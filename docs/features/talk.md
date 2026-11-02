@@ -41,6 +41,14 @@ A turn can be ended mid-reply (`stopTalk` in `src/actions/talk.ts`, `stopTurn` i
 
 It checks identity, same origin and token scope. Viewers of `/talk` see the `Stopped.` turn arrive over the stream.
 
+## Queue and Steer while an answer runs (#8819)
+
+The composer stays open while the agent works. `say()` in `src/crew/conversation.ts` takes `during`: `inject` (the old behaviour, still the default for the API without `during`, MCP and plain `ssh talk`), `queue` (kept in memory for after the turn; up to 5; each runs as its own turn, in order) or `interrupt` (stops the turn, keeps its words and the `Stopped.` line, and sends the message first). Stop clears the queue; a forge restart drops it. A file attached to a queued message is held: it cannot be removed (409) or sent with another message (`file_taken`), and one gone by the time it runs is left out.
+
+- **Web:** while an answer runs Send reads Queue and Steer and Stop appear. A queued message shows dimmed, "Queued", with Cancel (a post form to `POST /talk/queue/:id/cancel`, so it works without the script); every open tab sees it over the stream (`queued` frame). Cancel puts the text back in the box.
+- **API:** `POST /api/v1/conversation/messages` with `during: "queue" | "steer"` (anything else is 422 `invalid_during`; a sixth queued message is 429 `queue_full`); `DELETE /api/v1/conversation/queue/:id` (404 for an id that is not yours or already went); `GET /api/v1/conversation/turns` lists `queued`.
+- **Terminal:** `ssh <forge> talk /queue <words>`, `talk /steer <words>`, `talk /queued` (ids and words), `talk /unqueue <id>`; they work with `--attach` too.
+
 ## Chat features: have, adding, not adding (#8752)
 
 Prior art read: Vercel AI Elements (Apache-2.0 React on shadcn; anatomy and behaviour ported, no code copied), AI SDK UI, ChatGPT and Claude.ai. No React: the page stays server-drawn with a small script.
@@ -58,7 +66,7 @@ Prior art read: Vercel AI Elements (Apache-2.0 React on shadcn; anatomy and beha
 | Thinking as one closed line; a steps line under a reply ("read 3 files, opened #12"); links to each issue, pull, file or app the turn opened or changed | this pull | AI Elements `Reasoning`, `ChainOfThought` |
 | Many conversations: new, list, search, rename, archive, URL each | next pull | needs a migration: today one row per person |
 | Edit and resend, regenerate, Retry (see below) | have (#8817) | replaced turns are kept and marked, not deleted |
-| Queue | next pull | needs a queue on `crew/conversation.ts` |
+| Queue and Steer while an answer runs | #8819 | `Queue` / `PromptInput` |
 | Cost under each reply and how full the context is (header, and in the terminal) | this pull | the run's own usage record, never an estimate |
 | Attachments, tables, plan line | later | need storage / token data / markdown tables |
 | Code highlighting and tables in replies | this pull (#8816) | a reply is stored whole and drawn whole, so no half-open fence is ever tokenised |

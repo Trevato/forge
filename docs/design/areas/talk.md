@@ -31,3 +31,4 @@
   - `.talk-attach` — the "Attach" file-picker label in the composer bar, a `.btn` that stays hidden until the script runs (the picker needs it).
 
 Under a reply, `.talk-cost` is one quiet line with the turn's dollars; above the log, `.talk-context` says how full the context is and, from 80 %, suggests a new conversation. Both are `small muted` text, no new colour.
+- `.talk-queued` — a message waiting for the running turn: the person bubble, dimmed with a dashed border, its "Queued" line and Cancel under it.

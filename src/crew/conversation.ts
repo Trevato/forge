@@ -20,7 +20,7 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
 import { appendTurn, lastExchange, listTurns, openConversation, removeTurn, restoreTurns, setAsideFrom, setClaudeSession, type Conversation } from "../core/conversations.ts";
-import { attach, deliver, NOTHING, release, type ConversationFile, type Delivery } from "../core/conversation_files.ts";
+import { attach, deliver, fileOwnedBy, NOTHING, release, type ConversationFile, type Delivery } from "../core/conversation_files.ts";
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
 import { cancelHeld, WORDS_MAX } from "../core/fence.ts";
 import { thinkingOf } from "../core/talk_work.ts";
@@ -113,6 +113,8 @@ export function stopTurn(app: App, userId: string): boolean {
   const conversation = openConversation(app.db, userId);
   const stop = stoppers.get(conversation.id)?.stop;
   if (stop === undefined) return false;
+  // Stop is the person calling it off: what waited behind the turn goes too (interrupting keeps it, `say`).
+  queues.delete(conversation.id);
   // Cancelled first: no Confirm may land while the process is going down.
   cancelHeld(app.db, `conversation:${conversation.id}`);
   stop();
@@ -192,22 +194,114 @@ export function mcpConfig(localUrl: string): string {
   });
 }
 
-export type SayRefusal = "unauthorized" | "empty" | "too_long" | "no_account" | "resting" | "busy" | "answering";
+export type SayRefusal = "unauthorized" | "empty" | "too_long" | "no_account" | "resting" | "busy" | "answering" | "queue_full" | "file_taken";
 
 export interface Said {
-  /** `started` a new turn, or `steered` one already running. */
-  readonly how: "started" | "steered";
+  /** `started` a new turn, `steered` words into the one running, `queued` for after it, or `interrupted` it to send these at once. */
+  readonly how: "started" | "steered" | "queued" | "interrupted";
   /** Settles when the turn does; only a started turn has one. */
   readonly done?: Promise<void>;
+  /** The queue id of a `queued` message, to cancel it by. */
+  readonly queued?: string;
 }
 
-/** Store a person's message and answer it: steer the turn that runs, or start one. */
-export function say(app: App, options: ConversationOptions, userId: string, text: string, files: readonly ConversationFile[] = []): Result<Said, SayRefusal> {
+/**
+ * What a message does when a turn is running (#8819): `inject` hands the words
+ * to the turn (the default, for callers that never asked otherwise), `queue`
+ * keeps them for after it, `interrupt` stops the turn and sends them at once.
+ * With no turn running, all three start one.
+ */
+export type During = "inject" | "queue" | "interrupt";
+
+/** A message waiting for the running turn to end. Held in memory: a restart drops it. */
+export interface Queued {
+  readonly id: string;
+  readonly text: string;
+  readonly files: readonly ConversationFile[];
+}
+
+/** Most messages that may wait behind one turn. */
+export const QUEUE_MAX = 5;
+
+const queues = new Map<string, Queued[]>();
+
+/** The person's messages waiting for their running turn, oldest first. */
+export const queuedOf = (app: App, userId: string): readonly Queued[] => queues.get(openConversation(app.db, userId).id) ?? [];
+
+/** Whether a message waiting in a queue holds this file: it cannot be removed or sent twice meanwhile. */
+export const fileQueued = (fileId: string): boolean => [...queues.values()].some((l) => l.some((q) => q.files.some((f) => f.id === fileId)));
+
+/** Take back a waiting message; false when it is gone (already sent, or never theirs). */
+export function cancelQueued(app: App, userId: string, queuedId: string): boolean {
+  const key = openConversation(app.db, userId).id;
+  const list = queues.get(key) ?? [];
+  const at = list.findIndex((q) => q.id === queuedId);
+  if (at < 0) return false;
+  list.splice(at, 1);
+  if (list.length === 0) queues.delete(key);
+  return true;
+}
+
+/**
+ * The turn ended: send the next waiting message as a turn of its own. A
+ * message that cannot start ends the wait with one failed line, for the rest
+ * would fail the same way.
+ */
+function drain(app: App, options: ConversationOptions, conversation: Conversation): void {
+  const list = queues.get(conversation.id);
+  const next = list?.shift();
+  if (list?.length === 0) queues.delete(conversation.id);
+  if (next === undefined) return;
+  const userId = conversation.userId;
+  const current = openConversation(app.db, userId);
+  if (current.id !== conversation.id) return void queues.delete(conversation.id);
+  const stored = appendTurn(app.db, userId, current.id, { role: "person", text: next.text });
+  if (!stored.ok) return drain(app, options, current);
+  // A file taken back or sent some other way while this waited is left out, not sent twice.
+  const files = next.files.filter((f) => {
+    const now = fileOwnedBy(app.db, userId, f.id);
+    return now !== undefined && now.turnId === undefined;
+  });
+  attach(app.db, files, stored.value.id);
+  const started = begin(app, options, current, next.text, 0, current.claudeSessionId || undefined, deliver(app.config.dataDir, userId, files));
+  if (started.ok) {
+    started.value.catch((error: unknown) => app.log.error("conversation turn crashed", { error: String(error) }));
+    return;
+  }
+  release(app.db, stored.value.id);
+  queues.delete(current.id);
+  appendTurn(app.db, userId, current.id, { role: "agent", text: failureLine("error"), failed: true });
+}
+
+/** Store a person's message and answer it: steer, queue or interrupt the turn that runs (`During`), or start one. */
+export function say(
+  app: App,
+  options: ConversationOptions,
+  userId: string,
+  text: string,
+  files: readonly ConversationFile[] = [],
+  during: During = "inject",
+): Result<Said, SayRefusal> {
   const user = getUserById(app.db, userId);
   if (user === undefined) return err("unauthorized");
   if (text.trim() === "") return err("empty");
   if (text.length > WORDS_MAX) return err("too_long");
   const conversation = openConversation(app.db, userId);
+  if (during !== "inject" && live.has(conversation.id)) {
+    const list = queues.get(conversation.id) ?? [];
+    const waiting: Queued = { id: id(), text, files };
+    if (files.some((f) => fileQueued(f.id))) return err("file_taken");
+    if (during === "queue") {
+      if (list.length >= QUEUE_MAX) return err("queue_full");
+      queues.set(conversation.id, [...list, waiting]);
+      return ok({ how: "queued", queued: waiting.id });
+    }
+    // Ahead of the others: it is what the person wants now. The stopped turn's end sends it.
+    queues.set(conversation.id, [waiting, ...list]);
+    stoppers.get(conversation.id)?.stop();
+    cancelHeld(app.db, `conversation:${conversation.id}`);
+    return ok({ how: "interrupted" });
+  }
   const stored = appendTurn(app.db, userId, conversation.id, { role: "person", text });
   if (!stored.ok) return err("too_long");
   attach(app.db, files, stored.value.id);
@@ -494,6 +588,9 @@ function begin(
     } finally {
       if (live.get(conversation.id) === runId) live.delete(conversation.id);
       if (stoppers.get(conversation.id)?.runId === runId) stoppers.delete(conversation.id);
+      // A restart leaves the next message unsent (its turn would be cut again); anything else sends it.
+      if (options.signal.aborted) queues.delete(conversation.id);
+      else drain(app, options, conversation);
     }
   })();
   return ok(turn);

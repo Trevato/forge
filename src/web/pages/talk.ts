@@ -15,7 +15,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { TALK_WORDS, talk, talkAgain } from "../../actions/talk.ts";
+import { cancelTalk, queuedTalk, TALK_WORDS, talk, talkAgain } from "../../actions/talk.ts";
 import { REFUSED, sayNo, sayYes, waitingConfirms } from "../../actions/conversation_confirms.ts";
 import { filesOfTurns, type ConversationFile } from "../../core/conversation_files.ts";
 import { DEFAULT_PAGE, lastExchange, listTurns, MAX_PAGE, openConversation, turnsAfter, type Turn } from "../../core/conversations.ts";
@@ -108,6 +108,11 @@ export function exchangeActs(db: Database, userId: string, conversationId: strin
   return acts;
 }
 
+/** A message waiting for the running turn; Cancel is a form that works without the script. */
+export const queuedHtml = (q: { id: string; text: string }): Html =>
+  html`<li class="talk-turn talk-person talk-queued" data-queued="${q.id}"><div class="talk-body talk-plain">${q.text}</div>
+    <form class="talk-meta small muted" method="post" action="${HERE}/queue/${q.id}/cancel" data-unqueue>Queued, sends after this answer ${btn("Cancel", { label: "Cancel this queued message" })}</form></li>`;
+
 /** How full the context is, one quiet line above the log; always drawn so a finished run can fill it. */
 const contextLine = (c: Context | undefined): Html =>
   html`<p class="talk-context small muted" data-context ${c === undefined ? html`hidden` : null}>${c === undefined ? "" : contextText(c)}</p>`;
@@ -193,6 +198,7 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: b
             ? html`<li class="muted talk-turn">Ask the forge anything, or tell it what to change. It acts as you, with your permissions, and asks before anything hard to undo.
                 <span class="talk-suggest">${SUGGESTIONS.map((q) => html`<a class="btn" href="${HERE}?q=${encodeURIComponent(q)}" data-suggest="${q}">${q}</a>`)}</span></li>`
             : turns.map((t) => turnHtml(t, waiting, costs.get(t.id), acts.get(t.id), works.get(t.id), sent.get(t.id)))}
+          ${before === undefined && running ? queuedTalk(ctx.app, user).map(queuedHtml) : null}
         </ol>
         <div id="end"></div>
       </div>
@@ -205,6 +211,8 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: b
           <label class="btn talk-attach" data-attach hidden>Attach<input type="file" multiple hidden data-pick /></label>
           <span class="spacer"></span>
           ${editing === undefined ? null : html`<a class="btn" href="${HERE}">Keep as it was</a>`}
+          <button type="button" class="btn" data-stop hidden>Stop</button>
+          <button type="button" class="btn" data-steer hidden title="Stop this answer and send now">Steer</button>
           ${btn(editing === undefined ? "Send" : "Resend", { variant: "primary" })}
         </div>
       </form>
@@ -230,7 +238,7 @@ export async function talkSend(ctx: Ctx): Promise<Response> {
   const text = form.get("text");
   if (typeof text !== "string" || text.trim() === "" || text.length > WORDS_MAX)
     return flashTo(ctx, `${HERE}#end`, { tone: "danger", message: `Say something, up to ${WORDS_MAX} characters.` });
-  const said = talk(ctx.app, user, text);
+  const said = talk(ctx.app, user, text, [], "queue");
   if (!said.ok) return flashTo(ctx, `${HERE}#end`, { tone: "danger", message: TALK_WORDS[said.error][1] });
   return flashTo(ctx, `${HERE}#end`, { tone: "success", message: "Sent. Reload to see the answer." });
 }
@@ -256,6 +264,18 @@ export async function talkAgainSend(ctx: Ctx): Promise<Response> {
     [status, message] = TALK_WORDS[said.error];
   }
   return asJson ? json({ ok: false, message }, status) : flashTo(ctx, `${HERE}#end`, { tone: "danger", message });
+}
+
+// POST /talk/queue/:id/cancel — take back a message waiting for the running turn.
+export async function talkQueueCancel(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (user === undefined) return signInFirst(ctx);
+  if (ctx.auth.via !== "session") return forbiddenPage(ctx, "Do this from your own signed-in browser.");
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const gone = !cancelTalk(ctx.app, user, ctx.params["id"] ?? "");
+  if ((ctx.request.headers.get("accept") ?? "").includes("application/json")) return gone ? json({ ok: false, message: "That message already went." }, 404) : json({ ok: true });
+  return flashTo(ctx, `${HERE}#end`, gone ? { tone: "danger", message: "That message already went." } : { tone: "success", message: "Cancelled." });
 }
 
 // POST /talk/confirm/:id — the person's yes or no, from their own session.
@@ -300,6 +320,7 @@ export function talkStream(ctx: Ctx): Response {
   return eventStream(app, ctx.request, (emit, close) => {
     const started = Date.now();
     let told = false;
+    let shown = "";
     const tick = (): void => {
       // Asked before the read: a turn that ends after this look is read whole next time.
       const running = clock.running(app, user.id);
@@ -309,9 +330,16 @@ export function talkStream(ctx: Ctx): Response {
         const works = worksOf(app.db, user.id, conversation.id, fresh);
         const sent = filesOfTurns(app.db, user.id, fresh.filter((t) => t.role === "person").map((t) => t.id));
         for (const turn of fresh) {
-          emit("turn", { id: turn.id, html: turnHtml(turn, waiting, undefined, undefined, works.get(turn.id), sent.get(turn.id)).text }, turn.id);
+          emit("turn", { id: turn.id, role: turn.role, html: turnHtml(turn, waiting, undefined, undefined, works.get(turn.id), sent.get(turn.id)).text }, turn.id);
           cursor = turn.id;
         }
+      }
+      // Every tab and viewer sees what waits: sent whenever the list changes.
+      const waits = queuedTalk(app, user);
+      const key = waits.map((q) => q.id).join();
+      if (key !== shown && (running || shown !== "")) {
+        shown = key;
+        emit("queued", { items: waits.map((q) => ({ id: q.id, html: queuedHtml(q).text })) });
       }
       if (fresh.length >= MAX_PAGE) return;
       if (!running) {

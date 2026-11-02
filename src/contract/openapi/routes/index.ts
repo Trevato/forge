@@ -5,6 +5,7 @@ export { route as deleteApiV1AdminInvitesId } from "./deleteApiV1AdminInvitesId.
 export { route as deleteApiV1AgentsUsername } from "./deleteApiV1AgentsUsername.ts";
 export { route as deleteApiV1BoardsSlug } from "./deleteApiV1BoardsSlug.ts";
 export { route as deleteApiV1ConversationFilesId } from "./deleteApiV1ConversationFilesId.ts";
+export { route as deleteApiV1ConversationQueueId } from "./deleteApiV1ConversationQueueId.ts";
 export { route as deleteApiV1OrgsOrgTeamsTeam } from "./deleteApiV1OrgsOrgTeamsTeam.ts";
 export { route as deleteApiV1OrgsOrgTeamsTeamMembersUsername } from "./deleteApiV1OrgsOrgTeamsTeamMembersUsername.ts";
 export { route as deleteApiV1ReposOwnerName } from "./deleteApiV1ReposOwnerName.ts";

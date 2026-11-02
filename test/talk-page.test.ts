@@ -192,7 +192,7 @@ describe("the page", () => {
   test("the page's own bytes are held: stylesheet and script stay small", async () => {
     const { talkCss, talkJs } = await import("../src/web/pages/talk_client.ts");
     expect(Buffer.byteLength(talkCss)).toBeLessThan(3_600);
-    expect(Buffer.byteLength(talkJs)).toBeLessThan(11_600);
+    expect(Buffer.byteLength(talkJs)).toBeLessThan(13_400);
     say(alice, "agent", "```ts\nlet x = 1;\n```");
     const page = await get("/talk", alice);
     const size = (await page.arrayBuffer()).byteLength;
@@ -200,19 +200,63 @@ describe("the page", () => {
   });
 
   describe("the script, driven against a DOM", () => {
-    test("while a reply streams Send is Stop, Escape stops too, and it is Send again when the turn ends", async () => {
+    test("while a reply streams the composer stays open: Send queues, Steer and Stop appear, Escape stops, and it is Send again when the turn ends", async () => {
       const t = await boot();
-      const button = t.doc.querySelector(".bar .btn");
-      expect(button.textContent).toBe("Send");
+      const send = t.doc.querySelector('.bar button[type="submit"]');
+      const stop = t.doc.querySelector("[data-stop]");
+      expect(send.textContent).toBe("Send");
+      expect(stop.hidden).toBe(true);
       t.sources.at(-1)!.on["running"]!({ data: "{}" });
-      expect(button.textContent).toBe("Stop");
-      button.dispatchEvent(new t.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      expect(send.textContent).toBe("Queue");
+      expect(stop.hidden).toBe(false);
+      stop.dispatchEvent(new t.window.MouseEvent("click", { bubbles: true, cancelable: true }));
       t.doc.dispatchEvent(new t.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
       expect(t.urls).toEqual(["/api/v1/conversation/stop", "/api/v1/conversation/stop"]);
       t.sources.at(-1)!.on["done"]!({ data: "{}" });
-      expect(button.textContent).toBe("Send");
+      expect(send.textContent).toBe("Send");
+      expect(stop.hidden).toBe(true);
       t.doc.dispatchEvent(new t.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
       expect(t.urls).toHaveLength(2);
+    });
+
+    const queuedFrame = (id: string, text: string) => ({ id, html: `<li class="talk-turn talk-queued" data-queued="${id}"><div class="talk-body">${text}</div><form data-unqueue method="post" action="/talk/queue/${id}/cancel"><button>Cancel</button></form></li>` });
+
+    test("a message sent mid-answer is queued; the stream's queued frame draws it; Cancel puts it back without overwriting what is typed (#8819)", async () => {
+      const t = await boot();
+      t.how.value = "queued";
+      t.sources.at(-1)!.on["running"]!({ data: "{}" });
+      t.box.value = "and then this";
+      t.key({});
+      await tick();
+      expect(t.bodies.at(-1)).toMatchObject({ text: "and then this", during: "queue" });
+      expect(t.status.textContent).toContain("Queued");
+      t.sources.at(-1)!.on["queued"]!({ data: JSON.stringify({ items: [queuedFrame("q1", "and then this")] }) });
+      t.sources.at(-1)!.on["queued"]!({ data: JSON.stringify({ items: [queuedFrame("q1", "and then this")] }) });
+      expect(t.doc.querySelectorAll("[data-queued]")).toHaveLength(1);
+      t.box.value = "something new";
+      t.doc.querySelector("form[data-unqueue]").dispatchEvent(new t.window.Event("submit", { bubbles: true, cancelable: true }));
+      await tick();
+      expect(t.urls.at(-1)).toEndWith("/talk/queue/q1/cancel");
+      expect(t.doc.querySelector("[data-queued]")).toBeNull();
+      expect(t.box.value).toBe("something new\nand then this");
+    });
+
+    test("Cancel keeps the message when the server fails and drops it only on a 404; Steer sends a steer", async () => {
+      const t = await boot();
+      t.sources.at(-1)!.on["running"]!({ data: "{}" });
+      t.sources.at(-1)!.on["queued"]!({ data: JSON.stringify({ items: [queuedFrame("q1", "keep me")] }) });
+      t.cancel.status = 500;
+      t.doc.querySelector("form[data-unqueue]").dispatchEvent(new t.window.Event("submit", { bubbles: true, cancelable: true }));
+      await tick();
+      expect(t.doc.querySelector("[data-queued]")).not.toBeNull();
+      t.cancel.status = 404;
+      t.doc.querySelector("form[data-unqueue]").dispatchEvent(new t.window.Event("submit", { bubbles: true, cancelable: true }));
+      await tick();
+      expect(t.doc.querySelector("[data-queued]")).toBeNull();
+      t.box.value = "do this instead";
+      t.doc.querySelector("[data-steer]").dispatchEvent(new t.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      await tick();
+      expect(t.bodies.at(-1)).toMatchObject({ text: "do this instead", during: "steer" });
     });
 
     const boot = async (user = "u1", store: Record<string, string> = {}) => {
@@ -223,7 +267,9 @@ describe("the page", () => {
       const doc = window.document as any;
       doc.body.innerHTML = `<div class="talk" data-talk data-user="${user}" data-paged="0" data-running="1"><div>
         <ol class="talk-log" role="log" data-last=""><li class="talk-turn talk-agent" id="t-1"><div class="talk-body"><pre><code>let a = 1;</code></pre></div><p class="talk-meta">Forge · now</p></li></ol><div id="end"></div></div>
-        <form class="talk-compose"><p class="talk-status" role="status"></p><ul data-chips></ul><textarea name="text"></textarea><div class="bar"><span data-hint></span><label data-attach hidden><input type="file" data-pick /></label><button class="btn" type="submit">Send</button></div></form></div>`;
+        <form class="talk-compose"><p class="talk-status" role="status"></p><ul data-chips></ul><textarea name="text"></textarea><div class="bar"><span data-hint></span><label data-attach hidden><input type="file" data-pick /></label><button class="btn" type="button" data-stop hidden>Stop</button><button class="btn" type="button" data-steer hidden>Steer</button><button class="btn" type="submit">Send</button></div></form></div>`;
+      const how = { value: "started" };
+      const cancel = { status: 200 };
       const sent: string[] = [];
       const urls: string[] = [];
       const copied: string[] = [];
@@ -232,10 +278,11 @@ describe("the page", () => {
         urls.push(u);
         if (u.endsWith("/files")) return { ok: true, json: async () => ({ id: "f1", name: "shot.png" }) };
         if (init.method === "DELETE") return { ok: true, json: async () => ({}) };
+        if (u.includes("/queue/")) return { ok: cancel.status === 200, status: cancel.status, json: async () => ({}) };
         const body = JSON.parse(init.body);
         sent.push(body.text);
         bodies.push(body);
-        return { ok: true, json: async () => ({}) };
+        return { ok: true, json: async () => ({ how: how.value, queued: "q1" }) };
       };
       const local = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; } };
       const nav = { clipboard: { writeText: async (t: string) => { copied.push(t); } } };
@@ -245,7 +292,7 @@ describe("the page", () => {
       const box = doc.querySelector("textarea");
       const key = (init: object) => box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }));
       const emit = (id: string, html: string) => sources.at(-1)!.on["turn"]!({ data: JSON.stringify({ id, html }) });
-      return { emit, bodies, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
+      return { how, cancel, emit, bodies, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
     };
     const tick = () => new Promise((r) => setTimeout(r, 5));
 

@@ -9,7 +9,7 @@ import type { App } from "../app.ts";
 import type { ConversationFile } from "../core/conversation_files.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { User } from "../core/users.ts";
-import { conversationOptions, redo, say, stopTurn, type RedoHow, type RedoRefusal, type SayRefusal, type Said } from "../crew/conversation.ts";
+import { cancelQueued, queuedOf, conversationOptions, redo, say, stopTurn, type During, type RedoHow, type RedoRefusal, type SayRefusal, type Said } from "../crew/conversation.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /** Messages a person may send in a minute. */
@@ -29,6 +29,8 @@ export const TALK_WORDS: Readonly<Record<TalkRefusal, readonly [number, string]>
   off: [503, "the forge's agent is not running here"],
   running: [409, "the forge is still answering; wait for it to finish"],
   nothing: [409, "there is nothing here to do that to"],
+  file_taken: [409, "that file already waits in another message"],
+  queue_full: [429, "five messages are already waiting; cancel one or wait for the answer"],
   rate_limited: [429, `at most ${TALK_PER_MINUTE} messages a minute`],
 };
 
@@ -48,12 +50,12 @@ const watch = (app: App, said: Said): void => {
   said.done?.catch((error: unknown) => app.log.error("conversation turn crashed", { error: String(error) }));
 };
 
-export function talk(app: App, user: User | undefined, text: string, files: readonly ConversationFile[] = []): Result<Said, TalkRefusal> {
+export function talk(app: App, user: User | undefined, text: string, files: readonly ConversationFile[] = [], during: During = "inject"): Result<Said, TalkRefusal> {
   if (user === undefined) return err("unauthorized");
   const options = conversationOptions(app);
   if (options === undefined) return err("off");
   if (!take(app, user)) return err("rate_limited");
-  const said = say(app, options, user.id, text, files);
+  const said = say(app, options, user.id, text, files, during);
   if (said.ok) watch(app, said.value);
   return said;
 }
@@ -75,3 +77,10 @@ export function stopTalk(app: App, user: User | undefined): Result<true, "unauth
   if (conversationOptions(app) === undefined) return err("off");
   return stopTurn(app, user.id) ? ok(true) : err("idle");
 }
+
+/** Take back a message waiting for the running turn; false when it already went. */
+export const cancelTalk = (app: App, user: User | undefined, queuedId: string): boolean => user !== undefined && cancelQueued(app, user.id, queuedId);
+
+/** The person's waiting messages, oldest first. */
+export const queuedTalk = (app: App, user: User | undefined): readonly { id: string; text: string }[] =>
+  user === undefined ? [] : queuedOf(app, user.id).map((q) => ({ id: q.id, text: q.text }));

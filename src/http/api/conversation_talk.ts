@@ -9,14 +9,14 @@
 
 import type { App } from "../../app.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
-import { stopTalk, TALK_WORDS, talk } from "../../actions/talk.ts";
+import { cancelTalk, stopTalk, TALK_WORDS, talk } from "../../actions/talk.ts";
 import { FILE_WORDS, fileBytes, fileOwnedBy, FILES_PER_MESSAGE, IMAGE_MAX, pendingAmong, removePending, storeFile } from "../../core/conversation_files.ts";
 import { DEFAULT_PAGE, listTurns, MAX_PAGE, openConversation } from "../../core/conversations.ts";
 import { WORDS_MAX } from "../../core/fence.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { scopeAllows } from "../../core/tokens.ts";
 import { worksOf } from "../../core/talk_work.ts";
-import { turnRunning } from "../../crew/conversation.ts";
+import { fileQueued, queuedOf, turnRunning } from "../../crew/conversation.ts";
 import { crossOrigin, type Handler } from "../context.ts";
 import { readBounded } from "../limits.ts";
 import { apiError, boundedBody, forbidden, json, unauthorized } from "../respond.ts";
@@ -62,12 +62,24 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
       return apiError("invalid_files", 422, `files is a list of at most ${FILES_PER_MESSAGE} attachment ids`);
     const files = pendingAmong(ctx.app.db, user.id, ids as string[]);
     if (!files.ok) return apiError("not_found", 404, FILE_WORDS.not_found[1]);
-    const said = talk(ctx.app, user, text, files.value);
+    // What to do when a turn runs: absent hands the words to it; `queue` waits for it; `steer` stops it and sends these at once.
+    const during = input["during"];
+    if (during !== undefined && during !== "queue" && during !== "steer") return apiError("invalid_during", 422, "during is queue or steer");
+    const said = talk(ctx.app, user, text, files.value, during === "queue" ? "queue" : during === "steer" ? "interrupt" : "inject");
     if (!said.ok) {
       const [status, words] = TALK_WORDS[said.error];
       return json({ error: said.error, message: words }, status, said.error === "rate_limited" || said.error === "busy" ? { "retry-after": "60" } : {});
     }
-    return json({ how: said.value.how }, 202);
+    return json(said.value.queued === undefined ? { how: said.value.how } : { how: said.value.how, queued: said.value.queued }, 202);
+  });
+
+  router.add("DELETE", "/api/v1/conversation/queue/:id", (ctx) => {
+    const user = ctx.auth.user;
+    if (user === undefined) return unauthorized();
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+    if (ctx.auth.via === "token" && !scopeAllows(ctx.auth.scope ?? "ro", "rw")) return forbidden();
+    if (!cancelTalk(ctx.app, user, ctx.params["id"] ?? "")) return apiError("not_found", 404, "that message already went, or was never waiting");
+    return json({ ok: true });
   });
 
   router.add("POST", "/api/v1/conversation/stop", (ctx) => {
@@ -125,6 +137,7 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     if (user === undefined) return unauthorized();
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     if (ctx.auth.via === "token" && !scopeAllows(ctx.auth.scope ?? "ro", "rw")) return forbidden();
+    if (fileQueued(ctx.params["id"] ?? "")) return apiError("file_taken", 409, "that file waits in a queued message; cancel the message first");
     if (!removePending(ctx.app.db, ctx.app.config.dataDir, user.id, ctx.params["id"] ?? "")) return apiError("not_found", 404, FILE_WORDS.not_found[1]);
     return json({ ok: true });
   });
@@ -142,6 +155,6 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     const all = turns.ok ? turns.value : [];
     const works = worksOf(ctx.app.db, user.id, conversation.id, all);
     const shown = all.map((t) => (t.role === "agent" ? { ...t, work: works.get(t.id) ?? null } : t));
-    return json({ running: turnRunning(ctx.app, user.id), turns: shown });
+    return json({ running: turnRunning(ctx.app, user.id), queued: queuedOf(ctx.app, user.id).map((q) => ({ id: q.id, text: q.text })), turns: shown });
   });
 }

@@ -50,6 +50,7 @@ export const talkCss = /* css */ `
 .talk-replaced { opacity: 0.55; }
 .talk-failed form { margin-top: 6px; }
 .talk-failed .btn, .talk-act { min-height: 2.75rem; }
+.talk-queued { opacity: 0.7; border-style: dashed; }
 .talk-acts { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
 .talk-agent .talk-acts { justify-content: flex-start; }
 `;
@@ -144,14 +145,16 @@ if (root) {
       return false;
     }
   };
-  // While a reply streams, Send is Stop; Escape stops too.
-  const action = form.querySelector(".bar button.btn");
-  const sendLabel = action.textContent;
+  // While a reply streams the composer stays open: Send queues the message, Steer stops the
+  // answer and sends it at once, Stop only stops. Escape stops too.
+  const action = form.querySelector(".bar button.btn:not([data-stop]):not([data-steer])");
+  const stopBtn = form.querySelector("[data-stop]");
+  const steerBtn = form.querySelector("[data-steer]");
   let answering = false;
   const mode = (on) => {
     answering = on;
-    action.textContent = on ? "Stop" : sendLabel;
-    action.dataset.stop = on ? "1" : "";
+    action.textContent = on ? "Queue" : "Send";
+    stopBtn.hidden = steerBtn.hidden = !on;
   };
   const stop = async () => {
     say("Stopping…");
@@ -162,8 +165,25 @@ if (root) {
       say("That was not sent: no connection.");
     }
   };
-  action.addEventListener("click", (e) => { if (answering) { e.preventDefault(); stop(); } });
+  stopBtn.addEventListener("click", stop);
+  steerBtn.addEventListener("click", () => form.requestSubmit(steerBtn));
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && answering) { e.preventDefault(); stop(); } });
+  // Queued messages are drawn by the server (they are the same on every tab); Cancel is its form, done in place.
+  log.addEventListener("submit", async (e) => {
+    const f = e.target.closest("form[data-unqueue]");
+    if (!f) return;
+    e.preventDefault();
+    const li = f.closest("[data-queued]");
+    try {
+      const res = await fetch(f.action, { method: "POST", headers: { accept: "application/json" }, body: new URLSearchParams() });
+      if (!res.ok && res.status !== 404) { say("That was not cancelled."); return; }
+      if (res.ok) { const t = li.querySelector(".talk-body").textContent; box.value = box.value ? box.value + "\\n" + t : t; grow(); say("Cancelled. The message is back in the box."); }
+      else say("It had already gone.");
+      li.remove();
+    } catch (_) {
+      say("That was not cancelled: no connection.");
+    }
+  });
   const follow = () => {
     if (paged) return;
     if (source) source.close();
@@ -172,9 +192,17 @@ if (root) {
     source.addEventListener("turn", (e) => {
       const turn = JSON.parse(e.data);
       last = turn.id;
-      if (!document.getElementById("t-" + turn.id)) { log.insertAdjacentHTML("beforeend", turn.html); decorate(log); }
+      if (!document.getElementById("t-" + turn.id)) {
+        const q = log.querySelector("[data-queued]");
+        if (q) q.insertAdjacentHTML("beforebegin", turn.html); else log.insertAdjacentHTML("beforeend", turn.html);
+        decorate(log);
+      }
       retry = 0;
       toEnd();
+    });
+    source.addEventListener("queued", (e) => {
+      log.querySelectorAll("[data-queued]").forEach((q) => q.remove());
+      for (const q of JSON.parse(e.data).items) log.insertAdjacentHTML("beforeend", q.html);
     });
     source.addEventListener("running", () => { dropActs(); mode(true); say("The forge is answering…"); });
     source.addEventListener("done", (e) => {
@@ -249,12 +277,13 @@ if (root) {
       if (await again("edit", new URLSearchParams({ text }))) { try { localStorage.removeItem(draftKey); } catch (_) {} }
       return;
     }
+    const steer = e.submitter === steerBtn;
     say("Sending…");
     try {
       const res = await fetch("/api/v1/conversation/messages", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text, files: attached.map((f) => f.id) }),
+        body: JSON.stringify({ text, files: attached.map((f) => f.id), during: steer && answering ? "steer" : "queue" }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -267,6 +296,9 @@ if (root) {
       grow();
       try { localStorage.removeItem(draftKey); } catch (_) {}
       stuck = true;
+      const out = await res.json().catch(() => ({}));
+      if (out.how === "queued") { say("Queued: it sends after this answer."); if (!source) follow(); return; }
+      if (out.how === "interrupted") { say("Stopping, then sending…"); return; }
       if (paged) { location.href = "/talk"; return; }
       follow();
     } catch (_) {
