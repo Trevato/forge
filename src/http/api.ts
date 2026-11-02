@@ -314,6 +314,7 @@ import { forgeRoutes } from "./api/forges.ts";
 import { releasesRoutes } from "./api/releases.ts";
 import { hookRoutes } from "./api/hooks.ts";
 import { agentRoutes } from "./api/agents.ts";
+import { subscriptionRoutes } from "./api/subscriptions.ts";
 import { boardRoutes } from "./api/boards.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
@@ -3749,6 +3750,7 @@ export function apiRoutes(router: Router<Handler>): void {
   }
 
   agentRoutes(router);
+  subscriptionRoutes(router);
 
   router.add("GET", "/api/v1/repos/:owner/:name/crew", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
