@@ -422,3 +422,24 @@ export async function writeRef(
   const result = await runGit(["update-ref", ref, oid], { cwd: dir });
   return result.ok;
 }
+
+/** Who wrote the commits a pull carries, and how many files they touch — for the note an author is sent. */
+export async function carriedSummary(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<{ commits: number; authors: string[]; files: number }> {
+  if (!isSafeOid(baseOid) || !isSafeOid(headOid))
+    return { commits: 0, authors: [], files: 0 };
+  const log = await runGit(
+    ["log", "--format=%an", `${baseOid}..${headOid}`],
+    { cwd: dir },
+  );
+  const names = log.ok ? log.value.split("\n").filter(Boolean) : [];
+  const diff = await runGit(
+    ["diff", "--name-only", `${baseOid}...${headOid}`],
+    { cwd: dir },
+  );
+  const files = diff.ok ? diff.value.split("\n").filter(Boolean).length : 0;
+  return { commits: names.length, authors: [...new Set(names)].slice(0, 10), files };
+}

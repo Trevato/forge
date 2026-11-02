@@ -63,7 +63,8 @@ import { isProposed } from "../core/pull_trust.ts";
 import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
-import type { MergeStrategy } from "../git/merge.ts";
+import { carriedSummary, resolveOid, type MergeStrategy } from "../git/merge.ts";
+import { landingKind, thanksNote } from "../core/landing_kind.ts";
 import { repoDir } from "../git/repos.ts";
 import { importIssue, importReviewStates } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -363,7 +364,7 @@ export async function mergePull(
   actor: User | undefined,
   repo: Repo,
   pull: Pull,
-  strategy: MergeStrategy,
+  requested: MergeStrategy,
   /** The merge queue's guard: land only onto this base, as this tree (#2036). */
   expect?: LandingExpect,
   /** `pastGate`: the owner's break-glass (`checks/bypass.ts`) skips the checks requirement. */
@@ -384,6 +385,8 @@ export async function mergePull(
   // reflects it, with the merge commit the origin actually made.
   if (pull.originHeadRepo !== null || repo.origin !== null)
     return err("mirrored");
+  // A fork someone keeps lands as a true merge whatever was asked (#8935).
+  const strategy = landingKind(app.db, pull, requested);
   // A fork may have pushed since the pull opened; merge what is being
   // proposed now, not the snapshot taken when it was.
   await refreshPullHead(app, repo, pull);
@@ -405,6 +408,14 @@ export async function mergePull(
   );
   const baseDir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const at = await pullDir(app.db, app.reposRoot, repo, pull);
+  const carriedBefore =
+    strategy === "merge" && pull.crossRepo
+      ? await carriedSummary(
+          baseDir,
+          (await resolveOid(baseDir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid,
+          (getPull(app.db, repo.id, pull.number) ?? pull).headOid,
+        )
+      : undefined;
   const merged = await landPull(
     app.db,
     baseDir,
@@ -429,6 +440,21 @@ export async function mergePull(
     },
   );
   if (!merged.ok) return merged;
+  if (carriedBefore !== undefined) {
+    const thanks = thanksNote({ number: pull.number, ...carriedBefore });
+    const noted = addIssueComment(app.db, {
+      issueId: pull.id,
+      authorId: writer.value.id,
+      body: thanks,
+    });
+    if (noted.ok)
+      app.bus.append({
+        kind: "pull.commented",
+        repoId: repo.id,
+        actorId: writer.value.id,
+        payload: { number: pull.number, body: thanks, commentId: noted.value.id },
+      });
+  }
   // What came of the decision to show it, when there was one.
   resolveOpen(app.db, pull.id, "land", "shipped");
   app.bus.append({

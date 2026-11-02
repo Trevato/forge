@@ -28,6 +28,7 @@ import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
 import { RED_ALONE_WAIT, redAloneAt, redMark, type RedMark } from "../../checks/queue.ts";
 import { tierLine, type TierState } from "../../checks/tiers.ts";
+import { fromKeptFork } from "../../core/landing_kind.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import { marksByName } from "../../core/marks.ts";
@@ -625,11 +626,14 @@ function mergeBox(
       ${checks}`,
     mayMerge
       ? html`<form method="post" action="${thread}/merge" class="row-fields">
-          <label class="sr-only" for="strategy">Merge strategy</label>
-          <select class="input" id="strategy" name="strategy">
-            <option value="merge">Merge commit</option>
-            <option value="squash">Squash and merge</option>
-          </select>
+          ${fromKeptFork(ctx.app.db, pull)
+            ? html`<input type="hidden" name="strategy" value="merge" />
+                <span class="muted small">Lands as a merge commit: a kept fork's commits keep their authors.</span>`
+            : html`<label class="sr-only" for="strategy">Merge strategy</label>
+                <select class="input" id="strategy" name="strategy">
+                  <option value="merge">Merge commit</option>
+                  <option value="squash">Squash and merge</option>
+                </select>`}
           ${btn("Merge pull request", {
             variant: "primary",
             icon: "merge",

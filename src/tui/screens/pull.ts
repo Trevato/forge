@@ -66,6 +66,7 @@ import { oneLine } from "../../checks/words.ts";
 import { resolveOid } from "../../git/merge.ts";
 import { nextOfPull, type Next } from "../../flow/next_actor.ts";
 import { stepLine, stepOfPull, type PathStep } from "../../flow/path.ts";
+import { fromKeptFork } from "../../core/landing_kind.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
@@ -1374,22 +1375,31 @@ export function pullScreen(
         state() === "ready"
       ) {
         const base = facts.baseBranch;
+        const pullRow = repo === undefined ? undefined : getPull(f.db, repo.id, number);
+        const kept = pullRow !== undefined && fromKeptFork(f.db, pullRow);
         ctx.push(
           confirmScreen(ctx, screen, {
             title: `Merge #${number}`,
             body: [
               `${view.summary()} into ${base}.`,
+              kept ? "A kept fork lands as a merge commit; its authors keep their names." : "",
               repo?.protectDefault === true && base === repo.defaultBranch
                 ? `${base} is protected; history is preserved.`
                 : "",
             ],
-            actions: [
-              { label: "Cancel", variant: "ghost" },
-              { label: "Squash", variant: "secondary" },
-              { label: "Merge" },
-            ],
-            selected: 2,
+            actions: kept
+              ? [{ label: "Cancel", variant: "ghost" }, { label: "Merge" }]
+              : [
+                  { label: "Cancel", variant: "ghost" },
+                  { label: "Squash", variant: "secondary" },
+                  { label: "Merge" },
+                ],
+            selected: kept ? 1 : 2,
             onChoose: (choice) => {
+              if (kept) {
+                if (choice === 1) merge("merge");
+                return;
+              }
               if (choice === 1) merge("squash");
               if (choice === 2) merge("merge");
             },
