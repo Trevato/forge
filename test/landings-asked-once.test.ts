@@ -45,8 +45,7 @@ describe("landings ask git once per merge commit", () => {
     let n = 0;
     const merge = (oid: string) => {
       n++;
-      // After the running commit was made, or it would already contain the merge.
-      const at = new Date(Date.now() + n * 60_000).toISOString();
+      const at = new Date(Date.now() - (10 - n) * 60_000).toISOString();
       const issueId = id();
       app.db.query(`INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, ?3, 'pull', 'P', '', ?4, 'closed', ?5)`).run(issueId, repo.value.id, n, u.value.id, at);
       app.db.query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id, merged_at, merged_oid) VALUES (?1, ?2, ?3, '', '', ?4, ?5, ?6)`).run(issueId, repo.value.defaultBranch, `b/${n}`, repo.value.id, at, oid);

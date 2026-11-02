@@ -99,8 +99,7 @@ export function forgetLive(): void {
 
 function isLive(row: MergedRow, state: LiveState | undefined): boolean {
   if (state === undefined || row.repo.toLowerCase() !== state.own.toLowerCase()) return true;
-  // A merge made before the running commit is behind it, though git was not asked about it (or answered no for a rewritten history).
-  return Date.parse(row.at) <= state.at || (row.oid !== "" && state.oids.has(row.oid));
+  return row.oid === "" ? Date.parse(row.at) <= state.at : state.oids.has(row.oid);
 }
 
 /**

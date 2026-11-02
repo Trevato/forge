@@ -65,8 +65,7 @@ describe("changelog page", () => {
     const day = new Date().toISOString().slice(0, 10);
     merge("forge", "First <b>thing</b>", `${day}T01:00:00.000Z`, oids[0]!);
     merge("forge", "Second thing", `${day}T02:00:00.000Z`, oids[1]!);
-    // Not before the running commit was made, or it would be behind it.
-    merge("forge", "Third thing", `${day}T23:59:59.000Z`, oids[2]!);
+    merge("forge", "Third thing", `${day}T03:00:00.000Z`, oids[2]!);
     merge("notes", "A note app change", `${day}T02:30:00.000Z`, "");
     token = createToken(app.db, alice.id, "rw", "rw").token;
   }, 60_000);
@@ -175,7 +174,7 @@ describe("changelog page", () => {
     const fork = must(await createRepo(app, alice, { name: "fork", visibility: "public" }));
     const c = must(await commitToBranch(app, alice, fork, { message: "fork work", files: [{ path: "x.txt", content: "x\n" }] }));
     const day = new Date().toISOString().slice(0, 10);
-    merge("fork", "Fork change", `${day}T23:59:59.000Z`, c.commitOid);
+    merge("fork", "Fork change", `${day}T23:00:00.000Z`, c.commitOid);
     delete app.config.forgeRepo;
     forgetLive();
     process.env["FORGE_COMMIT"] = c.commitOid;
