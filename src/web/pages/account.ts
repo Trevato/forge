@@ -143,9 +143,7 @@ function edgeLinkView(ctx: Ctx): Html {
   return card(
     linked !== undefined
       ? html`<p>open-platform.sh: linked as <strong>${linked}</strong></p>
-          <form method="post" action="/settings/edge/unlink">
-            ${btn("Unlink", { type: "submit" })}
-          </form>`
+          ${confirmAction({ action: "/settings/edge/unlink", verb: "Unlink" })}`
       : html`<p>open-platform.sh: not linked</p>
           ${carried === undefined
             ? html`<p class="hint">Sign in through open-platform.sh, then come back here to link that login.</p>`
@@ -165,9 +163,7 @@ function parentLinkView(ctx: Ctx): Html {
   return card(
     linked
       ? html`<p>${host}: linked</p>
-          <form method="post" action="/settings/parent/unlink">
-            ${btn("Unlink", { type: "submit" })}
-          </form>`
+          ${confirmAction({ action: "/settings/parent/unlink", verb: "Unlink" })}`
       : html`<p>${host}: not linked</p>
           <form method="post" action="/settings/parent/link">
             ${btn(`Link ${host}`, { type: "submit" })}

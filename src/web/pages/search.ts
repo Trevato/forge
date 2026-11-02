@@ -569,6 +569,26 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/settings\/edge\/unlink$/,
+    describe: () => ({
+      verb: "Unlink",
+      title: "Unlink your open-platform.sh login?",
+      detail:
+        "You can no longer sign in here through open-platform.sh until you sign in that way and link it again on this page.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/settings\/parent\/unlink$/,
+    describe: () => ({
+      verb: "Unlink",
+      title: "Unlink the parent forge?",
+      detail:
+        "You can no longer sign in here through the parent forge until you link it again on this page. The last way in is never removed.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/proposal-tokens\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Revoke",
