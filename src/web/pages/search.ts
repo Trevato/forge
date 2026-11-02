@@ -15,7 +15,8 @@ import { search } from "../../actions/search.ts";
 import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canWrite, enterableApps, getRepo } from "../../core/repos.ts";
+import { canAdmin, canWrite, enterableApps, getRepo } from "../../core/repos.ts";
+import { getMirrorTarget } from "../../core/migrate_mirror.ts";
 import {
   cleanQuery,
   CODE_BUDGET_MS,
@@ -606,6 +607,26 @@ const DESTRUCTIVE: {
       detail: `The child can no longer push child/<name>/… branches or open pulls on ${m[1]}/${m[2]}. Pulls it already opened stay. A new token has to be minted to let it propose again.`,
       phrase: "",
     }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/mirror\/stop$/,
+    describe: (m, ctx) => {
+      // The mirror's name is read fresh, and only for someone who could
+      // stop it, so this page never says where a private repository goes.
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const held =
+        repo && canAdmin(ctx.app.db, repo, ctx.auth.user)
+          ? getMirrorTarget(ctx.app.db, repo.id)
+          : undefined;
+      return {
+        verb: "Stop mirroring",
+        title: held
+          ? `Stop mirroring ${m[1]}/${m[2]} to ${held.fullName}?`
+          : `Stop mirroring ${m[1]}/${m[2]}?`,
+        detail: `${held ? held.fullName : "The copy on the other side"} stays as it is; nothing more is pushed to it. Only a new migration sets up a mirror again.`,
+        phrase: "",
+      };
+    },
   },
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/prompts\/([^/]+)\/delete$/,

@@ -383,15 +383,16 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     held === undefined
       ? null
       : card(
-          html`<form method="post" action="${base}/settings/mirror/stop">
-            <p class="muted" data-mirror-line>${mirrorLine(held)}</p>
+          html`<p class="muted" data-mirror-line>${mirrorLine(held)}</p>
             <p class="muted small">
               Stopping leaves ${held.fullName} as it is; nothing more is pushed.
             </p>
             <div class="form-actions">
-              ${btn("Stop mirroring", { variant: "primary" })}
-            </div>
-          </form>`,
+              ${confirmAction({
+                action: `${base}/settings/mirror/stop`,
+                verb: "Stop mirroring",
+              })}
+            </div>`,
           { head: html`${icon("branch")}<h2>Mirror</h2>` },
         );
   const response = settingsPageResponse(
