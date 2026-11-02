@@ -63,6 +63,7 @@ import { checkWords } from "../../checks/summary.ts";
 import { oneLine } from "../../checks/words.ts";
 import { resolveOid } from "../../git/merge.ts";
 import { nextOfPull, type Next } from "../../flow/next_actor.ts";
+import { stepOfPull, type PathStep } from "../../flow/path.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
@@ -225,6 +226,8 @@ export function pullScreen(
   let threads: Thread[] = [];
   /** Who acts next, for a local open pull; the page says the same line. */
   let next: Next | null = null;
+  /** Which of check, review, land, live the pull is at; the page's step line. */
+  let step: PathStep | null = null;
   /** Where each team the issue names stands; empty when it names none. */
   let teams: TeamVerdict[] = [];
   /** Settled threads the reader has opened back up, for this visit only. */
@@ -324,6 +327,19 @@ export function pullScreen(
             headOid: row.headOid || (facts?.headOid ?? ""),
             conflicts: facts?.conflicts.length ?? 0,
           });
+    step =
+      row === undefined || settings === undefined
+        ? null
+        : stepOfPull(
+            f.db,
+            settings,
+            row,
+            {
+              headOid: row.headOid || (facts?.headOid ?? ""),
+              conflicts: facts?.conflicts.length ?? 0,
+            },
+            next,
+          );
     checkProgress = runningProgress(f.app.config.dataDir, check);
     const spec =
       repo === undefined || !isApp
@@ -1002,7 +1018,7 @@ export function pullScreen(
         x1,
         head!.y + 1,
         truncate(
-          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${step.step}${step.done ? " (done)" : ""}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
           Math.max(0, edge - x1),
         ),
         style(c.mutedFg, c.bg),

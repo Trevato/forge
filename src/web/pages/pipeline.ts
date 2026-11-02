@@ -1,0 +1,102 @@
+/**
+ * /pipeline, open to anyone: the one path a change follows, in four words
+ * (#7703). A newcomer reads it top to bottom and can say how a change gets
+ * from a pull to production; each step's finer machinery is one click down
+ * (the row folds), and the live counts per stage are on /boards. Every pull
+ * page links here from its path line (`changeHead`), and the MCP `pull`
+ * answers the same four words as `step`.
+ */
+import type { Ctx } from "../../http/context.ts";
+import { STEP_MEANS, STEPS, type Step } from "../../flow/path.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { html } from "../html.ts";
+import { page } from "../layout.ts";
+import { card, row } from "../ui.ts";
+
+/** What a pull waits on at each step, what only that step catches, and the parts inside it. */
+export const STEP_DETAIL: Record<Step, { waits: string; catches: string; inside: readonly string[] }> = {
+  check: {
+    waits: "a free check slot, then the check itself (minutes).",
+    catches: "a change that does not type-check, breaks the lint, or fails a test its own files reach.",
+    inside: [
+      "The gate script and the type check, on the pull's head.",
+      "The tests the change reaches (the fast tier), sharded across the check's machine.",
+      "A red main pauses pulls' checks for a while, so a pull is not blamed for main's red.",
+    ],
+  },
+  review: {
+    waits: "a reviewer: an agent for agent pulls, or a person who can write the repository.",
+    catches: "what no test asks: the wrong change, an unsafe one, or one nobody asked for.",
+    inside: [
+      "A verdict counts for the head it was given on; a new push asks for a fresh look.",
+      "Changes asked send the pull back to its builder, who pushes and is checked again.",
+    ],
+  },
+  land: {
+    waits: "the merge queue, which merges approved, green pulls into the default branch in order.",
+    catches: "a pull that no longer merges onto the base as it is now.",
+    inside: [
+      "Before it joins the queue, a pull is proved once on the base's tip; that proof is being removed (#7779).",
+      "The merge queue's gate: lint and types on the pull merged with the base's tip.",
+      "A conflicting pull goes back to its builder to rebase before it can land.",
+    ],
+  },
+  live: {
+    waits: "the next release of the default branch.",
+    catches: "a tree that builds and checks but does not boot or answer as a website.",
+    inside: [
+      "The release build, and a boot of the built image on an empty data directory.",
+      "The new version takes over the port only once it answers healthy.",
+      "After the swap the forge loads its own public pages; a failure is paged.",
+    ],
+  },
+};
+
+const title = (s: Step) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+
+// GET /pipeline
+export function pipelinePage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const rendering = performance.now();
+  const body = html`<div class="page-head">
+      <h1>How a change lands</h1>
+      <p class="muted">
+        Every change follows the same four steps:
+        <strong>check, review, land, live</strong>. A pull's page says which
+        one it is at and, in one sentence, why it waits there.
+      </p>
+    </div>
+    <ol class="list" id="path">
+      ${STEPS.map((s, i) => {
+        const d = STEP_DETAIL[s];
+        return row({
+          id: s,
+          data: { step: s },
+          title: `${i + 1}. ${title(s)}`,
+          meta: html`${STEP_MEANS[s]}`,
+          fold: {
+            id: `inside-${s}`,
+            open: false,
+            body: html`<div class="card-body">
+              <p class="small">It waits for ${d.waits} Only this step catches ${d.catches}</p>
+              <ul class="small">${d.inside.map((line) => html`<li>${line}</li>`)}</ul>
+            </div>`,
+          },
+        });
+      })}
+    </ol>
+    ${card(
+      html`<div class="card-body">
+        <p class="small">
+          The whole test suite does not stand in the path: a pull's check runs the tests its change reaches,
+          and the rest of the path runs lint and types. An admin sees how many changes sit at each step right now on
+          <a href="/boards">Boards</a>.
+        </p>
+        <p class="muted small">For agents: the MCP tool <span class="mono">pull</span> answers <span class="mono">step: { step, why, done }</span> with these four words.</p>
+      </div>`,
+      { head: html`<h2>Where to look next</h2>` },
+    )}`;
+  const response = page({ ctx, title: "How a change lands", body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
+}

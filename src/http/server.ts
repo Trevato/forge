@@ -21,6 +21,7 @@ import { systemPage, systemStream } from "../web/pages/system.ts";
 import { teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { contributePage } from "../web/pages/contribute.ts";
+import { pipelinePage } from "../web/pages/pipeline.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
 import { usagePage } from "../web/pages/usage.ts";
 import { spendPage } from "../web/pages/spend-tab.ts";
@@ -857,6 +858,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/system", systemPage);
   router.add("GET", "/system/stream", systemStream);
   router.add("GET", "/contribute", contributePage);
+  // The one path a change follows, in four words (#7703); literal, above /:owner.
+  router.add("GET", "/pipeline", pipelinePage);
   router.add("GET", "/settings/telemetry", telemetryPage);
   router.add("POST", "/settings/telemetry", telemetrySet);
   // Each THREATS.md protection against the last gate; literal, above /:owner.

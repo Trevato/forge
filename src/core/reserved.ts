@@ -65,6 +65,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "board",
   "boards",
   "contribute",
+  "pipeline",
   "events",
   "explore",
   "family",

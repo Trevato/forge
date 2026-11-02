@@ -399,6 +399,8 @@ work here.
 
 ## What works today
 
+Every pull says which of four steps it is at — check, review, land, live — and why it waits there: a line under its title on both tabs (linked to `/pipeline`, a public page that explains the four steps), `step: { step, why, done }` in the MCP `pull` tool, and `step: …` in the terminal pull screen's header. See [`docs/features/pipeline.md`](docs/features/pipeline.md).
+
 A public app of a public repository tells an agent that lands on it what it can
 do: its HTML pages, and the "not running" page, carry two `Link` headers —
 `rel="help"` to `/__forge/report` and `rel="alternate"` to the forge's

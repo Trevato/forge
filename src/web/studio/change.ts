@@ -52,6 +52,7 @@ import {
   btn,
   card,
   confirmAction,
+  badge,
   icon,
   originTag,
   seg,
@@ -83,7 +84,8 @@ import { previewVision } from "../../crew/vision.ts";
 import { visionPreviewCard } from "./direction.ts";
 import { holdCard } from "./hold.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
-import { nextOfPull, type Next } from "../../flow/next_actor.ts";
+import { nextOfPull } from "../../flow/next_actor.ts";
+import { STEP_MEANS, STEPS, stepOfPull, type PathStep } from "../../flow/path.ts";
 import { changeHref } from "./nouns.ts";
 import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
@@ -187,7 +189,17 @@ function reviewEntry(
 /** A change's head, the same on both of its tabs: the title, its state,
  * who opened it and in answer to whom, where it came from, and what the
  * crew spent on it. */
-export function changeHead(ctx: Ctx, repo: Repo, pull: Pull, next: Next | null = null): Html {
+export function changeHead(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+  live: { readonly headOid: string; readonly conflicts: number } | null = null,
+): Html {
+  const next = live === null ? null : nextOfPull(ctx.app.db, pull, live);
+  const step =
+    live === null && pull.mergedAt === null
+      ? null
+      : stepOfPull(ctx.app.db, repo, pull, live ?? { headOid: pull.headOid, conflicts: 0 }, next);
   const who = toldBy(ctx.app.db, pull);
   const marks = marksByName(ctx.app.db, [pull.authorName, who ?? ""]);
   return html`<div class="page-head">
@@ -225,11 +237,31 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull, next: Next | null =
           >`,
       )}
     </div>
+    ${when(step, pathLine)}
     ${when(
       next,
       (n) => html`<p class="next-actor muted small">Next: ${n.who}, ${n.why}.</p>`,
     )}
   </div>`;
+}
+
+/**
+ * Where the pull is on the one path (#7703): the four words, the current one
+ * marked, and why it waits there. The words link to /pipeline, which says
+ * what each one means and holds the finer steps.
+ */
+export function pathLine(p: PathStep): Html {
+  const at = STEPS.indexOf(p.step);
+  const words = STEPS.map((s, i) => {
+    const label = `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+    if (i === at)
+      return html`<strong aria-current="step" title="${STEP_MEANS[s]}">${label}</strong>${p.done ? html` ${badge("done", { tone: "success" })}` : null}`;
+    return html`<span title="${STEP_MEANS[s]}">${label}</span>`;
+  });
+  return html`<p class="muted small" data-path="${p.step}">
+    <a href="/pipeline">${words.map((w, i) => html`${i > 0 ? " · " : ""}${w}`)}</a>
+    — ${p.why}
+  </p>`;
 }
 
 /** The change's two steps: the change itself, and its Files one tab
@@ -597,7 +629,7 @@ async function changeConversation(
       compact: true,
       ownTitle: true,
     })}
-    ${changeHead(ctx, repo, pull, status === undefined ? null : nextOfPull(db, pull, { headOid, conflicts: status.conflicts.length }))}
+    ${changeHead(ctx, repo, pull, status === undefined ? null : { headOid, conflicts: status.conflicts.length })}
     ${changeTabs(repo, pull, "change")}
     ${when(siblings.length > 0, () =>
       html`<p class="muted small variant-link">
