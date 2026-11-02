@@ -225,6 +225,46 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(heldWords(held)).toBe("open_pull=1");
   });
 
+  test("one tick starts a run per free slot, and a held issue never takes one (#8729)", async () => {
+    const { repo: made, mason } = await crewed(app, alice, "slots");
+    for (const name of ["mason2", "mason3"]) {
+      const created = await createAgent(app, alice, { username: name });
+      if (!created.ok) throw new Error(String(created.error));
+      expect(addToCrew(app, alice, getRepoById(app.db, made.id)!, name).ok).toBe(true);
+    }
+    const set = await updateRepoSettings(app, alice, getRepoById(app.db, made.id)!, { autonomySlots: 3 });
+    if (!set.ok) throw new Error(JSON.stringify(set.error));
+    const repo = getRepoById(app.db, made.id)!;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# slots\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const held = issue(repo, "Alpha rounding of corners");
+    const rest = [
+      issue(repo, "Bravo caching of thumbnails"),
+      issue(repo, "Charlie escaping of titles"),
+      issue(repo, "Delta printing of receipts"),
+    ];
+    // The first has a pull opened a moment ago, so the dispatcher would refuse it.
+    const headBranch = `mason/${held.number}-alpha`;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: headBranch,
+      base: "main",
+      message: "Alpha",
+      files: [{ path: "alpha.ts", content: "export const n = 1;\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const pull = await openPull(app, mason, repo, { title: "Alpha", body: "Done.", baseBranch: "main", headBranch });
+    if (!pull.ok) throw new Error(String(pull.error));
+
+    expect(await driveRepo(app, getRepoById(app.db, repo.id)!)).toBe("picked");
+    // Assigning is the event that starts a run: exactly the three startable issues are assigned.
+    const taken = [held, ...rest].filter((i) => getIssueById(app.db, i.id)!.assigneeId !== null).map((i) => i.id);
+    expect(taken.sort()).toEqual(rest.map((i) => i.id).sort());
+    expect(heldWords(heldNow(app, getRepoById(app.db, repo.id)!))).toContain("open_pull=1");
+  });
+
   test("a sentinel finding is a builder's to start on the next tick, never parked on the sentinel (#3002)", async () => {
     const { repo, mason } = await crewed(app, alice, "watched");
     const fresh = () => getRepoById(app.db, repo.id)!;

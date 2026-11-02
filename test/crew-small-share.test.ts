@@ -89,13 +89,13 @@ function open(title: string): Issue {
   return made.value;
 }
 
-/** Drives once; a pick gets the run its assignment would start, so it holds a slot. */
-async function drive(issues: readonly Issue[]): Promise<Issue | undefined> {
+/** Drives once; a tick starts one issue per free slot, and each pick gets the run its assignment would start. */
+async function drive(issues: readonly Issue[]): Promise<Issue[]> {
   const before = new Set(issues.filter((i) => getIssueById(app.db, i.id)!.assigneeId !== null).map((i) => i.id));
-  if ((await driveRepo(app, fresh())) !== "picked") return undefined;
-  const picked = issues.map((i) => getIssueById(app.db, i.id)!).find((i) => i.assigneeId !== null && !before.has(i.id));
-  if (picked === undefined) return undefined;
-  createRun(app.db, { repoId: repo.id, kind: "agent", issueId: picked.id, actorId: picked.assigneeId ?? undefined, reason: "assigned" });
+  if ((await driveRepo(app, fresh())) !== "picked") return [];
+  const picked = issues.map((i) => getIssueById(app.db, i.id)!).filter((i) => i.assigneeId !== null && !before.has(i.id));
+  for (const i of picked)
+    createRun(app.db, { repoId: repo.id, kind: "agent", issueId: i.id, actorId: i.assigneeId ?? undefined, reason: "assigned" });
   return picked;
 }
 
@@ -156,8 +156,7 @@ test("with 5 slots and only small issues ready, at most 2 start; then an epic's 
   const small = ["A test pins the title", "A test pins the body", "A test pins the date", "A test pins the tags"].map(open);
   const started: Issue[] = [];
   for (let n = 0; n < 5; n++) {
-    const picked = await drive(small);
-    if (picked !== undefined) started.push(picked);
+    started.push(...(await drive(small)));
   }
   expect(started.length).toBe(2);
   expect(smallShareWords(app, fresh())).toBe("2/2");
@@ -168,18 +167,18 @@ test("with 5 slots and only small issues ready, at most 2 start; then an epic's 
   expect(linkIssue(app, alice, fresh(), epic, child).ok).toBe(true);
   app.db.query("UPDATE run SET state = 'ok' WHERE issue_id = ?1").run(started[0]!.id);
   const next = await drive([...small, child]);
-  expect(next?.id).toBe(child.id);
+  expect(next.map((i) => i.id)).toContain(child.id);
 });
 
 test("one small issue of two slots shows on /board's Today, the studio's crew panel and the terminal's Flow", async () => {
-  expect(smallShareWords(app, fresh())).toBe("1/2");
+  expect(smallShareWords(app, fresh())).toBe("2/2");
   const board = await (await get("/board")).text();
   const today = board.slice(board.indexOf('id="today"'));
-  expect(today).toContain("small issues: 1 of 2 slots");
+  expect(today).toContain("small issues: 2 of 2 slots");
   const studio = await (await get("/alice/notes/settings")).text();
-  expect(studio).toMatch(/<dt>Small issues<\/dt>\s*<dd>1\/2 slots<\/dd>/);
+  expect(studio).toMatch(/<dt>Small issues<\/dt>\s*<dd>2\/2 slots<\/dd>/);
   const flow = heldLines(readHeld(app, true), 200).join("\n");
-  expect(flow).toMatch(/^alice\/notes startable=\d+.* small 1\/2$/m);
+  expect(flow).toMatch(/^alice\/notes startable=\d+.* small 2\/2$/m);
 });
 
 test("what the owner raised again starts before an epic's issue", async () => {
@@ -188,21 +187,23 @@ test("what the owner raised again starts before an epic's issue", async () => {
   const child = open("Export notes as text");
   expect(linkIssue(app, alice, fresh(), epic, child).ok).toBe(true);
   app.db.query("INSERT INTO issue_raise (issue_id, raised_at) VALUES (?1, ?2)").run(plain.id, new Date().toISOString());
-  expect((await drive([plain, child]))?.id).toBe(plain.id);
-  expect((await drive([plain, child]))?.id).toBe(child.id);
+  // Both start in the one tick: slots are free for the owner's issue and the epic's.
+  expect((await drive([plain, child])).map((i) => i.id).sort()).toEqual([plain.id, child.id].sort());
 });
 
 test("slots.smallShare set on /settings/capacity changes the pick: 0 starts no small issue, 100 does; out of range is refused", async () => {
+  // The earlier ticks filled the slots; those runs end so this pick has room.
+  app.db.query("UPDATE run SET state = 'ok' WHERE repo_id = ?1 AND state IN ('queued','running')").run(repo.id);
   const small = open("A test pins the colour");
   expect((await setShare("0")).status).toBe(303);
   expect(smallShare(app.db)).toBe(0);
-  expect(await drive(opened)).toBeUndefined();
+  expect(await drive(opened)).toEqual([]);
   expect(getIssueById(app.db, small.id)!.assigneeId).toBeNull();
   expect((await setShare("100")).status).toBe(303);
   expect(smallShare(app.db)).toBe(100);
   const picked = await drive(opened);
-  expect(picked).toBeDefined();
-  expect(isSmall(picked!.title, [])).toBe(true);
+  expect(picked.length).toBeGreaterThan(0);
+  for (const i of picked) expect(isSmall(i.title, [])).toBe(true);
   for (const value of ["101", "-1", "half"]) {
     await setShare(value);
     expect(smallShare(app.db)).toBe(100);

@@ -400,13 +400,14 @@ function freeSlots(app: App, repo: Repo, now: Date): number {
 }
 
 /** The pickable issues in slot order: the owner's raised on top, then the roadmap, small last and none past their share (#7571). */
-function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: readonly Run[], slots: number): Ranked[] {
+function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: readonly Run[], slots: number, picked: ReadonlySet<string> = new Set()): Ranked[] {
   const issues = ready.map((r) => r.issue);
   const small = smallIssues(app.db, issues);
   const roadmap = roadmapIssues(app.db, repo, issues.map((i) => i.id));
   const first = firstAt(app.db, issues.map((i) => i.id));
   const raised = raisedAt(app.db, issues.map((i) => i.id));
-  const running = smallOfIds(app.db, slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])));
+  // Issues picked earlier in this tick hold their share before their runs show (#8729).
+  const running = smallOfIds(app.db, [...new Set([...slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])), ...picked])]);
   return slotOrder(
     ready,
     (r) => ({
@@ -444,6 +445,27 @@ export async function driveRepo(
   repo: Repo,
   now = new Date(),
 ): Promise<Drove> {
+  // One start per free builder slot (#8729). Each pass re-reads the ceiling,
+  // the paced slots and the held filters, so a start the dispatcher refused
+  // or a spend that reached the wall ends the tick's starts there.
+  // An issue picked this tick may not have its run yet: it is kept out of the
+  // next pass and counted against the slots until the run shows.
+  const taken = new Set<string>();
+  const did = await driveOnce(app, repo, now, taken);
+  if (did !== "picked") return did;
+  for (let n = 1; n < Math.max(1, repo.autonomySlots); n++) {
+    const next = await driveOnce(app, getRepoById(app.db, repo.id) ?? repo, now, taken);
+    if (next !== "picked") break;
+  }
+  return did;
+}
+
+async function driveOnce(
+  app: App,
+  repo: Repo,
+  now: Date,
+  taken: Set<string>,
+): Promise<Drove> {
   if (repo.autonomy === "off") return "off";
   const status = autonomyStatus(app, repo, now);
   if (status.paused !== null) return "paused";
@@ -452,6 +474,9 @@ export async function driveRepo(
   const crew = listCrewRoles(app.db, repo.id);
   const active = activeRuns(app, repo.id);
   const slotted = slottedRuns(active, crew);
+  // Picked earlier in this tick and not yet running: still a slot spent.
+  const running = new Set(active.map((r) => r.issueId));
+  const pending = [...taken].filter((id) => !running.has(id)).length;
   // Slots follow the subscriptions' remaining windows, never past the
   // operator's; at a wall nothing new starts until the reset.
   const paced = repoPace(app, repo, now);
@@ -478,10 +503,11 @@ export async function driveRepo(
     ),
     held.relieving,
   );
-  const ready = held.startable;
-  if (slotted.length < paced.slots && releaseForPace(app, repo, by, slotted.length, ready.length, now) !== undefined)
+  const ready = held.startable.filter((r) => !taken.has(r.issue.id));
+  const used = slotted.length + pending;
+  if (used < paced.slots && releaseForPace(app, repo, by, used, ready.length, now) !== undefined)
     return "released";
-  if (slotted.length >= paced.slots) {
+  if (used >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
     // the reserve is short — counted, never assumed: a full crew with a
     // full reserve is not a reason to plan (#1097, #3237).
@@ -508,8 +534,9 @@ export async function driveRepo(
     )
   );
   // The roadmap first, and small issues held to their share of the slots (#7571).
-  const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, slotted, paced.slots));
+  const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, slotted, paced.slots, taken));
   if (next !== undefined) {
+    taken.add(next.issue.id);
     const routed = await routeIssue(app, repo, next.issue, crewFor(next.issue), inFlight);
     if (!routed) return "paused";
     const builder = routed.builder;
