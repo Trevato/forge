@@ -74,8 +74,11 @@ afterAll(async () => {
 const REQUEST_MS = 5_000;
 const BATCH = 8;
 
-async function timed(pattern: string): Promise<{ status: number; session: boolean }> {
+type Answer = { status: number; session: boolean; ms: number };
+
+async function once(pattern: string): Promise<Answer> {
   const path = pattern.replace(/:([a-z_]+)/g, (_, k: string) => FILL[k] ?? "x").replace(/\*[a-z_]+/, "x");
+  const t0 = performance.now();
   const res = await fetch(`${servers.url}${path}`, {
     headers: { authorization: `Bearer ${bearer}` },
     redirect: "manual",
@@ -83,7 +86,20 @@ async function timed(pattern: string): Promise<{ status: number; session: boolea
   });
   await res.body?.cancel();
   const phases = (res.headers.get("server-timing") ?? "").split(",").map((p) => p.trim().split(";")[0]);
-  return { status: res.status, session: phases.includes("session") };
+  return { status: res.status, session: phases.includes("session"), ms: Math.round(performance.now() - t0) };
+}
+
+/** Status 0 is a request that outlived REQUEST_MS: the slow route is the finding. Any other error is the test's own and propagates. Nothing is asked twice: a 429 or 5xx is the finding. */
+async function timed(pattern: string): Promise<Answer> {
+  const t0 = performance.now();
+  try {
+    return await once(pattern);
+  } catch (e) {
+    if (e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")) {
+      return { status: 0, session: false, ms: Math.round(performance.now() - t0) };
+    }
+    throw e;
+  }
 }
 
 /** Routes walked: those the fixture can exercise. Requests run in batches, so the walk's ceiling is batches x REQUEST_MS. */
@@ -92,12 +108,15 @@ const WALK_MS = Math.ceil(walked().length / BATCH) * REQUEST_MS + 5_000;
 
 test("no GET route answers 200 without a session phase unless the allowlist names it", async () => {
   const patterns = walked();
-  const results: Awaited<ReturnType<typeof timed>>[] = [];
+  const results: Answer[] = [];
   for (let i = 0; i < patterns.length; i += BATCH) {
     results.push(...(await Promise.all(patterns.slice(i, i + BATCH).map((p) => timed(p)))));
   }
   // A throttled or failing route is not a route that was checked.
-  const unchecked = patterns.filter((_, i) => results[i]!.status === 429 || results[i]!.status >= 500);
+  // Each finding names its pattern, status (0 = timed out) and elapsed ms, so a red run says which route.
+  const unchecked = patterns
+    .map((p, i) => `${p} -> ${results[i]!.status} in ${results[i]!.ms}ms`)
+    .filter((_, i) => results[i]!.status === 0 || results[i]!.status === 429 || results[i]!.status >= 500);
   expect(unchecked).toEqual([]);
   expect(results.filter((r) => r.status === 200).length).toBeGreaterThan(0);
   const untimed = patterns.filter((_, i) => results[i]!.status === 200 && !results[i]!.session);
