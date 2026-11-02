@@ -18,6 +18,17 @@ A reply streams in over `GET /talk/stream?after=<turn id>` (server-sent events, 
 
 When the agent asks first (`needs_confirm`), the turn draws **Confirm** (the existing yes) and **Cancel** (a no: the confirm is spent, nothing runs, a turn says it was cancelled). A result shown once (an invite link) is drawn by Settings → Confirms instead, where Confirm leads.
 
+## Stop
+
+A turn can be ended mid-reply (`stopTalk` in `src/actions/talk.ts`, `stopTurn` in `src/crew/conversation.ts`). The agent's process group ends with everything it started; the words it had said stay, followed by a `Stopped.` line; the run is stored as `failed`. Held writes waiting on a Confirm are cancelled before the kill and again after, so nothing lands while the process goes down.
+
+- **Web:** the Stop button beside Send while an answer is running, and `Escape` in the composer. Send still posts the form without the script.
+- **API:** `POST /api/v1/conversation/stop` answers 200, or 409 when nothing runs; a read-only token is 403.
+- **MCP:** `stop` with no `repo` and no `run` stops the forge's agent; with both it stops that crew run; one without the other is an error. The agent's own token is refused.
+- **Terminal:** `ssh <forge> talk /stop` (or `--stop`) exits 0 when stopped, 1 with "no answer is running".
+
+It checks identity, same origin and token scope. Viewers of `/talk` see the `Stopped.` turn arrive over the stream.
+
 ## Chat features: have, adding, not adding (#8752)
 
 Prior art read: Vercel AI Elements (Apache-2.0 React on shadcn; anatomy and behaviour ported, no code copied), AI SDK UI, ChatGPT and Claude.ai. No React: the page stays server-drawn with a small script.

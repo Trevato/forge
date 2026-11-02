@@ -21,7 +21,8 @@ import { createUser, type User } from "../src/core/users.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { serve } from "../src/http/server.ts";
 import { TOOLS } from "../src/crew/claude.ts";
-import { MCP_SERVER, mcpConfig, RESUMED_LINE, resumeInterrupted, say, unendedLine, TURNS_LIVE_MAX, type ConversationOptions } from "../src/crew/conversation.ts";
+import { answerHeld, hold, waitingFor } from "../src/core/fence.ts";
+import { MCP_SERVER, mcpConfig, RESUMED_LINE, resumeInterrupted, say, STOPPED_LINE, stopTurn, turnRunning, unendedLine, TURNS_LIVE_MAX, type ConversationOptions } from "../src/crew/conversation.ts";
 
 let dir: string;
 let app: App;
@@ -473,4 +474,45 @@ echo '{"type":"result","subtype":"success","is_error":true,"result":"You have hi
     expect(next.ok).toBe(true);
     if (next.ok) await next.value.done;
   });
+});
+
+describe("stopping a turn (#8818)", () => {
+  test("a stopped turn leaves no process, keeps what was said, marked stopped, and cancels a pending confirm", async () => {
+    const u = { value: alice };
+    const pidFile = join(dir, "stop.pid");
+    const path = join(dir, "stop-claude");
+    writeFileSync(
+      path,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+sleep 300 &
+echo $! > "${pidFile}"
+echo '{"type":"system","subtype":"init","session_id":"sess-stop","model":"fake"}'
+echo '{"type":"assistant","session_id":"sess-stop","message":{"id":"m1","content":[{"type":"text","text":"Looking into it."}],"usage":{"input_tokens":1,"output_tokens":1}}}'
+sleep 300
+`,
+    );
+    chmodSync(path, 0o755);
+    const said = say(app, options(path), u.value.id, "do a slow thing");
+    if (!said.ok || said.value.done === undefined) throw new Error("not started");
+    for (let i = 0; i < 100 && !turns(u.value).some((t) => t === "agent:Looking into it."); i++) await Bun.sleep(50);
+    expect(turns(u.value)).toContain("agent:Looking into it.");
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const via = `conversation:${openConversation(app.db, u.value.id).id}`;
+    const held = hold(app.db, via, u.value.id, "create_issue", { title: "x" });
+    expect(held).not.toBeNull();
+    expect(stopTurn(app, u.value.id)).toBe(true);
+    await said.value.done;
+    expect(turnRunning(app, u.value.id)).toBe(false);
+    expect(turns(u.value).slice(-3)).toEqual(["person:do a slow thing", "agent:Looking into it.", `agent:${STOPPED_LINE}`]);
+    expect(waitingFor(app.db, u.value.id)).toEqual([]);
+    expect(answerHeld(app.db, held!, u.value.id).ok).toBe(false);
+    let alive = true;
+    for (let i = 0; i < 60 && alive; i++) {
+      try { process.kill(pid, 0); await Bun.sleep(50); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+    expect(stopTurn(app, u.value.id)).toBe(false);
+  }, 20_000);
 });

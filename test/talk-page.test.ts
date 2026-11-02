@@ -146,6 +146,21 @@ describe("the page", () => {
   });
 
   describe("the script, driven against a DOM", () => {
+    test("while a reply streams Send is Stop, Escape stops too, and it is Send again when the turn ends", async () => {
+      const t = await boot();
+      const button = t.doc.querySelector(".bar .btn");
+      expect(button.textContent).toBe("Send");
+      t.sources.at(-1)!.on["running"]!({ data: "{}" });
+      expect(button.textContent).toBe("Stop");
+      button.dispatchEvent(new t.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      t.doc.dispatchEvent(new t.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      expect(t.urls).toEqual(["/api/v1/conversation/stop", "/api/v1/conversation/stop"]);
+      t.sources.at(-1)!.on["done"]!({ data: "{}" });
+      expect(button.textContent).toBe("Send");
+      t.doc.dispatchEvent(new t.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      expect(t.urls).toHaveLength(2);
+    });
+
     const boot = async (user = "u1", store: Record<string, string> = {}) => {
       const sources: Array<{ on: Record<string, (e: { data: string }) => void> }> = [];
       const { Window } = await import("happy-dom");
@@ -154,10 +169,11 @@ describe("the page", () => {
       const doc = window.document as any;
       doc.body.innerHTML = `<div class="talk" data-talk data-user="${user}" data-paged="0" data-running="1"><div>
         <ol class="talk-log" role="log" data-last=""><li class="talk-turn talk-agent" id="t-1"><div class="talk-body"><pre><code>let a = 1;</code></pre></div><p class="talk-meta">Forge · now</p></li></ol><div id="end"></div></div>
-        <form class="talk-compose"><p class="talk-status" role="status"></p><textarea name="text"></textarea><span data-hint></span></form></div>`;
+        <form class="talk-compose"><p class="talk-status" role="status"></p><textarea name="text"></textarea><div class="bar"><span data-hint></span><button class="btn" type="submit">Send</button></div></form></div>`;
       const sent: string[] = [];
+      const urls: string[] = [];
       const copied: string[] = [];
-      const fetchStub = async (_u: string, init: { body: string }) => { sent.push(JSON.parse(init.body).text); return { ok: true, json: async () => ({}) }; };
+      const fetchStub = async (u: string, init: { body: string }) => { urls.push(u); sent.push(JSON.parse(init.body).text); return { ok: true, json: async () => ({}) }; };
       const local = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; } };
       const nav = { clipboard: { writeText: async (t: string) => { copied.push(t); } } };
       class ES { on: Record<string, (e: { data: string }) => void> = {}; constructor() { sources.push(this); } addEventListener(n: string, f: (e: { data: string }) => void) { this.on[n] = f; } close() {} }
@@ -166,7 +182,7 @@ describe("the page", () => {
       const box = doc.querySelector("textarea");
       const key = (init: object) => box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }));
       const emit = (id: string, html: string) => sources.at(-1)!.on["turn"]!({ data: JSON.stringify({ id, html }) });
-      return { emit, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
+      return { emit, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
     };
     const tick = () => new Promise((r) => setTimeout(r, 5));
 

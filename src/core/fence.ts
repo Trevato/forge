@@ -275,6 +275,17 @@ export function hold(
   })();
 }
 
+/**
+ * Every write a conversation still holds is answered no and its arguments
+ * cleared, so a stopped turn leaves nothing a late Confirm could apply.
+ * Returns how many were cancelled.
+ */
+export function cancelHeld(db: Database, via: string, now: number = Date.now()): number {
+  return db
+    .query("UPDATE conversation_held SET answered_at = ?2, args = '{}' WHERE via = ?1 AND answered_at IS NULL")
+    .run(via, new Date(now).toISOString()).changes;
+}
+
 /** A conversation's held writes, oldest first. */
 export function heldIn(db: Database, via: string): Held[] {
   return db

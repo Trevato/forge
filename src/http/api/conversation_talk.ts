@@ -7,7 +7,7 @@
  * request is same-origin, and sending is throttled per person (`actions/talk.ts`).
  */
 
-import { TALK_WORDS, talk } from "../../actions/talk.ts";
+import { stopTalk, TALK_WORDS, talk } from "../../actions/talk.ts";
 import { DEFAULT_PAGE, listTurns, MAX_PAGE, openConversation } from "../../core/conversations.ts";
 import { WORDS_MAX } from "../../core/fence.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
@@ -46,6 +46,16 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
       return json({ error: said.error, message: words }, status, said.error === "rate_limited" || said.error === "busy" ? { "retry-after": "60" } : {});
     }
     return json({ how: said.value.how }, 202);
+  });
+
+  router.add("POST", "/api/v1/conversation/stop", (ctx) => {
+    const user = ctx.auth.user;
+    if (user === undefined) return unauthorized();
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+    if (ctx.auth.via === "token" && !scopeAllows(ctx.auth.scope ?? "ro", "rw")) return forbidden();
+    const stopped = stopTalk(ctx.app, user);
+    if (!stopped.ok) return json({ error: stopped.error, message: stopped.error === "idle" ? "no answer is running" : "the forge's agent is not running here" }, stopped.error === "idle" ? 409 : 503);
+    return json({ stopped: true }, 202);
   });
 
   router.add("GET", "/api/v1/conversation/turns", (ctx) => {

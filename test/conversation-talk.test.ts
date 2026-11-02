@@ -20,7 +20,7 @@ import { TALK_PER_MINUTE } from "../src/actions/talk.ts";
 import { turnsLimit } from "../src/http/api/conversation_talk.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { forgeSshSession } from "../src/tui/ssh.ts";
-import { parseTalkCommand } from "../src/tui/ssh-talk.ts";
+import { isStop, parseTalkCommand } from "../src/tui/ssh-talk.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -203,6 +203,23 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","t
     expect(res.status).toBe(403);
   });
 
+  test("stop answers 409 when no answer runs, in the API and the MCP; a read-only token and the agent's own token are refused (#8818)", async () => {
+    await settle();
+    const stop = (t: string) => fetch(`${servers.url}/api/v1/conversation/stop`, { method: "POST", headers: headers(t), body: "{}" });
+    expect((await stop(token)).status).toBe(409);
+    const id = app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username = 'alice'").get()!.id;
+    expect((await stop(createToken(app.db, id, "reader2", "ro").token)).status).toBe(403);
+    expect((await stop(via)).status).toBe(403);
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: { ...headers(token), accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "stop", arguments: {} } }),
+    });
+    const body = (await res.json()) as { result: { isError?: boolean; content: { text: string }[] } };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]!.text).toContain("no answer is running");
+  });
+
   test("the MCP say with no repo speaks to the agent; the agent's own token is refused", async () => {
     const said = await mcp(token, { text: "by mcp" });
     expect(said.error).toBe(false);
@@ -225,5 +242,29 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","t
     expect(refused.code).toBe(1);
     expect((await exec("talk   ")).code).toBe(1);
     expect(await persons()).toEqual(["by api", "by mcp", "by ssh $HOME"]);
+  });
+
+  test("ssh talk /stop stops instead of speaking; with nothing running it says so (#8818)", async () => {
+    expect(isStop("/stop")).toBe(true);
+    expect(isStop(" --stop ")).toBe(true);
+    expect(isStop("please /stop")).toBe(false);
+    await settle();
+    const before = await persons();
+    const r = await exec("talk /stop");
+    expect(r.code).toBe(1);
+    expect(await persons()).toEqual(before);
+  });
+
+  test("the MCP stop with a run and no repo, or a repo and no run, is an error", async () => {
+    for (const args of [{ run: "x" }, { repo: "alice/x" }]) {
+      const res = await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: { ...headers(token), accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "stop", arguments: args } }),
+      });
+      const body = (await res.json()) as { result: { isError?: boolean; content: { text: string }[] } };
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0]!.text).toContain("give both");
+    }
   });
 });

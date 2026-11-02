@@ -21,7 +21,7 @@ import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
 import { appendTurn, listTurns, openConversation, removeTurn, setClaudeSession, type Conversation } from "../core/conversations.ts";
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
-import { WORDS_MAX } from "../core/fence.ts";
+import { cancelHeld, WORDS_MAX } from "../core/fence.ts";
 import { PLATFORM, pickSubscription, type Pick } from "../core/subscriptions.ts";
 import { getUserById } from "../core/users.ts";
 import { mintViaToken, VIA_TOKEN_MAX_MS } from "../core/via_token.ts";
@@ -95,6 +95,27 @@ export const unendedLine = (tools: readonly string[]): string => {
 
 const RESUME_PROMPT =
   "The forge restarted while you were answering and you are resuming this conversation. Before any write, read to see whether it already happened; a held write's confirmation was answered once and is not to be asked for again. Then finish your answer to the person's last message.";
+
+/** The line a stopped turn leaves after what it had said. */
+export const STOPPED_LINE = "Stopped.";
+
+/** Stops for the turns running, by conversation id. */
+const stoppers = new Map<string, { runId: string; stop: () => void }>();
+
+/**
+ * Stop the person's running turn: the agent's process group ends (and every
+ * process it started), the words so far stay, a held write waiting for a
+ * Confirm is cancelled, never applied. False when no turn runs.
+ */
+export function stopTurn(app: App, userId: string): boolean {
+  const conversation = openConversation(app.db, userId);
+  const stop = stoppers.get(conversation.id)?.stop;
+  if (stop === undefined) return false;
+  // Cancelled first: no Confirm may land while the process is going down.
+  cancelHeld(app.db, `conversation:${conversation.id}`);
+  stop();
+  return true;
+}
 
 /** Turns with a session listening, by conversation id: the run id a message is steered to. */
 const live = new Map<string, string>();
@@ -277,6 +298,9 @@ function begin(
     )
     .run(runId, conversation.id, userId, subscriptionId, prompt, resumes, resumeSession ?? "", now.toISOString());
   live.set(conversation.id, runId);
+  const stopper = new AbortController();
+  stoppers.set(conversation.id, { runId, stop: () => stopper.abort() });
+  const signal = AbortSignal.any([options.signal, stopper.signal]);
   const put = (role: "agent" | "tool", text: string): void => {
     const stored = appendTurn(app.db, userId, conversation.id, { role, text: text.slice(0, 20_000) });
     if (stored.ok && role === "agent") streamed.push({ id: stored.value.id, text });
@@ -319,7 +343,7 @@ function begin(
           label: "conversation",
           timeoutMs: options.timeoutMs,
           log: (line) => appendRunLog(app.config.dataDir, runId, line),
-          signal: options.signal,
+          signal,
           mcp: { config: mcpConfig(options.localUrl), allow: [`mcp__${MCP_SERVER}`] },
           onSteer: (send) => {
             unlisten = listenForSteer(runId, send);
@@ -340,7 +364,7 @@ function begin(
           app.db
             .query("UPDATE conversation_run SET resume_outcome = ?2, version = ?3 WHERE id = ?1")
             .run(runId, named && !lost ? "resumed" : "fallback", running().version);
-        if (session === undefined || (named && !lost) || options.signal.aborted) break;
+        if (session === undefined || (named && !lost) || signal.aborted) break;
         appendRunLog(app.config.dataDir, runId, "no session to resume; starting this message fresh");
         // What the failed attempt showed (its error may be printed as text) is taken back.
         for (const t of streamed.splice(0)) if (lostSession(t.text)) removeTurn(app.db, userId, conversation.id, t.id);
@@ -351,6 +375,7 @@ function begin(
     } finally {
       unlisten();
       if (live.get(conversation.id) === runId) live.delete(conversation.id);
+      if (stoppers.get(conversation.id)?.runId === runId) stoppers.delete(conversation.id);
     }
     const cost = outcome?.costUsd ?? 0;
     // Stopped for a restart: the row stays `running` for the next boot to
@@ -363,6 +388,16 @@ function begin(
       return;
     }
     app.db.query("DELETE FROM token WHERE id = ?1").run(minted.value.id);
+    if (stopper.signal.aborted) {
+      // A write held after the stop was asked is cancelled too.
+      cancelHeld(app.db, via);
+      put("agent", STOPPED_LINE);
+      app.db
+        .query("UPDATE conversation_run SET state = 'failed', tokens_in = ?2, tokens_out = ?3, cost_usd = ?4, finished_at = ?5 WHERE id = ?1")
+        .run(runId, outcome?.tokensIn ?? 0, outcome?.tokensOut ?? 0, cost, new Date().toISOString());
+      app.db.query("UPDATE subscription SET spent_usd = spent_usd + ?2 WHERE id = ?1").run(subscriptionId, cost);
+      return;
+    }
     const answer = outcome?.result ?? "";
     if (outcome !== undefined && isRateLimited(outcome)) {
       // The provider's words are not shown: the streamed copy of them goes.

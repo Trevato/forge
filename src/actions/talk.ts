@@ -8,8 +8,8 @@
 import type { App } from "../app.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { User } from "../core/users.ts";
-import { conversationOptions, say, type SayRefusal, type Said } from "../crew/conversation.ts";
-import { err, type Result } from "../kernel/result.ts";
+import { conversationOptions, say, stopTurn, type SayRefusal, type Said } from "../crew/conversation.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 
 /** Messages a person may send in a minute. */
 export const TALK_PER_MINUTE = 12;
@@ -44,4 +44,11 @@ export function talk(app: App, user: User | undefined, text: string): Result<Sai
   if (said.ok && said.value.done !== undefined)
     said.value.done.catch((error: unknown) => app.log.error("conversation turn crashed", { error: String(error) }));
   return said;
+}
+
+/** Stop the person's running turn; `idle` when none runs. */
+export function stopTalk(app: App, user: User | undefined): Result<true, "unauthorized" | "off" | "idle"> {
+  if (user === undefined) return err("unauthorized");
+  if (conversationOptions(app) === undefined) return err("off");
+  return stopTurn(app, user.id) ? ok(true) : err("idle");
 }

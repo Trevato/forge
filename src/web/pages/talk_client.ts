@@ -99,6 +99,26 @@ if (root) {
     });
   };
   decorate(log);
+  // While a reply streams, Send is Stop; Escape stops too.
+  const action = form.querySelector(".bar .btn");
+  const sendLabel = action.textContent;
+  let answering = false;
+  const mode = (on) => {
+    answering = on;
+    action.textContent = on ? "Stop" : sendLabel;
+    action.dataset.stop = on ? "1" : "";
+  };
+  const stop = async () => {
+    say("Stopping…");
+    try {
+      const res = await fetch("/api/v1/conversation/stop", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      if (!res.ok) { const body = await res.json().catch(() => ({})); say(body.message || "Nothing to stop."); }
+    } catch (_) {
+      say("That was not sent: no connection.");
+    }
+  };
+  action.addEventListener("click", (e) => { if (answering) { e.preventDefault(); stop(); } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && answering) { e.preventDefault(); stop(); } });
   const follow = () => {
     if (paged) return;
     if (source) source.close();
@@ -110,8 +130,8 @@ if (root) {
       retry = 0;
       toEnd();
     });
-    source.addEventListener("running", () => say("The forge is answering…"));
-    source.addEventListener("done", () => { say(""); source.close(); source = null; });
+    source.addEventListener("running", () => { mode(true); say("The forge is answering…"); });
+    source.addEventListener("done", () => { mode(false); say(""); source.close(); source = null; });
     source.addEventListener("more", () => { source.close(); follow(); });
     source.addEventListener("drain", () => { source.close(); setTimeout(follow, 1000); });
     source.onerror = () => {

@@ -4,10 +4,12 @@
  * as the account the presented key belongs to, and prints that the agent is
  * answering; the answer is read back with `forge talk` or on the feed. The
  * words are the rest of the command line as given: no shell, no expansion; a
- * control character is refused before anything runs.
+ * control character is refused before anything runs. `talk /stop` (or
+ * `--stop`) ends the running answer, as Stop does on /talk: what the agent
+ * had said stays, its processes end, a held write is cancelled.
  */
 
-import { TALK_WORDS, talk } from "../actions/talk.ts";
+import { TALK_WORDS, stopTalk, talk } from "../actions/talk.ts";
 import type { App } from "../app.ts";
 import type { User } from "../core/users.ts";
 import { CONTROL_WORDS } from "./ssh-tell.ts";
@@ -22,6 +24,11 @@ export function parseTalkCommand(command: string | undefined): string | undefine
   return m === null ? undefined : (m[1] ?? "");
 }
 
+/** The words that stop the running answer instead of being said. */
+export function isStop(words: string): boolean {
+  return words.trim() === "/stop" || words.trim() === "--stop";
+}
+
 /** Run one `talk` exec for `user` (undefined: an unknown key). */
 export function serveTalk(app: App, session: SshSession, user: User | undefined, words: string): void {
   const refuse = (text: string): void => {
@@ -29,6 +36,15 @@ export function serveTalk(app: App, session: SshSession, user: User | undefined,
     session.exit(1);
   };
   if (/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(words)) return refuse(CONTROL_WORDS);
+  if (isStop(words)) {
+    const stopped = stopTalk(app, user);
+    if (!stopped.ok)
+      return refuse(
+        stopped.error === "idle" ? "no answer is running" : stopped.error === "off" ? TALK_WORDS.off[1] : TALK_WORDS.unauthorized[1],
+      );
+    session.write(`stopped the forge's agent; what it said stays${CRLF}`);
+    return session.exit(0);
+  }
   const said = talk(app, user, words);
   if (!said.ok) return refuse(TALK_WORDS[said.error][1]);
   session.write(
