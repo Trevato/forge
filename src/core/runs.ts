@@ -1172,26 +1172,33 @@ export function agentRunTotals(
   return { runs: row?.runs ?? 0, spentUsd: row?.spent ?? 0 };
 }
 
-/** The newest agent run of each repository, in one query. */
+/**
+ * The one statement behind `latestAgentRunsForRepos`, exported so its test
+ * explains this exact text and fails when it stops seeking `run_agent_latest`.
+ * `?1` is a JSON array of repository ids.
+ */
+export const LATEST_AGENT_RUNS_SQL = `SELECT run.* FROM run WHERE run.id IN (
+  SELECT (SELECT r.id FROM run r
+           WHERE r.repo_id = ids.value AND r.kind = 'agent'
+           ORDER BY r.created_at DESC, r.id DESC LIMIT 1)
+    FROM json_each(?1) AS ids)`;
+
+/**
+ * The newest agent run of each repository, in one query: per repository one
+ * seek into `run_agent_latest`, never a window over every agent run (#8379).
+ * Ties on `created_at` break by the larger id, as they always have.
+ */
 export function latestAgentRunsForRepos(
   db: Database,
   repoIds: readonly string[],
 ): Map<string, Run> {
   const out = new Map<string, Run>();
   const unique = [...new Set(repoIds)];
-  const CHUNK = 400;
-  for (let i = 0; i < unique.length; i += CHUNK) {
-    const batch = unique.slice(i, i + CHUNK);
-    const rows = db
-      .query<RunRow, string[]>(
-        `SELECT * FROM (
-           SELECT run.*, ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY created_at DESC, id DESC) AS rn
-           FROM run WHERE kind = 'agent' AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
-         ) WHERE rn = 1`,
-      )
-      .all(...batch);
-    for (const row of rows) out.set(row.repo_id, toRun(row));
-  }
+  if (unique.length === 0) return out;
+  const rows = db
+    .query<RunRow, [string]>(LATEST_AGENT_RUNS_SQL)
+    .all(JSON.stringify(unique));
+  for (const row of rows) out.set(row.repo_id, toRun(row));
   return out;
 }
 
