@@ -78,6 +78,22 @@ describe("/boards forms", () => {
     expect(body).toContain('name="slug"');
     expect(body).toContain('<label for="f-pin-title">Panel title</label>');
   });
+
+  test("Delete this board asks first on the confirm page, which names the board", async () => {
+    const made = await makeBoard(app, admin, "Doomed");
+    if (!made.ok) throw new Error(JSON.stringify(made.error));
+    const slug = made.value;
+    const board = await (await get(`/boards/${slug}`, "admin")).text();
+    const to = encodeURIComponent(`/boards/${slug}/delete`);
+    expect(board).toContain(`href="/-/confirm?to=${to}"`);
+    expect(board).not.toContain(`action="/boards/${slug}/delete"`);
+    const res = await get(`/-/confirm?to=${to}`, "admin");
+    expect(res.status).toBe(200);
+    const confirm = await res.text();
+    expect(confirm).toContain(`Delete the board ${slug}?`);
+    expect(confirm).toContain("Its panels and pins go with it. Nothing it reads is touched.");
+    expect(confirm).toContain(`action="/boards/${slug}/delete"`);
+  });
 });
 
 describe("/boards/data", () => {

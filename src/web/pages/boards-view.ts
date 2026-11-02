@@ -18,7 +18,7 @@ import { liveRegionsJs } from "../client.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
-import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
+import { btn, card, chartBox, confirmAction, empty, field, selectField } from "../ui.ts";
 import { flowPanel } from "./flow-panel.ts";
 import { boardsHoldsCard } from "./boards-holds.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
@@ -187,7 +187,7 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
           ${btn("Save settings")}
         </form>
         <form method="post" action="/boards/${slug}/duplicate">${btn("Duplicate")}</form>
-        <form method="post" action="/boards/${slug}/delete">${btn("Delete this board", { variant: "danger" })}</form></div>`,
+        ${confirmAction({ action: `/boards/${slug}/delete`, verb: "Delete this board" })}</div>`,
       { head: html`<h2>Board</h2>` },
     )}`;
 }

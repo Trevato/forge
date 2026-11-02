@@ -596,6 +596,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/boards\/([^/]+)\/delete$/,
+    describe: (m) => ({
+      verb: "Delete board",
+      title: `Delete the board ${decodeURIComponent(m[1] ?? "")}?`,
+      detail: "Its panels and pins go with it. Nothing it reads is touched.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/hooks\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Delete webhook",
