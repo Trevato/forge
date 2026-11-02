@@ -18,6 +18,8 @@ import { monthSpent } from "../src/core/model_grant.ts";
 import { addSubscription, getSubscription, PLATFORM, setGrants, wakeSubscription } from "../src/core/subscriptions.ts";
 import { verifyToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { serve } from "../src/http/server.ts";
 import { TOOLS } from "../src/crew/claude.ts";
 import { MCP_SERVER, mcpConfig, RESUMED_LINE, resumeInterrupted, say, unendedLine, TURNS_LIVE_MAX, type ConversationOptions } from "../src/crew/conversation.ts";
 
@@ -34,7 +36,7 @@ const options = (binary: string, signal = new AbortController().signal): Convers
 });
 
 /** A stand-in `claude`: records what it was given, answers, and holds while told to. */
-function stub(name: string, sid: string, mode: "answer" | "hang" | "steer" | "fail", gone = false): string {
+function stub(name: string, sid: string, mode: "answer" | "hang" | "steer" | "fail" | "gate", gone = false): string {
   const path = join(dir, name);
   writeFileSync(
     path,
@@ -50,6 +52,7 @@ echo '{"type":"system","subtype":"init","session_id":"${sid}","model":"fake"}'
 ${mode === "fail" ? "exit 1" : ""}
 echo '{"type":"assistant","session_id":"${sid}","message":{"id":"m1","content":[{"type":"tool_use","name":"mcp__forge__now","input":{}}],"usage":{"input_tokens":10,"output_tokens":5}}}'
 ${mode === "hang" ? "sleep 30" : ""}
+${mode === "gate" ? `while [ ! -f "${dir}/${name}.gate" ]; do sleep 0.05; done` : ""}
 ${mode === "steer" ? `IFS= read -r second; printf '%s' "$second" > "${dir}/${name}.second"` : ""}
 echo '{"type":"assistant","session_id":"${sid}","message":{"id":"m2","content":[{"type":"text","text":"All quiet."}],"usage":{"input_tokens":20,"output_tokens":9}}}'
 RESULT='{"type":"result","subtype":"success","is_error":false,"result":"All quiet.","total_cost_usd":0.5,"num_turns":2,"session_id":"${sid}","terminal_reason":"completed","usage":{"input_tokens":20,"output_tokens":9}}'
@@ -174,6 +177,64 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Back.","to
     expect(b.ok && b.value.how).toBe("steered");
     if (a.ok) await a.value.done;
     expect(JSON.parse(readFileSync(join(dir, "steered.second"), "utf8")).message.content[0].text).toBe("two");
+  });
+
+  test("a reply in progress is read from the stream, dropped halfway, and resumed from the last event id (#8815)", async () => {
+    const bin = stub("gated", "sess-g", "gate");
+    const servers = await serve(app);
+    const cookie = `forge_session=${createSession(app.db, alice.id).token}`;
+    const conversation = openConversation(app.db, alice.id);
+    const base = listTurns(app.db, alice.id, conversation.id, { limit: 1 });
+    const from = base.ok && base.value.length > 0 ? base.value.at(-1)!.id : "";
+    const parse = (text: string) =>
+      text.split("\n\n").flatMap((f) => {
+        const event = /^event: (.*)$/m.exec(f)?.[1];
+        return event === undefined ? [] : [{ event, id: /^id: (.*)$/m.exec(f)?.[1] }];
+      });
+    const turnIds = (text: string) => parse(text).filter((f) => f.event === "turn").map((f) => f.id);
+    let started: Promise<void> | undefined;
+    try {
+      const a = say(app, options(bin), alice.id, "stream me");
+      if (!a.ok || a.value.how !== "started") throw new Error("not started");
+      started = a.value.done;
+      // First connection: read until the tool call has streamed (the person's message, then the call), then drop.
+      const drop = new AbortController();
+      const first = await fetch(`${servers.url}/talk/stream?after=${from}`, { headers: { cookie }, signal: drop.signal });
+      const reader = first.body!.getReader();
+      let seen = "";
+      while (turnIds(seen).length < 2) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        seen += new TextDecoder().decode(chunk.value);
+      }
+      drop.abort();
+      const before = turnIds(seen);
+      expect(before.length).toBe(2);
+      // Another device opening mid-turn sees the same so far.
+      const second = new AbortController();
+      const other = await fetch(`${servers.url}/talk/stream`, { headers: { cookie, "last-event-id": from }, signal: second.signal });
+      const otherReader = other.body!.getReader();
+      let otherSeen = "";
+      while (turnIds(otherSeen).length < 2) {
+        const chunk = await otherReader.read();
+        if (chunk.done) break;
+        otherSeen += new TextDecoder().decode(chunk.value);
+      }
+      second.abort();
+      expect(turnIds(otherSeen)).toEqual(before);
+      writeFileSync(join(dir, "gated.gate"), "");
+      await started;
+      const rest = parse(await (await fetch(`${servers.url}/talk/stream`, { headers: { cookie, "last-event-id": before[1]! } })).text());
+      const all = turnIds(await (await fetch(`${servers.url}/talk/stream?after=${from}`, { headers: { cookie } })).text());
+      expect(all.slice(0, 2)).toEqual(before);
+      expect(rest.filter((f) => f.event === "turn").map((f) => f.id)).toEqual(all.slice(2));
+      expect(all.length).toBe(3);
+      expect(rest.at(-1)!.event).toBe("done");
+    } finally {
+      writeFileSync(join(dir, "gated.gate"), "");
+      await started;
+      servers.stop();
+    }
   });
 
   test("a restart mid-turn: found at boot and resumed once from the same session", async () => {
