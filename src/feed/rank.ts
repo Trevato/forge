@@ -33,6 +33,9 @@ export interface FeedItem {
   readonly look?: FeedLook;
   /** For a post about a pull or an issue that is over: how it ended. Absent while open. */
   readonly settled?: Settled;
+  /** How many people like it, and whether this viewer does (`feed/likes.ts`); absent when nobody does. */
+  readonly likes?: number;
+  readonly liked?: boolean;
   /** For a post about a pull: which of check, review, land, live it is at, and why. */
   readonly step?: PathStep;
 }

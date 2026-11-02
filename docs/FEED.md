@@ -172,3 +172,9 @@ keeps them; signing out clears every draft. It lives in the feed's existing
 script (no new script, no dependency). Not covered: the "the forge" thought
 target posts as a plain form, so its draft is dropped on submit, and the
 lean client home has no feed script, so no draft.
+
+## Likes
+
+A like is a signal (#7751): `POST /api/v1/feed/interactions` with `kind: "liked"` (or the form at `POST /feed/like`) toggles the viewer's `feed_like` row: pressing again deletes it, so a person counts once per item. An item of `GET /api/v1/feed` carries `likes` and `liked` once anyone likes it (absent means 0 and false), and every card draws a Like button with the count. A like does not move the ranking. An item the viewer cannot read is a 404, as for every act.
+
+In the terminal, the Feed screen (`ssh` in, then Ctrl-K and "Feed") marks a liked post `♥ n` and one others like `♡ n`; `l` on the post under the cursor likes it and a second `l` takes it back. It runs the same `readInteraction` check and `toggleLike` as the page, and the write moves the forge's write clock, so web viewers see it on their next live refresh.

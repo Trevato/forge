@@ -47,9 +47,9 @@ export interface InteractionRefusal {
   readonly message: string;
 }
 
-export interface InteractionAct {
+export interface InteractionAct<K extends string = InteractionKind> {
   readonly itemId: string;
-  readonly kind: InteractionKind;
+  readonly kind: K;
   readonly target: InteractionTarget;
 }
 
@@ -63,12 +63,12 @@ const text = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
  * a feed item id, the kind is one of `kinds` (the door's own), and the
  * viewer may act on what the item is about.
  */
-export function readInteraction(
+export function readInteraction<K extends string = InteractionKind>(
   db: Database,
   viewer: User,
   input: { readonly item?: unknown; readonly kind?: unknown; readonly app?: unknown },
-  kinds: readonly InteractionKind[],
-): Result<InteractionAct, InteractionRefusal> {
+  kinds: readonly K[],
+): Result<InteractionAct<K>, InteractionRefusal> {
   const itemId = text(input.item);
   if (!ITEM_ID.test(itemId))
     return err({ code: "invalid_item", message: "item is a feed item id" });

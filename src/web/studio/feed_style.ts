@@ -5,6 +5,9 @@ export const feedCss = /* css */ `
 .feed { display: grid; gap: 0; }
 .feed > .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .feed > .card[hidden] { display: none; }
+/* The Like form sits in the card's flow; its count has a fixed width so a press moves nothing. */
+.feed .like { display: inline-block; margin: 0; }
+.feed .like [data-likes] { display: inline-block; min-width: 3ch; text-align: end; font-variant-numeric: tabular-nums; }
 .feed .card-foot > details { flex: 1 1 100%; }
 /* Your apps: a narrow column on a desk, a tab away on a phone. */
 /* An admin's tick boxes are always shown (no Select toggle); 24 px to tap. */

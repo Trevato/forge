@@ -4,7 +4,9 @@
  *
  * A reply is a comment on the issue or pull the post links to: the same
  * `addCommentThrough` the issue and pull screens call, offered on the same
- * posts to the same people as the page's Reply (`feed/reply.ts`). Twenty
+ * posts to the same people as the page's Reply (`feed/reply.ts`). `l` likes
+ * the post under the cursor and a second press takes it back: the page's
+ * Like, behind the same `readInteraction` check (`feed/likes.ts`). Twenty
  * posts at a time; `n` reads the next page from the cursor the last returned.
  */
 
@@ -12,6 +14,8 @@ import { addCommentThrough } from "../../actions/issues.ts";
 import { getIssue } from "../../core/issues.ts";
 import { parseCursor, readFeed } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
+import { readInteraction } from "../../feed/interact.ts";
+import { toggleLike } from "../../feed/likes.ts";
 import { replyTarget } from "../../feed/reply.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -26,6 +30,10 @@ import { Composer } from "./thread.ts";
 const PAGE = 20;
 
 const oneLine = (text: string): string => text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ");
+
+/** `♥ 3` for a post the person likes, `♡ 3` for one others do; nothing when nobody does. */
+const likeMark = (item: FeedItem): string =>
+  item.liked === true ? `♥ ${item.likes ?? 1}` : (item.likes ?? 0) > 0 ? `♡ ${item.likes}` : "";
 
 export function feedScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
@@ -47,6 +55,21 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
   const selected = () => {
     const item = items[state.index];
     return item === undefined ? undefined : replyTarget(f.db, f.user, item);
+  };
+
+  /** `l`: like the post under the cursor, or take the like back; the row then shows the count the forge answers. */
+  const like = (): void => {
+    const item = items[state.index];
+    if (item === undefined || f.user === undefined) return;
+    const act = readInteraction(f.db, f.user, { item: item.id, kind: "liked", app: item.app }, ["liked"]);
+    if (!act.ok) {
+      ctx.toast(act.error.message, "danger");
+      return;
+    }
+    const now = toggleLike(f.db, f.user.id, act.value.itemId, act.value.target.repoId);
+    items[state.index] = { ...item, likes: now.likes, liked: now.liked };
+    ctx.toast(now.liked ? "liked" : "like taken back", "success");
+    ctx.invalidate();
   };
 
   const submit = (): void => {
@@ -72,6 +95,7 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
       return [
         binding(["j", "k"], "move"),
         ...(selected() === undefined ? [] : [binding(["r"], "reply")]),
+        ...(items.length === 0 ? [] : [binding(["l"], "like")]),
         ...(next === null ? [] : [binding(["n"], "next page")]),
         binding(["esc", "q"], "back"),
       ];
@@ -86,7 +110,7 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
       const rows: ListRow[] = items.map((item) => ({
         title: oneLine(`${item.actor ?? item.app} ${item.what}`),
         secondary: item.app,
-        meta: ago(item.at),
+        meta: [likeMark(item), ago(item.at)].filter((m) => m !== "").join("  "),
         ...(item.step === undefined ? {} : { note: stepLine(item.step) }),
       }));
       drawList(s, list!, c, state, rows);
@@ -104,7 +128,8 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
       else if (e.key === "r") {
         const at = selected();
         if (at !== undefined) composer.start(`Reply on ${at.thread.owner}/${at.thread.name} #${at.thread.number}`);
-      } else if (e.key === "n") {
+      } else if (e.key === "l") like();
+      else if (e.key === "n") {
         if (next !== null) read(next);
       } else state.key(e, items.length);
       return true;
@@ -116,7 +141,7 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
 export const entry: PaletteEntry = {
   id: "feed",
   title: "Feed",
-  hint: "what happened, ranked; r replies on a post about an issue or pull",
+  hint: "what happened, ranked; r replies on a post about an issue or pull, l likes",
   offered: (session) => session.user !== undefined,
   run: (session, ctx) => ctx.push(feedScreen(session, ctx)),
 };

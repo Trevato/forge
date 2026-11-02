@@ -148,3 +148,28 @@ test("a person who cannot read the repository is not shown its post", async () =
   expect(listComments(forge.db, issueId).map((c) => c.body)).not.toContain("Let me in.");
   t.stop();
 });
+
+test("l likes the post under the cursor, a second l takes it back, and the page's feed sees it", async () => {
+  const alice = getUserByName(forge.db, "alice")!;
+  const t = boot("alice");
+  await t.open();
+  await t.press("l");
+  expect(t.text()).toContain("♥ 1");
+  const [top] = readFeed(forge.db, alice, { limit: 1 }).items;
+  expect(top!.likes).toBe(1);
+  expect(top!.liked).toBe(true);
+  // Another viewer's feed counts it live: the same table the page reads.
+  await t.press("l");
+  expect(t.text()).not.toContain("♥");
+  expect(readFeed(forge.db, alice, { limit: 1 }).items[0]!.likes).toBeUndefined();
+  t.stop();
+});
+
+test("l on a post the person cannot read likes nothing", async () => {
+  const t = boot("bob");
+  await t.open();
+  await t.press("l");
+  const secret = forge.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'secret'").get()!.id;
+  expect(forge.db.query("SELECT 1 FROM feed_like WHERE repo_id = ?1").get(secret)).toBeNull();
+  t.stop();
+});
