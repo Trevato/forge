@@ -70,9 +70,22 @@ export const toolbarJs = `(function () {
   }
   if (d.app) line(d.app, true);
   if (d.env === "production") line("Production");
-  else if (d.pull) line("Preview of pull #" + d.pull);
-  if (d.title) line(d.title);
   var LS = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+  var pullHref = "";
+  // The pull this preview shows, one tap away: built from the script's own origin, never from page text.
+  if (d.env !== "production" && /^\\d{1,9}$/.test(d.pull || "") && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "")) {
+    try { pullHref = new URL("/" + d.repo + "/pulls/" + d.pull, me.src).href; } catch (e) {}
+  }
+  if (d.env === "production") {}
+  else if (pullHref) {
+    var pl = document.createElement("a");
+    pl.textContent = "Preview of pull #" + d.pull;
+    pl.href = pullHref;
+    pl.rel = "noopener";
+    pl.style.cssText = LS;
+    panel.appendChild(pl);
+  } else if (d.pull) line("Preview of pull #" + d.pull);
+  if (d.title) line(d.title);
   var link = document.createElement("a");
   link.textContent = "Home";
   link.rel = "noopener";
