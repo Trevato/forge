@@ -255,6 +255,7 @@ import {
   isTerminal,
   latestRunsForIssues,
   listActiveRuns,
+  RUN_STATES,
   type Run,
 } from "../core/runs.ts";
 import { checkStale } from "../checks/stale.ts";
@@ -3573,6 +3574,10 @@ export function apiRoutes(router: Router<Handler>): void {
     const q = ctx.url.searchParams;
     const kind = q.get("kind");
     const env = q.get("env");
+    const wanted = q.get("state");
+    const state = RUN_STATES.find((s) => s === wanted);
+    if (wanted !== null && state === undefined)
+      return apiError("invalid_state", 422, `state is one of ${RUN_STATES.join(", ")}`);
     const limit = Math.min(Math.max(Number(q.get("limit")) || 50, 1), 200);
     // Already as this reader may see them (`runForReader`): a stranger's
     // runs carry no cost, turns, agent session or node. Each row also names
@@ -3582,6 +3587,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
         ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
         ...(env !== null && isEnvName(env) ? { env } : {}),
+        ...(state === undefined ? {} : { state }),
         ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
         limit,
       });

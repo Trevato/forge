@@ -338,6 +338,10 @@ export function taskPrompt(input: TaskInput): string {
 const MCP_SIZE_RULE =
   "This issue touches the MCP. Run `bun test test/mcp-size.test.ts` before pushing; it names the five costliest tools when it fails. Prefer an `action` or `kind` on an existing tool (docs/MCP.md, \"Room for a new tool\") over a new tool, and never raise the ceilings.";
 
+/** A plan on the issue is how a person sees where a run is without reading its log; only the forge serves the tool. */
+const PLAN_RULE =
+  "Keep a short plan on this issue with the `keep_plan` tool (up to 12 items, replaced whole each time): call it once you have read the code and again as items finish, so a person sees where you are without a log.";
+
 /** The forge's own repository: its briefs name paths in the forge's tree, not an app scaffold's. */
 function isForge(repo: { readonly name: string }): boolean {
   return repo.name === "forge";
@@ -418,6 +422,7 @@ function taskBody(input: TaskInput): string {
       );
     if (input.pull === undefined && isForge(input.repo) && namesMcp(issue.title, issue.body))
       out.push("", MCP_SIZE_RULE);
+    if (input.pull === undefined && isForge(input.repo)) out.push("", PLAN_RULE);
     out.push(
       "",
       `Work it on the branch \`${input.branch}\` and push when done.`,

@@ -105,6 +105,12 @@ function ran(
     summary: state === "ok" ? "answered" : "declined: no",
     costUsd: 0.5,
   });
+  // Runs on one issue are spread past the repeat stop's ten minutes (#8707), so
+  // the cap and the breaker, which these tests are about, are what they meet.
+  const before = runsOn(issue).length - 1;
+  app.db
+    .query("UPDATE run SET created_at = ?1 WHERE id = ?2")
+    .run(new Date(Date.now() - before * 11 * 60_000).toISOString(), run.id);
   if (reply !== undefined) ok(addComment(app, bot.user, repo, issue, reply));
 }
 

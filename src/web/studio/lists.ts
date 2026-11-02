@@ -92,7 +92,8 @@ const WORD_FILTERS: readonly WordFilter[] = [
 ];
 
 function listBucket(word: Word): WordFilter {
-  if (word === "waiting" || word === "planned") return "working";
+  if (word === "waiting" || word === "planned" || word === "silent" || word === "needs input")
+    return "working";
   if (word === "done") return "shipped";
   if (word === "cancelled") return "stopped";
   return word;

@@ -1389,3 +1389,20 @@ export function getRunErrorLine(db: Database, runId: string): { text: string; at
     .get(runId);
   return row === null || row === undefined || row.error_line === "" ? undefined : { text: row.error_line, at: row.error_at };
 }
+
+/**
+ * How many runs of a repository are really going: agent runs and checks in
+ * the `running` state, the pipeline's `building`, `review` and `checking`
+ * stages added (`flow/pipeline.ts`). Queued, paused and finished runs are
+ * not running, and a deploy is no work of the crew's.
+ */
+export function runningCount(db: Database, repoId: string): number {
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        `SELECT COUNT(*) AS n FROM run
+          WHERE state = 'running' AND repo_id = ?1 AND kind IN ('agent','check')`,
+      )
+      .get(repoId)?.n ?? 0
+  );
+}

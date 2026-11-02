@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { redactHeld } from "../kernel/log.ts";
+import { noteActivity } from "./activity.ts";
 
 export const runsRoot = (dataDir: string): string => join(dataDir, "runs");
 
@@ -84,6 +85,7 @@ export function appendRunLog(
   const clean = redactHeld(line.replace(/\r?\n/g, " ")).slice(0, MAX_LINE);
   mkdirSync(runsRoot(dataDir), { recursive: true });
   appendFileSync(runLogPath(dataDir, runId), `${clean}\n`);
+  noteActivity(runId);
   for (const tap of taps) {
     try {
       tap(runId, [clean]);

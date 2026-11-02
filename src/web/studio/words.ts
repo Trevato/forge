@@ -8,6 +8,7 @@
  * thing about the same commit. Nothing here knows about a page.
  */
 
+import { shownState } from "../../runs/state.ts";
 import type { Database } from "bun:sqlite";
 import { ancestries, type AncestryCache } from "./ancestry.ts";
 import {
@@ -64,7 +65,9 @@ export type Word =
   | "planned"
   | "told"
   | "done"
-  | "cancelled";
+  | "cancelled"
+  | "silent"
+  | "needs input";
 
 /**
  * Production's history as one page has asked it: the ancestry of each
@@ -413,7 +416,13 @@ export async function runWord(
     return run.notBefore === null
       ? { word: "waiting", note: "queued" }
       : { word: "waiting", note: "paused, resumes soon" };
-  if (run.state === "running") return { word: "working", note: "now" };
+  if (run.state === "running") {
+    // Worked out from what the run did, never what it says (`runs/state.ts`).
+    const shown = shownState(ctx.db, run);
+    if (shown === "silent") return { word: "silent", note: "no sign of life" };
+    if (shown === "needs input") return { word: "needs input", note: "waiting on a person" };
+    return { word: "working", note: "now" };
+  }
   if (run.state === "failed")
     return { word: "stopped", note: run.summary || run.state };
   // A cancelled run is not a broken one — superseded by a newer push, its
@@ -534,7 +543,7 @@ export function wordBadge(word: Word, id?: string): Html {
   const variant =
     word === "look" || word === "shipped" || word === "done"
       ? "success"
-      : word === "stopped"
+      : word === "stopped" || word === "silent"
         ? "danger"
         : word === "working"
           ? "accent"

@@ -33,6 +33,7 @@ import { abortAgentRun } from "../crew/running.ts";
 import { queueAgentRun, taskOf } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readRunLog, readRunLogTail, runLogPath } from "../runs/log.ts";
+import { shownStates, type ShownState } from "../runs/state.ts";
 import { firstErrorLine } from "../runs/error_line.ts";
 import { requireReader, requireWriter, type AccessError } from "./access.ts";
 
@@ -171,6 +172,8 @@ export function listRepoRuns(
 
 /** A run as the runs API lists it: the agent's name, and the pull or issue it is about. */
 export type NamedRun = Run & {
+  /** The state to show, worked out from what the run did (`runs/state.ts`). */
+  readonly shown: ShownState;
   readonly agent: string | null;
   readonly number: number | null;
   readonly title: string | null;
@@ -192,10 +195,12 @@ export function nameRuns(app: App, runs: readonly Run[]): NamedRun[] {
     app.db,
     runs.flatMap((r) => (r.issueId === null ? [] : [r.issueId])),
   );
+  const shown = shownStates(app.db, runs);
   return runs.map((r) => {
     const issue = r.issueId === null ? undefined : issues.get(r.issueId);
     return {
       ...r,
+      shown: shown.get(r.id) ?? "waiting",
       agent: r.kind === "agent" && r.actorId !== null ? (actors.get(r.actorId)?.username ?? null) : null,
       number: issue?.number ?? null,
       title: issue?.title ?? null,

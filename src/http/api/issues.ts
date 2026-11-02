@@ -17,6 +17,7 @@ import {
   plannerCloseRefusal,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
+import { PLAN_SHAPE, readPlan, setPlan } from "../../actions/run_plan.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
 import { dependenciesOf } from "../../core/dependencies.ts";
 import { teamsOfIssue } from "../../core/issue_teams.ts";
@@ -177,6 +178,25 @@ export function issueRoutes(router: Router<Handler>): void {
     return json(withLabels(ctx, created.value), 201);
   });
 
+  // The plan a crew run keeps on its issue: replaced whole at each update (#8707).
+  router.add("GET", "/api/v1/repos/:owner/:name/issues/:number/plan", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    return json({ plan: readPlan(ctx.app, found.repo, ctx.auth.user, found.issue) ?? null });
+  });
+  router.add("PUT", "/api/v1/repos/:owner/:name/issues/:number/plan", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    const input = await body(ctx.request);
+    const set = setPlan(ctx.app, ctx.auth.user, found.repo, found.issue, { items: input.items, ask: input.ask });
+    if (!set.ok)
+      return set.error === "invalid" ? apiError("invalid", 422, PLAN_SHAPE) : originAware(set.error);
+    return json({ plan: set.value });
+  });
+
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
     // Numbers are shared with pulls: a pull's number answers as the same
     // shape, marked `kind: "pull"`, with the path where its diff lives (#3299).
@@ -212,6 +232,7 @@ export function issueRoutes(router: Router<Handler>): void {
               pull: `/api/v1/repos/${repo.ownerName}/${repo.name}/pulls/${issue.number}`,
             }
           : {}),
+        plan: readPlan(ctx.app, found.repo, ctx.auth.user, issue) ?? null,
         comments: shown,
         commentsTotal: total,
         commentsNext: shown.length > 0 && shown.length < total ? shown[0]!.id : null,

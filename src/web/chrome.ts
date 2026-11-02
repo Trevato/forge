@@ -10,6 +10,7 @@
 
 import { sshCommand } from "../ssh/command.ts";
 import { mayReadRuns } from "../actions/runs.ts";
+import { runningCount } from "../core/runs.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { audienceFacts, audienceOf } from "../core/audience.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../http/edge.ts";
@@ -347,14 +348,17 @@ export function scopeHeader(
   // (`mayReadRuns`: a private app's are for those who may enter it), and
   // how to open the terminal (the TUI over SSH) for whoever has keys. A
   // repository only browsed from elsewhere has no runs here.
-  if (repo !== undefined && mayReadRuns(ctx.app, ctx.auth.user, repo))
+  if (repo !== undefined && mayReadRuns(ctx.app, ctx.auth.user, repo)) {
+    const running = runningCount(ctx.app.db, repo.id);
     items.push({
       label: "Runs",
       href: `${base}/runs`,
       icon: "activity",
+      ...(running > 0 ? { count: running } : {}),
       current: active === "runs",
       shortcut: "g r",
     });
+  }
   // What happened on the repository, as the reader may see it: the events
   // page, for any repository kept here.
   if (repo !== undefined)

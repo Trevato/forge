@@ -71,6 +71,7 @@ import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence, settleAll, settleOnPush } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
+import { REPEAT_NOTE, repeatTripped } from "./repeat.ts";
 import { unstickOwed } from "./stalls.ts";
 import {
   CAP_NOTE,
@@ -414,6 +415,11 @@ export function queueAgentRun(
   // Three failed or declined runs in an hour: parked, until a person speaks.
   if (breakerTripped(app.db, repo, issue.id)) {
     parkForBreaker(app, repo, issue, agent);
+    return undefined;
+  }
+  // The same issue run again and again within minutes: a loop, parked once.
+  if (repeatTripped(app.db, repo, issue.id)) {
+    parkForBreaker(app, repo, issue, agent, REPEAT_NOTE);
     return undefined;
   }
   // A day's share of runs on one issue without a person's word: a loop,

@@ -1221,8 +1221,8 @@ export function askDismissedBy(db: Database, viewerId: string, issue: Issue): bo
     issue.kind === "pull"
       ? pullCause(db, issue)
       : (db
-          .query<{ at: string | null }, [string, string, string]>(
-            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body IN (?2, ?3)",
+          .query<{ at: string | null }, [string, string, string, string]>(
+            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body IN (?2, ?3, ?4)",
           )
           .get(issue.id, ...WAITING_NOTES)?.at ?? issue.createdAt);
   return at > cause;

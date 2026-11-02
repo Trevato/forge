@@ -109,6 +109,7 @@ import { heldByGateAlone, releaseFromGate } from "./release_later.ts";
 import { weekFor } from "./week_read.ts";
 import { announceGovernor, governorFor } from "./governed.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
+import { REPEAT_NOTE } from "./repeat_note.ts";
 import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
@@ -1007,7 +1008,7 @@ export function parkForBreaker(
   const last = listComments(app.db, issue.id).at(-1);
   if (last?.body === note) return false;
   addComment(app, author, repo, issue, note);
-  log.info(note === BREAKER_NOTE ? "parked by the breaker" : "parked at the run cap", {
+  log.info(note === BREAKER_NOTE ? "parked by the breaker" : note === REPEAT_NOTE ? "parked by the repeat stop" : "parked at the run cap", {
     repo: `${repo.ownerName}/${repo.name}`,
     issue: issue.number,
   });

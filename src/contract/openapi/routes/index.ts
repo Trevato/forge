@@ -112,6 +112,7 @@ export { route as getApiV1ReposOwnerNameIssues } from "./getApiV1ReposOwnerNameI
 export { route as getApiV1ReposOwnerNameIssuesNumber } from "./getApiV1ReposOwnerNameIssuesNumber.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberComments } from "./getApiV1ReposOwnerNameIssuesNumberComments.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberDependencies } from "./getApiV1ReposOwnerNameIssuesNumberDependencies.ts";
+export { route as getApiV1ReposOwnerNameIssuesNumberPlan } from "./getApiV1ReposOwnerNameIssuesNumberPlan.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberTeams } from "./getApiV1ReposOwnerNameIssuesNumberTeams.ts";
 export { route as getApiV1ReposOwnerNameLabels } from "./getApiV1ReposOwnerNameLabels.ts";
 export { route as getApiV1ReposOwnerNameMap } from "./getApiV1ReposOwnerNameMap.ts";
@@ -309,6 +310,7 @@ export { route as putApiV1ReposOwnerNameAppMembers } from "./putApiV1ReposOwnerN
 export { route as putApiV1ReposOwnerNameCrewUsername } from "./putApiV1ReposOwnerNameCrewUsername.ts";
 export { route as putApiV1ReposOwnerNameIssuesNumberAssignee } from "./putApiV1ReposOwnerNameIssuesNumberAssignee.ts";
 export { route as putApiV1ReposOwnerNameIssuesNumberLabels } from "./putApiV1ReposOwnerNameIssuesNumberLabels.ts";
+export { route as putApiV1ReposOwnerNameIssuesNumberPlan } from "./putApiV1ReposOwnerNameIssuesNumberPlan.ts";
 export { route as putApiV1ReposOwnerNameIssuesNumberTeams } from "./putApiV1ReposOwnerNameIssuesNumberTeams.ts";
 export { route as putApiV1ReposOwnerNameMilestonesNumberWatch } from "./putApiV1ReposOwnerNameMilestonesNumberWatch.ts";
 export { route as putApiV1ReposOwnerNamePullsNumberAssignee } from "./putApiV1ReposOwnerNamePullsNumberAssignee.ts";

@@ -59,6 +59,7 @@ import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { planCard } from "./plan_card.ts";
 import { NOT_CHANGED } from "../edit_words.ts";
 import { flashOrJson, flashTo } from "../layout.ts";
 import {
@@ -397,7 +398,7 @@ export function conversation(
     node: html`<div class="timeline" id="conversation">
       ${opening}${when(options.editAction, (action) =>
         editForm(issue, action),
-      )}${earlier}${shown.map((e) => e.node)}
+      )}${planCard(ctx.app.db, issue)}${earlier}${shown.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
   };
