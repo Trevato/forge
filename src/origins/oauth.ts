@@ -91,6 +91,8 @@ export interface AppRegistration {
   readonly clientId: string;
   /** Empty for a public client — PKCE carries the proof instead. */
   readonly clientSecret: string;
+  /** `forge` when the origin is another forge, else absent or "". */
+  readonly software?: string;
 }
 
 // ---- the OAuth endpoints, per forge ----
@@ -106,6 +108,10 @@ export function endpoints(app: AppRegistration): {
   token: string;
 } {
   const web = app.webUrl.replace(/\/+$/, "");
+  // Another forge keeps its OAuth at `/oauth/*` (RFC 8414 paths it also
+  // publishes); it has no device grant.
+  if (app.software === "forge")
+    return { device: "", authorize: `${web}/oauth/authorize`, token: `${web}/oauth/token` };
   return {
     device: `${web}/login/device/code`,
     authorize: `${web}/login/oauth/authorize`,
@@ -348,6 +354,8 @@ export interface FlowRow {
   readonly apiUrl: string;
   readonly webUrl: string;
   readonly clientId: string;
+  /** `forge` when the origin is another forge, learned when the connect began. */
+  readonly software: string;
   readonly redirectUri: string;
   readonly userCode: string;
   readonly verificationUri: string;
@@ -370,6 +378,7 @@ interface RawFlow {
   api_url: string;
   web_url: string;
   client_id: string;
+  software: string;
   client_secret_enc: string;
   state_hash: string | null;
   verifier_enc: string;
@@ -395,6 +404,7 @@ const toFlow = (row: RawFlow): FlowRow => ({
   apiUrl: row.api_url,
   webUrl: row.web_url,
   clientId: row.client_id,
+  software: row.software,
   redirectUri: row.redirect_uri,
   userCode: row.user_code,
   verificationUri: row.verification_uri,
@@ -454,9 +464,9 @@ export function createFlow(
     `INSERT INTO oauth_flow
        (id, user_id, flow, kind, api_url, web_url, client_id, client_secret_enc,
         state_hash, verifier_enc, redirect_uri, device_code_enc, user_code,
-        verification_uri, interval_secs, expires_at, short_code, target_enc)
+        verification_uri, interval_secs, expires_at, short_code, target_enc, software)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-             ?17, ?18)`,
+             ?17, ?18, ?19)`,
   ).run(
     flowId,
     input.userId,
@@ -487,6 +497,7 @@ export function createFlow(
     input.target === undefined || input.target === ""
       ? ""
       : seal(dataDir, input.target, flowId),
+    input.app.software ?? "",
   );
   return getFlow(db, flowId)!;
 }
@@ -751,7 +762,7 @@ export function appFor(
   db: Database,
   dataDir: string,
   userId: string,
-  target: { kind: OriginKind; apiUrl: string; webUrl: string },
+  target: { kind: OriginKind; apiUrl: string; webUrl: string; software?: string },
   env: Record<string, string | undefined> = process.env,
 ): Result<AppRegistration, "no_app"> {
   const row = db
@@ -774,6 +785,7 @@ export function appFor(
       webUrl: row.web_url,
       clientId: row.client_id,
       clientSecret: opened,
+      software: target.software ?? "",
     });
   }
 
@@ -786,6 +798,7 @@ export function appFor(
       webUrl: target.webUrl,
       clientId: registered,
       clientSecret: "",
+      software: target.software ?? "",
     });
   }
 
@@ -840,13 +853,102 @@ export function operatorClientId(
 export function scopesFor(
   kind: OriginKind,
   authKind: AuthKind = "oauth",
+  software = "",
 ): string {
   void authKind;
+  // Another forge offers `ro` and `rw`; bringing code across needs only `ro`,
+  // and the approval page there shows what is asked.
+  if (software === "forge") return "ro";
   if (kind === "github") return "repo read:org";
   return "read:repository write:repository read:issue write:issue read:user";
 }
 
+// ---- dynamic client registration (RFC 7591), forge to forge ----
+
+/**
+ * Register this forge at another forge as a public client, once, so nobody
+ * copies a client id by hand. The other forge answers `POST /oauth/register`
+ * with a `client_id`; PKCE stands in for a secret.
+ */
+export async function registerClient(
+  webUrl: string,
+  input: { redirectUri: string; name: string },
+): Promise<Result<string, OAuthFailure>> {
+  let response: Response;
+  try {
+    response = await fetch(`${webUrl.replace(/\/+$/, "")}/oauth/register`, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json", "user-agent": "forge" },
+      body: JSON.stringify({
+        client_name: input.name,
+        redirect_uris: [input.redirectUri],
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+      }),
+      redirect: "manual",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (error) {
+    return err({ error: "unreachable", message: String(error) });
+  }
+  if (response.status !== 201 && response.status !== 200) {
+    await response.body?.cancel().catch(() => undefined);
+    return err({
+      error: "no_app",
+      message: `the origin refused to register this forge (${response.status})`,
+    });
+  }
+  const buffer = await readCapped(response);
+  if (buffer === undefined)
+    return err({ error: "invalid_response", message: "answer too large" });
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(buffer));
+    const clientId =
+      typeof parsed === "object" && parsed !== null
+        ? str(parsed as Record<string, unknown>, "client_id")
+        : "";
+    if (clientId === "")
+      return err({
+        error: "invalid_response",
+        message: "the origin issued no client id",
+      });
+    return ok(clientId);
+  } catch {
+    return err({ error: "invalid_response", message: "the origin's registration answer was not JSON" });
+  }
+}
+
 // ---- transport ----
+
+/**
+ * The body of an answer, read from the stream and abandoned the moment it
+ * passes MAX_BYTES: the bytes actually read are the cap, not a header the
+ * host chose. Undefined when the host sent more.
+ */
+async function readCapped(response: Response): Promise<Uint8Array | undefined> {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
+}
 
 /**
  * A form POST to a token endpoint, answered as JSON. Both forges will
@@ -882,8 +984,8 @@ async function postForm(
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (declared > MAX_BYTES)
     return err({ error: "invalid_response", message: "answer too large" });
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > MAX_BYTES)
+  const buffer = await readCapped(response);
+  if (buffer === undefined)
     return err({ error: "invalid_response", message: "answer too large" });
   const text = new TextDecoder().decode(buffer);
 

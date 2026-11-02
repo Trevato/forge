@@ -79,6 +79,7 @@ import {
   revokeGrant,
   saveApp,
   scopesFor,
+  registerClient,
   startDevice,
   touchFlow,
   type AppRow,
@@ -456,11 +457,31 @@ export async function startOAuthConnect(
       message: `cannot identify ${input.host}`,
     });
 
-  const registration = appFor(app.db, app.config.dataDir, user.value.id, {
+  const software = softwareOf(found.value.software);
+  const target = {
     kind: found.value.kind,
     apiUrl: found.value.apiUrl,
     webUrl: found.value.webUrl,
-  });
+    software,
+  };
+  let registration = appFor(app.db, app.config.dataDir, user.value.id, target);
+  if (!registration.ok && software === "forge" && (input.redirectUri ?? "") !== "") {
+    // Another forge registers us itself: no client id to copy.
+    const made = await registerClient(target.webUrl, {
+      redirectUri: input.redirectUri!,
+      name: `forge at ${new URL(input.redirectUri!).host}`,
+    });
+    if (!made.ok)
+      return err({ error: "provider_refused", message: made.error.message });
+    saveApp(app.db, app.config.dataDir, {
+      userId: user.value.id,
+      kind: target.kind,
+      apiUrl: target.apiUrl,
+      webUrl: target.webUrl,
+      clientId: made.value,
+    });
+    registration = appFor(app.db, app.config.dataDir, user.value.id, target);
+  }
   if (!registration.ok) {
     return err({
       error: "no_app",
@@ -470,7 +491,7 @@ export async function startOAuthConnect(
           : "register an OAuth application on this instance first",
     });
   }
-  const scope = scopesFor(found.value.kind);
+  const scope = scopesFor(found.value.kind, "oauth", software);
 
   if (flowFor(found.value.kind) === "device") {
     const started = await startDevice(registration.value, scope);
@@ -662,6 +683,7 @@ export async function completeOAuthCallback(
     webUrl: flow.webUrl,
     clientId: flow.clientId,
     clientSecret: secrets?.clientSecret ?? "",
+    software: flow.software,
   };
   const exchanged = await exchangeCode(registration, {
     code: input.code,
@@ -696,6 +718,7 @@ async function completeConnect(
     webUrl: string;
     clientId: string;
     clientSecret: string;
+    software?: string;
   },
   tokens: {
     accessToken: string;
@@ -709,6 +732,7 @@ async function completeConnect(
       apiUrl: registration.apiUrl,
       webUrl: registration.webUrl,
       authKind: "oauth",
+      software: registration.software ?? "",
       token: tokens.accessToken,
     }),
   ).whoami();
@@ -724,6 +748,7 @@ async function completeConnect(
     authKind: "oauth",
     refreshToken: tokens.refreshToken,
     expiresAt: tokens.expiresAt,
+    software: registration.software ?? "",
   });
   if (!stored.ok)
     return { status: "failed", detail: ORIGIN_ALREADY_CONNECTED };

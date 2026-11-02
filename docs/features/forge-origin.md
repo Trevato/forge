@@ -7,13 +7,21 @@ Connect another forge at `/settings/origins` the way you connect Forgejo: type i
 - **Mirror:** brings the code and its history, and the issues, pulls and comments, read in the forge's own JSON (`src/origins/providers/forge-work.ts`) with the real author kept. The origin's card and `GET /api/v1/user/origins` (`carries`) say what did not come: labels and how the app runs (not yet), and its data and secrets (never by default).
 - **Write-through:** a comment, an issue or a state change here goes to the other forge first, with the connecting person's token (`rw` needed), and is refused with nothing changed here when the forge is down or says no. A pull is opened there with `createPull` (the contribute path); its merge comes back with the next sync.
 
+## Sign in with one click (#8902)
+
+Type the friend's address at `/settings/origins` and press Continue. If the address is a forge, this forge registers itself there (`POST /oauth/register`, RFC 7591, a public client, kept per user and host), then sends the browser to its approval page with PKCE and the scope `ro` — the least that brings code across. The friend sees who asks and what for, picks the lifetime, and the browser returns to `/settings/origins/callback`. No client id or token is copied.
+
+- **Refresh:** pick a lifetime other than "Until I revoke it" and the friend's forge issues a rotating refresh token; this forge refreshes before expiry. A spent one (`invalid_grant`) marks the origin needs-reauth, as on every other kind. A token that never expires carries no refresh token and needs none.
+- **Registration is per callback address:** if this forge's public URL changes, forget the app and connect again.
+- Test: `test/forge-origin-oauth.test.ts` runs two forges through the whole flow.
+
 Not yet: webhooks and a catch-up for missed events, review and check state coming back live, guest rules for a crew on the receiving side, following upstream with one action.
 
-Not in the first piece, in order: sign in through OAuth, migrate an app whole with its run and build, follow upstream between forges with a pull back, and the one-page paste-a-link path. Test: `test/forge-origin.test.ts` runs two forges against each other.
+Not yet, in order: migrate an app whole with its run and build, follow upstream between forges with a pull back, and the one-page paste-a-link path. Test: `test/forge-origin.test.ts` runs two forges against each other.
 
 ## Both doors, and what was exercised
 
-The terminal reaches the same code as the web and the API: `src/tui/screens/issue.ts` and `pull.ts` comment and change state through `addCommentThrough` and `setIssueStateThrough` (`src/actions/issues.ts`), which call `providers.createComment` / `setState` when the repository is a mirror. No terminal screen or entry changed, so the write-through tests cover it; there is no separate terminal path to test.
+The terminal reaches the same code as the web and the API: `src/tui/screens/issue.ts` and `pull.ts` comment and change state through `addCommentThrough` and `setIssueStateThrough` (`src/actions/issues.ts`), which call `providers.createComment` / `setState` when the repository is a mirror. The one-click sign-in has no terminal path (a forge has no device grant): Connected origins and Origin apps say so and point to the web page, and the terminal connects a forge with a token.
 
 A forge's comments carry no edit time, so `updatedAt` is read when the forge sends one and is the creation time otherwise: an edited comment syncs once the forge reports edits. A thread is paged to its end; one of more than 100,000 comments is a failed sync, never a short one.
 

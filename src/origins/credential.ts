@@ -137,6 +137,7 @@ async function refreshOnce(app: App, originId: string): Promise<void> {
     kind: origin.kind,
     apiUrl: origin.apiUrl,
     webUrl: origin.webUrl,
+    software: origin.software,
   });
   if (!registration.ok) {
     markNeedsReauth(

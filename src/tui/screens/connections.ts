@@ -7,7 +7,7 @@
 import { connectOrigin, disconnectOrigin, listUserOrigins, syncOriginNow } from "../../actions/origins.ts";
 import { DISCONNECT_DETAIL, NO_SUCH_ORIGIN, connectWords, disconnectedWords, syncedWords } from "../../actions/origin_words.ts";
 import { mirrorsByOrigin } from "../../core/origins.ts";
-import { FORGE_NOT_CARRIED } from "../../origins/words.ts";
+import { FORGE_NOT_CARRIED, FORGE_SIGN_IN_ON_PAGE } from "../../origins/words.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -37,8 +37,8 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
         picked?.software === "forge"
           ? `Another forge. ${FORGE_NOT_CARRIED}`
           : all.length === 0
-            ? "No origin connected. Press c to connect one."
-            : "The hosts your mirrors come from.";
+            ? `No origin connected. Press c to connect one. ${FORGE_SIGN_IN_ON_PAGE}`
+            : `The hosts your mirrors come from. ${FORGE_SIGN_IN_ON_PAGE}`;
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       const n = counts();
       drawList(

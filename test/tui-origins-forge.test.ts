@@ -73,6 +73,8 @@ test("c connects another forge by address and token, and the list says what did 
     await type("Connected origins");
     await key("enter");
     expect(app.screen.toText()).toContain("Press c to connect one.");
+    // A forge has no device sign-in: the terminal says so and points at the page.
+    expect(app.screen.toText().replace(/\s+/g, " ")).toContain("Another forge signs in with one click on the web page; here, with a token.");
 
     await key("c");
     await type(friendServers.url);
