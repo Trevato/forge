@@ -131,6 +131,7 @@ import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
 import { sweepStaleReds } from "./stale_reds.ts";
+import { sweepStranded } from "./stranded.ts";
 import { parkPull, strikeNote } from "./park_pull.ts";
 import { keepVerdict } from "../flow/culprits.ts";
 import { sweepRepeats } from "./repeat_checks.ts";
@@ -1248,6 +1249,12 @@ export async function autonomyTick(
   sweep: (app: App, repo: Repo) => Promise<number> = sweepGreen,
 ): Promise<void> {
   if (crewOffInPreview()) return;
+  // A pull a person holds with changes requested goes back to its builder after a day of silence, in any repository.
+  try {
+    sweepStranded(app, now);
+  } catch (error) {
+    log.error("stranded sweep failed", { error: String(error) });
+  }
   for (const repo of listAutonomousRepos(app.db)) {
     // An archived repository is put away: the crew starts nothing in it.
     if (repo.archivedAt !== null) continue;

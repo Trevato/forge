@@ -74,6 +74,7 @@ export function decisionsFor(
         short: c.why ?? `assigned to you · updated ${thing.updatedAt.slice(0, 10)}`,
         ...(c.why === undefined ? {} : { why: c.why }),
         ...(c.builder === undefined ? {} : { giveBack: c.builder }),
+        ...(c.canLand === true ? { canLand: true } : {}),
       };
     }
     if (c.kind === "proposal" && c.proposal)
@@ -216,12 +217,28 @@ export function decisionForm(d: Decision, back?: string): Html | null {
       <input type="hidden" name="ask" value="${d.id}" />
     </form>`;
   if (d.kind === "proposal" && d.proposal) return proposalForms(d, back);
+  if (d.kind === "assigned" && d.issue !== undefined)
+    return html`${d.giveBack === undefined
+      ? null
+      : html`<form id="${askFormId(d)}-back" method="post" hidden action="/asks/give-back">
+      <input type="hidden" name="ask" value="${d.id}" />${back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`}
+    </form>`}<form ${own} action="${repoBase(d.repo)}/issues/${d.issue.number}/state">
+      <input type="hidden" name="state" value="closed" />${back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`}
+    </form>`;
   if (pull === undefined) return null;
   const base = repoBase(d.repo);
   const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
-  if (d.kind === "assigned" && d.giveBack !== undefined)
-    return html`<form id="${askFormId(d)}-back" method="post" hidden action="/asks/give-back">
+  if (d.kind === "assigned")
+    return html`${d.giveBack === undefined
+      ? null
+      : html`<form id="${askFormId(d)}-back" method="post" hidden action="/asks/give-back">
       <input type="hidden" name="ask" value="${d.id}" />${where}
+    </form>`}${d.canLand !== true
+      ? null
+      : html`<form id="${askFormId(d)}-land" method="post" hidden action="${base}/pulls/${pull.number}/ship">
+      <input type="hidden" name="pull" value="${pull.number}" />${where}
+    </form>`}<form ${own} action="${base}/pulls/${pull.number}/state">
+      <input type="hidden" name="state" value="closed" />${where}
     </form>`;
   if (d.kind === "handover" && d.giveBack !== undefined)
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
@@ -301,15 +318,18 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
         btn("Close", { size: "sm", form: `${askFormId(d)}-close` }),
       ],
     };
-  if (d.kind === "assigned" && (d.pull ?? d.issue))
-    return {
-      primary: btn("Open", {
-        href: pull ? changeHref(base, pull.number) : `${base}/issues/${d.issue!.number}`,
-        size: "sm",
-        variant: "primary",
-      }),
-      others: d.giveBack === undefined ? [] : [btn("Give back to the crew", { size: "sm", form: `${askFormId(d)}-back` })],
-    };
+  if (d.kind === "assigned" && (d.pull ?? d.issue)) {
+    const open = btn("Open", {
+      href: pull ? changeHref(base, pull.number) : `${base}/issues/${d.issue!.number}`,
+      size: "sm",
+    });
+    const close = btn("Close", { size: "sm", form: askFormId(d) });
+    const give = d.giveBack === undefined ? [] : [btn("Give to the crew", { size: "sm", form: `${askFormId(d)}-back`, variant: "primary" as const })];
+    const land = d.canLand === true ? [btn("Land", { size: "sm", form: `${askFormId(d)}-land` })] : [];
+    // One accent per card: only the first action is primary.
+    const [first, ...rest] = [...give, ...land, close];
+    return { primary: first!, others: [...rest, open] };
+  }
   if (d.kind === "proposal" && d.proposal)
     return {
       primary: btn("Approve", { size: "sm", form: askFormId(d), variant: "primary" }),

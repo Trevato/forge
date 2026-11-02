@@ -8,7 +8,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { lastBuilderOf } from "../../actions/give_back.ts";
+import { crewHandsFor } from "../../actions/give_back.ts";
 import { forgeVitals, needLine } from "../../actions/health.ts";
 import { reviewSet } from "./review_set.ts";
 import type { Degraded } from "../../kernel/vitals.ts";
@@ -31,6 +31,7 @@ import {
   listOpenPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
+import { reviewSummary } from "../../core/reviews.ts";
 import { mayView } from "../../core/sealed.ts";
 import { closesFromBody, getPull, joinMany, type Pull } from "../../core/pulls.ts";
 import {
@@ -137,6 +138,8 @@ export interface Decision {
   readonly recommendation?: Recommendation | undefined;
   /** For "handover" and a pass-assigned "assigned": the builder the pull can be given back to, if any. */
   readonly giveBack?: string | undefined;
+  /** For "assigned" pull: whether landing is allowed now (green, no outstanding change request). */
+  readonly canLand?: boolean | undefined;
 }
 
 /** What an ask asks, the answers it takes, and what happens if nobody gives one. */
@@ -185,7 +188,7 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
   },
   assigned: {
     decision: "This is assigned to you: act on it?",
-    options: ["Open it"],
+    options: ["Give to the crew", "Land", "Close"],
     ifNothing: "it stays assigned to you",
   },
   proposal: {
@@ -287,6 +290,8 @@ interface AskCandidate {
   readonly handover?: Handover;
   /** For "handover" and a pass-assigned "assigned": the crew member that opened or last worked on the pull, when it can be given back. */
   readonly builder?: string;
+  /** For an "assigned" pull: it is green with no change requested, so it can land. */
+  readonly canLand?: boolean;
   /** For "handover", "waiting" and a pass-assigned "assigned": one sentence on why a person must decide. */
   readonly why?: string;
   /** For "handover" and "waiting": what the crew advised, when it wrote one. */
@@ -549,6 +554,14 @@ function askCandidatesFor(
   const joinedMine = new Map(
     joinMany(db, mine.filter((i) => i.kind === "pull")).map((p) => [p.id, p]),
   );
+  const mineChecks = latestRunsForIssues(db, [...joinedMine.keys()]);
+  const hands = crewHandsFor(
+    db,
+    mine.flatMap((issue) => {
+      const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
+      return repo === undefined || issue.assigneeIsAgent ? [] : [{ repo, work: issue }];
+    }),
+  );
   for (const issue of mine) {
     const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
     if (!readable(repo) || repo.archivedAt !== null) continue;
@@ -557,7 +570,8 @@ function askCandidatesFor(
     if (issue.kind === "pull" && pull === undefined) continue;
     // A pull a pass gave up on and assigned to this person says why, and can go back.
     const reason = pull === undefined || issue.assigneeIsAgent ? undefined : passReasonOf(db, issue.id, issue.assigneeId!);
-    const back = reason === undefined ? undefined : lastBuilderOf(db, repo, issue)?.username;
+    // Whatever a person holds can go to the crew, not only what a pass gave up on.
+    const back = issue.assigneeIsAgent ? undefined : hands.get(issue.id);
     out.push({
       kind: "assigned",
       id: `assigned:${issue.id}`,
@@ -568,6 +582,11 @@ function askCandidatesFor(
       authorIsAgent: issue.authorIsAgent,
       ...(reason === undefined ? {} : { why: reason }),
       ...(back === undefined ? {} : { builder: back }),
+      ...(pull !== undefined &&
+      mineChecks.get(pull.id)?.state === "ok" &&
+      reviewSummary(db, pull.id, pull.headOid).changesRequested === 0
+        ? { canLand: true }
+        : {}),
     });
   }
   return out;

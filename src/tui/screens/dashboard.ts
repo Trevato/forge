@@ -779,12 +779,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     });
   };
 
-  /** Give the handed-over pull under the cursor back to its builder, through the action the web uses. */
+  /** Give the handed-over or assigned work under the cursor to the crew, through the action the web uses. */
   const giveBackHere = (): void => {
     const here = onYou[at("onyou").index];
     if (here === undefined) return;
-    if (here.over !== true && here.passed === undefined) {
-      ctx.toast("only a handed-over pull goes back to the crew", "attn");
+    if (here.hand === true) {
+      ctx.toast("only work handed to you goes back to the crew", "attn");
       return;
     }
     const done = giveBack(f.app, f.user, `${here.over === true ? "handover" : "assigned"}:${here.issue.id}`);
@@ -971,7 +971,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ...(focus === "onyou" && onYou[at("onyou").index]?.hand === true
           ? [binding(["D"], "let the decider")]
           : []),
-        ...(focus === "onyou" && (onYou[at("onyou").index]?.over === true || onYou[at("onyou").index]?.passed !== undefined)
+        ...(focus === "onyou" && onYou[at("onyou").index] !== undefined && onYou[at("onyou").index]?.hand !== true
           ? [binding(["b"], "give back to the crew")]
           : []),
         ...(focus === "onyou" && waveHere() !== undefined
