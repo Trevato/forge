@@ -17,6 +17,7 @@ import {
   deleteTeam,
   removeTeamMember,
 } from "../../actions/orgs.ts";
+import { addRefusal, addedSays, removeRefusal, removedSays } from "../../actions/team_words.ts";
 import {
   OWNERS_TEAM,
   accessAllows,
@@ -624,17 +625,10 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        added.error === "no_such_user"
-          ? `No account called ${username || "that"}.`
-          : added.error === "agent_cannot_own"
-            ? `${username} is an agent: an agent never administers an organization.`
-            : "Could not add that member.",
+      message: addRefusal(added.error, username),
     });
   return flashTo(ctx, dest, {
-    message: added.value.added
-      ? `Added ${username} to ${r.team.name}.`
-      : `${username} was already on ${r.team.name}.`,
+    message: addedSays(added.value.added, username, r.team.name),
   });
 }
 
@@ -660,17 +654,10 @@ export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
   if (!removed.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        removed.error === "no_such_user"
-          ? `No account called ${username || "that"}.`
-          : removed.error === "last_owner"
-            ? `${r.team.name} must keep at least one person who owns ${r.org.username}. Make someone else an owner first.`
-            : "Could not remove that member.",
+      message: removeRefusal(removed.error, username, r.org.username, r.team.name),
     });
   return flashTo(ctx, dest, {
-    message: removed.value.removed
-      ? `Removed ${username} from ${r.team.name}.`
-      : `${username} was not on ${r.team.name}.`,
+    message: removedSays(removed.value.removed, username, r.team.name),
   });
 }
 
