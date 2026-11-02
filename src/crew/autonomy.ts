@@ -34,7 +34,7 @@ import { roadmapIssues, shareWords, slotOrder, smallCap, smallIssues, smallOfIds
 import { raisedAt } from "../core/thought_links.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
-import { CLOSED_NOTE } from "../core/done_on_main.ts";
+import { CLOSED_NOTE, leftNote, reopenedByPerson, unticked } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { carriesUpstream } from "../actions/upstream_follow.ts";
 import {
@@ -1554,6 +1554,14 @@ export function closeSuperseded(
   for (const number of closesFromBody(pull.body)) {
     const about = getIssue(app.db, repo.id, number);
     if (!about || about.state !== "open") continue;
+    // A superseded pull landed nothing: a person's reopen stands against it,
+    // and so does work still unticked.
+    if (reopenedByPerson(app.db, repo.id, number)) continue;
+    const left = unticked(about.body);
+    if (left.length > 0) {
+      addComment(app, by, repo, issue, leftNote(number, left));
+      continue;
+    }
     if (about.assigneeId !== null) assignIssue(app, by, repo, about, null);
     addComment(app, by, repo, about, `${CLOSED_NOTE}${named} (pull #${pull.number}).`);
     setIssueState(app, by, repo, about, "closed", { reason: "done" });

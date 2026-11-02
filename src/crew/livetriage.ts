@@ -31,7 +31,7 @@
 import type { App } from "../app.ts";
 import { linkIssue } from "../actions/dependencies.ts";
 import { addComment, setIssueState } from "../actions/issues.ts";
-import { alreadyDone, CLOSED_NOTE, DONE_LIKE } from "../core/done_on_main.ts";
+import { alreadyDone, CLOSED_NOTE, DONE_LIKE, reopenedByPerson } from "../core/done_on_main.ts";
 import { getIssueById, getIssuesByIds, type Issue } from "../core/issues.ts";
 import { addDependency, removeDependency } from "../core/dependencies.ts";
 import { isStructural, pillarsOf, servedBy, type Pillar, type Pillars } from "../core/pillars.ts";
@@ -405,6 +405,7 @@ export async function liveTriage(
     if (did.closed >= MOST_CHANGES) break;
     const issue = getIssueById(app.db, id);
     if (!issue || issue.state !== "open") continue;
+    if (reopenedByPerson(app.db, repo.id, issue.number)) continue;
     const there = await onBase(dir, repo.defaultBranch, oids);
     if (there.length !== oids.length) continue;
     try {
