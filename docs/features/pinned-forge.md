@@ -42,7 +42,24 @@ Each id is recorded the moment it exists. A first deploy that fails before a dro
 
 ## Not done
 
-- No canary on a real account: #8746.
+- No canary result on a real account yet: the script is written, the run needs an owner's token (#8746, see Canary).
 - No `Deploy to…` page or link: #8744.
 - The droplet's address is not read back, so no URL is shown, no TLS or domain, no health check: #8745.
 - AWS and Azure drivers.
+
+## Canary (#8746)
+
+The driver is tested against a fake API only. `scripts/pinned-canary.ts` runs one real Deploy, Update and Rollback through the admin API, times each, and fails past 10 minutes or when a version or state is not the asked one:
+
+```
+FORGE_TOKEN=<admin token> bun scripts/pinned-canary.ts https://your.forge --account <do account, writes allowed> \
+  --app owner/name --source https://… --version <commit> --next <second commit or tag>
+```
+
+The name defaults to `canary-<date>-<time>`, so a second run the same day does not collide. Versions and source are checked before any paid call, and on failure the script prints the droplet and volume ids it recorded. It leaves a droplet and a volume (~$13 a month) the driver cannot delete; remove them in the DigitalOcean console. `test/pinned-canary.test.ts` covers the script against a fake forge.
+
+### Canary results
+
+Not run yet. It needs a DigitalOcean token an owner has put in Settings → Cloud accounts; none was available to the agent that wrote the script. Paste the table the script prints here, with the date, and close #8746.
+
+This is an operator script, not a feature: it has no screen in `src/tui/` and no MCP verb because it drives the doors that exist (the HTTP admin API, the same actions the terminal and `pinned_forge` use); a second door to a one-off paid test would be one more thing to keep honest. It is small, touches no `src/`, and was written so the owner's run is one command; it does not displace the pipeline list. The pull refers to #8746 and does not close it: the issue closes when the table above is real.
