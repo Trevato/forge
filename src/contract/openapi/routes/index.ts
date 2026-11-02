@@ -164,6 +164,7 @@ export { route as patchApiV1ForgeFollowing } from "./patchApiV1ForgeFollowing.ts
 export { route as patchApiV1ReposOwnerName } from "./patchApiV1ReposOwnerName.ts";
 export { route as patchApiV1ReposOwnerNameApp } from "./patchApiV1ReposOwnerNameApp.ts";
 export { route as patchApiV1ReposOwnerNameIssuesNumber } from "./patchApiV1ReposOwnerNameIssuesNumber.ts";
+export { route as patchApiV1ReposOwnerNameLabelsId } from "./patchApiV1ReposOwnerNameLabelsId.ts";
 export { route as patchApiV1ReposOwnerNamePullsNumber } from "./patchApiV1ReposOwnerNamePullsNumber.ts";
 export { route as patchApiV1User } from "./patchApiV1User.ts";
 export { route as postApiV1AdminAccountsUsernameCeiling } from "./postApiV1AdminAccountsUsernameCeiling.ts";

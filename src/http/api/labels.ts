@@ -1,10 +1,11 @@
 /**
  * A repository's labels over the API: `GET` and `POST`
- * `/api/v1/repos/:owner/:name/labels`, and `DELETE` `…/labels/:id`. Moved
+ * `/api/v1/repos/:owner/:name/labels`, and `PATCH` and `DELETE` `…/labels/:id`. Moved
  * out of `api.ts` (#6303); the rules live in `actions/repos.ts`.
  */
 
-import { createLabel, deleteLabel } from "../../actions/repos.ts";
+import { createLabel, deleteLabel, updateLabel } from "../../actions/repos.ts";
+import { LABEL_WORDS } from "../../actions/label_words.ts";
 import { listLabels } from "../../core/issues.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { loadRepo, pageOf, pageParams } from "../api.ts";
@@ -38,6 +39,41 @@ export function labelsRoutes(router: Router<Handler>): void {
     );
     if (!created.ok) return respondAccess(created.error, 422);
     return json(created.value, 201);
+  });
+
+  router.add("PATCH", "/api/v1/repos/:owner/:name/labels/:id", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    if (input.name === undefined && input.color === undefined)
+      return json({ error: "invalid", message: "update names a new name, a new color, or both" }, 422);
+    if (
+      (input.name !== undefined && typeof input.name !== "string") ||
+      (input.color !== undefined && typeof input.color !== "string")
+    )
+      return json({ error: "invalid", message: LABEL_WORDS.shape }, 422);
+    const id = ctx.params.id!;
+    const current = listLabels(ctx.app.db, repo.id).find((l) => l.id === id);
+    if (!current) return notFound();
+    const updated = updateLabel(
+      ctx.app,
+      ctx.auth.user,
+      repo,
+      id,
+      input.name === undefined ? current.name : (input.name as string),
+      input.color === undefined ? current.color : (input.color as string),
+    );
+    if (!updated.ok) {
+      if (updated.error === "invalid" || updated.error === "taken")
+        return json(
+          { error: updated.error, message: updated.error === "taken" ? LABEL_WORDS.taken : LABEL_WORDS.shape },
+          422,
+        );
+      return respondAccess(updated.error, 422);
+    }
+    return json(updated.value);
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name/labels/:id", (ctx) => {

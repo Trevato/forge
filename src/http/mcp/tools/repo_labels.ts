@@ -7,7 +7,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "repo_labels",
-  doc: "`{ repo, action?, name?, color?, id? }`: list (`list`, the default, paged by `limit` 1–200 and `cursor`, as `{ items, next_cursor }`; a read-only token may), create (`create`, `name`, `color` six hex digits), rename or recolour (`update`, `id`, `name` and/or `color`, as the labels page) or remove (`remove`, `id`) the repository's labels, as `GET`/`POST …/labels` and `DELETE …/labels/:id`; create, update and remove need an admin token and a repository admin",
+  doc: "`{ repo, action?, name?, color?, id? }`: list (`list`, the default, paged by `limit` 1–200 and `cursor`, as `{ items, next_cursor }`; a read-only token may), create (`create`, `name`, `color` six hex digits), rename or recolour (`update`, `id`, `name` and/or `color`, as the labels page) or remove (`remove`, `id`) the repository's labels, as `GET`/`POST …/labels` and `PATCH`/`DELETE …/labels/:id`; create, update and remove need an admin token and a repository admin",
   description:
     "Repo labels: list (default), create, update, remove (admin token).",
   inputSchema: {
