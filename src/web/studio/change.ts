@@ -412,7 +412,7 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull, spent: Spent = newSp
     >
       ${wordBadge(word)} <span class="muted small">${note}</span>
       ${when(
-        tellsAnswered(db, repo.id, [pull]).get(pull.number),
+        tick(spent, "tells", () => tellsAnswered(db, repo.id, [pull]).get(pull.number)),
         (t) => html`<span class="sep" aria-hidden="true">·</span
           >${tellLine(base, t)}`,
       )}
@@ -427,7 +427,9 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull, spent: Spent = newSp
     </p>`,
   );
 
-  const preview = when(record, () => previewCard(ctx, repo, pull));
+  const preview = tick(spent, "preview", () =>
+    when(record, () => previewCard(ctx, repo, pull)),
+  );
   return {
     record,
     db,
@@ -498,9 +500,13 @@ async function changeConversation(
       : await lap(spent, "diff", () =>
           wallOf(wordCtx.dir, status.baseOid, status.headOid),
         );
-  const crewDecision = decisionsFor(ctx, [repo], { evenDismissed: true }).find(
-    (d) => d.pull?.id === pull.id,
-  );
+  // Everything the Decide card, the vision preview and Take it back read is
+  // read here, under `decide`; only this pull's own asks (`pull`).
+  const decideAt = performance.now();
+  const crewDecision = decisionsFor(ctx, [repo], {
+    evenDismissed: true,
+    pull: pull.id,
+  }).find((d) => d.pull?.id === pull.id);
   // A person's own change carries no crew decision (`decisionsFor` reads
   // agent pulls only — #208's territory), but the change's own page still
   // owes its writer the same route and the same words, whoever opened it.
@@ -591,6 +597,7 @@ async function changeConversation(
     ctx.auth.user !== undefined && canAdmin(db, repo, ctx.auth.user)
       ? await previewVision(ctx.app, repo, pull)
       : null;
+  const decisionForms = decision ? decisionForm(decision) : null;
   const decisionSection = when(decisionBody, (body) =>
     card(body, {
       head: html`${icon("alert")}
@@ -626,15 +633,36 @@ async function changeConversation(
   );
 
   const siblings = variantSiblings(db, [pull])[0] ?? [];
+  spent.decide += performance.now() - decideAt;
   const glyph = originGlyph(repo);
   const headOid = status?.headOid ?? pull.headOid;
+  const pageHead = tick(spent, "head", () => ({
+    top: html`${repoHeader(ctx, repo, "pulls", {
+      compact: true,
+      ownTitle: true,
+    })}
+    ${changeHead(ctx, repo, pull, status === undefined ? null : { headOid, conflicts: status.conflicts.length })}
+    ${changeTabs(repo, pull, "change")}`,
+    crumbs: crumbsFor(repo),
+    palette: repoPalette(ctx, repo),
+  }));
+  const gate = tick(
+    spent,
+    "gate",
+    () => html`${holdCard(ctx, repo, pull, { act: true })}
+    ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
+    ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
+    ${when(wall, (w) => wallCard(w, writer ? thread : undefined))}`,
+  );
+  const look = tick(spent, "looks", () =>
+    when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid)),
+  );
   const reviewsAt = performance.now();
   const reviews = listReviews(db, pull.id);
   const reviewerMarks = marksByName(
     db,
     reviews.map((r) => r.authorName),
   );
-  spent.reviews += performance.now() - reviewsAt;
   const talk = conversation(ctx, repo, pull, {
     openVerb: "opened this",
     extra: reviews.map((review) =>
@@ -645,13 +673,23 @@ async function changeConversation(
         ? `${thread}/edit`
         : undefined,
   });
+  const reply = composer(ctx, {
+    action: `${thread}/comments`,
+    // Closing is its author's or a writer's (`setIssueState`): nobody
+    // else is shown a button the server would only refuse.
+    ...(ctx.auth.user !== undefined &&
+    (ctx.auth.user.id === pull.authorId || writer)
+      ? { stateAction: `${thread}/state` }
+      : {}),
+    state: pull.state,
+    locked: pull.mergedAt !== null,
+    closeLabel: "Close pull request",
+    crewNote: threadNote(ctx.app.db, repo, pull),
+  });
+  spent.reviews += performance.now() - reviewsAt;
 
-  const body = html`${repoHeader(ctx, repo, "pulls", {
-      compact: true,
-      ownTitle: true,
-    })}
-    ${changeHead(ctx, repo, pull, status === undefined ? null : { headOid, conflicts: status.conflicts.length })}
-    ${changeTabs(repo, pull, "change")}
+  // From here on nothing is read: `render` only builds the page.
+  const body = html`${pageHead.top}
     ${when(siblings.length > 0, () =>
       html`<p class="muted small variant-link">
         <a href="${base}/variants/${pull.variantGroup ?? ""}"
@@ -660,33 +698,18 @@ async function changeConversation(
       </p>`,
     )}
     <div id="pull-check">${checkLine}</div>
-    ${when(runLine, (l) => l)} ${holdCard(ctx, repo, pull, { act: true })}
-    ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
-    ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
-    ${when(wall, (w) => wallCard(w, ctx.auth.user !== undefined && canWrite(db, repo, ctx.auth.user) ? thread : undefined))} ${decisionSection}
+    ${when(runLine, (l) => l)} ${gate} ${decisionSection}
     ${when(visionPreview, (v) => visionPreviewCard(v))}
     ${takeBackSection}
-    ${when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid))}
+    ${look}
     <div class="split">
       <div>
         ${talk.node}
-        ${composer(ctx, {
-          action: `${thread}/comments`,
-          // Closing is its author's or a writer's (`setIssueState`): nobody
-          // else is shown a button the server would only refuse.
-          ...(ctx.auth.user !== undefined &&
-          (ctx.auth.user.id === pull.authorId || writer)
-            ? { stateAction: `${thread}/state` }
-            : {}),
-          state: pull.state,
-          locked: pull.mergedAt !== null,
-          closeLabel: "Close pull request",
-          crewNote: threadNote(ctx.app.db, repo, pull),
-        })}
+        ${reply}
       </div>
       <aside><div id="pull-preview">${preview}</div></aside>
     </div>
-    ${decision ? decisionForm(decision) : null}
+    ${decisionForms}
     ${liveMount({
       repo: base,
       thread: "pull",
@@ -705,22 +728,19 @@ async function changeConversation(
       title: pull.title,
       body: pull.body,
     }),
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
+    crumbs: pageHead.crumbs,
+    palette: pageHead.palette,
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
   // Each phase is named once, from what the laps added up to; render is what
   // is left of the page's own time, so the phases never exceed `app`.
-  const { diff, checks, reviews: reviewMs } = spent;
-  notePhase(request, "diff", diff);
-  notePhase(request, "checks", checks);
-  notePhase(request, "reviews", reviewMs);
-  notePhase(
-    request,
-    "render",
-    Math.max(0, performance.now() - began - diff - checks - reviewMs),
-  );
+  let read = 0;
+  for (const [name, ms] of Object.entries(spent)) {
+    notePhase(request, name, ms);
+    read += ms;
+  }
+  notePhase(request, "render", Math.max(0, performance.now() - began - read));
   return response;
 }
 
@@ -728,15 +748,42 @@ async function changeConversation(
 interface Spent {
   diff: number;
   checks: number;
+  tells: number;
+  preview: number;
+  head: number;
+  gate: number;
+  decide: number;
+  looks: number;
   reviews: number;
 }
-const newSpent = (): Spent => ({ diff: 0, checks: 0, reviews: 0 });
+/** In the order Server-Timing names them. */
+const newSpent = (): Spent => ({
+  diff: 0,
+  checks: 0,
+  tells: 0,
+  preview: 0,
+  head: 0,
+  gate: 0,
+  decide: 0,
+  looks: 0,
+  reviews: 0,
+});
 
 /** Run `work` and add the time it took to `spent[key]`. */
-async function lap<T>(spent: Spent, key: "diff" | "checks", work: () => Promise<T>): Promise<T> {
+async function lap<T>(spent: Spent, key: keyof Spent, work: () => Promise<T>): Promise<T> {
   const started = performance.now();
   try {
     return await work();
+  } finally {
+    spent[key] += performance.now() - started;
+  }
+}
+
+/** The same for a synchronous read: no await, no microtask. */
+function tick<T>(spent: Spent, key: keyof Spent, work: () => T): T {
+  const started = performance.now();
+  try {
+    return work();
   } finally {
     spent[key] += performance.now() - started;
   }

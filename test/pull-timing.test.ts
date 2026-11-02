@@ -13,6 +13,7 @@ import type { User } from "../src/core/users.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { PULL_PAGE_PHASES } from "./helpers/pull-phases.ts";
 
 quietLogs();
 
@@ -100,14 +101,14 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("a pull names session, diff, checks, reviews and render after app, summing to no more than app", async () => {
+test("a pull names its read phases and render after app, summing to no more than app", async () => {
   const res = await fetch(`${servers.url}/alice/r/pulls/${number}`, { headers: { cookie } });
   expect(res.status).toBe(200);
   await res.arrayBuffer();
   const parts = (res.headers.get("server-timing") ?? "").split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
   const after = names.slice(names.indexOf("app") + 1);
-  expect(after).toEqual(["session", "diff", "checks", "reviews", "render"]);
+  expect(after).toEqual([...PULL_PAGE_PHASES]);
   const ms = (n: string) => Number(parts[names.indexOf(n)]!.match(/dur=([\d.]+)/)![1]);
   const sum = after.reduce((t, n) => t + ms(n), 0);
   // Each is rounded to 0.1 ms, so allow one step per phase.

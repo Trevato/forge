@@ -28,16 +28,17 @@ const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
 /**
  * The decisions waiting on the viewer, worded and pictured. A change's own
  * page passes `evenDismissed`: setting an ask aside quiets the lists, never
- * the decision on the thing itself.
+ * the decision on the thing itself, and names its `pull`: only that pull's
+ * own decisions are read, never the repository's whole list.
  */
 export function decisionsFor(
   ctx: Ctx,
   allRepos: readonly Repo[],
-  options: { evenDismissed?: boolean } = {},
+  options: { evenDismissed?: boolean; pull?: string } = {},
 ): Decision[] {
   const db = ctx.app.db;
   const candidates = options.evenDismissed
-    ? scoredFor(db, ctx.auth.user, allRepos)
+    ? scoredFor(db, ctx.auth.user, allRepos, Date.now(), options.pull)
     : waitingOn(db, ctx.auth.user, allRepos);
   // The pictures, in one read: a green pull's row leads with its preview.
   const repoIds = [...new Set(candidates.map((c) => c.repo.id))];
