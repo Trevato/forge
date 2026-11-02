@@ -18,6 +18,10 @@ green changes, and nothing waits on a person. [`docs/STUDIO.md`](docs/STUDIO.md)
 git underneath is one click away — the switch in the top bar, or `?mode=dev` on
 any URL — and it is the rest of this page.
 
+Slow app? Its response's `Server-Timing` keeps the app's entries and adds the
+forge's `forge-route`, `forge-wake`, `forge-upstream` and `forge-rewrite`
+(milliseconds only; see `docs/APPS.md`).
+
 A forge this one spawned (hosted) runs the apps it was given too: its `bakery`
 answers at `bakery--<child>--<this forge's host>`, in this forge's lanes, on the
 child's own data, and `/forges` says how many are running and why any is not. Each row also ends with the first step its person has not taken (`not claimed yet`, `no everyday account yet`, `no tell yet`, or `going: last tell <time>`; `has not reported yet` before the child's first beat), read from the child's heartbeat; the terminal's forges screen and the MCP `forges` tool (`nextStep`) say the same.

@@ -47,7 +47,7 @@ import { clientBucket } from "../http/peer.ts";
 import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
 import { checkWord } from "./check_word.ts";
 import { openPulls } from "./door_pulls.ts";
-import { takePhases, timePhase } from "../core/route_timing.ts";
+import { notePhase, startedAt, takePhases, timePhase } from "../core/route_timing.ts";
 import { readServing } from "./serving.ts";
 import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
@@ -390,15 +390,25 @@ function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined 
   return pull?.sealed === true ? pull : undefined;
 }
 
-/** The response with the phases the request named, as `Server-Timing`. */
+/**
+ * The response with the phases the request named, as `Server-Timing`: the
+ * one writer for the proxy, on the forge's own `/__forge/*` pages and on a
+ * relayed app answer alike. It appends, so an app's own entries stay first;
+ * on an app answer the forge's phases are `forge-` named (`relayPhase`) so
+ * none can collide with the app's or with the server's `route`.
+ */
 function withPhases(request: Request, res: Response): Response {
   const phases = takePhases(request);
-  if (phases.length > 0)
-    res.headers.set(
-      "server-timing",
-      phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`).join(", "),
-    );
+  if (phases.length === 0) return res;
+  const mine = phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`).join(", ");
+  const theirs = res.headers.get("server-timing");
+  res.headers.set("server-timing", theirs === null || theirs === "" ? mine : `${theirs}, ${mine}`);
   return res;
+}
+
+/** Name one of the forge's phases of relaying an app answer. Durations only. */
+function relayPhase(request: Request, name: "route" | "wake" | "upstream" | "rewrite", ms: number): void {
+  notePhase(request, `forge-${name}`, ms);
 }
 
 /**
@@ -1023,15 +1033,24 @@ export async function proxyApp(
   }
   // An environment asleep wakes for the request that wants it, and the
   // request waits the second that takes rather than seeing a closed door.
-  if (runtime.envStatus(target.app, target.env)?.state === "asleep")
+  let wakeMs = 0;
+  if (runtime.envStatus(target.app, target.env)?.state === "asleep") {
+    const woke = performance.now();
     await runtime.wake(target.app, target.env);
+    wakeMs = performance.now() - woke;
+  }
   const admitted = admit(runtime, request, target);
+  // A refused answer names no phases: wake runs before `admit`, so its time
+  // would tell a caller who may not read the app whether it was asleep.
   if (!admitted.ok)
     return url.pathname.startsWith("/__forge/")
       ? securityFloor(admitted.error)
       : admitted.error;
   const { status, port, grant: vouched } = admitted.value;
   runtime.touch(target.app, target.env);
+  const began = performance.now();
+  relayPhase(request, "route", Math.max(0, began - (startedAt(request) ?? began) - wakeMs));
+  relayPhase(request, "wake", wakeMs);
 
   const upstream = new URL(url);
   upstream.protocol = "http:";
@@ -1082,6 +1101,7 @@ export async function proxyApp(
     portAnswered();
   };
   let response: Response;
+  const sent = performance.now();
   try {
     response = await fetch(upstream, {
       method: request.method,
@@ -1097,8 +1117,10 @@ export async function proxyApp(
     } as RequestInit);
   } catch {
     answered();
-    return unavailable(runtime, target, status, "the app stopped answering");
+    relayPhase(request, "upstream", performance.now() - sent);
+    return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
   }
+  relayPhase(request, "upstream", performance.now() - sent);
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
   // Which app answered: a probe from outside (`spawn/reach.ts`) tells this
@@ -1130,6 +1152,7 @@ export async function proxyApp(
     (rewritable(out, response.status) ||
       (!out.has("content-length") && htmlAnswer(out, response.status)))
   ) {
+    const rewriting = performance.now();
     let bytes: Uint8Array<ArrayBuffer>;
     try {
       if (out.has("content-length")) bytes = new Uint8Array(await response.arrayBuffer());
@@ -1138,15 +1161,18 @@ export async function proxyApp(
         // past that it goes on as it came, what was read first.
         const read = await readPage(response.body);
         if (!read.whole)
-          return new Response(read.rest, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: out,
-          });
+          return withPhases(
+            request,
+            new Response(read.rest, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: out,
+            }),
+          );
         bytes = read.bytes;
       }
     } catch {
-      return unavailable(runtime, target, status, "the app stopped answering");
+      return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
     }
     // A signed-in person's page load gets the panel's one-use proof, and so
     // is theirs alone: never stored or shared. A page the app's own script
@@ -1178,19 +1204,23 @@ export async function proxyApp(
     out.set("content-length", String(sent.length));
     out.delete("etag");
     out.delete("content-md5");
-    return new Response(sent, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: out,
-    });
+    relayPhase(request, "rewrite", performance.now() - rewriting);
+    return withPhases(
+      request,
+      new Response(sent, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: out,
+      }),
+    );
   }
-  return new Response(
-    body,
-    {
+  return withPhases(
+    request,
+    new Response(body, {
       status: response.status,
       statusText: response.statusText,
       headers: out,
-    },
+    }),
   );
 }
 

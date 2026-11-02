@@ -254,6 +254,20 @@ read the repository sees only the time, never a sha. The read is the `serving`
 Server-Timing phase. The prefix was already the forge's, so an app's own
 `/__forge/` path is not reachable.
 
+**Reading a slow app's Server-Timing.** A response the proxy relays keeps the
+app's own entries (`db`, `app`, …) and gains the forge's, each `forge-` named
+and in milliseconds only: `forge-route` (finding the target and its grant),
+`forge-wake` (waiting for a sleeping or starting environment; 0 when none),
+`forge-upstream` (until the app's headers) and `forge-rewrite` (pill injection,
+when it ran). Big `forge-wake` is a cold start, big `forge-upstream` is the
+app; if all are small, the time went before the request reached the forge. The
+"app stopped answering" page carries `route`, `wake` and `upstream` too; the
+forge's own `/__forge/*` pages and the WebSocket upgrade name no forge- phases.
+A refused answer (sign in, not found, not running) names none either: the wake
+runs before the door is asked, so its time would tell a caller who may not read
+the app whether it was asleep. The proxy has one writer for these
+(`withPhases` over `notePhase`), which appends to the app's header.
+
 **Tell the crew from the pill.** Signed in as someone who may direct the crew,
 the panel also offers *Tell the crew* (`/__forge/crew` adds a `tell` link, only
 for them; signed out there is no action). It opens the forge's own
