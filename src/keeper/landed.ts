@@ -7,6 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { blocking, listHolds, standingHolds, type Hold } from "./hold.ts";
 import { listKeeperReleases, type KeeperRelease } from "./record.ts";
 
 /** When `sha` landed, epoch ms: its pull's merge, else the first time a landing checked it out. */
@@ -52,4 +53,13 @@ export type LandedRelease = KeeperRelease & { readonly commit: string; readonly 
 
 export function withLandedToLive(db: Database, releases: readonly KeeperRelease[]): LandedRelease[] {
   return releases.map((r) => ({ ...r, commit: r.sha.slice(0, 7), landedToLiveSeconds: landedToLive(db, r) ?? null }));
+}
+
+/** What the keeper did and what stops the next cut: one answer for MCP `release_keeper` and `GET /api/v1/keeper`. */
+export function keeperAnswer(db: Database): { blocked: string | null; releases: LandedRelease[]; holds: Hold[] } {
+  return {
+    blocked: blocking(standingHolds(db)) ?? null,
+    releases: withLandedToLive(db, listKeeperReleases(db)),
+    holds: listHolds(db),
+  };
 }

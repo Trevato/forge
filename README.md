@@ -564,7 +564,7 @@ The release keeper (`src/keeper/`, #7557) cuts, promotes and verifies releases o
 - **Verify:** it records the known-good version and image before the tag, sets the Deployment's image, and has the new version spend ten minutes under page load probing `/healthz` each second.
 - **Roll back and hold:** three bad probes in a row hold further cuts with the numbers and set the recorded known-good image back by name, never "undo". A pull saying `release hold <N>` lets the fix through, and that release verifying lifts the hold.
 - **Owner's hold:** set and lifted from the card, the terminal (`h`) or MCP `release_hold`, by a person who may roll back, never an agent.
-- **Where to see it:** the **Release keeper** card on `/releases`, `Release keeper` in the terminal's palette, the **Maintenance** board under `/boards`, and MCP `release_keeper`, each gated as `/releases` is: a guest sees none of it.
+- **Where to see it:** the **Release keeper** card on `/releases`, `Release keeper` in the terminal's palette, the **Maintenance** board under `/boards`, MCP `release_keeper` and `GET /api/v1/keeper` (JSON; 403 for a caller who may not read releases), each gated as `/releases` is: a guest sees none of it.
 
 How it works and how to turn it on: [`docs/features/release-keeper.md`](docs/features/release-keeper.md).
 

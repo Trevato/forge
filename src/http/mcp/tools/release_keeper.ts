@@ -1,7 +1,5 @@
 import { mayRead } from "../../../release/gate.ts";
-import { blocking, listHolds, standingHolds } from "../../../keeper/hold.ts";
-import { withLandedToLive } from "../../../keeper/landed.ts";
-import { listKeeperReleases } from "../../../keeper/record.ts";
+import { keeperAnswer } from "../../../keeper/landed.ts";
 import { bad, good, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
@@ -13,11 +11,6 @@ export const tool: Tool = {
   run(ctx, user) {
     if (!mayRead(ctx.app, user))
       return bad("forbidden", "the release history is for the forge's administrators and its repository's readers");
-    const db = ctx.app.db;
-    return good({
-      blocked: blocking(standingHolds(db)) ?? null,
-      releases: withLandedToLive(db, listKeeperReleases(db)),
-      holds: listHolds(db),
-    });
+    return good(keeperAnswer(ctx.app.db));
   },
 };

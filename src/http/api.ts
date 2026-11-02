@@ -313,6 +313,7 @@ import { egressGrantRoutes } from "./api/egress_grants.ts";
 import { forgeRoutes } from "./api/forges.ts";
 import { releasesRoutes } from "./api/releases.ts";
 import { hookRoutes } from "./api/hooks.ts";
+import { keeperRoutes } from "./api/keeper.ts";
 import { agentRoutes } from "./api/agents.ts";
 import { subscriptionRoutes } from "./api/subscriptions.ts";
 import { boardRoutes } from "./api/boards.ts";
@@ -2931,6 +2932,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   hookRoutes(router);
+  keeperRoutes(router);
 
   // Sync one mirror, or let a fork take its parent's updates. A mirror only
   // pulls, so any writer may ask. A fork fast-forwards, or writes a merge
