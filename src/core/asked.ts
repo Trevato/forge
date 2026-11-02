@@ -172,7 +172,9 @@ export function pullsByAsk(
               issue.created_at, issue.parked, pull.merged_at,
               user.username AS author
        FROM issue JOIN pull ON pull.issue_id = issue.id JOIN user ON user.id = issue.author_id
-       WHERE issue.repo_id IN (${placeholders(repoIds.length)})
+       WHERE issue.repo_id IN (${placeholders(repoIds.length)}) AND issue.kind = 'pull'
+         AND issue.body LIKE '%#%'
+         AND (issue.body LIKE '%close%' OR issue.body LIKE '%fix%' OR issue.body LIKE '%resolve%')
        ORDER BY issue.number`,
     )
     .all(...repoIds);

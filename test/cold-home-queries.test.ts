@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { breakerParked, WAITING_NOTES } from "../src/crew/breaker.ts";
+import { pullsByAsk } from "../src/core/asked.ts";
 import { readPipeline } from "../src/flow/pipeline.ts";
 import { readVitals } from "../src/flow/vitals.ts";
 import { id } from "../src/kernel/id.ts";
@@ -94,4 +95,38 @@ test("ready asks: the tally is the old join's, counted by hand", () => {
   expect(ready()).toBe(old);
   db.query("UPDATE repo SET autonomy = 'off'").run();
   expect(ready()).toBe(0);
+});
+
+test("pullsByAsk: only pulls that close something are read, and the same ones as reading every body", () => {
+  const db = f.app.db;
+  const mk = (n: number, body: string) => {
+    const i = issue("pull", "open", n);
+    db.query("UPDATE issue SET body = ?1 WHERE id = ?2").run(body, i);
+    db.query("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id) VALUES (?1, 'main', 'b', '', '', ?2)").run(i, repoId);
+  };
+  mk(9201, "CLOSES #7 and fixes #8");
+  mk(9202, "mentions #7 only");
+  mk(9203, "Resolved #9");
+  const got = pullsByAsk(db, [repoId]);
+  const keys = [...got.keys()].filter((k) => /#(7|8|9)$/.test(k)).sort();
+  expect(keys).toEqual([`${repoId}#7`, `${repoId}#8`, `${repoId}#9`]);
+  expect(got.get(`${repoId}#7`)!.map((p) => p.number)).toEqual([9201]);
+});
+
+test("the cold pull reads walk an index, not the table", () => {
+  const db = f.app.db;
+  const plan = (sql: string, ...args: (string | number)[]) =>
+    db.query<{ detail: string }, (string | number)[]>(`EXPLAIN QUERY PLAN ${sql}`).all(...args).map((r) => r.detail).join("\n");
+  const open = plan(
+    `SELECT COUNT(*) FROM issue i JOIN pull p ON p.issue_id = i.id JOIN repo r ON r.id = i.repo_id
+      WHERE i.kind = 'pull' AND i.state = 'open' AND p.merged_at IS NULL`,
+  );
+  expect(open).not.toMatch(/SCAN (p|pull)\b/);
+  const win = plan(
+    `SELECT COUNT(*) FROM issue i JOIN pull p ON p.issue_id = i.id
+      WHERE i.kind = 'pull' AND i.created_at >= ?1 AND i.created_at <= ?2`,
+    "a",
+    "b",
+  );
+  expect(win).toMatch(/issue_created/);
 });
