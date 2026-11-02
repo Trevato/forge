@@ -12,6 +12,7 @@ import { connectOrigin, deleteOriginApp, disconnectOrigin, listOriginApps, listP
 import { addSshKey, changePassword, deleteSshKey, updateProfile } from "../../actions/users.ts";
 import { VERIFY_WORDS } from "../../actions/verify_words.ts";
 import { resendVerification } from "../../actions/verify.ts";
+import { NOTIFY_ERRORS, notifyHost, notifyUrlOf, setNotifyUrl } from "../../crew/notify.ts";
 import { listAssignedTo } from "../../core/issues.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { listKeys, publicKey } from "../../core/keys.ts";
@@ -201,6 +202,31 @@ export function userRoutes(router: Router<Handler>): void {
     const removed = deleteSshKey(ctx.app, ctx.auth.user, ctx.params.id!);
     if (!removed.ok) return respondAccess(removed.error, 422);
     return new Response(null, { status: 204 });
+  });
+
+  // The phone notify URL: a person's, and only its host is ever answered.
+  const notifyState = (ctx: Ctx, userId: string) => {
+    const host = notifyHost(notifyUrlOf(ctx.app.db, userId));
+    return json({ set: host !== undefined, host: host ?? null });
+  };
+  router.add("GET", "/api/v1/user/notify", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const user = ctx.auth.user;
+    if (!user) return unauthorized();
+    if (user.kind === "agent") return apiError("forbidden", 403, "a notify URL is a person's, not an agent's");
+    return notifyState(ctx, user.id);
+  });
+  router.add("PUT", "/api/v1/user/notify", async (ctx) => {
+    const user = ctx.auth.user;
+    if (user?.kind === "agent") return apiError("forbidden", 403, "a notify URL is a person's, not an agent's");
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    if (typeof input.url !== "string") return apiError("invalid", 422, "send url as text, or empty to turn it off");
+    const saved = setNotifyUrl(ctx.app.db, user!.id, input.url);
+    if (!saved.ok) return apiError("invalid_url", 422, NOTIFY_ERRORS[saved.error]);
+    ctx.app.bus.append({ kind: "account.notify_set", actorId: user!.id });
+    return notifyState(ctx, user!.id);
   });
 
   // ── origins ──────────────────────────────────────────────────────────

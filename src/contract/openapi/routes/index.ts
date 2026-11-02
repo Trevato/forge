@@ -137,6 +137,7 @@ export { route as getApiV1User } from "./getApiV1User.ts";
 export { route as getApiV1UserAssigned } from "./getApiV1UserAssigned.ts";
 export { route as getApiV1UserKeys } from "./getApiV1UserKeys.ts";
 export { route as getApiV1UserNextSteps } from "./getApiV1UserNextSteps.ts";
+export { route as getApiV1UserNotify } from "./getApiV1UserNotify.ts";
 export { route as getApiV1UserOrgs } from "./getApiV1UserOrgs.ts";
 export { route as getApiV1UserOriginApps } from "./getApiV1UserOriginApps.ts";
 export { route as getApiV1UserOrigins } from "./getApiV1UserOrigins.ts";
@@ -295,4 +296,5 @@ export { route as putApiV1ReposOwnerNamePullsNumberHold } from "./putApiV1ReposO
 export { route as putApiV1ReposOwnerNamePullsNumberLabels } from "./putApiV1ReposOwnerNamePullsNumberLabels.ts";
 export { route as putApiV1ReposOwnerNameUpstream } from "./putApiV1ReposOwnerNameUpstream.ts";
 export { route as putApiV1SecretsScopeName } from "./putApiV1SecretsScopeName.ts";
+export { route as putApiV1UserNotify } from "./putApiV1UserNotify.ts";
 export { route as putApiV1UserPinsOwnerName } from "./putApiV1UserPinsOwnerName.ts";

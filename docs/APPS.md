@@ -1493,9 +1493,12 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
   link-local, `.local`, `.internal` and bare hosts. The name is resolved and
   judged again at send time and redirects are not followed. It is kept in the
   user's settings, never logged, and the account page shows only its host.
-- *Doors.* Settings, MCP `notify` and the terminal's "Phone notifications"
+- *Doors.* Settings, MCP `notify`, `GET`/`PUT /api/v1/user/notify` and the
+  terminal's "Phone notifications"
   screen (`src/tui/screens/notify.ts`: `s` sets, `x` turns off after a confirm)
-  all go through `setNotifyUrl`. The terminal draws the typed URL as dots and
+  all go through `setNotifyUrl`. The API door is a person's only (an agent
+  gets 403) and `PUT` needs an admin-scope token; both answer only the host.
+  The terminal draws the typed URL as dots and
   shows only the host; an agent is not offered the screen.
 - Not here yet: a health problem for an admin has no event to ride.
 
