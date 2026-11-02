@@ -1456,8 +1456,7 @@ async function withGitAccess(
     else if (created.error === "storage_limit") {
       const ownerId = resolveOwner(ctx.app, ctx.auth.user, ctx.params.owner!) ?? ctx.auth.user.id;
       return gitRefused(ctx, storageRefusedText(storageSentence(ctx.app, ownerId) ?? "at the limit"));
-    }
-    else if (created.error === "not_member")
+    } else if (created.error === "not_member")
       return gitRefused(ctx, `Not made: ${NOT_A_MEMBER}`);
     else if (created.error === "repository_limit")
       return gitRefused(

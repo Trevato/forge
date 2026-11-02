@@ -219,8 +219,7 @@ export async function runJob(spec: JobSpec, opts: JobOptions = {}): Promise<JobR
       else if (now() >= deadline) {
         const pod = await findPod().catch(() => undefined);
         return { exitCode: null, lines: await logLines(pod?.metadata?.name), timedOut: true, ...nodeOf(pod) };
-      }
-      else await sleep(pollMs);
+      } else await sleep(pollMs);
     }
     const pod = await findPod();
     // A failed Job with no pod, or a pod the kubelet evicted, never ran its

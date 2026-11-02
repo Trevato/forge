@@ -953,8 +953,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     if (focus === "repos") {
       if (exploring()) openExplored(exploredRows()[at("repos").index]);
       else openRepo(shown()[at("repos").index]);
-    }
-    else if (focus === "onyou") openAssigned(onYou[at("onyou").index]);
+    } else if (focus === "onyou") openAssigned(onYou[at("onyou").index]);
     else openPin(pins[at("machine").index]);
   };
 
