@@ -12,4 +12,4 @@ remove one or absorb it into another, or turn it into code.
 - **Git is truth; the database is a derived index.** Enforced by: `src/core/reconcile.ts` rebuilds it on boot.
 - **Speed is counted in work, never in a clock.** Enforced by: `test/flake.test.ts`.
 - **Work that serves no pillar waits behind the Later gate.** Enforced by: `src/actions/plan.ts` refuses a plan item with neither.
-- **Less is better: one person can hold the whole forge in their head, so no new dependency, no new rule without a reason.** Enforced by: nothing yet.
+- **Less is better: one person can hold the whole forge in their head, so no new dependency, no new rule without a reason.** Enforced by: `test/dependencies-named.test.ts` (each package has its line in the README); nothing yet for rules.

@@ -167,12 +167,22 @@ a failed or killed install only logs and lets the run start.
 
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
-stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`
-(a devDependency, with its own few transitive packages) lets
-`test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code
-builds from the crew's settings; it never ships and the app never imports it. Everything worth having is written here: the Result type, the
+stays that way. The dev-only exceptions are listed under Dependencies below;
+none ships and the app never imports them. Everything worth having is written here: the Result type, the
 router, the SSR templates, the design system, the markdown renderer. The only
 thing forge asks of the host is a `git` binary.
+
+## Dependencies
+
+Every package in `package.json`, with why it is there. A package with no line
+here fails `test/dependencies-named.test.ts`; so does a line for one that left.
+
+- `@anthropic-ai/sandbox-runtime` — lets `test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code builds from the crew's settings.
+- `@types/bun` — the type check's types for Bun's own APIs.
+- `axe-core` — the release check's accessibility rules (`src/release/axe.ts`); they need a rendered page, and there is no zero-dependency equivalent.
+- `happy-dom` — a DOM for tests that run a page's script (`test/changelog.test.ts`) without a browser.
+- `typescript` — the native 7.x checker behind `bun x tsc --noEmit`.
+- `typescript-api` — TypeScript 5.x, kept only for the compiler API `scripts/hollow.ts` walks; 7.x has none yet.
 
 Forgejo is the reference for what a forge should _feel_ like. This is that
 feeling on a foundation sized for one person.
