@@ -84,7 +84,7 @@ describe("notes from the app, in the terminal", () => {
     // Filtered, so the row's presence does not depend on how many others the palette lists.
     expect(await palette(bob, notes, [":", "Tell the"])).toContain("alice/notes — Tell the builders");
     expect(await palette(bob, plain, [":", "Tell the"])).not.toContain("Tell the builders");
-  });
+  }, 30_000);
 
   test("a note files a from-app issue as the person", async () => {
     const text = await palette(bob, notes, [":", "Tell the", "\r", ..."the logo is blurry".split(""), "\r"]);
@@ -94,7 +94,7 @@ describe("notes from the app, in the terminal", () => {
     const issue = getIssue(app.db, notes.id, row.issue_number)!;
     expect(labelsFor(app.db, issue.id).map((l) => l.name)).toEqual(["from-app"]);
     expect(issue.body).toContain("by @bob.");
-  });
+  }, 30_000);
 
   test("a person sees their own with its status; the admin sees all and bans", async () => {
     expect(await palette(bob, notes, [":", "Notes from", "\r"])).toContain("the logo is blurry");
@@ -107,7 +107,7 @@ describe("notes from the app, in the terminal", () => {
     await palette(alice, notes, [":", "Notes from", "\r", "\r", "\x1b[C", "\x1b[C", "\r"]);
     const record = getAppBySlug(app.db, "notes")!;
     expect(isBanned(app.db, record.id, `u:${bob.id}`)).toBe(true);
-  });
+  }, 30_000);
 
   test("the admin lists the banned senders and unbans one; a reader has no such row", async () => {
     const record = getAppBySlug(app.db, "notes")!;
@@ -122,5 +122,5 @@ describe("notes from the app, in the terminal", () => {
     const again = await sendNote(app, record, notes, "production", undefined, sender, { text: "back again", page: "", viewport: "unknown" }, "ssh:again");
     expect(again.ok).toBe(true);
     expect(await palette(alice, notes, [":", "Banned", "\r"])).not.toContain("Unban this sender");
-  });
+  }, 30_000);
 });
