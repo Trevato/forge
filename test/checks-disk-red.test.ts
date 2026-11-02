@@ -166,10 +166,10 @@ describe("a full check machine gives back unused checkouts", () => {
       const orphan = join(dataDir, "checks", "orphan");
       mkdirSync(orphan, { recursive: true });
       diskReading.read = () => ({ freeBytes: 500, totalBytes: 1000 });
-      expect(reclaimIfFull(app)).toBe(false);
+      expect(await reclaimIfFull(app)).toBe(false);
       expect(existsSync(orphan)).toBe(true);
       diskReading.read = () => ({ freeBytes: 50, totalBytes: 1000 });
-      expect(reclaimIfFull(app)).toBe(true);
+      expect(await reclaimIfFull(app)).toBe(true);
       expect(existsSync(orphan)).toBe(false);
     } finally {
       diskReading.read = statDisk;

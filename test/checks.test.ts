@@ -22,6 +22,7 @@ import {
   pickNext,
   requeueAbandonedChecks,
   startChecks,
+  sweepSoon,
   STARVATION_MS,
   type ChecksHandle,
 } from "../src/checks/service.ts";
@@ -1316,6 +1317,7 @@ describe("startChecks: a booting forge removes only checkouts nobody is running 
       for (const id of [live.id, lapsed.id, "no-such-run"])
         mkdirSync(where(id), { recursive: true });
       const handle = startChecks(db, { forgeUrl: "http://localhost" });
+      await sweepSoon(db);
       await handle.stop();
       expect(existsSync(where(live.id))).toBe(true);
       expect(existsSync(where(lapsed.id))).toBe(false);
