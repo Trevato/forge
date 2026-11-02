@@ -405,8 +405,8 @@ describe("a client's first screen", () => {
   });
 
   test("a client sees no forge-wide figures, lean or whole", async () => {
-    expect(await page(owner)).not.toContain('class="stats mb"');
-    expect(await page(owner, "/?all=1")).not.toContain('class="stats mb"');
+    expect(await page(owner)).not.toContain('class="stats kpi-row mb"');
+    expect(await page(owner, "/?all=1")).not.toContain('class="stats kpi-row mb"');
   });
 
   test("queued agents and no running ones read as about to start", async () => {

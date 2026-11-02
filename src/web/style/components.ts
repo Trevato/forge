@@ -156,6 +156,7 @@ fieldset.field > .check + .check { margin-top: 8px; }
   overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--card); color: var(--fg); text-decoration: none;
 }
+@media (max-width: 480px) { .kpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 a.stat:hover { border-color: var(--border-strong); }
 .stat[data-tone="attn"] { border-color: color-mix(in srgb, var(--attn) 40%, var(--border)); }
 .stat-label { display: block; height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-min); line-height: 18px; color: var(--muted-fg); }

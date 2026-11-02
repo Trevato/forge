@@ -95,7 +95,7 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
   const overdue = backupOverdue(k.backupAt, now);
   const spendWords = spendCeilingWords(k.spend);
   const rate = k.landed / k.landedHours.length;
-  return html`<section class="stats mb" aria-label="The last 24 hours, as of this page load">
+  return html`<section class="stats kpi-row mb" aria-label="The last 24 hours, as of this page load">
     ${tile(
       "Shipped per hour",
       "/board",
