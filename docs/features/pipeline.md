@@ -45,8 +45,27 @@ The step is looked up per row (a few queries each); batching it is left for when
 the lists measure slow.
 `changeHead` computes "who acts next" once and hands it to `stepOfPull`.
 
+## The full suite as a report
+
+A verification after landing (`src/checks/verify.ts`) runs every shard against
+the default branch's tip. When it is red, `src/checks/report.ts` files one
+issue per failing test file through `fileIssueOnce` (`src/checks/flake.ts`),
+titled `Full suite red: <file>` and labelled `full-suite`; a later red adds a
+comment to the open issue instead of filing again. Nothing that decides a
+pull, a batch or a release reads a verification, so the report holds none.
+
+How it is scheduled: the checks service looks every minute (`VERIFY_SWEEP_MS`)
+for a repository whose default branch has moved since its last verification
+and verifies it, at most once per `VERIFY_EVERY_MS` (30 minutes, set in
+`src/main.ts`) and never two at once. So the report runs after a landing, not
+on a daily clock: a quiet main is not re-run, a busy one at most every half hour.
+
+`/pipeline` links the label (in the forge's own repository, `ownRepoPath()`)
+in the card under "Where to look next". The terminal's Flow dialog ends with
+a line counting the open report issues; the issue list there filters by
+label with `l`.
+
 ## Not here yet
 
-The rest of #7703 is filed as its own issues: remove the proof (#7779), run
-the full suite as a scheduled report (#7780), re-run a shard that crashed
+The rest of #7703 is filed as its own issues: remove the proof (#7779), re-run a shard that crashed
 outside any test (#7781), reuse a verdict for the same tree (#7782), and measure each step (#7784).

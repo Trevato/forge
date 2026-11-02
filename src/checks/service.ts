@@ -64,6 +64,7 @@ import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { afterVerify } from "./culprit.ts";
+import { redDetail, reportRed } from "./report.ts";
 import {
   bisectOrigin,
   failedFiles,
@@ -859,6 +860,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           log.error("revert proposal failed", { error: String(error) }),
         );
       // A red verification after landing names its culprit (#7786).
+      if (done && run.env === VERIFY_ENV)
+        reportRed(app, repo, done).forEach(write);
       if (done && inVerifyLane(run.env))
         await afterVerify(app, repo, done, (r, env, oid, reason) => request(r, env, oid, reason))
           .then((lines) => lines.forEach(write))
@@ -1407,7 +1410,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         return {
           ok: false,
           error: killed ? ran.error : summary,
-          detail: files.length > 0 ? { ...(detail ?? { passed: 0, failed: files.length, names: [] }), files } : detail,
+          detail: redDetail(detail, files, checkLines),
           stage: checkStage(ran.error),
           ...(killed ? { killed } : {}),
         };

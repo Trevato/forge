@@ -13,12 +13,15 @@
  * changes requested waiting on a builder and on a reviewer (`flow/requested.ts`, #2172); then each
  * autonomous repository's ready list, startable beside the count per
  * filter that holds the rest (`flow/held.ts`, #2244), as the flow panel draws it;
- * last, how long each main has gone unverified after landing (`flow/verified.ts`, #7786).
+ * then how long each main has gone unverified after landing (`flow/verified.ts`, #7786);
+ * then one line for the full-suite report's open issues (`checks/report.ts`, #7780);
+ * last, the duplicate lines (`duplicateLines`).
  * Read-only; Enter, Esc or q closes it.
  */
 
 import type { Database } from "bun:sqlite";
 import { recentGates, type KeptResult } from "../../checks/gate_result.ts";
+import { reportLine } from "../../checks/report.ts";
 import { HOLDS } from "../../crew/held.ts";
 import { pullCounts } from "../../crew/hot_files.ts";
 import { warmingLine } from "../../crew/hot_history.ts";
@@ -138,6 +141,8 @@ export function flowLines(
     ...(verified === undefined || verified.length === 0
       ? []
       : ["", ...verified.flatMap((r) => wrap(`${r.repo}: ${verifiedSays(r, now.getTime())}`, inner))]),
+    "",
+    ...wrap(reportLine(db), inner),
     "",
     ...duplicateLines(dups, inner),
   ];

@@ -410,7 +410,7 @@ work here.
 
 ## What works today
 
-Every pull says which of four steps it is at — check, review, land, live — and why it waits there: a line under its title on both tabs (linked to `/pipeline`, a public page that explains the four steps), `step: { step, why, done }` in the MCP `pull` tool, and `step: …` in the terminal pull screen's header; the same word and sentence sit on the pull's post in the feed, its row on the pulls list and on `/review` (each linked to `/pipeline`), and in the terminal's feed, pulls list and on-you list (`Review — No review yet.` under the row). See [`docs/features/pipeline.md`](docs/features/pipeline.md).
+Every pull says which of four steps it is at — check, review, land, live — and why it waits there: a line under its title on both tabs (linked to `/pipeline`, a public page that explains the four steps), `step: { step, why, done }` in the MCP `pull` tool, and `step: …` in the terminal pull screen's header; the same word and sentence sit on the pull's post in the feed, its row on the pulls list and on `/review` (each linked to `/pipeline`), and in the terminal's feed, pulls list and on-you list (`Review — No review yet.` under the row). The whole suite is a report, not a gate: after a landing it runs against the default branch and each failing test file gets one issue labelled `full-suite` (listed from `/pipeline`; the terminal's Flow dialog counts the open ones and the issue list filters by label with `l`). See [`docs/features/pipeline.md`](docs/features/pipeline.md).
 
 A public app of a public repository tells an agent that lands on it what it can
 do: its HTML pages, and the "not running" page, carry two `Link` headers —

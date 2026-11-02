@@ -47,6 +47,8 @@ export interface CheckDetail {
   readonly names: readonly string[];
   /** The test files the failures printed under, when a verification after landing failed (#7786). */
   readonly files?: readonly string[];
+  /** The failing tests under those files, at most forty, for the report that files them (#7780). */
+  readonly failures?: readonly { readonly file: string; readonly name: string }[];
   /** The check machine's free disk share (0..1) when a red finished (#5453). */
   readonly diskFree?: number;
 }

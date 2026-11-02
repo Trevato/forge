@@ -12,6 +12,7 @@ import { cachedStepStats, statParts, STEP_WINDOW_DAYS, type StepStat } from "../
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
+import { reportPath } from "../../checks/report.ts";
 import { card, row, stat } from "../ui.ts";
 
 /** What a pull waits on at each step, what only that step catches, and the parts inside it. */
@@ -109,6 +110,11 @@ export function pipelinePage(ctx: Ctx): Response {
           The whole test suite does not stand in the path: a pull's check runs the tests its change reaches,
           and the rest of the path runs lint and types. An admin sees how many changes sit at each step right now on
           <a href="/boards">Boards</a>.
+        </p>
+        <p class="small" id="full-suite">
+          The whole suite still runs, as a report: after a landing, on a schedule, against the default branch's tip.
+          Each test file it finds failing gets one issue labelled <span class="mono">full-suite</span>, listed
+          <a href="${reportPath()}">here</a>. The report holds no pull, batch or release.
         </p>
         <p class="muted small">For agents: the MCP tool <span class="mono">pull</span> answers <span class="mono">step: { step, why, done }</span> with these four words.</p>
       </div>`,

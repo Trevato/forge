@@ -206,3 +206,15 @@ test("a merged pull into an app is landed until production has served a deploy s
   expect(stepOfPull(app.db, repo, pull, live)).toEqual({ step: "live", why: "Landed and live in production.", done: true });
   expect(await read(`/alice/shipped/pulls/${opened.value.number}`)).toContain('data-path="live"');
 });
+
+test("/pipeline links the full-suite report's issues, and that link answers", async () => {
+  process.env["FORGE_SENTINEL_REPO"] = "alice/open";
+  try {
+    const body = await (await fetch(`${servers.url}/pipeline`)).text();
+    expect(body).toContain('id="full-suite"');
+    expect(body).toContain('href="/alice/open/issues?label=full-suite"');
+    expect((await fetch(`${servers.url}/alice/open/issues?label=full-suite`)).status).toBe(200);
+  } finally {
+    delete process.env["FORGE_SENTINEL_REPO"];
+  }
+});
