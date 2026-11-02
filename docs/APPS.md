@@ -242,7 +242,11 @@ forge, never the app, with no script, saying the app and where you are
 (`production` or `preview of pull #N`) and linking Home, the repository and *Make it yours*
 (`<repo>/make-it-yours`; both only to who may read the repository, who also
 get the "more pulls" line linked to `<repo>/pulls`) and *Tell the crew* (the same link `/__forge/crew` gives; signed
-out it offers sign in). It also says what is serving, read from the deploy
+out it offers sign in). On a preview it also links *The live app* (the production
+address, so one tap compares the pull with production), only to who may read the
+repository, as *What changed* is; production's door has no such link. In the
+open-pulls list the preview's own pull is plain text marked "(this preview)"
+instead of a link back to itself. It also says what is serving, read from the deploy
 record (no git): production shows the newest release and the three before it
 (a redeploy of the same commit is not another release), a preview shows its
 pull and the commit it last served, or "not deployed yet". A viewer who cannot

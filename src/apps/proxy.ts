@@ -474,6 +474,7 @@ function doorPulls(
       number: p.number,
       title: p.title,
       check: checkWord(p.run, p.headOid),
+      ...(env === target.env ? { self: true } : {}),
       href: live
         ? runtime.urlFor(target.app, env)
         : new URL(
@@ -944,6 +945,9 @@ export async function proxyApp(
         {
           where,
           pulls,
+          ...(target.env === "production"
+            ? {}
+            : { live: runtime.urlFor(target.app, "production") }),
           ...(crew === undefined ? {} : { crew }),
           ...(serving === undefined ? {} : { serving }),
           forgeUrl: runtime.options.forgeUrl,

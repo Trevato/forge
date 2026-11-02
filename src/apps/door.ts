@@ -27,6 +27,8 @@ export type DoorFacts = {
   pulls?: DoorPullLine[] | undefined;
   /** Who of the crew is working here now, as the pill's crew line says it. */
   crew?: CrewNow | undefined;
+  /** The production host of this app, only on a preview. */
+  live?: string | undefined;
   /** This host's own report door, only for a public app anyone may report on. */
   report?: string | undefined;
 };
@@ -34,7 +36,7 @@ export type DoorFacts = {
 /** How many pulls the door lists; one more read than this means there are others. */
 export const DOOR_PULL_LIMIT = 5;
 
-export type DoorPullLine = { number: number; title: string; check: string; href: string };
+export type DoorPullLine = { number: number; title: string; check: string; href: string; self?: boolean };
 
 const STYLE =
   "html{color-scheme:light dark}body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}li{margin:.4rem 0}pre{overflow-x:auto;padding:.6rem;background:#eee;color:#111;user-select:all}" +
@@ -100,9 +102,10 @@ function servingHtml(facts: DoorFacts): string {
 
 function pullsHtml(pulls: DoorPullLine[] | undefined, morePulls: string | undefined): string {
   if (pulls === undefined || pulls.length === 0) return "";
-  const items = pulls.slice(0, DOOR_PULL_LIMIT).map((p) =>
-    link(p.href, `#${p.number} ${[...p.title].slice(0, 120).join("")} · check ${p.check}`),
-  );
+  const items = pulls.slice(0, DOOR_PULL_LIMIT).map((p) => {
+    const text = `#${p.number} ${[...p.title].slice(0, 120).join("")} · check ${p.check}`;
+    return p.self === true ? `<li>${escapeAttr(text)} (this preview)</li>` : link(p.href, text);
+  });
   const words = "More pulls are open on the forge.";
   const more =
     pulls.length <= DOOR_PULL_LIMIT
@@ -130,6 +133,9 @@ export function doorPage(facts: DoorFacts, head: boolean): Response {
       links.push(link(new URL(`/${where.repo}/pulls/${where.pull}/files`, forgeUrl).href, "What changed"));
     links.push(link(`${repoUrl}/make-it-yours`, "Make it yours"));
     morePulls = `${repoUrl}/pulls`;
+    // Production's address is for a reader of the app, as What changed is.
+    if (facts.live !== undefined && where.env !== "production")
+      links.push(link(facts.live, "The live app"));
   }
   if (facts.tell !== undefined) links.push(link(facts.tell, "Tell the crew"));
   else if (facts.signin !== undefined)
