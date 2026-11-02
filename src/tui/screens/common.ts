@@ -48,6 +48,19 @@ export class ListState {
   offset = 0;
   /** Rows the last render had room for — what `ctrl+d` pages by. */
   height = 10;
+  /** Screen rows each drawn item took, from `offset`, when some item had a note; else undefined. */
+  heights: number[] | undefined;
+
+  /** The item at list row `y`: where a click landed, however tall the items above it. */
+  at(y: number): number {
+    if (this.heights === undefined) return this.offset + y;
+    let top = 0;
+    for (let i = 0; i < this.heights.length; i++) {
+      top += this.heights[i]!;
+      if (y < top) return this.offset + i;
+    }
+    return -1;
+  }
 
   clamp(length: number): void {
     this.index = Math.max(0, Math.min(this.index, Math.max(0, length - 1)));
@@ -215,6 +228,8 @@ export interface ListRow {
   readonly hollow?: boolean;
   readonly secondary?: string;
   readonly meta?: string;
+  /** A muted line under the row, indented past its dot; the item is then two rows tall. */
+  readonly note?: string;
 }
 
 /** A scrolling list of `row()`s with a scrollbar when it overflows. */
@@ -228,15 +243,44 @@ export function drawList(
 ): void {
   if (r.w <= 0 || r.h <= 0) return;
   const body = { x: r.x, y: r.y, w: Math.max(0, r.w - 1), h: r.h };
-  const from = state.window(r.h, rows.length);
-  for (let i = 0; i < r.h; i++) {
-    const item = rows[from + i];
-    if (item === undefined) break;
-    row(s, { x: body.x, y: body.y + i, w: body.w, h: 1 }, c, {
+  const noted = rows.some((i) => i.note !== undefined && i.note !== "");
+  const tall = (i: number): number => (noted && rows[i]!.note ? 2 : 1);
+  let from: number;
+  if (!noted) {
+    state.heights = undefined;
+    from = state.window(r.h, rows.length);
+  } else {
+    // Scroll by item, so the cursor's whole entry (row and note) is in view.
+    state.clamp(rows.length);
+    from = Math.max(0, Math.min(state.offset, state.index));
+    const span = (a: number, b: number): number => {
+      let h = 0;
+      for (let i = a; i <= b; i++) h += tall(i);
+      return h;
+    };
+    while (from < state.index && span(from, state.index) > r.h) from++;
+    // Never leave a gap under the last item when the ones above would fit.
+    while (from > 0 && span(from - 1, rows.length - 1) <= r.h) from--;
+    state.offset = from;
+  }
+  let y = 0;
+  const heights: number[] = [];
+  for (let i = from; i < rows.length && y < r.h; i++) {
+    const item = rows[i]!;
+    const h = Math.min(tall(i), r.h - y);
+    row(s, { x: body.x, y: body.y + y, w: body.w, h: 1 }, c, {
       ...item,
-      selected: focused && from + i === state.index,
-      focused: from + i === state.index,
+      selected: focused && i === state.index,
+      focused: i === state.index,
     });
+    if (item.note && h > 1 && body.w > 4)
+      s.text(body.x + 4, body.y + y + 1, truncate(item.note, body.w - 4), style(c.mutedFg, c.bg), body.x + body.w);
+    heights.push(h);
+    y += h;
+  }
+  if (noted) {
+    state.heights = heights;
+    state.height = Math.max(1, heights.length);
   }
   scrollbar(s, { x: r.x + r.w - 1, y: r.y, w: 1, h: r.h }, c, {
     total: rows.length,
@@ -276,7 +320,7 @@ export function hitList(
 ): void {
   ctx.hit(r, {
     click: (e) => {
-      const index = state.offset + e.y;
+      const index = state.at(e.y);
       if (index < 0 || index >= count) return;
       if (index === state.index || e.double) {
         state.index = index;
