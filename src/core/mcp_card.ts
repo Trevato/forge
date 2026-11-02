@@ -16,6 +16,30 @@ export function mcpPointers(origin: string): { url: string; oauth: string } {
   };
 }
 
+/** A thin plugin the forge ships for a harness: where its source is and its one install line. */
+export interface HarnessPlugin {
+  readonly harness: string;
+  readonly label: string;
+  readonly path: string;
+  readonly install: string;
+}
+
+/** The one list the card and /llms.txt both read, so they cannot drift. */
+export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
+  {
+    harness: "claude-code",
+    label: "Claude Code",
+    path: "plugins/claude-code",
+    install: "claude --plugin-dir plugins/claude-code",
+  },
+  {
+    harness: "opencode",
+    label: "OpenCode",
+    path: "plugins/opencode/forge.ts",
+    install: "mkdir -p .opencode/plugin && cp plugins/opencode/forge.ts .opencode/plugin/",
+  },
+];
+
 /**
  * The server card. The format is still a draft, so only what we can keep
  * true is named: who answers, where, over what transport, how to sign in,
@@ -32,5 +56,10 @@ export function mcpCard(origin: string, now: Running = running()) {
     protectedResourceMetadata: oauth,
     documentation: `${origin}/llms.txt`,
     tokenFreeTools: ["report"],
+    plugins: HARNESS_PLUGINS.map((p) => ({
+      harness: p.harness,
+      path: p.path,
+      install: p.install,
+    })),
   };
 }

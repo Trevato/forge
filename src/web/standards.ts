@@ -36,7 +36,7 @@ import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
-import { mcpCard, mcpPointers } from "../core/mcp_card.ts";
+import { HARNESS_PLUGINS, mcpCard, mcpPointers } from "../core/mcp_card.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase } from "../core/route_timing.ts";
 import { shippedReleases, type Shipped } from "../release/shipped.ts";
@@ -359,8 +359,10 @@ export function llmsTxt(ctx: Ctx): Response {
       "## Use it from your harness",
       "",
       `- MCP endpoint: ${mcp.url} (streamable HTTP; OAuth metadata at ${mcp.oauth}). Or send a token as Authorization: Bearer.`,
-      "- Claude Code plugin: `claude --plugin-dir plugins/claude-code` in a clone of this forge's repository (set FORGE_URL and FORGE_TOKEN).",
-      "- OpenCode plugin: copy plugins/opencode/forge.ts into .opencode/plugin/ (set FORGE_URL and FORGE_TOKEN).",
+      ...HARNESS_PLUGINS.map(
+        (p) =>
+          `- ${p.label} plugin (source ${p.path} in this forge's repository; set FORGE_URL and FORGE_TOKEN): \`${p.install}\``,
+      ),
       "",
       "## What you can do on any page",
       "",
