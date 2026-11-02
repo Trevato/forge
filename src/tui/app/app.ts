@@ -338,6 +338,15 @@ export class App {
     return !this.dirty && !this.busy;
   }
 
+  /**
+   * No palette search waiting on its debounce or in flight. `settled` does
+   * not count it, so typing in the palette stays snappy under a harness; a
+   * test that acts on the results waits on this, not on a sleep.
+   */
+  get paletteSettled(): boolean {
+    return this.paletteTimers.length === 0;
+  }
+
   /** Frames actually painted. A harness watches it stop changing. */
   get frameCount(): number {
     return this.frames;
@@ -845,6 +854,10 @@ export class App {
         })
         .catch(() => {
           if (!abort.signal.aborted) this.palette.searching = false;
+        })
+        .finally(() => {
+          // The live run is the last; once it lands this query has nothing left to do.
+          if (live && this.paletteAbort === abort) this.paletteTimers = [];
         });
     };
     this.paletteTimers = [

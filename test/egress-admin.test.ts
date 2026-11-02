@@ -17,7 +17,7 @@ import { startEgress } from "../src/apps/egress.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { settleApp, settlePalette, settleUntil } from "./helpers/tui.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
@@ -76,7 +76,9 @@ describe("egress grants in the terminal", () => {
       await settleApp(tui);
       await press("/");
       for (const ch of "arm") await press(ch);
-      // The palette searches on a debounce no settle can see; enter on an empty list opens nothing.
+      // The palette searches twice, at 120ms and live at 400ms, and redraws the list each time;
+      // enter before the second can open a row the redraw moves.
+      await settlePalette(tui);
       await settleUntil(tui, "ada/arm");
       await press("enter", "enter");
       // "ada/arm" is on screen from the palette and the dashboard before the repository opens; its one-line file is the sign it has.
