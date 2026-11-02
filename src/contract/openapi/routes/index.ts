@@ -94,6 +94,7 @@ export { route as getApiV1ReposOwnerNameFollowingProposals } from "./getApiV1Rep
 export { route as getApiV1ReposOwnerNameForks } from "./getApiV1ReposOwnerNameForks.ts";
 export { route as getApiV1ReposOwnerNameGatesIdLog } from "./getApiV1ReposOwnerNameGatesIdLog.ts";
 export { route as getApiV1ReposOwnerNameHooks } from "./getApiV1ReposOwnerNameHooks.ts";
+export { route as getApiV1ReposOwnerNameHooksIdDeliveries } from "./getApiV1ReposOwnerNameHooksIdDeliveries.ts";
 export { route as getApiV1ReposOwnerNameIssues } from "./getApiV1ReposOwnerNameIssues.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumber } from "./getApiV1ReposOwnerNameIssuesNumber.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberComments } from "./getApiV1ReposOwnerNameIssuesNumberComments.ts";

@@ -42,6 +42,7 @@ const SECRET = "needs a secret scope an operator has set";
 const GO = "needs a short code minted by a share; the seed shares nothing";
 const ARCH = "needs an archived-home operation id; the seed archives nothing";
 const GATE = "needs a kept gate log, written only when a full gate runs on land";
+const HOOK = "needs a webhook, which the seed does not register";
 
 /** GET patterns the seed cannot fill → why. Requested with a placeholder all the same. */
 const UNSEEDED: Record<string, string> = {
@@ -58,6 +59,7 @@ const UNSEEDED: Record<string, string> = {
   "/api/v1/orgs/:org/teams": ORG,
   "/api/v1/orgs/:org/teams/:team/members": ORG,
   "/api/v1/repos/:owner/:name/gates/:id/log": GATE,
+  "/api/v1/repos/:owner/:name/hooks/:id/deliveries": HOOK,
   "/api/v1/repos/:owner/:name/waves/:version": WAVE,
   "/api/v1/secrets/:scope": SECRET,
   "/api/v1/user/origins/:id/browse/:owner/:name": ORIGIN,

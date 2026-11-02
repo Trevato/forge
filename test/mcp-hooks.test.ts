@@ -73,6 +73,19 @@ describe("MCP hooks", () => {
     expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: added.value.id })).error).toContain("not_found");
   });
 
+  test("deliveries answers the hook's last deliveries as the route does, and refuses as it does", async () => {
+    const added = await tool(aliceAdmin, { repo: "alice/game", action: "add", url: "https://example.com/d", secret: "0123456789abcdef" });
+    const repoId = app.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name='game'").get()!.id;
+    app.bus.append({ kind: "push", repoId });
+    const got = await tool(aliceAdmin, { repo: "alice/game", action: "deliveries", id: added.value.id });
+    expect(got.value.items.length).toBeGreaterThan(0);
+    expect(got.value.items[0].kind).toBe("push");
+    expect(JSON.stringify(got)).not.toContain("0123456789abcdef");
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "deliveries", id: "nope" })).error).toContain("not_found");
+    expect((await tool(bobAdmin, { repo: "alice/game", action: "deliveries", id: added.value.id })).error).toContain("not_found");
+    await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: added.value.id });
+  });
+
   test("list pages by limit and cursor, and refuses what the route refuses", async () => {
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {
