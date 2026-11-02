@@ -256,16 +256,23 @@ Server-Timing phase. The prefix was already the forge's, so an app's own
 
 **Reading a slow app's Server-Timing.** A response the proxy relays keeps the
 app's own entries (`db`, `app`, …) and gains the forge's, each `forge-` named
-and in milliseconds only: `forge-route` (finding the target and its grant),
-`forge-wake` (waiting for a sleeping or starting environment; 0 when none),
-`forge-upstream` (until the app's headers) and `forge-rewrite` (pill injection,
-when it ran). Big `forge-wake` is a cold start, big `forge-upstream` is the
-app; if all are small, the time went before the request reached the forge. The
-"app stopped answering" page carries `route`, `wake` and `upstream` too; the
-forge's own `/__forge/*` pages and the WebSocket upgrade name no forge- phases.
-A refused answer (sign in, not found, not running) names none either: the wake
-runs before the door is asked, so its time would tell a caller who may not read
-the app whether it was asleep. The proxy has one writer for these
+and in milliseconds only: `forge-route` (finding the target and its grant:
+the sum of `forge-lookup`, the server finding the app by its host,
+`forge-state`, the doors and the environment's state, and `forge-session`, the
+grant read), `forge-wake` (waiting for a sleeping or starting environment; 0
+when none), `forge-upstream` and `forge-ttfb` (the same wait, until the app's
+headers: `fetch` reports nothing of its connection, so the socket's opening
+is inside it), `forge-body` (reading a page whole for the pill) and
+`forge-rewrite` (pill injection with that read, when it ran). Big `forge-wake`
+is a cold start, big `forge-ttfb` is the app or its listener, big `forge-body`
+is an app slow to finish its page; if all are small, the time went before the
+request reached the forge. The forge opens no second socket to time the
+connect: it would take a backlog slot in the very case it is meant to find.
+The "app stopped answering" page carries `route`, `wake` and `upstream` too;
+the forge's own `/__forge/*` pages and the WebSocket upgrade name no forge-
+phases. A refused answer (sign in, not found, not running) names none either:
+the wake runs before the door is asked, so its time would tell a caller who may
+not read the app whether it was asleep. The proxy has one writer for these
 (`withPhases` over `notePhase`), which appends to the app's header.
 
 **Tell the crew from the pill.** Signed in as someone who may direct the crew,

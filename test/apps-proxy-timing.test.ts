@@ -16,17 +16,33 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { deploySettled } from "./helpers/apps-forge.ts";
 
 const DOMAIN = "apps.test";
-const SLOW = `const server = Bun.serve({
-  port: Number(process.env.PORT),
-  hostname: "127.0.0.1",
-  async fetch(request) {
-    if (new URL(request.url).pathname === "/healthz") {
-      await Bun.sleep(300);
-      return new Response("ok", { headers: { "server-timing": "db;dur=0.1, app;dur=1.1" } });
-    }
-    return new Response("<html><body><h1>hello</h1></body></html>", { headers: { "content-type": "text/html" } });
-  },
-});
+// node:http, not Bun.serve: Bun drops a streamed Response's content-length,
+// and /slowbody needs one so the forge reads the page whole however slow.
+const SLOW = `import { createServer } from "node:http";
+createServer((request, res) => {
+  const path = new URL(request.url, "http://app").pathname;
+  if (path === "/healthz") {
+    setTimeout(() => {
+      res.writeHead(200, { "server-timing": "db;dur=0.1, app;dur=1.1" });
+      res.end("ok");
+    }, 300);
+  } else if (path === "/ttfb") {
+    setTimeout(() => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("late");
+    }, 30);
+  } else if (path === "/slowbody") {
+    // Headers at once, the page's end 300 ms later: the wait is the body's.
+    const head = "<html><body><h1>slow";
+    const tail = " body</h1></body></html>";
+    res.writeHead(200, { "content-type": "text/html", "content-length": String(head.length + tail.length) });
+    res.write(head);
+    setTimeout(() => res.end(tail), 300);
+  } else {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("<html><body><h1>hello</h1></body></html>");
+  }
+}).listen(Number(process.env.PORT), "127.0.0.1");
 `;
 
 const dur = (header: string, name: string): number | undefined => {
@@ -104,6 +120,42 @@ describe("a proxied answer's Server-Timing", () => {
     // Durations only: nothing of the host or the app's name.
     expect(header).toMatch(/^[a-z0-9.;=, -]+$/);
     expect(header).not.toContain("hello");
+  });
+
+  test("an app slow to its headers shows in forge-ttfb, which is forge-upstream", async () => {
+    const res = await viaHost("/ttfb");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("late");
+    const header = res.headers.get("server-timing")!;
+    expect(dur(header, "forge-ttfb")!).toBeGreaterThanOrEqual(30);
+    expect(dur(header, "forge-ttfb")).toBe(dur(header, "forge-upstream")!);
+    // No probe socket: the connect is inside ttfb, never named apart.
+    expect(dur(header, "forge-connect")).toBeUndefined();
+    expect(header).toMatch(/^[a-z0-9.;=, -]+$/);
+  });
+
+  test("forge-route splits into forge-lookup, forge-state and forge-session", async () => {
+    const header = (await viaHost("/healthz")).headers.get("server-timing")!;
+    const parts = ["forge-lookup", "forge-state", "forge-session"].map((name) => dur(header, name));
+    for (const ms of parts) expect(ms).toBeGreaterThanOrEqual(0);
+    const sum = parts.reduce((a, b) => a! + b!, 0)!;
+    expect(Math.abs(sum - dur(header, "forge-route")!)).toBeLessThanOrEqual(0.2);
+  });
+
+  test("a page read whole for the pill names the wait for its body, forge-body", async () => {
+    const header = (await viaHost("/")).headers.get("server-timing")!;
+    expect(dur(header, "forge-body")).toBeGreaterThanOrEqual(0);
+    expect(dur(header, "forge-body")!).toBeLessThanOrEqual(dur(header, "forge-rewrite")!);
+  });
+
+  test("a page whose body comes late puts the wait in forge-body, not forge-ttfb", async () => {
+    const res = await viaHost("/slowbody");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("slow body");
+    const header = res.headers.get("server-timing")!;
+    expect(dur(header, "forge-body")!).toBeGreaterThanOrEqual(250);
+    expect(dur(header, "forge-ttfb")!).toBeLessThan(dur(header, "forge-body")!);
+    expect(dur(header, "forge-upstream")!).toBeLessThan(dur(header, "forge-body")!);
   });
 
   test("a page the pill is written into names forge-rewrite", async () => {

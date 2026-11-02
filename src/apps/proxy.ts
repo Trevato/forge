@@ -407,9 +407,27 @@ function withPhases(request: Request, res: Response): Response {
   return res;
 }
 
+/**
+ * The forge's phases of relaying an app answer, `forge-` named. Durations
+ * only, under these fixed names: `route` is `lookup` + `state` + `session`.
+ */
+type RelayPhase =
+  | "route" | "lookup" | "state" | "session" | "wake"
+  | "upstream" | "ttfb" | "body" | "rewrite";
+
 /** Name one of the forge's phases of relaying an app answer. Durations only. */
-function relayPhase(request: Request, name: "route" | "wake" | "upstream" | "rewrite", ms: number): void {
+function relayPhase(request: Request, name: RelayPhase, ms: number): void {
   notePhase(request, `forge-${name}`, ms);
+}
+
+/**
+ * Name `ttfb` and `upstream` for headers that took `headersMs`. `fetch` says
+ * nothing of its connection, so the two are the same wait: `ttfb` is the name
+ * the split reads by, `upstream` the total older readers know.
+ */
+function relayUpstream(request: Request, headersMs: number): void {
+  relayPhase(request, "ttfb", headersMs);
+  relayPhase(request, "upstream", headersMs);
 }
 
 /**
@@ -822,6 +840,7 @@ export async function proxyApp(
   target: AppTarget,
   server: Bun.Server<AppSocket>,
 ): Promise<Response | undefined> {
+  const entered = performance.now();
   const url = new URL(request.url);
   // The pill's script, from the app's own host: only the exact hashed path
   // is it; any other /__forge/toolbar… path is the forge's 404, never the app's.
@@ -1059,7 +1078,9 @@ export async function proxyApp(
     await runtime.wake(target.app, target.env);
     wakeMs = performance.now() - woke;
   }
+  const admitting = performance.now();
   const admitted = admit(runtime, request, target);
+  const sessionMs = performance.now() - admitting;
   // A refused answer names no phases: wake runs before `admit`, so its time
   // would tell a caller who may not read the app whether it was asleep.
   if (!admitted.ok)
@@ -1069,7 +1090,13 @@ export async function proxyApp(
   const { status, port, grant: vouched } = admitted.value;
   runtime.touch(target.app, target.env);
   const began = performance.now();
-  relayPhase(request, "route", Math.max(0, began - (startedAt(request) ?? began) - wakeMs));
+  // `route` split where it goes: the server finding the app (`lookup`), the
+  // doors and the environment's state (`state`), the grant read (`session`).
+  const lookupMs = Math.max(0, entered - (startedAt(request) ?? entered));
+  relayPhase(request, "route", lookupMs + Math.max(0, began - entered - wakeMs));
+  relayPhase(request, "lookup", lookupMs);
+  relayPhase(request, "state", Math.max(0, began - entered - wakeMs - sessionMs));
+  relayPhase(request, "session", sessionMs);
   relayPhase(request, "wake", wakeMs);
 
   const upstream = new URL(url);
@@ -1137,10 +1164,10 @@ export async function proxyApp(
     } as RequestInit);
   } catch {
     answered();
-    relayPhase(request, "upstream", performance.now() - sent);
+    relayUpstream(request, performance.now() - sent);
     return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
   }
-  relayPhase(request, "upstream", performance.now() - sent);
+  relayUpstream(request, performance.now() - sent);
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
   // Which app answered: a probe from outside (`spawn/reach.ts`) tells this
@@ -1191,6 +1218,7 @@ export async function proxyApp(
           );
         bytes = read.bytes;
       }
+      relayPhase(request, "body", performance.now() - rewriting);
     } catch {
       return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
     }
