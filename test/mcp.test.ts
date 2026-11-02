@@ -329,6 +329,7 @@ describe("the forge over MCP", () => {
       "land_past_gate",
       "repo_labels",
       "wait_for",
+      "next_up",
       "lift",
       "held",
       "confirm_wait",

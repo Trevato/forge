@@ -52,6 +52,8 @@ export function smallIssuesWords(share: { readonly running: number; readonly cap
 }
 
 export interface Classed {
+  /** On the owner's ranked list (#8694): before everything, small or not. */
+  readonly ranked?: boolean;
   /** Raised again by the owner: on top whatever else it is. */
   readonly raised: boolean;
   /** Under an open epic or a P0/P1 pillar. */
@@ -60,7 +62,7 @@ export interface Classed {
 }
 
 /**
- * The ready list in pick order: what the owner raised again first, then
+ * The ready list in pick order: the owner's ranked list strictly first (#8694), then what the owner raised again, then
  * roadmap work, then other, small work last, the map's order kept within
  * each; small work — raised or not — is left out once `running` small
  * issues fill `cap`.
@@ -73,6 +75,7 @@ export function slotOrder<T>(
 ): T[] {
   const rank = (t: T) => {
     const c = classOf(t);
+    if (c.ranked === true) return { r: -2, small: false };
     return { r: c.raised ? -1 : c.small ? 2 : c.roadmap ? 0 : 1, small: c.small };
   };
   const open = running < cap;

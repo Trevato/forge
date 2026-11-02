@@ -17,6 +17,7 @@ import { unadoptedAmong } from "../crew/direct.ts";
 import { flowLabelled } from "./flow_label.ts";
 import { raisedAt, raisedInRepo } from "./thought_links.ts";
 import { firstAt, firstInRepo } from "./first.ts";
+import { ranksInRepo } from "./rank.ts";
 import { limbRanks, limbTree, readPlaces } from "./limb_order.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
@@ -255,6 +256,8 @@ export interface Graph {
   readonly flow?: ReadonlySet<string>;
   /** When a writer put an issue first (#7806): ready ahead of everything else. */
   readonly first?: ReadonlyMap<string, string>;
+  /** The owner's ranked list (#8694): an issue's place, 1 at the top. Ready, ranked issues go before all else. */
+  readonly ranked?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -460,6 +463,7 @@ export function repoGraph(
         ? raisedAt(db, issues.map((i) => i.id))
         : raisedInRepo(db, repoId),
     flow: flowLabelled(db, repoId),
+    ranked: ranksInRepo(db, repoId),
     first:
       whole === undefined
         ? firstAt(db, issues.map((i) => i.id))
@@ -700,9 +704,16 @@ export function readyNow(graph: Graph): Ranked[] {
   // What a person put first comes before all of it, the latest first. It only
   // orders what is already ready: no rank lifts the Later gate or a blocker.
   const first = graph.first;
-  if (first === undefined || first.size === 0) return ready;
-  const when = (r: Ranked) => first.get(r.issue.id) ?? "";
-  return ready.sort((a, b) => when(b).localeCompare(when(a)));
+  if (first !== undefined && first.size > 0) {
+    const when = (r: Ranked) => first.get(r.issue.id) ?? "";
+    ready.sort((a, b) => when(b).localeCompare(when(a)));
+  }
+  // The owner's ranked list is the last word, by place; the rest keep their
+  // order, so the same state always gives the same pick (#8694).
+  const ranked = graph.ranked;
+  if (ranked === undefined || ranked.size === 0) return ready;
+  const place = (r: Ranked) => ranked.get(r.issue.id) ?? Number.MAX_SAFE_INTEGER;
+  return ready.sort((a, b) => place(a) - place(b));
 }
 
 /**

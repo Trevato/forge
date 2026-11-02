@@ -77,6 +77,7 @@ import { heldScreen } from "./screens/held.ts";
 import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
+import { nextScreen } from "./screens/next.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newForgeScreen } from "./screens/newforge.ts";
 import { newOrgScreen } from "./screens/neworg.ts";
@@ -125,6 +126,12 @@ const REPO_VERBS: readonly {
     id: "milestones",
     title: "Milestones in a repository",
     open: (f, ctx, repo) => limbsScreen(f, ctx, repo),
+  },
+  {
+    // The owner's one ranked list the crew builds from (#8694).
+    id: "next-up",
+    title: "Next up in a repository",
+    open: (f, ctx, repo) => nextScreen(f, ctx, repo),
   },
   {
     // What the crew's tokens bought on one app, as MCP `returns` with `repo` (#7271).

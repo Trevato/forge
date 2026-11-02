@@ -45,6 +45,7 @@ import {
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
 import { firstAt } from "../core/first.ts";
+import { ranksInRepo } from "../core/rank.ts";
 import { ensurePlanner } from "./planner.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import {
@@ -405,12 +406,14 @@ function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: re
   const small = smallIssues(app.db, issues);
   const roadmap = roadmapIssues(app.db, repo, issues.map((i) => i.id));
   const first = firstAt(app.db, issues.map((i) => i.id));
+  const ranked = ranksInRepo(app.db, repo.id);
   const raised = raisedAt(app.db, issues.map((i) => i.id));
   // Issues picked earlier in this tick hold their share before their runs show (#8729).
   const running = smallOfIds(app.db, [...new Set([...slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])), ...picked])]);
   return slotOrder(
     ready,
     (r) => ({
+      ranked: ranked.has(r.issue.id),
       raised: raised.has(r.issue.id) || first.has(r.issue.id),
       roadmap: roadmap.has(r.issue.id),
       small: small.has(r.issue.id) && !first.has(r.issue.id),

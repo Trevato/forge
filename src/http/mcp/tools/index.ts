@@ -90,6 +90,7 @@ export { tool as model_ceiling } from "./model_ceiling.ts";
 export { tool as model_grant } from "./model_grant.ts";
 export { tool as new_app } from "./new_app.ts";
 export { tool as next_steps } from "./next_steps.ts";
+export { tool as next_up } from "./next_up.ts";
 export { tool as notify } from "./notify.ts";
 export { tool as now } from "./now.ts";
 export { tool as org_create } from "./org_create.ts";

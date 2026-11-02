@@ -124,7 +124,7 @@ describe("the one list of what asks first", () => {
     "assign", "attach_look", "board_pins", "board_write", "branches", "capacity", "cloud_accounts", "close", "confirm_wait",
     "crew", "decisions_by", "detach", "edit", "email_verify", "feed_chips", "feed_dismiss", "flag_set", "flag_winner",
     "follow_mode", "front_page", "hold", "issue_teams", "labels", "lift", "limb", "make_it_yours", "map", "merge", "new_app",
-    "notify", "org_create", "origin_apps", "pins", "plan", "profile", "propose_to_parent_forge", "repo_labels", "reports",
+    "next_up", "notify", "org_create", "origin_apps", "pins", "plan", "profile", "propose_to_parent_forge", "repo_labels", "reports",
     "restore_drill", "review", "say", "signup", "snapshot_now", "spend", "steer", "sync", "take_back", "take_updates",
     "teams", "tell", "threads", "trail", "upstream", "variant", "wait_for", "watch", "whoami_can", "write_file",
   ]);

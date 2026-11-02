@@ -1425,6 +1425,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         What waits for what. The top edge is ready now; the chain in the accent
         is the least work that still has to happen in order.
         <a href="${repoBase(repo)}/milestones">How far each milestone is</a>.
+        <a href="${repoBase(repo)}/next">Next up</a> is the one ranked list the crew builds from.
       </p>
     </div>
     <div
