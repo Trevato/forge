@@ -22,6 +22,8 @@ import { createSession } from "../src/core/sessions.ts";
 import { serve } from "../src/http/server.ts";
 import { TOOLS } from "../src/crew/claude.ts";
 import { answerHeld, hold, waitingFor } from "../src/core/fence.ts";
+import { flowFor } from "../src/system/telemetry.ts";
+import { readTalkTurns, talkTurnsWords } from "../src/flow/talk_turns.ts";
 import { MCP_SERVER, mcpConfig, RESUMED_LINE, resumeInterrupted, say, STOPPED_LINE, stopTurn, turnRunning, unendedLine, TURNS_LIVE_MAX, type ConversationOptions } from "../src/crew/conversation.ts";
 
 let dir: string;
@@ -502,12 +504,19 @@ sleep 300
     const via = `conversation:${openConversation(app.db, u.value.id).id}`;
     const held = hold(app.db, via, u.value.id, "create_issue", { title: "x" });
     expect(held).not.toBeNull();
+    const failedBefore = readTalkTurns(app.db).failed;
     expect(stopTurn(app, u.value.id)).toBe(true);
     await said.value.done;
     expect(turnRunning(app, u.value.id)).toBe(false);
     expect(turns(u.value).slice(-3)).toEqual(["person:do a slow thing", "agent:Looking into it.", `agent:${STOPPED_LINE}`]);
     expect(waitingFor(app.db, u.value.id)).toEqual([]);
     expect(answerHeld(app.db, held!, u.value.id).ok).toBe(false);
+    // Stored as stopped, and not a failure (#8860).
+    expect(app.db.query("SELECT state FROM conversation_run WHERE user_id = ?1 ORDER BY started_at DESC LIMIT 1").get(u.value.id)).toEqual({ state: "failed" });
+    expect(app.db.query("SELECT stopped FROM conversation_run WHERE user_id = ?1 ORDER BY started_at DESC LIMIT 1").get(u.value.id)).toEqual({ stopped: 1 });
+    const turnsNow = readTalkTurns(app.db);
+    expect(turnsNow.stopped).toBeGreaterThanOrEqual(1);
+    expect(turnsNow.failed).toBe(failedBefore);
     let alive = true;
     for (let i = 0; i < 60 && alive; i++) {
       try { process.kill(pid, 0); await Bun.sleep(50); } catch { alive = false; }
@@ -515,4 +524,18 @@ sleep 300
     expect(alive).toBe(false);
     expect(stopTurn(app, u.value.id)).toBe(false);
   }, 20_000);
+});
+
+describe("talk turn counts (#8860)", () => {
+  test("stopped turns are counted apart and leave the failure rate alone", () => {
+    const base = readTalkTurns(app.db);
+    const c = openConversation(app.db, alice.id);
+    for (const [state, stopped] of [["ok", 0], ["failed", 0], ["failed", 1], ["failed", 1]] as const)
+      app.db.query("INSERT INTO conversation_run (id, conversation_id, user_id, state, stopped, prompt, started_at) VALUES (?1,?2,?3,?4,?5,'x','2026-11-03')").run(crypto.randomUUID(), c.id, alice.id, state, stopped);
+    const now = readTalkTurns(app.db);
+    expect([now.ok - base.ok, now.failed - base.failed, now.stopped - base.stopped]).toEqual([1, 1, 2]);
+    expect(talkTurnsWords({ ok: 0, failed: 0, stopped: 0, failureRate: 0 })).toBe("");
+    expect(talkTurnsWords({ ok: 1, failed: 1, stopped: 2, failureRate: 0.5 })).toBe("Talk: 1 turn failed, 2 stopped by the person");
+    expect(flowFor(app, { kind: "owner" }).vitals.says).toContain(`Talk: ${now.failed} ${now.failed === 1 ? "turn" : "turns"} failed, ${now.stopped} stopped by the person`);
+  });
 });

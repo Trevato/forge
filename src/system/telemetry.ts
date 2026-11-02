@@ -12,6 +12,7 @@ import { SOURCES } from "../boards/sources.ts";
 import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../flow/conflicted.ts";
 import { firedAlarms } from "../flow/alarms.ts";
 import { running } from "../kernel/version.ts";
+import { readTalkTurns, talkTurnsWords } from "../flow/talk_turns.ts";
 import { readTalkResumes, talkResumesWords } from "../flow/talk_resumes.ts";
 import { readVitals, vitalsFor, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
 import { parkedSays, readParked } from "../flow/parked.ts";
@@ -42,6 +43,7 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
   // Dollars only for the owner and an agent holding telemetry:read (#6424).
   const vitals = vitalsFor(readVitals(app.db, now, reader.kind === "agent"), reader.kind === "owner" || reader.spend === true);
   const talk = readTalkResumes(app.db, running().version);
+  const talkTurns = readTalkTurns(app.db);
   const parked = readParked(app.db, now, reader.kind === "agent");
   return {
     says: verdict(stages, now.getTime()),
@@ -55,7 +57,7 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
     parked: { says: parkedSays(parked), ...parked },
     // Open pulls, opened and landed in 1 h and 6 h, and conflicted, against #5924's targets (#5935).
     // A fallback after a release is a line here, not a banner (#8795).
-    vitals: { says: [vitalsLine(vitals), talkResumesWords(talk)].filter((w) => w !== "").join(" · "), talk, misses: vitalsMisses(vitals), ...vitals },
+    vitals: { says: [vitalsLine(vitals), talkResumesWords(talk), talkTurnsWords(talkTurns)].filter((w) => w !== "").join(" · "), talk, talkTurns, misses: vitalsMisses(vitals), ...vitals },
     // What the last red batches were: the pull named and returned with its failing tests, or a load red (#7639).
     redBatches: readVerdicts(app.db, now, reader.kind === "agent"),
     // Findings reviewers repeated, proposed as checks and retired, beside review comments per pull (#8716).
