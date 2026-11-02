@@ -4,14 +4,15 @@
  * A forge answers the Gitea dialect only for the one list connecting needs,
  * `GET /user/repos`; who you are and one repository are read in its own
  * shape, so the rest of its API grows no Gitea fields. Git comes over HTTPS
- * as ever. What a forge does not yet answer to an origin is its issues,
- * pulls, comments and labels: those reads say "none" rather than failing, so
- * the mirror brings the code across and settles, and the origin's `carries`
- * note says what did not come.
+ * as ever. Issues, pulls and comments are read and written in its own JSON
+ * (`forge-work.ts`); labels do not come yet and say "none" rather than
+ * failing, and the origin's `carries` note says so.
  */
 
 import type {
+  ListIssuesQuery,
   Page,
+  RemoteComment,
   ProviderResult,
   RemoteIdentity,
   RemoteLabel,
@@ -21,8 +22,10 @@ import type {
 } from "../types.ts";
 import { ForgejoProvider, nextPage, toRepo } from "./forgejo.ts";
 import { NO_ACCOUNT } from "../words.ts";
+import { forgeCursor, toForgeComment, toForgeWork } from "./forge-work.ts";
 import { asArray, asString, dig, fail, field, seg, splitFullName, succeed } from "./http.ts";
 
+const MAX_COMMENT_PAGES = 1000;
 const NONE = { ok: true, value: [] } as const;
 
 export class ForgeProvider extends ForgejoProvider {
@@ -89,7 +92,148 @@ export class ForgeProvider extends ForgejoProvider {
     return Promise.resolve(NONE);
   }
 
-  override listIssues(): Promise<ProviderResult<Page<RemoteIssue>>> {
-    return Promise.resolve({ ok: true, value: { items: [], next: null } });
+  private repoPath(fullName: string): string | undefined {
+    const named = splitFullName(fullName);
+    return named ? `/repos/${seg(named.owner)}/${seg(named.name)}` : undefined;
+  }
+
+  /** Issues or pulls, newest first, a page at a time. */
+  override async listIssues(
+    fullName: string,
+    query: ListIssuesQuery,
+  ): Promise<ProviderResult<Page<RemoteIssue>>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const limit = await this.pageSize();
+    const result = await this.api.call({
+      path: `${base}/${query.kind === "pull" ? "pulls" : "issues"}`,
+      query: {
+        state: query.state,
+        limit,
+        ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      },
+    });
+    if (!result.ok) return result;
+    const rows = asArray(field(result.value.data, "items")).filter(
+      (raw) => raw !== null && typeof raw === "object",
+    );
+    const items = rows
+      .map((raw) => toForgeWork(raw, this.webUrl, fullName))
+      .filter((i) => query.since === undefined || i.updatedAt >= query.since);
+    return succeed({ items, next: forgeCursor(result.value.data) });
+  }
+
+  override async getIssue(fullName: string, number: number): Promise<ProviderResult<RemoteIssue>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    let result = await this.api.call({ path: `${base}/issues/${number}` });
+    // A pull answers at `/issues` too, but only `/pulls` carries its branches and merge.
+    if (result.ok && asString(field(result.value.data, "kind")) === "pull")
+      result = await this.api.call({ path: `${base}/pulls/${number}`, query: { diff: 0 } });
+    if (!result.ok) return result;
+    return succeed(toForgeWork(result.value.data, this.webUrl, fullName));
+  }
+
+  override async listComments(
+    fullName: string,
+    number: number,
+    since?: string,
+  ): Promise<ProviderResult<readonly RemoteComment[]>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const comments: RemoteComment[] = [];
+    let after: string | undefined;
+    // A thread comes oldest first, `next` the id to continue after. Paging
+    // stops at the end of the thread; a thread that never ends is a failure,
+    // not a short list.
+    for (let page = 0; ; page++) {
+      if (page >= MAX_COMMENT_PAGES)
+        return fail("invalid_response", `thread ${number} has more than ${MAX_COMMENT_PAGES * 100} comments`);
+      const result = await this.api.call({
+        path: `${base}/issues/${number}/comments`,
+        query: { limit: 100, ...(after === undefined ? {} : { after }) },
+      });
+      if (!result.ok) return result;
+      for (const raw of asArray(field(result.value.data, "comments")))
+        comments.push(toForgeComment(raw, this.webUrl, fullName, number));
+      after = forgeCursor(result.value.data) ?? undefined;
+      if (after === undefined) break;
+    }
+    return succeed(since === undefined ? comments : comments.filter((c) => c.updatedAt >= since));
+  }
+
+  override async createIssue(
+    fullName: string,
+    input: { title: string; body: string; labels?: readonly string[] },
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `${base}/issues`,
+      method: "POST",
+      body: { title: input.title, body: input.body },
+    });
+    if (!result.ok) return result;
+    return succeed(toForgeWork(result.value.data, this.webUrl, fullName));
+  }
+
+  override async createComment(
+    fullName: string,
+    number: number,
+    body: string,
+  ): Promise<ProviderResult<RemoteComment>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `${base}/issues/${number}/comments`,
+      method: "POST",
+      body: { body },
+    });
+    if (!result.ok) return result;
+    return succeed(toForgeComment(result.value.data, this.webUrl, fullName, number));
+  }
+
+  override async createPull(
+    fullName: string,
+    input: { title: string; body: string; base: string; head: string },
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const path = `/repos/${seg(named.owner)}/${seg(named.name)}`;
+    // A fork's branch is `owner:branch`; a forge names it as head plus headRepo.
+    const parts = input.head.split(":");
+    if (parts.length > 2 || parts.some((p) => p === ""))
+      return fail("not_found", `not a branch: ${input.head}`);
+    const [owner, branch] = parts.length === 2 ? parts : [undefined, parts[0]];
+    const name = named.name;
+    const result = await this.api.call({
+      path: `${path}/pulls`,
+      method: "POST",
+      body: {
+        title: input.title,
+        body: input.body,
+        base: input.base,
+        head: branch,
+        ...(owner === undefined ? {} : { headRepo: `${owner}/${name}` }),
+      },
+    });
+    if (!result.ok) return result;
+    return succeed(toForgeWork(result.value.data, this.webUrl, fullName));
+  }
+
+  override async setState(
+    fullName: string,
+    number: number,
+    state: "open" | "closed",
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `${base}/issues/${number}`,
+      method: "PATCH",
+      body: { state },
+    });
+    if (!result.ok) return result;
+    return succeed(toForgeWork(result.value.data, this.webUrl, fullName));
   }
 }

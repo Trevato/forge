@@ -24,4 +24,4 @@ export const PATH_IS_DIRECTORY = "that path is a directory, not a file";
  * and in the API, so a mirror of a friend's app never reads as the whole of it.
  */
 export const FORGE_NOT_CARRIED =
-  "Code comes across, and the repository's history. Not yet: issues, pulls, comments, labels, and how the app runs. Never by default: its data and its secrets.";
+  "Code comes across, and the repository's history. Issues, pulls and comments read and write through. Not yet: labels, and how the app runs. Never by default: its data and its secrets.";
