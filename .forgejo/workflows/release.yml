@@ -100,7 +100,9 @@ jobs:
             case "$STATE" in
               ok) echo "$REPO@$SHA: $(printf '%s' "$BODY" | sed -n 's/.*"summary":"\([^"]*\)".*/\1/p')"; exit 0 ;;
               failed) echo "FATAL: the forge's own check failed on $SHA: $URL/$REPO/runs/$(printf '%s' "$BODY" | sed -n 's/.*"runId":"\([^"]*\)".*/\1/p')"; exit 1 ;;
-              superseded) echo "FATAL: main's check of $SHA was superseded and will not run; tag a commit main has checked"; exit 1 ;;
+              # A landing right after the cut cancels main's check of the tag. The commit passed its own landing gate,
+              # and verify-after runs the whole suite on main, so a busy hour must not hold a release.
+              superseded) echo "warning: main's check of $SHA was superseded by a later landing; relying on the landing gate and the boot proof"; exit 0 ;;
               none) [ $(( $(date +%s) - START )) -lt 600 ] || { echo "FATAL: main never checked $SHA in 10 min; tag a commit on main"; exit 1; } ;;
             esac
             [ "$(date +%s)" -lt "$DEADLINE" ] || { echo "FATAL: no green check of $SHA on $URL/$REPO in 2 h (last: ${STATE:-unreadable})"; exit 1; }
