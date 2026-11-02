@@ -22,6 +22,12 @@ const UNTIMED: Record<string, string> = {
   "/metrics": "Prometheus text exposition, scraped by token; not a page read",
 };
 
+/** Routes the fixture cannot exercise (they 5xx on it) → why; any other 429/5xx fails the walk. */
+const UNEXERCISED: Record<string, string> = {
+  "/api/v1/boards/:slug": "the fixture has no board repository to spawn git in",
+  "/api/v1/boards/:slug/panels/:id": "the fixture has no board repository to spawn git in",
+};
+
 const FILL: Record<string, string> = {
   owner: "alice", username: "alice", name: "notes", number: "1", org: "alice",
   slug: "main", id: "1", team: "core", scope: "alice", job: "1", oid: "0", env: "prod",
@@ -68,14 +74,23 @@ async function timed(pattern: string): Promise<{ status: number; session: boolea
   return { status: res.status, session: phases.includes("session") };
 }
 
+/** Walking every route is many requests; a loaded check machine must not turn that into a verdict. */
+const WALK_MS = 30_000;
+const BATCH = 8;
+
 test("no GET route answers 200 without a session phase unless the allowlist names it", async () => {
-  const untimed: string[] = [];
-  for (const pattern of getPatterns()) {
-    const r = await timed(pattern);
-    if (r.status === 200 && !r.session) untimed.push(pattern);
+  const patterns = getPatterns();
+  const results: Awaited<ReturnType<typeof timed>>[] = [];
+  for (let i = 0; i < patterns.length; i += BATCH) {
+    results.push(...(await Promise.all(patterns.slice(i, i + BATCH).map((p) => timed(p)))));
   }
+  // A throttled or failing route is not a route that was checked.
+  const unchecked = patterns.filter((_, i) => results[i]!.status === 429 || results[i]!.status >= 500).filter((p) => !(p in UNEXERCISED));
+  expect(unchecked).toEqual([]);
+  expect(results.filter((r) => r.status === 200).length).toBeGreaterThan(0);
+  const untimed = patterns.filter((_, i) => results[i]!.status === 200 && !results[i]!.session);
   expect(untimed.filter((p) => !(p in UNTIMED))).toEqual([]);
-});
+}, WALK_MS);
 
 test("an allowlisted route that now names session leaves the list", async () => {
   const patterns = new Set(getPatterns());
