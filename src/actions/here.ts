@@ -396,5 +396,21 @@ function repoActions(
     out.push({ do: "merge a pull", http: `POST ${r}/pulls/{number}/merge` });
   if (canAdmin(db, repo, viewer))
     out.push({ do: "change settings", http: `PATCH ${r}` });
+  // How a native fork follows its parent: a writer's moves, the same rule
+  // `takeOrTell` and `proposeToParentForge` ask (`requireWriter`).
+  if (
+    repo.forkParentId !== null &&
+    repo.origin === null &&
+    canWrite(db, repo, viewer)
+  )
+    out.push(
+      { do: "read how it follows its parent", http: `GET ${r}/following`, mcp: "following" },
+      { do: "take the parent's updates", http: `POST ${r}/following/take`, mcp: "take_updates" },
+      {
+        do: "propose its changes to the parent",
+        http: `POST ${r}/following/propose-parent`,
+        mcp: "propose_to_parent_forge",
+      },
+    );
   return out;
 }

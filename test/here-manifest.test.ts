@@ -205,6 +205,32 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(list).not.toContain("change settings");
   });
 
+  test("a writer of a fork is offered how it follows its parent; a reader and a plain repository's writer are not", async () => {
+    const fork = await forkRepo(app, usersByName["wes"]!, getRepo(app.db, "acme", "game")!);
+    if (!fork.ok) throw new Error(String(fork.error));
+    const path = "/wes/game";
+    const moves = [
+      "read how it follows its parent",
+      "take the parent's updates",
+      "propose its changes to the parent",
+    ];
+    const { body } = await manifest(path, "wes");
+    for (const d of moves) expect(does(body)).toContain(d);
+    expect(body.actions.find((a: any) => a.do === moves[1]).http).toBe(
+      "POST /api/v1/repos/wes/game/following/take",
+    );
+    expect(moves.map((d) => body.actions.find((a: any) => a.do === d).mcp)).toEqual([
+      "following",
+      "take_updates",
+      "propose_to_parent_forge",
+    ]);
+    for (const who of ["carol", undefined])
+      for (const d of moves)
+        expect(does((await manifest(path, who)).body)).not.toContain(d);
+    for (const d of moves)
+      expect(does((await manifest("/acme/game", "wes")).body)).not.toContain(d);
+  });
+
   test("the owner also changes the settings", async () => {
     const { body } = await manifest("/acme/game", "alice");
     expect(body.you.as).toBe("owner");
