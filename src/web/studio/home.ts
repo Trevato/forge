@@ -235,7 +235,7 @@ function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html | Promis
     kpis: () => {
       const ceilingUsd = forgeCeiling(ctx.app.config);
       const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
-      const kpiOpts = { idle: idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
+      const kpiOpts = { idle: () => idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
       return html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
         ${timePhase(request, "vitals", () => vitalsRow(db))} ${clogRow(db)}
         ${keeperRow(db, true)}

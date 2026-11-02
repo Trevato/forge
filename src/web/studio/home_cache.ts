@@ -8,14 +8,17 @@
  * every second, so a write-stamped entry never hit. Past 60 s the old answer
  * is still served at once, and one refresh per key runs after the response
  * (#7625); only a cold start, or an answer past the 10 min ceiling, computes
- * inline. The builders figure is the exception: it is read fresh on every
- * request, so it always agrees with the idle reason home prints beside it.
- * The waiting line stays on the write clock: the asks count must be exact.
+ * inline. The builders figure is the exception: the counts are read fresh on
+ * every request, and the idle reason rides in the cached answer only while
+ * the counts are the ones it was computed with; when they differ it is asked
+ * again. The waiting line stays on the write clock: the asks count must be
+ * exact.
  */
 import type { Database } from "bun:sqlite";
 import type { Answer } from "../../boards/query.ts";
 import { writeStamp } from "../../core/write_clock.ts";
-import { readBuilders, readKpis, type KpiTimer, type Kpis } from "../../flow/kpis.ts";
+import type { IdleReason } from "../../crew/idle_reason.ts";
+import { readBuilders, readKpis, slotsBusy, type KpiTimer, type Kpis } from "../../flow/kpis.ts";
 import { readVitals, type Vitals } from "../../flow/vitals.ts";
 import { createLog } from "../../kernel/log.ts";
 import { Stamped } from "../../kernel/stamped.ts";
@@ -136,14 +139,18 @@ export function cachedWaiting(db: Database, viewerId: string, compute: () => Wai
 /**
  * Admin only: the caller has checked. Keyed by UTC hour, ceiling and data
  * directory; kept 60 s and refreshed after (`servedStale`), all but the
- * builders, read fresh each time so they agree with the idle reason. Nothing
- * is kept inside a transaction, whose rows may roll back. `time` names
- * readKpis' parts for Server-Timing.
+ * builders' counts, read fresh each time (and the reason with them when they
+ * changed). Nothing is kept inside a transaction, whose rows may roll back.
+ * `time` names readKpis' parts for Server-Timing.
  */
 export function cachedKpis(
   db: Database,
   now: Date,
-  forge: { readonly ceilingUsd: number | null; readonly dataDir?: string },
+  forge: {
+    readonly ceilingUsd: number | null;
+    readonly dataDir?: string;
+    readonly idle?: () => IdleReason | null;
+  },
   time?: KpiTimer,
 ): Kpis {
   if (db.inTransaction) return readKpis(db, now, forge, time);
@@ -159,8 +166,13 @@ export function cachedKpis(
   // request in the next hour asks for a new key.
   const kept = servedStale(db, kpiCache(db), key, compute, () => readKpis(db, now, forge));
   if (computed) return kept;
-  const builders = time === undefined ? readBuilders(db) : time("kpis.builders", () => readBuilders(db));
-  return { ...kept, builders };
+  const read = (): Kpis["builders"] => {
+    const counts = readBuilders(db);
+    if (slotsBusy(counts)) return counts;
+    const same = counts.running === kept.builders.running && counts.slots === kept.builders.slots;
+    return { ...counts, idle: same ? kept.builders.idle : forge.idle?.() ?? null };
+  };
+  return { ...kept, builders: time === undefined ? read() : time("kpis.builders", read) };
 }
 
 /**

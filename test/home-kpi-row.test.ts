@@ -21,7 +21,7 @@ const hours = (n: number) => Array.from({ length: 24 }, (_, i) => (i === 3 ? n :
 describe("home kpi row", () => {
   test("five tiles with their links and figures", () => {
     const out = kpiRowFor(
-      { landedHours: hours(6), landed: 6, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
+      { landedHours: hours(6), landed: 6, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
       { sha: "abcdef0123456", at: "2026-10-19T11:00:00.000Z" },
     ).toString();
     expect(out).toContain('<span class="sha">abcdef0</span>');
@@ -36,7 +36,7 @@ describe("home kpi row", () => {
 
   test("the whole figure is in the title and the link's label, rounded and in studio words", () => {
     const out = kpiRowFor(
-      { landedHours: hours(7), landed: 7, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
+      { landedHours: hours(7), landed: 7, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
       { sha: "abcdef0123456", at: "2026-10-19T11:00:00.000Z" },
     ).toString();
     expect(out).toContain('title="0.29"');
@@ -48,13 +48,13 @@ describe("home kpi row", () => {
   });
 
   test("empty figures say so", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach: NO_REACH }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach: NO_REACH }, null).toString();
     expect(out).toContain("Nothing live yet");
     expect(out).toContain("No check finished in 24 h");
   });
 
   test("no git words render, not even in a title or label", () => {
-    const out = kpiRowFor({ landedHours: hours(1), landed: 1, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 1000, backupAt: null, reach: NO_REACH }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(1), landed: 1, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 1000, backupAt: null, reach: NO_REACH }, null).toString();
     expect(out).not.toMatch(/commit|merge|branch|repositor|pull request|checks (passed|failed)/i);
   });
 
@@ -78,7 +78,7 @@ describe("home kpi row", () => {
   });
 
   test("a truncated note carries its whole text as a title", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach: NO_REACH }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, reach: NO_REACH }, null).toString();
     expect(out).toContain('title="No check finished in 24 h"');
   });
 
@@ -91,7 +91,7 @@ describe("home kpi row", () => {
   });
 
   test("the builders tile says running of slots, titles it, and links to the crew", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     expect(out).toContain('href="/settings/crew"');
     expect(out).toContain('class="stat-value num" title="2 of 4">2 of 4<');
     expect(out).toContain('title="Crew builders running now, of 4 slots"');
@@ -99,7 +99,7 @@ describe("home kpi row", () => {
   });
 
   test("with no slots set the builders tile shows a dash and says so", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     expect(out).toContain('class="stat-value num" title="—">—<');
     expect(out).toContain('title="No slots set">No slots set<');
     expect(out).toContain(`aria-label="Builders running: —, No slots set"`);
@@ -107,7 +107,7 @@ describe("home kpi row", () => {
   });
 
   test("the builders note does not repeat the value", () => {
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     expect(out).toContain(">running now<");
   });
 
@@ -130,12 +130,12 @@ describe("the builders figure from the database", () => {
     db.run("INSERT INTO repo VALUES ('autonomous', 3, 'main', 'a'), ('autonomous', 1, 'main', 'b'), ('off', 8, 'main', 'c')");
     db.run("INSERT INTO run (id, kind, state) VALUES ('1','agent','running'), ('2','agent','running'), ('3','agent','queued'), ('4','check','running')");
     const { readKpis } = await import("../src/flow/kpis.ts");
-    expect(readKpis(db, new Date()).builders).toEqual({ running: 2, slots: 4 });
+    expect(readKpis(db, new Date()).builders).toEqual({ running: 2, slots: 4, idle: null });
   });
 });
 
 describe("the terminal's figures", () => {
-  const k = { landedHours: hours(6), landed: 6, live: { sha: "abcdef0123456", at: new Date().toISOString() }, builders: { running: 2, slots: 4 }, spend: { todayUsd: 12, ceilingUsd: 40 }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH };
+  const k = { landedHours: hours(6), landed: 6, live: { sha: "abcdef0123456", at: new Date().toISOString() }, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 12, ceilingUsd: 40 }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH };
   test("the same nine figures in the same words", () => {
     const lines = kpiLines(k, { sha: "abcdef0123456", since: "5m ago" });
     expect(lines).toHaveLength(9);
@@ -143,7 +143,7 @@ describe("the terminal's figures", () => {
     expect(lines[4]).toBe("Crew spend today $12 of $40");
     expect(kpiLines({ ...k, spend: { todayUsd: 0.4, ceilingUsd: null } }, null)[4]).toBe("Crew spend today $0.40, no forge ceiling");
     expect(lines[3]).toBe("Builders running 2 of 4");
-    expect(kpiLines({ ...k, builders: { running: 0, slots: 0 } }, null)[3]).toBe("Builders running —, no slots set");
+    expect(kpiLines({ ...k, builders: { running: 0, slots: 0, idle: null } }, null)[3]).toBe("Builders running —, no slots set");
     expect(lines[0]).toContain("Shipped per hour 0.3");
     expect(lines[0]).toContain("6 changes in 24 h");
     expect(lines[1]).toContain("Live version abcdef0");
@@ -159,7 +159,7 @@ describe("the terminal's figures", () => {
 
 describe("the spend tile", () => {
   const row = (spend: { todayUsd: number; ceilingUsd: number | null }) =>
-    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend }, null).toString();
+    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend }, null).toString();
 
   test("shows today's spend of the ceiling, the cents in the title, linking to the crew page", () => {
     const out = row({ todayUsd: 12.34, ceilingUsd: 40 });
@@ -205,7 +205,7 @@ describe("home kpi row: the last off-box backup", () => {
   const NOW = new Date("2026-10-20T12:00:00.000Z");
   const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
   const row = (backupAt: string | null) =>
-    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt, reach: NO_REACH, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null }, null, NOW).toString();
+    kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt, reach: NO_REACH, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null }, null, NOW).toString();
   const tile = (out: string) => /<a class="stat"[^>]*href="\/settings\/backups"[^>]*>/.exec(out)![0];
 
   test("a backup 2 h old reads its age, with the exact time, and is not flagged", () => {
@@ -252,7 +252,7 @@ describe("home kpi row: the last off-box backup", () => {
 describe("the reach tiles", () => {
   test("say what they count in words, each linking to the reach board", () => {
     const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 };
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     for (const v of ["5 today", "31 in 7 days", "3 of 12", "signed in today", "1.3 s", "reacts in 180 ms"]) expect(out).toContain(`>${v}<`);
     expect((out.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(3);
     expect(out).not.toContain("INP");
@@ -262,12 +262,12 @@ describe("the reach tiles", () => {
   test("the terminal draws the 30 days as one block per day", () => {
     const days = Array.from({ length: 30 }, (_, i) => (i === 29 ? 8 : 0));
     const reach = { usersToday: 0, usersTotal: 1, visitorsToday: 8, visitors7d: 8, visitorDays: days, loadP75: null, inpP75: null };
-    const line = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).find((l) => l.startsWith("Visitors"))!;
+    const line = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).find((l) => l.startsWith("Visitors"))!;
     expect(line).toContain("▁".repeat(29) + "█");
   });
 
   test("the terminal says the same", () => {
-    const lines = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 }, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null);
+    const lines = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 }, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null);
     expect(lines.find((l) => l.startsWith("Visitors"))).toContain("Visitors 5 today, 31 in 7 days");
     expect(lines).toContain("Accounts 3 of 12 signed in today");
     expect(lines.find((l) => l.startsWith("Visitors"))).toContain("▁".repeat(30));
@@ -286,7 +286,7 @@ describe("the visitors sparkline", () => {
     expect(r.visitorDays[29]).toBe(2);
     expect(r.visitorDays[0]).toBe(1); // 2026-09-20 is 29 days back; 09-19 is out
     expect(r.visitorDays.reduce((a, b) => a + b, 0)).toBe(3);
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: r, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: r, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     const svg = /<svg[^>]*last 30 days[^>]*><polyline points="([^"]+)"/.exec(out)!;
     expect(svg[1]!.split(" ")).toHaveLength(30);
     expect(out).toContain('href="/boards/reach"');
@@ -409,7 +409,7 @@ describe("home waiting line", () => {
 });
 
 describe("the forge ceiling hit (#5798)", () => {
-  const base = { landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0 } };
+  const base = { landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null } };
   const over = { todayUsd: 601, ceilingUsd: 600, hitAt: "2026-10-25T14:03:20.000Z" };
 
   test("past the cap the tile is attention-toned and names the time; the terminal says the same words", () => {

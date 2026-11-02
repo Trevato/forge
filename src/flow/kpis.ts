@@ -19,6 +19,7 @@
 import type { Database } from "bun:sqlite";
 import { spentTodayEverywhere } from "../crew/autonomy.ts";
 import { ceilingHitAt, ceilingReached } from "./ceiling.ts";
+import type { IdleReason } from "../crew/idle_reason.ts";
 import { lastOffBox } from "../snapshot/off_box.ts";
 import { readReach, type Reach } from "./reach.ts";
 import { HOURS, median } from "./throughput.ts";
@@ -35,7 +36,12 @@ export interface Kpis {
   /** Median check duration in milliseconds over checks that finished in 24 h; null for none. */
   readonly medianCheckMs: number | null;
   /** Crew builders running now, of the slots the autonomous repositories are set to. */
-  readonly builders: { readonly running: number; readonly slots: number };
+  readonly builders: {
+    readonly running: number;
+    readonly slots: number;
+    /** Why none is starting anything now (`idleReason`); null while every slot is busy or no reason is known. */
+    readonly idle: IdleReason | null;
+  };
   /** What the crew's runs cost since UTC midnight, and the forge's daily ceiling (null: none set). */
   readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null; /** When the run that crossed the cap was created (ISO); null while under it. */ readonly hitAt?: string | null };
   /** When a snapshot was last known off the machine (a bucket destination or the mirror, `off_box.ts`); null when never. */
@@ -51,16 +57,21 @@ export type KpiTimer = <T>(name: KpiPart, fn: () => T) => T;
 
 const untimed: KpiTimer = (_name, fn) => fn();
 
-/** Crew builders running now, of the autonomous repositories' slots: one cheap query, so home reads it fresh beside the idle reason (#7624). */
-export function readBuilders(db: Database): Kpis["builders"] {
-  return (
+/** Every slot is taken: no reason to name. One rule, for the fresh read and home's cached one. */
+export function slotsBusy(b: { readonly running: number; readonly slots: number }): boolean {
+  return b.slots > 0 && b.running >= b.slots;
+}
+
+/** Crew builders running now, of the autonomous repositories' slots: one cheap query, so home reads the counts fresh (#7624). `idle` is the reason the caller already has. */
+export function readBuilders(db: Database, idle: IdleReason | null = null): Kpis["builders"] {
+  const counts =
     db
       .query<{ running: number; slots: number }, []>(
         `SELECT (SELECT COUNT(*) FROM run WHERE kind = 'agent' AND state = 'running') AS running,
                 (SELECT COALESCE(SUM(autonomy_slots), 0) FROM repo WHERE autonomy != 'off') AS slots`,
       )
-      .get() ?? { running: 0, slots: 0 }
-  );
+      .get() ?? { running: 0, slots: 0 };
+  return { ...counts, idle };
 }
 
 /**
@@ -104,7 +115,12 @@ function firstLandings(db: Database, since: string, to: string): string[] {
 export function readKpis(
   db: Database,
   now: Date,
-  forge: { readonly ceilingUsd: number | null; readonly dataDir?: string } = { ceilingUsd: null },
+  forge: {
+    readonly ceilingUsd: number | null;
+    readonly dataDir?: string;
+    /** Why builders are idle, asked inside the builders part; left out, no reason is named. */
+    readonly idle?: () => IdleReason | null;
+  } = { ceilingUsd: null },
   time: KpiTimer = untimed,
 ): Kpis {
   const end = now.getTime();
@@ -135,7 +151,10 @@ export function readKpis(
     .all(since, to)
     .map((r) => Math.round(r.ms)));
 
-  const builders = time("kpis.builders", () => readBuilders(db));
+  const builders = time("kpis.builders", () => {
+    const counts = readBuilders(db);
+    return slotsBusy(counts) ? counts : { ...counts, idle: forge.idle?.() ?? null };
+  });
 
   const spend = time("kpis.spend", () => {
     const todayUsd = spentTodayEverywhere(db, now);

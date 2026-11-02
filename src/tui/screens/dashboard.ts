@@ -113,7 +113,7 @@ import { firedAlarms } from "../../flow/alarms.ts";
 import { lastClearedNote } from "../../flow/clog_tick.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { alarmIdleCrew } from "../../flow/alarm_idle_crew.ts";
-import { idleLine, idleReason, type IdleReason } from "../../crew/idle_reason.ts";
+import { idleLine, idleReason } from "../../crew/idle_reason.ts";
 import { noReleaseAlarm } from "../../flow/alarm_no_release.ts";
 import { redMainAlarm } from "../../flow/alarm_red_main.ts";
 import { alarmStuck } from "../../flow/alarm_stuck.ts";
@@ -351,10 +351,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ? []
         : [
             ...idleLines(f.app, now),
-            ...withIdleWord(
-              kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
-              idleReason(f.app, now),
-            ),
+            ...kpiLines(readKpis(f.db, now, { ...kpiForge(f.app), idle: () => idleReason(f.app, now) }), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
             vitalsLine(readVitals(f.db, now)),
             ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }).map((a) => a.says),
             ...(cleared === undefined ? [] : [cleared]),
@@ -1441,12 +1438,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   }
 
   return screen;
-}
-
-/** The builders line ends ` · <word>` while they are idle, the word home prints (`idleReason`). */
-function withIdleWord(lines: string[], reason: IdleReason | null): string[] {
-  if (reason === null) return lines;
-  return lines.map((l) => (l.startsWith("Builders running ") ? `${l} · ${reason.word}` : l));
 }
 
 /** Why the builders are idle, as the one line an admin's home reads; none while they are not. */

@@ -11,7 +11,10 @@ import { getUserByName } from "../src/core/users.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { idleReason } from "../src/crew/idle_reason.ts";
 import { writeStamp } from "../src/core/write_clock.ts";
-import { kpiRow } from "../src/web/studio/kpi_row.ts";
+import { kpiRow, kpiRowFor } from "../src/web/studio/kpi_row.ts";
+import { cachedKpis, kpiCache } from "../src/web/studio/home_cache.ts";
+import { readKpis } from "../src/flow/kpis.ts";
+import { kpiLines } from "../src/flow/kpi_words.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { noteLimit } from "../src/core/standing.ts";
 import { addSubscription, EVERYONE, setGrants } from "../src/core/subscriptions.ts";
@@ -66,8 +69,11 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const home = async (): Promise<string> =>
-  freshHome(servers.url, `forge_session=${createSession(app.db, admin.id).token}; forge_mode=studio`);
+/** The reason rides in home's 60 s KPI answer (#7664): a test that changed the state forgets the answer first. */
+const home = async (keep = false): Promise<string> => {
+  if (!keep) kpiCache(app.db).clear();
+  return freshHome(servers.url, `forge_session=${createSession(app.db, admin.id).token}; forge_mode=studio`);
+};
 
 async function terminal(): Promise<string> {
   const t = headlessTerminal(200, 40);
@@ -114,8 +120,8 @@ test("no subscription with headroom: the granted account's window is full", asyn
   const later = new Date(now + 2 * 3_600_000);
   expect(idleReason(app, new Date(now))?.word).toBe("no subscription with headroom");
   expect(idleReason(app, later)?.word).not.toBe("no subscription with headroom");
-  expect(String(kpiRow(app.db, { now: new Date(now), idle: idleReason(app, new Date(now)) }))).toContain("no subscription with headroom");
-  expect(String(kpiRow(app.db, { now: later, idle: idleReason(app, later) }))).not.toContain("no subscription with headroom");
+  expect(String(kpiRow(app.db, { now: new Date(now), idle: () => idleReason(app, new Date(now)) }))).toContain("no subscription with headroom");
+  expect(String(kpiRow(app.db, { now: later, idle: () => idleReason(app, later) }))).not.toContain("no subscription with headroom");
   expect(writeStamp(app.db)).toBe(stampBefore);
   expect(tile(page)).toContain("no subscription with headroom");
   expect(tile(page)).toContain('href="/subscriptions"');
@@ -147,8 +153,41 @@ test("both doors agree within home's 60 s KPI entry: the run ends, each says 0 o
   expect(tile(busy)).toContain("1 of 1");
   for (const r of app.db.query<{ id: string }, []>("SELECT id FROM run WHERE kind = 'agent' AND state = 'running'").all())
     finishRun(app.db, r.id, { state: "ok", summary: "done" });
-  const page = await home();
+  // Within the entry the counts changed, so the reason is asked again rather than left silent.
+  const page = await home(true);
   expect(tile(page)).toContain("0 of 1");
   expect(tile(page)).toContain("ceiling reached");
   expect(await terminal()).toContain("Builders running 0 of 1 · ceiling reached");
+});
+
+test("the reason rides in the cached KPI answer: readKpis carries it, the tile and line print it (#7664)", async () => {
+  for (const r of app.db.query<{ id: string }, []>("SELECT id FROM run WHERE kind = 'agent' AND state = 'running'").all())
+    finishRun(app.db, r.id, { state: "ok", summary: "done" });
+  const now = new Date();
+  const k = readKpis(app.db, now, { ceilingUsd: null, idle: () => idleReason(app, now) });
+  expect(k.builders.idle).toEqual({ word: "ceiling reached", href: "/meter" });
+  expect(kpiLines(k, null)[3]).toBe("Builders running 0 of 1 · ceiling reached");
+  expect(tile(String(kpiRowFor(k, null, now)))).toContain('href="/meter"');
+  // Every slot busy: nothing is added, and the reason is not asked.
+  claimRun(app.db, createRun(app.db, { repoId: repo.id, kind: "agent", actorId: builder.id, reason: "assigned" }).id);
+  const busy = readKpis(app.db, now, { ceilingUsd: null, idle: () => { throw new Error("asked"); } });
+  expect(busy.builders.idle).toBeNull();
+});
+
+test("a cached reason is dropped when the counts change: one of two slots running names no stale reason (#7664)", () => {
+  const run = (id: string) => finishRun(app.db, id, { state: "ok", summary: "done" });
+  for (const r of app.db.query<{ id: string }, []>("SELECT id FROM run WHERE kind = 'agent' AND state = 'running'").all()) run(r.id);
+  app.db.query("UPDATE repo SET autonomy_slots = 2 WHERE autonomy != 'off'").run();
+  kpiCache(app.db).clear();
+  const now = new Date();
+  const ceiling = { word: "ceiling reached", href: "/meter" };
+  let reason: typeof ceiling | null = ceiling;
+  const forge = { ceilingUsd: null, idle: () => reason };
+  expect(cachedKpis(app.db, now, forge).builders).toEqual({ running: 0, slots: 2, idle: ceiling });
+  // Same counts: the entry's reason is kept without asking.
+  expect(cachedKpis(app.db, now, { ceilingUsd: null, idle: () => { throw new Error("asked"); } }).builders.idle).toEqual(ceiling);
+  // One of two starts: the entry is still warm, but its reason was for 0 of 2.
+  claimRun(app.db, createRun(app.db, { repoId: repo.id, kind: "agent", actorId: builder.id, reason: "assigned" }).id);
+  reason = null;
+  expect(cachedKpis(app.db, now, forge).builders).toEqual({ running: 1, slots: 2, idle: null });
 });

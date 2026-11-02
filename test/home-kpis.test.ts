@@ -132,7 +132,7 @@ describe("home kpis", () => {
 
 describe("home kpi row titles", () => {
   const full = kpiRowFor(
-    { landedHours: Array.from({ length: 24 }, (_, i) => (i === 0 ? 6 : 0)), landed: 6, live: null, builders: { running: 2, slots: 4 }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
+    { landedHours: Array.from({ length: 24 }, (_, i) => (i === 0 ? 6 : 0)), landed: 6, live: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: 185_000, backupAt: null, reach: NO_REACH },
     { sha: "abcdef0123456789", at: "2026-10-19T11:00:00.000Z" },
   ).toString();
 

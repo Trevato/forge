@@ -32,7 +32,7 @@ export function trendText(series: readonly number[]): string {
 }
 
 /** Builders running of their slots: `2 of 4`, or an em dash when no slots are set. */
-export function buildersValue(b: Kpis["builders"]): string {
+export function buildersValue(b: Pick<Kpis["builders"], "running" | "slots">): string {
   return b.slots === 0 ? "—" : `${b.running} of ${b.slots}`;
 }
 
@@ -141,7 +141,7 @@ export function kpiLines(k: Kpis, live: { sha: string; since: string } | null, n
     `Shipped per hour ${(k.landed / k.landedHours.length).toFixed(1)}  ${sparkText(k.landedHours)}  ${k.landed} ${k.landed === 1 ? "change" : "changes"} in 24 h`,
     `Live version ${live === null ? "— nothing live yet" : `${live.sha.slice(0, 7)}, live ${live.since}`}`,
     `Median check time ${checkTime(k.medianCheckMs)}`,
-    `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}`,
+    `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}${k.builders.idle === null ? "" : ` · ${k.builders.idle.word}`}`,
     `Crew spend today ${spendValue(k.spend)}${spendLineNote(k.spend)}`,
     `Last off-box backup ${backupAge(k.backupAt, now)}${backupOverdue(k.backupAt, now) ? ", overdue" : ""}`,
     `Visitors ${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}  ${trendText(k.reach.visitorDays)}  30 days`,

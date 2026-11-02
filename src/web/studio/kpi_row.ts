@@ -92,8 +92,8 @@ export function liveNow(): { sha: string; at: string } | null {
   return commit === null ? null : { sha: commit, at: BOOTED };
 }
 
-/** `idle` is why the builders are idle now (`idleReason`), asked at render time: it moves with the clock, which the cached figures do not. */
-export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date(), idle: IdleReason | null = null): Html {
+export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date()): Html {
+  const idle = k.builders.idle;
   const overdue = backupOverdue(k.backupAt, now);
   const spendWords = spendCeilingWords(k.spend);
   const rate = k.landed / k.landedHours.length;
@@ -165,10 +165,10 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
 }
 
 /** The figures count every repository, so the caller shows this to an admin only. */
-export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; idle?: IdleReason | null; now?: Date; time?: KpiTimer } = {}): Html {
+export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; idle?: () => IdleReason | null; now?: Date; time?: KpiTimer } = {}): Html {
   const now = opts.now ?? new Date();
-  const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }) };
-  return kpiRowFor(cachedKpis(db, now, forge, opts.time), liveNow(), now, opts.idle ?? null);
+  const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }), ...(opts.idle === undefined ? {} : { idle: opts.idle }) };
+  return kpiRowFor(cachedKpis(db, now, forge, opts.time), liveNow(), now);
 }
 
 /**
