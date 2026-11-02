@@ -5,80 +5,17 @@ import { ROUTES } from "../src/contract/openapi.ts";
 /**
  * Every `/api/v1` route registered in src/http/api.ts has a row in `ROUTES`
  * (one file each under src/contract/openapi/routes/), or is listed here. This list only shrinks: describe
- * a route, then delete its line. An entry that is now described is ignored.
+ * a route, then delete its line: an entry that is now described fails the test
+ * until you do.
  */
 const NOT_YET_DESCRIBED: readonly string[] = [
-  "DELETE /api/v1/orgs/{}/teams/{}/members/{}",
-  "DELETE /api/v1/repos/{}/{}/labels/{}",
-  "DELETE /api/v1/user/keys/{}",
-  "DELETE /api/v1/user/origins/{}",
-  "DELETE /api/v1/user/pins/{}/{}",
-  "GET /api/v1/agents",
-  "GET /api/v1/asks",
-  "GET /api/v1/feed",
-  "GET /api/v1/feed/chips",
-  "GET /api/v1/migrate/{}/stream",
-  "GET /api/v1/openapi.json",
-  "GET /api/v1/orgs/{}",
-  "GET /api/v1/orgs/{}/teams",
-  "GET /api/v1/orgs/{}/teams/{}/members",
-  "GET /api/v1/repos/{}/{}/app/{}/open",
-  "GET /api/v1/repos/{}/{}/commits/{}/check",
-  "GET /api/v1/repos/{}/{}/contents/{}",
-  "GET /api/v1/repos/{}/{}/labels",
-  "GET /api/v1/repos/{}/{}/milestones",
-  "GET /api/v1/repos/{}/{}/milestones/{}",
-  "GET /api/v1/repos/{}/{}/pulls/{}/review-states",
-  "GET /api/v1/user",
-  "GET /api/v1/user/assigned",
-  "GET /api/v1/user/keys",
-  "GET /api/v1/user/orgs",
-  "GET /api/v1/user/origins",
-  "GET /api/v1/user/origins/oauth/{}",
-  "GET /api/v1/user/origins/{}/browse/{}/{}",
-  "GET /api/v1/user/origins/{}/browse/{}/{}/issues",
-  "GET /api/v1/user/origins/{}/browse/{}/{}/issues/{}",
-  "GET /api/v1/user/origins/{}/browse/{}/{}/pulls",
-  "GET /api/v1/user/origins/{}/browse/{}/{}/pulls/{}",
-  "GET /api/v1/user/origins/{}/mirror/{}/stream",
-  "GET /api/v1/user/origins/{}/repos",
-  "GET /api/v1/user/pins",
-  "GET /api/v1/users/{}",
-  "GET /api/v1/users/{}/repos",
-  "PATCH /api/v1/user",
-  "POST /api/v1/asks/bulk",
-  "POST /api/v1/asks/bulk/{}/undo",
-  "POST /api/v1/asks/decide",
-  "POST /api/v1/asks/decide/{}/undo",
-  "POST /api/v1/asks/proposal/{}/{}",
-  "POST /api/v1/feed/chips",
-  "POST /api/v1/repos/{}/{}/issues/{}/dependencies/{}/confirm",
-  "POST /api/v1/repos/{}/{}/labels",
-  "POST /api/v1/repos/{}/{}/milestones/{}/limb",
-  "POST /api/v1/repos/{}/{}/prompts/{}/run",
-  "POST /api/v1/repos/{}/{}/proposal-tokens",
-  "POST /api/v1/repos/{}/{}/pulls/{}/comments",
-  "POST /api/v1/repos/{}/{}/pulls/{}/looks",
-  "POST /api/v1/repos/{}/{}/pulls/{}/review-states",
-  "POST /api/v1/repos/{}/{}/pulls/{}/variant",
-  "POST /api/v1/repos/{}/{}/reports/{}/accept",
-  "POST /api/v1/repos/{}/{}/reports/{}/dismiss",
-  "POST /api/v1/repos/{}/{}/runs/{}/steer",
-  "POST /api/v1/user/keys",
-  "POST /api/v1/user/origins",
-  "POST /api/v1/user/origins/oauth",
-  "POST /api/v1/user/origins/{}/sync",
-  "PUT /api/v1/front",
-  "PUT /api/v1/repos/{}/{}/crew/{}",
-  "PUT /api/v1/repos/{}/{}/pulls/{}/labels",
-  "PUT /api/v1/user/pins/{}/{}",
 ];
 
 const norm = (path: string) => path.replace(/[:*]\w+/g, "{}").replace(/\{\w+\}/g, "{}");
 
-/** Every file under src/http that registers routes. */
+/** Every file under src/http (and its route modules in src/http/api/) that registers routes. */
 const files = () =>
-  readdirSync(new URL("../src/http/", import.meta.url))
+  [...readdirSync(new URL("../src/http/", import.meta.url)), ...readdirSync(new URL("../src/http/api/", import.meta.url)).map((f) => `api/${f}`)]
     .filter((f) => f.endsWith(".ts"))
     .map((f) => ({ f, src: readFileSync(new URL(`../src/http/${f}`, import.meta.url), "utf8") }))
     .filter(({ src }) => src.includes("router.add("));
@@ -116,9 +53,13 @@ test("every registered /api/v1 route has an OpenAPI row or is listed as not yet 
   const described = new Set(ROUTES.map((r) => `${r.method.toUpperCase()} ${norm(r.path)}`));
   const all = registered();
   const missing = all.filter((r) => !described.has(r) && !NOT_YET_DESCRIBED.includes(r));
-  const removable = NOT_YET_DESCRIBED.filter((r) => described.has(r));
-  console.log(`openapi-coverage: ${removable.length} NOT_YET_DESCRIBED entries could be removed`);
   expect(missing, `routes with no OpenAPI row (add a file under src/contract/openapi/routes/, then run bun scripts/openapi-routes.ts):\n${missing.join("\n")}`).toEqual([]);
+});
+
+test("NOT_YET_DESCRIBED has no entry that is now described", () => {
+  const described = new Set(ROUTES.map((r) => `${r.method.toUpperCase()} ${norm(r.path)}`));
+  const stale = NOT_YET_DESCRIBED.filter((r) => described.has(r));
+  expect(stale, `described now; delete these lines from NOT_YET_DESCRIBED:\n${stale.join("\n")}`).toEqual([]);
 });
 
 test("NOT_YET_DESCRIBED is sorted and names registered routes", () => {

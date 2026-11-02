@@ -97,6 +97,8 @@ export function familyLines(view: FamilyView): [string, string][] {
             c.severedAt !== null ? `follows nothing since ${c.severedAt.slice(0, 10)}` : c.forgeTip === null ? "" : `code at ${c.forgeTip.slice(0, 7)}`,
             c.openProposals === null ? "" : `${c.openProposals} open`,
           ].filter((b) => b !== "");
+    // Where it runs, as `/forges` says it: "own cell", "hosted", or why it is hosted.
+    if (c.placement !== null) bits.push(c.placement);
     out.push([`child ${c.name}`, bits.join(" · ")]);
     const follow = followLine(c);
     if (follow !== null) out.push(["", follow]);

@@ -81,8 +81,9 @@ afterAll(async () => {
 
 describe("notes from the app, in the terminal", () => {
   test("only an app's repository has the rows", async () => {
-    expect(await palette(bob, notes, [":"])).toContain("alice/notes — Tell the builders");
-    expect(await palette(bob, plain, [":"])).not.toContain("Tell the builders");
+    // Filtered, so the row's presence does not depend on how many others the palette lists.
+    expect(await palette(bob, notes, [":", "Tell the"])).toContain("alice/notes — Tell the builders");
+    expect(await palette(bob, plain, [":", "Tell the"])).not.toContain("Tell the builders");
   });
 
   test("a note files a from-app issue as the person", async () => {

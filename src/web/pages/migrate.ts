@@ -13,6 +13,10 @@
  * commits and selects the one the app most likely lives on — the person's
  * newest (`origins/work-branch.ts`); the Migrate button carries the choice.
  *
+ * An account whose token sees public repositories only says so on its card
+ * (`origins/token-reach.ts`), with GitHub's new-token page one click away
+ * and a field that replaces the token in place.
+ *
  * Every mutation is `migrateRepo`; the page only puts its answer into words.
  */
 
@@ -57,6 +61,13 @@ import {
   selectField,
   field as formField,
 } from "../ui.ts";
+import {
+  FINE_GRAINED_NOTE,
+  PUBLIC_ONLY,
+  newTokenUrl,
+  tokenReach,
+} from "../../origins/token-reach.ts";
+import type { TokenReach } from "../../origins/types.ts";
 import { STAGE_BADGE_JS, stageRow, stageStateFor } from "../stage-row.ts";
 import { prefill, originHost } from "./migrate-prefill.ts";
 import { githubConnectable, hostLabel } from "./origins.ts";
@@ -92,7 +103,10 @@ interface OriginChoices {
   readonly id: string;
   readonly kind: string;
   readonly host: string;
+  readonly webUrl: string;
   readonly repos: readonly OriginRepoRow[];
+  /** What its token sees; undefined when the origin names no limit. */
+  readonly reach: TokenReach | undefined;
 }
 
 /** Every origin you connected; one that cannot list has no rows. */
@@ -100,13 +114,18 @@ async function originChoices(ctx: Ctx): Promise<OriginChoices[]> {
   const user = ctx.auth.user!;
   const out: OriginChoices[] = [];
   for (const origin of listUserOrigins(ctx.app, user)) {
-    const listed = await listRemoteRepos(ctx.app, user, origin.id);
+    const [listed, reach] = await Promise.all([
+      listRemoteRepos(ctx.app, user, origin.id),
+      tokenReach(ctx.app, origin),
+    ]);
     out.push({
       id: origin.id,
       kind: origin.kind,
       host: originHost(origin.webUrl),
+      webUrl: origin.webUrl,
       label: `${origin.login} @ ${hostLabel(origin.webUrl)}`,
       repos: listed.ok ? listed.value : [],
+      reach,
     });
   }
   return out;
@@ -222,6 +241,36 @@ export function matchesFilter(
 }
 
 /**
+ * Under an account whose token lists public repositories only: why the
+ * private ones are missing, where to make a token that sees them, and the
+ * field that puts it on this origin without disconnecting it.
+ */
+function publicOnly(origin: OriginChoices): Html {
+  return html`<div class="mt" id="migrate-reach-${origin.id}" data-reach="public">
+    <p class="small">${icon("lock")} ${PUBLIC_ONLY} — ${origin.label}.</p>
+    <p class="small">
+      <a href="${newTokenUrl(origin.webUrl)}" target="_blank" rel="noopener noreferrer"
+        >Make a token with <span class="mono">repo</span> on GitHub</a
+      >
+    </p>
+    <form method="post" action="/settings/origins/${origin.id}/token">
+      <input type="hidden" name="then" value="migrate" />
+      ${formField({
+        label: `New token for ${origin.label}`,
+        name: "token",
+        type: "password",
+        hint: `${FINE_GRAINED_NOTE}.`,
+        mono: true,
+        required: true,
+        autocomplete: "off",
+        id: `f-token-${origin.id}`,
+      })}
+      ${btn("Replace", { size: "sm", variant: "outline", type: "submit" })}
+    </form>
+  </div>`;
+}
+
+/**
  * The accounts half, outside the migrate form (forms do not nest): each
  * connected origin with a Disconnect, and Connect GitHub when there is no
  * GitHub account yet. Both come back here (`then=migrate`).
@@ -265,6 +314,7 @@ function accounts(ctx: Ctx, origins: readonly OriginChoices[]): Html {
             }),
           )}
         </ul>`}
+    ${origins.filter((o) => o.reach === "public").map(publicOnly)}
     ${connect}`,
     {
       head: html`${icon("globe")}
@@ -294,16 +344,20 @@ function picker(
     </p>`;
   return html`<div class="field" id="migrate-picker">
     <label for="f-q">Your repositories</label>
-    <input
-      class="input"
-      type="search"
-      id="f-q"
-      name="q"
-      form="migrate-search"
-      value="${values.q}"
-      placeholder="Filter by name or description"
-      autocomplete="off"
-    />
+    <div class="bar">
+      <input
+        class="input"
+        type="search"
+        id="f-q"
+        name="q"
+        form="migrate-search"
+        value="${values.q}"
+        placeholder="Filter by name or description"
+        autocomplete="off"
+        enterkeyhint="search"
+      />
+      ${btn("Filter", { variant: "outline", type: "submit", form: "migrate-search", icon: "search" })}
+    </div>
     ${values.source === ""
       ? null
       : html`<input type="hidden" name="source" value="${values.source}" />`}
@@ -526,7 +580,7 @@ function migrateForm(
  * The name field follows the picked repository or the pasted URL until
  * somebody types in it — a preview; the server names it the same way.
  */
-const migrateJs = /* js */ `
+export const migrateJs = /* js */ `
 (function () {
   var name = document.getElementById('f-name');
   var url = document.getElementById('f-url');

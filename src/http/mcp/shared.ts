@@ -8,6 +8,9 @@ import { KIND_CHIPS, parseChipArgs } from "../../core/feed_chips.ts";
 import type { Ctx } from "../context.ts";
 import type { BoardError } from "../../actions/boards.ts";
 import { BOARD_NOT_SAVED } from "../../actions/board_words.ts";
+import { fence, fenceTag, fenceUp, hold, named, readFenced } from "../../core/fence.ts";
+import { appendTurn, openConversation } from "../../core/conversations.ts";
+import { asksFirst, confirmSentence } from "../../crew/conversation_confirm.ts";
 
 export type Args = Record<string, unknown>;
 export type Answer =
@@ -25,6 +28,14 @@ export const attachWords = (error: string): string =>
     bad_image: "image must be a PNG or JPEG, base64, that reads",
     too_large: "the picture is over 5 MB",
   })[error] ?? "refused";
+
+/** What an SSH key refusal says, on MCP and in the terminal. */
+export const keyWords = (error: string): string =>
+  ({
+    invalid_key: "not a public key in authorized_keys form",
+    key_exists: "that key is already registered",
+    not_found: "no such key of yours",
+  })[error] ?? error;
 
 export const bad = (error: string, message: string): Answer => ({
   ok: false,
@@ -44,8 +55,8 @@ export interface Tool {
   readonly adminOnly?: true;
   /** Listed, and callable, only with a token of this scope. */
   readonly needsAdminScope?: true;
-  /** With this argument absent the tool only reads, whatever the token. */
-  readonly readsWithout?: string;
+  /** With this argument (or all of these) absent the tool only reads, whatever the token. */
+  readonly readsWithout?: string | readonly string[];
   /** A call this accepts only reads, whatever the token. */
   readonly readsWhen?: (args: Args) => boolean;
   /** A write that only plans (`dryRun` not false) is a read: `ro` may ask. */
@@ -61,8 +72,94 @@ export const visible = (tool: Tool, ctx: Ctx, user: User): boolean =>
 /** Whether this call only plans or reads, so a read-only token may make it. */
 export const plansOnly = (tool: Tool, args: Args): boolean =>
   (tool.dryByDefault === true && args["dryRun"] !== false) ||
-  (tool.readsWithout !== undefined && args[tool.readsWithout] === undefined) ||
+  (tool.readsWithout !== undefined && [tool.readsWithout].flat().every((k) => args[k] === undefined)) ||
   tool.readsWhen?.(args) === true;
+
+/** What a held write tells the forge's agent, beside the confirm's id. */
+export const NEEDS_CONFIRM =
+  "this write follows text read as data and the person's newest words do not name it, so nothing was done: it is held as a confirm; say in one sentence what it would do and let the person decide";
+
+/**
+ * The fence's hold (#7649): for the forge's own agent (a via token), a write
+ * after a read of fenced text that the person's newest words do not name
+ * is kept as a confirm and not done. Undefined: go ahead.
+ */
+export function heldWrite(ctx: Ctx, user: User, tool: Tool, args: Args): Record<string, unknown> | undefined {
+  const via = ctx.auth.through;
+  if (via === undefined || !tool.writes || plansOnly(tool, args)) return undefined;
+  // An admin-only tool stays unknown to a person who is not one.
+  if (tool.adminOnly === true && !user.isAdmin) return undefined;
+  const words = fenceUp(ctx.app.db, via);
+  if (words === undefined || named(words, tool.name, args)) return undefined;
+  // Past the cap nothing more is kept, and the agent is told the same.
+  const confirm = hold(ctx.app.db, via, user.id, tool.name, args);
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ needs_confirm: confirm, tool: tool.name, says: NEEDS_CONFIRM }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+/** What an asked-first call tells the forge's agent, beside the confirm's id and its sentence. */
+export const ASKS_FIRST =
+  "this action asks the person first, so nothing was done: say the sentence in `does` to them; their yes, within 10 minutes, under Settings → Confirms (/settings/confirms) or the terminal's Confirms, does it once";
+
+/**
+ * Asked first (#7650): for the forge's own agent, a call of a tool on the
+ * list in `crew/conversation_confirm.ts` — and any call of an admin-scope
+ * tool its rw token cannot reach, when the person is an admin — is kept as a
+ * confirm with one sentence of what it will do, written to the person's
+ * conversation as a `confirm` turn, and not done. Undefined: go on.
+ */
+export function askedFirst(ctx: Ctx, user: User, tool: Tool, args: Args): Record<string, unknown> | undefined {
+  const via = ctx.auth.through;
+  if (via === undefined) return undefined;
+  // What the person may not do stays unknown to their agent.
+  if ((tool.adminOnly === true || tool.needsAdminScope === true) && !user.isAdmin) return undefined;
+  const short = tool.needsAdminScope === true && !scopeAllows(ctx.auth.scope ?? "ro", "admin");
+  if (!short && (!tool.writes || plansOnly(tool, args) || !asksFirst(tool.name, args))) return undefined;
+  const confirm = hold(ctx.app.db, via, user.id, tool.name, args);
+  const does = confirmSentence(tool.name, args);
+  if (confirm !== null) {
+    const conversation = openConversation(ctx.app.db, user.id);
+    appendTurn(ctx.app.db, user.id, conversation.id, {
+      role: "confirm",
+      text: JSON.stringify({ confirm, tool: tool.name, does }),
+    });
+  }
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          confirm === null
+            ? { needs_confirm: null, tool: tool.name, says: "too many confirms are waiting in this conversation; nothing was kept" }
+            : { needs_confirm: confirm, tool: tool.name, does, says: ASKS_FIRST },
+        ),
+      },
+    ],
+    isError: true,
+  };
+}
+
+/**
+ * An answer as the forge's own agent reads it: every string the forge did
+ * not make inside a data block — a refusal's message too, which may echo a
+ * name someone else chose — and the read marked so the next write is
+ * weighed against it. Any other caller's answer is returned as it was.
+ */
+export function fenceAnswer(ctx: Ctx, answer: Answer): Answer {
+  const via = ctx.auth.through;
+  if (via === undefined) return answer;
+  const wrapped = fence(answer.ok ? answer.value : answer.message, fenceTag());
+  if (!wrapped.fenced) return answer;
+  readFenced(ctx.app.db, via);
+  return answer.ok ? { ...answer, value: wrapped.value } : { ...answer, message: wrapped.value as string };
+}
 
 export const CHIP_ARGS = {
   hide_kinds: {
@@ -219,3 +316,7 @@ export function boardFailed(e: BoardError): Answer {
   if (typeof e === "object") return bad("refused", e.refused);
   return bad(e, BOARD_NOT_SAVED);
 }
+
+/** Orders by name's code points, never the machine's locale: the tool list and its docs table read the same everywhere. */
+export const byName = (a: { readonly name: string }, b: { readonly name: string }): number =>
+  a.name < b.name ? -1 : a.name > b.name ? 1 : 0;

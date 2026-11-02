@@ -27,6 +27,7 @@ import {
   setIssueLabelsThrough,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
+import { VIA_WORDS } from "../../core/acting_via.ts";
 import { listEvents } from "../../core/events.ts";
 import { markOf, marksByName, type Mark } from "../../core/marks.ts";
 import {
@@ -36,6 +37,7 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { editIssue, type Closing } from "../../actions/issues.ts";
+import { putFlowFirst } from "../../actions/flow_first.ts";
 import {
   getIssue,
   labelsFor,
@@ -168,6 +170,11 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       verb: "let this head run",
     },
     "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
+    "pull.released": {
+      icon: "check",
+      tone: "success",
+      verb: "released the hold",
+    },
   };
 
 /**
@@ -199,14 +206,26 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
     const look = EVENT_LOOK[event.kind]!;
     const actor =
       event.actorId !== null ? actors.get(event.actorId) : undefined;
+    // The forge's own release of an until-green hold carries its line and no actor.
+    const note =
+      event.kind === "pull.released" && typeof event.payload.note === "string"
+        ? event.payload.note
+        : undefined;
     entries.push({
       at: event.createdAt,
       node: tlEvent({
         icon: look.icon,
         tone: look.tone,
-        body: html`${actor
+        body:
+          note !== undefined && !actor
+            ? html`<span>the forge</span> <span>${note}</span> ${time(
+                event.createdAt,
+              )}`
+            : html`${actor
             ? userLink(actor.username, { mark: markOf(actor) })
-            : html`<span>someone</span>`} <span>${look.verb}</span> ${time(
+            : html`<span>someone</span>`}${event.via !== undefined && actor
+            ? html` <span>${VIA_WORDS}</span>`
+            : null} <span>${look.verb}</span> ${time(
             event.createdAt,
           )}`,
       }),
@@ -947,6 +966,25 @@ export async function labelsSubmit(
         ? "Labels cleared."
         : `Labels set to ${applied.value.map((l) => l.name).join(", ")}.`,
   });
+}
+
+/** POST …/issues/:number/flow — put the issue first, or take it back. Writers only. */
+export async function flowSubmit(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const asked = field(form, "flow");
+  const dest = backTo(form, `${repoBase(found.repo)}/issues/${found.issue.number}`);
+  if (asked !== "0" && asked !== "1") return flashTo(ctx, dest, { tone: "danger", message: NOT_CHANGED });
+  const applied = await putFlowFirst(ctx.app, ctx.auth.user, found.repo, found.issue, asked === "1");
+  if (!applied.ok)
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: originError(applied.error) ?? THREAD_SAYS.labelsForbidden,
+    });
+  return flashTo(ctx, dest, { message: asked === "1" ? "Flow first." : "No longer first." });
 }
 
 // ---- teams ----

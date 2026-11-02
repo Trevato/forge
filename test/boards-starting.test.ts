@@ -36,10 +36,10 @@ test("a forge with no person to found the repo writes nothing", async () => {
   expect(await offerStartingBoards(bare)).toEqual([]);
 });
 
-test("a fresh boot writes the ten starting boards, and every panel runs", async () => {
-  expect((await offerStartingBoards(app)).sort()).toEqual(["apps", "crew", "forges", "reach", "releases", "restarts", "security", "serving", "throughput", "usage"]);
+test("a fresh boot writes the eleven starting boards, and every panel runs", async () => {
+  expect((await offerStartingBoards(app)).sort()).toEqual(["apps", "crew", "forges", "maintenance", "reach", "releases", "restarts", "security", "serving", "throughput", "usage"]);
   const boards = await listBoards(app.reposRoot);
-  expect(boards.map((b) => b.slug)).toEqual(["apps", "crew", "forges", "reach", "releases", "restarts", "security", "serving", "throughput", "usage"]);
+  expect(boards.map((b) => b.slug)).toEqual(["apps", "crew", "forges", "maintenance", "reach", "releases", "restarts", "security", "serving", "throughput", "usage"]);
   let panels = 0;
   for (const { board } of boards) {
     for (const p of board.panels) {

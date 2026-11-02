@@ -8,7 +8,10 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 const doc = readFileSync("docs/design/map.md", "utf8");
-const src = readFileSync("src/web/pages/map.ts", "utf8");
+// The repository map and its forge-wide lanes (#6310) are one page source.
+const src = ["src/web/pages/map.ts", "src/web/pages/global-map.ts"]
+  .map((path) => readFileSync(path, "utf8"))
+  .join("\n");
 
 const MARKERS: Record<string, string> = {
   "Map canvas": 'id: "map-canvas"',

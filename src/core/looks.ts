@@ -284,6 +284,17 @@ export function deleteLooks(
   return gone.map(toLook);
 }
 
+/** Delete every thumb of an app that was taken as a stranger; the ones deleted. */
+export function deleteStrangerThumbs(db: Database, appId: string): Look[] {
+  return db
+    .query<
+      Row,
+      [string]
+    >(`DELETE FROM look WHERE app_id = ?1 AND kind = 'thumb' AND taken_as = 'nobody' AND attached_by IS NULL RETURNING *`)
+    .all(appId)
+    .map(toLook);
+}
+
 /**
  * Which taking of a picture this is: a picture retaken at the same commit
  * (a thumb from before thumbs were the page, or one that failed) is a new

@@ -20,7 +20,9 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
-import { canRead, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, type Repo } from "../../core/repos.ts";
+import { FLOW_LABEL } from "../../core/flow_label.ts";
+import { flowButton } from "../flow_button.ts";
 import { waitingCount } from "../../actions/reports.ts";
 
 import { listRepoRuns } from "../../actions/runs.ts";
@@ -53,14 +55,14 @@ import {
   seg,
   time,
 } from "../ui.ts";
-import type { Run } from "../../core/runs.ts";
+import type { Run, RunState } from "../../core/runs.ts";
 import { actorsFor, durationText, issuesFor, runTitleFrom } from "../pages/runs.ts";
 import { originGlyph } from "../pages/thread.ts";
 import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { knowMergeClosings, tellWords } from "./tell.ts";
 import {
-  pullWord,
+  pullWords,
   runWord,
   wordBadge,
   type Word,
@@ -369,6 +371,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     .map((issue, i) => ({ issue, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
 
+  const mayLabel = canWrite(db, repo, ctx.auth.user);
   const list =
     rows.length === 0
       ? empty({
@@ -397,6 +400,15 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
                 ? html`${issue.assigneeName} · `
                 : null}${info.note} · ${time(issue.updatedAt)}`,
               trail: wordBadge(info.word),
+              ...(mayLabel && issue.state === "open"
+                ? {
+                    after: flowButton(
+                      `${base}/issues/${issue.number}/flow`,
+                      (labels.get(issue.id) ?? []).some((l) => l.name.toLowerCase() === FLOW_LABEL),
+                      `${ctx.url.pathname}${ctx.url.search}`,
+                    ),
+                  }
+                : {}),
             }),
           ),
         );
@@ -503,9 +515,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
     ...sealedScope(db, repo, ctx.auth.user),
   });
   lap("pulls");
-  const words = await Promise.all(
-    fetched.map((pull) => pullWord(wordCtx, pull)),
-  );
+  const words = await pullWords(wordCtx, fetched);
   lap("words");
   const answered = tellsAnswered(db, repo.id, fetched);
   lap("tells");
@@ -583,38 +593,102 @@ export async function changesList(ctx: Ctx): Promise<Response> {
 /** Which runs a list shows: all three kinds by default, or the one that
  * `?kind=` asks for — the narrowing dev's list offered, kept so a link
  * written to it keeps meaning what it said. */
-type RunsKind = "agent" | "deploy" | "check";
+type RunsKind = "agent" | "deploy" | "check" | "proof";
 
 function readRunsKind(ctx: Ctx): RunsKind | undefined {
   const raw = ctx.url.searchParams.get("kind");
-  return raw === "agent" || raw === "deploy" || raw === "check"
+  return raw === "agent" || raw === "deploy" || raw === "check" || raw === "proof"
     ? raw
     : undefined;
 }
 
-/** The runs list's own address with a word, a kind and a cursor. */
+/** The states `?state=` narrows to; anything else is ignored. */
+const RUN_STATES: readonly RunState[] = [
+  "queued",
+  "running",
+  "ok",
+  "failed",
+  "cancelled",
+];
+
+function readRunsState(ctx: Ctx): RunState | undefined {
+  const raw = ctx.url.searchParams.get("state");
+  return RUN_STATES.find((s) => s === raw);
+}
+
+/** The row of state links above the list, in the words the badges use. */
+const STATE_LINKS: readonly [RunState | undefined, string][] = [
+  [undefined, "All"],
+  ["failed", "Failed"],
+  ["running", "Running"],
+  ["ok", "Succeeded"],
+];
+
+/** The runs list's own address with a word, a kind, a state and a cursor. */
 function runsHref(
   base: string,
   kind: RunsKind | undefined,
   word: WordFilter | undefined,
   cursor?: string,
+  state?: RunState,
 ): string {
   const params = new URLSearchParams();
   if (kind !== undefined) params.set("kind", kind);
+  if (state !== undefined) params.set("state", state);
   if (word !== undefined) params.set("word", word);
   if (cursor !== undefined) params.set("cursor", cursor);
   const text = params.toString();
   return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
 }
 
+/** What a queued run waits on, in the words its row says it by: a builder
+ * for an agent run, a slot for a check, the deploy lane for a deploy; a run
+ * paused on a limit says it resumes later. */
+export function whatRunWaitsOn(run: Run): string {
+  if (run.notBefore !== null) return "paused on a limit, resumes soon";
+  return run.kind === "agent"
+    ? "waiting for a builder"
+    : run.kind === "check"
+      ? "waiting for a check slot"
+      : "waiting for the deploy lane";
+}
+
+/** Whether a run is doing something at this moment — the only runs under
+ * Working. A deploy is not counted: the flow report's stages are builders,
+ * reviewers and checks, and the tab's count is held to theirs. */
+export function isWorkingNow(run: Run): boolean {
+  return run.state === "running" && run.kind !== "deploy";
+}
+
+/** Whether a run belongs on the page asked for. Working is exactly the
+ * runs running now. With no word chosen a check or a deploy that finished
+ * is news too, and an explicit `?state=` shows every run it fetched: the
+ * default list is the whole story, newest first. Otherwise the word rules. */
+export function onRunsList(
+  run: Run,
+  word: Word,
+  filter: WordFilter | undefined,
+  state: RunState | undefined,
+): boolean {
+  if (filter === "working") return isWorkingNow(run);
+  if (filter === undefined && (run.kind !== "agent" || state !== undefined))
+    return true;
+  return inWordFilter(word, filter);
+}
+
 /** A check's state in the words its row names it by. */
 const checkState = (run: Run): string =>
-  run.state === "ok" ? "passed" : run.state;
+  run.state === "ok"
+    ? "passed"
+    : run.state === "queued"
+      ? whatRunWaitsOn(run)
+      : run.state;
 
 const RUNS_KIND_WORDS: Record<RunsKind, string> = {
   agent: "Agent runs",
   deploy: "Deploys",
   check: "Checks",
+  proof: "Proofs",
 };
 
 /**
@@ -629,6 +703,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const base = repoBase(repo);
   const filter = readWordFilter(ctx);
   const kind = readRunsKind(ctx);
+  const state = readRunsState(ctx);
   const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
 
@@ -637,6 +712,10 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const reading = performance.now();
   const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
     kind,
+    // Working is what runs now: read only the running ones, so the page
+    // is not spent on finished rows it would drop.
+    state: state ?? (filter === "working" ? "running" : undefined),
+    withProofs: true,
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
   });
@@ -656,11 +735,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const rows = fetched
     .map((run, i) => ({ run, info: words[i]! }))
     .filter(
-      // With no word chosen a check or a deploy that finished is news too:
-      // the default list is the whole story, newest first.
-      (r) =>
-        (filter === undefined && r.run.kind !== "agent") ||
-        inWordFilter(r.info.word, filter),
+      (r) => onRunsList(r.run, r.info.word, filter, state),
     );
 
   notePhase(ctx.request, "runs", performance.now() - reading);
@@ -698,7 +773,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                   ? html`${run.commitOid.slice(0, 7)} · ${checkState(run)}
                     ${when(durationText(run), (d) => html` · took ${d}`)} ·
                     ${time(run.finishedAt ?? run.createdAt)}`
-                  : html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
+                  : html`${run.kind === "agent" ? html`${who} · ` : null}${run.state === "queued" ? whatRunWaitsOn(run) : info.note}
               · ${time(run.finishedAt ?? run.createdAt)}`,
               trail: wordBadge(info.word),
             });
@@ -708,20 +783,29 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
 
   const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
     <div class="mt">
+      <nav aria-label="Run state">
+        ${seg(
+          STATE_LINKS.map(([s, label]) => ({
+            label,
+            href: runsHref(base, kind, filter, undefined, s),
+            current: s === state,
+          })),
+        )}
+      </nav>
       ${wordFilterBar(
-        (word) => runsHref(base, kind, word),
+        (word) => runsHref(base, kind, word, undefined, state),
         filter,
         filter === undefined,
       )}
       ${list}
       ${pager(
         fetched.length === LIST_PAGE && last !== undefined
-          ? { next: runsHref(base, kind, filter, last.id) }
+          ? { next: runsHref(base, kind, filter, last.id, state) }
           : {},
       )}
     </div>
     <p class="muted small mt">
-      Show ${(["agent", "deploy", "check"] as const).map(
+      Show ${(["agent", "deploy", "check", "proof"] as const).map(
         (k, i) =>
           html`${i > 0 ? " · " : ""}${k === kind
               ? html`<strong>${RUNS_KIND_WORDS[k]}</strong>`

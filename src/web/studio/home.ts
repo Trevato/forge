@@ -52,12 +52,21 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
-import { kpiRow, vitalsRow, waitingLine } from "./kpi_row.ts";
+import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
+import { keeperRow } from "./keeper_row.ts";
+import { clogRow, kpiRow, vitalsRow, waitingLine } from "./kpi_row.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { idleReason } from "../../crew/idle_reason.ts";
 import { kpiCache, panelCache, waitingCache } from "./home_cache.ts";
+import { accessFingerprint } from "../../core/access_fingerprint.ts";
+import { homeFresh, homeRegion, homeVariant, refreshJs, type HomeRegion } from "./home_last.ts";
+import type { KpiTimer } from "../../flow/kpis.ts";
+import { archivedAppCount } from "../pages/apps.ts";
 import { pinnedPanels } from "./pinned.ts";
-import { homeTabs } from "./home_tabs.ts";
+import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
+import { sinceYouWere } from "./since.ts";
+import { homeTabs, unshippedAsks } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
 import { everydayCard } from "../pages/everyday.ts";
 import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
@@ -107,6 +116,7 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
       ...(state === undefined ? {} : { trail: envStateBadge(state) }),
     });
   });
+  const archived = archivedAppCount(ctx);
   const list = html`${rows.length === 0
         ? html`<p class="muted small">No apps yet.</p>`
         : html`<ul class="list">
@@ -127,7 +137,12 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
           btn("Front page", { href: "/front", size: "sm", icon: "globe" }),
         )}
         ${when(user.isAdmin && rows.length > 0, () => btn("Archive", { size: "sm" }))}
-      </div>`;
+      </div>
+      ${when(
+        archived > 0,
+        () =>
+          html`<p class="muted small"><a href="/apps?archived=1">${archived} archived</a></p>`,
+      )}`;
   return card(
     // An admin's list is a form: tick apps, then Archive.
     user.isAdmin && rows.length > 0
@@ -178,6 +193,18 @@ export function liveAppsFragment(ctx: Ctx): Response {
   return body;
 }
 
+// GET /live/client-apps — a client's apps card alone; 404 to anyone else.
+export async function liveClientAppsFragment(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  const steps = user ? await nextStepsOf(ctx, user) : undefined;
+  if (!user || steps === undefined) {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    notePhase(ctx.request, "render", 0);
+    return fragment(html``, { status: 404 });
+  }
+  return fragment(await clientApps(ctx, user), { request: ctx.request }); // names session and render itself
+}
+
 /**
  * What a bulk step on the On you list answers its own script with: the
  * region as it is now and the asks page's list.
@@ -195,6 +222,45 @@ export function liveOnYouFragment(ctx: Ctx): Response {
   const body = fragment(onYouRegion(ctx, user), { request: ctx.request }); // needsYouSection times "asks"
   notePhaseRest(ctx.request, "render", rendering, ["asks"]);
   return body;
+}
+
+/**
+ * How each late region of home is drawn for `user` (#7660): the page serves
+ * the last drawing from memory and `/live/home/<name>` draws it fresh.
+ */
+function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html | Promise<Html>> {
+  const { db } = ctx.app;
+  const request = ctx.request;
+  return {
+    kpis: () => {
+      const ceilingUsd = forgeCeiling(ctx.app.config);
+      const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
+      const kpiOpts = { idle: () => idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
+      return html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
+        ${timePhase(request, "vitals", () => vitalsRow(db))} ${clogRow(db)}
+        ${keeperRow(db, true)}
+        ${alarmLines(cachedAlarms(db, new Date(), ceilingUsd))}`;
+    },
+    waiting: () => timePhase(request, "waiting", () => waitingLine(db, user), () => waitingCache(db)),
+    panels: async () => (await timePhaseAsync(request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(db))) ?? html``,
+    asked: () => homeTabs("feed", timePhase(request, "asked", () => unshippedAsks(db, user))),
+    feed: () => timePhase(request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(db)),
+  };
+}
+
+// GET /live/home/<region> — one late region of home, drawn fresh, for the page to swap in.
+export async function liveHomeFragment(ctx: Ctx, name: HomeRegion): Promise<Response> {
+  const user = ctx.auth.user;
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  if (!user || ((name === "kpis" || name === "panels") && !user.isAdmin)) {
+    notePhase(ctx.request, "render", 0);
+    return fragment(html``, { status: 404 });
+  }
+  const rendering = performance.now();
+  const body = await homeFresh(ctx.app.db, user.id, name, homeVariant(ctx.url), accessFingerprint(ctx.app.db, user), homeDraws(ctx, user)[name]);
+  const res = fragment(html`<div>${body}</div>`, { request: ctx.request });
+  notePhaseRest(ctx.request, "render", rendering, [name, "vitals"]);
+  return res;
 }
 
 /**
@@ -253,36 +319,35 @@ export async function studioHome(
   const { repos: appRepos } = timePhase(ctx.request, "repos", () => writableAppsOf(ctx, user));
   // Render is what is left of the page once the named reads are taken out.
   const rendering = performance.now();
+  const visitedAt = Date.now();
+  const before = timePhase(ctx.request, "visit", () =>
+    isNavigation(ctx.request) ? noteVisit(ctx.app.db, user.id, visitedAt) : lastVisit(ctx.app.db, user.id),
+  );
+  const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, user, before, visitedAt));
+  const draws = homeDraws(ctx, user);
+  const access = timePhase(ctx.request, "access", () => accessFingerprint(ctx.app.db, user));
+  const regionOf = (name: HomeRegion): Promise<Html> =>
+    homeRegion(ctx.app.db, ctx.request, user.id, name, homeVariant(ctx.url), access, draws[name]);
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
-  const ceilingUsd = forgeCeiling(ctx.app.config);
-  const kpiOpts = { dataDir: ctx.app.config.dataDir, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
   const body = html`<h1 class="sr-only">Home</h1>
-    ${ask} ${address} ${figures
-      ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))
-      : liveLine(ctx)}
-    ${figures ? timePhase(ctx.request, "vitals", () => vitalsRow(ctx.app.db)) : null}
-    ${timePhase(ctx.request, "waiting", () => waitingLine(ctx.app.db, user), () => waitingCache(ctx.app.db))}
-    ${figures
-      ? await timePhaseAsync(ctx.request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(ctx.app.db))
-      : null}
+    ${ask} ${address} ${figures ? await regionOf("kpis") : liveLine(ctx)}
+    ${await regionOf("waiting")}
+    ${figures ? await regionOf("panels") : null}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home">
         <a href="/">Just my apps</a>
       </p>`,
     )}
-    ${homeTabs("feed")}
+    ${since}
+    ${await regionOf("asked")}
     <div class="split" data-rail="wide">
       <div class="stack">
         ${composer(ctx, user)}
-        <div class="bar feed-head">
-          <span class="spacer"></span>
-          <a class="small muted" href="/asked">What you asked for</a>
-        </div>
         ${flowCards(ctx, user)}
         ${feedNote()}
-        ${timePhase(ctx.request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(ctx.app.db))}
+        ${await regionOf("feed")}
       </div>
       <aside class="stack">
         ${
@@ -300,9 +365,9 @@ export async function studioHome(
     ctx,
     title: "Home",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}${ask ? `\n${passkeyJs}` : ""}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}\n${refreshJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "vitals", "waiting", "panels", "feed"]);
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "vitals", "waiting", "panels", "feed", "visit", "since", "access"]);
   return res;
 }
 
@@ -504,7 +569,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
 export function studioDoor(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   let tiles: Html[] = [];
-  const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app));
+  const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app, Date.now(), ctx.request));
   timePhase(ctx.request, "tiles", () => {
     tiles = front.shelf.map(tile);
   });

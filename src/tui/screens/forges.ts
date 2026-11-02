@@ -7,18 +7,28 @@
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { ATTENTION_WORDS, CLAIM_WORDS, claimState, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { useLine } from "../../spawn/usage.ts";
+import { timeAgo } from "../../web/ui.ts";
 import { card } from "../ui/widgets.ts";
-import { drawFacts } from "./common.ts";
+import { drawFacts, runAsync } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
+import { clientRows } from "../../spawn/clients.ts";
 
 /** [name, "Not reporting · for Maria · Claimed · 3 apps running"] per row; an empty line when none. */
 export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
   if (rows.length === 0) return [["", "You have not sent a forge yet"]];
-  return rows.map((r) => [
+  return rows.flatMap((r): [string, string][] => [[
     r.name,
-    [r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null]
+    [r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null, useLine(r.size, r.use), r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
       .filter((m): m is string => m !== null)
       .join(" · "),
-  ]);
+  ], ...addressLines(r)]);
+}
+
+/** Under a forge that is running, not reachable: each public address and what it answered (#7959), as /forges lists them. */
+function addressLines(r: ClientRow): [string, string][] {
+  if (r.reach === null || r.reach.ok) return [];
+  return r.reach.proofs.map((p): [string, string] => ["", `  ${p.ok ? "reachable" : "NOT REACHABLE"} ${p.url.replace(/^https?:\/\//, "")}: ${p.says}`]);
 }
 
 /** The lines that fit in `room` rows; when some do not, the last row says how many. */
@@ -49,3 +59,14 @@ export function forgesScreen(ctx: Ctx, rows: readonly ClientRow[]): Screen {
     },
   };
 }
+
+/** The forges this one sent, as /forges lists them: an admin's only. */
+export const entry: PaletteEntry = {
+  id: "forges",
+  title: "Forges you sent",
+  hint: "each forge sent, claimed or not, and its apps",
+  offered: (session) => session.user?.isAdmin === true,
+  run: (session, ctx) => runAsync(ctx, async () => {
+    ctx.push(forgesScreen(ctx, await clientRows(session.app)));
+  }),
+};

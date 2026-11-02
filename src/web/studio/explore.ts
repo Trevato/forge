@@ -9,7 +9,8 @@
 import {
   explore,
   exploreLine,
-  parseExploreQuery,
+  exploreNote,
+  readExploreLine,
   type ExploreQuery,
   type ExploreRow,
 } from "../../actions/explore.ts";
@@ -43,7 +44,7 @@ function numbers(row: ExploreRow): { apps: string; rest: string } {
 function rowHtml(row: ExploreRow): Html {
   const { apps, rest } = numbers(row);
   // One tap from a person to their apps; with none, the count is plain text.
-  const theirs = href({ kind: "app", sort: "score", text: "", archived: false, owner: row.name });
+  const theirs = href({ kind: "app", sort: "score", text: "", archived: false, updated: "all", owner: row.name });
   const count = apps === "" ? html`` : row.numbers.apps > 0 ? html`<a href="${theirs}">${apps}</a>` : html`${apps}`;
   const parts = [
     row.description === "" ? html`` : html`${row.description}`,
@@ -79,6 +80,8 @@ function terms(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
     out.push({ term: `sort:${query.sort}`, without: { ...query, sort: "score" } });
   if (query.archived)
     out.push({ term: "archived:yes", without: { ...query, archived: false } });
+  if (query.updated !== "all")
+    out.push({ term: `updated:${query.updated}`, without: { ...query, updated: "all" } });
   const words = query.text.split(/\s+/).filter((w) => w !== "");
   words.forEach((word, i) =>
     out.push({
@@ -120,7 +123,8 @@ function emptyState(signedIn: boolean, query: ExploreQuery): Html {
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
+  const { query, unknown } = readExploreLine(ctx.url.searchParams.get("q") ?? "");
+  const note = exploreNote(unknown);
   const ranking = performance.now();
   const rows = await explore(ctx.app, ctx.auth.user, query);
   notePhase(ctx.request, "rank", performance.now() - ranking);
@@ -141,12 +145,19 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "Use", sort: "use" as const },
     { label: "Fresh", sort: "fresh" as const },
   ];
+  const windows = [
+    { label: "Any time", updated: "all" as const },
+    { label: "Today", updated: "1d" as const },
+    { label: "This week", updated: "7d" as const },
+    { label: "This month", updated: "30d" as const },
+  ];
   const body = html`${pageHead("Explore", {
       sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
     })}
     <form method="get" action="/explore" class="bar mb">
       <input
-        class="input mono search"
+        type="search"
+        class="input mono"
         name="q"
         value="${exploreLine(query)}"
         placeholder="kind:app sort:forks garden"
@@ -156,6 +167,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
+    ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}</p>`}
     <div class="bar mb">
       ${seg(
         kinds.map((k) => ({
@@ -169,6 +181,13 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
           label: s.label,
           href: href({ ...query, sort: s.sort }),
           current: query.sort === s.sort,
+        })),
+      )}
+      ${seg(
+        windows.map((w) => ({
+          label: w.label,
+          href: href({ ...query, updated: w.updated }),
+          current: query.updated === w.updated,
         })),
       )}
       <a

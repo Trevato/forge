@@ -83,11 +83,29 @@ describe("a red many pulls share", () => {
     expect(sharedTests(db)).toEqual([]);
   });
 
-  test("every tree gate names a suite that exists", () => {
-    const suites = new Set<string>();
-    for (const f of new Glob("test/*.test.ts").scanSync("."))
-      for (const m of readFileSync(f, "utf8").matchAll(/describe\("((?:[^"\\]|\\.)*)"/g)) suites.add(`${m[1]} > `);
-    for (const g of TREE_GATES) expect(suites.has(g)).toBe(true);
+  test("every reserved page a pull forgot is that pull's own red, not the lane's (#7809)", () => {
+    const gate = "reserved names > every top-level page of the forge is a reserved name";
+    for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
+    expect(shared(red("i4", [gate]))).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+    // The rest of the suite is no gate: three pulls on it still share it.
+    const other = "reserved names > the forge's own nouns are reserved too";
+    for (const i of ["i1", "i2"]) red(i, [other]);
+    expect(shared(red("i3", [other]))).toBe(true);
+  });
+
+  test("every tree gate names a suite, or a test in it, that exists", () => {
+    const names = new Set<string>();
+    for (const f of new Glob("test/*.test.ts").scanSync(".")) for (const n of suiteNames(readFileSync(f, "utf8"))) names.add(n);
+    for (const g of TREE_GATES) expect([g, names.has(g)]).toEqual([g, true]);
+  });
+
+  test("a gate naming a test under the wrong suite names nothing", () => {
+    const names = suiteNames('describe("A", () => {\n  test("t", () => {});\n});\ndescribe("B", () => {\n  test("u", () => {});\n});\n');
+    expect(names.has("A > t")).toBe(true);
+    expect(names.has("B > u")).toBe(true);
+    expect(names.has("B > t")).toBe(false);
+    expect(names.has("A > u")).toBe(false);
   });
 
   test("one pull red three times is its own red, not the lane's", () => {
@@ -250,3 +268,14 @@ describe("a failure outside a test names what it threw (#5727)", () => {
     );
   });
 });
+
+/** Each `describe > test` a test file declares, every test paired only with the describe it sits under, plus `describe > ` for each suite. */
+function suiteNames(text: string): Set<string> {
+  const names = new Set<string>();
+  let suite: string | undefined;
+  for (const m of text.matchAll(/\b(describe|test)\("((?:[^"\\]|\\.)*)"/g)) {
+    if (m[1] === "describe") names.add(`${(suite = m[2])} > `);
+    else if (suite !== undefined) names.add(`${suite} > ${m[2]}`);
+  }
+  return names;
+}

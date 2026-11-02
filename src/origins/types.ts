@@ -261,6 +261,9 @@ export interface ListIssuesQuery {
   readonly cursor?: string;
 }
 
+/** What a token can list: private repositories too, or public ones only. */
+export type TokenReach = "private" | "public";
+
 /**
  * What every provider implements. Results are `Result<T, ProviderFailure>`
  * (see kernel/result.ts) — network and remote refusals are expected outcomes.
@@ -276,6 +279,11 @@ export interface Provider {
   readonly webUrl: string;
 
   whoami(): Promise<ProviderResult<RemoteIdentity>>;
+  /**
+   * Whether the credential can see private repositories at all. Left out
+   * by an origin whose tokens carry no such limit worth naming.
+   */
+  tokenReach?(): Promise<ProviderResult<TokenReach>>;
   listRepos(cursor?: string): Promise<ProviderResult<Page<RemoteRepo>>>;
   getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>>;
 

@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { indexText, tableText, toolFiles, withTable } from "../scripts/mcp-tools.ts";
-import { toolNames } from "../src/http/mcp.ts";
+import { REPORT_TOOL, toolNames } from "../src/http/mcp.ts";
 import { TOOLS } from "../src/http/mcp/tools.ts";
 
 const ROOT = join(import.meta.dir, "..");
@@ -47,7 +47,18 @@ describe("the gathered tools", () => {
 
   test("docs/MCP.md's tool table is current: run `bun scripts/mcp-tools.ts`", () => {
     const md = read("docs/MCP.md");
-    expect(md).toBe(withTable(md, tableText(TOOLS)));
+    expect(md).toBe(withTable(md, tableText([...TOOLS, REPORT_TOOL])));
+  });
+
+  test("are ordered by code point, not the machine's locale", () => {
+    const names = TOOLS.map((t) => t.name);
+    expect(names).toEqual([...names].sort());
+    const rows = tableText([
+      { name: "b", doc: "x", writes: false },
+      { name: "B", doc: "x", writes: false },
+      { name: "a", doc: "x", writes: false },
+    ]).split("\n").filter((l) => l.startsWith("| `"));
+    expect(rows.map((l) => l.split("`")[1])).toEqual(["B", "a", "b"]);
   });
 
   test("a new file is one new line in the index, touching no other", () => {

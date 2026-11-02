@@ -300,6 +300,12 @@ function forgeActions(
       mcp: "report",
       account: false,
     },
+    {
+      do: "see how to help build this forge",
+      http: "GET /api/v1/contribute",
+      mcp: "contribute",
+      account: false,
+    },
     ...(viewer === undefined
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),
@@ -354,6 +360,19 @@ function repoActions(
   const record = getAppByRepo(db, repo.id);
   if (record !== undefined && canEnterApp(db, repo, record, viewer))
     out.push({ do: "open the app", http: `GET ${r}/app/production/open` });
+  // The copy is for whoever cannot write the app (the web's button, `!canWrite`);
+  // its dry run is `ro`, so a read-only token sees it too.
+  if (
+    record !== undefined &&
+    canEnterApp(db, repo, record, viewer) &&
+    !canWrite(db, repo, viewer)
+  )
+    out.push({
+      do: "make it yours",
+      http: `POST ${r}/make-it-yours`,
+      mcp: "make_it_yours",
+      ...(viewer === undefined ? { account: true } : unproven),
+    });
   if (!acts) return out;
   const tellSsh = sshTellCommand(app);
   if (mayDirectCrew(db, repo, viewer))
@@ -377,5 +396,21 @@ function repoActions(
     out.push({ do: "merge a pull", http: `POST ${r}/pulls/{number}/merge` });
   if (canAdmin(db, repo, viewer))
     out.push({ do: "change settings", http: `PATCH ${r}` });
+  // How a native fork follows its parent: a writer's moves, the same rule
+  // `takeOrTell` and `proposeToParentForge` ask (`requireWriter`).
+  if (
+    repo.forkParentId !== null &&
+    repo.origin === null &&
+    canWrite(db, repo, viewer)
+  )
+    out.push(
+      { do: "read how it follows its parent", http: `GET ${r}/following`, mcp: "following" },
+      { do: "take the parent's updates", http: `POST ${r}/following/take`, mcp: "take_updates" },
+      {
+        do: "propose its changes to the parent",
+        http: `POST ${r}/following/propose-parent`,
+        mcp: "propose_to_parent_forge",
+      },
+    );
   return out;
 }

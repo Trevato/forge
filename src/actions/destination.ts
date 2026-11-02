@@ -61,13 +61,17 @@ export function invalidField(i: DestinationInput): string | undefined {
 
 const isAdmin = (actor: User | undefined): boolean => actor?.isAdmin === true;
 
+/** Who may set or forget where snapshots go, through every door — page, MCP, terminal: a site admin who is a person, never an agent. */
+export const mayChangeDestination = (actor: Pick<User, "isAdmin" | "kind"> | null | undefined): boolean =>
+  actor?.isAdmin === true && actor.kind !== "agent";
+
 /** Seal what was given (an error is `not_found` or a sentence for the page); blank fields keep their sealed value. Says what is still missing. */
 export function saveDestination(
   app: App,
   actor: User | undefined,
   input: DestinationInput,
 ): Result<string, string> {
-  if (!isAdmin(actor)) return err("not_found");
+  if (!mayChangeDestination(actor)) return err("not_found");
   const bad = invalidField(input);
   if (bad) return err(bad);
   const fields: [string, string][] = [
@@ -103,7 +107,7 @@ export function forgetDestination(
   app: App,
   actor: User | undefined,
 ): Result<void, "not_found"> {
-  if (!isAdmin(actor)) return err("not_found");
+  if (!mayChangeDestination(actor)) return err("not_found");
   clearSealed(app.db);
   app.bus.append({
     kind: "secret.deleted",

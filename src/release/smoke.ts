@@ -6,6 +6,12 @@
  * branch never answers with `Response.error()`. With `version`, `/healthz` is
  * first polled until `X-Forge-Version` is that version.
  *
+ * With `heavy`, it also loads the heaviest pages (`HEAVY_PAGES`: `/boards`
+ * signed in, `/`, `/explore`, `/search?q=a`, one repository's home), each of which
+ * must answer 200 within `SLOW_MS`, then polls `/healthz` once a second for
+ * `WATCH_MS`, rotating through those pages, and fails naming the page that
+ * was slow or failed (#6898: `/readyz` never touches the database, 0.7.277 hung).
+ *
  * The running forge proves each new version with it (`release/prove.ts`), so
  * it lives here: the image ships src/ and nothing else (#2652).
  * `bun scripts/smoke.ts <url>` is the same checks from a shell.
@@ -17,6 +23,27 @@ export const AGENTS: Record<string, string> = {
   desktop:
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 };
+
+/** How long after go-live `/healthz` is watched, how often, and the slowest answer allowed. */
+export const WATCH_MS = 60_000;
+export const WATCH_POLL_MS = 1_000;
+export const SLOW_MS = 1_000;
+/** One repository's home, for the heavy-page load. */
+export const REPO_HOME = "/trevato/forge";
+/** The heaviest pages; `/boards` is fetched with the token. */
+export const HEAVY_PAGES: readonly string[] = ["/boards", "/", "/explore", "/search?q=a", REPO_HOME];
+
+export interface Heavy {
+  watchMs?: number;
+  pollMs?: number;
+  slowMs?: number;
+  /** The repository whose home is loaded; unset, `REPO_HOME` is tried and a 404 there is skipped. */
+  repo?: string;
+  /** Every `/healthz` answer in the watch must carry this `X-Forge-Version`. */
+  version?: string | undefined;
+  /** Sent with the watch's `/healthz`: the forge tells only its probe its version. */
+  probe?: Readonly<Record<string, string>>;
+}
 
 export interface Failure {
   url: string;
@@ -59,6 +86,10 @@ export interface Options {
   fetch?: typeof fetch;
   /** Accept a redirect from `/board` to sign-in as the sign-in it is, for a caller holding no token. */
   anonymousBoard?: boolean;
+  /** An app's URL on this forge: `GET /` there must never be a forge page (#6726). */
+  appHost?: string;
+  /** Load the heaviest pages, then watch `/healthz` (see the top of this file). Off unless given. */
+  heavy?: Heavy;
 }
 
 /** The redirect statuses a sign-in answers with. */
@@ -102,6 +133,63 @@ async function waitForVersion(root: URL, version: string, waitMs: number, pollMs
     await Bun.sleep(pollMs);
   }
   return { url, agent: "-", status, contentType: "", why: `wanted X-Forge-Version ${version}, last saw ${seen}` };
+}
+
+/** Loads each of `HEAVY_PAGES`, then polls `/healthz` for the window; the first failure, or null. */
+async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globalThis.fetch, anonymousBoard: boolean): Promise<Failure | null> {
+  const slowMs = heavy.slowMs ?? SLOW_MS;
+  const headers: Record<string, string> = { "user-agent": AGENTS["desktop"]! };
+  const pages = HEAVY_PAGES.map((p) => (p === REPO_HOME && heavy.repo ? heavy.repo : p));
+  // An answer between `slowMs` and twice it is slow; none by then is a hang.
+  const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean; hung?: boolean }> => {
+    const url = new URL(path, root).href;
+    const started = performance.now();
+    const failureFor = (why: string, status: number | string = "error"): Failure => ({ url, agent: "desktop", status, contentType: "", why });
+    const gone = (why: string, status: number | string = "error") => ({ failure: failureFor(why, status), slow: false });
+    try {
+      const auth: Record<string, string> = path === "/boards" && token ? { authorization: `Bearer ${token}` } : {};
+      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(slowMs * 2), headers: { ...headers, ...(path === "/healthz" ? heavy.probe : {}), ...auth } });
+      const body = await res.text();
+      const took = Math.round(performance.now() - started);
+      if (took > slowMs) return { failure: failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true };
+      if (path === REPO_HOME && !heavy.repo && res.status === 404) return { failure: null, slow: false };
+      if (path === "/healthz" && heavy.version && res.headers.get("x-forge-version") !== heavy.version)
+        return gone(`/healthz reported X-Forge-Version ${res.headers.get("x-forge-version") ?? "none"}, wanted ${heavy.version}`, res.status);
+      if (path === "/boards" && anonymousBoard && !token && isSignInRedirect(url, res)) return { failure: null, slow: false };
+      if (res.status !== 200) return gone(`${path} expected 200`, res.status);
+      if (!body.trim()) return gone(`${path} answered with an empty body`, res.status);
+      return { failure: null, slow: false };
+    } catch (error) {
+      return { ...gone(`${path} did not answer within ${slowMs * 2} ms (${error})`), hung: true };
+    }
+  };
+  // The cause of 0.7.279's 1098 ms /boards is unconfirmed; a cold cache after
+  // the boot is the guess (#7198). So each page's first load, and only that,
+  // is asked again after a slow answer (never a hang or an error), and the
+  // first slow answer is printed. The watch below calls `once`: a degradation
+  // there is seen on the first slow answer.
+  const timed = async (path: string): Promise<Failure | null> => {
+    const first = await once(path);
+    if (!first.slow) return first.failure;
+    console.warn(`smoke: ${first.failure?.why}; asking again`);
+    return (await once(path)).failure;
+  };
+  for (const path of pages) {
+    const failed = await timed(path);
+    if (failed) return failed;
+  }
+  const deadline = Date.now() + (heavy.watchMs ?? WATCH_MS);
+  const pollMs = heavy.pollMs ?? WATCH_POLL_MS;
+  for (let tick = 0; Date.now() < deadline; tick++) {
+    // One lost answer in a minute of polling (#7724) is asked again at once;
+    // two in a row is a hang and fails the proof.
+    let health = await once("/healthz");
+    if (health.hung) health = await once("/healthz");
+    const failed = health.failure ?? (await once(pages[tick % pages.length]!)).failure;
+    if (failed) return failed;
+    await Bun.sleep(pollMs);
+  }
+  return null;
 }
 
 /** Runs every check against `base`; returns the failures (empty is green). */
@@ -168,6 +256,21 @@ export async function smoke(base: string, token = "", options: Options = {}): Pr
       if (nav === null) fail(sw.url, "desktop", sw.res, "no navigation branch");
       else if (/Response\s*\.\s*error\s*\(/.test(nav)) fail(sw.url, "desktop", sw.res, "a navigation can be answered with Response.error()");
     }
+  }
+  if (options.appHost) {
+    const url = new URL("/", options.appHost).href;
+    try {
+      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { "user-agent": AGENTS["desktop"]! } });
+      const body = await res.text();
+      if (/<title>\s*forge\s*<\/title>/i.test(body)) fail(url, "desktop", res, "an app host answered with the forge's page");
+    } catch (error) {
+      failures.push({ url, agent: "desktop", status: "error", contentType: "", why: String(error) });
+    }
+  }
+  if (options.heavy && failures.length === 0) {
+    const heavy = { version: options.version, ...(options.probe ? { probe: options.probe } : {}), ...options.heavy };
+    const slow = await watch(root, token, heavy, fetch, !!options.anonymousBoard);
+    if (slow) failures.push(slow);
   }
   return failures;
 }

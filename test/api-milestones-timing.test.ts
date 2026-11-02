@@ -82,7 +82,7 @@ test("the proposals read names session, read, render", async () => {
 
 test("one milestone names session, read, render; a miss names session and read", async () => {
   const list = JSON.parse((await phases("/api/v1/repos/alice/r/milestones")).body);
-  expect(list.limbs.length).toBeGreaterThan(0);
+  expect(list.items.length).toBeGreaterThan(0);
   const got = await phases(`/api/v1/repos/alice/r/milestones/${umbrella}`);
   expect(got.status).toBe(200);
   expect(got.names).toEqual(["session", "read", "render"]);

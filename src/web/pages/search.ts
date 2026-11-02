@@ -15,7 +15,8 @@ import { search } from "../../actions/search.ts";
 import { envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canWrite, enterableApps, getRepo } from "../../core/repos.ts";
+import { canAdmin, canWrite, enterableApps, getRepo } from "../../core/repos.ts";
+import { getMirrorTarget } from "../../core/migrate_mirror.ts";
 import {
   cleanQuery,
   CODE_BUDGET_MS,
@@ -27,7 +28,7 @@ import {
   type SearchResults,
 } from "../../core/search.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { DELETE_REPO, STOP_APP } from "../danger_words.ts";
@@ -74,6 +75,9 @@ interface Apps {
 
 const privateBadge = (yes: boolean): Html =>
   when(yes, () => badge("Private", { icon: "lock", variant: "secondary" }));
+
+const archivedBadge = (yes: boolean): Html =>
+  when(yes, () => badge("Archived", { variant: "secondary" }));
 
 /** Whether an app is live. No query — `runtime.status` reads what is
  * already in memory. Undefined for a private app the viewer may not enter:
@@ -129,7 +133,7 @@ function repoHitRow(ctx: Ctx, apps: Apps, hit: RepoHit): Html {
         ? counts
         : badge(live.word, { tone: live.tone })}${privateBadge(
         hit.visibility === "private",
-      )}`,
+      )}${archivedBadge(hit.archived)}`,
     });
   }
   const mirror = hit.mirroredAs;
@@ -237,6 +241,7 @@ function codeHitRow(hit: CodeHit, query: string): Html {
           >${markMatch(hit.text.trim(), query)}</span
         >
       </span>
+      ${when(hit.archived, () => html`<span class="row-trail">${archivedBadge(true)}</span>`)}
     </a>
   </li>`;
 }
@@ -317,7 +322,9 @@ async function find(
     ctx.auth.user === undefined &&
     (a.kind === "code" || a.kind === "all") &&
     cleanQuery(a.query) !== "";
-  const held = greps ? strangerCodeSearch(ctx.app, ctx.request) : undefined;
+  const held = greps
+    ? timePhase(ctx.request, "gate", () => strangerCodeSearch(ctx.app, ctx.request))
+    : undefined;
   const withCode = held === undefined || held.allowed;
   try {
     const found = await search(ctx.app, ctx.auth.user, {
@@ -325,6 +332,7 @@ async function find(
       kind: a.kind,
       live: a.live,
       withCode,
+      phase: (name, ms) => notePhase(ctx.request, name, ms),
       ...(a.codeAll
         ? {}
         : { codeBudgetMs: ctx.app.config.codeBudgetMs ?? CODE_BUDGET_MS }),
@@ -364,7 +372,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     role="search"
   >
     <input
-      class="input search"
+      class="input"
       type="search"
       name="q"
       value="${a.query}"
@@ -399,7 +407,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     return blank;
   }
 
-  const { found, busy } = await timePhaseAsync(ctx.request, "search", () => find(ctx, a));
+  const { found, busy } = await find(ctx, a);
   const apps: Apps = timePhase(ctx.request, "apps", () => {
     const seen = appsOf(ctx, ctx.auth.user);
     return {
@@ -485,6 +493,14 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
         ${String(busy)} s.
       </p>`,
   )}
+  ${when(
+    found.codeSkipped,
+    () =>
+      html`<p class="muted small" role="status" data-code-skipped>
+        Some code was not searched: the forge is busy grepping. Try again
+        shortly.
+      </p>`,
+  )}
   ${WORDS
     .filter(
       ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
@@ -527,6 +543,16 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/detach$/,
+    describe: (m) => ({
+      verb: "Detach from parent",
+      title: `Detach ${m[1]}/${m[2]} from its parent?`,
+      detail:
+        "Every object it borrows is copied into its own store and the link is dropped: no updates to take, nothing to propose upstream. Branches, history, issues and pulls stay. There is no undo.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/branches\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Delete branch",
@@ -554,6 +580,26 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/settings\/edge\/unlink$/,
+    describe: () => ({
+      verb: "Unlink",
+      title: "Unlink your open-platform.sh login?",
+      detail:
+        "You can no longer sign in here through open-platform.sh until you sign in that way and link it again on this page.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/settings\/parent\/unlink$/,
+    describe: () => ({
+      verb: "Unlink",
+      title: "Unlink the parent forge?",
+      detail:
+        "You can no longer sign in here through the parent forge until you link it again on this page. The last way in is never removed.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/proposal-tokens\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Revoke",
@@ -561,6 +607,26 @@ const DESTRUCTIVE: {
       detail: `The child can no longer push child/<name>/… branches or open pulls on ${m[1]}/${m[2]}. Pulls it already opened stay. A new token has to be minted to let it propose again.`,
       phrase: "",
     }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/mirror\/stop$/,
+    describe: (m, ctx) => {
+      // The mirror's name is read fresh, and only for someone who could
+      // stop it, so this page never says where a private repository goes.
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const held =
+        repo && canAdmin(ctx.app.db, repo, ctx.auth.user)
+          ? getMirrorTarget(ctx.app.db, repo.id)
+          : undefined;
+      return {
+        verb: "Stop mirroring",
+        title: held
+          ? `Stop mirroring ${m[1]}/${m[2]} to ${held.fullName}?`
+          : `Stop mirroring ${m[1]}/${m[2]}?`,
+        detail: `${held ? held.fullName : "The copy on the other side"} stays as it is; nothing more is pushed to it. Only a new migration sets up a mirror again.`,
+        phrase: "",
+      };
+    },
   },
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/prompts\/([^/]+)\/delete$/,
@@ -577,6 +643,15 @@ const DESTRUCTIVE: {
       verb: "Delete label",
       title: "Delete this label?",
       detail: `It is removed from every issue and pull request in ${m[1]}/${m[2]} that carries it. The issues themselves are untouched.`,
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/boards\/([^/]+)\/delete$/,
+    describe: (m) => ({
+      verb: "Delete board",
+      title: `Delete the board ${decodeURIComponent(m[1] ?? "")}?`,
+      detail: "Its panels and pins go with it. Nothing it reads is touched.",
       phrase: "",
     }),
   },
@@ -610,6 +685,16 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/settings\/cloud\/remove\?provider=([a-z0-9_-]+)&name=([a-z][a-z0-9_]{0,31})$/,
+    describe: (m) => ({
+      verb: "Remove account",
+      title: `Remove the ${m[1]} account ${m[2]}?`,
+      detail:
+        "Its sealed token is deleted from this forge. Anything that used it stops reaching that provider until you add an account again. Nothing at the provider is touched.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/settings\/keys\/([^/]+)\/delete$/,
     describe: () => ({
       verb: "Remove key",
@@ -637,12 +722,31 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/-\/teams\/([^/]+)\/remove\?user=([A-Za-z0-9_.-]+)$/,
+    describe: (m) => ({
+      verb: "Remove from team",
+      title: `Remove @${m[3]} from this team?`,
+      detail: `They lose whatever access this team grants them in ${m[1]}. Their account is untouched.`,
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/app\/disable$/,
     describe: (m) => ({
       verb: STOP_APP,
       title: `Stop running ${m[1]}/${m[2]} as an app?`,
       detail:
         "Production and every preview stop, and their data directories and checkouts are removed from disk. The repository and its code are untouched. Run it as an app again later and it starts from empty data.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/app\/(production|pull-[1-9]\d*)\/stop$/,
+    describe: (m) => ({
+      verb: "Stop",
+      title: `Stop ${m[3]} of ${m[1]}/${m[2]}?`,
+      detail:
+        "It stops answering at its address until someone presses Redeploy. Its data stays where it is.",
       phrase: "",
     }),
   },
@@ -702,6 +806,16 @@ const DESTRUCTIVE: {
       };
     },
   },
+  {
+    pattern: /^\/admin\/invites\/([^/]+)\/revoke$/,
+    describe: (m) => ({
+      verb: "Revoke",
+      title: `Revoke invite ${decodeURIComponent(m[1] ?? "")}?`,
+      detail:
+        "Whoever holds this link can no longer sign up with it. A new link has to be minted to let them in.",
+      phrase: "",
+    }),
+  },
 ];
 
 function describeTarget(to: string, ctx: Ctx): Destructive | undefined {
@@ -722,6 +836,11 @@ function describeTarget(to: string, ctx: Ctx): Destructive | undefined {
  * table above recognises as destructive.
  */
 export function confirmPage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return timePhase(ctx.request, "render", () => confirmBody(ctx));
+}
+
+function confirmBody(ctx: Ctx): Response {
   const params = ctx.url.searchParams;
   const to = params.get("to") ?? "";
   if (

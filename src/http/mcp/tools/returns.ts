@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "returns",
   doc: "`{ repo?, days? }`: what the crew's tokens bought over the last `days` (1–90, default 7): dollars, runs, changes landed, cost per change; `repo` narrows it to one app of yours",
   description:
-    "What crew tokens bought over `days` (1–90, default 7): dollars, runs, landed, cost/change.",
+    "What crew tokens bought in `days` (1–90, default 7): dollars, runs, landed, cost/change.",
   inputSchema: {
     type: "object",
     properties: {

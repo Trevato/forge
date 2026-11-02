@@ -443,8 +443,7 @@ export async function subscriptionDelete(ctx: Ctx): Promise<Response> {
     POOL,
     removed
       ? {
-          message:
-            "Removed, with its grants. Runs it paid for keep it in their history.",
+          message: SUBSCRIPTION_WORDS.removed,
         }
       : { tone: "danger", message: SUBSCRIPTION_WORDS.not_found },
   );

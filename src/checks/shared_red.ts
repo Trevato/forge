@@ -43,11 +43,15 @@ export const NO_TEST_NAME = "(unnamed)";
  * fails the pull that added the thing it forbids, the same way on any
  * machine. Many pulls tripping one in an hour is many pulls each adding
  * what it forbids (a class DESIGN.md does not name), not a lane's red, so they never make one.
- * A name here is a suite's `describe` prefix, and a test keeps it existing.
+ * A name here is a suite's `describe` prefix, or one test's full name when
+ * the rest of its suite is not a gate, and a test keeps it existing.
+ * Reserved names (#7809): each pull adding a top-level page without
+ * reserving it ("keeper", "feed", "favicon.ico") failed it, main green.
  */
 export const TREE_GATES: readonly string[] = [
   "design check: nothing added outside the system (#2678) > ",
   "no polling in src/web > ",
+  "reserved names > every top-level page of the forge is a reserved name",
 ];
 
 /** Whether a failing test's name is one of {@link TREE_GATES}'. */

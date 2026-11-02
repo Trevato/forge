@@ -87,11 +87,12 @@ describe("the new forge screen", () => {
   test("the screen and its plan promise no update that does not happen", () =>
     withScreen(admin, async ({ tui, terminal }) => {
       const form = tui.screen.toText();
-      expect(form).toContain("Recorded for now");
+      expect(form).toContain("tell-me (default) tells the owner in their inbox");
       terminal.feed("kai\x10");
       await settleApp(tui);
       const text = form + tui.screen.toText();
-      expect(tui.screen.toText()).toContain("Recorded for now, not acted on");
+      expect(tui.screen.toText()).toContain("It follows this forge's code as tell-me: it tells the owner in their inbox");
+      expect(text).not.toMatch(/recorded for now/i);
       expect(text).not.toMatch(/keeps? (itself )?up to date|updates itself|automatically/i);
     }));
 

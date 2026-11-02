@@ -24,6 +24,8 @@ import {
   MIN_BUDGET_USD,
 } from "../../spawn/plan.ts";
 import { DEFAULT_SIZE, SIZES, sizesView } from "../../spawn/sizes.ts";
+import { DEFAULT_TEMPLATE, TEMPLATES, templateOf } from "../../spawn/templates.ts";
+import { FOLLOW_LABELS, FOLLOW_WORDS } from "../../spawn/follow_words.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -42,6 +44,7 @@ interface Values {
   readonly budgetUsd: string;
   readonly modelEndpoint: string;
   readonly size: string;
+  readonly template: string;
   /** The last post carried a key: it is never sent back, so it is asked for again. */
   readonly hadKey: boolean;
 }
@@ -58,6 +61,7 @@ const EMPTY: Values = {
   budgetUsd: "",
   modelEndpoint: "",
   size: DEFAULT_SIZE,
+  template: DEFAULT_TEMPLATE,
   hadKey: false,
 };
 
@@ -134,6 +138,16 @@ function sizeOptions(chosen: string): { value: string; label: string; selected?:
     value: size,
     label: `${size}: ${lower(says.get(size as keyof typeof SIZES) ?? "")}`,
     selected: size === at,
+  }));
+}
+
+/** The templates in order, Blank first; the one asked for chosen (Blank when it is not one of them). */
+function templateOptions(chosen: string): { value: string; label: string; selected?: boolean }[] {
+  const at = TEMPLATES.some((t) => t.id === chosen) ? chosen : DEFAULT_TEMPLATE;
+  return TEMPLATES.map((t) => ({
+    value: t.id,
+    label: `${t.title}: ${lower(t.says)}`,
+    selected: t.id === at,
   }));
 }
 
@@ -220,7 +234,7 @@ function formView(
           ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
         })}
         <fieldset class="field" ${errors["followMode"] ? html`data-invalid` : null}>
-          <legend>How it follows this forge's code (recorded for now; nothing acts on it yet)</legend>
+          <legend>How it follows this forge's code</legend>
           <label class="check">
             <input
               type="radio"
@@ -229,7 +243,7 @@ function formView(
               ${values.followMode !== "take-updates" ? html`checked` : null}
             />
             <span
-              >Recorded for now: tell me <span class="muted small">your choice is kept; nothing tells you yet.</span></span
+              >${FOLLOW_LABELS["tell-me"]} <span class="muted small">${FOLLOW_WORDS["tell-me"]}</span></span
             >
           </label>
           <label class="check">
@@ -240,7 +254,7 @@ function formView(
               ${values.followMode === "take-updates" ? html`checked` : null}
             />
             <span
-              >Recorded for now: take updates <span class="muted small">your choice is kept; nothing acts on it yet.</span></span
+              >${FOLLOW_LABELS["take-updates"]} <span class="muted small">${FOLLOW_WORDS["take-updates"]}</span></span
             >
           </label>
           ${errors["followMode"]
@@ -312,6 +326,13 @@ function formView(
               ...(errors["budgetUsd"] ? { error: errors["budgetUsd"] } : {}),
             })}
         ${selectField({
+          label: "Template",
+          name: "template",
+          hint: "What the child starts from besides the apps you fork. Blank is the default.",
+          options: templateOptions(values.template),
+          ...(errors["template"] ? { error: errors["template"] } : {}),
+        })}
+        ${selectField({
           label: "Size (optional)",
           name: "size",
           hint: "Room for the child to grow into. Small is the default and is not recorded.",
@@ -341,7 +362,7 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
   const copied = (body["copied"] as string[] | undefined) ?? [];
   const bytes = Number(body["bytes"] ?? 0);
   const note = body["keyNote"];
-  const plan = body["plan"] as { budgetUsd?: number | null } | undefined;
+  const plan = body["plan"] as { budgetUsd?: number | null; template?: string } | undefined;
   const budget = plan?.budgetUsd ?? null;
   const address = childUrlOf(ctx.app, values.name);
   return card(
@@ -355,6 +376,9 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
                 ? "You keep owner access after it is claimed; the claim page tells them."
                 : "You leave once it is claimed; they can invite you back."}
             </li>`}
+        ${plan?.template === undefined
+          ? null
+          : html`<li>It starts from the <b>${templateOf(plan.template).title}</b> template.</li>`}
         ${budget === null
           ? null
           : html`<li>Its crew runs on the key you give, up to $${budget} for the key's whole life.</li>`}
@@ -450,6 +474,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     budgetUsd: field(form, "budgetUsd").trim(),
     modelEndpoint: field(form, "modelEndpoint").trim(),
     size: field(form, "size").trim() || DEFAULT_SIZE,
+    template: field(form, "template").trim() || DEFAULT_TEMPLATE,
     hadKey: field(form, "modelKey").trim() !== "",
   };
   const key = field(form, "modelKey").trim();
@@ -468,6 +493,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     ...(values.budgetUsd === "" ? {} : { budgetUsd: Number(values.budgetUsd) }),
     // Small is the default: it is not recorded, so the plan stays as it was.
     ...(values.size === DEFAULT_SIZE ? {} : { size: values.size }),
+    ...(values.template === DEFAULT_TEMPLATE ? {} : { template: values.template }),
     dryRun: planOnly,
   });
   if (door.status >= 400)

@@ -25,6 +25,7 @@ import { CHECK_ASKED } from "../../actions/pull_ask_words.ts";
 import { reviewWords } from "../../actions/review_words.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
+import { RED_ALONE_WAIT, redAloneAt, redMark, type RedMark } from "../../checks/queue.ts";
 import { tierLine, type TierState } from "../../checks/tiers.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
@@ -53,7 +54,8 @@ import {
   type Side,
 } from "../../core/reviews.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { canAdmin, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { bypassOffered, landPastGate, type BypassError } from "../../checks/bypass.ts";
 import { commitLog, readerFor } from "../../git/read.ts";
 import { wallOf } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -86,6 +88,7 @@ import {
   badge,
   btn,
   card,
+  field as formField,
   icon,
   labelCss,
   queuedPhrase,
@@ -104,6 +107,7 @@ import { previewEnv } from "../../apps/data.ts";
 import { specFindings } from "./pull-spec.ts";
 import { pullPreviewFindings } from "../../core/preview_findings.ts";
 import { crewActivityCard } from "./runs.ts";
+import { nextOfPull } from "../../flow/next_actor.ts";
 import { holdCard } from "../studio/hold.ts";
 import {
   changeHead,
@@ -303,6 +307,17 @@ export function checksLine(
   </p>`;
 }
 
+/** One muted line when the merge queue holds the pull as red alone; nothing otherwise. */
+export function redAloneLine(mark: RedMark | undefined): Html {
+  if (mark === undefined) return html``;
+  const exact = redAloneAt(mark);
+  if (exact === "") return html``;
+  return html`<p class="muted small">
+    ${icon("clock")}red alone at
+    <time datetime="${new Date(mark.at).toISOString()}">${exact}</time>, ${RED_ALONE_WAIT}
+  </p>`;
+}
+
 /** Whether a head declares a fast tier: a commit's files never change. */
 const fastByHead = new Map<string, boolean>();
 export async function declaresFast(dir: string, head: string): Promise<boolean> {
@@ -391,7 +406,8 @@ function pullChecksLine(
     `${thread}/checks-line`,
   );
   const found = !isApp ? null : pullPreviewFindings(ctx.app.db, repo.id, previewEnv(pull.number));
-  return html`${line}${found === null ? "" : specFindings(found)}`;
+  const red = redAloneLine(redMark(repo.id, pull.id, status.headOid));
+  return html`${line}${red}${found === null ? "" : specFindings(found)}`;
 }
 
 /** One §5 row in a toned card; `.setting-list` wraps the sentence and drops the action under it on a phone. */
@@ -573,12 +589,25 @@ function mergeBox(
       "Waiting on checks.",
       html`${why} ${reviewsChip(status.reviews, by)} ${checks}`,
       when(mayMerge, () =>
-        btn("Merge pull request", {
+        html`${btn("Merge pull request", {
           variant: "primary",
           icon: "merge",
           disabled: true,
           title: "A passing deploy of this head is required first",
-        }),
+        })}${when(
+          bypassOffered(ctx.app, ctx.auth.user, repo),
+          () => html`<form method="post" action="${thread}/land-past">
+            ${formField({
+              name: "reason",
+              label: "Land past the gate",
+              hint: "Landing has stopped. Say why this pull lands without its checks; it goes on the pull's trail. Review and conflicts still count.",
+              required: true,
+              minlength: 8,
+              maxlength: 500,
+            })}
+            <div class="form-actions">${btn("Land past the gate", { variant: "danger", icon: "merge" })}</div>
+          </form>`,
+        )}`,
       ),
     );
   }
@@ -949,7 +978,8 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
       compact: true,
       ownTitle: true,
     })}
-    ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "files")}
+    ${changeHead(ctx, repo, pull, nextOfPull(ctx.app.db, pull, { headOid: status.headOid, conflicts: status.conflicts.length }))}
+    ${changeTabs(repo, pull, "files")}
     <p class="files-where muted small" id="files">
       <span class="mono">${headLabel} → ${pull.baseBranch}</span>
       <span class="sep" aria-hidden="true">·</span>
@@ -1359,6 +1389,34 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
     });
   }
   return flashTo(ctx, dest, { message: "Pull request merged." });
+}
+
+// POST /:owner/:name/pulls/:number/land-past — the owner's break-glass (#7790).
+export async function pullLandPastSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  const user = ctx.auth.user;
+  if (!user || user.kind === "agent" || !canAdmin(ctx.app.db, found.repo, user))
+    return new Response("forbidden", { status: 403 });
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const landed = await landPastGate(ctx.app, user, found.repo, found.pull, field(form, "reason") ?? "");
+  if (!landed.ok) return flashTo(ctx, dest, { tone: "danger", message: bypassWords(landed.error) });
+  return flashTo(ctx, dest, { message: "Landed past the gate; the reason is on the trail." });
+}
+
+function bypassWords(e: BypassError): string {
+  switch (e.kind) {
+    case "reason":
+      return "Say why in 8 to 500 characters: it goes on the pull's trail.";
+    case "not_stopped":
+      return "Landing has not stopped, so there is no way past the gate: wait for the checks.";
+    case "merge":
+      return `Not landed: ${mergeFailure(e.error)}`;
+    default:
+      return "Only an owner can land a pull past the gate.";
+  }
 }
 
 /**

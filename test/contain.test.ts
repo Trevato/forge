@@ -21,6 +21,7 @@ import { openPull, submitReview } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import {
   cellCounters,
+  cellMounts,
   cellsAvailable,
   hiddenMounts,
   mountMode,
@@ -473,6 +474,22 @@ describe("cells hide every mount that may carry a secret", () => {
       "/etc/hosts",
     ])
       expect(hidden).not.toContain(kept);
+  });
+
+  // A forge that runs in a cell (a preview) has its own sockets at
+  // /run/forge; a child forge's cell inside it remounted them read-only and
+  // never had a socket to listen on (#6023).
+  test("nothing under the cell's own /tmp and /run is hidden again, so a cell inside a cell keeps its sockets", () => {
+    const dirs = new Set(["/data", "/run/forge", "/run/secrets", "/tmp/fc-1", "/etc/plat-ca", "/data/code"]);
+    const kind = (path: string) => (dirs.has(path) ? "dir" : path === "/etc/token" ? "file" : undefined);
+    const mounts = cellMounts(
+      { hide: ["/data"], reveal: ["/data/code"] },
+      ["/run/forge", "/run/secrets", "/tmp", "/tmp/fc-1", "/run", "/etc/plat-ca", "/etc/token", "/var/run/gone"],
+      kind,
+    );
+    expect(mounts.hide).toEqual(["/data", "/etc/plat-ca"]);
+    expect(mounts.blank).toEqual(["/etc/token"]);
+    expect(mounts.reveal).toContain("/data/code");
   });
 });
 
@@ -1060,3 +1077,42 @@ describe.skipIf(noCells)(
     }, 240_000);
   },
 );
+
+describe.skipIf(noCells)("cells: the shared install cache is read-only (#7543)", () => {
+  test("a revealed cache under a hidden data dir is readable and a write into it fails", async () => {
+    const data = await mkdtemp(join(tmpdir(), "forge-cell-cache-"));
+    const cache = join(data, "check-install", "r", "bun");
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, "pkg"), "x");
+    const dir = join(data, "..", `co-${Date.now()}`);
+    mkdirSync(dir);
+    const lines: string[] = [];
+    const result = await runStep(
+      "check",
+      `cat ${cache}/pkg && (echo y > ${cache}/new && echo WROTE || echo REFUSED)`,
+      {
+        cwd: dir,
+        env: childEnv({}),
+        log: (line) => lines.push(line),
+        signal: new AbortController().signal,
+        timeoutMs: 60_000,
+        cell: {
+          dir,
+          writable: [],
+          home: join(dir, ".home"),
+          hide: [data],
+          reveal: [cache],
+          egress: [],
+          reach: [],
+          limits: { memoryMiB: 1024, cpus: 2, diskMiB: 1024 },
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(lines).toContain("x");
+    expect(lines).toContain("REFUSED");
+    expect(lines).not.toContain("WROTE");
+    await rm(data, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
+  }, 60_000);
+});

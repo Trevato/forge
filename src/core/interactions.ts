@@ -20,9 +20,6 @@ export const INTERACTION_KINDS = [
 ] as const;
 export type InteractionKind = (typeof INTERACTION_KINDS)[number];
 
-export const isInteractionKind = (v: unknown): v is InteractionKind =>
-  typeof v === "string" && (INTERACTION_KINDS as readonly string[]).includes(v);
-
 /** A feed item id: a namespace, then what it names — `event:01J…`, `ask:look:…`. */
 export const ITEM_ID = /^[a-z]{2,12}:[A-Za-z0-9_.:-]{1,160}$/;
 

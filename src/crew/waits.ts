@@ -21,6 +21,8 @@ export type Wait =
   | "carried"
   | "wall"
   | "review"
+  | "proving"
+  | "proof-red"
   | "red";
 
 /** How many approved pulls waited on each reason. */

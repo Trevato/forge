@@ -8,6 +8,7 @@
 import type { App } from "../app.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import { forgeCeiling } from "../flow/ceiling.ts";
 import { readKpis } from "../flow/kpis.ts";
 import { waitingOn } from "../web/studio/asks.ts";
 
@@ -20,7 +21,7 @@ export function idleReason(b: { running: number; slots: number }, s: { todayUsd:
 }
 
 export function homeTruth(app: App, user: User, now: Date = new Date()) {
-  const k = readKpis(app.db, now, { ceilingUsd: app.config.crewCeilingUsd ?? null });
+  const k = readKpis(app.db, now, { ceilingUsd: forgeCeiling(app.config) });
   const asks = waitingOn(app.db, user, listReposVisibleTo(app.db, user, { limit: 200, withoutArchived: true }));
   const oldest = asks.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null);
   return {

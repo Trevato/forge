@@ -1,9 +1,11 @@
 /**
  * Home's KPI row and pinned panels come from the cache docs/CACHING.md
- * designs (#2717): hit when nothing was written, miss after a write, a warm
+ * designs (#2717): a hit within 60 s whatever was written (#7624), a warm
  * hit that runs none of their reads, and the owner's figures never reach
  * another viewer.
  */
+import { forgetHome } from "../src/web/studio/home_last.ts";
+import { freshHome } from "./helpers/home-fresh.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { pinPanel } from "../src/actions/board-pins.ts";
 import { writeBoard } from "../src/actions/boards.ts";
@@ -12,8 +14,7 @@ import { kpiCache, panelCache } from "../src/web/studio/home_cache.ts";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
 
 let f: SnappyFixture;
-const home = async (cookie?: string): Promise<string> =>
-  (await fetch(`${f.base}/`, { headers: cookie ? { cookie } : {} })).text();
+const home = (cookie?: string): Promise<string> => freshHome(f.base, cookie);
 
 beforeAll(async () => {
   f = await snappyFixture();
@@ -31,7 +32,7 @@ afterAll(async () => {
   await f.close();
 });
 
-test("a warm home reads neither the KPIs nor the panels again; a write does", async () => {
+test("a warm home reads neither the KPIs nor the panels again, even after a write", async () => {
   const a = await home(f.ownerCookie);
   expect(a).toContain('class="stats mb"');
   expect(a).toContain("<h2>Pin A</h2>");
@@ -40,12 +41,14 @@ test("a warm home reads neither the KPIs nor the panels again; a write does", as
   const [km, pm] = [kpi.misses, panel.misses];
   await home(f.ownerCookie);
   expect([kpi.misses, panel.misses]).toEqual([km, pm]);
-  expect(kpi.hits).toBeGreaterThan(0);
-  expect(panel.hits).toBeGreaterThan(0);
+  // The second look is a hit one layer in front of those caches (`home_last.ts`): both phases say so.
+  const timing = (await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } })).headers.get("server-timing") ?? "";
+  expect(timing).toMatch(/kpis;dur=[\d.]+;desc="hit"/);
+  expect(timing).toMatch(/panels;dur=[\d.]+;desc="hit"/);
 
   f.app.db.query("UPDATE repo SET description = 'moved' WHERE id = ?1").run(f.repos[0]!.id);
   await home(f.ownerCookie);
-  expect([kpi.misses, panel.misses]).toEqual([km + 1, pm + 1]);
+  expect([kpi.misses, panel.misses]).toEqual([km, pm]);
 });
 
 test("the owner's KPIs and panels never render for another viewer, warm or not", async () => {
@@ -116,6 +119,7 @@ test("warm home holds p95 under the stated budget", async () => {
   expect(warm.status).toBe(200);
 
   // What a miss of both runs that the warm page does not, with the feed still warm.
+  forgetHome(f.app.db);
   kpiCache(f.app.db).clear();
   panelCache(f.app.db).clear();
   const missed = await counted();

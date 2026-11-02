@@ -99,7 +99,7 @@ describe("working now in the terminal", () => {
     expect(await palette(bob, [":", "Working"])).not.toContain("Working now");
     const run = liveRun("LIVEJOB sanding the door");
     try {
-      expect(await palette(bob, [":", "Working"], "LIVEJOB")).toContain("Working now: LIVEJOB sanding the door");
+      expect(await palette(bob, [":", "Working"], "LIVEJOB")).toContain("LIVEJOB sanding the door");
     } finally {
       run.done();
     }
@@ -125,8 +125,8 @@ describe("make it yours in the terminal", () => {
     expect(await palette(bob, [":", "Make it"], "Make it yours")).toContain("alice/lobby — Make it yours");
   });
 
-  test("it opens the fork screen", async () => {
-    const text = await palette(bob, [":", "make it", "\r"], "Fork");
-    expect(text).toContain("Fork");
+  test("it opens the make-it-yours screen", async () => {
+    const text = await palette(bob, [":", "make it", "\r"], "your own");
+    expect(text).toContain("Make alice/lobby your own");
   });
 });

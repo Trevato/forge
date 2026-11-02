@@ -1,5 +1,4 @@
-import { listResilience } from "../../../actions/resilience.ts";
-import { drillCommand } from "../../../kernel/domain_drill.ts";
+import { drillRows, listResilience } from "../../../actions/resilience.ts";
 import { bad, good, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
@@ -12,22 +11,6 @@ export const tool: Tool = {
     const listed = listResilience(ctx.app, user);
     if (!listed.ok) return bad("forbidden", "failure domains are for a forge admin who is a person");
     const origin = ctx.app.config.url ?? ctx.url.origin;
-    return good(
-      listed.value.map((d) =>
-        d.drill.name === null
-          ? { key: d.key, breaks: d.breaks, drilled: false, why: d.drill.why }
-          : {
-              key: d.key,
-              breaks: d.breaks,
-              drilled: true,
-              drill: d.drill.name,
-              last:
-                d.drill.last === null
-                  ? null
-                  : { at: d.drill.last.at, green: d.drill.last.green, why: d.drill.last.why },
-              command: drillCommand(d.key, origin),
-            },
-      ),
-    );
+    return good(drillRows(listed.value, origin));
   },
 };

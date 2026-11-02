@@ -105,8 +105,9 @@ describe("waves page", () => {
     expect(at("Tenth")).toBeGreaterThan(-1);
     expect(at("Tenth")).toBeLessThan(at("Ninth"));
     expect(at("Ninth")).toBeLessThan(at("Zeta"));
-    expect(body).toContain("0.10.0");
-    expect(body).toContain("2026-02-01");
+    expect(body).toContain("0.10.0 · 2026-02-01 · Tenth · 0 pulls");
+    expect(body).toContain("0.9.0 · 2026-01-01 · Ninth · 0 pulls");
+    expect(at("0.10.0 · 2026-02-01")).toBeLessThan(at("0.9.0 · 2026-01-01"));
     expect(body).toContain('href="/alice/pub/waves/0.10.0"');
   });
 
@@ -225,9 +226,9 @@ describe("waves page", () => {
 
   test("a row counts the pulls this viewer can see, as the wave's page lists them", async () => {
     const body = await (await get("/alice/pub/waves")).text();
-    expect(body).toContain("0.1.0 · Mixed · 2 pulls");
+    expect(body).toContain("0.1.0 · 2026-03-05 · Mixed · 2 pulls");
     const guest = await (await get("/alice/pub/waves", false)).text();
-    expect(guest).toContain("0.1.0 · Mixed · 1 pull<");
+    expect(guest).toContain("0.1.0 · 2026-03-05 · Mixed · 1 pull<");
     expect(guest).not.toContain("2 pulls");
     expect(guest).not.toContain("Secret work");
     const page = await (await get("/alice/pub/waves/0.1.0", false)).text();

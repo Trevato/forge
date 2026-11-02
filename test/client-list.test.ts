@@ -220,6 +220,19 @@ describe("the client list", () => {
     expect(html).not.toContain(claimUrl.split("#")[1]!);
   });
 
+  test("the admin's page carries the forges side by side: columns, shared use, no heartbeat yet", async () => {
+    const res = await list(admin);
+    expect(res.status).toBe(200);
+    const html = (await res.text()).replace(/\s+/g, " ");
+    for (const col of ["Forge", "Address", "Size", "Memory", "CPU", "Disk", "Apps", "Last heartbeat"])
+      expect(html).toContain(`<th scope="col">${col}</th>`);
+    const maria = html.slice(html.indexOf('data-compare="maria"'), html.indexOf("</tr>", html.indexOf('data-compare="maria"')));
+    expect(maria).toContain('data-use="shared"');
+    expect(maria).toContain("<td>small · 512 MiB, 1 core, 2 GiB</td>");
+    expect(maria).toContain("<td>shared</td>");
+    expect(maria).toContain("<td>none yet</td>");
+  });
+
   test("an unclaimed row offers a fresh link: it replaces the old one, shown once; only an admin may ask", async () => {
     const html = (await (await list(admin)).text()).replace(/\s+/g, " ");
     const maria = html.slice(html.indexOf('data-forge="maria"'), html.indexOf("</li>", html.indexOf('data-forge="maria"')));

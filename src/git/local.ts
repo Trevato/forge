@@ -441,10 +441,16 @@ export async function unstageAll(dir: string): Promise<LocalResult<void>> {
 export async function discardPath(
   dir: string,
   path: string,
-  opts: { untracked?: boolean } = {},
+  opts: { untracked?: boolean; unstagedOnly?: boolean } = {},
 ): Promise<LocalResult<void>> {
   if (opts.untracked === true)
     return done(await runLocal(["clean", "-fd", "--", path], { cwd: dir }));
+  // The unstaged half only: the working file goes back to the index, and
+  // whatever is staged stays staged.
+  if (opts.unstagedOnly === true)
+    return done(
+      await runLocal(["restore", "--worktree", "--", path], { cwd: dir }),
+    );
   const out = await runLocal(
     ["restore", "--staged", "--worktree", "--source=HEAD", "--", path],
     { cwd: dir },
@@ -864,7 +870,9 @@ export async function isAncestor(
 /** Is `oid` a commit object in the repository? One `git cat-file -e`. */
 export async function hasCommit(dir: string, oid: string): Promise<boolean> {
   if (!isSafeRef(oid)) return false;
-  const out = await runLocal(["cat-file", "-e", `${oid}^{commit}`], { cwd: dir });
+  const out = await runLocal(["cat-file", "-e", `${oid}^{commit}`], {
+    cwd: dir,
+  });
   return out.ok;
 }
 

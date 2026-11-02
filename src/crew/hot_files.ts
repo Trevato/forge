@@ -6,7 +6,9 @@
  * drains under the limit.
  *
  * - An issue's expected files are the repository paths its title and body
- *   name (`expectedFiles`): `src/http/mcp.ts`, `docs/MCP.md`.
+ *   name (`expectedFiles`): `src/http/mcp.ts`, `docs/MCP.md`. When the body
+ *   has a line that starts with `Files:`, only the paths on that line count;
+ *   a path named elsewhere as context does not hold the build.
  * - The files an open pull touches are read from git once per head
  *   (`learnPullFiles`, asked by the picker before it sorts), and kept in
  *   memory: a cache git rebuilds, never state of its own.
@@ -19,9 +21,10 @@ import { getIssuesByIds, type Issue } from "../core/issues.ts";
 import { joinMany, pullDir } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { runGitCapture } from "../git/env.ts";
+import { HOT_PULLS } from "../flow/hot_trend.ts";
+import { sampleHeat } from "./hot_history.ts";
 
-/** A file this many open pulls touch is hot: no new build starts on it. */
-export const HOT_PULLS = 5;
+export { HOT_PULLS };
 
 /**
  * A pull whose diff touches more than this many files counts toward no file's
@@ -40,7 +43,27 @@ const QUOTED = /`([\w-][\w.-]*\.[A-Za-z0-9]+)`/g;
 
 /** The repository paths an issue names, in the order it names them, each once. */
 export function expectedFiles(issue: Pick<Issue, "title" | "body">): string[] {
-  const text = `${issue.title}\n${issue.body}`;
+  const listed = issue.body.match(/^Files:(.*)$/m);
+  return pathsIn(listed ? listed[1]! : `${issue.title}\n${issue.body}`);
+}
+
+/** The most paths one issue may relieve. */
+const MAX_RELIEVED = 3;
+
+/**
+ * The paths an issue relieves (#7422): named on a line starting `Relieves:`
+ * and also on its `Files:` line, at most three. The change exists to shrink
+ * what other pulls must touch there, so the file being hot does not hold it.
+ */
+export function relievedFiles(issue: Pick<Issue, "body">): string[] {
+  const files = issue.body.match(/^Files:(.*)$/m);
+  const line = issue.body.match(/^Relieves:(.*)$/m);
+  if (!files || !line) return [];
+  const listed = new Set(pathsIn(files[1]!));
+  return pathsIn(line[1]!).filter((p) => listed.has(p)).slice(0, MAX_RELIEVED);
+}
+
+function pathsIn(text: string): string[] {
   const found = new Set<string>();
   for (const pattern of [PATH, QUOTED])
     for (const match of text.matchAll(pattern)) {
@@ -66,9 +89,10 @@ const OID = /^[0-9a-f]{40,64}$/;
 /**
  * Read the files each open pull of `repo` touches, for any pull whose head
  * moved since it was last read, and forget the pulls no longer open. A pull
- * git cannot answer for touches nothing until it can.
+ * git cannot answer for touches nothing until it can. Each pass samples the
+ * counts at `now` (`hot_history.ts`).
  */
-export async function learnPullFiles(app: App, repo: Repo): Promise<void> {
+export async function learnPullFiles(app: App, repo: Repo, now: number = Date.now()): Promise<void> {
   const ids = app.db
     .query<{ id: string }, [string]>(
       `SELECT p.issue_id AS id FROM pull p JOIN issue i ON i.id = p.issue_id
@@ -99,17 +123,67 @@ export async function learnPullFiles(app: App, repo: Repo): Promise<void> {
     after.set(pull.id, { at, number: pull.number, files: out.stdout.split("\0").filter((f) => f !== "") });
   }
   touched.set(repo.id, after);
+  sampleHeat(repo.id, pullCounts(repo.id), now);
+}
+
+/** Every file of `repoId` with how many open pulls touch it, narrow pulls only. */
+export function pullCounts(
+  repoId: string,
+  admit: (pullNumber: number) => boolean = () => true,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const { files, number } of touched.get(repoId)?.values() ?? []) {
+    if (files.length > WIDE_PULL || !admit(number)) continue;
+    for (const file of files) counts.set(file, (counts.get(file) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** The most pulls a hold names. */
+export const PULLS_NAMED = 8;
+
+/** The numbers of the open pulls that touch `path`, oldest first, at most `PULLS_NAMED`. Memory only. */
+export function pullsTouching(
+  repoId: string,
+  path: string,
+  admit: (pullNumber: number) => boolean = () => true,
+): number[] {
+  const out: number[] = [];
+  for (const { files, number } of touched.get(repoId)?.values() ?? [])
+    if (files.length <= WIDE_PULL && admit(number) && files.includes(path)) out.push(number);
+  return out.sort((a, b) => a - b).slice(0, PULLS_NAMED);
 }
 
 /** Every file of `repo` that `HOT_PULLS` or more open pulls touch, with how many. */
-export function hotFiles(repoId: string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const { files } of touched.get(repoId)?.values() ?? []) {
-    if (files.length > WIDE_PULL) continue;
-    for (const file of files) counts.set(file, (counts.get(file) ?? 0) + 1);
-  }
+export function hotFiles(
+  repoId: string,
+  admit?: (pullNumber: number) => boolean,
+): Map<string, number> {
+  const counts = pullCounts(repoId, admit);
   for (const [file, n] of counts) if (n < HOT_PULLS) counts.delete(file);
   return counts;
+}
+
+/** The flow panel lists a file this many open pulls touch, held or not. */
+export const WARM_PULLS = 3;
+
+/** Every repository with pulls learned, and each file `WARM_PULLS` or more of its open pulls touch. Memory only: never git. */
+export function warmFiles(): { repoId: string; path: string; pulls: number }[] {
+  const out: { repoId: string; path: string; pulls: number }[] = [];
+  for (const [repoId, pulls] of touched) {
+    const counts = new Map<string, number>();
+    for (const { files } of pulls.values()) {
+      if (files.length > WIDE_PULL) continue;
+      for (const file of files) counts.set(file, (counts.get(file) ?? 0) + 1);
+    }
+    for (const [path, n] of counts) if (n >= WARM_PULLS) out.push({ repoId, path, pulls: n });
+  }
+  return out;
+}
+
+/** Put what git said about `repoId`'s open pulls into the cache, as `learnPullFiles` would; for tests. */
+export function rememberPullFiles(repoId: string, pulls: readonly { number: number; files: readonly string[] }[]): void {
+  touched.set(repoId, new Map(pulls.map((p) => [`pull-${p.number}`, { at: `seeded-${p.number}`, ...p }])));
 }
 
 /** An open pull too wide to count toward heat, with the files its diff touches. */
@@ -139,7 +213,9 @@ export function hotOverlap(
   hot: ReadonlyMap<string, number>,
 ): HotFile[] {
   if (hot.size === 0) return [];
+  const relieved = new Set(relievedFiles(issue));
   return expectedFiles(issue)
+    .filter((path) => !relieved.has(path))
     .flatMap((path) => {
       const pulls = hot.get(path);
       return pulls === undefined ? [] : [{ path, pulls }];
@@ -152,6 +228,10 @@ export interface HotHold {
   readonly number: number;
   readonly title: string;
   readonly files: readonly HotFile[];
+  /** The admin's hold (`file_holds.ts`) that keeps this build, with the setter's name. */
+  readonly pin?: { readonly path: string; readonly byName: string };
+  /** The path another issue (`#by`) is already relieving, which keeps this one waiting. */
+  readonly relieving?: { readonly path: string; readonly by: number };
 }
 
 /** The pulls too wide to count as the picker last saw them, per repository, held builds or not. */
@@ -166,7 +246,13 @@ export function standingWide(repoId: string): { at: string; wide: readonly WideP
 const standing = new Map<string, { at: string; holds: readonly HotHold[]; wide: readonly WidePull[] }>();
 
 /** Remember the builds the picker holds on hot files in `repoId` now; none clears it. */
-export function holdHot(repoId: string, issues: readonly Issue[], at = new Date()): void {
+export function holdHot(
+  repoId: string,
+  issues: readonly Issue[],
+  at = new Date(),
+  pins: ReadonlyMap<number, { path: string; byName: string }> = new Map(),
+  relieving: ReadonlyMap<number, { path: string; by: number }> = new Map(),
+): void {
   const wide = widePulls(repoId);
   if (wide.length === 0) standingWideBy.delete(repoId);
   else standingWideBy.set(repoId, { at: at.toISOString(), wide });
@@ -177,7 +263,17 @@ export function holdHot(repoId: string, issues: readonly Issue[], at = new Date(
   const hot = hotFiles(repoId);
   standing.set(repoId, {
     at: at.toISOString(),
-    holds: issues.map((i) => ({ number: i.number, title: i.title, files: hotOverlap(i, hot) })),
+    holds: issues.map((i) => {
+      const pin = pins.get(i.number);
+      const rel = relieving.get(i.number);
+      return {
+        number: i.number,
+        title: i.title,
+        files: hotOverlap(i, hot),
+        ...(pin === undefined ? {} : { pin }),
+        ...(rel === undefined ? {} : { relieving: rel }),
+      };
+    }),
     wide,
   });
 }
@@ -199,6 +295,9 @@ export function hotWords(hot: ReadonlyMap<string, number>): string {
 
 /** One sentence for a held build: `#12 waits: src/http/mcp.ts is in 6 open pulls (hot at 5).` */
 export function hotSays(hold: HotHold): string {
+  if (hold.pin !== undefined) return `#${hold.number} waits: ${hold.pin.byName} holds new work on ${hold.pin.path}.`;
+  if (hold.relieving !== undefined)
+    return `#${hold.number} waits: ${hold.relieving.path} is already being relieved by #${hold.relieving.by}.`;
   const files = hold.files
     .slice(0, 3)
     .map((f) => `${f.path} is in ${f.pulls} open pulls`)

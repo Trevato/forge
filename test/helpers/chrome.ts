@@ -107,7 +107,7 @@ async function readDebuggerUrl(
  * cookies and the given colour scheme, and return what `expression` (a JS
  * expression that yields a JSON string) says once the page has loaded.
  */
-async function evaluateLoaded(
+export async function evaluateLoaded(
   binary: string,
   url: string,
   viewport: { width: number; height: number },
@@ -187,6 +187,7 @@ async function evaluateLoaded(
     const { result } = await cdp.send("Runtime.evaluate", {
       expression,
       returnByValue: true,
+      awaitPromise: true,
     });
     return result.value as string;
   } finally {

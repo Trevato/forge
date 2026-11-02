@@ -390,6 +390,42 @@ function origin(url: string): { host: string; port: number } | undefined {
 const isLoopback = (host: string): boolean =>
   host === "localhost" || host === "::1" || /^127\./.test(host);
 
+/** A path at or under `root`. */
+const within = (path: string, root: string): boolean => path === root || path.startsWith(`${root}/`);
+
+/**
+ * What a cell covers and what it shows again, from what the caller names
+ * and what the machine mounts (`hiddenMounts`). Deepest last, so a hidden
+ * directory never covers a writable one inside it. `/tmp` and `/run` are
+ * fresh in every cell, so nothing under them is the machine's: a forge
+ * that itself runs in a cell has its own `/run/forge` mounted there, and
+ * remounting that read-only would leave the inner cell no socket to listen on.
+ */
+export function cellMounts(
+  spec: Pick<CellSpec, "hide" | "reveal">,
+  machine: readonly string[],
+  kind: (path: string) => "dir" | "file" | undefined = pathKind,
+): { hide: string[]; blank: string[]; reveal: string[] } {
+  const hidden = [...new Set([...spec.hide, ...machine])]
+    // A path that is not there has nothing to hide (and cannot be mounted
+    // over on a read-only root).
+    .filter(
+      (path) =>
+        !["", "/"].includes(path) && !within(path, "/tmp") && !within(path, "/run") && kind(path) !== undefined,
+    )
+    .sort((a, b) => a.length - b.length);
+  // A directory is covered by an empty read-only tmpfs; a file (a secret
+  // mounted by itself) by /dev/null.
+  const hide = hidden.filter((path) => kind(path) === "dir");
+  const blank = hidden.filter((path) => kind(path) === "file");
+  // The runtime itself must stay visible when it lives in a hidden home
+  // (`~/.bun/bin/bun` on a developer's machine).
+  const reveal = [dirname(process.execPath), ...(spec.reveal ?? [])].filter((path) =>
+    hide.some((h) => within(path, h)),
+  );
+  return { hide, blank, reveal };
+}
+
 /** Make a cell: its sockets, its proxy, its relays. `close()` undoes it. */
 export function openCell(
   spec: CellSpec,
@@ -424,26 +460,7 @@ export function openCell(
       relay({ tcp: spec.listen }, { unix: join(sockets, "in.sock") }),
     );
 
-  // Deepest last, so a hidden directory never covers a writable one inside it.
-  // What the caller names, plus whatever the machine mounts that may carry
-  // a secret (`hiddenMounts`): a cell never needs either.
-  const hidden = [...new Set([...spec.hide, ...hiddenMounts()])]
-    // A path that is not there has nothing to hide (and cannot be mounted
-    // over on a read-only root). `/tmp` and `/run` are already the cell's own.
-    .filter(
-      (path) =>
-        !["", "/", "/tmp", "/run"].includes(path) && existsSync(path),
-    )
-    .sort((a, b) => a.length - b.length);
-  // A directory is covered by an empty read-only tmpfs; a file (a secret
-  // mounted by itself) by /dev/null.
-  const hide = hidden.filter((path) => isDirectory(path));
-  const blank = hidden.filter((path) => !isDirectory(path));
-  // The runtime itself must stay visible when it lives in a hidden home
-  // (`~/.bun/bin/bun` on a developer's machine).
-  const reveal = [dirname(process.execPath), ...(spec.reveal ?? [])].filter((path) =>
-    hide.some((h) => path === h || path.startsWith(`${h}/`)),
-  );
+  const { hide, blank, reveal } = cellMounts(spec, hiddenMounts());
   const writable = [...new Set([spec.dir, spec.home, ...spec.writable])];
   for (const path of writable) mkdirSync(path, { recursive: true });
   // tmpfs is memory the watch cannot see from outside, so every one is
@@ -539,6 +556,12 @@ export function openCell(
       rmSync(sockets, { recursive: true, force: true });
     },
   };
+}
+
+/** What is at `path`: a directory, a file, or nothing. */
+function pathKind(path: string): "dir" | "file" | undefined {
+  if (!existsSync(path)) return undefined;
+  return isDirectory(path) ? "dir" : "file";
 }
 
 /** Whether `path` is a directory (following links, as bubblewrap will). */
@@ -700,6 +723,20 @@ export interface CellCounter {
   readonly cpuUsec: number;
   /** Resident memory of every process in the tree, bytes (`VmRSS`). */
   readonly memoryBytes: number;
+  /** Cores used over the watch's CPU window; null until the window has filled. */
+  readonly cores?: number | null;
+}
+
+/** Cores used since the oldest sample; null until the samples span half the CPU window. */
+export function coresOf(
+  samples: readonly { at: number; ticks: number }[],
+  last: { ticks: number } | undefined,
+  now: number,
+): number | null {
+  const first = samples[0];
+  if (first === undefined || last === undefined) return null;
+  const span = (now - first.at) / 1000;
+  return span >= WATCH.cpuWindowMs / 1000 / 2 ? Math.max(0, (last.ticks - first.ticks) / CLK_TCK / span) : null;
 }
 
 /** Every labelled cell the watch has read at least once. */
@@ -712,6 +749,7 @@ export function cellCounters(): CellCounter[] {
       label: e.label,
       cpuUsec: (e.last.ticks * 1_000_000) / CLK_TCK,
       memoryBytes: e.last.kib * 1024,
+      cores: coresOf(e.samples, e.last, Date.now()),
     });
   }
   return out;

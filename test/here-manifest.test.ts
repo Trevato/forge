@@ -77,6 +77,18 @@ describe("the manifest: what you can do here, as who you are", () => {
       visibility: "private",
     });
     if (!vault.ok) throw new Error(String(vault.error));
+    const pub = await newApp(app, alice, {
+      name: "pub",
+      owner: "acme",
+      visibility: "public",
+    });
+    if (!pub.ok) throw new Error(String(pub.error));
+    const plain = await createRepo(app, alice, {
+      name: "plain",
+      owner: "acme",
+      visibility: "public",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
     const bot = await createAgent(app, alice, { username: "bot" });
     if (!bot.ok) throw new Error(String(bot.error));
     expect(addToCrew(app, alice, game.value.repo, "bot").ok).toBe(true);
@@ -193,6 +205,32 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(list).not.toContain("change settings");
   });
 
+  test("a writer of a fork is offered how it follows its parent; a reader and a plain repository's writer are not", async () => {
+    const fork = await forkRepo(app, usersByName["wes"]!, getRepo(app.db, "acme", "game")!);
+    if (!fork.ok) throw new Error(String(fork.error));
+    const path = "/wes/game";
+    const moves = [
+      "read how it follows its parent",
+      "take the parent's updates",
+      "propose its changes to the parent",
+    ];
+    const { body } = await manifest(path, "wes");
+    for (const d of moves) expect(does(body)).toContain(d);
+    expect(body.actions.find((a: any) => a.do === moves[1]).http).toBe(
+      "POST /api/v1/repos/wes/game/following/take",
+    );
+    expect(moves.map((d) => body.actions.find((a: any) => a.do === d).mcp)).toEqual([
+      "following",
+      "take_updates",
+      "propose_to_parent_forge",
+    ]);
+    for (const who of ["carol", undefined])
+      for (const d of moves)
+        expect(does((await manifest(path, who)).body)).not.toContain(d);
+    for (const d of moves)
+      expect(does((await manifest("/acme/game", "wes")).body)).not.toContain(d);
+  });
+
   test("the owner also changes the settings", async () => {
     const { body } = await manifest("/acme/game", "alice");
     expect(body.you.as).toBe("owner");
@@ -213,6 +251,22 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(body.mcp.oauth).toBe(`${base}/.well-known/oauth-protected-resource`);
     expect(body.docs).toBe(`${base}/llms.txt`);
     expect(JSON.stringify(body)).not.toContain("vault");
+  });
+
+  test("the forge's manifest names how to help, for anyone; a repository's does not", async () => {
+    for (const who of [undefined, "carol"]) {
+      const { body, size } = await manifest("/", who);
+      expect(body.actions).toContainEqual({
+        do: "see how to help build this forge",
+        http: "GET /api/v1/contribute",
+        mcp: "contribute",
+        account: false,
+      });
+      expect(size).toBeLessThan(2048);
+      expect(does((await manifest("/acme/game", who)).body)).not.toContain(
+        "see how to help build this forge",
+      );
+    }
   });
 
   test("/explore and /search name their query API and MCP tool, the query carried over", async () => {
@@ -305,6 +359,27 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(offer.verify).toBe(true);
     const carol = (await manifest("/acme/game", "carol")).body;
     expect(carol.actions.find((a: any) => a.do === "offer a change").verify).toBeUndefined();
+  });
+
+  test("a repository with an app offers make it yours to whoever cannot write it", async () => {
+    const find = (m: any) => m.actions.find((a: any) => a.do === "make it yours");
+    const carol = find((await manifest("/acme/pub", "carol")).body);
+    expect(carol).toEqual({
+      do: "make it yours",
+      http: "POST /api/v1/repos/acme/pub/make-it-yours",
+      mcp: "make_it_yours",
+    });
+    expect(find((await manifest("/acme/pub", "una")).body).verify).toBe(true);
+    const out = find((await manifest("/acme/pub")).body);
+    expect(out.account).toBe(true);
+    expect(out.verify).toBeUndefined();
+  });
+
+  test("a writer, and a repository without an app, are not offered make it yours", async () => {
+    expect(does((await manifest("/acme/pub", "wes")).body)).not.toContain("make it yours");
+    expect(does((await manifest("/acme/pub", "alice")).body)).not.toContain("make it yours");
+    expect(does((await manifest("/acme/plain", "carol")).body)).not.toContain("make it yours");
+    expect(does((await manifest("/acme/plain")).body)).not.toContain("make it yours");
   });
 
   test("an org's own pages are the org's, not a missing repository", async () => {

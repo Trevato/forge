@@ -9,16 +9,18 @@
 
 import type { Database } from "bun:sqlite";
 import { backupAge, backupFull, backupOverdue, buildersValue, checkTime, reactNote, speedWords, spendCeilingWords, spendFull, spendValue, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
-import type { Kpis } from "../../flow/kpis.ts";
+import type { IdleReason } from "../../crew/idle_reason.ts";
+import type { KpiTimer, Kpis } from "../../flow/kpis.ts";
+import { clogLines, readClog } from "../../flow/clog_read.ts";
 import { vitalsLine } from "../../flow/vitals.ts";
 import { cachedKpis, cachedVitals, cachedWaiting } from "./home_cache.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
 import { sha, stat, time } from "../ui.ts";
-import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
-import { waitingOn } from "./asks.ts";
+import { reviewSetOf } from "./review_set.ts";
+import { staleArchive } from "./review_stale.ts";
 
 const W = 96;
 const H = 24;
@@ -91,6 +93,7 @@ export function liveNow(): { sha: string; at: string } | null {
 }
 
 export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now: Date = new Date()): Html {
+  const idle = k.builders.idle;
   const overdue = backupOverdue(k.backupAt, now);
   const spendWords = spendCeilingWords(k.spend);
   const rate = k.landed / k.landedHours.length;
@@ -122,10 +125,10 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
     )}
     ${tile(
       "Builders running",
-      "/settings/crew",
+      idle?.href ?? "/settings/crew",
       buildersValue(k.builders),
       buildersValue(k.builders),
-      k.builders.slots === 0 ? "No slots set" : "running now",
+      k.builders.slots === 0 ? "No slots set" : idle?.word ?? "running now",
       k.builders.slots === 0 ? "No slots set" : `Crew builders running now, of ${k.builders.slots} ${k.builders.slots === 1 ? "slot" : "slots"}`,
     )}
     ${tile(
@@ -162,27 +165,32 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
 }
 
 /** The figures count every repository, so the caller shows this to an admin only. */
-export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; now?: Date } = {}): Html {
+export function kpiRow(db: Database, opts: { ceilingUsd?: number; dataDir?: string; idle?: () => IdleReason | null; now?: Date; time?: KpiTimer } = {}): Html {
   const now = opts.now ?? new Date();
-  const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }) };
-  return kpiRowFor(cachedKpis(db, now, forge), liveNow(), now);
+  const forge = { ceilingUsd: opts.ceilingUsd ?? null, ...(opts.dataDir === undefined ? {} : { dataDir: opts.dataDir }), ...(opts.idle === undefined ? {} : { idle: opts.idle }) };
+  return kpiRowFor(cachedKpis(db, now, forge, opts.time), liveNow(), now);
 }
 
 /**
  * One `.small .muted` line over `/review`: how many asks wait on the viewer
- * (the very rows /review lists) and how long the oldest has. Empty at zero.
+ * (the very set /review draws, stale ones left out) and how long the oldest has. Asks older than 30 days follow as
+ * `N stale, archive?`, which opens the bulk-dismiss preview: nothing is
+ * dismissed without a look. Empty when there is nothing to say.
  */
 export function waitingLine(db: Database, user: User, now: Date = new Date()): Html {
-  const { count, oldest } = cachedWaiting(db, user.id, () => {
-    const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
-    const asks = waitingOn(db, user, repos);
+  const { count, oldest, stale } = cachedWaiting(db, user.id, () => {
+    const set = reviewSetOf(db, user, now);
     return {
-      count: asks.length,
-      oldest: asks.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null),
+      count: set.count,
+      oldest: set.live.reduce<string | null>((o, a) => (o === null || Date.parse(a.since) < Date.parse(o) ? a.since : o), null),
+      stale: set.stale.map((a) => ({ id: a.id })),
     };
   });
   const words = waitingWords(count, oldest, now);
-  return words === null ? html`` : html`<p class="small muted"><a href="/review">${words}</a></p>`;
+  if (words === null && stale.length === 0) return html``;
+  // `.break` lets the words wrap; `.stack` puts the link on its own line. No ask title: the home stays bare of them.
+  // The fold is a form, which cannot sit in the paragraph: it follows it.
+  return html`${words === null ? null : html`<p class="small muted break stack stack-tight"><span>${words}</span><a href="/review">Review them</a></p>`}${stale.length === 0 ? null : staleArchive(stale)}`;
 }
 
 /** Home's flow vitals for an admin (#5935): one muted line of counts; the open count links to the boards. */
@@ -190,4 +198,11 @@ export function vitalsRow(db: Database, now: Date = new Date()): Html {
   const v = cachedVitals(db, now);
   const rest = vitalsLine(v).split(" · ").slice(1).join(" · ");
   return html`<p class="small muted"><a href="/boards">${v.open} open pulls</a> · ${rest}</p>`;
+}
+
+/** Home's clog lines for an admin (#6757): the clog standing now and the last cleared note; nothing when there is neither. */
+export function clogRow(db: Database, now: Date = new Date()): Html {
+  const lines = clogLines(readClog(db, now), now.getTime());
+  if (lines.length === 0) return html``;
+  return html`${lines.map((l) => html`<p class="small muted break">${l}</p>`)}`;
 }

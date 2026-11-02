@@ -7,7 +7,7 @@
  */
 
 import { parseContext } from "../../actions/tell_context.ts";
-import { parseFrom } from "../../actions/tell.ts";
+import { parseFrom } from "../../actions/tell_from.ts";
 import { mayDirectCrew } from "../../crew/direct.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";

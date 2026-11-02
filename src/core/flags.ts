@@ -17,6 +17,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { quietly } from "./write_clock.ts";
 
 export type FlagDecl = {
   /** One line: what the flag switches and why it exists. */
@@ -213,8 +214,16 @@ export function makeFlags<const D extends Record<string, FlagDecl>>(decls: D) {
     },
     decls,
     /** The live value of `name`, if one is set. */
-    value(name: keyof D & string): FlagValue | undefined {
+    value(name: string): FlagValue | undefined {
       return values.get(name);
+    },
+    /** Every declared flag with its declaration and live value, in declaration order. */
+    entries(): { name: string; decl: FlagDecl; value: FlagValue | undefined }[] {
+      return Object.keys(decls).map((name) => ({
+        name,
+        decl: decls[name]!,
+        value: values.get(name),
+      }));
     },
     /**
      * Store `value` for a declared flag (`undefined` clears it), keep the
@@ -266,12 +275,12 @@ export function makeFlags<const D extends Record<string, FlagDecl>>(decls: D) {
           `INSERT INTO flag_use (day, flag, variant, n) VALUES (?1, ?2, ?3, ?4)
            ON CONFLICT (day, flag, variant) DO UPDATE SET n = n + excluded.n`,
         );
-        db.transaction(() => {
+        db.transaction(() => quietly(db, () => {
           for (const [key, n] of taken) {
             const [day, flag, variant] = key.split("\t");
             up.run(day!, flag!, Number(variant), n);
           }
-        })();
+        }))();
       } catch {
         for (const [key, n] of taken) pending.set(key, (pending.get(key) ?? 0) + n);
       }

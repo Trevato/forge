@@ -20,7 +20,7 @@ import {
   getRepo,
   visibleForks,
 } from "../core/repos.ts";
-import type { Repo } from "../core/repos.ts";
+import { canEnterApp, type Repo } from "../core/repos.ts";
 import { parentUrl, shownTrail, sourceLabel } from "../core/provenance.ts";
 import type { Database } from "bun:sqlite";
 import type { Ctx } from "../http/context.ts";
@@ -38,6 +38,8 @@ import {
   type RepoScope,
 } from "./scope.ts";
 import { changesHref, tellsHref } from "./studio/nouns.ts";
+import { knownSpec, warmSpec } from "../apps/api_spec.ts";
+import { appsRuntime } from "../apps/runtime.ts";
 import { badge, btn, empty, tabs, type TabItem } from "./ui.ts";
 
 // ---- loading ----
@@ -123,6 +125,7 @@ export type RepoTab =
   | "branches"
   | "app"
   | "runs"
+  | "api"
   | "settings"
   /** A page that belongs to no tab (waves): nothing is marked current. */
   | "none";
@@ -182,8 +185,9 @@ export function scopeHeader(
       ? undefined
       : forkParentFor(ctx.app.db, repo, ctx.auth.user);
 
-  const isApp =
-    repo !== undefined && getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const record =
+    repo === undefined ? undefined : getAppByRepo(ctx.app.db, repo.id);
+  const isApp = record !== undefined;
   // An app speaks the studio's words (told, changes), a plain repository
   // git's (issues, pulls, commits, branches) — for every viewer (#603).
   const studio = isApp;
@@ -289,6 +293,19 @@ export function scopeHeader(
       current: active === "runs",
       shortcut: "g r",
     });
+  // An app that serves /openapi.json gets its API reference one tab over.
+  // The spec is read in the background and remembered, so a header never waits.
+  if (repo !== undefined && record !== undefined && canEnterApp(ctx.app.db, repo, record, ctx.auth.user)) {
+    const port = appsRuntime(ctx.app)?.envStatus(record, "production")?.port;
+    warmSpec(record, port);
+    if (knownSpec(record.id) != null)
+      items.push({
+        label: "API",
+        href: `${base}/api`,
+        icon: "command",
+        current: active === "api",
+      });
+  }
   if (ctx.auth.user !== undefined && sshCommand(ctx.app) !== undefined)
     items.push({
       label: "Terminal",
@@ -401,7 +418,7 @@ export function lineageLine(
 function audienceLine(ctx: Ctx, repo: Repo, admin: boolean, base: string): Html {
   const { level, sentence } = audienceOf(audienceFacts(ctx.app.db, repo, ctx.auth.user));
   const split = level === "split" ? html`${badge("Split", { tone: "attn" })} ` : null;
-  return html`<p class="repo-desc">
+  return html`<p class="muted small">
     ${split}${admin ? html`<a href="${base}/settings">${sentence}</a>` : sentence}
   </p>`;
 }

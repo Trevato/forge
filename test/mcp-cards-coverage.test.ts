@@ -13,6 +13,7 @@ import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { CARD_KINDS, CARD_OF_TOOL } from "../src/web/studio/cards.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listVia } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -53,7 +54,7 @@ describe("MCP cards coverage", () => {
   });
 
   test("every tool a card names is in tools/list", async () => {
-    const names = new Set<string>((await rpc("tools/list")).result.tools.map((t: any) => t.name));
+    const names = new Set<string>((await listVia((p) => rpc("tools/list", p))).result.tools.map((t: any) => t.name));
     const missing = Object.keys(CARD_OF_TOOL).filter((t) => !names.has(t));
     expect(missing).toEqual([]);
   });

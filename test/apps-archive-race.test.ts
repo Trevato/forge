@@ -27,7 +27,7 @@ describe("archive and wake race", () => {
   const archivedMoves = (): number =>
     listEvents(forge.app.db, { limit: 1000 }).filter((e) => {
       const changed = e.payload["changed"];
-      return e.kind === "repo.settings_updated" && Array.isArray(changed) && changed.includes("archived");
+      return e.kind === "repo.settings_updated" && typeof changed === "object" && changed !== null && "archived" in changed;
     }).length;
   const production = () => forge.runtime.envStatus(record, "production")?.state;
 

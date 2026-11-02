@@ -35,12 +35,17 @@ model allowance (dollars a month, default none, through the grant of #1145),
 or demotes a member to guest. Demoting leaves any allowance as it is; take it
 back on the account's page.
 
+The page states what the roles mean in two sentences built from the table
+(`roleLimits` in `src/core/roles.ts`): what a guest cannot do, every row a
+member has and a guest lacks, and the admin refusal's own words, so it cannot
+say less than the guards refuse (`test/people-role-limits.test.ts`).
+
 <!-- roles-table -->
 | Ability | guest | member | admin |
 | --- | --- | --- | --- |
 | Read what is public | yes | yes | yes |
 | Comment and open issues | yes | yes | yes |
-| Make an app their own | no | yes | yes |
+| Create a repository, fork one or copy an app | no | yes | yes |
 | Run a crew on a model allowance | no | yes | yes |
 | Administer the forge | no | no | yes |
 <!-- /roles-table -->

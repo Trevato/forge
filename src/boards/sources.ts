@@ -285,6 +285,28 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       reports: "reports kept that day (production only)",
     },
   },
+  // The release keeper's releases (#7557), one row each: what the probes
+  // counted through the roll and the ten minutes under page load. Seconds
+  // dark is the target-zero number. The stop reason is free text, not listed.
+  keeperReleases: {
+    table: "keeper_release",
+    owner: "admin",
+    time: "cut_at",
+    columns: {
+      version: "text", stage: "text", cut_at: "time", live_at: "time", finished_at: "time",
+      roll_probes: "number", roll_non200: "number", probes: "number", pages: "number",
+      bad_in_row: "number", worst_ms: "number", seconds_dark: "number",
+    },
+    docs: {
+      stage: "rolling, verifying, verified (verified live) or rolled_back",
+      roll_non200: "/healthz probes, one a second, that got no 200 while the roll ran (target 0 with surge)",
+      probes: "/healthz probes in the ten minutes under page load",
+      pages: "pages fetched as an admin under load, one at a time",
+      bad_in_row: "the most bad probes in a row (non-200 or over 10 s); 3 fails the release",
+      worst_ms: "the slowest probe or page, ms",
+      seconds_dark: "probe-seconds with no 200, roll and verify together (target 0)",
+    },
+  },
   // Forges made by the one-click path (#2914): one row per spawn event
   // (`actions/spawn.ts`, `spawn/live.ts`). The forge's name and the failure's
   // words are not listed; the step is one of a fixed few.

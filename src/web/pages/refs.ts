@@ -129,7 +129,10 @@ export function pathCrumbs(
     { label: name, href: `${base}/tree/${encoded}` },
   ];
   parts.forEach((part, i) => {
-    const walked = parts.slice(0, i + 1).join("/");
+    const walked = parts
+      .slice(0, i + 1)
+      .map(encodeURIComponent)
+      .join("/");
     const last = i === parts.length - 1;
     items.push(
       last && leafIsFile

@@ -60,3 +60,8 @@ scrape_configs:
     static_configs:
       - targets: ["forge.example.com"]
 ```
+
+`GET /metrics` (site admin only; repository names are in the labels) serves
+`forge_egress_connections`, `forge_egress_bytes_in` and `forge_egress_bytes_out`
+per `repo` and `destination` as Prometheus text, so a leaked upstream socket
+shows as a gauge that never falls (#3719).

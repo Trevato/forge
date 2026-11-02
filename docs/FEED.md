@@ -23,7 +23,7 @@ Anything the viewer cannot read is a 404.
   only to those who may see owner facts), `pull.opened|merged|reviewed`,
   `look.taken` (a `look`: a full set of pictures), `app.serving`,
   `issue.blocked|unblocked` (map changes), `issue.opened` (a `tell`, in its
-  title's words) and `issue.commented|pull.commented` (a `reply`, in its
+  title's words; see Bursts fold) and `issue.commented|pull.commented` (a `reply`, in its
   own words).
 - Pending asks (`askLinesFor`), only for what the viewer may decide.
 - Decision-ledger outcomes, only for repositories the viewer may write.
@@ -41,6 +41,17 @@ Anything the viewer cannot read is a 404.
 
 Runs already announce themselves on the outbox (`run.*`); looks did not, so
 `look.taken` was added.
+
+## Bursts fold (`src/feed/fold.ts`)
+
+When one author opens 3 or more issues in one repository within 2 minutes,
+`foldBursts` replaces them with one post, `planned N issues in owner/name`,
+ranked where the newest would be and linking to the repository's map. The
+first 3 titles ride on it as `lines` (`{ text, link }`), the rest as `more`;
+the web card draws them as a `.list` of rows, MCP `feed` and
+`GET /api/v1/feed` return them. One or two issues keep their own posts. The
+fold runs after the viewer's filters and before paging, so chip counts and
+cursors see the folded posts. A new kind of burst is a row in `FOLDS`.
 
 ## Ranking (`src/feed/rank.ts`, `affinity.ts`)
 
@@ -69,8 +80,9 @@ says as a link into the thing, a small line of why, Steer (run
 cards, posts to the run's `steer`) or Tell the crew (everything else, posts to
 the app's `tell`), Dismiss and Mute app (the interactions API, same-origin).
 Keys: `j`/`k`/Enter are the shell's, `x` dismisses the focused card.
-Not yet: the `choose` deck card (nothing in the feed produces one), stop from
-a card, and paging past the first 20.
+The `choose` card comes from `src/feed/choose.ts`, a run card offers Stop
+(`src/web/studio/cards.ts`), and `?cursor=` pages past the first 20
+(`src/web/studio/feed.ts`).
 
 ## Offline (`src/web/sw.ts`, `outbox.ts`)
 
@@ -142,3 +154,13 @@ one `POST /api/v1/asks/bulk` (`action`, `items`, `reason`, `preview: false`);
 still names one). The list swaps in place and the top bar's count follows. One undo link
 (`POST /api/v1/asks/bulk/<id>/undo`) is kept for a day. The MCP's `asks_act`
 takes the same set, verb and reason.
+
+## The composer keeps your draft
+
+What you type in the home composer is saved in the browser's localStorage
+(per signed-in user and page, at most once a second) and is back after a
+reload. Sending clears it; a send the forge refuses puts the words back and
+keeps them; signing out clears every draft. It lives in the feed's existing
+script (no new script, no dependency). Not covered: the "the forge" thought
+target posts as a plain form, so its draft is dropped on submit, and the
+lean client home has no feed script, so no draft.

@@ -295,7 +295,7 @@ const BUDGET_MEASURE =
 /**
  * Every line of `source` that holds a speed to a raw millisecond number: a
  * title saying "under N ms", or a Server-Timing/elapsed time bounded by a
- * literal under the floor (a hang guard above it stays a plain expect). `test/helpers/budget.ts` is the one way (#4429).
+ * literal under the floor (a hang guard above it stays a plain expect). `expectWork()` in `test/helpers/work.ts` counts work instead (#7824).
  */
 export function rawBudgets(name: string, source: string): string[] {
   const found: string[] = [];
@@ -307,8 +307,8 @@ export function rawBudgets(name: string, source: string): string[] {
         Number(bound!.replaceAll("_", "")) < WALL_CLOCK_FLOOR_MS
       )
         raw = true;
-    if (raw && !/expectBudget/.test(line))
-      found.push(`${name}:${i + 1}: ${line.trim()} — bound speed with expectBudget() from test/helpers/budget.ts`);
+    if (raw)
+      found.push(`${name}:${i + 1}: ${line.trim()} — count work (statements, spawns, bytes) with expectWork() from test/helpers/work.ts, not a clock (#7824)`);
   });
   return found;
 }
@@ -357,7 +357,7 @@ export function firstFailing(run: FileRun): string {
     : "none named; the file failed outside a test";
 }
 
-/** The issue for a file outside the gate that is red. */
+/** The issue for a file the scheduled run found red. */
 export function redIssueFor(
   run: FileRun,
   where: string,

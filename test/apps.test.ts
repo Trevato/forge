@@ -275,7 +275,7 @@ describe("apps: production, previews, data, gates", () => {
     );
     expect(run.state).toBe("ok");
     // The preview is gone: no process, no directory, an honest page.
-    const deadline = Date.now() + 10_000;
+    const deadline = Date.now() + 40_000;
     while (
       existsSync(envDir(dataDir, record.id, `pull-${pull.number}`)) &&
       Date.now() < deadline

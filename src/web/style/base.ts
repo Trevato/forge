@@ -187,6 +187,7 @@ export const utilities = /* css */ `
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 [hidden] { display: none !important; }
+[data-region] { display: contents; }
 
 @media (min-width: 720px) {
   .shell { padding: 0 24px 96px; }

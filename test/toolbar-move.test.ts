@@ -33,7 +33,7 @@ const make = (tag: string): El => ({
 });
 const all = (el: El): El[] => [el, ...el.children.flatMap(all)];
 
-function boot(store: Record<string, string> | null, width = 400, height = 800) {
+export function boot(store: Record<string, string> | null, width = 400, height = 800) {
   let root!: El;
   const host = { el: null as El | null };
   const doc = {
@@ -80,7 +80,7 @@ describe("moving the pill", () => {
     fire(pill, "pointermove", { clientX: 100, clientY: 60 });
     expect(host.style.left).toBe("78px"); // follows the pointer while dragging
     fire(pill, "pointerup", { clientX: 100, clientY: 60 });
-    expect(host.style.top).toBe("12px");
+    expect(host.style.top).toBe("48px");
     expect(host.style.left).toBe("12px");
     expect(host.style.right).toBe("auto");
     expect(box.style.flexDirection).toBe("row");
@@ -88,7 +88,7 @@ describe("moving the pill", () => {
     expect(store["forge-pill-corner"]).toBe("tl");
     // The next page load puts it there again.
     expect(boot(store).host.style.left).toBe("12px");
-    expect(boot(store).host.style.top).toBe("12px");
+    expect(boot(store).host.style.top).toBe("48px");
   });
 
   test("a press that barely moves is a tap, not a drag", () => {

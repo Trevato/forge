@@ -13,6 +13,7 @@
  * from it.
  */
 
+import { paceOf, type Pace } from "./pace.ts";
 import type { Database } from "bun:sqlite";
 import { writeStamp } from "./write_clock.ts";
 import { deferredIn, repoGraph, type Graph } from "./dependencies.ts";
@@ -117,6 +118,8 @@ export interface Milestone extends Limb {
   };
   /** A plain sentence: when it lands at this week's pace, or why nobody can say. */
   readonly estimate: string;
+  /** Issues closed per day and the date it is on pace for, at the `now` the plan was read with. */
+  readonly pace: Pace;
   /** What it waits for directly that has a tree of its own. */
   readonly limbs: readonly Limb[];
   /** What it waits for directly that brings none: at most an order among these. */
@@ -605,6 +608,20 @@ export function readPlan(
             }
           : {}),
         estimate,
+        pace: paceOf(
+          {
+            closedAt: under
+              .filter((i) => i.state === "closed" && counted(i) && i.closedAt !== null)
+              .map((i) => i.closedAt!),
+            total: limb.weight.total,
+            open,
+            deferred: limb.deferred,
+            closedInWindow: closedThisWeek,
+            window: PILLAR_DAYS,
+            days,
+          },
+          now,
+        ),
         limbs: arranged(issue.id, [...limbIds]).map(limbOf),
         leaves: children
           .filter((c) => !limbIds.has(c.id))
@@ -665,6 +682,9 @@ export function milestoneJson(
     ...limbJson(milestone),
     title: milestone.issue.title,
     estimate: milestone.estimate,
+    closedPerDay: milestone.pace.closedPerDay,
+    paceDate: milestone.pace.paceDate,
+    pace: milestone.pace.line,
     // `building` is the count, as on a limb; this is who is on what.
     buildingNow: milestone.building.map((b) => ({
       ...brief(b.issue),

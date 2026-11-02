@@ -105,6 +105,7 @@ select.input {
   background-repeat: no-repeat;
 }
 @media (pointer: coarse) { .input { min-height: 44px; } }
+.bar .input[type=search] { min-width: 180px; flex: 1; max-width: 320px; }
 
 /* One control for every boolean. A native checkbox tinted with accent-color
    is themed for free, keyboard-correct for free, and honest about what it is —
@@ -337,6 +338,9 @@ a.sha:hover { color: var(--accent); }
 /* Cards stacked in normal flow space themselves. Inside a container that
    already manages its own spacing with gap, that margin would double it. */
 .card + .card { margin-top: 12px; }
+/* The open pulls a held issue waits on: a wrapping line of touch-sized links. */
+.held-pulls { display: flex; flex-wrap: wrap; gap: 0 4px; align-items: center; }
+.held-pulls a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; }
 :is(.stack, .split, .timeline) > .card + .card { margin-top: 0; }
 .card-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -388,6 +392,7 @@ a.sha:hover { color: var(--accent); }
   padding: 8px 14px; min-height: 40px;
   transition: background-color 100ms var(--ease);
 }
+a.flow-row { min-height: 44px; }
 .row:focus-visible { outline-offset: -2px; }
 a.row:hover, .row[data-nav]:hover { background: var(--muted); color: inherit; }
 .list li[aria-current="true"] > .row { background: var(--muted); }
@@ -418,6 +423,11 @@ a.row:hover .row-title { color: var(--accent); }
 .row-meta .avatar { width: 16px; height: 16px; font-size: var(--fs-min); vertical-align: -0.28em; }
 .row-meta .byline-name { margin-left: 4px; }
 .row-lead { color: var(--faint); display: inline-flex; flex: none; }
+/* A control beside a link row, outside the link: the row takes the width, the control keeps its own. */
+.list > li.has-after { display: flex; align-items: center; flex-wrap: wrap; }
+.list > li.has-after > .row, .list > li.has-after > details { flex: 1 1 0; min-width: 0; }
+.row-after { flex: none; padding: 0 14px 0 0; }
+.list > li.has-after > .row-children { flex-basis: 100%; }
 .row-trail { display: flex; align-items: center; gap: 8px; flex: none; }
 /* The leading glyph is the row's state; a badge repeating it is noise. */
 .row[data-state="open"] .row-lead { color: var(--success); }
@@ -670,6 +680,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 
 /* ---- tell the crew, in place: fixed, so nothing shifts ---- */
 .tell-here { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; width: min(620px, 100%); margin: 0 auto; padding: 8px; }
+.tell-picture { max-width: 100%; height: auto; }
 .tell-here .comment-form { margin: 0; box-shadow: var(--shadow-2); }
 
 /* ---- command palette ---- */
@@ -762,6 +773,14 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 [data-tip][data-tip-side="bottom"]::after { bottom: auto; top: calc(100% + 6px); }
 [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; }
 @media (pointer: coarse) { [data-tip]::after { display: none; } }
+
+/* ---- page head: title, actions, subtitle ---- */
+.page-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 20px 0 14px;
+}
+.page-head h1 { min-width: 0; }
+.page-head > .page-head-sub { flex-basis: 100%; margin-top: -4px; }
 
 /* ---- breadcrumbs ---- */
 .crumbs {

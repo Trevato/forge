@@ -87,6 +87,9 @@ describe("egress grants in the terminal", () => {
       await h.press("e");
       await settleUntil(h.tui, "asked for, not granted");
       await h.press("g");
+      await settleUntil(h.tui, "reach");
+      expect(grants()).toEqual([]);
+      await h.press("y");
       await settleUntil(h.tui, "granted by ada");
       expect(grants()).toEqual([ARM]);
       await h.press("x");

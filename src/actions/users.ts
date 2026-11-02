@@ -22,6 +22,8 @@ import {
   deleteToken as revokeToken,
   type TokenScope,
 } from "../core/tokens.ts";
+import { mintViaToken, VIA_TOKEN_MAX_MS } from "../core/via_token.ts";
+import { id } from "../kernel/id.ts";
 import { inviteSpentBy } from "../core/invites.ts";
 import {
   changePassword as rehash,
@@ -254,6 +256,42 @@ export function createToken(
     },
   });
   return ok(minted);
+}
+
+/**
+ * Mint the token the forge's agent acts with in one conversation: the
+ * person's own, rw, expiring within the turn (`core/via_token.ts`), gated to
+ * `/mcp` and fenced there. Without `conversation` a fresh one starts; with
+ * it, only one this person's earlier token named, so nobody resets the
+ * fence's marks of a conversation that is not theirs. `words` are what the
+ * person said to start the turn. The caller owes the door: the person's own
+ * session, same-origin, never a token.
+ */
+export function mintConversationToken(
+  app: App,
+  actor: User | undefined,
+  input: { conversation?: string; words: string },
+): Result<{ id: string; token: string; expiresAt: string; via: string }, "unauthorized" | "invalid_via"> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const via = `conversation:${input.conversation ?? id()}`;
+  if (input.conversation !== undefined) {
+    const theirs = app.db
+      .query<{ n: number }, [string, string]>(
+        "SELECT COUNT(*) AS n FROM via_token v JOIN token t ON t.id = v.token_id WHERE v.via = ?1 AND t.user_id = ?2",
+      )
+      .get(via, user.value.id);
+    if (!theirs || theirs.n === 0) return err("invalid_via");
+  }
+  const expiresAt = new Date(Date.now() + VIA_TOKEN_MAX_MS).toISOString();
+  const minted = mintViaToken(app.db, user.value.id, via, input.words, expiresAt);
+  if (!minted.ok) return err("invalid_via");
+  app.bus.append({
+    kind: "token.created",
+    actorId: user.value.id,
+    payload: { tokenId: minted.value.id, name: `via:${via}`, scope: "rw", expiresAt, via },
+  });
+  return ok({ ...minted.value, expiresAt, via });
 }
 
 export function deleteToken(

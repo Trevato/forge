@@ -5,7 +5,9 @@
  * read, and never adds a NOT NULL column they would not fill.
  */
 import { describe, expect, test } from "bun:test";
-import releases from "../src/core/releases.json" with { type: "json" };
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import releases from "../src/core/releases-before-tags.json" with { type: "json" };
 import {
   migrationFiles,
   migrations,
@@ -71,6 +73,14 @@ describe("migrations are additive across a roll", () => {
       .map((m) => ({ name: m.name, problems: notAdditive(m.sql) }))
       .filter((m) => m.problems.length > 0);
     expect(offenders).toEqual([]);
+  });
+
+  test("a release cut moves no branch: its record is a tag, not a file in the tree", () => {
+    // The releases before #6642 stay frozen beside the code; one cut since
+    // lives on its tag (release/shipped.ts). A check runs on the tree
+    // alone, so it reads the frozen list: a migration landed since is held
+    // to additive, as it was when it landed.
+    expect(existsSync(join(import.meta.dir, "../src/core/releases.json"))).toBe(false);
   });
 
   test("the release record is newest first and never ahead of the schema", () => {

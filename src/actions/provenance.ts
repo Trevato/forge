@@ -8,6 +8,7 @@
 import type { App } from "../app.ts";
 import { getProvenance, setProvenanceShown } from "../core/provenance.ts";
 import type { Repo } from "../core/repos.ts";
+import { settingMoved } from "../core/settings_changed.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireRepoAdmin } from "./access.ts";
@@ -42,7 +43,7 @@ export function showProvenance(
     kind: "repo.settings_updated",
     repoId: repo.id,
     actorId: admin.value.id,
-    payload: { changed: was === shown ? [] : ["provenance"], shown },
+    payload: { changed: settingMoved("provenance", was, shown), shown },
   });
   return ok({ shown, was, dryRun });
 }

@@ -21,7 +21,9 @@ describe("following's words", () => {
       test(`${file} reads ${name} rather than typing it`, () => {
         const source = readFileSync(join(import.meta.dir, "..", file), "utf8");
         expect(source).not.toContain(sentence);
-        expect(source).toContain(name);
+        // The propose refusal reaches the pages through `proposeRefusalWords`.
+        const reads = name === "PROPOSE_NEEDS_WRITE" && file.endsWith("following.ts") ? "proposeRefusalWords" : name;
+        expect(source).toContain(reads);
       });
     }
   }

@@ -15,6 +15,7 @@ import {
   detachFork,
   forkBareRepo,
   initBareRepo,
+  repoDirExists,
   repoDir,
 } from "../git/repos.ts";
 import { id } from "../kernel/id.ts";
@@ -617,6 +618,16 @@ export function forkParentFor(
     : undefined;
 }
 
+/**
+ * Forget a fork's parent. Only once the fork owns its objects (`detachFork`):
+ * a row without a parent over a store that still borrows one is a fork that
+ * breaks when the parent goes.
+ */
+export function clearForkParent(db: Database, repoId: string): void {
+  db.query("UPDATE repo SET fork_parent_id = NULL WHERE id = ?1").run(repoId);
+  forgetListings(db);
+}
+
 /** The forks of this repository the viewer may see — the list, and its count. */
 export function visibleForks(
   db: Database,
@@ -851,6 +862,7 @@ export function listReposByOwner(
     params.push(options.cursor);
     where += ` AND repo.id < ?${params.length}`;
   }
+  if (options.withoutArchived === true) where += " AND repo.archived_at IS NULL";
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
@@ -862,7 +874,10 @@ export function listReposByOwner(
 }
 
 /**
- * Delete a repo. Row first, then disk — inverse of creation, same invariant.
+ * Delete a repo. Disk first, then the row: when the directory will not go,
+ * the repository stays listed and a retry finds it (`delete_failed`). A
+ * directory that is already missing leaves nothing to orphan, so the row still
+ * goes and `delete_failed` is still reported.
  * Before removing the objects, detach every fork that borrows them (repack so
  * the fork owns its objects, then drop its alternates link) — otherwise a
  * fork would be silently corrupted. This is the detach-before-delete rule.
@@ -884,19 +899,23 @@ export async function deleteRepo(
       });
       return err("delete_failed");
     }
-    db.query("UPDATE repo SET fork_parent_id = NULL WHERE id = ?1").run(
-      fork.id,
-    );
+    clearForkParent(db, fork.id);
   }
 
-  db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
-  forgetListings(db);
   const dir = repoDir(reposRoot, repo.ownerName, repo.name);
   // A pooled `cat-file` holds this directory open. Closing it first is what
   // keeps the space actually free after the unlink instead of pinned to a
   // descriptor nobody will ever read again.
   closeReader(dir);
+  const present = await repoDirExists(dir);
+  // The directory goes first: when it will not, the row stays, so the
+  // repository is still listed and a retry finds it. With no directory there
+  // is nothing to orphan, so the row goes and the missing repository is
+  // still reported.
   const removed = await deleteRepoDir(dir);
+  if (!removed.ok && present) return err("delete_failed");
+  db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
+  forgetListings(db);
   if (!removed.ok) return err("delete_failed");
   return ok();
 }
@@ -1212,13 +1231,14 @@ export function moveArchived(
   archived: boolean,
   at: string = new Date().toISOString(),
 ): boolean {
+  // RETURNING counts the repository, not the trigger's write to `front_epoch`.
   const changes = archived
     ? db
-        .query("UPDATE repo SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL")
-        .run(repoId, at).changes
+        .query("UPDATE repo SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL RETURNING id")
+        .all(repoId, at).length
     : db
-        .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL")
-        .run(repoId).changes;
+        .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL RETURNING id")
+        .all(repoId).length;
   if (changes === 1) forgetListings(db);
   return changes === 1;
 }

@@ -20,6 +20,7 @@ import { getIssue, type Issue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
 import { holdOpen } from "../http/caller.ts";
 import { appHostSuffix } from "./host.ts";
+import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
@@ -29,14 +30,18 @@ import {
   canWrite,
   canRead,
   getRepoById,
+  type Repo,
   ownerInStanding,
 } from "../core/repos.ts";
-import { getUserById, isActive } from "../core/users.ts";
+import { RateLimiter } from "../core/ratelimit.ts";
+import { verifyToken } from "../core/tokens.ts";
+import { getUserById, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
+import { sideOf, type Side } from "./side.ts";
 import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
 import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
@@ -469,6 +474,7 @@ function doorPulls(
       number: p.number,
       title: p.title,
       check: checkWord(p.run, p.headOid),
+      ...(env === target.env ? { self: true } : {}),
       href: live
         ? runtime.urlFor(target.app, env)
         : new URL(
@@ -477,6 +483,53 @@ function doorPulls(
           ).href,
     };
   });
+}
+
+/**
+ * The pill's other side, for a signed-in reader of the repository only: the
+ * pull titles it may name are the reader's own to see (`openPulls`).
+ */
+function sideFor(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  who: GrantWho | undefined,
+): Side | null {
+  if (who === undefined) return null;
+  return sideForViewer(runtime, target.app, target.env, getUserById(runtime.app.db, who.id));
+}
+
+/** The repository, when `viewer` is an active reader of it: the only one the other side is told to. */
+export function sideReader(db: App["db"], record: AppRecord, viewer: User | undefined): Repo | undefined {
+  if (viewer === undefined || !isActive(viewer)) return undefined;
+  const repo = getRepoById(db, record.repoId);
+  return repo !== undefined && canRead(db, repo, viewer) ? repo : undefined;
+}
+
+/** The gate and the reading of the pill's other side, for the pill and the terminal alike. */
+export function sideForViewer(
+  runtime: Pick<AppsRuntime, "app" | "urlFor" | "envStatus">,
+  record: AppRecord,
+  env: EnvName,
+  viewer: User | undefined,
+): Side | null {
+  const db = runtime.app.db;
+  const repo = sideReader(db, record, viewer);
+  if (repo === undefined || viewer === undefined) return null;
+  const app = { url: runtime.urlFor(record, "production") };
+  if (env !== "production") return sideOf(app, env, []);
+  const previews = openPulls(db, repo, viewer, 50).flatMap((p) => {
+    const penv = previewEnv(p.number);
+    const status = runtime.envStatus(record, penv);
+    if (status === undefined) return [];
+    const state =
+      status.state === "running"
+        ? "running"
+        : status.state === "asleep" || status.dormant !== undefined
+          ? "asleep"
+          : status.state;
+    return [{ number: p.number, title: p.title, state, url: runtime.urlFor(record, penv) }];
+  });
+  return sideOf(app, env, previews);
 }
 
 /** Whether the person a grant names may enter this app now. */
@@ -498,6 +551,79 @@ function stillEntitled(
   );
 }
 
+/** What the app's host tells a signed-in reader it may not enter. */
+export const NOT_ENTITLED_WORDS =
+  "not found: this token can read the repository but may not enter its app. Ask a writer of the repository to add you to the app, or use a token of a writer or of the crew.";
+
+const BEARER_GRANT_MS = 60_000;
+/** Failed tokens one client may present per minute, across every app host. */
+const BEARER_FAILURES_PER_MINUTE = 30;
+const failedTokens = new WeakMap<App, RateLimiter>();
+
+/**
+ * A bearer token on a request to a guarded app, read the way the forge's
+ * own API reads it. It admits when its person may enter the app; a run's
+ * token only on the repository it was minted for. A person who can read
+ * the repository but not enter is told so (`hint`); anyone else — a token
+ * that cannot read it, an expired one — gets nothing to learn from.
+ */
+function bearerAdmission(
+  runtime: AppsRuntime,
+  request: Request,
+  target: AppTarget,
+): {
+  grant?: Grant;
+  hint?: string;
+  readOnly?: boolean;
+  retryAfter?: number;
+} | undefined {
+  const header = request.headers.get("authorization");
+  if (header === null || !header.startsWith("Bearer ")) return undefined;
+  if (
+    target.app.access !== "private" &&
+    sealedPull(runtime, target) === undefined
+  )
+    return undefined;
+  // Counted before the lookup, given back when the token is good: only
+  // failures use up the allowance.
+  let limiter = failedTokens.get(runtime.app);
+  if (limiter === undefined) {
+    limiter = new RateLimiter({
+      perMinute: BEARER_FAILURES_PER_MINUTE,
+      adminPerMinute: BEARER_FAILURES_PER_MINUTE,
+      enabled: true,
+    });
+    failedTokens.set(runtime.app, limiter);
+  }
+  const key = clientBucket(request);
+  const allowed = limiter.take(key, "ro");
+  if (!allowed.allowed) return { retryAfter: allowed.retryAfter };
+  const verified = verifyToken(runtime.app.db, header.slice(7));
+  if (!verified.ok) return undefined;
+  limiter.refund(key);
+  const { user, run, scope } = verified.value;
+  const repo = getRepoById(runtime.app.db, target.app.repoId);
+  if (repo === undefined) return undefined;
+  if (run !== undefined && run.repoId !== repo.id && run.forkId !== repo.id)
+    return undefined;
+  if (!canRead(runtime.app.db, repo, user)) return undefined;
+  const grant: Grant = {
+    who: {
+      id: user.id,
+      name: user.username,
+      // A read-only token is never an admin inside the app.
+      role:
+        scope !== "ro" && canWrite(runtime.app.db, repo, user)
+          ? "admin"
+          : "user",
+    },
+    expiresMs: Date.now() + BEARER_GRANT_MS,
+  };
+  return stillEntitled(runtime, target, grant)
+    ? { grant, readOnly: scope === "ro" }
+    : { hint: NOT_ENTITLED_WORDS };
+}
+
 /**
  * What a request addressed to an app must pass before anything is served:
  * a private app's grant, then a live port. One gate for both the request
@@ -510,10 +636,40 @@ function admit(
   target: AppTarget,
 ): Result<{ status: EnvStatus; port: number; grant?: Grant }, Response> {
   const cookie = cookieValue(request, grantCookieName(target));
-  const signed =
+  const cookieGrant =
     cookie === undefined
       ? undefined
       : readGrant(runtime.app.config.dataDir, cookie, target);
+  // No browser, no cookie: a bearer token of someone who may enter is as
+  // good as a grant for this one request (#7829).
+  const bearer =
+    cookieGrant === undefined
+      ? bearerAdmission(runtime, request, target)
+      : undefined;
+  if (bearer?.retryAfter !== undefined)
+    return err(
+      new Response("too many failed tokens", {
+        status: 429,
+        headers: {
+          "retry-after": String(bearer.retryAfter),
+          "cache-control": "no-store",
+        },
+      }),
+    );
+  // A read-only token reads: the forge's API refuses it writes, and the
+  // app's door is no wider.
+  if (
+    bearer?.readOnly === true &&
+    request.method !== "GET" &&
+    request.method !== "HEAD"
+  )
+    return err(
+      new Response("this token is read-only", {
+        status: 403,
+        headers: { "cache-control": "no-store" },
+      }),
+    );
+  const signed = cookieGrant ?? bearer?.grant;
   // A private app's grant is asked again on every request whether the
   // person it names may still enter: a grant outlives a change of heart —
   // a writer removed, the app made private — by up to twelve hours, and
@@ -544,6 +700,10 @@ function admit(
       // gets that answer here.
       const url = new URL(request.url);
       const navigating =
+        bearer?.hint === undefined &&
+        // A caller that presented a token is a script, not a person at a
+        // link: it is answered, not sent to sign in.
+        !(request.headers.get("authorization") ?? "").startsWith("Bearer ") &&
         (request.method === "GET" || request.method === "HEAD") &&
         (request.headers.get("accept") ?? "").includes("text/html") &&
         !url.pathname.startsWith("/__forge/");
@@ -559,7 +719,14 @@ function admit(
           }),
         );
       }
-      return err(new Response("not found", { status: 404 }));
+      return err(
+        new Response(bearer?.hint ?? "not found", {
+          status: 404,
+          ...(bearer?.hint === undefined
+            ? {}
+            : { headers: { "content-type": "text/plain; charset=utf-8" } }),
+        }),
+      );
     }
   }
   // An archived repository's app is put away: stopped, its data kept, and
@@ -586,20 +753,40 @@ function admit(
  * form (`actions/reports.ts`), when both the app and the repository are
  * public. A private one offers nothing, and a nested host is its guest's.
  */
-function reportUrl(runtime: AppsRuntime, target: AppTarget): URL | undefined {
+export function reportUrl(runtime: AppsRuntime, target: AppTarget): URL | undefined {
+  const repo = publicRepo(runtime, target);
+  return repo === undefined ? undefined : reportOf(runtime, repo);
+}
+
+/** The repository of an app that is public along with it, else nothing. */
+function publicRepo(runtime: AppsRuntime, target: AppTarget): Repo | undefined {
   if (target.nested || target.app.access !== "public") return undefined;
   const repo = getRepoById(runtime.app.db, target.app.repoId);
-  if (repo === undefined || !canRead(runtime.app.db, repo, undefined))
-    return undefined;
-  return new URL(
-    `/${repo.ownerName}/${repo.name}/report`,
-    runtime.options.forgeUrl,
-  );
+  return repo !== undefined && canRead(runtime.app.db, repo, undefined)
+    ? repo
+    : undefined;
 }
+
+const reportOf = (runtime: AppsRuntime, repo: Repo): URL =>
+  new URL(`/${repo.ownerName}/${repo.name}/report`, runtime.options.forgeUrl);
 
 /** The link relation a public app's pages carry to `/__forge/report`. */
 const REPORT_LINK =
-  '</__forge/report>; rel="help"; title="Report a problem (no account needed)"';
+  `</__forge/report>; rel="help"; title="${REPORT_LINK_TITLE}"`;
+
+/**
+ * The `Link` values a public app's pages carry: the report door and the
+ * forge's role-aware manifest for the app's repository, so an agent that
+ * landed on the app finds what it can do. One repository read serves both;
+ * a private app, a nested host or a vanished repository gets none.
+ */
+export function discoveryLinks(runtime: AppsRuntime, target: AppTarget): string[] {
+  const repo = publicRepo(runtime, target);
+  if (repo === undefined) return [];
+  const here = new URL("/api/v1/here", runtime.options.forgeUrl);
+  here.search = `?path=${encodeURIComponent(`/${repo.ownerName}/${repo.name}`)}`;
+  return [REPORT_LINK, `<${here.href}>; rel="alternate"; type="application/json"`];
+}
 
 const isHtml = (headers: Headers): boolean =>
   (headers.get("content-type") ?? "").toLowerCase().startsWith("text/html");
@@ -677,8 +864,16 @@ export async function proxyApp(
       target.app,
       signed?.who?.id,
     );
+    const side =
+      signed?.who === undefined
+        ? null
+        : timePhase(request, "side", () => sideFor(runtime, target, signed.who));
     const body = timePhase(request, "render", () =>
-      JSON.stringify({ ...crew, ...(tell === undefined ? {} : { tell }) }),
+      JSON.stringify({
+        ...crew,
+        ...(tell === undefined ? {} : { tell }),
+        ...(side === null ? {} : { side }),
+      }),
     );
     return withPhases(
       request,
@@ -727,6 +922,7 @@ export async function proxyApp(
       ),
     );
     const ssh = doorSsh(runtime, target, signed?.who);
+    const report = reportUrl(runtime, target);
     const where = timePhase(request, "pull", () =>
       pillWhere(runtime, target, signed?.who),
     );
@@ -736,14 +932,27 @@ export async function proxyApp(
     const pulls = timePhase(request, "pulls", () =>
       doorPulls(runtime, target, signed?.who),
     );
+    const crew = crewNow(
+      runtime.app.db,
+      runtime.options.forgeUrl,
+      target.app,
+      target.env,
+      signed?.who?.id,
+      request,
+    );
     const page = timePhase(request, "render", () =>
       doorPage(
         {
           where,
           pulls,
+          ...(target.env === "production"
+            ? {}
+            : { live: runtime.urlFor(target.app, "production") }),
+          ...(crew === undefined ? {} : { crew }),
           ...(serving === undefined ? {} : { serving }),
           forgeUrl: runtime.options.forgeUrl,
           ...(ssh === undefined ? {} : { ssh }),
+          ...(report === undefined ? {} : { report: "/__forge/report" }),
           ...(tell === undefined ? { signin: "/__forge/signin" } : { tell }),
         },
         request.method === "HEAD",
@@ -892,10 +1101,13 @@ export async function proxyApp(
   }
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
+  // Which app answered: a probe from outside (`spawn/reach.ts`) tells this
+  // from a platform's standby page, which answers 200 for any name.
+  out.set("x-forge-app", target.app.slug);
   // An agent reading a public app's page learns where to report a problem
   // without the app having to say so.
-  if (isHtml(out) && reportUrl(runtime, target) !== undefined)
-    out.append("link", REPORT_LINK);
+  if (isHtml(out))
+    for (const link of discoveryLinks(runtime, target)) out.append("link", link);
   const eventStream =
     response.body !== null &&
     (response.headers.get("content-type") ?? "")
@@ -1077,13 +1289,13 @@ const WS_IDLE_SECONDS = 120;
  * that merely says `Upgrade: websocket` is an ordinary request, and is
  * fetched as one with the hop-by-hop headers stripped, as it always was.
  */
-const isWebSocketHandshake = (request: Request): boolean =>
+export const isWebSocketHandshake = (request: Request): boolean =>
   request.method === "GET" &&
   request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
   request.headers.has("sec-websocket-key");
 
 /** The subprotocols a handshake offers, in the order it offers them. */
-const offeredProtocols = (request: Request): string[] =>
+export const offeredProtocols = (request: Request): string[] =>
   (request.headers.get("sec-websocket-protocol") ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -1142,7 +1354,7 @@ async function proxyWebSocket(
  * sentence for the "not running" page: the app was not listening, or it
  * answered the handshake with something other than a socket.
  */
-function connectUpstream(
+export function connectUpstream(
   url: URL,
   headers: Record<string, string>,
   protocols: string[],
@@ -1352,7 +1564,8 @@ function unavailable(
         : gone
           ? "This preview is gone: its pull was closed, and its data with it."
           : "Nothing is running here yet.");
-  const report = reportUrl(runtime, target) !== undefined;
+  const links = discoveryLinks(runtime, target);
+  const report = links.length > 0;
   const runLink =
     status?.runId === undefined
       ? ""
@@ -1381,7 +1594,7 @@ ${report ? '<p><a href="/__forge/report">Report a problem</a> to the people who 
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
       ...(deploying ? { "retry-after": "3" } : {}),
-      ...(report ? { link: REPORT_LINK } : {}),
+      ...(report ? { link: links.join(", ") } : {}),
     },
   });
 }

@@ -11,7 +11,7 @@
  * id, so the redirect itself says nothing about what exists.
  */
 
-import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
+import { steerRefusedWords } from "../../actions/steer_words.ts";
 import { readLooks } from "../../checks/looks.ts";
 import type { Database } from "bun:sqlite";
 import {
@@ -76,6 +76,8 @@ export function runTitle(
     const of = `Check of ${run.commitOid.slice(0, 7)}`;
     return number === undefined ? of : `${of} for #${number}`;
   }
+  if (run.kind === "proof")
+    return `Proof of ${run.commitOid.slice(0, 7)}${issue === undefined ? "" : ` for #${issue.number}`}`;
   if (run.kind === "deploy")
     return about === "" ? "Deploy production" : `Deploy preview ${about}`;
   const who = actor ?? "an agent";
@@ -233,7 +235,7 @@ export function runTitleFrom(
 }
 
 const kindIcon = (kind: RunKind) =>
-  icon(kind === "agent" ? "bot" : kind === "check" ? "check" : "rocket");
+  icon(kind === "agent" ? "bot" : kind === "check" || kind === "proof" ? "check" : "rocket");
 
 // ---- rows ----
 
@@ -347,12 +349,7 @@ export async function runSteer(ctx: Ctx): Promise<Response> {
     if (steered.error === "not_found") return notFoundPage(ctx);
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        steered.error === "empty"
-          ? SAY_SOMETHING_WORDS
-          : steered.error === "not_agent"
-            ? "Only an agent's run can be steered."
-            : "You need write access to steer a run.",
+      message: steerRefusedWords(steered.error),
     });
   }
   return flashTo(ctx, dest, {

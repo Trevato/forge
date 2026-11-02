@@ -17,6 +17,7 @@ export const tool: Tool = {
     },
   },
   writes: true,
+  doc: "`{ slug?, charter?, dial?, members?, dryRun? }`: the crew teams (person admins): without `slug` lists them; with it, changes charter, dial (0–100) or members, planned unless `dryRun` is false",
   dryByDefault: true,
   run(ctx, user, args) {
     const read = readTeams(ctx.app, user);

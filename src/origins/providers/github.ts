@@ -30,6 +30,7 @@ import type {
   RemoteMilestone,
   RemoteReviewState,
   RemoteTreeEntry,
+  TokenReach,
 } from "../types.ts";
 import {
   NO_ACCOUNT,
@@ -107,6 +108,27 @@ export class GitHubProvider implements Provider {
         asString(field(result.value.data, "html_url")) ||
         `${this.webUrl}/${login}`,
     });
+  }
+
+  /**
+   * A classic token (and an OAuth grant) names its scopes on every answer
+   * in `X-OAuth-Scopes`: without `repo` it lists public repositories only.
+   * A fine-grained token names none, so one private row is asked for.
+   */
+  async tokenReach(): Promise<ProviderResult<TokenReach>> {
+    const user = await this.api.call({ path: "/user" });
+    if (!user.ok) return user;
+    const scopes = user.value.headers.get("x-oauth-scopes");
+    if (scopes !== null)
+      return succeed(
+        scopes.split(",").some((s) => s.trim() === "repo") ? "private" : "public",
+      );
+    const probe = await this.api.call({
+      path: "/user/repos",
+      query: { visibility: "private", per_page: 1 },
+    });
+    if (!probe.ok) return probe;
+    return succeed(asArray(probe.value.data).length > 0 ? "private" : "public");
   }
 
   async listRepos(cursor?: string): Promise<ProviderResult<Page<RemoteRepo>>> {

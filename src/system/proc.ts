@@ -80,9 +80,9 @@ export function parseMemory(text: string | null): Memory | null {
     return m ? Number(m[1]) * 1024 : 0;
   };
   const total = kb("MemTotal");
-  return total === 0
-    ? null
-    : { total, available: kb("MemAvailable"), swapTotal: kb("SwapTotal"), swapFree: kb("SwapFree") };
+  const available = kb("MemAvailable");
+  // No MemAvailable (an old kernel, a cut file) is unknown, not zero bytes free.
+  return total === 0 || available === 0 ? null : { total, available, swapTotal: kb("SwapTotal"), swapFree: kb("SwapFree") };
 }
 
 export function parseLoad(text: string | null): [number, number, number] | null {

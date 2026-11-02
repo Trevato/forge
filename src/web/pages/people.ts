@@ -1,13 +1,13 @@
 /**
  * People — every account and its role in one table: guest, member or admin.
  * An admin promotes a guest to member (with a starter model allowance, none
- * by default) or demotes a member, in one same-origin form post. Roles are
- * shown and recorded; nothing is refused because of one yet (`docs/ROLES.md`).
+ * by default) or demotes a member, in one same-origin form post. The guards
+ * refuse what `CAN` withholds; the card says so in `roleLimits` (`docs/ROLES.md`).
  */
 
 import { setRole } from "../../actions/roles.ts";
 import { GRANT_MAX_USD } from "../../core/model_grant.ts";
-import { listPeople, type Person } from "../../core/roles.ts";
+import { listPeople, roleLimits, type Person } from "../../core/roles.ts";
 import { getUserByName, type User } from "../../core/users.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -65,8 +65,7 @@ export function peoplePage(ctx: Ctx): Response {
           {
             head: html`<h2>Guests, members and admins</h2>
               <p class="muted">A member may be given a starter model allowance (up to
-                $${GRANT_MAX_USD} a month). Roles are recorded here; nothing is refused
-                because of one yet.</p>`,
+                $${GRANT_MAX_USD} a month). ${roleLimits()}</p>`,
           },
         ),
         "Account settings",

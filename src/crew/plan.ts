@@ -16,6 +16,7 @@
 
 import { tmpdir } from "node:os";
 import { childEnv } from "../apps/process.ts";
+import { clip } from "../text/clip.ts";
 
 export interface PlanAgent {
   readonly name: string;
@@ -65,10 +66,6 @@ const SCHEMA = {
   additionalProperties: false,
 } as const;
 
-function clip(text: string, max: number): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-}
 
 function buildPrompt(input: PlanInput): string {
   const roster = input.agents

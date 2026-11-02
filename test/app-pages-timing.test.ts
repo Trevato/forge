@@ -1,6 +1,6 @@
-/** `/:owner/:name/app` and its `answers`, `now` and `state` fragments name their Server-Timing phases and answer within budget (#4320). */
+/** `/:owner/:name/app` and its `answers`, `now` and `state` fragments name their Server-Timing phases and cost a bounded number of statements (#4320). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,6 +59,14 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** The most statements a request may run: today's count with room for a read or two. */
+const MAX_STATEMENTS: Record<string, number> = {
+  "/app": 10,
+  "/app/answers": 10,
+  "/app/now": 26,
+  "/app/state": 21,
+};
+
 /** Route → the reads it makes, between `session` and `render`. */
 const ROUTES: [string, string[]][] = [
   ["/app", ["repo", "view"]],
@@ -80,24 +88,16 @@ const get = (path: string) =>
   fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "manual" });
 
 for (const [route, reads] of ROUTES)
-  test(`GET /alice/vault${route} names its phases and answers within its budget`, async () => {
-    const against = await baselineMs(servers.url);
+  test(`GET /alice/vault${route} names its phases and costs a bounded number of statements`, async () => {
     await (await get(`/alice/vault${route}`)).arrayBuffer(); // warm
-    // Timers and GC jitter on a busy machine: judge the best of several requests.
-    let total = Infinity;
-    let left = Infinity;
     for (let i = 0; i < 5; i++) {
       const res = await get(`/alice/vault${route}`);
       await res.arrayBuffer();
       expect(res.status).toBeLessThan(400);
       const got = phases(res.headers.get("server-timing"));
       for (const name of ["session", ...reads, "render"]) expect(got.has(name)).toBe(true);
-      const sum = ["session", ...reads, "render"].reduce((n, k) => n + got.get(k)!, 0);
-      total = Math.min(total, got.get("app")!);
-      left = Math.min(left, Math.abs(got.get("app")! - sum));
     }
-    expectBudget(total, { ms: 50, against });
-    expect(left).toBeLessThanOrEqual(1.5); // each is rounded to 0.1
+    expectWork(await requestStatements(app.db, `${servers.url}/alice/vault${route}`, { headers: { cookie }, redirect: "manual" }), { max: MAX_STATEMENTS[route]! });
   });
 
 for (const [route] of ROUTES)

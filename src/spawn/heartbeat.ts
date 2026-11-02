@@ -19,12 +19,13 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { spentTodayEverywhere } from "../crew/autonomy.ts";
 import { beatKeyOf, listChildren } from "../actions/spawn.ts";
-import releases from "../core/releases.json" with { type: "json" };
+import { shippedReleases } from "../release/shipped.ts";
 import { forgeLinkOf, forgeTipOf, FOLLOW_MODES, type FollowMode, type ForgeLink } from "./chain.ts";
 import { isParentLocal } from "./beat-door.ts";
 import { upstreamState } from "./upstream.ts";
 import { progress } from "../core/next-steps.ts";
 import { running } from "../kernel/version.ts";
+import { forgeCeiling } from "../flow/ceiling.ts";
 
 export const SIGNATURE_HEADER = "x-forge-signature";
 /** A child reports this often; one silent for three beats reads as quiet. */
@@ -254,10 +255,10 @@ export function standing(app: App, name: string, at = Date.now()): Beat {
 
 /** What the crew spent today, and the daily ceiling that pauses it (null when the forge sets none). */
 export function spendReport(app: App, now = new Date()): { spendTodayUsd: number; ceilingUsd: number | null } {
-  const cap = app.config.crewCeilingUsd;
+  const cap = forgeCeiling(app.config);
   return {
     spendTodayUsd: Math.min(Math.round(spentTodayEverywhere(app.db, now) * 100) / 100, USD_MAX),
-    ceilingUsd: cap === undefined || !(cap > 0) ? null : Math.min(cap, USD_MAX),
+    ceilingUsd: cap === null ? null : Math.min(cap, USD_MAX),
   };
 }
 
@@ -356,7 +357,7 @@ export interface ChildStanding {
 
 /** How many releases of this forge are newer than `version`; null when it is not one of them. */
 export function releasesBehind(version: string): number | null {
-  const i = releases.releases.findIndex((r) => r.version === version);
+  const i = shippedReleases().findIndex((r) => r.version === version);
   return i < 0 ? null : i;
 }
 

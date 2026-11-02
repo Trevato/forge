@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "usage",
   doc: "`{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's",
   description:
-    "What the crew's runs on an app spent over `days` (1–90, default 7), by agent and issue. Writers.",
+    "What crew runs on an app spent in `days` (1–90, default 7), by agent, issue. Writers.",
   inputSchema: {
     type: "object",
     properties: {

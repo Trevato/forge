@@ -202,6 +202,18 @@ describe("an agent pull that waits for a person's review says so", () => {
     expect(board).toContain("<b>1</b> waiting since");
     const settings = await page(aliceCookie, "/alice/engine/settings");
     expect(settings).toContain("No reviewer: agent pulls wait for you.");
+    expect(settings.split("No reviewer").length).toBe(2);
+    expect(settings).toContain('data-auto="on"');
+    expect(settings).toContain("No planner: your direction goes nowhere");
+  });
+
+  test("with auto mode off an empty seat is an invitation, not a warning", async () => {
+    app.db.query("UPDATE repo SET autonomy = 'off' WHERE id = ?1").run(repo.id);
+    const settings = await page(aliceCookie, "/alice/engine/settings");
+    expect(settings).toContain('data-auto="off"');
+    expect(settings).toContain("open seat");
+    expect(settings).not.toContain("No planner:");
+    app.db.query("UPDATE repo SET autonomy = 'autonomous' WHERE id = ?1").run(repo.id);
   });
 
   test("the MCP's now lists it with its age", async () => {

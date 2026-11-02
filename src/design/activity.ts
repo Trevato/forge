@@ -9,6 +9,7 @@
  * when the row has no actor: a deploy is the forge's own doing, and says so.
  */
 
+import { VIA_WORDS } from "../core/acting_via.ts";
 import type { ForgeEvent } from "../core/events.ts";
 
 /** The pull number an environment name carries, for `pull-12`. */
@@ -86,10 +87,12 @@ export function eventActor(
   event: ForgeEvent,
   actorName: string | undefined,
 ): string {
-  if (actorName !== undefined) return actorName;
+  if (actorName !== undefined)
+    return event.via === undefined ? actorName : `${actorName} ${VIA_WORDS}`;
   return event.kind.startsWith("run.") ||
     event.kind.startsWith("app.") ||
-    event.kind.startsWith("prompt.")
+    event.kind.startsWith("prompt.") ||
+    (event.kind === "pull.released" && event.actorId === null)
     ? "the forge"
     : "someone";
 }
@@ -119,6 +122,7 @@ const WORDS: Record<string, string> = {
   "pull.thread_resolved": "resolved a review thread",
   "repo.created": "created a repository",
   "repo.forked": "forked a repository",
+  "repo.detached": "detached a fork from its parent",
   "repo.settings_updated": "changed repository settings",
   "repo.upstream_follow": "changed which upstream the repository follows",
   "repo.following": "turned following an upstream on or off",

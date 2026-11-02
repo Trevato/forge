@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { mcpCard } from "../src/core/mcp_card.ts";
 import { running } from "../src/kernel/version.ts";
 
 describe("the MCP server card", () => {
@@ -57,6 +58,17 @@ describe("the MCP server card", () => {
 
     // The documentation link is live.
     expect((await fetch(card.documentation)).status).toBe(200);
+  });
+
+  test("carries the commit it runs, or null when nothing says", () => {
+    const sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+    expect(mcpCard("https://x", running({ FORGE_APP_COMMIT: sha })).commit).toBe(sha);
+    expect(mcpCard("https://x", running({})).commit).toBeNull();
+  });
+
+  test("the live card's commit is what running() says", async () => {
+    const card = (await (await fetch(`${base}/.well-known/mcp.json`)).json()) as any;
+    expect(card.commit).toBe(running().commit);
   });
 
   test("the `mcp` block of /api/v1/here gives the same url and oauth", async () => {

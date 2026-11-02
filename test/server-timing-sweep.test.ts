@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
-import { buildRouter, serve, type Servers } from "../src/http/server.ts";
+import { buildApiRouter, buildRouter, serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -20,9 +20,6 @@ quietLogs();
 
 /** Pages without named phases yet → the issue that will name them. */
 const UNNAMED: Array<[path: string, issue: string]> = [
-  ["/-/confirm", "#3390"],
-  ["/signin/parent", "#3390"],
-  ["/signin/parent/callback", "#3390"],
 ];
 
 /** Long-lived streams and live fragments: no page, no phases to name. */
@@ -47,8 +44,10 @@ const REDIRECTS = new Set([
   "/alice/forge/tells/new",
   "/big",
   "/flow",
+  "/login",
   "/settings/origins/callback",
   "/settings/resilience",
+  "/sign-in",
 ]);
 
 /** Every GET pattern the router source registers, one-line or wrapped. */
@@ -61,7 +60,7 @@ function registeredGets(): Set<string> {
 
 /** Parameter-free GET patterns, plus `/:owner/:name/<literal>…` ones. */
 function sweptPatterns(): string[] {
-  const registered = new Set(buildRouter().patterns());
+  const registered = new Set([...buildRouter().patterns(), ...buildApiRouter().patterns()]);
   return [...registeredGets()]
     .filter((p) => registered.has(p) && !NOT_PAGES.has(p) && !p.startsWith("/assets/"))
     .filter((p) => !p.replace(/^\/:owner\/:name/, "").includes(":") && !p.includes("*"))
@@ -147,6 +146,6 @@ test("the sweep reads wrapped router.add registrations, so a reformat cannot shr
   const found = registeredGets();
   expect(found.has("/origins/:id/r/:owner/:name/commit/:oid")).toBe(true); // wrapped over four lines
   expect(found.has("/robots.txt")).toBe(true); // one line
-  const registered = new Set(buildRouter().patterns());
+  const registered = new Set([...buildRouter().patterns(), ...buildApiRouter().patterns()]);
   expect([...found].filter((p) => !registered.has(p))).toEqual([]);
 });

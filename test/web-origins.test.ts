@@ -10,7 +10,7 @@
  * their comment did not go upstream, not silently given a local one.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +24,7 @@ import { listPins } from "../src/core/pins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
+import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { advance, createJob, settled } from "../src/origins/jobs.ts";
 import { icon } from "../src/web/ui.ts";
 import { quietLogs, withoutEnv } from "./helpers/globals.ts";
@@ -37,6 +38,10 @@ import {
 import { adminCookie, seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
+
+// Every test here drives a real git fetch and renders real pages; on a loaded
+// check machine the 5 s default measures the machine, not the code.
+setDefaultTimeout(30_000);
 
 const ORIGIN_LOGIN = "octo";
 const ORIGIN_TOKEN = "octo-origin-secret-9f2a";
@@ -416,6 +421,19 @@ describe("origins on the web", () => {
   });
 
   test("Mirror starts a job, shows its stages, and lands on the mirror", async () => {
+    // The first fetch is retried on the forge's clock (2 s, 5 s, 10 s); a
+    // loaded check machine can spend all three and fail the job. Retry on a
+    // short clock instead, so the verdict is the mirror's, not the load's.
+    const found = firstFetchRetry.ms;
+    firstFetchRetry.ms = Array.from({ length: 40 }, () => 250);
+    try {
+      await mirrorStartsAJob();
+    } finally {
+      firstFetchRetry.ms = found;
+    }
+  });
+
+  async function mirrorStartsAJob(): Promise<void> {
     const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
     const mirrored = await asUser(alice, `/settings/origins/${id}/mirror`, {
       form: { fullName: "octo/widgets" },
@@ -426,10 +444,15 @@ describe("origins on the web", () => {
 
     // The job page renders the checklist, and works with no JavaScript: a
     // meta refresh keeps it current while the mirror is still running.
-    const running = await (await asUser(alice, jobPath)).text();
+    // A job nothing drives stays running, so the page cannot race the mirror.
+    const pending = createJob(id, "octo/pending");
+    const running = await (
+      await asUser(alice, `/settings/origins/${id}/mirror/${pending.id}`)
+    ).text();
     expect(running).toContain("Creating the repository");
     expect(running).toContain("Importing issues");
     expect(running).toContain('id="stages"');
+    advance(pending.id, { stage: "failed", detail: "test over" });
 
     const jobId = jobPath.split("/").pop()!;
     const done = await settled(jobId);
@@ -440,7 +463,7 @@ describe("origins on the web", () => {
     const after = await (await asUser(alice, jobPath)).text();
     expect(after).not.toContain("http-equiv");
     expect(after).toContain("Open the mirror");
-  });
+  }
 
   test("a running job's stream sends the next stage, then done with the mirror's address; only its starter may read it", async () => {
     const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;

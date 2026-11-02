@@ -18,6 +18,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, drawList, later, promptScreen, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 const day = (at: string | null): string => (at === null ? "never" : at.slice(0, 16).replace("T", " "));
 
@@ -102,7 +103,7 @@ export function cloudScreen(f: Session, ctx: Ctx): Screen {
             title: `${LABEL[provider as (typeof PROVIDERS)[number]]} / ${name}`,
             label: "the token (checked, then sealed, never shown)",
             mask: true,
-            onSubmit: (value) => settle(addAccount(f.app, f.user, provider, name, value), () => `Sealed ${provider}/${name}.`),
+            onSubmit: (value) => settle(addAccount(f.app, f.user, provider, name, value.trim()), () => `Sealed ${provider}/${name}.`),
           }),
         );
       },
@@ -160,7 +161,7 @@ export function cloudScreen(f: Session, ctx: Ctx): Screen {
             title: `Rotate ${provider}/${name}`,
             label: "the new token (checked, then sealed)",
             mask: true,
-            onSubmit: (value) => settle(rotateAccount(f.app, f.user, provider, name, value), () => `Rotated ${provider}/${name}.`),
+            onSubmit: (value) => settle(rotateAccount(f.app, f.user, provider, name, value.trim()), () => `Rotated ${provider}/${name}.`),
           }),
         );
       else if (e.key === "n")
@@ -210,3 +211,12 @@ export function cloudScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** Cloud accounts, as Settings → Cloud accounts has them: a forge admin (#2199). */
+export const entry: PaletteEntry = {
+  id: "cloud",
+  title: "Cloud accounts",
+  hint: "provider tokens, what they are used for, today's calls",
+  offered: (session) => session.user?.isAdmin === true,
+  run: (session, ctx) => ctx.push(cloudScreen(session, ctx)),
+};

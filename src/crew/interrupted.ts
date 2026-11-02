@@ -21,8 +21,9 @@ const PROVIDER =
 const NETWORK = new RegExp(`${NETWORK_ERROR.source}|could not reach|unreachable`, "i");
 const RESTART =
   /^cancelled$|interrupted by a restart|stopped for a restart|the forge stopped/i;
-// The runner's own words when the forge could not clone or check out.
-const CLONE = /^clone failed:/i;
+// The runner's own words when the forge could not clone, fetch or check
+// out: the run never reached the agent (#6263).
+const CLONE = /^(?:clone|checkout|fetch(?: from the fork)?) failed:/i;
 
 /**
  * Why a run that ended without a pull was cut short, read from its summary

@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { vitals } from "../src/kernel/vitals.ts";
-import { newestVersion, readNewest, setBehind, watchBehind, type Newest } from "../src/release/behind.ts";
+import { newestOf, readNewest, setBehind, watchBehind, type Newest } from "../src/release/behind.ts";
+import { setTagged, shippedReleases } from "../src/release/shipped.ts";
 
 let dataDir: string;
 let app: App;
@@ -80,39 +81,27 @@ test("a read that finds nothing clears the cause; an unstamped forge says nothin
   expect(h.card()).toBeUndefined();
 });
 
-test("the newest version is the first of the document, or nothing", () => {
-  expect(newestVersion(JSON.stringify({ releases: [{ version: "1.2.3" }, { version: "1.2.2" }] }))).toBe("1.2.3");
-  expect(newestVersion("{")).toBeUndefined();
-  expect(newestVersion(JSON.stringify({ releases: [{ version: "a b; rm" }] }))).toBeUndefined();
+test("the newest is the first tagged release, or nothing while none is tagged", () => {
+  expect(newestOf([{ version: "1.2.3", migrations: 1, at: T0 }, { version: "1.2.2", migrations: 1, at: T0 - MIN }])).toEqual({ version: "1.2.3", at: T0 });
+  expect(newestOf([])).toBeUndefined();
+  // A frozen release carries no time it was cut: no cause can be dated from it.
+  expect(newestOf([{ version: "1.2.3", migrations: 1 }])).toBeUndefined();
 });
 
-test("readNewest reads the list and its landing time from the git store", async () => {
+test("readNewest reads the release tags and when each was cut from the git store, and keeps them as shipped", async () => {
   const dir = join(dataDir, "r.git");
-  const run = async (...a: string[]) => {
-    const p = Bun.spawn(["git", ...a], {
-      cwd: dir,
-      stdout: "ignore",
-      stderr: "ignore",
-      env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" },
-    });
-    await p.exited;
-  };
-  await Bun.spawn(["git", "init", "-q", "-b", "main", dir]).exited;
-  const commit = async (v: string[], date: string) => {
-    await Bun.$`mkdir -p ${dir}/src/core`.quiet();
-    await Bun.write(
-      join(dir, "src/core/releases.json"),
-      JSON.stringify({ releases: v.map((version) => ({ version })) }, null, 2),
-    );
-    await run("add", ".");
-    await Bun.spawn(["git", "commit", "-q", "-m", v[0]!, "--date", date], {
-      cwd: dir,
-      env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_COMMITTER_DATE: date },
-    }).exited;
-  };
-  await commit(["0.1.0"], "2026-10-16T10:00:00Z");
-  await commit(["0.1.1", "0.1.0"], "2026-10-16T12:00:00Z");
-  expect(await readNewest(dir, "main")).toEqual({ version: "0.1.1", at: Date.parse("2026-10-16T12:00:00Z") });
-  expect(await readNewest(dir, "nope")).toBeUndefined();
-  expect(await readNewest(dir, "--bad")).toBeUndefined();
+  const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+  const git = (args: string[], date = "2026-10-16T10:00:00Z", stdin?: string) =>
+    Bun.spawn(["git", ...args], { cwd: dir, env: { ...env, GIT_COMMITTER_DATE: date }, stdout: "ignore", stderr: "ignore", ...(stdin ? { stdin: new Blob([stdin]) } : {}) }).exited;
+  await Bun.$`mkdir -p ${dir}`.quiet();
+  await git(["init", "-q", "-b", "main"]);
+  await git(["commit", "-q", "--allow-empty", "-m", "one"]);
+  expect(await readNewest(dir)).toBeUndefined();
+  await git(["tag", "-a", "-F", "-", "v9.1.0"], "2026-10-16T10:00:00Z", JSON.stringify({ version: "9.1.0", migrations: 91, ids: [] }));
+  await git(["tag", "-a", "-F", "-", "v9.1.1"], "2026-10-16T12:00:00Z", JSON.stringify({ version: "9.1.1", migrations: 91, ids: [] }));
+  // Main never moved: the release is the tag.
+  expect(await readNewest(dir)).toEqual({ version: "9.1.1", at: Date.parse("2026-10-16T12:00:00Z") });
+  expect(shippedReleases()[0]!.version).toBe("9.1.1");
+  setTagged([]);
+  expect(await readNewest(join(dataDir, "nope.git"))).toBeUndefined();
 });

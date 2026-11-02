@@ -26,6 +26,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { mcpTool } from "./helpers/mcp.ts";
 import { askCountFor, askLinesFor, forgeNeedsFor, repoAsks } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listAt } from "./mcp-list.ts";
 
 quietLogs();
 // Every test here is HTTP round trips against a server on a shared machine: the 5s default measures its load, not the code.
@@ -254,12 +255,7 @@ describe("muting a repository's asks", () => {
     expect(((await tool(token, "asks", { hide_people: ["nobody"] })) as any).error).toContain("hide_people");
     expect(((await tool(token, "asks", { hide_kinds: "reviews" })) as any).error).toContain("lists");
     // The manifest says so.
-    const res = await fetch(`${servers.url}/mcp`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
-    });
-    const tools = ((await res.json()) as any).result.tools as any[];
+    const tools = (await listAt(servers.url, token)).result.tools as any[];
     for (const name of ["asks", "feed"]) {
       const t = tools.find((x) => x.name === name);
       expect(t.description).toContain("saved filter");

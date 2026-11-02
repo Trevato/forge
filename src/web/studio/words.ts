@@ -9,7 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { ancestorsOf } from "../../git/merge.ts";
+import { ancestries } from "./ancestry.ts";
 import {
   NO_TESTS_TAIL,
   TESTS_PASSED_TAIL,
@@ -106,6 +106,9 @@ interface Ahead {
   readonly checks: Map<string, CheckSummary>;
   readonly reviewers: Map<string, string | undefined>;
   readonly runPulls: Map<string, Pull | undefined>;
+  readonly parked: Map<string, boolean>;
+  /** Production as a merged pull sees it; `null` when the viewer may not see it. */
+  production?: { env: EnvStatus | undefined } | null;
 }
 // Keyed by the page's `WordCtx`, which is made fresh for each request and
 // dropped with it, so nothing here outlives the render it was read for.
@@ -113,7 +116,7 @@ const ahead = new WeakMap<WordCtx, Ahead>();
 const aheadOf = (ctx: WordCtx): Ahead => {
   let a = ahead.get(ctx);
   if (a === undefined)
-    ahead.set(ctx, (a = { checks: new Map(), reviewers: new Map(), runPulls: new Map() }));
+    ahead.set(ctx, (a = { checks: new Map(), reviewers: new Map(), runPulls: new Map(), parked: new Map() }));
   return a;
 };
 
@@ -147,6 +150,44 @@ export function knowPulls(ctx: WordCtx, pulls: readonly Pull[]): void {
   });
   const waits = reviewWaitsFor(ctx.db, have);
   for (const p of green) a.reviewers.set(p.id, waits.get(p.id)?.reviewer);
+}
+
+/**
+ * `pullWord` for a page of pulls: checks, reviewers, close reasons and
+ * production's status are read together first, so the page costs a handful
+ * of queries rather than several per row. Each word is the one `pullWord`
+ * gives, in the order of `pulls`.
+ */
+export async function pullWords(
+  ctx: WordCtx,
+  pulls: readonly Pull[],
+): Promise<{ word: Word; note: string }[]> {
+  knowPulls(ctx, pulls);
+  const a = aheadOf(ctx);
+  const closed = pulls.filter((p) => p.mergedAt === null && p.state === "closed");
+  if (closed.length > 0) {
+    const issues = getIssuesByIds(ctx.db, closed.map((p) => p.id));
+    for (const p of closed)
+      a.parked.set(p.id, issues.get(p.id)?.closeReason === "parked");
+  }
+  if (
+    a.production === undefined &&
+    pulls.some((p) => p.mergedAt !== null) &&
+    ctx.runtime !== undefined &&
+    ctx.record !== undefined
+  ) {
+    const repo = getRepoById(ctx.db, ctx.record.repoId);
+    a.production =
+      repo === undefined ||
+      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
+        ? null
+        : {
+            env: ctx.runtime
+              .status(ctx.record)
+              .find((e) => e.env === "production"),
+          };
+  }
+  return await Promise.all(pulls.map((p) => pullWord(ctx, p)));
 }
 
 /** `knowPulls` for the pull each of these finished runs produced (`pullFromRun`). */
@@ -212,7 +253,7 @@ async function caughtUp(
   const key = `${ctx.dir}\0${production.commitOid}`;
   let ancestry = ctx.history.get(key);
   if (ancestry === undefined) {
-    ancestry = ancestorsOf(ctx.dir, production.commitOid);
+    ancestry = ancestries.of(ctx.dir, production.commitOid);
     ctx.history.set(key, ancestry);
   }
   return (await ancestry)?.has(commitOid) ?? false;
@@ -308,15 +349,21 @@ export async function pullWord(
       return { word: "shipped", note: "merged" };
     // A private app's production — its state, its deploy's error — is for
     // those who may enter it (`canEnterApp`); anyone else reads "merged".
-    const repo = getRepoById(ctx.db, ctx.record.repoId);
-    if (
-      repo === undefined ||
-      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
-    )
-      return { word: "shipped", note: "merged" };
-    const production = ctx.runtime
-      .status(ctx.record)
-      .find((e) => e.env === "production");
+    const read = ahead.get(ctx)?.production;
+    if (read === null) return { word: "shipped", note: "merged" };
+    let production: EnvStatus | undefined;
+    if (read !== undefined) production = read.env;
+    else {
+      const repo = getRepoById(ctx.db, ctx.record.repoId);
+      if (
+        repo === undefined ||
+        !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
+      )
+        return { word: "shipped", note: "merged" };
+      production = ctx.runtime
+        .status(ctx.record)
+        .find((e) => e.env === "production");
+    }
     if (await caughtUp(ctx, production, commitOid))
       return { word: "shipped", note: "production is serving it" };
     return mergedPullWord(production, commitOid);
@@ -325,7 +372,8 @@ export async function pullWord(
     return {
       word: "stopped",
       note:
-        getIssueById(ctx.db, pull.id)?.closeReason === "parked"
+        (ahead.get(ctx)?.parked.get(pull.id) ??
+          getIssueById(ctx.db, pull.id)?.closeReason === "parked")
           ? "parked by the crew"
           : "closed without shipping",
     };

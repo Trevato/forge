@@ -45,6 +45,7 @@ import {
   addSubscription,
   getSubscriptionByName,
   lockBudget,
+  normalizeToken,
   setGrants,
   subscriptionAad,
 } from "../core/subscriptions.ts";
@@ -114,6 +115,8 @@ interface Ledger {
   readonly createdAt?: string;
   /** Absent on a ledger written before sizes; reads as small. */
   readonly size?: Size;
+  /** The template chosen (`spawn/templates.ts`); absent means `blank`. */
+  readonly template?: string;
   /** Absent on a ledger written before cells; reads as hosted. */
   readonly placement?: PlacementKind;
   /** Why a child that wanted a cell is hosted instead (`spawn/host.ts`). */
@@ -224,6 +227,8 @@ async function make(
   plan: SpawnPlan,
   deps: SpawnDeps,
 ): Promise<Result<Spawned, SpawnError>> {
+  // The key as the person meant it: whitespace and a `Bearer ` prefix from the paste dropped.
+  if (deps.modelKey !== undefined) deps = { ...deps, modelKey: normalizeToken(deps.modelKey) };
   const planHash = sha256(JSON.stringify(plan));
   let ledger = await readLedger(app, plan.name);
   if (ledger) {
@@ -267,6 +272,7 @@ async function make(
       apps: plan.apps.map((a) => a.ref),
       createdAt: new Date().toISOString(),
       size: plan.size ?? DEFAULT_SIZE,
+      ...(plan.template === undefined ? {} : { template: plan.template }),
       placement: placed.value.kind ?? "hosted",
       statusToken: secret(),
       beatKey: secret(),
@@ -464,6 +470,7 @@ async function copyInto(
         url: liveChildUrl(app, plan.name),
         keepAccess: plan.keepAccess,
         size: plan.size ?? DEFAULT_SIZE,
+        ...(plan.template === undefined ? {} : { template: plan.template }),
         // Each app is a fork: where it came from, so the child can follow it.
         apps: plan.apps.map((a) => ({ repo: `${plan.org}/${a.ref.split("/")[1]}`, upstream: a.ref })),
         ...(plan.fresh === undefined ? {} : { fresh: `${plan.org}/${plan.fresh.name}` }),
@@ -673,6 +680,8 @@ export interface Child {
   /** When it was begun; null on a ledger older than the client list. */
   readonly createdAt: string | null;
   readonly size: Size;
+  /** The template it started from; absent when `blank`. */
+  readonly template?: string;
   readonly placement: PlacementKind;
   /** Why it is hosted when it asked for a cell; null otherwise. */
   readonly placementNote: string | null;
@@ -695,6 +704,7 @@ export async function listChildren(app: App): Promise<Child[]> {
         apps: ledger.apps ?? [],
         createdAt: ledger.createdAt ?? null,
         size: isSize(ledger.size) ? ledger.size : DEFAULT_SIZE,
+        ...(typeof ledger.template === "string" ? { template: ledger.template } : {}),
         placement: ledger.placement ?? "hosted",
         placementNote: ledger.placementNote ?? null,
       });

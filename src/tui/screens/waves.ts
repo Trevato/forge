@@ -5,8 +5,12 @@
  * opens that wave as plain text.
  */
 
+import { cutWaveFor, planCutFor } from "../../actions/cut_wave.ts";
 import { canRead } from "../../core/repos.ts";
 import { VERSION } from "../../story/wave.ts";
+import { movedForViewer, type MovedMilestone } from "../../story/wave_moved.ts";
+import { milestonePath, planNow } from "../../story/wave_plan.ts";
+import { repoBase } from "../../web/chrome.ts";
 import { carriedPulls, pullPath, type CarriedPull } from "../../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves, type WaveEntry } from "../../story/waves.ts";
 import { NO_WAVES } from "../../story/words.ts";
@@ -18,7 +22,8 @@ import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { ListState, Scroll, drawList, drawLines, hitList, plural, runAsync } from "./common.ts";
+import { ListState, Scroll, confirmScreen, drawList, drawLines, hitList, plural, runAsync, yesNo } from "./common.ts";
+import { pullScreen } from "./pull.ts";
 import { localRepo, sourceName, whereRows, whereStrip } from "./where.ts";
 
 /** One line per wave, as the screen draws it. */
@@ -26,9 +31,9 @@ export function waveRows(entries: WaveEntry[]) {
   return entries.map((e) =>
     e.ok
       ? {
-          title: e.wave.headline,
+          title: `${e.wave.version} · ${e.wave.date} · ${e.wave.headline}`,
           secondary: "",
-          meta: `${e.wave.version}  ${e.wave.date}`,
+          meta: "",
         }
       : { title: e.file, secondary: `Not a wave: ${e.reason}`, meta: "" },
   );
@@ -39,8 +44,15 @@ const plain = (s: string): string =>
   // eslint-disable-next-line no-control-regex
   s.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+/g, " ");
 
+/** A moved milestone with the path that opens it. */
+export type MovedLine = MovedMilestone & { path: string };
+
 /** One wave as lines of plain text: headline, version and date, highlights with why, then the pulls the viewer may see. */
-export function waveLines(entry: WaveEntry, pulls: CarriedPull[]): string[] {
+export function waveLines(
+  entry: WaveEntry,
+  pulls: CarriedPull[],
+  moved: MovedLine[] = [],
+): string[] {
   if (!entry.ok) return [plain(entry.file), "", `Not a wave: ${plain(entry.reason)}`];
   const w = entry.wave;
   return [
@@ -50,6 +62,16 @@ export function waveLines(entry: WaveEntry, pulls: CarriedPull[]): string[] {
     "Highlights",
     ...w.highlights.map((h) => `  ${plain(h.title)} - ${plain(h.why)}`),
     "",
+    ...(moved.length === 0
+      ? []
+      : [
+          "Moved",
+          ...moved.flatMap((m) => [
+            `  ${plain(m.title)} - ${m.done} of ${m.total} done`,
+            `    ${plain(m.path)}`,
+          ]),
+          "",
+        ]),
     "Pulls",
     ...(pulls.length === 0
       ? ["  No pulls to show here."]
@@ -60,8 +82,8 @@ export function waveLines(entry: WaveEntry, pulls: CarriedPull[]): string[] {
   ];
 }
 
-function waveScreen(ctx: Ctx, entry: WaveEntry, pulls: CarriedPull[]): Screen {
-  const lines = waveLines(entry, pulls);
+function waveScreen(ctx: Ctx, entry: WaveEntry, pulls: CarriedPull[], moved: MovedLine[]): Screen {
+  const lines = waveLines(entry, pulls, moved);
   const scroll = new Scroll();
   return {
     title: entry.ok ? entry.wave.version : entry.file,
@@ -99,7 +121,17 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
       if (!one) return;
       // The page's gate on each pull: one the viewer cannot read is not named.
       const pulls = one.ok ? carriedPulls(f.db, pullRefs(one.wave), f.user) : [];
-      ctx.push(waveScreen(ctx, one, pulls));
+      // Same list as the page, from the same function, with the same gate.
+      const moved = one.ok
+        ? movedForViewer({
+            db: f.db,
+            repo,
+            refs: pullRefs(one.wave),
+            viewer: f.user,
+            plan: () => planNow(f.db, repo, new Date()),
+          }).map((m) => ({ ...m, path: milestonePath(repoBase(repo), m.number) }))
+        : [];
+      ctx.push(waveScreen(ctx, one, pulls, moved));
     });
   };
 
@@ -114,11 +146,55 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
     ctx.invalidate();
   };
 
-  return {
+  const cut = (): void => {
+    if (repo === undefined) return;
+    runAsync(ctx, async () => {
+      const plan = await planCutFor(f.app, f.user, repo);
+      if (!plan.ok) return void ctx.toast(plan.error, "danger");
+      const { version, pulls } = plan.value;
+      const choose = (choice: number): void => {
+              if (choice !== 0) return;
+              runAsync(ctx, async () => {
+                const done = await cutWaveFor(f.app, f.user, repo);
+                if (!done.ok) return void ctx.toast(done.error, "danger");
+                await reload();
+                const number = done.value.number;
+                ctx.push(
+                  confirmScreen(ctx, self, {
+                    title: "Wave drafted",
+                    body: [`Draft pull #${number} holds wave ${done.value.version}.`],
+                    actions: [{ label: "Open" }, { label: "Close" }],
+                    onChoose: (c) => {
+                      if (c === 0) ctx.push(pullScreen(f, ctx, src, number));
+                    },
+                  }),
+                );
+              });
+      };
+      ctx.push(
+        yesNo(
+          ctx,
+          confirmScreen(ctx, self, {
+            title: "Cut wave",
+            body: [
+              `${plural(pulls, "pull")} since the last wave would go into it.`,
+              `cut wave ${version}? y/n`,
+            ],
+            actions: [{ label: "Cut" }, { label: "Cancel" }],
+            onChoose: choose,
+          }),
+          choose,
+        ),
+      );
+    });
+  };
+
+  const self: Screen = {
     title: "Waves",
     keys: [
       binding(["j", "k"], "move"),
       binding(["enter"], "open"),
+      binding(["c"], "cut a wave"),
       binding(["r"], "refresh"),
     ],
     load: reload,
@@ -165,7 +241,12 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
         runAsync(ctx, reload);
         return true;
       }
+      if (e.key === "c") {
+        cut();
+        return true;
+      }
       return false;
     },
   };
+  return self;
 }

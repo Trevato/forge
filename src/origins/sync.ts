@@ -30,6 +30,7 @@ import {
   getCursor,
   listAllOrigins,
   listMirrors,
+  markNeedsReauth,
   originForRepo,
   recordFetch,
   rememberOriginRepo,
@@ -39,6 +40,7 @@ import {
 } from "../core/origins.ts";
 import { storageStale } from "../core/storage.ts";
 import { getRepoById } from "../core/repos.ts";
+import { settingMoved } from "../core/settings_changed.ts";
 import { pullDiff, type Pull, getPull } from "../core/pulls.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
@@ -161,7 +163,8 @@ async function runOrigin(
 
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) {
-    report.error = "this origin has no usable credential";
+    report.error = `this origin has no stored token: reconnect ${origin.login} at ${origin.webUrl}`;
+    markNeedsReauth(app.db, origin.id, report.error);
     recordSync(app.db, origin.id, { at: startedAt, error: report.error });
     schedule(app, origin.id, SYNC_INTERVAL_MS);
     return report;
@@ -324,7 +327,7 @@ async function syncMirrorUnguarded(
         kind: "repo.settings_updated",
         repoId: repo.id,
         actorId: origin.userId,
-        payload: { changed: ["visibility"], visibility: wanted, via: "origin" },
+        payload: { changed: settingMoved("visibility", repo.visibility, wanted), visibility: wanted, via: "origin" },
       });
       repo = getRepoById(app.db, repo.id)!;
     }

@@ -14,10 +14,10 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
-import { runGit, runGitCapture, type GitFailure } from "./env.ts";
+import { runGit, runGitCapture, runGitRaw, type GitFailure } from "./env.ts";
 import { isSafeOid, isSafeRef } from "./guard.ts";
 import { resolveOid } from "./merge.ts";
-import { listRefs } from "./read.ts";
+import { LOG_FORMAT, listRefs, parseLogRecords, type Commit } from "./read.ts";
 
 /**
  * A branch list stops comparing here. Each comparison is one `rev-list`
@@ -142,13 +142,33 @@ export interface BranchListing {
 
 /**
  * Every branch, with its divergence from the default. One `for-each-ref`
- * for the names and tips, then one `rev-list --left-right --count` per
+ * for the names and tips, then one `for-each-ref %(ahead-behind:)` for
+ * the counts, or, with `bulk: false` or an older git, one `rev-list` per
  * branch (bounded, and capped by `MAX_BRANCH_COMPARE`).
  */
 export async function listBranches(
   dir: string,
   defaultBranch: string,
+  opts: { readonly bulk?: boolean } = {},
 ): Promise<Result<BranchListing, GitFailure>> {
+  const rows = await listBranchRows(dir, defaultBranch);
+  if (!rows.ok) return rows;
+  return ok(await compareBranches(dir, defaultBranch, rows.value, rows.value.length, opts));
+}
+
+export interface BranchRow extends BranchRef {
+  readonly isDefault: boolean;
+}
+
+/**
+ * Names and tips only, default first then alphabetical: one `for-each-ref`
+ * and no comparison, so a caller that shows a page can take the page before
+ * it pays for ahead/behind.
+ */
+export async function listBranchRows(
+  dir: string,
+  defaultBranch: string,
+): Promise<Result<BranchRow[], GitFailure>> {
   const refs = await listRefs(dir, "refs/heads/");
   if (!refs.ok) return refs;
 
@@ -164,16 +184,44 @@ export async function listBranches(
         ? -1
         : 1,
   );
+  return ok(rows);
+}
 
+/**
+ * Ahead/behind for just `rows` (a page of the list). `total` is how many
+ * branches the repo has: past `MAX_BRANCH_COMPARE` nothing is compared, as
+ * for the whole list.
+ */
+export async function compareBranches(
+  dir: string,
+  defaultBranch: string,
+  rows: readonly BranchRow[],
+  total: number,
+  opts: { readonly bulk?: boolean } = {},
+): Promise<BranchListing> {
   const compare =
-    rows.length <= MAX_BRANCH_COMPARE && isSafeRef(defaultBranch)
+    total <= MAX_BRANCH_COMPARE && isSafeRef(defaultBranch)
       ? await resolveOid(dir, `refs/heads/${defaultBranch}`)
       : undefined;
   if (compare === undefined) {
-    return ok({
+    return {
       branches: rows.map((r) => ({ ...r, ahead: null, behind: null })),
-      compared: rows.length <= MAX_BRANCH_COMPARE,
-    });
+      compared: total <= MAX_BRANCH_COMPARE,
+    };
+  }
+
+  const counted =
+    opts.bulk === false
+      ? undefined
+      : await aheadBehindAll(dir, compare, rows.map((r) => r.name));
+  if (counted !== undefined) {
+    return {
+      branches: rows.map((r) => ({
+        ...r,
+        ...(counted.get(r.name) ?? { ahead: null, behind: null }),
+      })),
+      compared: true,
+    };
   }
 
   const branches: BranchInfo[] = [];
@@ -189,7 +237,84 @@ export async function listBranches(
       });
     }
   }
-  return ok({ branches, compared: true });
+  return { branches, compared: true };
+}
+
+/**
+ * Every branch's divergence from `base` in one `for-each-ref`, which asks
+ * git's own `%(ahead-behind:)` (2.41+). Undefined when this git lacks it,
+ * and the caller falls back to one `rev-list` per branch.
+ */
+async function aheadBehindAll(
+  dir: string,
+  base: string,
+  names: readonly string[],
+): Promise<Map<string, { ahead: number; behind: number }> | undefined> {
+  if (!isSafeOid(base)) return undefined;
+  // An empty page has nothing to count; asking git would compare every branch.
+  if (names.length === 0) return new Map();
+  if (!names.every(isBranchName)) return undefined;
+  const listed = await runGit(
+    [
+      "for-each-ref",
+      `--format=%(refname)%00%(ahead-behind:${base})`,
+      "--",
+      ...names.map((n) => `refs/heads/${n}`),
+    ],
+    { cwd: dir },
+  );
+  return listed.ok ? parseAheadBehind(listed.value) : undefined;
+}
+
+/**
+ * The `refname NUL ahead SP behind` lines of `aheadBehindAll`. A malformed
+ * line gives up on the whole list (undefined), so the caller takes the slow
+ * per-branch path rather than show a wrong count.
+ */
+export function parseAheadBehind(
+  text: string,
+): Map<string, { ahead: number; behind: number }> | undefined {
+  const out = new Map<string, { ahead: number; behind: number }>();
+  if (text === "") return out;
+  for (const line of text.split("\n")) {
+    const [ref, pair] = line.split("\0");
+    // `%(ahead-behind:B)` prints "<ahead> <behind>" of the ref against B.
+    const [ahead, behind] = (pair ?? "").split(" ").map(Number);
+    if (!ref || !Number.isSafeInteger(ahead) || !Number.isSafeInteger(behind))
+      return undefined;
+    out.set(ref.slice("refs/heads/".length), {
+      ahead: ahead as number,
+      behind: behind as number,
+    });
+  }
+  return out;
+}
+
+/**
+ * The tip commit of each oid, in one `git log --no-walk`. Oids come from
+ * git itself; anything unsafe is skipped, never passed on.
+ */
+export async function tipCommits(
+  dir: string,
+  oids: readonly string[],
+): Promise<Map<string, Commit>> {
+  const safe = [...new Set(oids)].filter(isSafeOid);
+  const out = new Map<string, Commit>();
+  if (safe.length === 0) return out;
+  const result = await runGitRaw(
+    [
+      "log",
+      "--no-walk=unsorted",
+      "-z",
+      `--format=${LOG_FORMAT}`,
+      ...safe,
+      "--",
+    ],
+    { cwd: dir },
+  );
+  if (!result.ok) return out;
+  for (const commit of parseLogRecords(result.value)) out.set(commit.oid, commit);
+  return out;
 }
 
 /**

@@ -22,6 +22,7 @@ quietLogs();
 const NOT_A_PAGE: Record<string, string> = {
   "/llms.txt": "plain markdown for machines, not a page to picture",
   "/robots.txt": "plain text for crawlers",
+  "/favicon.ico": "the tab icon, an image",
   "/releases.json": "JSON feed of /releases",
   "/sitemap.xml": "XML for crawlers",
   "/manifest.webmanifest": "the install manifest, JSON",
@@ -40,6 +41,8 @@ const NOT_A_PAGE: Record<string, string> = {
   "/asks": "redirects to /#needs-you",
   "/big": "redirects to /board?wall",
   "/flow": "redirects to /boards",
+  "/login": "redirects to /signin",
+  "/sign-in": "redirects to /signin",
   "/mcp": "a protocol endpoint, answers 405 to a GET",
   "/_measure": "the page-load beacon, a POST endpoint",
   "/events": "a live event stream that never ends",

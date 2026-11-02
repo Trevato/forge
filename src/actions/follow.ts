@@ -14,6 +14,8 @@ import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { chainOfRepo, forgeLinkOf, FOLLOW_MODES, isFollowMode, setChainMode, severChain, type FollowMode } from "../spawn/chain.ts";
 import { FAMILY_WORDS } from "./family_words.ts";
+import { FOLLOWS_NOTHING } from "./follow_words.ts";
+import { forkFollowMode, setForkFollowMode } from "../core/fork_follow.ts";
 import { requireUser } from "./access.ts";
 import { takeFromParent, type Taken } from "../spawn/take.ts";
 import { takeUpdates, type ForkSync, type TakeUpdatesError } from "./forks.ts";
@@ -97,6 +99,14 @@ export function takeForgeWords(r: TakeForgeResult): { tone?: "danger"; message: 
   return { message: "Already up to date." };
 }
 
+/** How a repository follows its parent now: the forge chain's record when it carries one, else the fork's own choice. */
+export async function followModeOf(app: App, repo: Repo): Promise<FollowMode> {
+  const link = await forgeLinkOf(app);
+  return link !== undefined && link.repo === `${repo.ownerName}/${repo.name}`
+    ? link.mode
+    : forkFollowMode(app.db, repo.id);
+}
+
 export type FollowModeError = SeverError | "invalid_mode" | "severed";
 
 /** The one answer every door gives a refused mode change, with the status an HTTP door sends. */
@@ -117,11 +127,16 @@ export async function setFollowMode(
 ): Promise<Result<FollowMode, FollowModeError>> {
   const who = requireUser(actor);
   if (!who.ok) return err("unauthorized");
-  if ((await chainOfRepo(app, repo)) === undefined) return err("not_following");
+  const carries = (await chainOfRepo(app, repo)) !== undefined;
+  if (!carries && repo.forkParentId === null) return err("not_following");
   if (!canAdmin(app.db, repo, who.value) || !canWrite(app.db, repo, who.value)) return err("forbidden");
   if (!isFollowMode(mode)) return err("invalid_mode");
-  const set = await setChainMode(app, mode);
-  if (!set.ok) return err(set.error);
+  if (carries) {
+    const set = await setChainMode(app, mode);
+    if (!set.ok) return err(set.error);
+  } else {
+    setForkFollowMode(app.db, repo.id, mode);
+  }
   app.bus.append({
     kind: "forge.follow_mode",
     repoId: repo.id,
@@ -184,4 +199,51 @@ export function convergeWords(
         message: "The crew is at today's ceiling; it converges tomorrow.",
       };
   }
+}
+/**
+ * What taking updates says when there was nothing to take. "Up to date"
+ * only of a parent that is itself up to date: a frozen one may be far
+ * behind its own upstream, and the take only knows the frozen copy.
+ */
+export function nothingNew(parent: Repo): string {
+  const name = `${parent.ownerName}/${parent.name}`;
+  return parent.detached === null
+    ? `Already up to date with ${name}.`
+    : `Nothing new from ${name}, which is frozen: its origin was disconnected, so upstream may have moved. Reconnect it.`;
+}
+
+/**
+ * What a take said, for every door that words it the same: taken (moved or
+ * merged), nothing new, refused, or a conflict with what the crew did about it.
+ */
+export function takeWords(
+  took: TakeOrTell,
+  fork: Repo,
+  parent: Repo,
+): { tone?: "danger"; message: string } {
+  const parentName = `${parent.ownerName}/${parent.name}`;
+  if (took.ok)
+    return {
+      message: !took.value.updated
+        ? nothingNew(parent)
+        : took.value.merged
+          ? `Took ${parentName}'s updates: merged into ${fork.defaultBranch} at ${took.value.to.slice(0, 7)}.`
+          : `Took ${parentName}'s updates: ${fork.defaultBranch} is at ${took.value.to.slice(0, 7)}.`,
+    };
+  const e = took.error;
+  if (typeof e === "string")
+    return {
+      tone: "danger",
+      message: e === "not_a_fork" ? FOLLOWS_NOTHING : "You need write access to take updates here.",
+    };
+  // A conflict is a tell for the crew (`takeOrTell`).
+  if (e.kind === "conflict") {
+    const files = `${e.files.length === 1 ? "One file needs" : `${e.files.length} files need`} a decision (${e.files.join(", ")})`;
+    const words = "converge" in e ? convergeWords(e.converge, parentName) : { message: "" };
+    return { tone: "danger", message: `${files}. ${words.message}` };
+  }
+  return {
+    tone: "danger",
+    message: e.kind === "moved" ? "Something moved while this was read; try again." : `Git could not take the updates: ${e.message}`,
+  };
 }

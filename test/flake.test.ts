@@ -33,9 +33,14 @@ import {
   rawBudgets,
   WALL_CLOCK_FLOOR_MS,
 } from "../scripts/flake.ts";
+import { breaches } from "./helpers/rule.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const read = (path: string): string => readFileSync(`${root}${path}`, "utf8");
+// Every test file the wall-clock rules read; this file holds the detectors' own examples.
+const scanned = readdirSync(`${root}test`)
+  .filter((name) => name.endsWith(".test.ts") && name !== "flake.test.ts")
+  .map((name) => `test/${name}`);
 
 const dirs: string[] = [];
 const scratch = async (): Promise<string> => {
@@ -341,14 +346,10 @@ describe("no tight wall-clock bound in a test", () => {
     );
   });
 
-  test("no test file bounds a request or a spawn below the floor", () => {
-    const files = readdirSync(`${root}test`)
-      .filter((name) => name.endsWith(".test.ts"))
-      // This file holds the detector's own examples.
-      .filter((name) => name !== "flake.test.ts")
-      .map((name) => `test/${name}`);
-    expect(files.flatMap((path) => tightBounds(path, read(path)))).toEqual([]);
-  }, 120_000); // reads every test file: past the 5 s default on a loaded machine
+  breaches(
+    "no test file bounds a request or a spawn below the floor",
+    scanned.flatMap((path) => tightBounds(path, read(path))),
+  );
 });
 
 describe("no raw wall-clock budget in a test (#4429)", () => {
@@ -356,18 +357,15 @@ describe("no raw wall-clock budget in a test (#4429)", () => {
     expect(rawBudgets("x", "expect(dur(\"app\")).toBeLessThan(50);")).toHaveLength(1);
     expect(rawBudgets("x", "expect(total).toBeLessThan(50);")).toHaveLength(1);
     expect(rawBudgets("x", "test(`GET /a answers under 50 ms`, () => {});")).toHaveLength(1);
-    expect(rawBudgets("x", "expectBudget(dur(\"app\"), { ms: 50, against });")).toEqual([]);
     expect(rawBudgets("x", "expect(elapsed).toBeLessThan(5_000);")).toEqual([]); // a hang guard
     expect(rawBudgets("x", "expect(res.status).toBeLessThan(400);")).toEqual([]);
     expect(rawBudgets("x", "expect(lines.length).toBeLessThan(20);")).toEqual([]);
   });
 
-  test("no test file holds a speed to a raw ms number", () => {
-    const files = readdirSync(`${root}test`)
-      .filter((name) => name.endsWith(".test.ts") && name !== "flake.test.ts")
-      .map((name) => `test/${name}`);
-    expect(files.flatMap((path) => rawBudgets(path, read(path)))).toEqual([]);
-  }, 120_000);
+  breaches(
+    "no test file holds a speed to a raw ms number",
+    scanned.flatMap((path) => rawBudgets(path, read(path))),
+  );
 });
 
 describe("the scheduled run of the files outside the gate", () => {

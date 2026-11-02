@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { PARK_LIKE } from "../core/done_on_main.ts";
 import { getReposByIds } from "../core/repos.ts";
 import { lastDrill } from "../snapshot/drills.ts";
+import { clip } from "../text/clip.ts";
 import { PARK_STRIKES, parkedTwice } from "./parks.ts";
 
 /** A park reason is cut to this many characters on a card or a terminal row. */
@@ -34,10 +35,9 @@ export interface CrewHandover {
   readonly drill: DrillLine | undefined;
 }
 
-/** One line, at most `REASON_MAX` characters. */
+/** One line, at most `REASON_MAX` code points. */
 export function oneLine(reason: string): string {
-  const flat = reason.replace(/\s+/g, " ").trim();
-  return flat.length <= REASON_MAX ? flat : `${flat.slice(0, REASON_MAX - 1)}…`;
+  return clip(reason, REASON_MAX);
 }
 
 /** The issues parked twice in any repository, newest park first. */

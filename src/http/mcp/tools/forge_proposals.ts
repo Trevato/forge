@@ -5,7 +5,7 @@ export const tool: Tool = {
   name: "forge_proposals",
   doc: "`{ repo }`: what this forge proposed to its parent, newest first; `reachable` is false if the parent did not answer",
   description:
-    "What this forge proposed to its parent, newest first; `reachable` false if it is silent.",
+    "What this forge proposed to its parent; `reachable` false if it is silent.",
   inputSchema: {
     type: "object",
     properties: { repo: REPO_ARG },

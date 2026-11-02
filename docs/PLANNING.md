@@ -16,7 +16,14 @@ where it is not for assigning (which spends money) or merging (a person's
 call).
 
 On the issue page, **Depends on** says _Waits for 2, 1 still open_ and
-_Holds up 3_, with each issue linked and a field to add one. Over the API:
+_Holds up 3_, with each issue linked and a field to add one. The terminal's
+issue screen shows the same line, `Waits for #12, #15 · Holds up #20`, when
+there is any, and a click on a number opens that issue. There a writer
+presses `w` and types a number: a new one is linked, and one it already
+waits for asks a confirm, then is unlinked. A refusal reads in
+`dependencyWords`' sentences, as MCP `wait_for` says it. The page, the
+terminal and `wait_for` all go through `linkIssue` and `unlinkIssue`
+(`src/actions/dependencies.ts`). Over the API:
 
 ```
 GET    /api/v1/repos/:owner/:name/issues/:n/dependencies   → { blockedBy, blocks }
@@ -93,7 +100,7 @@ a level and a flow are different units: the line says whether the plan is
 converging, the bars say whether anything is moving.
 
 The same three lists are data at `GET /api/v1/repos/:owner/:name/map`,
-which is what an agent reads before it starts and what a repository in
+which is what an agent reads before it starts (`issues` and `edges` hold only open issues; `?done=1`, or `done: true` on MCP `map`, brings the closed ones back; `counts.done` always says how many) and what a repository in
 autonomous mode reads to pick the next thing. Both carry where the crew
 is: an issue with an agent run in flight is marked _working_ on the
 drawing and listed under `working` in the data; every issue in the data
@@ -191,8 +198,13 @@ action as the MCP `plan` tool (`openPlan`): the same items, the same
 refusals, all or nothing. An item names its `pillar`, or is `later: true`
 with `why`; one that says neither is refused with `no_pillar` and nothing is
 opened, so the planner reads the refusal, names the pillar or defers the
-item, and posts again. The answer is `{ opened, ready, later, gate }`. A
-repository with no umbrella issues has no pillars, and plans as it always
+item, and posts again. The answer is `{ opened, ready, held, later, gate }`. `held`
+lists each opened issue that is ready but would not start now, as `{ key, number, by,
+detail }`: `by` is one of the map's hold names (`HOLDS` in
+`src/crew/held.ts`) and `detail` its sentence. The usual ones are `hot_file`
+(a file on the issue's `Files:` line is hot, or an admin holds it); an open
+pull cannot hold an issue opened a moment ago. The planner can rewrite
+what is held in the same run. A repository with no umbrella issues has no pillars, and plans as it always
 did.
 
 **An issue opened outside a plan.** A builder that finds its task too big
@@ -267,7 +279,12 @@ dropped and split issues are neither.
 `/:owner/:name/milestones/:number` is one milestone opened: who is building
 what, what is blocked and on what, what merged this week, and a plain
 estimate — the open issues at the pace of the last 7 days, or a sentence
-saying there is no pace to estimate from. What it waits for directly shows
+saying there is no pace to estimate from. Under it, issues closed per day
+over 14 UTC days as a sparkline and one line from the same numbers:
+`on pace for <date>` (today plus the estimate's days), `no movement in 7
+days`, or `done <date>` (the day the last issue closed); a deferred milestone
+has no line. The terminal's milestone list shows the line for the limb under
+the cursor, and the MCP gives `closedPerDay`, `paceDate` and `pace`. What it waits for directly shows
 as limbs where a child brings a tree of its own, and as leaves where it
 brings none (one that only waits for its siblings is a leaf in an order).
 Leaves show only on the limb they are under, and each issue shows once:
@@ -284,7 +301,8 @@ never flagged.
 It is one tap away: each pillar in the map's _By pillar_ and in the board's
 7-day line opens its milestone, the map names the page, and the issue page
 of anything that waits for others says _see how far it is_. The same
-numbers are data at `GET /api/v1/repos/:owner/:name/milestones` and
+numbers are data at `GET /api/v1/repos/:owner/:name/milestones` (the limbs
+as `{ items, next_cursor }`, with `limit` and `cursor`) and
 `…/milestones/:number`, and in the MCP's `milestones`: `building` is the
 count on a limb and on a milestone alike, and `buildingNow` lists who is on
 what. An agent's name and the spend are the owner's to see: a reader gets
@@ -382,7 +400,9 @@ from the plan each time, as that person:
 A watch on a repository the person can no longer read says nothing, in the
 feed or on the phone. An agent does not watch. The same is `PUT` and
 `DELETE /api/v1/repos/:owner/:name/milestones/:number/watch` with a write
-token, `watching` on the milestone's read, and the MCP's `watch`.
+token, `watching` on the milestone's read, and the MCP's `watch`. On the
+terminal's Milestones screen, `w` on a row watches or stops; a watched row
+reads _watching_, and an agent is told only a person watches.
 
 ## A repository on its own
 
@@ -430,7 +450,10 @@ asked, under **Settings → Autonomy**:
   two updates ended without a push is handed to the person who turned
   autonomy on — assigned to them, not closed (`crew/finishing.ts`; the
   tick line says `finishing="queued Q, in flight F, skipped S: <why>×k"`,
-  and each skipped pull is logged once per reason as `finishing: skip pull=N why="…"`). The planner's next pass splits or rewrites a parked
+  or `finishing="0 candidates of N open"`; each skipped pull is logged
+  once per reason as `finishing: skip pull=N why="…"`, and every open pull
+  that is not a candidate as `finishing: drop pull=N why="…"`; it reads every
+  open pull, not the newest fifty). The planner's next pass splits or rewrites a parked
   issue, and one parked twice is handed to the planner (below). The planner
   keeps a standing reserve of startable work — two issues per builder
   slot, never fewer than three — and is asked whenever fewer than that can
@@ -497,6 +520,10 @@ and after the same bounded number of tries the crew stops and waits for a
 person: autonomy re-queues nothing a person must decide. The map page says
 how it stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why
 it is paused when it is.
+
+## Relieving a hot file
+
+A planner may write a `Relieves: <path>` line in an issue only for a change whose purpose is to cut what other pulls must touch in that file (a split, an extraction), and the path must also be on its `Files:` line. Such an issue is not held by that file being hot (three paths at most), but only one at a time per file: while an open pull or a run serves another issue that relieves the path, the second waits (`waits: <path> is already being relieved by #N`), and an admin's pin on the file still holds it. The line is read from any issue body and the author is not checked, on purpose: the exemption lifts only the hot-file count, never the other holds, it admits at most three paths that the issue also lists under `Files:`, and one relieving build per file bounds what a stray `Relieves:` can pile up.
 
 ## Holding a pull
 
@@ -613,10 +640,11 @@ predate reasons count as done.
 ## Plans need a nod
 
 A repository setting, `plansNeedNod` (PATCH `/api/v1/repos/:owner/:name`,
-admin only, never an agent), off by default: nothing reads a stored proposal
-yet, so on would hide the planner's work. On, `POST …/plan` and the MCP
+admin only, never an agent), off by default: on, the planner's work waits for a nod
+and is not opened until then. On, `POST …/plan` and the MCP
 `plan` tool run every check as ever (`no_pillar`, loops, unknown keys) and
 then store one proposal — title, why, the ordered issues with their
 `blockedBy` — answering `proposed` with its id (HTTP 202). No issue is opened.
-Off, the plan opens its linked issues all or none. A person's nod that opens
-a stored proposal is not built yet.
+Off, the plan opens its linked issues all or none. A person's nod opens a
+stored proposal: `approve` in `src/actions/proposals.ts`, from the inbox card
+or the MCP `asks_proposal`.

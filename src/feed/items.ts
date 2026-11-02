@@ -12,7 +12,8 @@ import type { Chips } from "../core/feed_chips.ts";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
-import { commentAnchor, getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
+import { getReview } from "../core/reviews.ts";
+import { commentAnchor, getIssuesByIds, getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
 import {
   listDetachedMirrors,
   listOrigins,
@@ -29,7 +30,9 @@ import {
 import { getRunErrorLine } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { watchedBy } from "../core/watches.ts";
+import { CLOG_NOTE_WINDOW_MS, flattenNote } from "../flow/clog_note.ts";
 import { chooseCandidates } from "./choose.ts";
+import type { Foldable } from "./fold.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
 import { QUIET_WINDOW_MS, quietRunEventIds } from "./quiet.ts";
@@ -75,6 +78,11 @@ export interface Candidate {
   readonly said?: string;
   /** For an ask: what it asks, the answers, what happens if nobody acts, and its rank. */
   readonly ask?: FeedAsk;
+  /** Set on a post that may fold into a burst (`fold.ts`). */
+  readonly fold?: Foldable;
+  /** On a folded post: the first titles, each linking to its own thing, and how many more. */
+  readonly lines?: readonly { readonly text: string; readonly link: string }[];
+  readonly more?: number;
   /** For a look: the picture's environment and commit; the page finds the thumbnail. */
   readonly look?: FeedLook;
 }
@@ -378,6 +386,7 @@ export function candidatesFor(
     if (!repo) continue;
     const fold = folded.get(e.id);
     if (fold === "skip") continue;
+    if (e.kind === "clog.cleared" && now - Date.parse(e.createdAt) > CLOG_NOTE_WINDOW_MS) continue;
     const c = fromEvent(db, e, repo, owns(repo), readsLogs(repo), subjects);
     if (c)
       out.push({
@@ -414,9 +423,13 @@ export function candidatesFor(
   out.push(...frozenCandidates(db, viewer, now));
   out.push(...chooseCandidates(db, writable));
   out.push(...hotCandidates(writable));
+  // A decision about a pull or a tell links to it, one tap from its diff;
+  // one about nothing in particular keeps the pulls list.
+  const about = getIssuesByIds(db, decided.flatMap((d) => (d.issueId === null ? [] : [d.issueId])));
   for (const d of decided) {
     const repo = repos.get(d.repoId);
     if (!repo) continue;
+    const subject = d.issueId === null ? undefined : about.get(d.issueId);
     out.push({
       id: `decision:${d.id}`,
       kind: "decision",
@@ -425,7 +438,9 @@ export function candidatesFor(
       actorId: null,
       actor: null,
       at: d.outcomeAt ?? d.createdAt,
-      link: `${base(repo)}/pulls`,
+      link: subject === undefined
+        ? `${base(repo)}/pulls`
+        : `${base(repo)}/${subject.kind === "pull" ? "pulls" : "issues"}/${subject.number}`,
       what: clip(`${d.by} chose “${clip(d.answer, 40)}” on a ${d.kind} and it ended ${d.outcome}`),
       urgency: 0,
     });
@@ -516,6 +531,45 @@ interface Subjects {
   pull(repoId: string, number: number): Pull | undefined;
 }
 
+/** Asked-for-changes sits above plain news; an approval is news. */
+const CHANGES_URGENCY = 1;
+
+/**
+ * The verdict and the reviewer's first sentence, from the review the event
+ * names. A review that is gone, or one with no verdict, keeps the old words.
+ */
+function reviewedPost(
+  db: Database,
+  p: Record<string, unknown>,
+  common: Omit<Partial, "what">,
+  title: string,
+): Partial {
+  const review =
+    typeof p["reviewId"] === "string" ? getReview(db, p["reviewId"]) : undefined;
+  const on = title === "" ? "a pull request" : clip(title);
+  if (review?.state === "approved")
+    return { ...common, what: `approved ${on}` };
+  if (review?.state === "changes_requested") {
+    const first = firstSentence(review.body);
+    return {
+      ...common,
+      urgency: CHANGES_URGENCY,
+      what: `asked for changes on ${on}${first === "" ? "" : `: ${first}`}`,
+    };
+  }
+  return {
+    ...common,
+    what: `reviewed a pull request${title ? `: ${clip(title)}` : ""}`,
+  };
+}
+
+/** Up to the first sentence's end, at most 100 characters. */
+function firstSentence(body: string): string {
+  const text = body.trim().replace(/\s+/g, " ");
+  const end = text.search(/[.!?](\s|$)/);
+  return clip(end === -1 ? text : text.slice(0, end + 1), 100);
+}
+
 function fromEvent(
   db: Database,
   e: ForgeEvent,
@@ -581,7 +635,7 @@ function fromEvent(
     case "pull.merged":
       return { ...common, kind: "pull", link: change, what: `merged a pull request${title ? `: ${clip(title)}` : ""}${toldWords}` };
     case "pull.reviewed":
-      return { ...common, kind: "pull", link: change, what: `reviewed a pull request${title ? `: ${clip(title)}` : ""}` };
+      return reviewedPost(db, p, { ...common, kind: "pull", link: change }, title);
     case "look.taken": {
       const env = p["env"];
       const oid = p["commitOid"];
@@ -617,6 +671,7 @@ function fromEvent(
         kind: "tell",
         link: `${base(repo)}/issues/${number}`,
         what: `opened an issue: ${told === "" ? `#${number}` : clip(told)}`,
+        fold: { group: "issues", title: told === "" ? `#${number}` : clip(told) },
       };
     }
     case "issue.commented":
@@ -646,6 +701,12 @@ function fromEvent(
         what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
       };
     }
+    case "clog.cleared": {
+      const note = typeof p["note"] === "string" ? p["note"] : "";
+      if (note === "") return undefined;
+      const what = clip(flattenNote(note), 300);
+      return { ...common, kind: "map", link: base(repo), what, said: what };
+    }
     case "issue.blocked":
     case "issue.unblocked":
       return {
@@ -656,6 +717,13 @@ function fromEvent(
           e.kind === "issue.blocked"
             ? `#${String(number)} now waits for #${String(p["blockedBy"])}`
             : `#${String(number)} no longer waits for #${String(p["blockedBy"])}`,
+      };
+    case "crew.governed":
+      return {
+        ...common,
+        kind: "map",
+        link: `${base(repo)}/map`,
+        what: clip(typeof p["why"] === "string" ? p["why"] : "the crew's slots changed"),
       };
     default:
       return undefined;

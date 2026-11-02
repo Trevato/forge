@@ -4,7 +4,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 export const tool: Tool = {
   name: "spend",
   description:
-    "Report what your session spent outside the forge's runs: who, model, tokens or dollars, issue.",
+    "Report what your session spent outside forge runs: who, model, tokens or dollars, issue.",
   inputSchema: {
     type: "object",
     properties: {
@@ -19,6 +19,8 @@ export const tool: Tool = {
     },
     required: ["repo", "who"],
   },
+  doc:
+    "`{ repo, who, model?, tokensIn?, tokensOut?, usd?, issue?, note? }`: report what your session spent outside forge runs; `who` and some spend (tokens or `usd`) are required; answers the entry's `id` and `usd`",
   writes: true,
   run(ctx, user, args) {
     const repo = repoArg(ctx, user, args);

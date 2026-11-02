@@ -7,7 +7,7 @@ import { pullMergeStates, type Pull } from "../src/core/pulls.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 const env = gitClientEnv();
-const N = 50;
+const N = 130;
 let root: string;
 let dir: string;
 
@@ -54,7 +54,7 @@ beforeEach(async () => {
 
 afterEach(() => rm(root, { recursive: true, force: true }));
 
-test("a second read of 50 pulls does no git work; a moved head recomputes only its pull", async () => {
+test("a second read of 130 pulls does no git work and spawns nothing; a moved head recomputes only its pull", async () => {
   const items = Array.from({ length: N }, (_, i) => ({ dir, pull: pullOf(i) }));
   const spawn = spyOn(Bun, "spawn");
   try {
@@ -63,7 +63,9 @@ test("a second read of 50 pulls does no git work; a moved head recomputes only i
     expect(spawn.mock.calls.length).toBeGreaterThan(0);
 
     spawn.mockClear();
-    const second = await pullMergeStates(items);
+    // Counted, not timed: cached reads spawn no git at all.
+    let second = first;
+    for (let k = 0; k < 5; k++) second = await pullMergeStates(items);
     expect(spawn.mock.calls.length).toBe(0);
     expect(second).toEqual(first);
 

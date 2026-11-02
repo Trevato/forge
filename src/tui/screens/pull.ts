@@ -26,6 +26,7 @@
  *   `n`/`p` walk the unsettled ones while the cursor is inside a thread.
  */
 
+import { RED_ALONE_WAIT, redAloneAt, redMark } from "../../checks/queue.ts";
 import {
   addCommentThrough,
   setIssueStateThrough,
@@ -38,6 +39,11 @@ import {
   resolveReviewThread,
   submitReview,
 } from "../../actions/pulls.ts";
+import { holdPull, releasePull } from "../../actions/holds.ts";
+import { getHold, type Hold } from "../../core/holds.ts";
+import { bypassOffered, cleanReason, landPastGate } from "../../checks/bypass.ts";
+import { revertPull } from "../../actions/revert.ts";
+import { takeBackWords } from "../../actions/revert_words.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
 import { previewEnv } from "../../apps/data.ts";
@@ -56,6 +62,7 @@ import { checkStale, checksHold } from "../../checks/stale.ts";
 import { checkWords } from "../../checks/summary.ts";
 import { oneLine } from "../../checks/words.ts";
 import { resolveOid } from "../../git/merge.ts";
+import { nextOfPull, type Next } from "../../flow/next_actor.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
@@ -114,7 +121,8 @@ import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts
 import { PROPOSE_WHY, proposalOf, proposeResolution } from "../../crew/proposal.ts";
 import { conflictScreen } from "./conflicts.ts";
 import { reviewScreen } from "./review.ts";
-import { RunList, openRunLog, runTone } from "./runlist.ts";
+import { RunList, maySteer, openRunLog, steerPrompt } from "./runlist.ts";
+import { runTone } from "./runwords.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 import { openAppTerminal } from "./apptty.ts";
@@ -215,6 +223,8 @@ export function pullScreen(
   let diff: Diff = { files: [], additions: 0, deletions: 0 };
   let reviews: AnchoredReview[] = [];
   let threads: Thread[] = [];
+  /** Who acts next, for a local open pull; the page says the same line. */
+  let next: Next | null = null;
   /** Where each team the issue names stands; empty when it names none. */
   let teams: TeamVerdict[] = [];
   /** Settled threads the reader has opened back up, for this visit only. */
@@ -250,11 +260,17 @@ export function pullScreen(
   let checkSteps = "";
   /** `findingsWords` of the preview's website-spec findings; empty when none were recorded. */
   let specWords = "";
+  let redWords = "";
   /** The check's green was against a base that has since moved. */
   let checkOld = false;
   /** Agent runs about this pull, newest first. */
   const crew = new RunList(f);
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
+  /** The hold that stands on this pull; undefined when none does. */
+  let hold: Hold | undefined;
+  /** `h` is a person's key: an agent's hold is refused by the action, so it is not offered. */
+  const mayHold = (): boolean =>
+    mayWrite() && f.user?.kind === "user" && issueRow !== undefined;
   /** A writer, on a pull that is one of several variants. */
   const mayVote = (): boolean =>
     mayWrite() &&
@@ -285,6 +301,7 @@ export function pullScreen(
         : withOutdated(listReviewComments(f.db, row.id), diff);
     threads = row === undefined ? [] : readThreads(row);
     issueRow = repo === undefined ? undefined : getIssue(f.db, repo.id, number);
+    hold = row === undefined ? undefined : getHold(f.db, row.id);
     // The app half: the preview environment (in memory, from the runtime),
     // the checks at the live head (a row), and what the crew has done here.
     const record = repo === undefined ? undefined : getAppByRepo(f.db, repo.id);
@@ -300,12 +317,24 @@ export function pullScreen(
         ? NO_CHECK
         : checkSummary(f.db, row.id, row.headOid || (facts?.headOid ?? ""));
     checkBase = row?.baseBranch ?? facts?.baseBranch ?? "";
+    next =
+      row === undefined
+        ? null
+        : nextOfPull(f.db, row, {
+            headOid: row.headOid || (facts?.headOid ?? ""),
+            conflicts: facts?.conflicts.length ?? 0,
+          });
     checkProgress = runningProgress(f.app.config.dataDir, check);
     const spec =
       repo === undefined || !isApp
         ? null
         : pullPreviewFindings(f.db, repo.id, previewEnv(number));
     specWords = spec === null ? "" : findingsWords(spec);
+    const mark =
+      repo === undefined || row === undefined
+        ? undefined
+        : redMark(repo.id, row.id, row.headOid || (facts?.headOid ?? ""));
+    redWords = mark === undefined ? "" : `red alone at ${redAloneAt(mark)}, ${RED_ALONE_WAIT}`;
     checkSteps =
       settings === undefined
         ? ""
@@ -664,6 +693,98 @@ export function pullScreen(
   };
 
   /**
+   * Whether `L` is on offer: an open pull, an owner who is a person, and
+   * landing stopped (`checks/bypass.ts`). The same rule the page's form follows.
+   */
+  const mayLandPast = (): boolean => {
+    if (repo === undefined || !bypassOffered(f.app, f.user, repo)) return false;
+    const row = getPull(f.db, repo.id, number);
+    return row !== undefined && row.mergedAt === null && detail?.issue.state === "open";
+  };
+
+  /** `L` — a reason, then a plan to confirm, then the landing; `landPastGate` decides. */
+  const landPast = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: `Land #${number} past the gate`,
+        label: "Why this lands without its checks",
+        hint: "Landing has stopped. 8 to 500 characters; it goes on the pull's trail.",
+        onSubmit: (value) => {
+          const reason = cleanReason(value);
+          if (reason === undefined) return "Say why in 8 to 500 characters.";
+          // After the prompt closes itself, so the confirm is not the screen it pops.
+          return Promise.resolve().then(() => ctx.push(
+            confirmScreen(ctx, screen, {
+              title: `Land #${number} past the gate`,
+              body: [`Land "${getPull(f.db, target.id, number)?.title ?? ""}" without its checks?`, `Reason: ${reason}`, "Review and conflicts still count."],
+              actions: [{ label: "Cancel", variant: "ghost" }, { label: "Land past the gate", variant: "danger" }],
+              onChoose: (choice) => {
+                if (choice !== 1) return;
+                runAsync(ctx, async () => {
+                  const row = getPull(f.db, target.id, number);
+                  if (row === undefined) return;
+                  const landed = await landPastGate(f.app, f.user, target, row, reason);
+                  if (!landed.ok) {
+                    const e = landed.error;
+                    ctx.toast(
+                      e.kind === "merge" ? errorText(String(typeof e.error === "string" ? e.error : e.error.kind)) : `not landed: ${e.kind.replace("_", " ")}`,
+                      "danger",
+                    );
+                    return;
+                  }
+                  await reload();
+                  ctx.toast(`landed past the gate as ${landed.value.mergeOid.slice(0, 8)}`, "success");
+                });
+              },
+            }),
+          ));
+        },
+      }),
+    );
+  };
+
+  /**
+   * Whether `T` takes this back: a shipped pull on a local repository, for a
+   * person who may write. The same gate `revertPull` holds; it decides only
+   * whether the key is shown.
+   */
+  const mayTakeBack = (): boolean => {
+    if (repo === undefined || repo.origin !== null || !mayWrite()) return false;
+    if (f.user === undefined || f.user.kind === "agent") return false;
+    return getPull(f.db, repo.id, number)?.mergedAt != null;
+  };
+
+  const takeBack = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: `Take back #${number}`,
+        body: [`Open a pull that undoes "${row.title}" (#${number})?`],
+        actions: [{ label: "Cancel", variant: "ghost" }, { label: "Take it back" }],
+        onChoose: (choice) => {
+          if (choice !== 1) return;
+          runAsync(ctx, async () => {
+            const made = await revertPull(f.app, f.user, target, row);
+            if (!made.ok) {
+              ctx.toast(
+                `That could not be taken back: ${takeBackWords(made.error)}.`,
+                "danger",
+              );
+              return;
+            }
+            ctx.replace(pullScreen(f, ctx, local(f, target), made.value.number));
+          });
+        },
+      }),
+    );
+  };
+
+  /**
    * Whether `A` is on offer: an open origin-fork pull whose current head
    * nobody here has approved to run. The same condition as the page's card.
    */
@@ -753,18 +874,26 @@ export function pullScreen(
   const screen: Screen = {
     title: `#${number}`,
     get keys() {
+      const takeBackKey = mayTakeBack();
       return [
         binding(["tab"], tabCount() === 3 ? "next tab" : "conversation/files"),
         ...(tab === 1
           ? view.keys
           : tab === 2
-            ? [binding(["j", "k"], "move"), binding(["enter"], "open the run")]
+            ? [
+                binding(["j", "k"], "move"),
+                binding(["enter"], "open the run"),
+                ...(repo !== undefined && maySteer(f, repo, crew.selected)
+                  ? [binding(["s"], "steer")]
+                  : []),
+              ]
             : [binding(["j", "k"], "scroll")]),
         ...(isApp && preview !== undefined
           ? [binding(["O"], "open the preview")]
           : []),
         ...(isApp ? [binding(["P"], "open production")] : []),
-        ...(isApp && preview !== undefined
+        ...(takeBackKey ? [binding(["T"], "take it back")] : []),
+        ...(isApp && preview !== undefined && !takeBackKey
           ? [binding(["T"], "the preview's terminal")]
           : []),
         ...(mayWrite()
@@ -784,10 +913,14 @@ export function pullScreen(
                   ]
                 : []),
               binding(["a"], "assign"),
+              ...(mayHold() && (hold !== undefined || detail?.issue.state === "open")
+                ? [binding(["h"], hold === undefined ? "hold" : "let it go")]
+                : []),
               ...(state() === "conflicts"
                 ? [binding(["v"], "see the conflict blocks")]
                 : []),
               binding(["m"], "merge", { disabled: state() !== "ready" }),
+              ...(mayLandPast() ? [binding(["L"], "land past the gate")] : []),
               ...(tab === 1 && view.threadHere() !== null
                 ? [
                     binding(
@@ -823,7 +956,7 @@ export function pullScreen(
       // The box is exactly as tall as what is in it: the state, then a row
       // for the verdicts when there are any, then a row for the checks when
       // a deploy has run or the gate demands one.
-      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld, checkProgress, checkSteps, specWords);
+      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld, checkProgress, checkSteps, specWords, redWords);
       const boxH =
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
@@ -869,7 +1002,7 @@ export function pullScreen(
         x1,
         head!.y + 1,
         truncate(
-          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}`,
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
           Math.max(0, edge - x1),
         ),
         style(c.mutedFg, c.bg),
@@ -986,6 +1119,10 @@ export function pullScreen(
           );
         return true;
       }
+      if (e.key === "L" && mayLandPast()) {
+        landPast();
+        return true;
+      }
       if (e.key === "R" && mayWrite()) {
         review();
         return true;
@@ -1002,6 +1139,10 @@ export function pullScreen(
         openProduction();
         return true;
       }
+      if (e.key === "T" && mayTakeBack()) {
+        takeBack();
+        return true;
+      }
       if (e.key === "T" && isApp && preview !== undefined && repo) {
         void openAppTerminal(f, ctx, repo, previewEnv(number));
         return true;
@@ -1010,17 +1151,68 @@ export function pullScreen(
         assign();
         return true;
       }
+      if (e.key === "h" && mayHold() && repo !== undefined) {
+        const target = repo;
+        const user = f.user;
+        const row = getPull(f.db, target.id, number);
+        if (row === undefined) return true;
+        const done = (words: string) =>
+          runAsync(ctx, async () => {
+            ctx.toast(words, "success");
+            await reload();
+          });
+        if (hold !== undefined) {
+          ctx.push(
+            confirmScreen(ctx, screen, {
+              title: `Let #${number} go`,
+              body: [`Held by ${hold.heldByName}: ${hold.why}`],
+              actions: [
+                { label: "Cancel", variant: "ghost" },
+                { label: "Let it go" },
+              ],
+              selected: 1,
+              onChoose: (choice) => {
+                if (choice !== 1) return;
+                const out = releasePull(f.app, user, target, row);
+                if (out.ok) done("let go");
+                else ctx.toast(errorText(out.error), "danger");
+              },
+            }),
+          );
+        } else if (row.state === "open") {
+          ctx.push(
+            promptScreen(ctx, screen, {
+              title: `Hold #${number}`,
+              label: "Why",
+              hint: "One line saying why. Enter holds it; Esc cancels.",
+              onSubmit: (value) => {
+                const out = holdPull(f.app, user, target, row, value);
+                if (!out.ok) return errorText(out.error);
+                done("held");
+                return undefined;
+              },
+            }),
+          );
+        }
+        return true;
+      }
       if (e.key === "v" && mayWrite() && state() === "conflicts") {
         seeConflicts();
         return true;
       }
-      // The crew tab is a list: the cursor moves, enter opens the run.
+      // The crew tab is a list: the cursor moves, enter opens the run, `s` steers it.
       if (tab === 2) {
         if (crew.state.key(e, crew.runs.length)) return true;
         if (e.key === "enter") {
           const run = crew.selected;
           if (run !== undefined && repo !== undefined)
             openRunLog(f, ctx, repo, run);
+          return true;
+        }
+        if (e.key === "s") {
+          const run = crew.selected;
+          if (run !== undefined && repo !== undefined && maySteer(f, repo, run))
+            steerPrompt(f, ctx, screen, repo, run, () => runAsync(ctx, reload));
           return true;
         }
       }
@@ -1290,10 +1482,13 @@ export function checksText(
   steps = "",
   /** `findingsWords` of the preview; empty when none were recorded. */
   spec = "",
+  /** The queue holds the pull as red alone: its words; empty when it does not. */
+  red = "",
 ): string {
   const line = checksLine(check, required, isApp, baseBranch, stale, progress);
   const withSteps = line === "" || steps === "" ? line : `${line} · ${steps}`;
-  return withSteps === "" || spec === "" ? withSteps : `${withSteps} · ${spec}`;
+  const withSpec = withSteps === "" || spec === "" ? withSteps : `${withSteps} · ${spec}`;
+  return withSpec === "" || red === "" ? `${withSpec}${red}` : `${withSpec} · ${red}`;
 }
 
 function checksLine(

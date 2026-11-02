@@ -155,6 +155,8 @@ describe("the studio's slot count", () => {
       })
     ).text();
     expect(page).toContain("1 of 2 in use");
+    // The crew card says the governor's reason in one line (#7644).
+    expect(page).toContain("Builders 2: a quiet hour, 0 of 0 open pulls moving");
     expect(page).not.toContain("3 of 2");
     expect(page).not.toContain("2 of 2");
     // The runs that take no slot are not hidden: Now has all of them.

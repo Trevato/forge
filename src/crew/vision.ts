@@ -8,15 +8,20 @@
 
 import type { App } from "../app.ts";
 import { isVisionPull } from "../core/placements.ts";
-import { parseVision, type Vision } from "../core/vision.ts";
+import { NO_VISION, parseVision, type Vision } from "../core/vision.ts";
+import { directionStall } from "./planner.ts";
+import { runGit } from "../git/env.ts";
+import { getPull } from "../core/pulls.ts";
 import { canAdmin, getRepoById, updateRepoSettings } from "../core/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { editFiles } from "../actions/contents.ts";
 import { pullDir, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
+import { settingMoved } from "../core/settings_changed.ts";
 import type { User } from "../core/users.ts";
-import { listTree, readerFor } from "../git/read.ts";
+import { blobForRender, listTree, readerFor } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+import { clip } from "../text/clip.ts";
 
 const log = createLog("vision");
 
@@ -26,9 +31,7 @@ const LINE_SHOWN = 240;
 
 /** The line a thought adds: one flat, dated bullet that carries the thought's id. */
 export function directionLine(text: string, id: string, now: Date): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  const said = flat.length > LINE_SHOWN ? `${flat.slice(0, LINE_SHOWN - 1)}…` : flat;
-  return `- ${now.toISOString().slice(0, 10)}: ${said} (thought \`${id}\`)`;
+  return `- ${now.toISOString().slice(0, 10)}: ${clip(text, LINE_SHOWN)} (thought \`${id}\`)`;
 }
 
 /** `current` with `line` last under the `Changes of direction` section, made when missing. `current` null means no file. */
@@ -50,6 +53,43 @@ export function withDirection(current: string | null, line: string): string {
   while (end > at + 1 && lines[end - 1]!.trim() === "") end--;
   const tail = next < lines.length ? ["", ...lines.slice(next)] : [];
   return `${[...lines.slice(0, end), line, ...tail].join("\n")}\n`;
+}
+
+/** The document's cap: a bigger VISION.md is read as none. */
+const VISION_MAX_BYTES = 1_000_000;
+
+/**
+ * docs/VISION.md on the default branch, parsed; null when it is absent, not
+ * text or over the cap. The one read MCP `vision` and the terminal's Vision
+ * screen both make, so the cap and the fallback cannot drift apart.
+ */
+export async function readDefaultVision(reposRoot: string, repo: Repo): Promise<Vision | null> {
+  const dir = repoDir(reposRoot, repo.ownerName, repo.name);
+  const blob = await blobForRender(dir, repo.defaultBranch, VISION_PATH, VISION_MAX_BYTES);
+  return blob.kind === "text" ? parseVision(new TextDecoder().decode(blob.body)) : null;
+}
+
+/**
+ * What MCP `vision` and `GET /api/v1/repos/:owner/:name/vision` both answer.
+ * `direction`, `directionStall`, `directionParts` and `preview` are admin-only
+ * (null otherwise); `number` names an open vision pull to preview.
+ */
+export async function answerVision(app: App, user: User | undefined, repo: Repo, number?: number) {
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const read = await readDefaultVision(app.reposRoot, repo);
+  const vision = read ?? NO_VISION;
+  const last = read !== null ? await runGit(["log", "-1", "--format=%cI", repo.defaultBranch, "--", VISION_PATH], { cwd: dir }) : undefined;
+  const admin = canAdmin(app.db, repo, user);
+  const pull = admin && number !== undefined ? getPull(app.db, repo.id, number) : undefined;
+  const shown = pull ? await previewVision(app, repo, pull) : null;
+  return {
+    ...vision,
+    direction: admin ? repo.autonomyDirection : null,
+    directionStall: admin ? directionStall(app, repo) : null,
+    directionParts: admin ? directionParts(repo.autonomyDirection) : null,
+    preview: shown === null ? null : shown.ok ? { today: shown.today, after: shown.after } : { why: shown.why },
+    updatedAt: last?.ok && last.value.trim() ? last.value.trim() : null,
+  };
 }
 
 async function readVision(app: App, repo: Repo): Promise<string | null> {
@@ -92,15 +132,15 @@ export const BLOCK_START = "<!-- forge:vision:start -->";
 export const BLOCK_END = "<!-- forge:vision:end -->";
 export const DIRECTION_LIMIT = 2000;
 
-const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+/** `clip`, never leaving a space before its "…". */
+const clipTight = (s: string, n: number): string => clip(s, n).replace(/ …$/, "…");
 
 /** The block for a vision, markers included, no longer than `room` characters; null when not even its head fits. */
 export function visionBlock(vision: Vision, room = DIRECTION_LIMIT): string | null {
-  const flat = (s: string): string => s.replace(/\s+/g, " ").trim();
   const parts: string[] = [];
-  if (vision.purpose) parts.push(`Purpose: ${clip(flat(vision.purpose), 400)}`);
+  if (vision.purpose) parts.push(`Purpose: ${clipTight(vision.purpose, 400)}`);
   if (vision.order.length > 0) parts.push(`Order of work: ${vision.order.map((o) => `${o.n}. ${o.name}`).join("; ")}.`);
-  for (const rule of vision.rules) parts.push(`Rule: ${clip(flat(rule), 160)}`);
+  for (const rule of vision.rules) parts.push(`Rule: ${clipTight(rule, 160)}`);
   const kept: string[] = [];
   for (const part of parts) {
     const next = `${BLOCK_START}\n${[...kept, part].join("\n")}\n${BLOCK_END}`;
@@ -211,6 +251,6 @@ export async function landVision(app: App, merger: User, repo: Repo, pull: Pull)
     kind: "repo.settings_updated",
     repoId: repo.id,
     actorId: merger.id,
-    payload: { changed: ["autonomyDirection"], pull: pull.number },
+    payload: { changed: settingMoved("autonomyDirection", fresh.autonomyDirection, next.text), pull: pull.number },
   });
 }

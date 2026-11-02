@@ -3,7 +3,8 @@
  * week of merges answers fast when warm, with the same bytes as a cold
  * build, and a plan shows at once (#3321).
  */
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork } from "./helpers/work.ts";
+import { statements } from "./helpers/statements.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,7 +23,7 @@ let app: App, servers: Servers, bearer = "", repoId = "";
 
 const get = async (): Promise<{ body: string; ms: number; timing: string }> => {
   const t0 = performance.now();
-  const res = await fetch(`${servers.url}/api/v1/repos/alice/notes/map`, { headers: { authorization: `Bearer ${bearer}` } });
+  const res = await fetch(`${servers.url}/api/v1/repos/alice/notes/map?done=1`, { headers: { authorization: `Bearer ${bearer}` } });
   const body = await res.text();
   return { body, ms: performance.now() - t0, timing: res.headers.get("server-timing") ?? "" };
 };
@@ -79,7 +80,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("warm, the seed's map answers within its budget with the bytes of a cold build", async () => {
+test("warm, the seed's map answers from its snapshot with the bytes of a cold build", async () => {
   mapSnapshots(app.db).clear();
   const cold = await get();
   const data = JSON.parse(cold.body) as { issues: unknown[]; edges: unknown[]; pillars: { merged?: number }[] };
@@ -90,9 +91,10 @@ test("warm, the seed's map answers within its budget with the bytes of a cold bu
   const warm = await get();
   expect(mapSnapshots(app.db).hits).toBe(hits + 1);
   expect(warm.body).toBe(cold.body);
-  let slowest = 0;
-  for (let i = 0; i < 5; i++) slowest = Math.max(slowest, (await get()).ms);
-  expectBudget(slowest, { ms: 150, against: await baselineMs(servers.url) });
+  // Counted, not timed: a warm map is served from its snapshot, a hit each time and a few statements at most.
+  const warmHits = mapSnapshots(app.db).hits;
+  expectWork(await statements(app.db, async () => void (await get())), { max: 9 });
+  expect(mapSnapshots(app.db).hits).toBeGreaterThan(warmHits);
   expect(warm.timing).toContain("asktolive");
 });
 

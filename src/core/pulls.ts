@@ -9,6 +9,7 @@
 import { getRepoById } from "./repos.ts";
 import { repoDir } from "../git/repos.ts";
 import { sealedByNumber } from "./sealed.ts";
+import { endProofRunsForPull } from "./proof_runs.ts";
 import type { Database } from "bun:sqlite";
 import { diffRange, type Diff, type DiffLaps } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
@@ -33,6 +34,7 @@ import {
   getIssue,
   getIssueById,
   getIssuesByIds,
+  LIST_LIMIT_MAX,
   listIssues,
   setIssueState,
   type Issue,
@@ -521,6 +523,37 @@ export function openPullsForRepos(
   return out;
 }
 
+/** An open, unmerged pull as the pile lists it before it is hydrated. */
+export interface PileRow {
+  readonly id: string;
+  readonly repoId: string;
+  readonly sealed: boolean;
+  readonly authorId: string;
+}
+
+/**
+ * Every open, unmerged pull on the forge, oldest first, in one query: the
+ * pile an MCP caller pages (#7655). Reading rights are the caller's to apply
+ * to the rows (`canRead`, `mayView`); no git is touched.
+ */
+export function openPullPileRows(db: Database): PileRow[] {
+  return db
+    .query<{ id: string; repo_id: string; sealed: number; author_id: string }, []>(
+      `SELECT issue.id, issue.repo_id, issue.sealed, issue.author_id
+         FROM issue JOIN pull ON pull.issue_id = issue.id
+        WHERE issue.state = 'open' AND pull.merged_at IS NULL
+        ORDER BY issue.created_at, issue.id`,
+    )
+    .all()
+    .map((r) => ({ id: r.id, repoId: r.repo_id, sealed: r.sealed === 1, authorId: r.author_id }));
+}
+
+/** These pulls by issue id, in the order asked. */
+export function pullsByIssueIds(db: Database, ids: readonly string[]): Pull[] {
+  const issues = getIssuesByIds(db, ids);
+  return joinMany(db, ids.flatMap((id) => issues.get(id) ?? []));
+}
+
 export type ListPullsOptions = Omit<ListIssuesOptions, "kind">;
 
 export function listPulls(
@@ -529,6 +562,29 @@ export function listPulls(
   options: ListPullsOptions = {},
 ): Pull[] {
   return joinMany(db, listIssues(db, repoId, { ...options, kind: "pull" }));
+}
+
+/**
+ * Every open pull of the repository, sealed ones too, oldest first. All of
+ * them, page by page: a pass that read only the newest page never saw an
+ * older pull — the green sweep's approved ones (#4053), the finishing
+ * pass's approved, conflicted ones (#6263).
+ */
+export function listOpenPulls(db: Database, repoId: string): Pull[] {
+  const all: Pull[] = [];
+  let cursor: number | undefined;
+  for (;;) {
+    const page = listPulls(db, repoId, {
+      sealed: true,
+      state: "open",
+      limit: LIST_LIMIT_MAX,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    all.push(...page);
+    if (page.length < LIST_LIMIT_MAX) break;
+    cursor = page.at(-1)!.number;
+  }
+  return all.sort((a, b) => a.number - b.number);
 }
 
 /**
@@ -1064,6 +1120,7 @@ function closeAsMerged(
       landed.headOid,
       pullId,
     );
+    endProofRunsForPull(db, pullId, "pull landed");
     setIssueState(db, pullId, "closed");
   });
 }

@@ -8,7 +8,7 @@
  * the system's own voice and takes no actor.
  */
 
-import { isCommitId, releaseCheck, type CommitCheck } from "../checks/commit_check.ts";
+import { commitVerdicts, isCommitId, releaseCheck, type CommitCheck } from "../checks/commit_check.ts";
 import { hasCommit, isAncestor } from "../git/local.ts";
 import { repoDir } from "../git/repos.ts";
 import { mayViewId } from "../core/sealed.ts";
@@ -16,7 +16,7 @@ import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
 import { steerRun } from "../crew/runner.ts";
-import { getIssueById } from "../core/issues.ts";
+import { getIssueById, getIssuesByIds } from "../core/issues.ts";
 import { addComment } from "./issues.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { canEnterApp, canSeeOwnerFacts, onCrew, type Repo } from "../core/repos.ts";
@@ -28,11 +28,11 @@ import {
   type Run,
   setRunErrorLine,
 } from "../core/runs.ts";
-import type { User } from "../core/users.ts";
+import { getUsersByIds, type User } from "../core/users.ts";
 import { abortAgentRun } from "../crew/running.ts";
 import { queueAgentRun, taskOf } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { readRunLog, runLogPath } from "../runs/log.ts";
+import { readRunLog, readRunLogTail, runLogPath } from "../runs/log.ts";
 import { firstErrorLine } from "../runs/error_line.ts";
 import { requireReader, requireWriter, type AccessError } from "./access.ts";
 
@@ -169,6 +169,40 @@ export function listRepoRuns(
   );
 }
 
+/** A run as the runs API lists it: the agent's name, and the pull or issue it is about. */
+export type NamedRun = Run & {
+  readonly agent: string | null;
+  readonly number: number | null;
+  readonly title: string | null;
+};
+
+/**
+ * Names runs already read for this reader (`listRepoRuns`) in two grouped
+ * reads: `agent` is the username behind an agent run (null for a check or
+ * deploy), `number` and `title` the pull or issue the run is about (null when
+ * it is about none). A sealed issue never reaches here: `listRepoRuns` drops
+ * its runs for a reader who may not see it.
+ */
+export function nameRuns(app: App, runs: readonly Run[]): NamedRun[] {
+  const actors = getUsersByIds(
+    app.db,
+    runs.flatMap((r) => (r.kind === "agent" && r.actorId !== null ? [r.actorId] : [])),
+  );
+  const issues = getIssuesByIds(
+    app.db,
+    runs.flatMap((r) => (r.issueId === null ? [] : [r.issueId])),
+  );
+  return runs.map((r) => {
+    const issue = r.issueId === null ? undefined : issues.get(r.issueId);
+    return {
+      ...r,
+      agent: r.kind === "agent" && r.actorId !== null ? (actors.get(r.actorId)?.username ?? null) : null,
+      number: issue?.number ?? null,
+      title: issue?.title ?? null,
+    };
+  });
+}
+
 /**
  * The default branch's check that covers one commit (`checks/commit_check.ts`
  * `releaseCheck`), for whoever may read the repository's runs: what a
@@ -189,6 +223,17 @@ export async function checkOfCommit(
       contains: (descendant) => isAncestor(dir, oid, descendant),
     }),
   );
+}
+
+/** The own green or red verdicts of a page of commits, for whoever may read the runs; empty otherwise. */
+export function verdictsOfCommits(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  oids: readonly string[],
+): Map<string, CommitCheck> {
+  if (!mayReadRuns(app, actor, repo)) return new Map();
+  return commitVerdicts(app.db, repo.id, repo.defaultBranch, oids);
 }
 
 /** A run by id, only if it belongs to a repository the actor can see. */
@@ -219,13 +264,16 @@ export function runLog(
   actor: User | undefined,
   repo: Repo,
   runId: string,
+  tail?: number,
 ): Result<RunLogView, "not_found"> {
   const found = getRepoRun(app, actor, repo, runId);
   if (!found.ok) return found;
   const logHidden = !mayReadRunLog(app, actor, repo);
   const { lines, truncated } = logHidden
     ? { lines: [], truncated: false }
-    : readRunLog(app.config.dataDir, runId);
+    : tail === undefined
+      ? readRunLog(app.config.dataDir, runId)
+      : readRunLogTail(app.config.dataDir, runId, tail);
   return ok({
     run: found.value,
     lines,
@@ -305,6 +353,13 @@ export type SteerOutcome =
   | "sent"
   /** No session was listening; it went on the conversation for the next run. */
   | "commented";
+
+/** What each outcome means, said the same on every surface that steers. */
+export const STEER_SAYS: Record<SteerOutcome, string> = {
+  sent: "The agent hears it at its next step.",
+  commented:
+    "No session was listening; it went on the conversation for the next run.",
+};
 
 /**
  * Say something to an agent mid-run. A running agent hears it as its next

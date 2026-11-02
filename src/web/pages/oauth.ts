@@ -36,7 +36,9 @@ const PARAMS = [
 /** Nothing here is cacheable, and nothing here may be sent on as a referrer. */
 const guard = (response: Response): Response => {
   response.headers.set("cache-control", "no-store");
-  response.headers.set("referrer-policy", "no-referrer");
+  // same-origin, not no-referrer: no-referrer makes the browser send `Origin: null` on the consent form's
+  // own POST, and the CSRF gate refused every consent (2026-10-27). Other sites still get no referrer.
+  response.headers.set("referrer-policy", "same-origin");
   return response;
 };
 

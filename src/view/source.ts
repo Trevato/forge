@@ -121,7 +121,15 @@ export type Blob =
       readonly body: Uint8Array;
       readonly size: number;
     }
-  | { readonly kind: "too_large"; readonly size: number };
+  | {
+      readonly kind: "too_large";
+      readonly size: number;
+      /**
+       * Its first bytes (`HEAD_BYTES`), when the source read them: enough to
+       * say what the file is, never the file.
+       */
+      readonly head?: Uint8Array;
+    };
 
 /** An issue or a pull, as a list row. */
 export interface IssueSummary {

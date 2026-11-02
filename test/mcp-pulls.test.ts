@@ -142,10 +142,18 @@ test("a private repository the caller cannot read is not found, as pull says", a
   expect((await pulls(tok["ada"]!, { repo: "ada/vault" })).value.pulls).toHaveLength(2);
 });
 
-test("tools/list lists pulls and stays under 40 KB", async () => {
-  const { text } = await rpc(tok["ada"]!, "tools/list");
-  expect(Buffer.byteLength(text)).toBeLessThanOrEqual(38_500); // headroom: a new tool must not tip the lane red
-  expect(JSON.parse(text).result.tools.map((t: any) => t.name)).toContain("pulls");
+test("tools/list lists pulls and every page stays under 40 KB", async () => {
+  const names: string[] = [];
+  let params: { cursor?: string } = {};
+  for (;;) {
+    const { text } = await rpc(tok["ada"]!, "tools/list", params);
+    expect(Buffer.byteLength(text)).toBeLessThanOrEqual(38_500); // headroom: a new tool must not tip the lane red
+    const { result } = JSON.parse(text);
+    names.push(...result.tools.map((t: any) => t.name));
+    if (typeof result.nextCursor !== "string") break;
+    params = { cursor: result.nextCursor };
+  }
+  expect(names).toContain("pulls");
 });
 
 const labPulls = async (who: string, args: object = {}): Promise<any[]> =>

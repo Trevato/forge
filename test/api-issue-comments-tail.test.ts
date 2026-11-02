@@ -35,7 +35,12 @@ afterAll(async () => {
 });
 
 const read = (q: string) => fetch(`${servers.url}/api/v1/repos/alice/notes/issues/${number}${q}`);
-type Body = { comments: { body: string }[]; commentCount?: number };
+type Body = {
+  comments: { id: string; body: string }[];
+  commentCount?: number;
+  commentsTotal: number;
+  commentsNext: string | null;
+};
 
 test("comments=5 answers the newest five, oldest first, with the total", async () => {
   const res = await read("?comments=5");
@@ -65,8 +70,17 @@ test("anything but 0 to 200 is a 422 invalid_comments", async () => {
   }
 });
 
-test("without the parameter all comments come back and no commentCount", async () => {
+test("without the parameter the newest 50 come back with the total and no commentCount", async () => {
   const body = (await (await read("")).json()) as Body;
   expect(body.comments.length).toBe(30);
   expect("commentCount" in body).toBe(false);
+  expect(body.commentsTotal).toBe(30);
+  expect(body.commentsNext).toBeNull();
+});
+
+test("comments=5 hands a cursor to the older ones; comments=0 hands none", async () => {
+  const some = (await (await read("?comments=5")).json()) as Body;
+  expect(some.commentsNext).toBe(some.comments[0]!.id);
+  const none = (await (await read("?comments=0")).json()) as Body;
+  expect(none.commentsNext).toBeNull();
 });

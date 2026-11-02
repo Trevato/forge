@@ -16,6 +16,7 @@
  *                                 report a problem without an account, how
  *                                 to offer a change (llmstxt.org)
  *   /icons/forge-<size>.png       the mark, rastered for the manifest and iOS
+ *   /favicon.ico                  the 32px mark, for a browser that asks by habit
  *
  * Nothing here is configured; everything is derived from what the forge
  * already knows — its URL, its first account, its public repositories, its
@@ -23,19 +24,21 @@
  * FORGE_SECURITY_CONTACT.
  */
 
-import releases from "../core/releases.json" with { type: "json" };
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
+import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { sshTellCommand } from "../ssh/command.ts";
 import { llmsRepos, sitemapRepos } from "../core/listings.ts";
 import { canRead, getRepo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 import { SITE_LINE } from "./site_line.ts";
+import { mcpToolsSection } from "./llms_tools.ts";
 import { mcpCard, mcpPointers } from "../core/mcp_card.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase } from "../core/route_timing.ts";
+import { shippedReleases, type Shipped } from "../release/shipped.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -116,16 +119,17 @@ export function changePassword(): Response {
  */
 export function releasesJson(ctx: Ctx): Response {
   const origin = ctx.url.origin;
+  const list = shippedReleases();
   let kept = releasesBodies.get(origin);
-  if (kept === undefined) {
+  if (kept === undefined || kept.list !== list) {
     const body = JSON.stringify({
-      releases: releases.releases.map((r) => ({
+      releases: list.map((r) => ({
         name: r.version,
         url: `${origin}/releases.json#${encodeURIComponent(r.version)}`,
       })),
     });
     const etag = `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`;
-    kept = { body, etag };
+    kept = { list, body, etag };
     // Origins come from the Host header: keep a handful, not one per guess.
     if (releasesBodies.size >= 16) releasesBodies.clear();
     releasesBodies.set(origin, kept);
@@ -142,8 +146,8 @@ export function releasesJson(ctx: Ctx): Response {
   return res;
 }
 
-/** The releases document and its ETag, per origin; the file is read once at boot. */
-const releasesBodies = new Map<string, { body: string; etag: string }>();
+/** The releases document and its ETag, per origin, made again when the tags read differently. */
+const releasesBodies = new Map<string, { list: readonly Shipped[]; body: string; etag: string }>();
 
 /** GET /robots.txt */
 export function robotsTxt(ctx: Ctx): Response {
@@ -264,7 +268,7 @@ export function webManifest(ctx: Ctx): Response {
   );
 }
 
-const SIZES = new Set([180, 192, 512]);
+const SIZES = new Set([32, 180, 192, 512]);
 
 /** GET /icons/forge-:spec.png — `<size>` or `<size>-maskable`. */
 export function iconPng(ctx: Ctx): Response {
@@ -276,7 +280,20 @@ export function iconPng(ctx: Ctx): Response {
   // iOS rounds its own corners, so the touch icon is painted edge to edge
   // like a maskable one.
   const shape: MarkShape = m[2] !== undefined || size === 180 ? "full" : "icon";
-  const png = markPng(size, shape);
+  return pngResponse(markPng(size, shape));
+}
+
+/**
+ * GET /favicon.ico — the mark at 32px (`/icons/forge-32.png`). Every page
+ * carries its own inline SVG icon, but a browser asks here anyway on a page
+ * that is not ours (a raw file, a JSON answer); a PNG under an .ico name is
+ * read by every browser that asks, and answering spares the console a 404.
+ */
+export function favicon(): Response {
+  return pngResponse(markPng(32, "icon"));
+}
+
+function pngResponse(png: Uint8Array): Response {
   return new Response(png, {
     headers: {
       "content-type": "image/png",
@@ -354,13 +371,25 @@ export function llmsTxt(ctx: Ctx): Response {
       `- API: ${o}/api/v1, Authorization: Bearer <token>`,
       `- OpenAPI: GET ${o}/api/v1/openapi.json (redirects to ${o}/contract/openapi.json)`,
       "",
+      ...mcpToolsSection(),
       "## Public repositories",
       "",
       // Names and addresses only: a description is whatever its owner
       // wrote, and an agent reading this file must not meet anyone's words
       // as the forge's own.
-      ...(repos.length > 0
-        ? repos.map((r) => `- [${r}](${o}/${r})`)
+      ...(repos.lines.length > 0
+        ? [
+            ...repos.lines.map(
+              (r) =>
+                `- [${r.path}](${o}/${r.path})` +
+                (r.forks > 0
+                  ? ` · ${r.forks} ${r.forks === 1 ? "fork" : "forks"}`
+                  : ""),
+            ),
+            ...(repos.more
+              ? [`- More: ${o}/api/v1/explore`]
+              : []),
+          ]
         : ["None yet."]),
       "",
     ].join("\n"),
@@ -404,7 +433,7 @@ export function pageLinks(ctx: Ctx): PageLink[] {
       links.push({
         rel: "help",
         href: `/${repo.ownerName}/${repo.name}/report`,
-        title: "Report a problem (no account needed)",
+        title: REPORT_LINK_TITLE,
       });
   }
   return links;

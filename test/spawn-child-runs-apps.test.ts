@@ -43,6 +43,7 @@ describe("a hosted child's apps run in the parent", () => {
     const hit = await resolveHostedChildApp(parent, request);
     if (hit === undefined) return new Response("not an app host", { status: 418 });
     if (hit === "unknown") return new Response("not found", { status: 404 });
+    if ("cell" in hit) throw new Error("this child is hosted");
     // The server is only for a websocket upgrade, which these requests are not.
     return (await proxyApp(hit.runtime, request, hit.target, {} as never))!;
   };
@@ -129,6 +130,8 @@ describe("a hosted child's apps run in the parent", () => {
   test("<app>--<child>--<parent> answers from the child's app, on the child's own data", async () => {
     const res = await ask("bakery--maria--forge.test");
     expect(res.status).toBe(200);
+    // Says which app answered, so a probe from outside tells it from a platform's standby page (spawn/reach.ts).
+    expect(res.headers.get("x-forge-app")).toBe("bakery");
     const data = await res.text();
     // The child's directory, never the parent's or another child's.
     expect(data.startsWith(join(childDir, "apps"))).toBe(true);

@@ -15,6 +15,7 @@ import { commitToBranch } from "../src/actions/repos.ts";
 import { openPull, submitReview } from "../src/actions/pulls.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { HANDOVER_NOTE, handedOverPulls, handoverOf } from "../src/crew/guard.ts";
+import { addReviewComment } from "../src/core/reviews.ts";
 import { sendToReview, waitsForPerson } from "../src/crew/review.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
@@ -28,7 +29,8 @@ import { startCrew, queueAgentRun, type CrewHandle } from "../src/crew/dispatch.
 import { getAgent } from "../src/core/agents.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { setIssueState } from "../src/actions/issues.ts";
-import { ASK_WORDS, KIND_TIER, askLinesFor, decisionActions, decisionForm, decisionsFor, endOf } from "../src/web/studio/asks.ts";
+import { ASK_WORDS, KIND_TIER, askLinesFor, endOf } from "../src/web/studio/asks.ts";
+import { decisionActions, decisionForm, decisionsFor } from "../src/web/studio/decisions.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -412,6 +414,50 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
       c.body.startsWith("Handed to a person by the crew:"),
     );
 
+  test("the hand-over note quotes each review up to 600 characters, cut at a sentence end, with its line comments", async () => {
+    const set = await updateRepoSettings(app, alice, fresh(), {
+      autonomy: "autonomous",
+      autonomyCeilingUsd: 100,
+      autonomyBy: alice.id,
+    });
+    if (!set.ok) throw new Error(JSON.stringify(set.error));
+    const pull = await masonPull("quotes");
+    const sentence = "The token is logged on every retry and must not be. ";
+    const long = sentence.repeat(18).trim(); // ~900 characters
+    expect(long.length).toBeGreaterThan(850);
+    addReviewComment(app.db, {
+      pullId: pull.id,
+      authorId: sentinel.id,
+      body: `<b>log</b> ${"x".repeat(300)}`,
+      path: "src/auth.ts",
+      line: 42,
+      side: "new",
+      commitOid: "",
+      lineHash: "",
+    });
+    await verdict(pull, long);
+    settleFeedback(pull);
+    await verdict(pull, "Round two.");
+    settleFeedback(pull);
+    await verdict(pull, "Round three.");
+    const body = handoverNotes(pull)[0]!.body;
+    const quote = body
+      .split("\n")
+      .filter((l) => l.startsWith("> The token"))
+      .join("");
+    expect(quote.length).toBeLessThanOrEqual(602);
+    expect(quote.length).toBeGreaterThan(500);
+    expect(quote.endsWith("retry and must not be.")).toBe(true);
+    const line = body.split("\n").find((l) => l.startsWith("- src/auth.ts:42: "))!;
+    expect(line).toBeDefined();
+    expect(line.length).toBe("- src/auth.ts:42: ".length + 200);
+    expect(line).toContain("<b>log</b>");
+    expect(body).toContain("> Round two.");
+    expect(body).toContain("> Round three.");
+    // Out of the way of the tests after it, which count open hand-overs.
+    await setIssueState(app, alice, fresh(), getIssueById(app.db, pull.id)!, "closed");
+  });
+
   test("the third changes-requested hands the pull to a person; a fourth queues nothing", async () => {
     const set = await updateRepoSettings(app, alice, fresh(), {
       autonomy: "autonomous",
@@ -431,8 +477,8 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     expect(feedback(pull).length).toBe(2);
     const notes = handoverNotes(pull);
     expect(notes.length).toBe(1);
-    expect(notes[0]!.body).toContain("1. sentinel: Round one");
-    expect(notes[0]!.body).toContain("3. sentinel: Round three");
+    expect(notes[0]!.body).toContain("1. sentinel:\n\n> Round one");
+    expect(notes[0]!.body).toContain("3. sentinel:\n\n> Round three");
     expect(notes[0]!.body).toContain("planner");
     // Not parked, not closed: still open, and the planner's, not a person's (#1655).
     expect(getIssueById(app.db, pull.id)!.state).toBe("open");

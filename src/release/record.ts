@@ -53,6 +53,17 @@ export function listReleases(db: Database, limit = 20): Release[] {
     .map(toRelease);
 }
 
+/** Every kept release whose sha starts with these hex digits, newest first, one per sha. */
+export function releasesByPrefix(db: Database, hex: string): Release[] {
+  if (!/^[0-9a-f]{1,40}$/.test(hex)) return [];
+  const seen = new Set<string>();
+  return db
+    .query<Row, [string]>(`SELECT * FROM release WHERE sha LIKE ?1 || '%' ORDER BY id DESC`)
+    .all(hex)
+    .map(toRelease)
+    .filter((r) => !seen.has(r.sha) && seen.add(r.sha));
+}
+
 /** The newest healthy release a pull landed in; undefined while it is in none. */
 export function releaseOfPull(db: Database, repoId: string, pullNumber: number): Release | undefined {
   const row = db

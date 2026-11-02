@@ -11,9 +11,18 @@ import {
   createRouteTiming,
   KEEP_DAYS,
   readTiming,
+  nameFrame,
+  namesFrame,
+  noteDbTime,
   notePhase,
+  noteSessionTime,
+  noteStart,
   serverTiming,
+  takeDbTime,
   takePhases,
+  takeSessionTime,
+  timePhase,
+  timePhaseAsync,
 } from "../src/core/route_timing.ts";
 import { serve } from "../src/http/server.ts";
 import { migrate } from "../src/kernel/migrate.ts";
@@ -97,4 +106,56 @@ test("phases follow app in the header, and a name that is not a token is refused
   expect(serverTiming(5, undefined, takePhases(request))).toBe("app;dur=5.0, lanes;dur=1.3");
   expect(takePhases(request)).toEqual([]);
   expect(() => notePhase(request, "my repo", 1)).toThrow();
+});
+
+test("two phases timed on one request keep their order and each carries dur", async () => {
+  const request = new Request("http://x/");
+  expect(timePhase(request, "first", () => 7)).toBe(7);
+  expect(await timePhaseAsync(request, "second", async () => "ok")).toBe("ok");
+  const header = serverTiming(5, undefined, takePhases(request));
+  expect(header).toMatch(/^app;dur=5\.0, first;dur=\d+\.\d, second;dur=\d+\.\d$/);
+});
+
+test("a throw inside a timed phase still records the phase and rethrows", async () => {
+  const request = new Request("http://x/");
+  expect(() => timePhase(request, "boom", () => { throw new Error("sync"); })).toThrow("sync");
+  await expect(timePhaseAsync(request, "late", async () => { throw new Error("async"); })).rejects.toThrow("async");
+  expect(takePhases(request).map((p) => p.name)).toEqual(["boom", "late"]);
+});
+
+test("a phase name with a separator, quote or line break is refused and the header stays one line", () => {
+  const request = new Request("http://x/");
+  for (const name of ["a,b", "a;b", 'a"b', "a\rb", "a\nb", "a\r\nSet-Cookie: x=1", "", "A", "a b"]) {
+    expect(() => notePhase(request, name, 1)).toThrow();
+    expect(() => timePhase(request, name, () => 1)).toThrow();
+  }
+  notePhase(request, "fine", 1, true);
+  const header = serverTiming(1, 0.5, takePhases(request));
+  expect(header).toBe('db;dur=0.5, app;dur=1.0, fine;dur=1.0;desc="hit"');
+  expect(header).not.toMatch(/[\r\n]/);
+});
+
+test("route and compress frames are named once per request", () => {
+  const request = new Request("http://x/");
+  expect(namesFrame(request)).toBe(false);
+  noteStart(request, performance.now());
+  nameFrame(request);
+  expect(namesFrame(request)).toBe(true);
+  expect(takePhases(request).map((p) => p.name)).toEqual(["route"]);
+  expect(namesFrame(new Request("http://x/"))).toBe(false);
+});
+
+test("db and session time are given once, then nothing, and never cross requests", () => {
+  const a = new Request("http://x/a");
+  const b = new Request("http://x/b");
+  expect(takeDbTime(a)).toBeUndefined();
+  noteDbTime(a, 1.5);
+  noteDbTime(a, 2);
+  noteSessionTime(a, 3);
+  expect(takeDbTime(b)).toBeUndefined();
+  expect(takeSessionTime(b)).toBe(0);
+  expect(takeDbTime(a)).toBe(3.5);
+  expect(takeDbTime(a)).toBeUndefined();
+  expect(takeSessionTime(a)).toBe(3);
+  expect(takeSessionTime(a)).toBe(0);
 });

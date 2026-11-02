@@ -25,9 +25,13 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   claimed: false,
   lastActivityAt: null,
   running: null,
+  reach: null,
   attention: null,
   spendTodayUsd: null,
   ceilingUsd: null,
+  size: "small",
+  use: { kind: "shared" },
+  lastHeartbeatAt: null,
   nextStep: { key: "unreported", words: "has not reported yet", lastTellAt: null },
   ...over,
 });
@@ -97,25 +101,58 @@ describe("forges you sent in the terminal", () => {
     }
   });
 
+  test("a forge running, not reachable says so, with each address and its result", () => {
+    const reach = {
+      name: "maria", at: "2026-11-02T00:00:00.000Z", ok: false, since: "2026-11-02T00:00:00.000Z", alarmed: true,
+      proofs: [
+        { label: "home", url: "https://maria--forge.test/api/v1/forge", ok: true, status: 200, says: "answered 200" },
+        { label: "deal", url: "https://deal--maria--forge.test/", ok: false, status: 404, says: "answered 404, not by the app" },
+      ],
+    };
+    const lines = forgeLines([row({ reach })]);
+    expect(lines[0]![1]).toContain("Running, not reachable: deal answered 404, not by the app");
+    expect(lines.slice(1).map(([, t]) => t.trim())).toEqual([
+      "reachable maria--forge.test/api/v1/forge: answered 200",
+      "NOT REACHABLE deal--maria--forge.test/: answered 404, not by the app",
+    ]);
+  });
+
   test("a row carries the crew's spend today, and says when the ceiling is reached", () => {
     expect(forgeLines([row({ spendTodayUsd: 10, ceilingUsd: 10 })])[0]![1]).toContain("ceiling reached");
     expect(forgeLines([row({ spendTodayUsd: 3.2, ceilingUsd: 10 })])[0]![1]).toContain("$3.20 of $10 today");
     expect(forgeLines([row({})])[0]![1]).not.toContain("today");
   });
 
+  test("a row says its size and use: shared when hosted, X of Y in a cell", () => {
+    const hosted = forgeLines([row({ size: "medium" })])[0]![1];
+    expect(hosted).toContain("medium · shared");
+    const cell = row({
+      size: "small",
+      use: { kind: "cell", limits: { cpu: 1, memoryMiB: 512, diskMiB: 2048 }, memoryMiB: 310, cores: 0.4, diskMiB: 100 },
+      lastHeartbeatAt: new Date().toISOString(),
+    });
+    const line = forgeLines([cell])[0]![1];
+    expect(line).toContain("memory 310 MiB of 512 MiB");
+    expect(line).toContain("cpu 0.4 of 1 core");
+    expect(line).toContain("disk 100 MiB of 2 GiB");
+    expect(line).toContain("heartbeat just now");
+    const idle = row({ size: "small", use: { kind: "idle", limits: { cpu: 1, memoryMiB: 512, diskMiB: 2048 } } });
+    expect(forgeLines([idle])[0]![1]).toContain("memory not running");
+  });
+
   test("a row says who, the claim state and the apps note; never a link", () => {
     const up = { total: 3, running: 3, notRunning: [] };
     const down = { total: 2, running: 1, notRunning: [{ slug: "notes", why: "build failed" }] };
     expect(forgeLines([row({ running: up })])).toEqual([
-      ["maria", "for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet"],
+      ["maria", "for Maria's bakery · Not claimed yet · 3 apps running · has not reported yet · small · shared · no heartbeat yet"],
     ]);
     expect(forgeLines([row({ claimed: true, running: down, for: null })])).toEqual([
-      ["maria", "Claimed · 1 app running · notes: build failed · has not reported yet"],
+      ["maria", "Claimed · 1 app running · notes: build failed · has not reported yet · small · shared · no heartbeat yet"],
     ]);
     expect(forgeLines([row({ claimed: null })])[0]![1]).toContain("Unknown");
     expect(forgeLines([row({ made: false })])[0]![1]).toContain("Still being made");
     expect(forgeLines([row({ attention: "down", claimed: true, for: null })])).toEqual([
-      ["maria", "App down · Claimed · has not reported yet"],
+      ["maria", "App down · Claimed · has not reported yet · small · shared · no heartbeat yet"],
     ]);
     expect(forgeLines([row({})])[0]![1]).not.toMatch(/Not reporting|App down|Unclaimed/);
     expect(forgeLines([row({ nextStep: { key: "tell", words: "no tell yet", lastTellAt: null } })])[0]![1]).toContain("no tell yet");

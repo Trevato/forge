@@ -1,6 +1,6 @@
 /**
  * What pages put inside the components: rendered prose, a file's source, and
- * the diff — plus the page furniture that frames them (page head, repo
+ * the diff — plus the page furniture that frames them (repo
  * header, merge box, file tree). The diff is the product, so it gets the most
  * attention here: hairline gutters, an opaque sticky file header, a `+`/`−`
  * glyph that survives copy-paste, and an intra-line change signalled by two
@@ -11,13 +11,6 @@ export const content = /* css */ `
 @layer content {
 
 /* ---- page furniture ---- */
-.page-head {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin: 20px 0 14px;
-}
-.page-head h1 { min-width: 0; }
-.page-head > .page-head-sub { flex-basis: 100%; margin-top: -4px; }
-
 .repo-head { margin: 18px 0 0; view-transition-name: repo-head; }
 .repo-title {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -26,10 +19,9 @@ export const content = /* css */ `
 .repo-title .muted, .repo-title .sep { font-weight: 400; }
 /* A phone has no hover: the settings link is a full 44px line. */
 @media (max-width: 640px) {
-  .repo-head .repo-desc a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
+  .repo-head p.muted.small a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
 .repo-head p.muted.small { margin-top: 4px; text-wrap: pretty; }
-.repo-desc { margin-top: 4px; color: var(--muted-fg); font-size: 13px; text-wrap: pretty; }
 .repo-head .tabs { margin-top: 12px; }
 
 /* Provenance and pinning: one line under the title, so a <form> never has to
@@ -157,23 +149,11 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .repo-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 
 
-.filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.filters form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.filters .search { min-width: 180px; flex: 1; max-width: 320px; }
-/* A list's six words fit a phone without pushing the page sideways: a
-   little less padding there, and a scroll inside the bar as the last resort. */
-.filters .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-@media (max-width: 420px) { .filters .seg > a { padding: 0 8px; } }
-/* The same three reaches for a filter bar drawn with §5's .bar. */
-.bar .search { min-width: 180px; flex: 1; max-width: 320px; }
+/* A list's six words fit a phone without pushing the page sideways in a
+   filter bar drawn with §5's .bar: a little less padding there, and a
+   scroll inside the bar as the last resort. */
 .bar .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 @media (max-width: 420px) { .bar .seg > a { padding: 0 8px; } }
-
-.commit-head .card-body { padding: 14px 16px; }
-.commit-body {
-  white-space: pre-wrap; font-family: var(--mono); font-size: 12.5px;
-  color: var(--muted-fg); margin: 8px 0 4px;
-}
 
 .direction-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; color: var(--muted-fg); margin: 6px 0 0; }
 
@@ -267,6 +247,24 @@ form.inline { display: inline; margin-left: auto; }
 }
 .code tr:target .ln, .code tr[data-hl] .ln { color: var(--attn); }
 
+/* ---- csv view: the header stays under the bar, the first column on phones ---- */
+.csv-tools { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.csv-tools[hidden], .csv-view tr[hidden] { display: none; }
+.csv-tools .input { max-width: 260px; }
+.csv-scroll { overflow: auto; max-height: 75vh; scrollbar-width: thin; }
+.csv-view th { position: sticky; top: 0; z-index: 2; background: var(--card); user-select: none; }
+.csv-sort {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0;
+  text-align: inherit; cursor: pointer;
+}
+.csv-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.csv-view th:first-child { z-index: 3; }
+.csv-view td { max-width: 40ch; overflow-wrap: anywhere; }
+.csv-view th[aria-sort="ascending"]::after { content: " \\25B2"; font-size: 12.5px; }
+.csv-view th[aria-sort="descending"]::after { content: " \\25BC"; font-size: 12.5px; }
+.csv-view .num { text-align: right; }
+.csv-more { padding: 10px 12px; margin: 0; }
+
 /* ---- syntax tokens (colors come from the active theme) ----
    Two layers, exactly as the tokenizer emits them: a colour class every
    consumer understands, and — where the web can say something finer — a kind
@@ -302,6 +300,27 @@ form.inline { display: inline; margin-left: auto; }
    one path header, and the switch between the two views in it. */
 .blob-view { margin-left: 8px; }
 .blob-view .seg { font-size: 12.5px; }
+/* An audio or video file, played inline (render/player.ts). The video is as
+   wide as the pane and no wider; height follows its own aspect ratio. */
+.media-pane .media-player { display: block; width: 100%; max-width: 100%; }
+.media-pane video.media-player { height: auto; max-height: 80vh; background: var(--muted); border-radius: var(--radius-sm); }
+
+/* A PDF in the browser's own viewer: a fixed frame, so nothing shifts. */
+.pdf-view { overflow: hidden; }
+.pdf-frame { display: block; width: 100%; height: 80vh; min-height: 480px; border: 0; }
+.pdf-fallback { padding: 16px 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+/* A phone: a shorter frame, so a thumb can scroll the page past it. */
+@media (max-width: 600px) { .pdf-frame { height: 60vh; min-height: 360px; } }
+
+/* ---- image view ---- */
+.imgview-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 16px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+.imgview-dim { min-width: 9ch; }
+.imgview-pane { overflow: auto; min-height: 160px; max-height: 80vh; text-align: center; padding: 12px;
+  background: repeating-conic-gradient(color-mix(in srgb, var(--fg) 8%, var(--bg)) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.imgview-zoom { margin-left: auto; }
+.imgview-img { max-width: 100%; height: auto; cursor: zoom-in; vertical-align: middle; }
+.imgview-pane.is-actual { text-align: left; cursor: grab; }
+.imgview-pane.is-actual .imgview-img { max-width: none; cursor: zoom-out; }
 
 /* ---- prose (markdown) ---- */
 .prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }
@@ -320,6 +339,13 @@ form.inline { display: inline; margin-left: auto; }
   background: var(--muted); border: 1px solid var(--border);
   border-radius: var(--radius); max-width: none;
   padding: 12px 14px; overflow-x: auto; margin: 14px 0; scrollbar-width: thin;
+}
+/* Written text kept as typed (a commit message, a report): plain muted mono, wraps, never scrolls sideways. */
+.prose[data-text="message"] { padding: 0; margin: 8px 0 4px; font-size: 12.5px; line-height: 1.5; }
+.prose[data-text="message"] pre {
+  background: none; border: 0; border-radius: 0; padding: 0; margin: 0;
+  font-family: var(--mono); color: var(--muted-fg);
+  white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible;
 }
 .prose code { background: var(--muted); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; }
 .prose pre code { background: none; border: none; padding: 0; }
@@ -345,10 +371,13 @@ form.inline { display: inline; margin-left: auto; }
 .diff { display: flex; flex-direction: column; gap: 12px; }
 .change-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 0 12px; font-size: 13px; }
 .change-line a { display: inline-flex; align-items: center; gap: 6px; padding: 12px 0; line-height: 16px; color: inherit; }
-@media (pointer: coarse) { .change-line a { padding: 14px 0; } }
+.change-files { list-style: none; margin: 0 0 12px; padding: 0; font-size: 13px; }
+.change-files li { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: center; }
+.change-files a { padding: 12px 0; line-height: 16px; color: inherit; overflow-wrap: anywhere; }
+@media (pointer: coarse) { .change-line a, .change-files a { padding: 14px 0; } }
 .diff-summary { padding: 10px 14px; font-size: 13px; }
-.diff-summary .add, .change-line .add { color: var(--add-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
-.diff-summary .del, .change-line .del { color: var(--del-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.diff-summary .add, .change-line .add, .change-files .add { color: var(--add-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.diff-summary .del, .change-line .del, .change-files .del { color: var(--del-fg); font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .diff-file {
   /* Pure-CSS windowing: off-screen files cost nothing until scrolled to. */
@@ -820,6 +849,18 @@ textarea.editor:focus-visible { outline: none; }
     #needs-you #asks-phone-more > .stack { margin-top: 0; }
   }
 }
+/* The config form (#7336): nested objects as quiet fieldsets, scalar
+   arrays as a wrapping row of chips, object arrays as cards. */
+.config-group { border-left: 2px solid var(--border); padding-left: 12px; }
+.config-group > legend { font-weight: 600; margin-bottom: 8px; }
+.config-card { padding: 12px; margin: 0 0 12px; }
+.config-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.config-chips > li { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.config-chips .input { width: auto; min-width: 8rem; }
+.config-chips .field { margin: 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.config-diff { overflow-x: auto; white-space: pre; padding: 12px; }
+.config-diff > [data-op="add"] { background: var(--add-bg); color: var(--add-fg); }
+.config-diff > [data-op="del"] { background: var(--del-bg); color: var(--del-fg); }
 /* Reduced motion: the pulses hold still at a legible level, the scroll-tied
    fade stays at its resting width, and these transitions land at once. */
 @media (prefers-reduced-motion: reduce) {

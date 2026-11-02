@@ -199,13 +199,21 @@ describe("the crew line", () => {
     expect(toolbarJs).toContain("/__forge/crew");
     // One fetch is the crew line; the other is `call`, the feedback door's
     // single path (#4758): the sender's notes, polled only while the panel
-    // is open, and the send, each carrying the proof header in and out.
+    // is open, the send, and (#4820) the picture when ticked, each carrying
+    // the proof header in and out.
     expect(toolbarJs.match(/fetch\(/g)?.length).toBe(2);
     expect(toolbarJs.match(/setInterval/g)?.length).toBe(1);
-    expect(toolbarJs).not.toMatch(
+    // The one place the page is read is `shoot`, which runs only when the
+    // sender ticked the picture box; nothing else touches it.
+    const from = toolbarJs.indexOf("function shoot()");
+    const to = toolbarJs.indexOf('tellBox.addEventListener("submit"');
+    expect(from).toBeGreaterThan(0);
+    expect(to).toBeGreaterThan(from);
+    expect(toolbarJs.slice(0, from) + toolbarJs.slice(to)).not.toMatch(
       /document\.cookie|querySelector|getElementById|setTimeout/,
     );
+    expect(toolbarJs).not.toContain("document.cookie");
     expect(toolbarJs).toContain('aria-live", "polite"');
-    expect(toolbarJs.length).toBeLessThan(16 * 1024);
+    expect(toolbarJs.length).toBeLessThan(22 * 1024);
   });
 });

@@ -174,7 +174,7 @@ function filterBar(
         ${when(query.label !== "", () => hidden("label", query.label))}
         ${when(query.author !== "", () => hidden("author", query.author))}
         <input
-          class="input search"
+          class="input"
           type="search"
           name="q"
           value="${query.q}"
@@ -514,6 +514,7 @@ export async function browseBlob(ctx: Ctx): Promise<Response> {
     path,
     blob: blob.value,
     view: blobView(ctx.url.searchParams.get("view")),
+    all: ctx.url.searchParams.get("all") === "1",
   });
   if (ctx.url.searchParams.get("fragment") === "1")
     return fragment(pane, { request: ctx.request });

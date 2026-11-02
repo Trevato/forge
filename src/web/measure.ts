@@ -13,6 +13,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { quietly } from "../core/write_clock.ts";
 import { sha256 } from "../kernel/hash.ts";
 
 /** A report is a few dozen bytes; this is already generous. */
@@ -99,9 +100,11 @@ export function saltFor(db: Database, at: number): string {
   const salt = new Bun.CryptoHasher("sha256")
     .update(crypto.getRandomValues(new Uint8Array(32)))
     .digest("hex");
-  db.run("DELETE FROM vital_salt WHERE day <> ?", [day]);
-  db.run("INSERT OR IGNORE INTO vital_salt (day, salt) VALUES (?, ?)", [day, salt]);
-  db.run("DELETE FROM page_vital WHERE at < ?", [at - KEEP_MS]);
+  quietly(db, () => {
+    db.run("DELETE FROM vital_salt WHERE day <> ?", [day]);
+    db.run("INSERT OR IGNORE INTO vital_salt (day, salt) VALUES (?, ?)", [day, salt]);
+    db.run("DELETE FROM page_vital WHERE at < ?", [at - KEEP_MS]);
+  });
   return (
     db
       .query<{ salt: string }, [string]>("SELECT salt FROM vital_salt WHERE day = ?")
@@ -127,9 +130,11 @@ export function recordVital(
     .get(dayOf(at));
   if ((held?.n ?? 0) >= dayMax) return false;
   const visitor = sha256(`${saltFor(db, at)}\0${client}\0${agent}`).slice(0, 32);
-  db.run(
-    "INSERT INTO page_vital (day, at, route, visitor, ttfb, load, lcp, inp, cls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [dayOf(at), at, route, visitor, report.ttfb, report.load, report.lcp, report.inp, report.cls],
+  quietly(db, () =>
+    db.run(
+      "INSERT INTO page_vital (day, at, route, visitor, ttfb, load, lcp, inp, cls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [dayOf(at), at, route, visitor, report.ttfb, report.load, report.lcp, report.inp, report.cls],
+    ),
   );
   return true;
 }

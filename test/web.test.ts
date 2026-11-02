@@ -575,7 +575,7 @@ describe("web pages end to end", () => {
     }
   });
 
-  test("a path under no route at all gets the forge's page for a browser, and no_route for anyone else", async () => {
+  test("a path under no route at all gets the forge's page unless the caller asks for JSON", async () => {
     const browser = await fetch(`${base}/ada/engine/frobnicate`, {
       headers: {
         accept:
@@ -593,12 +593,15 @@ describe("web pages end to end", () => {
     expect(html).toContain("404");
     expect(html).toContain("Go home");
 
-    // No Accept header at all — a plain script or `curl` — keeps the JSON
-    // contract, same as before this page existed.
+    // No Accept header at all — curl, a crawler, a link unfurler — gets the page
+    // too (#6733); a caller that asks for JSON keeps the contract.
     const plain = await fetch(`${base}/ada/engine/frobnicate`);
     expect(plain.status).toBe(404);
-    expect(plain.headers.get("content-type")).toContain("application/json");
-    const body = (await plain.json()) as { error: string; message: string };
+    expect(plain.headers.get("content-type")).toContain("text/html");
+    const asked = await fetch(`${base}/ada/engine/frobnicate`, { headers: { accept: "application/json" } });
+    expect(asked.status).toBe(404);
+    expect(asked.headers.get("content-type")).toContain("application/json");
+    const body = (await asked.json()) as { error: string; message: string };
     expect(body.error).toBe("no_route");
     expect(body.message).toContain("/ada/engine/frobnicate");
 

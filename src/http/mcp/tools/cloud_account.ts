@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "cloud_account",
   doc: "`{ verb, provider, name, value?, to?, allowed?, repo? }`: change a cloud account: `attach` or `rotate` a token (`value`), `verify` it, `rename` it (`to`), `remove` it, `allow_writes` (`allowed` true or false) or `audit` (`repo` owner/name); a forge admin with an admin-scope token; answers a one-line `says`",
   description:
-    "Change a cloud account (admin token) by `verb`.",
+    "Change a cloud account by `verb` (admin).",
   inputSchema: {
     type: "object",
     properties: {
@@ -16,8 +16,8 @@ export const tool: Tool = {
       name: { type: "string", maxLength: 32 },
       value: { type: "string", maxLength: 4096, description: "For attach, rotate." },
       to: { type: "string", maxLength: 32 },
-      allowed: { type: "boolean", description: "For allow_writes." },
-      repo: { type: "string", maxLength: 200, description: "For audit." },
+      allowed: { type: "boolean" },
+      repo: { type: "string", maxLength: 200 },
     },
     required: ["verb", "provider", "name"],
   },

@@ -8,7 +8,7 @@ export const tool: Tool = {
   name: "take_updates",
   doc: "a fork takes its parent's updates when git can do it alone; a conflict is refused. On a spawned forge's code repository it opens the one `forge/take-updates` pull and never moves the default branch",
   description:
-    "Take the parent forge's updates into a fork: a pull on a spawned forge, else a merge.",
+    "Take the parent forge's updates into a fork.",
   inputSchema: {
     type: "object",
     properties: { repo: REPO_ARG },

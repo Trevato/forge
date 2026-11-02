@@ -135,8 +135,19 @@ export function commitScreen(ctx: Ctx, dir: string, o: CommitOpts): Screen {
       ctx.setCursor(focus === "subject" ? cursor : bodyCursor);
     },
     paste(chunk) {
-      if (focus === "subject") subject += chunk.replace(/\s+/g, " ");
-      else body.paste(chunk);
+      if (focus === "body") {
+        body.paste(chunk);
+        return true;
+      }
+      // A pasted message is a subject and a body: the first line stays in
+      // the field, the rest moves to the body, where the cursor follows.
+      const [first = "", ...rest] = chunk.replace(/\r\n?/g, "\n").split("\n");
+      subject += first.replace(/\s+/g, " ");
+      const more = rest.join("\n").replace(/^\n+/, "");
+      if (more.trim() !== "") {
+        body.paste(more);
+        focus = "body";
+      }
       return true;
     },
     key(e) {

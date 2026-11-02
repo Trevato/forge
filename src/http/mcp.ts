@@ -27,15 +27,21 @@ import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { clientBucket } from "./peer.ts";
+import { proofOf } from "./report_filer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
-import { type Args, visible, plansOnly, str, REPO_ARG, lean } from "./mcp/shared.ts";
+import { type Args, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst } from "./mcp/shared.ts";
+import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 /** Who answers: the forge, at the version its build stamped. */
+// One page of tools/list stays within this many bytes of tools; `nextCursor`
+// names the rest, so adding a tool never busts one response.
+export const TOOLS_PAGE_BYTES = 20_000;
+
 const server = () => ({ name: "forge", version: running().version });
 
 
@@ -51,6 +57,16 @@ function adminNote(ctx: Ctx, user: User): string {
       ? " Daily work belongs on an everyday account, apart from admin."
       : ` Daily work belongs on ${daily.username}, their everyday account.`
   }`;
+}
+
+/**
+ * Said to an admin whose token is short of admin scope (#7650): which tools
+ * it hides, and the two deliberate ways to them. Empty for anyone else.
+ */
+export function hiddenAdminNote(ctx: Ctx, user: User): string {
+  if (!user.isAdmin || scopeAllows(ctx.auth.scope ?? "ro", "admin")) return "";
+  const hidden = TOOLS.filter((t) => t.needsAdminScope === true).map((t) => t.name);
+  return `Hidden from this token, as admin-scope tools: ${hidden.join(", ")}; reach them with an admin-scope token, or as the forge's agent by a confirm the person answers in the conversation.`;
 }
 
 /** A card's model beside the text, for a host that draws `ui://` resources. */
@@ -91,38 +107,63 @@ function rpcOne(
   switch (m["method"]) {
     case "initialize": {
       const asked = str(params["protocolVersion"]);
+      const hidden = hiddenAdminNote(ctx, user);
       return reply({
         protocolVersion: (PROTOCOLS as readonly string[]).includes(asked)
           ? asked
           : PROTOCOLS[0],
         capabilities: { tools: {}, resources: {} },
         serverInfo: server(),
-        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options. A tool with \`dryRun\` plans unless it is \`false\`.${adminNote(ctx, user)}`,
+        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options. A tool with \`dryRun\` plans unless it is \`false\`.${adminNote(ctx, user)}${hidden === "" ? "" : ` ${hidden}`}${
+          ctx.auth.through === undefined ? "" : ` ${CONVERSATION_BRIEF}`
+        }`,
       });
     }
     case "ping":
       return reply({});
-    case "tools/list":
+    case "tools/list": {
+      const all = [
+        ...TOOLS.filter((t) => visible(t, ctx, user)).map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: lean(t.inputSchema),
+          // readOnlyHint defaults to false (MCP tool annotations), so only a
+          // read says so: 57 copies of the default were 2 KB of the 40 KB.
+          ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
+          ...(CARD_OF_TOOL[t.name] === undefined
+            ? {}
+            : {
+                _meta: {
+                  ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) },
+                },
+              }),
+        })),
+        { name: REPORT_TOOL.name, description: REPORT_TOOL.description, inputSchema: REPORT_TOOL.inputSchema },
+      ];
+      // The cursor is the name of the last tool of the page before, so a tool
+      // added between two requests moves nothing.
+      const cursor = params["cursor"];
+      let from = 0;
+      if (cursor !== undefined) {
+        const at =
+          typeof cursor === "string" ? all.findIndex((t) => t.name === cursor) : -1;
+        if (at < 0) return refuse(-32602, "unknown cursor");
+        from = at + 1;
+      }
+      let end = from;
+      let bytes = 0;
+      while (end < all.length) {
+        bytes += Buffer.byteLength(JSON.stringify(all[end]));
+        if (end > from && bytes > TOOLS_PAGE_BYTES) break;
+        end++;
+      }
+      const hidden = from === 0 ? hiddenAdminNote(ctx, user) : "";
       return reply({
-        tools: [
-          ...TOOLS.filter((t) => visible(t, ctx, user)).map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: lean(t.inputSchema),
-            // readOnlyHint defaults to false (MCP tool annotations), so only a
-            // read says so: 57 copies of the default were 2 KB of the 40 KB.
-            ...(t.writes ? {} : { annotations: { readOnlyHint: true } }),
-            ...(CARD_OF_TOOL[t.name] === undefined
-              ? {}
-              : {
-                  _meta: {
-                    ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) },
-                  },
-                }),
-          })),
-          REPORT_TOOL,
-        ],
+        tools: all.slice(from, end),
+        ...(end < all.length ? { nextCursor: all[end - 1]!.name } : {}),
+        ...(hidden === "" ? {} : { _meta: { hidden } }),
       });
+    }
     case "resources/list":
       return reply({
         resources: CARD_KINDS.map((k) => ({
@@ -141,12 +182,18 @@ function rpcOne(
     }
     case "tools/call": {
       const tool = TOOLS.find((t) => t.name === params["name"]);
-      if (tool === undefined || !visible(tool, ctx, user))
-        return refuse(-32602, `no tool named ${String(params["name"])}`);
       const args =
         typeof params["arguments"] === "object" && params["arguments"] !== null
           ? (params["arguments"] as Args)
           : {};
+      // Before the scope floor, so an admin tool the forge's agent was
+      // steered to is held as a confirm too, not merely refused (#7649), and
+      // one the person asked for waits for their yes (#7650).
+      const held =
+        tool === undefined ? undefined : (askedFirst(ctx, user, tool, args) ?? heldWrite(ctx, user, tool, args));
+      if (held !== undefined) return reply(held);
+      if (tool === undefined || !visible(tool, ctx, user))
+        return refuse(-32602, `no tool named ${String(params["name"])}`);
       if (tool.writes && !plansOnly(tool, args) && !scopeAllows(ctx.auth.scope ?? "ro", "rw"))
         return reply({
           content: [
@@ -154,12 +201,16 @@ function rpcOne(
           ],
           isError: true,
         });
-      return Promise.resolve(tool.run(ctx, user, args)).then((answer) =>
-        reply(
+      return Promise.resolve(tool.run(ctx, user, args)).then((ran) => {
+        const answer = fenceAnswer(ctx, ran);
+        return reply(
           answer.ok
             ? {
                 content: [{ type: "text", text: JSON.stringify(answer.value) }],
-                ...cardResult(String(params["name"]), answer.value, ctx.url.origin, answer.card),
+                // The forge's agent reads the fenced text, never a card drawn around it.
+                ...(ctx.auth.through === undefined
+                  ? cardResult(String(params["name"]), answer.value, ctx.url.origin, answer.card)
+                  : {}),
               }
             : {
                 content: [
@@ -167,8 +218,8 @@ function rpcOne(
                 ],
                 isError: true,
               },
-        ),
-      );
+        );
+      });
     }
     default:
       return refuse(-32601, `no method ${String(m["method"])}`);
@@ -180,8 +231,11 @@ function rpcOne(
  * public repository (`actions/reports.ts`), with the same limits as the
  * page and the API. Everything else here needs a token.
  */
-const REPORT_TOOL = {
+export const REPORT_TOOL = {
   name: "report",
+  /** Its row in docs/MCP.md (`bun scripts/mcp-tools.ts`); never sent to a client. */
+  doc: "`{ repo, title, body?, page?, agent? }`: report a problem in a public repository, the one tool open without a token; it still stores the report, which a person reads first; plain text. With a token the report carries your account; `agent` without one is shown as a claim",
+  writes: true,
   description:
     "Report a problem in a public repository, no account needed. Plain text; a person reads it first.",
   inputSchema: {
@@ -193,6 +247,11 @@ const REPORT_TOOL = {
       page: {
         type: "string",
         description: "Address where seen.",
+      },
+      agent: {
+        type: "string",
+        maxLength: 64,
+        description: "Your name; a claim without a token.",
       },
     },
     required: ["repo", "title"],
@@ -239,8 +298,10 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
       title: typeof args["title"] === "string" ? args["title"] : "",
       body: typeof args["body"] === "string" ? args["body"] : "",
       page: typeof args["page"] === "string" ? args["page"] : "",
+      agent: typeof args["agent"] === "string" ? args["agent"] : "",
     },
     clientBucket(ctx.request),
+    proofOf(ctx),
   );
   if (!filed.ok) {
     const e = filed.error;
@@ -249,7 +310,7 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
         ? "not_found: no such public repository (owner/name)"
         : e.error === "rate_limited"
           ? `rate_limited: try again in ${e.retryAfter} seconds`
-          : `${e.error}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}`,
+          : `${e.error}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, agent a name of letters, digits, . _ -`,
       true,
     );
   }
@@ -309,11 +370,11 @@ export function mcpRoutes(router: Router<Handler>): void {
       JSON.stringify({
         error: "unauthorized",
         message:
-          "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?}) files a problem report on a public repository; see /llms.txt",
+          "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?, agent?}) files a problem report on a public repository; see /llms.txt",
         report: {
           method: "tools/call",
           name: "report",
-          arguments: ["repo", "title", "body", "page"],
+          arguments: ["repo", "title", "body", "page", "agent"],
         },
       }),
       {

@@ -145,7 +145,7 @@ describe("a page of issues, worded in one batch", () => {
     const closing = openPullsClosing(app.db, repo.id);
     await tellWords(ctx(), repo, all, closing);
     const laps: number[] = [];
-    for (let n = 0; n < 5; n++) {
+    for (let n = 0; n < 25; n++) {
       const at = performance.now();
       await tellWords(ctx(), repo, all, closing);
       laps.push(performance.now() - at);

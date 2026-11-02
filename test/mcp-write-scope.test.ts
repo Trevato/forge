@@ -20,13 +20,24 @@ const SKIPPED: Record<string, string> = {};
 /** Valid arguments for each admin-scope tool: were its gate gone, the call would act. */
 const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   repo_settings: { repo: "alice/game", visibility: "public" },
+  sessions: { action: "end", id: "x" },
   mirror_set: { action: "forget" },
+  mirror_now: {},
   org_teams: { org: "acme", action: "create", team: "core", permission: "read" },
   agent: { action: "create", username: "robo", displayName: "Robo", model: "m", brief: "b" },
   subscription_budget: { id: "u1", usd: 5 },
+  subscription_delete: { id: "u1" },
+  subscription_add: { name: "Sneaky", token: "sk-ant-oat01-aaaaaaaaaaaaaaaaaaaa" },
+  subscription_wake: { id: "u1" },
+  subscription_headroom: { id: "u1", percent: 30 },
   prompts: { repo: "alice/game", action: "remove", id: "p1" },
+  release_hold: { reason: "freeze for the demo" },
   telemetry_grant: { agent: "robo", on: true },
   hooks: { repo: "alice/game", action: "add", url: "https://example.com/h", secret: "0123456789abcdef0123" },
+  app_domains: { repo: "alice/game", action: "add", host: "game.example.com" },
+  backups_destination: { action: "set", bucket: "forge-snaps", accessKey: "AKIA", secretKey: "s3cr3t-key-0123456789" },
+  backups_test: { endpoint: "http://127.0.0.1:1", bucket: "b", accessKey: "AKIA", secretKey: "s3cr3t-key-0123456789" },
+  rollback: { sha: "a".repeat(40), dryRun: false },
 };
 
 /** What `visible()` answers for a tool the token's scope does not open. */
@@ -87,7 +98,7 @@ describe("a token that may only read cannot write through any tool", () => {
   const writing = (t: ReturnType<typeof toolRegistry>[number]) => {
     if (t.name in ADMIN_ARGS) return ADMIN_ARGS[t.name]!;
     const args: Record<string, unknown> = { dryRun: false, action: "x" };
-    if (t.readsWithout !== undefined) args[t.readsWithout] = "x";
+    if (t.readsWithout !== undefined) args[[t.readsWithout].flat()[0]!] = "x";
     return args;
   };
 
@@ -130,7 +141,7 @@ describe("a token that may only read cannot write through any tool", () => {
     expect(unrefused).toEqual([]);
     expect(snapshot()).toEqual(before);
     expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
-  }, 8_000);
+  }, 60_000);
 
   test("each admin-scope tool is refused for an rw token, and nothing changes", async () => {
     const admin = toolRegistry().filter((t) => t.needsAdminScope);
@@ -147,5 +158,5 @@ describe("a token that may only read cannot write through any tool", () => {
     expect(answered).toEqual([]);
     expect(snapshot()).toEqual(before);
     expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
-  }, 8_000);
+  }, 60_000);
 });

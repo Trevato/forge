@@ -8,6 +8,7 @@
  * Every string on a card is plain text and is escaped here, once.
  */
 
+import { chipCounts } from "../../feed/chips.ts";
 import { chipsOf, KIND_CHIPS, type KindChip } from "../../core/feed_chips.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
@@ -21,15 +22,17 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { getRepo, getRepoById } from "../../core/repos.ts";
 import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
 import { mayFetchLook, pictured } from "../pages/looks.ts";
+import { dividers } from "./day_divider.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
+import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, disclosure, empty, nameMark, stateBadge, time, timeAgo } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, nameMark, row, stateBadge, time } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
 export const FEED_LIVE =
-  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,issue.closed,decision.*,thought.received,thought.placed";
+  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,crew.governed,issue.closed,decision.*,thought.received,thought.placed";
 
 export const FEED_FIRST_PAGE = 20;
 
@@ -110,13 +113,16 @@ export function feedCard(
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
   const head = html`${avatar(item.actor ?? item.app)}
-      <strong>${item.actor ?? item.app}</strong
+      <strong class="break">${item.actor ?? item.app}</strong
       >${nameMark(item.actor === null ? undefined : marks.get(item.actor))}
-      <span class="muted small">${item.app} · ${timeAgo(item.at)}</span>
+      <span class="muted small break">${item.app} · ${time(item.at)}</span>
       ${settledBadge(item.settled)}
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
   const body = html`<p class="break"><a href="${item.link}" data-feed-open>${item.what}</a></p>
+    ${item.lines === undefined
+      ? null
+      : html`<ul class="list">${item.lines.map((l) => row({ href: l.link, title: l.text }))}${item.more ? row({ title: `and ${item.more} more` }) : null}</ul>`}
     ${picture === undefined
       ? null
       : html`<a class="look" data-slot="feed" href="${item.link}" tabindex="-1" aria-hidden="true"
@@ -162,7 +168,7 @@ const lines = (text: string): Html[] =>
 export function thoughtCard(thought: Thought, who: string, placement?: Placement): Html {
   const head = html`${avatar(who)}
       <strong>${who}</strong>
-      <span class="muted small">${timeAgo(thought.receivedAt)}</span>
+      <span class="muted small">${time(thought.receivedAt)}</span>
       <span class="spacer"></span>
       <span class="badge">Received</span>`;
   return card(
@@ -220,7 +226,7 @@ export function composer(ctx: Ctx, user: User): Html {
   })}`;
   const form = html`<form id="composer" class="card" method="post" action="/tell">
     <div class="card-body stack">
-    <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew">${sharedDraft(ctx.url.searchParams)}</textarea>
+    <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew" data-draft="${user.id}">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="bar">
       ${repos.length === 0
         ? html`<input type="hidden" name="app" value="${FORGE_TARGET}" /><span class="muted small">the forge</span>`
@@ -273,6 +279,7 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
   ]);
   names.delete(user.username);
   const hiddenNames = new Set(hidden.map((u) => u.username));
+  const counts = chipCounts(items);
   const chip = (kind: string, value: string, label: string, shown: boolean): Html =>
     html`<button
       type="button"
@@ -282,7 +289,12 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
       aria-pressed="${String(shown)}"
     >${label}</button>`;
   return html`<div class="bar feed-chips" role="group" aria-label="Filter the feed">
-    ${KIND_CHIPS.map((k) => chip("kind", k, CHIP_LABEL[k], !chips.kinds.has(k)))}
+    ${KIND_CHIPS.flatMap((k) => {
+      const count = counts.get(k) ?? 0;
+      // Nothing on the page to filter: not drawn, unless switched off (it must come back on).
+      if (count === 0 && !chips.kinds.has(k)) return [];
+      return [chip("kind", k, count === 0 ? CHIP_LABEL[k] : `${CHIP_LABEL[k]} ${count}`, !chips.kinds.has(k))];
+    })}
     ${[...names].sort().map((n) => chip("person", n, n, !hiddenNames.has(n)))}
   </div>`;
 }
@@ -300,6 +312,9 @@ function readRegion(user: User, ctx: Ctx) {
     ...(cursor === undefined ? {} : { cursor }),
   });
   const items = page.items;
+  // The day the page before ended on, so a continuing page draws no divider twice (`day_divider.ts`).
+  const day = cursor === undefined ? "" : (ctx.url.searchParams.get("day") ?? "");
+  const lastDayOnPage = Number.isFinite(Date.parse(day)) ? new Date(day).toISOString() : undefined;
   const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
   const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
   // Who each poster is, asked once for the page (`core/marks.ts`).
@@ -310,7 +325,7 @@ function readRegion(user: User, ctx: Ctx) {
   const quiet = page.quiet;
   const quietRepo = quiet.repoId === null ? undefined : getRepoById(ctx.app.db, quiet.repoId);
   const quietLink = quietRepo === undefined ? "/explore" : `/${quietRepo.ownerName}/${quietRepo.name}/runs?kind=agent`;
-  return { items, next: page.next_cursor, cursor, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
+  return { items, next: page.next_cursor, cursor, lastDayOnPage, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
 }
 
 /** The region: cards, or one line saying there is nothing to do. */
@@ -333,18 +348,32 @@ export function caughtUp(items: readonly FeedItem[], next: string | null, cursor
         <span>You're caught up to ${time(oldest)}</span>
         <span class="spacer"></span>
         ${newest}
-        <a href="/?cursor=${encodeURIComponent(next)}">Older posts</a>
+        <a href="/?cursor=${encodeURIComponent(next)}&day=${encodeURIComponent(items[items.length - 1]!.at)}">Older posts</a>
       </p>`;
 }
 
 function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): Html {
-  const { items, next, cursor, thoughts, placed, marks, pictures, quiet, quietLink } = read;
+  const { items, next, cursor, lastDayOnPage, thoughts, placed, marks, pictures, quiet, quietLink } = read;
+  const now = new Date();
+  // One divider per change of day between neighbours, in the order the feed already has.
+  const posts: Html[] = [];
+  let before = lastDayOnPage;
+  for (const item of items) {
+    const [label] = dividers([item.at], now, before);
+    if (label !== undefined) posts.push(html`<p class="muted small" role="separator" aria-label="${label}" data-day-divider="${label}">${label}</p>`);
+    posts.push(feedCard(item, marks, pictures.get(item.id)));
+    before = item.at;
+  }
+  const liveQuery = [
+    cursor === undefined ? "" : `cursor=${encodeURIComponent(`${cursor.score}|${cursor.id}`)}`,
+    cursor === undefined || lastDayOnPage === undefined ? "" : `day=${encodeURIComponent(lastDayOnPage)}`,
+  ].filter(Boolean).join("&");
   return html`<section
     id="live-feed"
     class="feed"
     aria-label="Feed"
     data-live="${FEED_LIVE}"
-    data-live-src="/live/feed${cursor === undefined ? "" : `?cursor=${encodeURIComponent(`${cursor.score}|${cursor.id}`)}`}"
+    data-live-src="/live/feed${liveQuery === "" ? "" : `?${liveQuery}`}"
   >
     ${chipsBar(user, ctx, items)}
     ${thoughts.map((t) => thoughtCard(t, user.username, placed.get(t.id)))}
@@ -354,7 +383,7 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
           title: "Nothing new",
           note: "When something happens in your apps, it lands here.",
         })
-      : items.map((item) => feedCard(item, marks, pictures.get(item.id)))}
+      : posts}
     ${quiet === 0
       ? ""
       : html`<p class="small muted"><a href="${quietLink}">${quiet} quiet ${quiet === 1 ? "run" : "runs"} in the last 24 h</a></p>`}
@@ -375,12 +404,34 @@ export function liveFeedFragment(ctx: Ctx): Response {
 }
 
 /**
+ * When a card is hidden, the day divider just above it goes with it, unless
+ * a later card of that day is still showing — then the divider moves down to
+ * it, so a day never reads as a heading over nothing.
+ */
+export const dayKeepJs = /* js */ `
+function keepDay(card) {
+  var div = card.previousElementSibling;
+  if (!div || !div.hasAttribute('data-day-divider')) return;
+  var next = card.nextElementSibling;
+  while (next && next.hidden) next = next.nextElementSibling;
+  if (next && next.hasAttribute('data-item')) {
+    next.parentNode.insertBefore(div, next);
+    div.hidden = false;
+  } else {
+    div.hidden = true;
+  }
+}
+`;
+
+/**
  * j/k and enter are the shell's (`data-nav`). Here: `x` dismisses the card
  * in focus, the buttons dismiss or mute, and opening a card is recorded.
  * Interactions go to the feed API, same-origin with the session cookie.
  */
 export const feedJs = /* js */ `
 ${outboxJs}
+${draftJs}
+${dayKeepJs}
 (function () {
   var feed = document.getElementById('live-feed');
   if (!feed || typeof fetch === 'undefined') return;
@@ -427,6 +478,7 @@ ${outboxJs}
     var cards = Array.prototype.slice.call(feed.querySelectorAll('[data-item]'));
     var next = cards[cards.indexOf(card) + 1] || cards[cards.indexOf(card) - 1];
     card.hidden = true;
+    keepDay(card);
     if (next) next.focus();
   }
   // Acting is instant: the card goes, the act is kept and sent.
@@ -505,15 +557,27 @@ ${outboxJs}
   // The composer is a tell too: kept and sent the same way; the box clears
   // at once, and the post arrives in the timeline when the forge says so.
   var composer = document.getElementById('composer');
+  var draft = null;
+  if (composer && composer.elements.text && outbox) {
+    var draftBox = composer.elements.text;
+    draft = forgeDraft(window.localStorage, draftBox, 'draft.' + draftBox.dataset.draft + location.pathname, function (fn, ms) { setTimeout(fn, ms); });
+    draft.restore();
+    draftBox.addEventListener('input', draft.typed);
+  }
   if (composer) composer.addEventListener('submit', function (e) {
     var box = composer.elements.text;
     var app = composer.elements.app;
     var text = box ? box.value.trim() : '';
-    if (!text || !app || app.value === '${FORGE_TARGET}') return;
+    if (!text || !app) return;
+    // Sent from here, or posted natively (the forge target): either way the
+    // words are gone from the box, so the saved copy goes too.
+    if (draft) draft.clear();
+    if (app.value === '${FORGE_TARGET}') return;
     if (!queue('/api/v1/feed/tells', { app: app.value, text: text })) return;
     e.preventDefault();
     box.value = '';
     box.focus();
+    outbox.flush().then(function (r) { if (r.refused && draft) draft.refused(text); });
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'x' || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -531,6 +595,7 @@ ${outboxJs}
   document.addEventListener('submit', function (e) {
     if (e.target && e.target.getAttribute && e.target.getAttribute('action') === '/logout') {
       if (outbox) outbox.clear();
+      if (draft) draft.forgetAll();
       if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear');
     }
   });

@@ -17,10 +17,6 @@ import { seedAdmin } from "./helpers/admin.ts";
 
 /** Routes that answer a bare array today → the open issue that changes them. */
 const BARE: Record<string, string> = {
-  "/api/v1/repos/:owner/:name/forks": "#4843",
-  "/api/v1/repos/:owner/:name/labels": "#4843",
-  "/api/v1/repos/:owner/:name/hooks": "#4843",
-  "/api/v1/repos/:owner/:name/tags": "#5061",
   "/api/v1/repos/:owner/:name/commits": "#5083",
   "/api/v1/user/origins": "#4841",
   "/api/v1/user/origin-apps": "#4841",

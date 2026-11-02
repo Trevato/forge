@@ -32,6 +32,7 @@ import { spans } from "../kernel/degraded_history.ts";
 import { QUEUE_WAIT_MAX_MS } from "../kernel/vitals.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { isOutageSummary } from "./network.ts";
+import { clip } from "../text/clip.ts";
 
 const log = createLog("sentinel");
 
@@ -63,8 +64,7 @@ export interface Finding {
   readonly incident?: string;
 }
 
-const clip = (text: string, n = 200): string =>
-  text.length > n ? `${text.slice(0, n - 1)}…` : text;
+const QUOTE_MAX = 200;
 /**
  * Evidence is filed where others read it, and may be public: anything
  * credential-shaped, or a long unbroken token, never leaves as quoted.
@@ -111,7 +111,7 @@ export function strayTriggers(db: Database): Finding[] {
       title: `Trigger ${t.name} on ${t.tbl_name} is not in the schema`,
       evidence: [
         `sqlite_master: trigger \`${t.name}\` on table \`${t.tbl_name}\``,
-        `sql: ${clip(oneLine(t.sql ?? ""))}`,
+        `sql: ${clip(t.sql ?? "", QUOTE_MAX)}`,
       ],
       pillar: "Trust: the database does only what the schema says",
       lookFor: `\`SELECT name FROM sqlite_master WHERE type = 'trigger'\` lists only triggers the schema creates.`,
@@ -300,7 +300,7 @@ export function runStreaks(db: Database): Finding[] {
         title: `The check in ${repoSlug(db, repoId)} has not been green in its last ${runs.length} runs`,
         evidence: [
           `${failed.length} of the last ${runs.length} check runs failed, none passed`,
-          `${hits.length} say: "${clip(line)}"`,
+          `${hits.length} say: "${clip(line, QUOTE_MAX)}"`,
           `runs: ${hits.slice(0, 5).map((r) => r.id).join(", ")}`,
         ],
         pillar: "Trust: a green check means something",
@@ -323,7 +323,7 @@ export function runStreaks(db: Database): Finding[] {
         title: `Crew runs in ${repoSlug(db, repoId)} keep failing at the push or the sandbox`,
         evidence: [
           `${pushes.length} of the last ${runs.length} agent runs failed with a push or sandbox line`,
-          `e.g. "${clip(oneLine(pushes[0]?.summary ?? ""))}"`,
+          `e.g. "${clip(pushes[0]?.summary ?? "", QUOTE_MAX)}"`,
           `runs: ${pushes.slice(0, 5).map((r) => r.id).join(", ")}`,
         ],
         pillar: "Throughput: a crew run can finish what it starts",
@@ -351,7 +351,7 @@ export function repeatedErrors(now: number): Finding[] {
       title: `The log says "${clip(k, 90)}" ${lines.length} times`,
       evidence: [
         `${lines.length} ERROR lines, newest ${lines[0]?.at ?? ""}`,
-        `line: ${clip(oneLine(lines[0]?.message ?? ""))}`,
+        `line: ${clip(lines[0]?.message ?? "", QUOTE_MAX)}`,
       ],
       pillar: "Reliability: a quiet log",
       lookFor: "No ERROR line of this shape in an hour.",
@@ -387,7 +387,7 @@ export function degradedCauses(db: Database, now: number, forgeRepoId?: string):
     const minutes = Math.round(d.ms / 60_000);
     out.push({
       key: `degraded:${keyPart(cause)}`,
-      title: `${cause} was degraded ${minutes} minutes today: ${clip(oneLine(d.sentence), 120)}`,
+      title: `${cause} was degraded ${minutes} minutes today: ${clip(d.sentence, 120)}`,
       evidence: [
         `cause: ${cause}`,
         `sentence: ${oneLine(d.sentence)}`,
@@ -438,7 +438,7 @@ export function budgetBreaches(db: Database, now: number, forgeRepoId?: string):
     if (s.closedAt !== null || !BREACH_CAUSE.test(s.cause) || !ownCause(s.cause, forgeRepoId)) continue;
     out.push({
       key: `degraded:${keyPart(s.cause)}`,
-      title: `${s.cause} is past its budget: ${clip(oneLine(s.sentence), 120)}`,
+      title: `${s.cause} is past its budget: ${clip(s.sentence, 120)}`,
       evidence: [
         `cause: ${s.cause}`,
         `sentence: ${oneLine(s.sentence)}`,

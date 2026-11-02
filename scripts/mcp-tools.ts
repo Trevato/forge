@@ -14,6 +14,7 @@
  */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { byName } from "../src/http/mcp/shared.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const DIR = join(ROOT, "src/http/mcp/tools");
@@ -39,13 +40,19 @@ export function indexText(names: readonly string[]): string {
   ].join("\n");
 }
 
-type Documented = { readonly name: string; readonly doc?: string; readonly writes: boolean };
+type Documented = {
+  readonly name: string;
+  readonly doc?: string;
+  readonly writes: boolean;
+  readonly needsAdminScope?: true;
+};
 
 export function tableText(tools: readonly Documented[]): string {
   const rows = [...tools]
     .filter((t) => t.doc !== undefined)
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((t) => `| \`${t.name}\` | ${t.doc} | ${t.writes ? "yes" : ""} |`);
+    .sort(byName)
+    // An admin-scope tool is marked so, as `tools/list` hides it from a lesser token (#7650).
+    .map((t) => `| \`${t.name}\` | ${t.needsAdminScope === true ? "(admin scope) " : ""}${t.doc} | ${t.writes ? "yes" : ""} |`);
   return [BEGIN, "", "| tool | does | writes |", "| ---- | ---- | ------ |", ...rows, "", END].join("\n");
 }
 
@@ -67,8 +74,9 @@ if (import.meta.main) {
   }
   // After the index is current, so a new file's row is in the table.
   const { TOOLS } = await import("../src/http/mcp/tools.ts");
+  const { REPORT_TOOL } = await import("../src/http/mcp.ts");
   const md = readFileSync(DOC, "utf8");
-  const doc = withTable(md, tableText(TOOLS));
+  const doc = withTable(md, tableText([...TOOLS, REPORT_TOOL]));
   if (md !== doc) {
     stale.push("docs/MCP.md");
     if (!check) writeFileSync(DOC, doc);

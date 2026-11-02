@@ -3,9 +3,9 @@ import { good, bad, type Tool, APP_ARG, planRepo, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "milestones",
-  doc: "`{ app, issue? }`: how far each thing asked for is (and, with `issue`, whether you watch it: `watching`), from the dependency tree: the plan's limbs with their weights, or one milestone opened (who is building, what is blocked and on what, what merged in 7 days, an estimate, and for an owner `spend`: dollars, changes landed ever, the costliest three issues)",
+  doc: "`{ app, issue? }`: how far each thing asked for is (and, with `issue`, whether you watch it: `watching`), from the dependency tree: the plan's limbs with their weights, or one milestone opened (who is building, what is blocked and on what, what merged in 7 days, an estimate, `closedPerDay` (14 days) and `paceDate`, and for an owner `spend`: dollars, changes landed ever, the costliest three issues)",
   description:
-    "How far each thing asked for is. With `app`: top-level limbs, done/total, building, recent merges.",
+    "How far each ask is. With `app`: top-level limbs, done/total, building, recent merges.",
   inputSchema: {
     type: "object",
     properties: {

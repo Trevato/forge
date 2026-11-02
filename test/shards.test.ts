@@ -4,7 +4,7 @@
  * red run whose tail names every failing test from every shard.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveLimits } from "../src/apps/contain.ts";
@@ -12,6 +12,9 @@ import {
   SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
   besideOthers,
+  crashedOutside,
+  CRASH_RERUNS,
+  quoteCrash,
   failingFiles,
   onlyTestFailures,
   WORKER_MEMORY_BYTES,
@@ -446,6 +449,19 @@ describe("tally", () => {
   });
 });
 
+describe("tally, a shard killed mid-file", () => {
+  test("names the last file it started and how long it ran", () => {
+    const output = "test/a.test.ts:\n(pass) x [1ms]\n\ntest/x.test.ts:\n(pass) y [1ms]\n";
+    const ending = tally([{ files: ["test/a.test.ts", "test/x.test.ts"], code: 143, output, seconds: 411.6 }], 412);
+    expect(ending.lines).toContain("shard 1 killed after 412 s, running test/x.test.ts");
+  });
+
+  test("without a started file or a timing, the old line stands", () => {
+    const ending = tally([{ files: ["b"], code: 143, output: "", seconds: 5 }], 5);
+    expect(ending.lines).toContain("shard 1 exited 143 without naming a test: b");
+  });
+});
+
 describe("splitArgs", () => {
   test("after --, a bare name is a file under test/", () => {
     expect(
@@ -483,17 +499,14 @@ describe("splitArgs", () => {
     const check = parseCheck(text, undefined);
     expect(check.ok).toBe(true);
     if (!check.ok || check.value === undefined) throw new Error("no check");
-    const run = check.value.run;
+    const run = check.value.fast ?? "";
     const args = run
       .slice(run.indexOf("scripts/test-shards.ts ") + 23)
       .split(" ");
     const split = splitArgs(args);
     expect(split.ok).toBe(true);
     if (!split.ok) return;
-    const files = [
-      ...(split.flags.includes("--gate") ? gateFiles() : []),
-      ...split.files,
-    ];
+    const files = [...gateFiles(), ...split.files];
     expect(files.length).toBeGreaterThan(0);
     for (const file of files)
       expect(
@@ -724,11 +737,13 @@ describe("the gate audit before any shard", () => {
 describe("the gate audit alone, first in the check", () => {
   const script = new URL("../scripts/gate.ts", import.meta.url).pathname;
   const listed = presentTests();
+  // The check sets FORGE_CHECK_BASE; the scratch dir is no repo, so it has none.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "FORGE_CHECK_BASE"));
   const run = async (extra: string[], drop: string[] = []) => {
     const dir = mkdtempSync(join(tmpdir(), "forge-gate-"));
     mkdirSync(join(dir, "test"));
     for (const file of [...listed, ...extra]) if (!drop.includes(file)) writeFileSync(join(dir, file), "");
-    const child = Bun.spawn(["bun", script], { cwd: dir, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn(["bun", script], { cwd: dir, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const err = await new Response(child.stderr).text();
     const code = await child.exited;
     rmSync(dir, { recursive: true, force: true });
@@ -744,7 +759,8 @@ describe("the gate audit alone, first in the check", () => {
     );
     const green = await run(["test/zz-new.test.ts"]);
     expect(green.code).toBe(0);
-    expect(green.err).toBe("");
+    // The scratch dir is no git repo, so the pin check says it had no base.
+    expect(green.err).toBe("gate: no base to compare to (set FORGE_CHECK_BASE): migration pins not checked\n");
   }, 30_000);
 
   test("forge.json audits before tsc, and the native tsc runs incremental from the check's cache", async () => {
@@ -934,4 +950,189 @@ describe("a failing file is run once more alone", () => {
     expect(got.code).toBe(1);
     expect(got.out).not.toContain("fails only beside others");
   }, 30_000);
+});
+
+describe("a crash outside any test", () => {
+  const ran = "Ran 3 tests across 2 files. [9ms]";
+  test("is a red whose report is not only failed tests", () => {
+    expect(crashedOutside({ code: 1, output: `# Unhandled error between tests\n 3 pass\n 1 error\n${ran}` })).toBe(true);
+    expect(crashedOutside({ code: 137, output: "test/a.test.ts:\n(pass) a" })).toBe(true);
+    expect(crashedOutside({ code: 1, output: `(fail) a\n 1 fail\n${ran}` })).toBe(false);
+    expect(crashedOutside({ code: 0, output: "" })).toBe(false);
+    expect(CRASH_RERUNS).toBe(3);
+  });
+
+  test("is quoted in the log so nothing reading it counts the crashed run", () => {
+    const crashed = `test/a.test.ts:\n(fail) a [1.00ms]\n# Unhandled error between tests\n 0 pass\n 1 fail\n 1 error\nRan 1 test across 1 file. [3ms]\n`;
+    const quoted = quoteCrash("2/5", 1, crashed);
+    expect(quoted.split("\n")[0]).toBe(
+      "test-shards: shard 2/5 crashed outside any test (exit 1); re-running it once. The crashed run:",
+    );
+    expect(quoted).toContain("  │ # Unhandled error between tests");
+    const rerun = "test/a.test.ts:\n(pass) a [1.00ms]\n 1 pass\n 0 fail\nRan 1 test across 1 file. [3ms]\n";
+    const ending = tally([{ files: ["test/a.test.ts"], code: 0, output: quoted + rerun }], 1);
+    expect(ending.code).toBe(0);
+    expect(ending.lines.join("\n")).not.toContain("(fail)");
+    expect(failingFiles(quoted + rerun)).toEqual([]);
+    expect(onlyTestFailures(quoted + rerun)).toBe(true);
+  });
+});
+
+describe("every shard runs to the end, and a crashed one once more", () => {
+  const script = new URL("../scripts/test-shards.ts", import.meta.url).pathname;
+  const scratch = mkdtempSync(join(tmpdir(), "shard-crash-"));
+  // Heavy by bytes, so it runs first and gets a shard of its own.
+  const heavyRed = join(scratch, "heavy-red.test.ts");
+  writeFileSync(heavyRed, `import { expect, test } from "bun:test";\ntest("heavy red", () => { expect(1).toBe(2); });\n// ${"padding ".repeat(4000)}\n`);
+  const filler = join(scratch, "shard-filler.test.ts");
+  writeFileSync(filler, `import { test } from "bun:test";\ntest("filler", () => {});\n// ${"padding ".repeat(4000)}\n`);
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+  const run = async (shards: string, files: string[], mark: string) => {
+    const env = { ...process.env, FORGE_CHECK_SHARDS: shards, FORGE_CELL_CPUS: "4", SHARD_CRASH_MARK: mark } as Record<string, string | undefined>;
+    for (const name of Object.keys(env)) if (name.startsWith("FORGE_CHECK_") && name !== "FORGE_CHECK_SHARDS") delete env[name];
+    const child = Bun.spawn(["bun", script, ...files], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env });
+    const [out] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    return { code: await child.exited, out };
+  };
+
+  test("a red file does not stop the files after it", async () => {
+    // One worker, heaviest first: the red file runs before the green one.
+    const got = await run("1", [heavyRed, "test/fixtures/shard-victim.test.ts"], join(scratch, "unused"));
+    expect(got.code).toBe(1);
+    expect(got.out).toContain("(fail) heavy red");
+    expect(got.out).toContain("── shard 2/2: test/fixtures/shard-victim.test.ts");
+    expect(got.out).not.toContain("fail-fast");
+  }, 30_000);
+
+  test("a crash between tests re-runs its shard once, and the re-run is the verdict", async () => {
+    const got = await run("2", [filler, "test/fixtures/shard-crash-once.test.ts", "test/fixtures/shard-victim.test.ts"], join(scratch, "crashed-once"));
+    expect(got.out).toContain("crashed outside any test (exit 1); re-running it once. The crashed run:");
+    expect(got.out).toContain("  │ error: Cannot use a closed database");
+    expect(got.code).toBe(0);
+  }, 30_000);
+
+  test("a single worker quotes the crashed run too: no bare error lines, and the re-run is green", async () => {
+    const got = await run("1", ["test/fixtures/shard-crash-once.test.ts", "test/fixtures/shard-victim.test.ts"], join(scratch, "crashed-serial"));
+    expect(got.out).toContain("crashed outside any test (exit 1); re-running it once. The crashed run:");
+    expect(got.out).toContain("  │ error: Cannot use a closed database");
+    const bare = got.out.split("\n").filter((line) => !line.startsWith("  │ "));
+    expect(bare.some((line) => line.includes("Cannot use a closed database"))).toBe(false);
+    expect(bare.some((line) => line.includes("# Unhandled error"))).toBe(false);
+    expect(got.code).toBe(0);
+  }, 30_000);
+
+  test("only CRASH_RERUNS crashed shards are re-run; the next stays red unre-run", async () => {
+    const crashing = [1, 2, 3, 4].map((n) => {
+      const file = join(scratch, `crash-${n}.test.ts`);
+      writeFileSync(file, `throw new Error("boom at load ${n}");\n`);
+      return file;
+    });
+    const got = await run("4", crashing, join(scratch, "unused"));
+    expect(got.out.split("re-running it once").length - 1).toBe(CRASH_RERUNS);
+    expect(got.code).toBe(1);
+  }, 60_000);
+
+  test("a crash that happens again stays red", async () => {
+    const got = await run("2", [filler, "test/fixtures/shard-errors.test.ts", "test/fixtures/shard-victim.test.ts"], join(scratch, "unused"));
+    expect(got.out).toContain("re-running it once");
+    expect(got.out).toContain("boom at load");
+    expect(got.code).toBe(1);
+  }, 30_000);
+});
+
+describe("a fixture suite in six shards (#7617)", () => {
+  const script = new URL("../scripts/test-shards.ts", import.meta.url).pathname;
+  const fixture = (files: Record<string, string>): string => {
+    const dir = mkdtempSync(join(tmpdir(), "shards-fixture-"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+    return dir;
+  };
+  const run = async (
+    dir: string,
+    shards: string,
+    names: string[],
+    env: Record<string, string> = {},
+  ): Promise<{ code: number; out: string; stdout: string }> => {
+    const child = Bun.spawn(["bun", script, ...names], {
+      cwd: dir,
+      env: { ...process.env, FORGE_CHECK_SHARDS: shards, ...env },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    const code = await child.exited;
+    return { code, out: stdout + err, stdout };
+  };
+  const passing = (n: number): string =>
+    `import { test } from "bun:test";\ntest("passes ${n}", () => {});\n`;
+  /** The files named on the `── shard N/M…: files` lines, in the order shards ran. */
+  const finished = (stdout: string): string[] =>
+    [...stdout.matchAll(/^── shard \d+\/\d+(?: \(exit \d+, [\d.]+s\))?: (.*)$/gm)].map((m) => m[1]!);
+
+  test("twelve files in six shards: the plan has six slices and each file runs exactly once", async () => {
+    const names = Array.from({ length: 12 }, (_, i) => `s${i}.test.ts`);
+    const dir = fixture(Object.fromEntries(names.map((name, i) => [name, passing(i)])));
+    const six = await run(dir, "6", names);
+    rmSync(dir, { recursive: true, force: true });
+    expect(six.code).toBe(0);
+    expect(six.out).toContain("12 files in 6 shards");
+    expect(six.out.match(/test-shards: start \d+\/6 /g)?.length).toBe(6);
+    const ran = finished(six.stdout).flatMap((line) => line.split(" "));
+    for (const name of names) expect(ran.filter((file) => file === name).length).toBe(1);
+    expect(six.out).toMatch(/Ran 12 tests across 12 files/);
+  }, 60_000);
+
+  test("a failure in any shard reds the run and names the test", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 5; i++) files[`ok${i}.test.ts`] = passing(i);
+    files["bad.test.ts"] = `import { test, expect } from "bun:test";\ntest("the broken one", () => { expect(1).toBe(2); });\n`;
+    const dir = fixture(files);
+    const got = await run(dir, "3", Object.keys(files));
+    rmSync(dir, { recursive: true, force: true });
+    expect(got.code).not.toBe(0);
+    expect(got.out).toContain("(fail) the broken one");
+  }, 60_000);
+
+  test("each shard gets its own empty FORGE_APP_DATA and TMPDIR, removed after", async () => {
+    const probe = (n: number): string =>
+      `import { test, expect } from "bun:test";
+import { readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+test("probe ${n}", () => {
+  const data = process.env.FORGE_APP_DATA!;
+  expect(readdirSync(data)).toEqual([]);
+  expect(readdirSync(tmpdir())).toEqual([]);
+  writeFileSync(data + "/mark", "${n}");
+  console.log("PROBE-DATA " + data + " PROBE-TMP " + tmpdir());
+});
+`;
+    const names = ["p0.test.ts", "p1.test.ts", "p2.test.ts"];
+    const dir = fixture(Object.fromEntries(names.map((name, i) => [name, probe(i)])));
+    const root = mkdtempSync(join(tmpdir(), "shards-root-"));
+    const got = await run(dir, "3", names, { TMPDIR: root, FORGE_APP_DATA: root });
+    rmSync(dir, { recursive: true, force: true });
+    const seen = [...got.out.matchAll(/PROBE-DATA (\S+) PROBE-TMP (\S+)/g)];
+    const leaked = readdirSync(root);
+    rmSync(root, { recursive: true, force: true });
+    expect(got.code).toBe(0);
+    expect(new Set(seen.map((m) => m[1])).size).toBe(3);
+    expect(new Set(seen.map((m) => m[2])).size).toBe(3);
+    for (const m of seen) expect(m[1]!.startsWith(root)).toBe(true);
+    expect(leaked).toEqual([]);
+  }, 60_000);
+
+  test("a FORGE_APP_DATA the cell set is nested under, not replaced", async () => {
+    const dir = fixture({
+      "d.test.ts": `import { test } from "bun:test";\ntest("d", () => { console.log("PROBE-DATA " + process.env.FORGE_APP_DATA); });\n`,
+    });
+    const data = mkdtempSync(join(tmpdir(), "shards-data-"));
+    const got = await run(dir, "1", ["d.test.ts"], { FORGE_APP_DATA: data });
+    rmSync(dir, { recursive: true, force: true });
+    const leaked = readdirSync(data);
+    rmSync(data, { recursive: true, force: true });
+    expect(got.code).toBe(0);
+    expect(got.out).toContain(`PROBE-DATA ${data}/data-0`);
+    expect(leaked).toEqual([]);
+  }, 60_000);
 });

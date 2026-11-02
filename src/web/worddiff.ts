@@ -16,7 +16,7 @@ export interface WordDiff {
 }
 
 // Beyond this token count the O(n·m) LCS is not worth it; mark the whole line.
-const MAX_TOKENS = 800;
+export const MAX_TOKENS = 800;
 
 function tokenize(line: string): string[] {
   return line.match(/\w+|\s+|[^\w\s]/g) ?? [];

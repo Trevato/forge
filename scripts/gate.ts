@@ -20,7 +20,7 @@
  * runs `outsideFiles` nightly and files a `Red:` issue for each that fails (#812).
  */
 
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 export type Exclusion = {
@@ -58,6 +58,11 @@ export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/probes.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/public-url.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/rehearsal-real.test.ts",
+    reason: "red on main@accaa65 under the gate: the second real roll's old forge does not come up",
+    issue: 7632,
+  },
   {
     file: "test/reviews.test.ts",
     reason: "red in random order: a posted review comment appears inline, anchored to its line",
@@ -180,10 +185,56 @@ export function gateRefusal(present: readonly string[]): string[] {
   ];
 }
 
+function git(args: string[], cwd: string = process.cwd()): { ok: boolean; out: string } {
+  const r = Bun.spawnSync(["git", ...args], { stderr: "pipe", cwd });
+  return { ok: r.exitCode === 0, out: r.stdout.toString().trim() };
+}
+
+/**
+ * Pins the pull edited, against its base: `$FORGE_CHECK_BASE`, else the
+ * merge base with main. A pin whose migration is not on the base was never
+ * history, so it is deleted and regenerated rather than left to a new migration.
+ * With no base to compare to it says so on stderr and names nothing.
+ */
+// Imported on use: `treeGate` loads this file alone, outside the repository.
+export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]> {
+  const { parseNameStatus, pinEdits, unpinnedAdds } = await import("../src/kernel/pin_edits.ts");
+  const env = process.env.FORGE_CHECK_BASE;
+  const base =
+    env || git(["merge-base", "origin/main", "HEAD"], cwd).out || git(["merge-base", "main", "HEAD"], cwd).out;
+  if (!base) {
+    console.error("gate: no base to compare to (set FORGE_CHECK_BASE): migration pins not checked");
+    return [];
+  }
+  const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
+  if (!diff.ok) {
+    console.error(`gate: git diff against ${base} failed: migration pins not checked`);
+    return [];
+  }
+  const changes = parseNameStatus(diff.out);
+  const edits = pinEdits(changes).map((path) => {
+    const name = path.split("/").pop()?.replace(/\.pin$/, "") ?? "";
+    const deleted = changes.some((c) => c.path === path && c.status.startsWith("D"));
+    const onBase = git(["cat-file", "-e", `${base}:src/core/migrations/${name}.ts`], cwd).ok;
+    if (path.endsWith(".pin") && !onBase)
+      return `${path} was changed: its migration is not on the base yet, so delete the pin and re-run bun scripts/pin-migrations.ts`;
+    return deleted
+      ? `${path} was deleted: a migration on main is history, so restore it`
+      : `${path} was changed: a migration on main is history, so add a new migration instead`;
+  });
+  // Last, so the check's summary — its last line — names the one-step fix.
+  const pinned = (name: string) => existsSync(join(cwd, "src/core/migration-pins", `${name}.pin`));
+  const missing = unpinnedAdds(changes, pinned).map(
+    (name) =>
+      `this pull adds migration ${name} without its pin: run bun scripts/pin-migrations.ts and commit src/core/migration-pins/${name}.pin`,
+  );
+  return [...edits, ...missing];
+}
+
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
 // a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
-  const refusal = gateRefusal(presentTests());
+  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal())];
   for (const line of refusal) console.error(`gate: ${line}`);
   process.exit(refusal.length === 0 ? 0 : 2);
 }

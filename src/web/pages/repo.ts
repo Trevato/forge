@@ -28,11 +28,12 @@ import {
 } from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
 import {
+  archivedParentLine,
   followingCard,
   followingOf,
   lineageCard,
-  nothingNew,
 } from "./following.ts";
+import { nothingNew } from "../../actions/follow.ts";
 import { frozenBlock } from "./frozen.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
@@ -60,7 +61,7 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { codeJs } from "../client.ts";
-import { highlightBlob } from "../code.ts";
+import { countLines, highlightPrefix } from "../code.ts";
 import { latestWave } from "../../story/waves.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -71,6 +72,10 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
+import { csvJs, isCsvPath } from "../render/csv.ts";
+import { HEAD_BYTES } from "../render/kinds.ts";
+import { RENDERERS, rendererFor } from "../render/renderers.ts";
+import { mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
 import {
@@ -92,8 +97,11 @@ import {
 const MAX_RENDER_BYTES = 1_000_000;
 // A blob under the byte cap can still be pathological (a megabyte of newlines
 // is ~490k lines). Bounding rendered lines bounds the response independently.
-const MAX_RENDER_LINES = 5_000;
+/** Lines a file page draws before it links the rest (`?all=1` draws every one). */
+const FIRST_LINES = 1_500;
+const MAX_RENDER_LINES = 10_000;
 
+import { sshCloneUrl } from "../../ssh/command.ts";
 import { pathCrumbs, refMenu, refSetFrom, type RefSet } from "./refs.ts";
 import {
   codeLayout,
@@ -197,7 +205,7 @@ function forkRanking(
       title: html`<a href="/${f.fork.ownerName}/${f.fork.name}"
         >${f.fork.ownerName}/${f.fork.name}</a
       >`,
-      meta: html`${driftWords(f.drift)}${f.pushedAt === null
+      meta: html`${ranked.archived ? "" : driftWords(f.drift)}${f.pushedAt === null
         ? html``
         : html` · pushed ${time(f.pushedAt)}`}`,
       ...(offer
@@ -221,7 +229,9 @@ function forkRanking(
       : listCard(offering.map((f) => line(f, true)))}
     ${nothingNew.length === 0
       ? html``
-      : html`<h3 class="mt">${nothingNewHeading(nothingNew.length)}</h3>
+      : html`${ranked.archived
+            ? ""
+            : html`<h3 class="mt">${nothingNewHeading(nothingNew.length)}</h3>`}
           ${listCard(nothingNew.map((f) => line(f, false)))}`}`;
 }
 
@@ -229,8 +239,10 @@ function forkRanking(
 function forkBar(ctx: Ctx, repo: Repo): Html {
   const canFork =
     ctx.auth.user !== undefined && ctx.auth.user.id !== repo.ownerId;
+  // Forge it is for any signed-in person, the owner too: it makes a forge, not a copy in this one.
+  const canForge = ctx.auth.user?.kind === "user";
   const forkCount = forksFor(ctx, repo).length;
-  if (!canFork && forkCount === 0) return html``;
+  if (!canFork && !canForge && forkCount === 0) return html``;
   return html`<div class="mt">
     ${listCard([
       row({
@@ -241,11 +253,15 @@ function forkBar(ctx: Ctx, repo: Repo): Html {
                 >${badge(`${forkCount} fork${forkCount === 1 ? "" : "s"}`)}</a
               >`
             : "Forks",
-        trail: canFork
+        trail: html`${canFork
           ? html`<form method="post" action="${repoBase(repo)}/fork">
               ${btn("Fork", { size: "sm", icon: "fork" })}
             </form>`
-          : html``,
+          : html``}${canForge
+          ? html`<form method="post" action="${repoBase(repo)}/forge">
+              ${btn("Forge it", { size: "sm", icon: "rocket", variant: "outline" })}
+            </form>`
+          : html``}`,
       }),
     ])}
   </div>`;
@@ -599,8 +615,9 @@ export async function readmeFor(
  */
 export type BlobView = "source" | "rendered";
 
-export const isMarkdownPath = (path: string): boolean =>
-  /\.(md|markdown|mdx)$/i.test(path);
+/** The file saved under its own name, streamed at any size. */
+const downloadHref = (base: string, ref: string, path: string): string =>
+  `${mediaHref(base, ref, path)}?download=1`;
 
 export function blobView(value: string | null): BlobView {
   return value === "source" ? "source" : "rendered";
@@ -613,6 +630,7 @@ export function blobBody(
   path: string,
   blob: Blob,
   highlighted?: (ms: number) => void,
+  all = false,
 ): { content: Html; lines: number } {
   const encoded = encodeURIComponent(ref);
   if (blob.kind === "binary") {
@@ -623,7 +641,7 @@ export function blobBody(
         title: "Binary file",
         note: `${fileSize(blob.size)} — not shown, but you can download it.`,
         action: btn("Download", {
-          href: `${base}/raw/${encoded}/${path}`,
+          href: downloadHref(base, ref, path),
           variant: "primary",
           icon: "download",
         }),
@@ -636,41 +654,53 @@ export function blobBody(
       content: empty({
         icon: "alert",
         title: "Too large to render",
-        note: `${fileSize(blob.size)} — over the render cap. Fetch the raw bytes instead.`,
-        action: btn("View raw", {
-          href: `${base}/raw/${encoded}/${path}`,
+        note: `${fileSize(blob.size)} — over the render cap. Download it instead.`,
+        action: btn("Download", {
+          href: downloadHref(base, ref, path),
           variant: "primary",
+          icon: "download",
         }),
       }),
     };
   }
   const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
-  // Highlight the whole file (multi-line constructs need full context),
-  // then take the first N lines for rendering.
+  const limit = all ? MAX_RENDER_LINES : FIRST_LINES;
+  // Highlighting runs left to right, so the first N lines highlight the same
+  // alone as inside the whole file; only that prefix is read and painted.
   const began = performance.now();
-  const highlight = highlightBlob(text, path);
+  const total = countLines(text);
+  const lines = highlightPrefix(text, path, limit);
   highlighted?.(performance.now() - began);
-  const lines = highlight.slice(0, MAX_RENDER_LINES);
-  const truncated = highlight.length > MAX_RENDER_LINES;
+  const truncated = total > lines.length;
+  const fileHref = `${base}/blob/${encoded}/${path}`;
   return {
-    lines: highlight.length,
+    lines: total,
     content: html`<div class="card code">
         <table>
           ${lines.map(
             (line, i) =>
-              html`<tr id="L${i + 1}">
-                <td class="ln"><a href="#L${i + 1}">${i + 1}</a></td>
-                <td><pre>${line}</pre></td>
-              </tr>`,
+              html`<tr id="L${i + 1}"><td class="ln"><a href="#L${i + 1}">${i + 1}</a></td><td><pre>${line}</pre></td></tr>`,
           )}
         </table>
       </div>
       ${when(truncated, () =>
         empty({
-          icon: "alert",
-          title: "Showing the first 5,000 lines",
-          note: `This file has ${highlight.length.toLocaleString()} lines. Fetch the raw bytes for all of them.`,
-          action: btn("View raw", { href: `${base}/raw/${encoded}/${path}` }),
+          icon: "file",
+          title: `${(total - lines.length).toLocaleString("en-US")} more lines`,
+          note: all
+            ? "The rest is in the raw file."
+            : "The page draws the first lines so it opens at once. A link to a later line (#L…) lands once you show all lines.",
+          action: html`${all
+              ? html``
+              : btn("Show all lines", {
+                  href: `${fileHref}?all=1`,
+                  id: "code-cut",
+                  icon: "file",
+                })}
+            ${btn("View raw", {
+              href: `${base}/raw/${encoded}/${path}`,
+              variant: "outline",
+            })}`,
         }),
       )}`,
   };
@@ -712,9 +742,7 @@ function aboutCard(
   drift?: ForkDrift,
 ): Html {
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
-  // An SSH listener is not built yet; when a deployment configures one, the
-  // second clone line appears with no further change here.
-  const sshPort = (ctx.app.config as { sshPort?: number }).sshPort;
+  const sshUrl = sshCloneUrl(ctx.app, repo.ownerName, repo.name);
   const parent = forkParent(ctx, repo);
   const origin = repo.origin;
   // A fork made at the origin has no `forkParentId` — its parent is a
@@ -831,12 +859,12 @@ function aboutCard(
         <p class="mt small muted">Clone over HTTPS</p>
         ${copyField("clone-https", cloneUrl, "HTTPS clone address", "Copy clone URL")}
         ${when(
-          sshPort !== undefined,
-          () =>
+          sshUrl,
+          (url) =>
             html`<p class="mt small muted">Clone over SSH</p>
               ${copyField(
                   "clone-ssh",
-                  `ssh://git@${ctx.app.config.host ?? ctx.url.hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git`,
+                  url,
                   "SSH clone address",
                   "Copy SSH clone URL",
                 )}`,
@@ -984,6 +1012,26 @@ export function editAction(scope: RepoScope, ref: string, path: string): Html {
 }
 
 /**
+ * What draws this file, if anything: the registry decides what it is and
+ * whether it is under its cap; a kind with no renderer yet, or one over its
+ * cap, keeps the source view. A PDF is drawn from the media route, which only
+ * a repository on this forge has.
+ */
+function blobRenderer(scope: RepoScope, path: string, blob: Blob): ReturnType<typeof rendererFor> {
+  const found = rendererFor(path, blob);
+  return found?.render === RENDERERS.pdf && scope.kind !== "local" ? undefined : found;
+}
+
+/** Whether the blob page of this file draws a PDF, and so needs `object-src`. */
+export function drawsPdf(scope: RepoScope, path: string, blob: Blob, view: BlobView): boolean {
+  return (
+    view !== "source" &&
+    RENDERERS.pdf !== undefined &&
+    blobRenderer(scope, path, blob)?.render === RENDERERS.pdf
+  );
+}
+
+/**
  * One file, framed by the same path header the tree uses. The header is
  * sticky and the whole pane is one element, because a script swapping a
  * preview in replaces exactly this.
@@ -998,18 +1046,33 @@ export function renderBlob(
     view?: BlobView;
     /** Told how long highlighting took, for Server-Timing. */
     highlighted?: (ms: number) => void;
+    /** Draw every line instead of the first 1,500. */
+    all?: boolean;
   },
 ): Html {
   const base = scope.base;
   const encoded = encodeURIComponent(o.ref);
-  const markdown = o.blob.kind === "text" && isMarkdownPath(o.path);
-  const view: BlobView = markdown ? (o.view ?? "rendered") : "source";
-  const { content, lines } =
-    view === "rendered" && o.blob.kind === "text"
-      ? renderedMarkdown(o.blob)
-      : blobBody(base, o.ref, o.path, o.blob, o.highlighted);
+  const blob = o.blob;
+  const renderer = blobRenderer(scope, o.path, blob);
+  const view: BlobView = renderer ? (o.view ?? "rendered") : "source";
+  const drawn =
+    view === "rendered" && renderer
+      ? renderer.render({
+          path: o.path,
+          size: blob.size,
+          body: renderer.body,
+          media: mediaHref(base, o.ref, o.path),
+          pathHref: `${base}/blob/${encoded}/${o.path}`,
+          all: o.all === true,
+        })
+      : undefined;
+  const fellBack = drawn?.fallback;
+  const { content, lines, summary } =
+    drawn !== undefined && fellBack === undefined
+      ? drawn
+      : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all), summary: undefined };
   const sizeText =
-    o.blob.kind === "too_large" ? "" : sizeWithTokens(o.blob.size, o.path);
+    blob.kind === "too_large" ? "" : sizeWithTokens(blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
   return html`<div class="code-pane" id="code-pane" data-path="${o.path}">
     <div class="bar mb">
@@ -1021,27 +1084,29 @@ export function renderBlob(
       )}
       ${pathCrumbs(base, scope.facts.name, o.ref, o.path, true)}
       <span class="spacer"></span>
+      ${summary !== undefined
+        ? html`<span class="muted small num">${summary}</span>`
+        : when(
+            lines > 0,
+            () =>
+              html`<span class="muted small num"
+                >${lines.toLocaleString()} lines · ${sizeText}</span
+              >`,
+          )}
       ${when(
-        lines > 0,
-        () =>
-          html`<span class="muted small num"
-            >${lines.toLocaleString()} lines · ${sizeText}</span
-          >`,
-      )}
-      ${when(
-        markdown,
+        renderer !== undefined,
         () =>
           html`<span class="blob-view"
             >${seg([
               {
-                label: "Source",
-                href: `${fileHref}?view=source`,
-                current: view === "source",
-              },
-              {
                 label: "Rendered",
                 href: fileHref,
-                current: view === "rendered",
+                current: view === "rendered" && fellBack === undefined,
+              },
+              {
+                label: "Source",
+                href: `${fileHref}?view=source`,
+                current: view === "source" || fellBack !== undefined,
               },
             ])}</span
           >`,
@@ -1051,6 +1116,12 @@ export function renderBlob(
         size: "sm",
         variant: "outline",
       })}
+      ${btn("Download", {
+        href: downloadHref(base, o.ref, o.path),
+        size: "sm",
+        variant: "outline",
+        icon: "download",
+      })}
       ${btn("History", {
         href: `${base}/commits?ref=${encoded}&path=${encodeURIComponent(o.path)}`,
         size: "sm",
@@ -1059,20 +1130,12 @@ export function renderBlob(
       })}
       ${editAction(scope, o.ref, o.path)}
     </div>
+    ${when(
+      fellBack !== undefined,
+      () => html`<p class="muted small mb">Showing the source: ${fellBack}</p>`,
+    )}
     ${content}
   </div>`;
-}
-
-/** A Markdown file as prose, framed exactly the way a README is. */
-function renderedMarkdown(blob: Blob & { kind: "text" }): {
-  content: Html;
-  lines: number;
-} {
-  const text = new TextDecoder().decode(blob.body);
-  return {
-    lines: text === "" ? 0 : text.replace(/\n$/, "").split("\n").length,
-    content: html`<div class="card prose">${renderMarkdown(text)}</div>`,
-  };
 }
 
 /** The bytes, with the headers that stop them ever executing as a page. */
@@ -1220,7 +1283,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const parent = forkParent(ctx, repo);
   const [entries, drift] = await Promise.all([
     timePhaseAsync(ctx.request, "tree", () => scope.source.tree(ref, "")),
-    parent === undefined
+    parent === undefined || parent.archivedAt !== null
       ? undefined
       : timePhaseAsync(ctx.request, "drift", () => forkDrift(ctx.app, repo, parent)),
   ]);
@@ -1251,7 +1314,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
         · ${latest.headline} · ${latest.date}</p>`}
   ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo)}
   ${following === undefined
-    ? forkBar(ctx, repo)
+    ? html`${archivedParentLine(ctx, repo)}${forkBar(ctx, repo)}`
     : followingCard(ctx, repo, following)}
   ${await renderCode(scope, {
     refs,
@@ -1326,17 +1389,22 @@ export function codePage(
     content: Html;
     header?: Html;
     before?: Html;
+    /** The page draws a PDF in an `<object>` (`PageOptions.objectSrc`). */
+    objectSrc?: boolean;
+    /** Script only some files need (the CSV table's sort and filter). */
+    extraJs?: string;
   },
 ): Response {
   return page({
     ctx,
     title: o.title,
+    ...(o.objectSrc ? { objectSrc: true } : {}),
     crumbs: scope.crumbs,
     palette: scope.palette,
     body: html`${o.header ?? scopeHeader(ctx, scope, "code", { compact: true })}
     ${o.before ?? null} ${codeLayout(o.explorer, o.content)}
     ${codeMount(scope, o.ref)} ${finderDialog()}`,
-    scriptJs: codeJs,
+    scriptJs: o.extraJs === undefined ? codeJs : `${codeJs}\n${o.extraJs}`,
     wide: true,
   });
 }
@@ -1425,13 +1493,16 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const refs = await git.read(() => refSetFrom(scope.source));
   let highlightMs: number | undefined;
   const renderStart = performance.now();
+  const view = blobView(ctx.url.searchParams.get("view"));
+  const shown = capped(blob.value);
   const pane = renderBlob(scope, {
     refs,
     ref,
     path,
-    blob: capped(blob.value),
-    view: blobView(ctx.url.searchParams.get("view")),
+    blob: shown,
+    view,
     highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
+    all: ctx.url.searchParams.get("all") === "1",
   });
   if (highlightMs !== undefined) notePhase(ctx.request, "highlight", highlightMs);
   const paneMs = performance.now() - renderStart - (highlightMs ?? 0);
@@ -1462,6 +1533,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
       ),
     }),
     content: pane,
+    objectSrc: drawsPdf(scope, path, shown, view),
+    ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
   });
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
   return response;
@@ -1490,10 +1563,13 @@ export async function pathsJson(ctx: Ctx): Promise<Response> {
   );
 }
 
-/** The page's own render ceiling, under the source's fetch ceiling. */
-function capped(blob: Blob): Blob {
+/**
+ * The page's own render ceiling, under the source's fetch ceiling. A body
+ * over it is dropped and only its head kept, so a media kind is still drawn.
+ */
+export function capped(blob: Blob): Blob {
   return blob.kind !== "too_large" && blob.size > MAX_RENDER_BYTES
-    ? { kind: "too_large", size: blob.size }
+    ? { kind: "too_large", size: blob.size, head: blob.body.slice(0, HEAD_BYTES) }
     : blob;
 }
 

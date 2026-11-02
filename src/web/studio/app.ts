@@ -28,6 +28,7 @@ import {
   type PreviewLatency,
 } from "../../core/runs.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
+import { governorSeen } from "../../crew/governed.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
@@ -36,7 +37,11 @@ import { html, when, type Html } from "../html.ts";
 import { appLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { followingCard, followingOf } from "../pages/following.ts";
+import {
+  archivedParentLine,
+  followingCard,
+  followingOf,
+} from "../pages/following.ts";
 import {
   avatar,
   badge,
@@ -308,6 +313,8 @@ export async function studioApp(
     !ownerFacts || repo.autonomy === "off"
       ? undefined
       : timePhase(req, "autonomy", () => autonomyStatus(ctx.app, repo));
+  // The governor's reason, one line on the crew card (#7644).
+  const governor = timePhase(req, "governor", () => governorSeen(ctx.app, ctx.auth.user, repo, new Date()));
 
   // ---- the app itself ----
   // `deployTailing` says the head card is tailing production's own deploy —
@@ -459,6 +466,10 @@ export async function studioApp(
                 </dd>
                 <dt>Slots</dt>
                 <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
+                ${governor === undefined
+                  ? null
+                  : html`<dt>Governor</dt>
+                      <dd>${governor.why}</dd>`}
                 ${autonomy.paused
                   ? html`<dt>Paused</dt>
                       <dd>
@@ -501,7 +512,9 @@ export async function studioApp(
       compact: true,
       ownTitle: true,
     })}
-    ${following === undefined ? "" : followingCard(ctx, repo, following)}
+    ${following === undefined
+      ? archivedParentLine(ctx, repo)
+      : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
     ${askingLine(ctx, repo)}
     ${policy}

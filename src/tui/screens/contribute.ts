@@ -40,7 +40,7 @@ import type { Session } from "../session.ts";
 import { confirmScreen, errorText, runAsync } from "./common.ts";
 import { editErrorText } from "./commit.ts";
 import { showMirrorJob } from "./mirror.ts";
-import { hostOf, liveOrigin, localRepo } from "./where.ts";
+import { hostLabel, hostOf, liveOrigin, localRepo } from "./where.ts";
 
 /** A repository at an origin, as this screen has to name it. */
 export interface OriginTarget {
@@ -71,7 +71,7 @@ export function originTarget(src: RepoSource): OriginTarget | undefined {
   return {
     originId: link.originId,
     fullName: link.fullName,
-    host: hostOf(link.htmlUrl === "" ? link.fullName : link.htmlUrl),
+    host: hostLabel(link.htmlUrl, link.fullName),
   };
 }
 

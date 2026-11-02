@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { runModelReview } from "./actions/model_review.ts";
 import { BOOT_ACTOR, setSignup, signupFromEnv } from "./settings/signup.ts";
 import { startMemorySampler } from "./boards/memory.ts";
 import { startSampler } from "./boards/sampler.ts";
@@ -22,18 +23,24 @@ import { bootHostedChildren } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { startUpstreamWatch } from "./spawn/upstream.ts";
+import { startReachWatch } from "./spawn/reach.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
+import { drainBudgets } from "./drain.ts";
 import { drainStreams } from "./http/sse.ts";
 import { serve } from "./http/server.ts";
 import { checkDue } from "./actions/upstream_follow.ts";
 import { runSync } from "./origins/sync.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
+import { listApps } from "./core/apps.ts";
+import { holdAppHosts, releaseAppHosts } from "./apps/holding.ts";
 import { resolveAppDomain } from "./apps/host.ts";
 import { LAND_SETTLE_MS, requeueAbandonedChecks, startChecks } from "./checks/service.ts";
+import { VERIFY_EVERY_MS } from "./checks/verify.ts";
 import { RED_HOLD_MS } from "./checks/red_main.ts";
+import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
 import { startProbes } from "./contract/probes.ts";
@@ -45,12 +52,15 @@ import { failAbandonedRuns } from "./core/runs.ts";
 import { DRAIN_LINGER_MAX_S, drainLingerMs, startDraining } from "./http/health.ts";
 import { takePresence, warmBehind } from "./apps/presence.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
-import { startCrew } from "./crew/dispatch.ts";
+import { startCrew, sweepAssigned } from "./crew/dispatch.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
 import { peopleOnCrews } from "./core/agents.ts";
 import { startNotifier } from "./crew/notify.ts";
+import { expireCrewHolds } from "./actions/holds.ts";
+import { startClogTick } from "./flow/clog_tick.ts";
+import { startKeeper } from "./flow/keeper.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
@@ -59,15 +69,22 @@ import { configProblem, dataDirOf, preflight } from "./kernel/preflight.ts";
 import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
-import { proveRelease } from "./release/prove.ts";
-import { CHECK_EVERY_MS, readNewest, setBehind, watchBehind } from "./release/behind.ts";
-import { repoDir } from "./git/repos.ts";
+import { proveRunning } from "./release/prove.ts";
+import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
+import { readLandings } from "./release/landings.ts";
+import { ownTagsReader } from "./release/own_tags.ts";
+import { rollProbe, tick as keeperTick } from "./keeper/keeper.ts";
+import { keeperEnv, keeperPorts } from "./keeper/wire.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault } from "./core/capacity.ts";
 import { bootCounts, recordBoot, recordCleanExit } from "./kernel/boots.ts";
 import { census, censusWords, processRows } from "./kernel/census.ts";
 import { reapLeftoverBridges } from "./crew/leftovers.ts";
 import { crewRoot } from "./crew/workdir.ts";
+import { createLog } from "./kernel/log.ts";
+import { watchStalls } from "./kernel/loop_lag.ts";
+import { timeStatements } from "./kernel/slow_sql.ts";
+import { waitForPeer } from "./runs/peer.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -187,6 +204,11 @@ if (parentProblem !== null) {
   process.exit(1);
 }
 
+// The loop's lateness, from the first line of the boot: a stall over a
+// second is a warning that names its minute (kernel/loop_lag.ts, #6957),
+// draining included.
+watchStalls(createLog("loop"));
+
 const app = createApp({
   dataDir,
   // A new forge starts with signup = invite (FORGE_SIGNUP below still wins).
@@ -268,6 +290,8 @@ const app = createApp({
       }),
 });
 
+// A statement that holds the thread past 200 ms names its caller (#6957).
+timeStatements(app.db, createLog("sql"));
 loadFlags(app.db);
 loadTrustedHosts(app.db);
 // FORGE_SIGNUP (checked in configProblem) sets who may sign up; kept like any change.
@@ -279,6 +303,21 @@ await reconcile(app);
 // Issues linked under a pillar's umbrella before pillars had labels.
 const labelled = syncAllPillars(app);
 if (labelled > 0) app.log.info("pillars labelled", { issues: labelled });
+// The host apps answer at, resolved once and before the listener opens: an
+// app host never reaches the forge's own router, so `serve` needs it from the
+// first connection (#6726). Only the hostname matters here, not the port.
+const appsOn = process.env.FORGE_APPS !== "0";
+const appDomain = appsOn
+  ? resolveAppDomain({
+      explicit: (process.env.FORGE_APP_DOMAIN ?? "").trim() || undefined,
+      hosted,
+      hostname: new URL(
+        (hosted ? hostedAt : process.env.FORGE_URL)?.trim().replace(/\/+$/, "") ||
+          `http://${app.config.host ?? "localhost"}`,
+      ).hostname,
+    })
+  : undefined;
+if (appDomain?.ok === true) holdAppHosts(app, appDomain.domain);
 const servers = await serve(app);
 const sshStarted =
   sshPort > 0 ? await startForgeSsh(app, { port: sshPort }) : undefined;
@@ -299,18 +338,10 @@ const forgeUrl =
   (hosted ? hostedAt : process.env.FORGE_URL)?.replace(/\/+$/, "") ??
   `http://${host}:${servers.port}`;
 const publicUrl = new URL(forgeUrl);
-const appsOn = process.env.FORGE_APPS !== "0";
-// The host apps answer at is checked once, here: an IP-addressed forge
-// hands out a hostname no URL can hold once a slug attaches to it, and an
-// app that parses its own FORGE_APP_URL (the scaffold does) dies before it
-// answers — every deploy, forever. docs/APPS.md, "Hostnames and the proxy".
-const appDomain = appsOn
-  ? resolveAppDomain({
-      explicit: (process.env.FORGE_APP_DOMAIN ?? "").trim() || undefined,
-      hosted,
-      hostname: publicUrl.hostname,
-    })
-  : undefined;
+// An IP-addressed forge hands out a hostname no URL can hold once a slug
+// attaches to it, and an app that parses its own FORGE_APP_URL (the scaffold
+// does) dies before it answers — every deploy, forever. docs/APPS.md,
+// "Hostnames and the proxy".
 if (appDomain?.ok === false) app.log.error(appDomain.reason);
 if (appDomain?.ok === true && appDomain.note !== undefined)
   app.log.warn(appDomain.note);
@@ -337,6 +368,9 @@ const apps = appDomain?.ok
   : undefined;
 // Which other forge serves this data's apps, read before this one starts its own.
 const presence = apps ? takePresence(app.config.dataDir) : undefined;
+// The runtime is registered by its constructor: app hosts stop waiting now,
+// not at the end of `start()`.
+releaseAppHosts(app);
 await apps?.start();
 // In a rollout this forge takes no traffic until the apps it just started
 // serve: the one it replaces keeps proxying to its own copies until then,
@@ -347,6 +381,24 @@ if (apps && presence) warmBehind(app.log, presence, () => apps.startingCount());
 void backfillCarried(app.db, app.reposRoot).catch((error) =>
   app.log.error("could not backfill what deploys carried", { error: String(error) }),
 );
+// A forge still draining on this database keeps writing for its gates and
+// runs; starting ours beside it stalls the listener behind its write lock
+// (#6957). The listener answers meanwhile; a signal now stops what is up.
+const leaveEarly = (): void => {
+  void Promise.resolve(apps?.stop())
+    .catch(() => {})
+    .finally(() => {
+      presence?.stop();
+      ssh?.stop();
+      servers.stop();
+      app.close();
+      process.exit(0);
+    });
+};
+const earlySignals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+for (const signal of earlySignals) process.once(signal, leaveEarly);
+await waitForPeer(app.db, app.log);
+for (const signal of earlySignals) process.off(signal, leaveEarly);
 // A repository's own check, on every push a pull or the default branch takes.
 const checks =
   process.env.FORGE_CHECKS === "0"
@@ -357,8 +409,14 @@ const checks =
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, Number(capacityDefault("checks.concurrency"))),
         redHoldMs: RED_HOLD_MS,
         landSettleMs: LAND_SETTLE_MS,
-        // A roll lets running checks finish this long before cutting them off.
-        drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
+        // A roll lets running checks and merge-queue gates finish this long
+        // before cutting them off, and no longer: the new forge holds its
+        // own queue work until this one stops writing, so the write pause
+        // of a release is this budget (#7799). A gate cut off is queued
+        // again and resumes on the new forge.
+        drainMs: drainBudgets(process.env).checksMs,
+        // Main is verified after landing at most this often (#7786).
+        verifyEveryMs: VERIFY_EVERY_MS,
       });
 // Migrated repositories kept as a read-only mirror push to their source.
 const mirrorOut = startMirrorOut(app);
@@ -426,6 +484,8 @@ await firstBoot(app);
 const heartbeatTimer = startHeartbeat(app);
 // ...and looks upstream once an hour (spawn/upstream.ts).
 const upstreamTimer = startUpstreamWatch(app);
+// ...and this forge asks every child's public addresses what a visitor would get, every few minutes (spawn/reach.ts).
+const reachTimer = startReachWatch(app);
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.
@@ -535,33 +595,77 @@ const processTick = (): void => {
     app.log.warn("process census failed", { error: String(error) });
   }
 };
+// The clog watch (#6524, #6757) reads the flow every minute; its state is the database's.
+const stopClogTick = startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }), 60_000);
+// The throughput keeper (#7645) names what binds landings each minute and lifts what is its to lift.
+const stopKeeper = startKeeper(app, () => sweepAssigned(app));
+// An agent's hold that has stood 24 h is released each minute (#6918).
+const holdTimer = setInterval(() => {
+  try {
+    expireCrewHolds(app);
+  } catch (error) {
+    app.log.warn("hold expiry failed", { error: String(error) });
+  }
+}, 60_000);
+// The weekly model review (#7815): settles last week's changes, then proposes this week's; it runs once a week whatever the tick.
+const modelReviewTimer = setInterval(() => {
+  try {
+    runModelReview(app);
+  } catch (error) {
+    app.log.warn("model review failed", { error: String(error) });
+  }
+}, 3_600_000);
 const processTimer = setInterval(processTick, 60_000);
 processTick();
-// A new version proves itself against the public URL once (release/prove.ts).
-void proveRelease({
+// A new version proves itself against the public URL; a failed one again, 5 min after and backing off to hourly (release/prove.ts).
+proveRunning({
   dataDir: app.config.dataDir,
   version: running().version,
   url: forgeUrl,
   token: process.env["FORGE_TOKEN"],
-}).then((p) => p && app.log.info("release proof", { version: p.version, ok: String(p.ok), ...(p.failure ? { failure: p.failure } : {}) }));
-// Production behind main's newest release for over an hour is a card (release/behind.ts).
+  // The first app's production host: it must never answer as the forge (#6726).
+  appHost: (() => {
+    const first = listApps(app.db)[0];
+    return apps && first ? apps.urlFor(first, "production") : undefined;
+  })(),
+}, app.log);
+// The release tags of the forge's own repository are its shipped releases (release/shipped.ts);
+// production behind the newest for over an hour is a card (release/behind.ts).
+// A FORGE_REPO that is not owner/name is dropped by releaseEnv; say so, or the list stops at the frozen one unexplained.
+if ((process.env.FORGE_REPO ?? "") !== "" && !app.config.forgeRepo)
+  app.log.warn("FORGE_REPO is not owner/name; release tags are not read", { value: process.env.FORGE_REPO });
 if (app.config.forgeRepo) {
-  const [owner, name] = app.config.forgeRepo.split("/");
   const watch = watchBehind({
     live: () => running().version,
-    read: async () => {
-      const row = app.db
-        .query<{ default_branch: string }, [string, string]>(
-          "SELECT repo.default_branch FROM repo JOIN user u ON u.id = repo.owner_id WHERE u.username = ?1 AND repo.name = ?2",
-        )
-        .get(owner ?? "", name ?? "");
-      return row ? readNewest(repoDir(app.reposRoot, owner!, name!), row.default_branch) : undefined;
-    },
+    read: ownTagsReader(app, app.config.forgeRepo),
   });
   setBehind(watch);
   void watch.tick();
   setInterval(() => void watch.tick(), CHECK_EVERY_MS);
+  // The no-release alarm reads what this keeps of the running commit (#7638).
+  void readLandings(app);
+  setInterval(() => void readLandings(app), 60_000);
 }
+// The release keeper (#7557): cut on cadence, promote, verify under page load, roll back to the named
+// known-good image and hold. Off unless FORGE_RELEASE_KEEPER=on in a cluster (keeper/wire.ts).
+const keeperOn = keeperEnv(process.env);
+if (keeperOn.on) {
+  const ports = keeperPorts(app, { forgeUrl, deployment: keeperOn.deployment, container: keeperOn.container });
+  if (typeof ports === "string") app.log.warn("the release keeper is off", { why: ports });
+  else {
+    let said = "";
+    const step = () =>
+      void keeperTick(ports)
+        .then((line) => {
+          if (line !== said) app.log.info("release keeper", { line });
+          said = line;
+        })
+        .catch((error) => app.log.warn("release keeper step failed", { error: String(error) }));
+    step();
+    setInterval(step, 60_000);
+    setInterval(() => void rollProbe(ports).catch(() => {}), 1000);
+  }
+} else app.log.info("the release keeper is off", { why: keeperOn.why });
 // Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
 // put on one before that is reported here for the owner to take off — the
 // forge never removes it on its own.
@@ -648,19 +752,27 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(deliveryTimer);
   clearInterval(heartbeatTimer);
   clearInterval(upstreamTimer);
+  clearInterval(reachTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
   clearInterval(followTimer);
+  stopClogTick();
+  stopKeeper();
   clearInterval(processTimer);
+  clearInterval(holdTimer);
+  clearInterval(modelReviewTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.
   const linger = signal === "SIGTERM" ? Bun.sleep(lingerMs ?? 0) : undefined;
+  // The merge queue acts on nothing more: its gates run on through the
+  // checks' drain, and a verdict is kept for the forge that carries on (#6611).
+  stopQueue();
   return Promise.all([
     linger,
     prompts.stop(),
     notifier.stop(),
-    crew?.stop({ drain: true }),
+    crew?.stop({ drain: true, drainMs: drainBudgets(process.env).crewMs }),
     // Routers still send this process requests for the linger's length;
     // its apps answer them, and stop only after (#4496).
     (linger ?? Promise.resolve()).then(() => apps?.stop()).finally(() => presence?.stop()),
