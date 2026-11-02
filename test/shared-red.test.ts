@@ -94,6 +94,16 @@ describe("a red many pulls share", () => {
     expect(shared(red("i3", [other]))).toBe(true);
   });
 
+  test("an /api/v1 route a pull left undescribed is that pull's own red, not the lane's (#8140)", () => {
+    const gate = "every registered /api/v1 route has an OpenAPI row or is listed as not yet described";
+    for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
+    expect(shared(red("i4", [gate]))).toBe(false);
+    const index = "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`";
+    for (const i of ["i1", "i2", "i3"]) red(i, [index]);
+    expect(shared(red("i4", [index]))).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+  });
+
   test("every tree gate names a suite, or a test in it, that exists", () => {
     const names = new Set<string>();
     for (const f of new Glob("test/*.test.ts").scanSync(".")) for (const n of suiteNames(readFileSync(f, "utf8"))) names.add(n);
@@ -106,6 +116,7 @@ describe("a red many pulls share", () => {
     expect(names.has("B > u")).toBe(true);
     expect(names.has("B > t")).toBe(false);
     expect(names.has("A > u")).toBe(false);
+    expect(suiteNames('test("top", () => {});\n').has("top")).toBe(true);
   });
 
   test("one pull red three times is its own red, not the lane's", () => {
@@ -275,7 +286,7 @@ function suiteNames(text: string): Set<string> {
   let suite: string | undefined;
   for (const m of text.matchAll(/\b(describe|test)\("((?:[^"\\]|\\.)*)"/g)) {
     if (m[1] === "describe") names.add(`${(suite = m[2])} > `);
-    else if (suite !== undefined) names.add(`${suite} > ${m[2]}`);
+    else names.add(suite === undefined ? m[2]! : `${suite} > ${m[2]}`);
   }
   return names;
 }

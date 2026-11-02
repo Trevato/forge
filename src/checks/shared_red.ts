@@ -47,11 +47,15 @@ export const NO_TEST_NAME = "(unnamed)";
  * the rest of its suite is not a gate, and a test keeps it existing.
  * Reserved names (#7809): each pull adding a top-level page without
  * reserving it ("keeper", "feed", "favicon.ico") failed it, main green.
+ * OpenAPI coverage (#8140): each pull adding an /api/v1 route without its
+ * row, or a route file without regenerating the index, failed it, main green.
  */
 export const TREE_GATES: readonly string[] = [
   "design check: nothing added outside the system (#2678) > ",
   "no polling in src/web > ",
   "reserved names > every top-level page of the forge is a reserved name",
+  "every registered /api/v1 route has an OpenAPI row or is listed as not yet described",
+  "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`",
 ];
 
 /** Whether a failing test's name is one of {@link TREE_GATES}'. */
