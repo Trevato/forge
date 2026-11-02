@@ -63,7 +63,8 @@ function requireForgeAdmin(
   return user.value.isAdmin ? user : err("forbidden");
 }
 
-function checkPatch(
+/** The bounds an agent change must meet; the screens check them before they ask. */
+export function checkPatch(
   app: App,
   patch: AgentPatch,
 ): Result<AgentPatch, "invalid_model" | "brief_too_long" | "invalid_budget"> {

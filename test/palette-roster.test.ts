@@ -98,6 +98,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["quotas", "Account quotas", "what one account may own, and who changed it"],
     ["limits", "Limits", "what the forge caps, with default and bounds; change one"],
     ["teams", "Crew teams", "each team's charter, dial and members"],
+    ["agents", "Crew agents", "each agent's model, budget and brief"],
     ["invites", "Invite links", "make a single-use link, see which are open, revoke one"],
     ["subscriptions", "Crew subscriptions", "each account's budget and rest; wake one, set its budget, add or remove one"],
     ["cloud", "Cloud accounts", "provider tokens, what they are used for, today's calls"],
