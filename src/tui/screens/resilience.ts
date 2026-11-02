@@ -4,11 +4,11 @@
  * THREATS.md protection with its standing in the last gate, as /resilience
  * says it. Enter, Esc or q closes it.
  *
- * A forge admin takes a snapshot now with `n` and brings the mirror level with
- * `l`, each after a `y/n` asked on the dialog's first line, through
- * `actions/backups_now.ts` — MCP `snapshot_now`'s and `mirror_now`'s actions —
- * and the answer is said there in the page's words. While one runs, neither
- * key is offered.
+ * A forge admin takes a snapshot now with `n`, brings the mirror level with
+ * `l` and runs a restore drill with `r`, each after a `y/n` asked on the
+ * dialog's first line, through `actions/backups_now.ts` — MCP `snapshot_now`'s
+ * and `mirror_now`'s actions, and the Backups page's drill — and the answer is
+ * said there in the page's words. While one runs, none of the keys is offered.
  *
  * For an admin who is a person, `d` sets the destination and `x` forgets it
  * after a confirm, through `actions/destination.ts`; `m` seals the mirror and
@@ -19,7 +19,7 @@
  * A key is never drawn, kept past the save, or put in a note.
  */
 
-import { mirrorNow, recentSnapshots, snapshotNow } from "../../actions/backups_now.ts";
+import { drillNow, mirrorNow, recentSnapshots, snapshotNow } from "../../actions/backups_now.ts";
 import { readResilience } from "../../checks/resilience.ts";
 import {
   forgetDestination,
@@ -87,21 +87,36 @@ type Target = {
   readonly save: (input: DestinationInput) => string;
 };
 
-type Asking = "snapshot" | "mirror";
+type Asking = "snapshot" | "mirror" | "drill";
 
 const QUESTION: Record<Asking, string> = {
   snapshot: "take a snapshot now? y/n",
   mirror: "bring the mirror level now? y/n",
+  drill: "run a restore drill now? y/n",
 };
+
+const RUNNING: Record<Asking, string> = {
+  snapshot: "Taking a snapshot…",
+  mirror: "Bringing the mirror level…",
+  drill: "Running a restore drill…",
+};
+
+const KEY: ReadonlyMap<string, Asking> = new Map([
+  ["n", "snapshot"],
+  ["l", "mirror"],
+  ["r", "drill"],
+]);
 
 export function resilienceScreen(f: Session, ctx: Ctx): Screen {
   // One rule for the destination and the mirror: a site admin who is a person.
   const mayChange = (): boolean => mayChangeDestination(f.user);
   const refusedAll = "Where snapshots go is a forge admin's.";
+  // The actions refuse anyone else too; the keys are not offered to them.
+  const mayAct = (): boolean => f.user?.isAdmin === true;
   /** The newest snapshots, `unreadable` when the store could not be listed; undefined until read. */
   let snapshots: string[] | "unreadable" | undefined;
   let asking: Asking | undefined;
-  // While an action runs, `n` and `l` are ignored: a second would queue behind it.
+  // While an action runs, `n`, `l` and `r` are ignored: a second would queue behind it.
   let busy = false;
   let said = "";
   let note = "";
@@ -119,13 +134,16 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
 
   const act = (what: Asking): void => {
     busy = true;
-    said = what === "snapshot" ? "Taking a snapshot…" : "Bringing the mirror level…";
+    said = RUNNING[what];
     ctx.invalidate();
     runAsync(ctx, async () => {
       try {
         if (what === "snapshot") {
           const taken = await snapshotNow(f.app, f.user);
           said = taken.ok ? taken.value.says : taken.error.says;
+        } else if (what === "drill") {
+          const ran = await drillNow(f.app, f.user);
+          said = ran.ok ? ran.value.says : ran.error.says;
         } else {
           const level = await mirrorNow(f.app, f.user);
           said = level.ok ? level.value.says : level.error.says;
@@ -237,7 +255,13 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
     get keys() {
       if (asking !== undefined) return [binding(["y"], "yes"), binding(["n", "esc"], "no")];
       return [
-        ...(busy ? [] : [binding(["n"], "take a snapshot now"), binding(["l"], "bring the mirror level now")]),
+        ...(busy || !mayAct()
+          ? []
+          : [
+              binding(["n"], "take a snapshot now"),
+              binding(["l"], "bring the mirror level now"),
+              binding(["r"], "run a restore drill"),
+            ]),
         ...(mayChange()
           ? [
               binding(["d"], "set destination"),
@@ -269,8 +293,9 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "y") act(was);
         return true;
       }
-      if ((e.key === "n" || e.key === "l") && !busy) {
-        asking = e.key === "n" ? "snapshot" : "mirror";
+      const ask = KEY.get(e.key);
+      if (ask !== undefined && !busy && mayAct()) {
+        asking = ask;
         said = "";
       } else if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
       else if (!mayChange()) return true;

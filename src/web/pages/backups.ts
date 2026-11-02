@@ -28,7 +28,7 @@ import { formatMinutes, formatSpan, timeByPart, type DrillResult } from "../../s
 import { lastDrill } from "../../snapshot/drills.ts";
 import type { Store } from "../../snapshot/store.ts";
 import { snapshotsOf, type SnapshotsHandle } from "../../snapshot/service.ts";
-import { mirrorNow, snapshotNow } from "../../actions/backups_now.ts";
+import { drillNow, mirrorNow, snapshotNow } from "../../actions/backups_now.ts";
 import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -645,27 +645,14 @@ export async function backupsDrill(ctx: Ctx): Promise<Response> {
     });
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const svc = snapshotsOf(ctx.app);
-  if (svc === undefined || svc.store === undefined)
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: "This forge has no snapshots to drill.",
-    });
-  try {
-    const d = await svc.drill();
-    return flashTo(
-      ctx,
-      "/settings/backups",
-      d.verdict === "green"
-        ? { message: "The drill restored green." }
-        : { tone: "danger", message: `The drill failed at ${d.failedStep}.` },
-    );
-  } catch (error) {
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: `The drill could not run: ${String(error)}`,
-    });
-  }
+  const ran = await drillNow(ctx.app, ctx.auth.user);
+  return flashTo(
+    ctx,
+    "/settings/backups",
+    ran.ok && ran.value.verdict === "green"
+      ? { message: ran.value.says }
+      : { tone: "danger", message: ran.ok ? ran.value.says : ran.error.says },
+  );
 }
 
 /** POST /settings/backups/mirror — seal the mirror. */
