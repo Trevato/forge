@@ -5,7 +5,7 @@
  * a change is audited and takes effect on the next tick, and the MCP `crew`
  * tool sets the same numbers.
  */
-import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +15,9 @@ import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/r
 import { setCrewRole } from "../src/core/agents.ts";
 import { reviewWaits, waitLine } from "../src/actions/owner_waits.ts";
 import { checkAutonomy, getRepoById, type Repo } from "../src/core/repos.ts";
-import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import type { Pull } from "../src/core/pulls.ts";
+import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { driveRepo } from "../src/crew/autonomy.ts";
@@ -207,4 +209,61 @@ test("the reviewer's cap counts the reviews in flight on this repository only", 
   createRun(app.db, { repoId: repo.id, kind: "agent", actorId: getUserByName(app.db, "judge")!.id, reason: "review" });
   expect(reviewsInFlight(app.db, repo.id)).toBe(before + 1);
   expect(reviewsInFlight(app.db, "other-repo")).toBe(0);
+});
+
+describe("the reviewer's cap, end to end (#8734)", () => {
+  let porch: Repo;
+  let n = 0;
+  const now = new Date();
+  const porchNow = () => getRepoById(app.db, porch.id)!;
+  const reviews = (pull: Pull) => listRuns(app.db, porch.id, { issueId: pull.id }).filter((r) => r.reason === "review");
+  // A green agent pull: its check went green a minute before `now`, so review is due.
+  const agentPull = async (): Promise<Pull> => {
+    const branch = `cap${++n}`;
+    ok(await commitToBranch(app, alice, porch, { branch, base: "main", message: branch, files: [{ path: `${branch}.md`, content: "x\n" }] }));
+    const pull = ok(await openPull(app, alice, porch, { title: branch, body: "", baseBranch: "main", headBranch: branch }));
+    const run = createRun(app.db, { repoId: porch.id, kind: "check", issueId: pull.id, env: `pull-${pull.number}`, commitOid: pull.headOid, reason: "pull" });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "ok" });
+    const green = new Date(now.getTime() - 60_000).toISOString();
+    app.db.query("UPDATE run SET created_at = ?2, finished_at = ?2 WHERE id = ?1").run(run.id, green);
+    return { ...pull, authorIsAgent: true };
+  };
+
+  beforeAll(async () => {
+    porch = ok(await createRepo(app, alice, { name: "porch", visibility: "private" }));
+    ok(await commitToBranch(app, alice, porch, { message: "Start", files: [{ path: "README.md", content: "# porch\n" }] }));
+    expect(addToCrew(app, alice, porch, "judge").ok).toBe(true);
+    setCrewRole(app.db, porch.id, getUserByName(app.db, "judge")!.id, "reviewer");
+  });
+
+  test("at 1, the second agent pull is queued only after the first review ends", async () => {
+    ok(await updateRepoSettings(app, alice, porchNow(), { reviewerSlots: 1 }));
+    // A review queued on another repository takes none of this one's slot.
+    createRun(app.db, { repoId: repo.id, kind: "agent", actorId: getUserByName(app.db, "judge")!.id, reason: "review" });
+    const first = await agentPull();
+    const second = await agentPull();
+    expect(await sendToReview(app, porchNow(), first, now)).toBe("sent");
+    expect(await sendToReview(app, porchNow(), second, now)).toBe("wait");
+    expect(reviews(first)).toHaveLength(1);
+    expect(reviews(second)).toHaveLength(0);
+    // Running still holds the slot.
+    const run = reviews(first)[0]!;
+    claimRun(app.db, run.id);
+    expect(await sendToReview(app, porchNow(), second, now)).toBe("wait");
+    finishRun(app.db, run.id, { state: "ok", summary: "", costUsd: 0 });
+    expect(await sendToReview(app, porchNow(), second, now)).toBe("sent");
+    expect(reviews(second)).toHaveLength(1);
+    app.db.query("UPDATE run SET state = 'cancelled' WHERE state = 'queued'").run();
+  });
+
+  test("at 0, neither agent pull is queued: both wait for a person", async () => {
+    ok(await updateRepoSettings(app, alice, porchNow(), { reviewerSlots: 0 }));
+    const a = await agentPull();
+    const b = await agentPull();
+    expect(await sendToReview(app, porchNow(), a, now)).toBe("none");
+    expect(await sendToReview(app, porchNow(), b, now)).toBe("none");
+    expect(reviews(a)).toHaveLength(0);
+    expect(reviews(b)).toHaveLength(0);
+  });
 });

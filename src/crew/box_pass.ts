@@ -10,10 +10,10 @@ import { crewRole } from "../core/agents.ts";
 import { PASS_LEAD, unticked } from "../core/done_on_main.ts";
 import { getIssue, getIssueById, type Issue } from "../core/issues.ts";
 import { closesFromBody, getPull, mergedPullClosing, type Pull } from "../core/pulls.ts";
-import type { Repo } from "../core/repos.ts";
+import { PILLAR_MAX, type Repo } from "../core/repos.ts";
 import type { BoxList } from "./brief.ts";
 import { queueAgentRun } from "./dispatch.ts";
-import { pickReviewer, reviewersOf, reviewLoad } from "./review.ts";
+import { pickReviewer, reviewersOf, reviewLoad, reviewsInFlight } from "./review.ts";
 
 /** Landed issues one tick sends to review: the rest wait for the next, never unseen. */
 export const PASS_SENDS = 3;
@@ -55,14 +55,20 @@ export function passed(app: App, repo: Repo, issue: Issue, pull: Pull): boolean 
 /**
  * Send each issue held under `landed` that was never given the pass to the
  * crew's reviewer, once: the review run on the pull that landed is the
- * mark, so a tick later finds it sent. Returns how many were sent.
+ * mark, so a tick later finds it sent. Returns how many were sent. The
+ * reviewer's slots bound it as they bound `sendToReview` (#8734): a paused
+ * reviewer is sent nothing, and a full one waits for the next tick.
  */
 export function passLanded(app: App, repo: Repo, held: readonly Issue[]): number {
   const reviewers = reviewersOf(app.db, repo.id);
   if (reviewers.length === 0) return 0;
+  const room =
+    repo.reviewerSlots >= PILLAR_MAX
+      ? PASS_SENDS
+      : Math.min(PASS_SENDS, repo.reviewerSlots - reviewsInFlight(app.db, repo.id));
   let sent = 0;
   for (const issue of held) {
-    if (sent >= PASS_SENDS) break;
+    if (sent >= room) break;
     const merged = mergedPullClosing(app.db, repo.id, issue.number);
     const pull = merged === undefined ? undefined : getPull(app.db, repo.id, merged.number);
     if (pull === undefined || pull.mergedAt === null || passed(app, repo, issue, pull)) continue;

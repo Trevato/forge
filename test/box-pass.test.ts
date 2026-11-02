@@ -21,6 +21,7 @@ import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { landedBoxes, passed, passLanded } from "../src/crew/box_pass.ts";
+import { reviewsInFlight } from "../src/crew/review.ts";
 import { taskPrompt, type TaskInput } from "../src/crew/brief.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -248,6 +249,25 @@ describe("the reviewer's pass over the boxes", () => {
     expect(passed(app, fresh(), asked, landed)).toBe(false);
     expect(passLanded(app, fresh(), [now(asked)])).toBe(1);
     expect(passed(app, fresh(), asked, landed)).toBe(true);
+  });
+
+  test("the reviewer's slots bound the pass: paused sends none, a full seat waits (#8734)", async () => {
+    const first = issue("Capped one", "- [ ] a");
+    const second = issue("Capped two", "- [ ] b");
+    await land(await propose("capped-one", first));
+    await land(await propose("capped-two", second));
+    const slots = (n: number) => app.db.query("UPDATE repo SET reviewer_slots = ?2 WHERE id = ?1").run(repo.id, n);
+    const inFlight = () => reviewsInFlight(app.db, repo.id);
+    app.db.query("UPDATE run SET state = 'cancelled' WHERE repo_id = ?1 AND state IN ('queued','running')").run(repo.id);
+    slots(0);
+    expect(passLanded(app, fresh(), [now(first), now(second)])).toBe(0);
+    slots(1);
+    expect(passLanded(app, fresh(), [now(first), now(second)])).toBe(1);
+    expect(inFlight()).toBe(1);
+    expect(passLanded(app, fresh(), [now(first), now(second)])).toBe(0);
+    app.db.query("UPDATE run SET state = 'cancelled' WHERE repo_id = ?1 AND state IN ('queued','running')").run(repo.id);
+    expect(passLanded(app, fresh(), [now(first), now(second)])).toBe(1);
+    slots(8);
   });
 });
 
