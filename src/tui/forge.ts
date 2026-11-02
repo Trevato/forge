@@ -51,6 +51,7 @@ import { notifyScreen } from "./screens/notify.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { signInsScreen } from "./screens/signins.ts";
+import { originAppsScreen } from "./screens/originapps.ts";
 import { addEntries } from "./screens/entries.ts";
 import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
@@ -274,6 +275,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
           title: "Signed in",
           hint: "your browsers and tokens; d signs a browser out",
           run: () => ctx.push(signInsScreen(session, ctx)),
+        },
+        // Settings → Origins' OAuth apps and MCP `origin_apps` (#7291).
+        {
+          id: "origin-apps",
+          title: "Origin apps",
+          hint: "your OAuth apps for connecting origins; a adds, d removes",
+          run: () => ctx.push(originAppsScreen(session, ctx)),
         },
       );
     // The forge's RSS beside its JS heap, as /system gates it (#2151).
