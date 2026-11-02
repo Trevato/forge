@@ -12,7 +12,7 @@ import { emailVerified, markUnproven, markVerified } from "../src/core/verify.ts
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { settleApp, settlePalette, settleUntil } from "./helpers/tui.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
@@ -56,6 +56,8 @@ describe("verify an email from the People screen", () => {
     await settleApp(app);
     await press("ctrl+k");
     for (const ch of "People") await press(ch);
+    // Enter before the palette's live re-run lands can open a row it then moves.
+    await settlePalette(app);
     await press("enter");
     await settleUntil(app, "alice");
     return { app, press, text: () => app.screen.toText() };
