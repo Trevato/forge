@@ -947,6 +947,8 @@ const MESSAGES: Record<string, string> = {
   throttled: "too many attempts: try again in a minute",
   already_forked: "you already have a fork of this repo",
   already_merged: "this pull is already merged",
+  reason_required: "a bug closed without a fix says why: close it from the page or the API with a note",
+  invalid_note: "a reason is one sentence of at most 300 characters",
   unknown_label: "no such label",
   unknown_branch: "no such branch",
   unknown_base: "the base branch does not exist",

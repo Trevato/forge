@@ -381,7 +381,7 @@ export function setIssueState(
   closing: Closing = {},
 ): Result<
   Issue,
-  AccessError | "already_merged" | MirrorError | "invalid_reason"
+  AccessError | CloseError | MirrorError
 > {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
@@ -457,12 +457,35 @@ export function setIssueState(
     state === "closed" && issue.kind === "issue"
       ? (alreadyDone(app.db, [issue.id]).get(issue.id) ?? [])
       : [];
+  // A bug closed with no fix behind it (no commit on main, no split) says
+  // why; the crew's own live triage and stale sweeps note it themselves.
+  if (closing.note !== undefined && typeof closing.note !== "string") return err("invalid_note");
+  const note = (closing.note ?? "").trim();
+  if (note.length > MAX_NOTE) return err("invalid_note");
+  if (
+    state === "closed" &&
+    issue.kind === "issue" &&
+    reason !== "split" &&
+    doneBy.length === 0 &&
+    note === "" &&
+    !closing.triage &&
+    !closing.stale &&
+    !closing.system &&
+    labelsFor(app.db, issue.id).some((l) => l.name === "bug")
+  )
+    return err("reason_required");
   const changed = app.db.transaction(() => {
     const written = writeState(app.db, issue.id, state, reason);
     if (written && state === "closed") {
       clearFirst(app.db, issue.id);
       clearRank(app.db, issue.id);
     }
+    if (written && state === "closed" && note !== "")
+      insertComment(app.db, {
+        issueId: issue.id,
+        authorId: user.value.id,
+        body: `Closed${reason === "dropped" ? " as won't fix" : ""}: ${note}`,
+      });
     if (written && doneBy.length > 0)
       insertComment(app.db, {
         issueId: issue.id,
@@ -653,6 +676,16 @@ export function plannerCloseRefusal(
     : refused;
 }
 
+/** What a close can be refused for beyond access: a merged pull, a bad reason or note, a bug with no why. */
+export type CloseError =
+  | "already_merged"
+  | "invalid_reason"
+  | "invalid_note"
+  | "reason_required";
+
+/** The longest note a close takes: one sentence. */
+export const MAX_NOTE = 300;
+
 /** How an issue closes: done unless said otherwise; split names its children. */
 export interface Closing {
   readonly reason?: CloseReason;
@@ -660,6 +693,10 @@ export interface Closing {
   readonly into?: readonly number[];
   /** The crew's live triage closed it, not the person whose name it carries. */
   readonly triage?: boolean;
+  /** Why, in a sentence: a bug closed with no fix behind it needs one. */
+  readonly note?: string;
+  /** The forge's own close: it says why itself, so a bug needs no note. */
+  readonly system?: boolean;
   /** A crew pull closed for staying conflicted 72 hours (`crew/stale_pulls.ts`). */
   readonly stale?: boolean;
 }
@@ -682,7 +719,10 @@ export function closingFrom(input: Record<string, unknown>): Closing | undefined
       return undefined;
     into = input.into as number[];
   }
+  // A note's shape is judged where it is used (`invalid_note`), not here.
+  const note = input.note as string | undefined;
   return {
+    ...(note === undefined ? {} : { note }),
     ...(reason === undefined ? {} : { reason: reason as CloseReason }),
     ...(into === undefined ? {} : { into }),
   };
@@ -844,7 +884,7 @@ export async function setIssueStateThrough(
   state: IssueState,
   closing: Closing = {},
 ): Promise<
-  Result<Issue, ThroughError<AccessError | "already_merged" | "invalid_reason">>
+  Result<Issue, ThroughError<AccessError | CloseError>>
 > {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;

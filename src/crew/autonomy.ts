@@ -1661,7 +1661,7 @@ export function closeSuperseded(
     }
     if (about.assigneeId !== null) assignIssue(app, by, repo, about, null);
     addComment(app, by, repo, about, `${CLOSED_NOTE}${named} (pull #${pull.number}).`);
-    setIssueState(app, by, repo, about, "closed", { reason: "done" });
+    setIssueState(app, by, repo, about, "closed", { reason: "done", system: true });
   }
   log.info("superseded pull closed", {
     repo: `${repo.ownerName}/${repo.name}`,

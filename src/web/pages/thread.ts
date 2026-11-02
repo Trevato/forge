@@ -552,6 +552,14 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
             inputmode="numeric"
             placeholder="#, #"
             aria-label="Issue numbers it was split into"
+          />
+          <input
+            class="input"
+            name="note"
+            form="thread-state"
+            maxlength="300"
+            placeholder="why (a bug needs one; else optional)"
+            aria-label="Why it closes, in a sentence"
           />`
       : null;
   const closeButton =
@@ -856,11 +864,18 @@ export async function stateSubmit(
       tone: "danger",
       message: "Close as done, dropped, or split into issue numbers.",
     });
+  const note = field(form, "note").trim();
+  if (note.length > 300)
+    return flashOrJson(ctx, dest, {
+      tone: "danger",
+      message: "A reason is one sentence of at most 300 characters.",
+    });
   const closing: Closing =
-    wanted === "closed" && kind === "issue" && why !== ""
+    wanted === "closed" && kind === "issue"
       ? {
-          reason: why as CloseReason,
+          ...(why !== "" ? { reason: why as CloseReason } : {}),
           ...(why === "split" ? { into } : {}),
+          ...(note !== "" ? { note } : {}),
         }
       : {};
   // The `…Through` twin: identical on a native repo, and on a mirror it
@@ -880,13 +895,13 @@ export async function stateSubmit(
       studioRecord(ctx, found.repo) !== undefined
         ? "A merged change cannot be reopened."
         : "A merged pull request cannot be reopened.";
-    const message =
-      originError(changed.error) ??
-      (changed.error === "already_merged"
-        ? merged
-        : changed.error === "forbidden"
-          ? "Only the author or someone with write access can do that."
-          : NOT_CHANGED);
+    const refusals: Record<string, string> = {
+      reason_required: "A bug closed without a fix says why: add a sentence.",
+      invalid_note: "A reason is one sentence of at most 300 characters.",
+      already_merged: merged,
+      forbidden: "Only the author or someone with write access can do that.",
+    };
+    const message = originError(changed.error) ?? refusals[changed.error] ?? NOT_CHANGED;
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
   return flashOrJson(ctx, dest, {

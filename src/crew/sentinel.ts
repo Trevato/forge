@@ -890,7 +890,7 @@ function settleShared(app: App, repo: Repo, actor: User, now: number): void {
         log.warn("sentinel could not comment", { key: t.key, error: String(said.error) });
         continue;
       }
-      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "dropped" });
+      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "dropped", system: true });
       if (!closed.ok) {
         log.warn("sentinel could not close", { key: t.key, error: String(closed.error) });
         continue;
@@ -974,7 +974,7 @@ function closeHeld(app: App, repo: Repo, actor: User, active: ReadonlySet<string
         log.warn("sentinel could not comment", { key: t.key, error: String(said.error) });
         continue;
       }
-      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "done" });
+      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "done", system: true });
       if (!closed.ok) log.warn("sentinel could not close", { key: t.key, error: String(closed.error) });
     } catch (error) {
       log.error("sentinel close failed", { key: t.key, error: String(error) });

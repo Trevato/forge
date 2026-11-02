@@ -604,6 +604,14 @@ export function originAware(error: string, status = 422): Response {
       422,
       "a reason is done, dropped, or split (with `into`: the issues it became); only an issue closing takes one",
     );
+  if (error === "invalid_note")
+    return apiError("invalid_note", 422, "`note` is one sentence of text, at most 300 characters");
+  if (error === "reason_required")
+    return apiError(
+      "reason_required",
+      422,
+      "a bug closed without a fix says why: send `note` (one sentence, at most 300 characters)",
+    );
   if (error === "mirrored")
     return apiError(
       "mirrored",

@@ -103,7 +103,7 @@ export function applyGateReview(
     const issue = getIssue(app.db, repo.id, number);
     const verdict = proposed.get(number)!;
     if (issue === undefined || issue.state !== "open") continue;
-    if (!setIssueState(app, actor, repo, issue, "closed", { reason: verdict.reason }).ok) continue;
+    if (!setIssueState(app, actor, repo, issue, "closed", { reason: verdict.reason, system: true }).ok) continue;
     // The marker follows the close, never the other way: a failed close leaves none.
     app.bus.append({
       kind: "issue.gate_reviewed",
