@@ -787,6 +787,9 @@ const reportOf = (runtime: AppsRuntime, repo: Repo): URL =>
 const REPORT_LINK =
   `</__forge/report>; rel="help"; title="${REPORT_LINK_TITLE}"`;
 
+/** Names the forge's manifest, so it is told apart from an app's own alternate. */
+export const REPO_LINK_TITLE = "this app's repository on its forge";
+
 /**
  * The `Link` values a public app's pages carry: the report door and the
  * forge's role-aware manifest for the app's repository, so an agent that
@@ -798,7 +801,10 @@ export function discoveryLinks(runtime: AppsRuntime, target: AppTarget): string[
   if (repo === undefined) return [];
   const here = new URL("/api/v1/here", runtime.options.forgeUrl);
   here.search = `?path=${encodeURIComponent(`/${repo.ownerName}/${repo.name}`)}`;
-  return [REPORT_LINK, `<${here.href}>; rel="alternate"; type="application/json"`];
+  return [
+    REPORT_LINK,
+    `<${here.href}>; rel="alternate"; type="application/json"; title="${REPO_LINK_TITLE}"`,
+  ];
 }
 
 const isHtml = (headers: Headers): boolean =>
