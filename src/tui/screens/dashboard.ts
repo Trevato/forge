@@ -28,6 +28,7 @@ import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
 import { sinceDigest } from "../../web/studio/since.ts";
 import { askForSomething } from "./tell.ts";
+import { askForEveryday, everydayOf, EVERYDAY_WHY, keepAdmin } from "../../core/everyday.ts";
 import { mayView } from "../../core/sealed.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../../actions/fleet.ts";
 import { plain } from "./boards.ts";
@@ -210,6 +211,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let decider: string | null = null;
   /** Home's three figures, as the web's row says them; empty unless an admin looks (they count every repository). */
   let figures: string[] = [];
+  /**
+   * The web home's everyday ask, as one muted line at the head (#8046): why,
+   * and the two answers, while an admin has made no choice; once linked, the
+   * name of the account used day to day. Nobody else gets the row.
+   */
+  let everyday: { line: string; asking: boolean } | undefined;
   /** One line per fired flow alarm; an admin reads every repository, anyone else public ones alone. */
   let alarms: string[] = [];
   /** The panels this admin pinned to the web home, by title and board, in their order. */
@@ -295,10 +302,29 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     ctx.invalidate();
   };
 
+  const everydayHead = (): typeof everyday => {
+    if (f.user === undefined || !f.user.isAdmin || f.user.kind !== "user") return undefined;
+    if (askForEveryday(f.db, f.user))
+      return { line: `${EVERYDAY_WHY} E makes it on the web · K keeps using admin`, asking: true };
+    const daily = everydayOf(f.db, f.user);
+    return daily === undefined
+      ? undefined
+      : { line: `Day to day you are ${daily.username}; this is the admin account.`, asking: false };
+  };
+
+  /** `K`: the admin keeps working as admin, recorded for web and terminal alike. */
+  const keepAdminHere = (): void => {
+    if (f.user === undefined) return;
+    keepAdmin(f.db, f.user);
+    reload();
+    ctx.toast("kept admin; you will not be asked again", "success");
+  };
+
   const reload = (): void => {
     // The server remembers the *choice* and nothing about the laptop, so
     // this is a list of decisions — never a status that would be stale.
     pins = f.user ? listPins(f.db, f.user.id) : [];
+    everyday = everydayHead();
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
@@ -953,6 +979,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ...(focus === "repos" && f.user !== undefined && shown().some(mayArchive)
           ? [binding(["space"], "mark"), ...(markedRepos.size > 0 ? [binding(["a"], "archive marked")] : [])]
           : []),
+        ...(everyday?.asking === true
+          ? [binding(["E"], "everyday account"), binding(["K"], "keep admin")]
+          : []),
         binding(["r"], "refresh"),
       ];
     },
@@ -970,6 +999,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // A site admin's forge strip, as the board's: "All fine" or a line
       // per cause. Anyone else gets no rows and no reads.
       let body = area;
+      if (everyday !== undefined) {
+        const [strip, rest] = split(body, "v", [len(1), fill(1)]);
+        s.text(strip!.x, strip!.y, truncate(everyday.line, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w);
+        body = rest!;
+      }
       if (alarms.length > 0) {
         const [strip, rest] = split(body, "v", [len(alarms.length), fill(1)]);
         alarms.forEach((line, i) =>
@@ -1197,6 +1231,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ctx.push(migrateScreen(f, ctx));
         return true;
       }
+      if (e.key === "E" && everyday?.asking === true) {
+        openOnWeb(f, ctx, "/settings", "Making your everyday account");
+        return true;
+      }
+      if (e.key === "K" && everyday?.asking === true) return keepAdminHere(), true;
       if (e.key === "A" && f.user) {
         openOnWeb(f, ctx, "/settings", "Account settings");
         return true;
