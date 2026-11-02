@@ -19,7 +19,8 @@ import {
 } from "../src/core/runs.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { getAgent } from "../src/core/agents.ts";
-import { workdirFor } from "../src/crew/workdir.ts";
+import { readRunLog } from "../src/runs/log.ts";
+import { claimWorkdir, isClaimed, workdirFor } from "../src/crew/workdir.ts";
 import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
@@ -466,6 +467,41 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done.","to
     const next = await followUp(repo);
     expect(next.state).toBe("ok");
     expect(existsSync(lock)).toBe(false);
+  }, 60_000);
+
+  test("a leftover directory with files and no .git never fails the run (#8219)", async () => {
+    const { repo, clone } = await keptClone("bramble");
+    rmSync(join(clone, ".git"), { recursive: true, force: true });
+    const next = await followUp(repo);
+    expect(next.summary ?? "").not.toContain("clone failed");
+    expect(next.state).toBe("ok");
+    expect(existsSync(join(clone, ".git", "HEAD"))).toBe(true);
+  }, 60_000);
+
+  test("a run that finds the issue's clone held works in a clone of its own (#8219)", async () => {
+    const { repo, clone } = await keptClone("orchard-held");
+    // Another live run holds the clone, and has uncommitted work in it.
+    const other = claimWorkdir(clone, "otherrun");
+    writeFileSync(join(clone, "held.txt"), "mine");
+    const next = await followUp(repo);
+    expect(next.state).toBe("ok");
+    expect(readRunLog(app.config.dataDir, next.id).lines.some((l) => l.includes("another run holds the issue's clone"))).toBe(true);
+    // The held clone is untouched (a reset and clean would have taken the file)…
+    expect(existsSync(join(clone, "held.txt"))).toBe(true);
+    // …and the run's own clone is gone with it.
+    expect(readdirSync(dirname(clone)).some((n) => n.startsWith(`${basename(clone)}.run-`))).toBe(false);
+    await other.release();
+  }, 60_000);
+
+  test("a run that throws after claiming its clone frees the claim (#8219)", async () => {
+    const { repo, clone } = await keptClone("orchard-throw");
+    // A file where the clone should be: reading it as a directory throws.
+    rmSync(clone, { recursive: true, force: true });
+    writeFileSync(clone, "not a directory");
+    const next = await followUp(repo);
+    expect(next.state).toBe("failed");
+    expect(isClaimed(clone)).toBe(false);
+    rmSync(clone, { force: true });
   }, 60_000);
 
   test("a kept clone git no longer reads is moved aside and cloned afresh (#6263)", async () => {

@@ -161,6 +161,7 @@ import {
   type InstallRunner,
   removeClone,
   workdirFor,
+  claimWorkdir,
 } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
@@ -944,7 +945,6 @@ async function work(
     pull === undefined
       ? issue.number
       : (issueOfBranch(agent, pull.headBranch) ?? issue.number);
-  const dir = workdirFor(app.config.dataDir, agent, repo, taskNumber);
   write(
     `${agent.user.username} on ${repo.ownerName}/${repo.name}#${issue.number} (${reason}), branch ${branch}`,
   );
@@ -984,7 +984,17 @@ async function work(
   // A paused run resumes: its pull keeps saying "In progress".
   let pausing = false;
   let ending: Ending | undefined;
+  // The clone is claimed last, right before the `try` whose `finally` frees
+  // it: a throw anywhere above would otherwise hold it for the life of the
+  // process, and every later run on the issue would work beside it.
+  const workdir = claimWorkdir(
+    workdirFor(app.config.dataDir, agent, repo, taskNumber),
+    run.id,
+  );
+  const dir = workdir.dir;
   try {
+    if (workdir.own)
+      write(`another run holds the issue's clone; working in ${dir}`);
     // The secrets this run declared, for this run only: opened now, held for
     // redaction from this moment, dropped in the `finally` below — a crash
     // included.
@@ -1722,6 +1732,7 @@ async function work(
     await early?.stop();
     if (!pausing) early?.settle(ending);
     grant?.release();
+    await workdir.release();
     deleteToken(app.db, agent.user.id, token.id);
     if (runTmp !== undefined) rmSync(runTmp, { recursive: true, force: true });
   }
@@ -1810,7 +1821,7 @@ async function prepareClone(
   if (signal.aborted) return { ok: false, error: "cancelled" };
   // A kept clone git no longer reads as one — a clone a network blip cut
   // short — is moved aside, never reused, and cloned afresh (#6263).
-  if (!fresh && existsSync(dir) && !(await readsAsClone(dir, env))) {
+  if (existsSync(dir) && !(await readsAsClone(dir, env))) {
     const aside = `${dir}.broken-${Date.now()}`;
     renameSync(dir, aside);
     write(`the kept clone is not a git repository; moved aside to ${aside}, cloning afresh`);

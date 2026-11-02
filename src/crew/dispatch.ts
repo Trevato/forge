@@ -33,7 +33,7 @@ import {
 import { closesFromBody, getPull, pullDir, type Pull } from "../core/pulls.ts";
 import { claimedClones, sweepOrphanClones } from "./orphans.ts";
 import { pruneRunFiles } from "../runs/prune.ts";
-import { crewRoot } from "./workdir.ts";
+import { crewRoot, isClaimed } from "./workdir.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
@@ -262,7 +262,7 @@ export async function startCrew(
   }, options.tickMs ?? TICK_MS);
   // Clones no open issue, pull or run claims fill the volume (#5697).
   const sweepClones = (): void => {
-    sweepOrphanClones(crewRoot(app.config.dataDir), claimedClones(app.db))
+    sweepOrphanClones(crewRoot(app.config.dataDir), claimedClones(app.db), isClaimed)
       .then((count) => {
         if (count > 0) log.info("removed clones nothing claims", { count });
       })
