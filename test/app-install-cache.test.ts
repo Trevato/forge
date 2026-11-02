@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AppManifest } from "../src/apps/manifest.ts";
 import { installPlan, startProcess, type StartInput } from "../src/apps/process.ts";
+import { fixtureRegistry } from "./helpers/fixture-registry.ts";
 
 setDefaultTimeout(60_000);
 
@@ -29,37 +30,7 @@ const manifest: AppManifest = {
 const SERVER = `Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response("ok") });\n`;
 
 /** A registry on loopback serving one package, `fixture-pkg@1.0.0`; counts its requests. */
-async function registry(dir: string): Promise<{ url: string; hits: string[]; stop: () => void }> {
-  mkdirSync(join(dir, "pkg", "package"), { recursive: true });
-  writeFileSync(join(dir, "pkg", "package", "package.json"), JSON.stringify({ name: "fixture-pkg", version: "1.0.0" }));
-  const made = Bun.spawnSync(["tar", "-czf", join(dir, "fixture.tgz"), "-C", join(dir, "pkg"), "package"]);
-  if (made.exitCode !== 0) throw new Error("tar is needed for the fixture registry");
-  const tarball = new Uint8Array(await Bun.file(join(dir, "fixture.tgz")).arrayBuffer());
-  const hits: string[] = [];
-  const server: ReturnType<typeof Bun.serve> = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch(req): Response {
-      const path = new URL(req.url).pathname;
-      hits.push(path);
-      if (path === "/fixture-pkg/-/fixture-pkg-1.0.0.tgz") return new Response(tarball);
-      if (path === "/fixture-pkg")
-        return Response.json({
-          name: "fixture-pkg",
-          "dist-tags": { latest: "1.0.0" },
-          versions: {
-            "1.0.0": {
-              name: "fixture-pkg",
-              version: "1.0.0",
-              dist: { tarball: `http://127.0.0.1:${server.port}/fixture-pkg/-/fixture-pkg-1.0.0.tgz` },
-            },
-          },
-        });
-      return new Response("not found", { status: 404 });
-    },
-  });
-  return { url: `http://127.0.0.1:${server.port}/`, hits, stop: () => void server.stop(true) };
-}
+const registry = fixtureRegistry;
 
 /** An app's checkout depending on the fixture, with the lockfile bun writes against it. */
 async function checkout(dir: string, reg: string): Promise<string> {

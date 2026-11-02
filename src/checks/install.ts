@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { formatBytes } from "../core/storage.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { fillable } from "./fillable.ts";
 import { lend } from "./install_evict.ts";
 
 /** What an install prints when the machine, not the code, failed it. */
@@ -109,7 +110,11 @@ export function lockfileRefusal(dir: string, registry: string): string | undefin
     if (!url.startsWith(registry)) return `the lockfile names ${url.slice(0, 80)}, not the registry`;
   if (/[@"'/](?:github|gitlab|bitbucket|git|ssh|git\+\w+):/i.test(text))
     return "the lockfile has a git dependency";
-  return undefined;
+  // Every package by name and version with a sha512 integrity, or no fill:
+  // a file, link or workspace dependency, or a patch, is read on the host.
+  const manifest = existsSync(join(dir, "package.json")) ? readFileSync(join(dir, "package.json"), "utf8") : "{}";
+  const strict = fillable(manifest, text, registry);
+  return strict.ok ? undefined : strict.error;
 }
 
 /**

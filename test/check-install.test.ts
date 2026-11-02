@@ -268,6 +268,8 @@ describe("prefillInstallCache (#7543)", () => {
     const made = Bun.spawnSync(["tar", "-czf", join(dir, "fixture.tgz"), "-C", join(dir, "pkg"), "package"]);
     if (made.exitCode !== 0) throw new Error("tar is needed for the fixture registry");
     const tarball = new Uint8Array(await Bun.file(join(dir, "fixture.tgz")).arrayBuffer());
+    // As npm serves it: the fill trusts only a lockfile with sha512 integrities (`checks/fillable.ts`).
+    const integrity = `sha512-${new Bun.CryptoHasher("sha512").update(tarball).digest("base64")}`;
     const hits: string[] = [];
     const server: ReturnType<typeof Bun.serve> = Bun.serve({
       port: 0,
@@ -284,7 +286,7 @@ describe("prefillInstallCache (#7543)", () => {
               "1.0.0": {
                 name: "fixture-pkg",
                 version: "1.0.0",
-                dist: { tarball: `http://127.0.0.1:${server.port}/fixture-pkg/-/fixture-pkg-1.0.0.tgz` },
+                dist: { tarball: `http://127.0.0.1:${server.port}/fixture-pkg/-/fixture-pkg-1.0.0.tgz`, integrity },
               },
             },
           });

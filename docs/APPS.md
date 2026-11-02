@@ -720,20 +720,33 @@ queued again, and the forge that carries on runs it from the start.
 or `ECONNRESET` is tried once more after 2 s. If it fails that way again,
 the check is `failed: infrastructure`. It is queued again, and the merge
 queue counts it as cut off, not red. If the re-run fails the same way, it
-fails and says `infrastructure`. A check in a cell installs into its own
-home, so its bun cache is shared with nothing. An uncontained check uses
-its repository's cache (`<data>/check-install/<repo>/bun`), and installs
-into it take turns under a lock file, so two never extract one package
-into the same directory. That cache is bounded (`src/checks/install_evict.ts`,
-#7574): a fill, or an uncontained install, marks the packages its `bun.lock`
-names as lent, and under the same lock, in the background and at most hourly,
-the forge removes entries not lent for 30 days (`FORGE_CHECK_CACHE_DAYS`), then
-the oldest until the repository's cache is under 2 GB (`FORGE_CHECK_CACHE_MB`).
+fails and says `infrastructure`. An uncontained check uses its
+repository's cache (`<data>/check-install/<repo>/bun`), and installs into
+it take turns under a lock file, so two never extract one package into the
+same directory. A `job` check installs in its own pod with its own cache
+and is not retried.
+
+**A contained check installs from the shared cache**
+(`src/checks/install.ts`, #7543). A check in a cell reads its repository's
+cache and never writes it: before the install, the forge fills it on the
+host from a scratch copy of the commit's checkout (no `bunfig.toml` or
+`.npmrc` of the pull's, `--frozen-lockfile --ignore-scripts`, under the
+same lock), and binds it read-only into the cell, which installs from it
+copying. A warm install downloads nothing. The forge fills only a lockfile
+whose every package is a plain `name@version` from the pinned registry
+with a sha512 integrity (`src/checks/fillable.ts`); anything else
+(workspaces, git, file or tarball URLs, patches, an override or
+resolution to any of those, a binary `bun.lockb`)
+installs into the cell's own cache as before, and the log says why.
+
+That cache is bounded (`src/checks/install_evict.ts`, #7574): a fill, or an
+uncontained install, marks the packages its `bun.lock` names as lent, and
+under the same lock, in the background and at most hourly, the forge
+removes entries not lent for 30 days (`FORGE_CHECK_CACHE_DAYS`), then the
+oldest until the repository's cache is under 2 GB (`FORGE_CHECK_CACHE_MB`).
 An evicted package is fetched again by the next install. Only the text
-`bun.lock` is read: a repository on a binary `bun.lockb` lends nothing, so its
-packages age out after 30 days and are fetched again (a cell never fills from
-one at all). A `job` check installs in its own pod and is not
-retried.
+`bun.lock` is read: a repository on a binary `bun.lockb` lends nothing, so
+its packages age out after 30 days and are fetched again.
 
 **An app environment installs from that same cache** (`src/apps/process.ts`,
 #7544). Before a cold checkout's `install`, production or a preview, the
