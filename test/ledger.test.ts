@@ -3,6 +3,7 @@
  * ship or show, try again or stop — each with a rule underneath and a fake
  * decider on top, and each written down with what came of it.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { beforeAll, afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,7 +31,7 @@ import { submitReview } from "../src/core/reviews.ts";
 import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import type { Answer, Decider, Questions } from "../src/crew/decide.ts";
 import { driveRepo, landIfGreen } from "../src/crew/autonomy.ts";
 import { summariseCheckFailure } from "../src/checks/summary.ts";
@@ -103,7 +104,7 @@ describe("the decision ledger", () => {
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
     scout = getUserByName(app.db, "scout")!;
-    setCrewRole(app.db, repo.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, repo.id, getUserByName(app.db, "atlas")!.id, "planner");
     updateRepoSettings(app.db, repo, {
       autonomy: "autonomous",
       autonomyDirection: "Sell one real thing end to end.",

@@ -4,6 +4,7 @@
  * a planning run receives the teams section in its task.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -13,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { createLabel, getIssueById, setIssueLabels, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { listRuns } from "../src/core/runs.ts";
@@ -64,7 +65,7 @@ beforeAll(async () => {
     if (!agent.ok) throw new Error(String(agent.error));
     expect(addToCrew(app, alice, repo, name).ok).toBe(true);
   }
-  setCrewRole(app.db, repo.id, getUserByName(app.db, "atlas")!.id, "planner");
+  seatAs(app.db, repo.id, getUserByName(app.db, "atlas")!.id, "planner");
   // The stand-in agent keeps the first line it is told and ends at once.
   const fake = join(dataDir, "fake-claude");
   writeFileSync(

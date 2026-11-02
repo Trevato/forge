@@ -4,6 +4,7 @@
  * or lands it. The refusals come first.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ import { openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import {
   cleanWhy,
@@ -453,7 +454,7 @@ describe("a held pull and the rules", () => {
   });
 
   test("a held green pull with an approving review does not land", async () => {
-    setCrewRole(f.app.db, f.repo.id, quill.id, "reviewer");
+    seatAs(f.app.db, f.repo.id, quill.id, "reviewer");
     const pull = await greenPull("approved", mason);
     approve(pull, f.alice);
     hold(pull);

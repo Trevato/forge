@@ -5,6 +5,7 @@
  * credential, the home and the app page say so and where to add one.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { getAppByRepo, listApps } from "../src/core/apps.ts";
 import { getRepo } from "../src/core/repos.ts";
 import {
@@ -91,7 +92,7 @@ describe("a spawned child's apps", () => {
           createdBy: alice.id,
         });
         addCrew(parent.db, repo.value.id, atlas.value.id, alice.id);
-        setCrewRole(parent.db, repo.value.id, atlas.value.id, "planner");
+        seatAs(parent.db, repo.value.id, atlas.value.id, "planner");
       }
     }
     const spawned = await spawnForge(

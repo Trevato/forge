@@ -5,6 +5,7 @@
  */
 
 import {
+  askedRoles,
   createAgent,
   deleteAgent,
   getAgentView,
@@ -45,6 +46,7 @@ export function agentRoutes(router: Router<Handler>): void {
       ...(typeof input.budgetUsd === "number"
         ? { budgetUsd: input.budgetUsd }
         : {}),
+      ...askedRoles(input.roles),
     });
     if (!made.ok) return respondAccess(made.error, 422);
     return json(agentJson(made.value), 201);
@@ -76,6 +78,7 @@ export function agentRoutes(router: Router<Handler>): void {
         ...(typeof input.budgetUsd === "number"
           ? { budgetUsd: input.budgetUsd }
           : {}),
+        ...askedRoles(input.roles),
       },
     );
     if (!updated.ok) return respondAccess(updated.error, 422);

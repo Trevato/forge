@@ -1,14 +1,15 @@
 /**
  * Crew agents in the terminal, a forge admin's: each agent's model, budget and
  * the first line of its brief, as MCP `agent` and /api/v1/agents have them.
- * `m`, `b` and `B` change model, budget and brief, `n` creates one and `d`
+ * `m`, `b` and `B` change model, budget and brief, `r` its roles (planner,
+ * builder, reviewer: what a repository's team lists offer it for), `n` creates one and `d`
  * removes one. Every change shows its plan and applies only after a confirm,
  * through `updateAgent`, `createAgent` and `deleteAgent`, so the same bounds
  * apply and a refusal is said in MCP's words (the error code).
  */
 
 import { checkPatch, createAgent, deleteAgent, listAllAgents, updateAgent } from "../../actions/crew.ts";
-import type { AgentPatch } from "../../core/agents.ts";
+import { CREW_ROLES, type AgentPatch } from "../../core/agents.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -33,7 +34,7 @@ export function agentsScreen(f: Session, ctx: Ctx): Screen {
   const rows = (): ListRow[] =>
     list().map((a) => ({
       title: a.user.username,
-      secondary: `${a.model === "" ? "default model" : a.model} · ${a.budgetUsd === 0 ? "default budget" : `$${a.budgetUsd}`}`,
+      secondary: `${a.roles.join("+")} · ${a.model === "" ? "default model" : a.model} · ${a.budgetUsd === 0 ? "default budget" : `$${a.budgetUsd}`}`,
       meta: firstLine(a.brief),
     }));
 
@@ -44,6 +45,7 @@ export function agentsScreen(f: Session, ctx: Ctx): Screen {
       binding(["m"], "model"),
       binding(["b"], "budget"),
       binding(["B"], "brief"),
+      binding(["r"], "roles"),
       binding(["n"], "new"),
       binding(["d"], "remove"),
     ],
@@ -100,6 +102,13 @@ export function agentsScreen(f: Session, ctx: Ctx): Screen {
           const bad = checkPatch(f.app, { brief: v });
           if (!bad.ok) return `refused: ${bad.error}`;
           return later(ctx, () => confirm(name, { brief: v }, `${name}: brief → "${truncate(v, 60)}". y/n`));
+        });
+      else if (e.key === "r")
+        ask(name, `roles: ${CREW_ROLES.join(", ")} (comma separated)`, agent.roles.join(", "), (v) => {
+          const roles = v.split(",").map((r) => r.trim()).filter((r) => r !== "");
+          const bad = checkPatch(f.app, { roles });
+          if (!bad.ok) return `refused: ${bad.error}`;
+          return later(ctx, () => confirm(name, bad.value, `${name}: roles ${agent.roles.join("+")} → ${roles.join("+")}. y/n`));
         });
       else if (e.key === "d")
         ctx.push(

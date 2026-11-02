@@ -5,12 +5,13 @@
  * changes requested goes back to its builder after a day of their silence.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { createRepo, type Repo } from "../src/core/repos.ts";
@@ -63,7 +64,7 @@ describe("an ask settles", () => {
     if (!made.ok) throw new Error(made.error);
     createAgentRow(app.db, { userId: made.value.id, brief: "b" });
     addCrew(app.db, repo.id, made.value.id, owner.id);
-    setCrewRole(app.db, repo.id, made.value.id, role);
+    seatAs(app.db, repo.id, made.value.id, role);
     return made.value;
   };
   const work = (kind: "pull" | "issue", assignee: User | null, createdAt = new Date().toISOString()): Issue => {

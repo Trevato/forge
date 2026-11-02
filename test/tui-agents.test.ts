@@ -191,6 +191,24 @@ describe("agents in the terminal", () => {
     h.stop();
   });
 
+  test("roles change after a confirm and a bad one is refused before it", async () => {
+    const h = boot("alice");
+    await open(h);
+    await h.press("r");
+    await clear(h, 20);
+    await h.type("planner, boss");
+    await h.press("enter");
+    expect(getAgentByName(forge.db, "bot1")!.roles).toEqual(["builder"]);
+    await h.press("escape");
+    await h.press("r");
+    await clear(h, 20);
+    await h.type("planner, reviewer");
+    await h.press("enter");
+    await h.press("y");
+    expect(getAgentByName(forge.db, "bot1")!.roles).toEqual(["planner", "reviewer"]);
+    h.stop();
+  });
+
   test("a non-admin and an admin agent are never offered the screen", async () => {
     for (const who of ["bob", "carol"]) {
       const h = boot(who);

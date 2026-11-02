@@ -993,6 +993,7 @@ export function agentJson(agent: Agent) {
     model: agent.model,
     brief: agent.brief,
     budgetUsd: agent.budgetUsd,
+    roles: agent.roles,
     createdAt: agent.createdAt,
   };
 }

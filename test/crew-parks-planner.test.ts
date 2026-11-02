@@ -4,6 +4,7 @@
  * migration 43 rewords old outage parks so they no longer count. Split from
  * `test/crew-parks.test.ts`, whose `engine` it shares.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -11,7 +12,7 @@ import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { migrations } from "../src/core/schema.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -132,7 +133,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
     if (!agent.ok) throw new Error(String(agent.error));
     expect(addToCrew(e.app, e.alice, e.fresh(), "sentinel").ok).toBe(true);
     const sentinel = getUserByName(e.app.db, "sentinel")!;
-    setCrewRole(e.app.db, e.repo.id, sentinel.id, "reviewer");
+    seatAs(e.app.db, e.repo.id, sentinel.id, "reviewer");
     const branch = await commitToBranch(e.app, e.alice, e.fresh(), {
       branch: "feature/spent",
       base: "main",

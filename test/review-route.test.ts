@@ -6,6 +6,7 @@
  * not only one that ships on its own. A review run is judged by its verdict:
  * it pushes nothing by design.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole, type Agent } from "../src/core/agents.ts";
+import { type Agent } from "../src/core/agents.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import type { Review } from "../src/core/reviews.ts";
@@ -185,7 +186,7 @@ describe("every green pull an agent wrote is sent to review", () => {
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
     for (const name of ["juniper", "sentinel"])
-      setCrewRole(app.db, repo.id, getUserByName(app.db, name)!.id, "reviewer");
+      seatAs(app.db, repo.id, getUserByName(app.db, name)!.id, "reviewer");
     // Not autonomous: review is not the shipping loop's alone.
     expect(repo.autonomy).not.toBe("autonomous");
   });

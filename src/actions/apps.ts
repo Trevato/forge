@@ -284,6 +284,7 @@ export type NewAppError =
   | CreateAppError
   | "scaffold_failed"
   | "no_such_agent"
+  | "not_a_builder"
   | "app_limit";
 
 /**
@@ -307,6 +308,7 @@ export async function newApp(
       ? undefined
       : getAgentByName(app.db, input.agent);
   if (input.agent && !agent) return err("no_such_agent");
+  if (agent && !agent.roles.includes("builder")) return err("not_a_builder");
 
   // Refuse at the limit before a repository exists to take back.
   // The owner is resolved with the actor's rights, as createRepo does, so
@@ -371,7 +373,7 @@ export async function newApp(
     const binary = process.env["FORGE_CLAUDE"] ?? "claude";
     if (planningAvailable(binary)) {
       const roster = listAllAgents(app, user.value);
-      const agents = roster.ok ? roster.value : [];
+      const agents = roster.ok ? roster.value.filter((a) => a.roles.includes("builder")) : [];
       if (agents.length > 0) {
         const result = await plan(
           {
@@ -401,7 +403,7 @@ export async function newApp(
 
   let issue: Issue | undefined;
   if (chosen) {
-    addCrew(app.db, repo.value.id, chosen.user.id, user.value.id);
+    addCrew(app.db, repo.value.id, chosen.user.id, user.value.id, "builder");
     app.bus.append({
       kind: "crew.added",
       repoId: repo.value.id,
@@ -459,6 +461,7 @@ export const NEW_APP_ERRORS: Record<string, string> = {
   already_app: "That repository is already an app.",
   scaffold_failed: "The starter app could not be committed.",
   no_such_agent: NO_SUCH_AGENT,
+  not_a_builder: "That agent is not a builder, so it cannot be handed a new app. Pick a builder.",
 };
 
 export interface NewAppFromSentenceInput extends Omit<NewAppInput, "name"> {

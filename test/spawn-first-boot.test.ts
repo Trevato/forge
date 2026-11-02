@@ -6,6 +6,7 @@
  * child's own pages — and a link that is used, expired or made up says so.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,8 +22,7 @@ import {
   addCrew,
   createAgentRow,
   listCrewRoles,
-  setCrewRole,
-} from "../src/core/agents.ts";
+  } from "../src/core/agents.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { getOrg, listTeams, listTeamMembers } from "../src/core/orgs.ts";
 import { getRepo } from "../src/core/repos.ts";
@@ -113,7 +113,7 @@ describe("a spawned child's first boot", () => {
         createdBy: alice.id,
       });
       addCrew(parent.db, repo.value.id, agent.value.id, alice.id);
-      setCrewRole(parent.db, repo.value.id, agent.value.id, role);
+      seatAs(parent.db, repo.value.id, agent.value.id, role);
     }
     const source: SpawnSource = {
       catalog: [

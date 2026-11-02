@@ -5,6 +5,7 @@
  * the feed, and the feed through the MCP. The hold lifts when the pile
  * drains under five.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -122,7 +123,7 @@ describe("the picker holds a build on a hot file", () => {
       if (!created.ok) throw new Error(String(created.error));
       expect(addToCrew(app, alice, made.value, agent).ok).toBe(true);
     }
-    setCrewRole(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
     const set = await updateRepoSettings(app, alice, made.value, {
       autonomy: "autonomous",
       autonomyDirection: "Keep the engine small.",

@@ -5,6 +5,7 @@
  * a change is audited and takes effect on the next tick, and the MCP `crew`
  * tool sets the same numbers.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { crewNow } from "../src/actions/crew_now.ts";
 import { reviewSays } from "../src/crew/review_says.ts";
 import { askLinesFor } from "../src/web/studio/asks.ts";
@@ -72,13 +73,13 @@ beforeAll(async () => {
   servers = await serve(app);
   alice = ok(await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: PASSWORD, adminIfFirst: true }));
   proveAll(app);
-  for (const name of ["mason", "atlas", "judge"]) ok(await createAgent(app, alice, { username: name }));
+  for (const name of ["mason", "atlas", "judge"]) ok(await createAgent(app, alice, { username: name, roles: ["planner", "builder", "reviewer"] }));
   repo = ok(await createRepo(app, alice, { name: "yard", visibility: "public" }));
   ok(await commitToBranch(app, alice, repo, { message: "Start", files: [{ path: "README.md", content: "# yard\n" }] }));
-  for (const name of ["mason", "atlas", "judge"]) expect(addToCrew(app, alice, repo, name).ok).toBe(true);
+  for (const name of ["mason", "atlas", "judge"]) expect(addToCrew(app, alice, repo, name, "builder").ok).toBe(true);
   const id = (n: string) => getUserByName(app.db, n)!.id;
-  setCrewRole(app.db, repo.id, id("atlas"), "planner");
-  setCrewRole(app.db, repo.id, id("judge"), "reviewer");
+  seatAs(app.db, repo.id, id("atlas"), "planner");
+  seatAs(app.db, repo.id, id("judge"), "reviewer");
   ok(await updateRepoSettings(app, alice, repo, { autonomy: "autonomous", autonomyDirection: "Make the yard rounder.", autonomyCeilingUsd: 10, autonomySlots: 2, autonomyBy: alice.id }));
   const res = await fetch(`${servers.url}/signin`, { method: "POST", body: new URLSearchParams({ username: "alice", password: PASSWORD }), redirect: "manual" });
   cookie = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
@@ -230,11 +231,11 @@ test("a lapsed review says why on the now list, the MCP and the asks: paused, un
   expect(paused.ask).toContain("the reviewer is paused");
   app.db.query("UPDATE repo SET reviewer_slots = 8 WHERE id = ?1").run(repo.id);
 
-  setCrewRole(app.db, repo.id, judge.id, "builder");
+  seatAs(app.db, repo.id, judge.id, "builder");
   const none = await says();
   expect(none.now).toBe("no reviewer on the crew");
   expect(none.ask).toContain("no reviewer on the crew");
-  setCrewRole(app.db, repo.id, judge.id, "reviewer");
+  seatAs(app.db, repo.id, judge.id, "reviewer");
 });
 
 test("three change requests are worded as such, never as an empty crew", () => {
@@ -291,8 +292,8 @@ describe("the reviewer's cap, end to end (#8734)", () => {
   beforeAll(async () => {
     porch = ok(await createRepo(app, alice, { name: "porch", visibility: "private" }));
     ok(await commitToBranch(app, alice, porch, { message: "Start", files: [{ path: "README.md", content: "# porch\n" }] }));
-    expect(addToCrew(app, alice, porch, "judge").ok).toBe(true);
-    setCrewRole(app.db, porch.id, getUserByName(app.db, "judge")!.id, "reviewer");
+    expect(addToCrew(app, alice, porch, "judge", "builder").ok).toBe(true);
+    seatAs(app.db, porch.id, getUserByName(app.db, "judge")!.id, "reviewer");
   });
 
   test("at 1, the second agent pull is queued only after the first review ends", async () => {

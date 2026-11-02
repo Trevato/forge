@@ -4,6 +4,7 @@
  * updates that end without a push hand it to a person, on their review
  * list, instead of closing it or trying again.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +14,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -85,7 +86,7 @@ beforeAll(async () => {
   }
   mason = getUserByName(app.db, "mason")!;
   const quill = getUserByName(app.db, "quill")!;
-  setCrewRole(app.db, repo.id, quill.id, "reviewer");
+  seatAs(app.db, repo.id, quill.id, "reviewer");
 
   const branch = await commitToBranch(app, alice, repo, {
     branch: "feature/shared",

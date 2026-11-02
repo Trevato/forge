@@ -4,6 +4,7 @@
  * whose boxes are all ticked, and an issue held for boxes gets the same pass
  * once. A builder is still never sent to redo shipped work.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ import { passOf } from "../src/actions/box_pass.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull, submitReview } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { PASS_LEAD, tickBoxes, unticked } from "../src/core/done_on_main.ts";
 import { addComment, getIssueById, listComments, updateIssueText, type Issue } from "../src/core/issues.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
@@ -114,8 +115,8 @@ describe("the reviewer's pass over the boxes", () => {
       if (!created.ok) throw new Error(String(created.error));
       expect(addToCrew(app, alice, made.value, agent).ok).toBe(true);
     }
-    setCrewRole(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
-    setCrewRole(app.db, made.value.id, getUserByName(app.db, "vesper")!.id, "reviewer");
+    seatAs(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, made.value.id, getUserByName(app.db, "vesper")!.id, "reviewer");
     vesper = getUserByName(app.db, "vesper")!;
     mason = getUserByName(app.db, "mason")!;
     const set = await updateRepoSettings(app, alice, made.value, {
@@ -382,7 +383,7 @@ describe("the review-states door", () => {
     const created = await createAgent(app, alice, { username: "vesper" });
     if (!created.ok) throw new Error(String(created.error));
     addToCrew(app, alice, repo, "vesper");
-    setCrewRole(app.db, repo.id, getUserByName(app.db, "vesper")!.id, "reviewer");
+    seatAs(app.db, repo.id, getUserByName(app.db, "vesper")!.id, "reviewer");
     token = tokenFor(app, "vesper", "rw");
     const seeded = await commitToBranch(app, alice, repo, {
       message: "Start",

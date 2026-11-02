@@ -6,6 +6,7 @@
  * which pulls wait on a builder and which on a reviewer.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getIssueById, listComments } from "../src/core/issues.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -148,7 +149,7 @@ describe("a pull with changes requested always moves", () => {
     }
     builder = getUserByName(app.db, "mason")!;
     reviewer = getUserByName(app.db, "quill")!;
-    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
+    seatAs(app.db, repo.id, reviewer.id, "reviewer");
     // Assisted: a lapsed head is not sent for being autonomous, only for answering a verdict.
     app.db
       .query("UPDATE repo SET autonomy = 'assisted', autonomy_by = ?2, autonomy_slots = 3 WHERE id = ?1")

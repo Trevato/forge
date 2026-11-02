@@ -4,6 +4,7 @@
  * and the naming is a writer's, validated at the boundary.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { teamsOfIssue, teamVerdicts } from "../src/core/issue_teams.ts";
 import type { Issue } from "../src/core/issues.ts";
 import type { Pull } from "../src/core/pulls.ts";
@@ -114,7 +115,7 @@ describe("cross-team work", () => {
         const agent = await createAgent(app, alice, { username: name });
         if (!agent.ok) throw new Error(String(agent.error));
         addToCrew(app, alice, repo, name);
-        setCrewRole(app.db, repo.id, id(name), "reviewer");
+        seatAs(app.db, repo.id, id(name), "reviewer");
       }
     });
     await step("teams", () => {
@@ -191,7 +192,7 @@ describe("cross-team work", () => {
     const agent = await createAgent(app, alice, { username: "ember" });
     if (!agent.ok) throw new Error(String(agent.error));
     addToCrew(app, alice, repo, "ember");
-    setCrewRole(app.db, repo.id, id("ember"), "reviewer");
+    seatAs(app.db, repo.id, id("ember"), "reviewer");
     saveTeam(app.db, "security", { charter: "", dial: 0, members: [id("ember")] });
     saveTeam(app.db, "platform", { charter: "", dial: 0, members: [id("ember")] });
     const pull = await pullClosing(issueNaming(["security", "platform"]));

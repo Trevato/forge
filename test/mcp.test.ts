@@ -4,6 +4,7 @@
  * action the pages call — so what a person may not do on a page they may
  * not do here.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -14,7 +15,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { pullDir } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { openIssue } from "../src/actions/issues.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
@@ -571,7 +572,7 @@ describe("the forge over MCP", () => {
     const made = await createAgent(app, alice, { username: "closer", brief: "x" });
     if (!made.ok) throw new Error(String(made.error));
     expect(addToCrew(app, alice, game, "closer").ok).toBe(true);
-    setCrewRole(app.db, game.id, made.value.user.id, "planner");
+    seatAs(app.db, game.id, made.value.user.id, "planner");
     const botToken = createToken(app.db, made.value.user.id, "bot", "rw").token;
     const mine = (title: string) => {
       const o = openIssue(app, made.value.user, game, { title });

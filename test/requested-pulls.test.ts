@@ -5,6 +5,7 @@
  * share, so these pin it.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +14,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { requestedPulls, verdictIsStale } from "../src/core/requested.ts";
@@ -100,7 +101,7 @@ describe("requestedPulls", () => {
       if (!r.ok) throw new Error(String(r.error));
       await push(r.value, "main");
       for (const who of ["mason", "quill"]) expect(addToCrew(app, alice, r.value, who).ok).toBe(true);
-      setCrewRole(app.db, r.value.id, reviewer.id, "reviewer");
+      seatAs(app.db, r.value.id, reviewer.id, "reviewer");
       repos.push(r.value);
     }
     [garden, orchard] = repos as [Repo, Repo];

@@ -4,6 +4,7 @@
  * only when the reason changes, and the tick line's
  * `finishing="queued Q, in flight F, skipped S: <why>×k"`.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { setCapacity } from "../src/core/capacity.ts";
 import { setHold } from "../src/core/holds.ts";
 import type { Pull } from "../src/core/pulls.ts";
@@ -74,7 +75,7 @@ beforeAll(async () => {
   }
   const mason = getUserByName(app.db, "mason")!;
   const quill = getUserByName(app.db, "quill")!;
-  setCrewRole(app.db, repo.id, quill.id, "reviewer");
+  seatAs(app.db, repo.id, quill.id, "reviewer");
   for (const n of [1, 2, 3]) {
     const branch = await commitToBranch(app, alice, repo, {
       branch: `feature/${n}`,
@@ -147,7 +148,7 @@ test("a changed reason is said again, for that pull only", async () => {
   expect(full.skips[0]).toContain('finishing: skip pull=3 why="waits for room in the check lane"');
   expect(listRuns(app.db, repo.id, { kind: "agent" }).filter((r) => r.issueId === pulls[2]!.id)).toHaveLength(0);
 
-  setCrewRole(app.db, repo.id, getUserByName(app.db, "mason")!.id, "reviewer");
+  seatAs(app.db, repo.id, getUserByName(app.db, "mason")!.id, "reviewer");
   const none = await pass(1);
   expect(none.skips).toHaveLength(1);
   expect(none.skips[0]).toContain(`finishing: skip pull=3 why=${JSON.stringify(NO_BUILDER_ON_CREW)}`);

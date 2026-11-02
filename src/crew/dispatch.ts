@@ -374,6 +374,36 @@ export function atCeiling(
   return spentUsd >= repo.autonomyCeilingUsd;
 }
 
+/**
+ * Whether this run is a job outside the agent's seat here: a build for one
+ * that is not a builder (the direction issue is the planner's), a review for
+ * one that is not a reviewer. On the crew the seat is the repository's; off
+ * it, what the agent declares.
+ */
+export function outsideSeat(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  agent: Agent,
+  reason: RunReason,
+): boolean {
+  // Every reason but a review is building work: a first go, feedback, a red check, a conflict, a converge.
+  const seat =
+    reason === "review"
+      ? "reviewer"
+      : issue.id === repo.directionIssueId
+        ? "planner"
+        : "builder";
+  const held = crewRole(app.db, repo.id, agent.user.id);
+  // A pull assigned to its reviewer is asked for a look, a builder's for a fix: only a planner is outside.
+  if (reason !== "review" && issue.kind === "pull")
+    return (held ?? agent.roles[0]) === "planner";
+  return held === undefined ? !agent.roles.includes(seat) : held !== seat;
+}
+
+export const NOT_A_BUILDER_NOTE =
+  "I am not a builder here, so I have not started on this. Assign it to a builder on the crew, or change my roles in Settings.";
+
 /** Queue a run about an issue for an agent, unless one is already waiting. */
 export function queueAgentRun(
   app: App,
@@ -390,6 +420,8 @@ export function queueAgentRun(
 ): Run | undefined {
   // A suspended or removed owner's repositories run nothing, whoever asks.
   if (!accountActive(app.db, repo.ownerId)) return undefined;
+  // Never a job outside the agent's seat: building is a builder's, reviewing a reviewer's.
+  if (outsideSeat(app, repo, issue, agent, reason)) return undefined;
   // An archived repository starts nothing new; a run carrying on (`again`)
   // is one already going, and finishes. A first run
   // (`attempt` 0, as a conflict or converge run is queued) is new.
@@ -582,6 +614,12 @@ export function route(app: App, event: ForgeEvent): void {
         ? getAgent(app.db, issue.assigneeId)
         : undefined;
       if (!agent || issue.state !== "open") return;
+      // Assigned to a planner or a reviewer: said once, never silently run.
+      if (outsideSeat(app, repo, issue, agent, "assigned")) {
+        if (!listComments(app.db, issue.id).some((c) => c.body === NOT_A_BUILDER_NOTE))
+          addComment(app, agent.user, repo, issue, NOT_A_BUILDER_NOTE);
+        return;
+      }
       queueAgentRun(
         app,
         repo,

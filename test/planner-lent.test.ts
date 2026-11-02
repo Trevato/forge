@@ -2,6 +2,7 @@
  * A repository in auto mode with a direction and no planner gets one, and
  * its first planned issues start without a further step (#7637).
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,7 +10,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { crewRole, setCrewRole } from "../src/core/agents.ts";
+import { crewRole } from "../src/core/agents.ts";
 import { getIssueById } from "../src/core/issues.ts";
 import { createRepo as coreCreateRepo, getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -60,7 +61,7 @@ describe("a migrated repository with only a builder", () => {
     // Elsewhere on the forge atlas plans.
     const home = await repo("home");
     expect(addToCrew(app, alice, home, "atlas").ok).toBe(true);
-    setCrewRole(app.db, home.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, home.id, getUserByName(app.db, "atlas")!.id, "planner");
     // The migrated one: a builder, nothing else.
     pixel = await repo("pixel-plays");
     expect(addToCrew(app, alice, pixel, "torque").ok).toBe(true);
@@ -121,7 +122,7 @@ describe("a migrated repository with only a builder", () => {
   test("a planner with a crew but no direction issue yet reads the second message", async () => {
     const third = await repo("third");
     expect(addToCrew(app, alice, third, "atlas").ok).toBe(true);
-    setCrewRole(app.db, third.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, third.id, getUserByName(app.db, "atlas")!.id, "planner");
     await updateRepoSettings(app, alice, third, {
       autonomy: "assisted",
       autonomyDirection: "more",

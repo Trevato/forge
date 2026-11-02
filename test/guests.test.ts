@@ -4,6 +4,7 @@
  * can; and every older refusal keeps its own reason.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { setArchivedIn } from "./helpers/archive.ts";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -14,7 +15,7 @@ import { changeCapacity } from "../src/actions/capacity.ts";
 import { proposePlan } from "../src/actions/plan.ts";
 import { redirectProposal } from "../src/actions/proposals.ts";
 import { ARCHIVED_WHY } from "../src/core/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getProposal } from "../src/core/proposals.ts";
 import { listComments } from "../src/core/issues.ts";
 import { ensureDirectionIssue } from "../src/crew/autonomy.ts";
@@ -266,7 +267,7 @@ describe("a guest cannot own, copy or run", () => {
     expect(assigned).toBe(0);
   });
   test("redirecting a wave: a guest's own pending proposal is refused before anything is written", async () => {
-    setCrewRole(app.db, lab.id, helper.id, "planner");
+    seatAs(app.db, lab.id, helper.id, "planner");
     const direction = ensureDirectionIssue(app, alice, lab)!;
     const proposed = proposePlan(app, alice, lab, [{ key: "a", title: "Weed", body: "", blockedBy: [] }], {
       title: "Spring",
@@ -313,6 +314,8 @@ describe("a guest cannot own, copy or run", () => {
   });
 
   test("the wake-up sweep starts no run on an issue a guest assigned, and a hundred of them do not hold back a member's", async () => {
+    // Back to building: a dispatch gives a planner no build (#8907).
+    seatAs(app.db, lab.id, helper.id, "builder");
     // As an assignment made before the guard (or by a member since demoted):
     // the agent set, the event kept.
     const assignedBy = (who: User, title: string) => {

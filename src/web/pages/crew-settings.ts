@@ -43,7 +43,10 @@ export async function crewAdd(ctx: Ctx): Promise<Response> {
   const { repo, form } = gate;
   // The team card's one button names the seat it fills.
   const role = field(form, "role");
-  const added = addToCrew(ctx.app, ctx.auth.user, repo, field(form, "agent"), isCrewRole(role) ? role : undefined);
+  const asked = isCrewRole(role) ? role : undefined;
+  const added = addToCrew(ctx.app, ctx.auth.user, repo, field(form, "agent"), asked);
+  // An agent already on the crew picked for another list moves to it.
+  if (added.ok && asked !== undefined) setCrewRole(ctx.app.db, repo.id, added.value.user.id, asked);
   return flashTo(
     ctx,
     `${repoBase(repo)}/settings#crew`,
@@ -54,7 +57,9 @@ export async function crewAdd(ctx: Ctx): Promise<Response> {
       : {
           tone: "danger",
           message:
-            added.error === "not_an_agent"
+            added.error === "role_not_declared"
+              ? "That agent does not do that job. Change its roles first, under Settings → Crew."
+              : added.error === "not_an_agent"
               ? "Only an agent can be on a crew; a person is given access through an organization's team."
               : "No such agent on this forge.",
         },

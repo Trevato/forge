@@ -6,6 +6,7 @@
  * terminal's Flow dialog show the same counts, private repositories to the
  * owner only. Each test makes its own repository and crew.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,7 +16,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
+import { getAgentByName } from "../src/core/agents.ts";
 import { getIssueById, listIssues, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { DONE_NOTE } from "../src/core/done_on_main.ts";
@@ -49,7 +50,7 @@ async function crewed(
     }
     expect(addToCrew(app, alice, made.value, agent).ok).toBe(true);
   }
-  setCrewRole(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
+  seatAs(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
   const set = await updateRepoSettings(app, alice, made.value, {
     autonomy: "autonomous",
     autonomyDirection: "Keep the engine small.",
@@ -272,7 +273,7 @@ describe("the tick says why each ready issue cannot start", () => {
     if (!made.ok) throw new Error(String(made.error));
     expect(addToCrew(app, alice, fresh(), "sentinel").ok).toBe(true);
     const sentinel = getUserByName(app.db, "sentinel")!;
-    setCrewRole(app.db, repo.id, sentinel.id, "reviewer");
+    seatAs(app.db, repo.id, sentinel.id, "reviewer");
 
     // A lane past its budget: the sentinel files it at once, unassigned.
     const now = Date.now();

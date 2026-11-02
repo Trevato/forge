@@ -732,7 +732,7 @@ describe("apps, runs and the crew on the web", () => {
     expect(await bodyOf(alice, "/settings")).toContain('href="/settings/crew"');
 
     const bad = await web(alice, "/settings/crew", {
-      form: { username: "bot", budgetUsd: "-4" },
+      form: { username: "bot", budgetUsd: "-4", roles: "builder" },
     });
     expect(bad.status).toBe(422);
     const badPage = words(await bad.text());
@@ -751,6 +751,7 @@ describe("apps, runs and the crew on the web", () => {
         model: "",
         brief: "Be brief.",
         budgetUsd: "2",
+        roles: "builder",
       },
     });
     expect(made.status).toBe(303);
@@ -765,14 +766,14 @@ describe("apps, runs and the crew on the web", () => {
     expect(edit).toContain('value="bot"');
     expect(edit).toContain("Retire this agent");
     const updated = await web(alice, "/settings/crew/bot", {
-      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "3" },
+      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "3", roles: "builder" },
     });
     expect(updated.status).toBe(303);
     expect(getAgentByName(app.db, "bot")?.model).toBe("sonnet");
     expect(getAgentByName(app.db, "bot")?.budgetUsd).toBe(3);
     // A refused edit shows the error beside its field.
     const refused = await web(alice, "/settings/crew/bot", {
-      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "-4" },
+      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "-4", roles: "builder" },
     });
     expect(refused.status).toBe(422);
     const refusedPage = words(await refused.text());

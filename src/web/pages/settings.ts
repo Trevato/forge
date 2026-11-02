@@ -83,7 +83,7 @@ import {
   settingsLayout,
 } from "../chrome.ts";
 import { daySpark } from "../studio/kpi_row.ts";
-import { settingsLead } from "../studio/crew.ts";
+import { settingsLead, teamJs } from "../studio/crew.ts";
 import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
@@ -191,6 +191,7 @@ export function settingsPageResponse(
       crumbs: crumbsFor(repo),
       palette: repoPalette(ctx, repo),
       ...(styleCss !== undefined ? { styleCss } : {}),
+      scriptJs: teamJs,
       body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
       ${settingsLayout(sections(repoBase(repo), active), body)}`,
     },
@@ -236,6 +237,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
         title: pageTitle("settings", readable, true),
         crumbs: crumbsFor(readable),
         palette: repoPalette(ctx, readable),
+        scriptJs: teamJs,
         body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
       ${lead}${proposals ? html`<div class="mt">${proposals}</div>` : null}`,
       });

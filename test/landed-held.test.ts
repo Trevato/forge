@@ -4,6 +4,7 @@
  * holds it under `landed`, and a person's comment or edit since the merge
  * makes it pickable again; an agent's word does not.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +14,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, editIssue, openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { landedNote } from "../src/core/done_on_main.ts";
 import type { ForgeEvent } from "../src/core/events.ts";
 import { getIssueById, listComments, setAssignee, type Issue } from "../src/core/issues.ts";
@@ -79,7 +80,7 @@ describe("a landing with boxes unticked waits for a person", () => {
       if (!created.ok) throw new Error(String(created.error));
       expect(addToCrew(app, alice, made.value, agent).ok).toBe(true);
     }
-    setCrewRole(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
     mason = getUserByName(app.db, "mason")!;
     const set = await updateRepoSettings(app, alice, made.value, {
       autonomy: "autonomous",

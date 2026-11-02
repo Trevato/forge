@@ -5,6 +5,7 @@
  * second account.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
@@ -102,7 +103,7 @@ describe("the next-steps card of a spawned forge", () => {
       createdBy: alice.id,
     });
     addCrew(parent.db, repo.value.id, atlas.value.id, alice.id);
-    setCrewRole(parent.db, repo.value.id, atlas.value.id, "planner");
+    seatAs(parent.db, repo.value.id, atlas.value.id, "planner");
     parentServers = await serve(parent);
     const spawned = await spawnForge(
       parent,

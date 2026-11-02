@@ -1,4 +1,5 @@
 /** `/review` lists each ask waiting on a person as one row with its why. */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { addComment as addRawComment } from "../src/core/issues.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { previewEnv } from "../src/apps/data.ts";
 import { createApp as createAppRow } from "../src/core/apps.ts";
@@ -58,7 +59,7 @@ beforeAll(async () => {
   if (!made.ok) throw new Error(made.error);
   const repo = made.value;
   for (const a of [builder, reviewer]) addCrew(app.db, repo.id, a.id, alice.id);
-  setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
+  seatAs(app.db, repo.id, reviewer.id, "reviewer");
   let seq = 0;
   const pull = (author: string, title: string, age: number) => {
     const issueId = id();

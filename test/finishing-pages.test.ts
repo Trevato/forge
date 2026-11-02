@@ -4,6 +4,7 @@
  * up to date. Its entry and every pull it drops are logged once per reason,
  * and with no candidate the tick line says `0 candidates of N open`.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { createRun } from "../src/core/runs.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -86,7 +87,7 @@ beforeAll(async () => {
     if (!agent.ok) throw new Error(String(agent.error));
     expect(addToCrew(app, alice, repo, name).ok).toBe(true);
   }
-  setCrewRole(app.db, repo.id, getUserByName(app.db, "quill")!.id, "reviewer");
+  seatAs(app.db, repo.id, getUserByName(app.db, "quill")!.id, "reviewer");
   // The oldest pull edits the file main is about to change; fifty newer
   // ones each add their own file and merge clean.
   oldest = await pullOn(0, "export const zero = 'branch';\n");

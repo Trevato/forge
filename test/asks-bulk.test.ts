@@ -5,6 +5,7 @@
  * first: an outsider and a plain reader act on nothing.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +18,7 @@ import { addComment, openIssue } from "../src/actions/issues.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
+import { getAgentByName } from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
 import { assignIssue } from "../src/actions/issues.ts";
 import { mutedRepos, recordInteraction, removeMutes } from "../src/core/interactions.ts";
@@ -169,7 +170,7 @@ describe("acting on many asks at once", () => {
       });
       addToCrew(app, alice, made.value, "bot");
       addToCrew(app, alice, made.value, "planner");
-      setCrewRole(
+      seatAs(
         app.db,
         made.value.id,
         getAgentByName(app.db, "planner")!.user.id,

@@ -4,6 +4,7 @@
  * and the card leaves; a foreign Origin is refused; a reader gets a 404.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { addComment } from "../src/actions/issues.ts";
@@ -12,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { getIssueById, listComments, setAssignee } from "../src/core/issues.ts";
 import { handoverOf } from "../src/crew/guard.ts";
 import { createRepo, type Repo } from "../src/core/repos.ts";
@@ -146,7 +147,7 @@ describe("give a handed-over pull back to the crew", () => {
     if (!made.ok) throw new Error(`seed repo: ${made.error}`);
     repo = made.value;
     for (const agent of [builder, reviewer]) addCrew(app.db, repo.id, agent.id, owner.id);
-    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
+    seatAs(app.db, repo.id, reviewer.id, "reviewer");
     cookie = await signIn("alice", "a-good-passphrase");
     readerCookie = await signIn("reader", "a-good-passphrase");
   }, 30_000);
@@ -226,7 +227,7 @@ describe("give a handed-over pull back to the crew", () => {
     if (!planner.ok) throw new Error(planner.error);
     createAgentRow(app.db, { userId: planner.value.id, brief: "plans." });
     addCrew(app.db, repo.id, planner.value.id, owner.id);
-    setCrewRole(app.db, repo.id, planner.value.id, "planner");
+    seatAs(app.db, repo.id, planner.value.id, "planner");
     const fake = join(dataDir, "fake-claude.sh");
     writeFileSync(
       fake,

@@ -3,6 +3,7 @@
  * a slow check queue must not lapse a pull before review was ever sent.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
@@ -98,7 +99,7 @@ describe("review is owed from the check's green", () => {
     const agent = await createAgent(app, alice, { username: "quill" });
     if (!agent.ok) throw new Error(String(agent.error));
     addToCrew(app, alice, repo, "quill");
-    setCrewRole(app.db, repo.id, getUserByName(app.db, "quill")!.id, "reviewer");
+    seatAs(app.db, repo.id, getUserByName(app.db, "quill")!.id, "reviewer");
   }, 30_000);
 
   afterAll(async () => {

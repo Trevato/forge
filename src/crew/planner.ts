@@ -7,7 +7,7 @@
 
 import type { App } from "../app.ts";
 import { addToCrew } from "../actions/crew.ts";
-import { getAgent, listCrewRoles, setCrewRole, type Agent } from "../core/agents.ts";
+import { getAgent, listCrewRoles, type Agent } from "../core/agents.ts";
 import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 
@@ -42,8 +42,7 @@ export function ensurePlanner(app: App, repo: Repo, by: User): Agent | undefined
   if (have !== undefined) return have.agent;
   const chosen = ownersPlanner(app, repo);
   if (chosen === undefined) return undefined;
-  if (!addToCrew(app, by, repo, chosen.user.username).ok) return undefined;
-  setCrewRole(app.db, repo.id, chosen.user.id, "planner");
+  if (!addToCrew(app, by, repo, chosen.user.username, "planner").ok) return undefined;
   return chosen;
 }
 

@@ -19,6 +19,8 @@ export interface Agent {
   readonly brief: string;
   /** Spend per run in USD; 0 means the forge's default. */
   readonly budgetUsd: number;
+  /** The seats it can hold, in planner, builder, reviewer order; never empty. */
+  readonly roles: readonly CrewRole[];
   readonly createdBy: string | null;
   readonly createdAt: string;
 }
@@ -28,6 +30,7 @@ interface AgentRow {
   model: string;
   brief: string;
   budget_usd: number;
+  roles: string;
   created_by: string | null;
   created_at: string;
 }
@@ -46,6 +49,7 @@ function agentOf(user: User, row: AgentRow): Agent {
     model: row.model,
     brief: row.brief,
     budgetUsd: row.budget_usd,
+    roles: parseRoles(row.roles),
     createdBy: row.created_by,
     createdAt: row.created_at,
   };
@@ -58,17 +62,19 @@ export function createAgentRow(
     model?: string | undefined;
     brief?: string | undefined;
     budgetUsd?: number | undefined;
+    roles?: readonly CrewRole[] | undefined;
     createdBy?: string | undefined;
   },
 ): Agent {
   db.query(
-    "INSERT INTO agent (user_id, model, brief, budget_usd, created_by) VALUES (?1, ?2, ?3, ?4, ?5)",
+    "INSERT INTO agent (user_id, model, brief, budget_usd, created_by, roles) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
   ).run(
     input.userId,
     input.model ?? "",
     input.brief ?? "",
     input.budgetUsd ?? 0,
     input.createdBy ?? null,
+    joinRoles(input.roles),
   );
   return getAgent(db, input.userId)!;
 }
@@ -113,6 +119,8 @@ export interface AgentPatch {
   model?: string;
   brief?: string;
   budgetUsd?: number;
+  /** Replaces the agent's roles; empty or unknown ones are ignored. */
+  roles?: readonly CrewRole[];
 }
 
 export function updateAgent(
@@ -134,13 +142,23 @@ export function updateAgent(
     params.push(Math.min(Math.max(patch.budgetUsd, 0), limitValue(db, "agent.budget_max_usd")));
     sets.push(`budget_usd = ?${params.length}`);
   }
+  if (patch.roles !== undefined && patch.roles.length > 0) {
+    params.push(joinRoles(patch.roles));
+    sets.push(`roles = ?${params.length}`);
+  }
   if (sets.length > 0) {
     params.push(userId);
     db.query(
       `UPDATE agent SET ${sets.join(", ")} WHERE user_id = ?${params.length}`,
     ).run(...params);
   }
-  return getAgent(db, userId);
+  const agent = getAgent(db, userId);
+  // A seat the agent no longer declares moves to one it does: a repo narrows, never widens.
+  if (agent && patch.roles !== undefined)
+    db.query(
+      "UPDATE repo_crew SET role = ?2 WHERE user_id = ?1 AND instr(',' || ?3 || ',', ',' || role || ',') = 0",
+    ).run(userId, agent.roles[0]!, agent.roles.join(","));
+  return agent;
 }
 
 // ---- the crew of a repository ----
@@ -155,13 +173,22 @@ export function addCrew(
   repoId: string,
   userId: string,
   addedBy?: string,
+  role?: CrewRole,
 ): boolean {
+  const agent = getAgent(db, userId);
+  const declared = agent?.roles ?? [];
+  // No default to builder: the seat is the one asked for, else the first the agent declares.
+  // A user with no agent row goes on to the insert, where the database refuses a person.
+  const seat = agent
+    ? role !== undefined && declared.includes(role) ? role : declared[0]
+    : (role ?? "builder");
+  if (seat === undefined) return false;
   return (
     db
       .query(
-        "INSERT OR IGNORE INTO repo_crew (repo_id, user_id, added_by) VALUES (?1, ?2, ?3)",
+        "INSERT OR IGNORE INTO repo_crew (repo_id, user_id, added_by, role) VALUES (?1, ?2, ?3, ?4)",
       )
-      .run(repoId, userId, addedBy ?? null).changes > 0
+      .run(repoId, userId, addedBy ?? null, seat).changes > 0
   );
 }
 
@@ -281,8 +308,8 @@ export function deleteAgent(db: Database, userId: string): boolean {
  */
 export type CrewRole = "builder" | "planner" | "reviewer";
 export const CREW_ROLES: readonly CrewRole[] = [
-  "builder",
   "planner",
+  "builder",
   "reviewer",
 ];
 export const isCrewRole = (value: unknown): value is CrewRole =>
@@ -295,11 +322,37 @@ export function crewRole(
 ): CrewRole | undefined {
   const row = db
     .query<
-      { role: string },
+      { role: string; roles: string },
       [string, string]
-    >("SELECT role FROM repo_crew WHERE repo_id = ?1 AND user_id = ?2")
+    >("SELECT repo_crew.role, agent.roles FROM repo_crew JOIN agent ON agent.user_id = repo_crew.user_id WHERE repo_id = ?1 AND repo_crew.user_id = ?2")
     .get(repoId, userId);
-  return row && isCrewRole(row.role) ? row.role : row ? "builder" : undefined;
+  return row ? seatOf(row.role, parseRoles(row.roles)) : undefined;
+}
+
+/** The roles an agent declares, in seat order; a bad or empty value reads as builder. */
+export function parseRoles(value: string): CrewRole[] {
+  const out = CREW_ROLES.filter((r) => value.split(",").includes(r));
+  return out.length > 0 ? out : ["builder"];
+}
+
+function joinRoles(roles: readonly CrewRole[] | undefined): string {
+  return parseRoles((roles ?? []).join(",")).join(",");
+}
+
+/** The seat a repo row holds: its own when the agent declares it, else the agent's first. */
+function seatOf(role: string, declared: readonly CrewRole[]): CrewRole {
+  return isCrewRole(role) && declared.includes(role) ? role : declared[0]!;
+}
+
+/** The repositories where an agent holds a seat that `roles` would not declare. */
+export function seatsOutside(db: Database, userId: string, roles: readonly CrewRole[]): string[] {
+  return db
+    .query<{ name: string }, [string, string]>(
+      `SELECT repo.name FROM repo_crew JOIN repo ON repo.id = repo_crew.repo_id
+       WHERE repo_crew.user_id = ?1 AND instr(',' || ?2 || ',', ',' || repo_crew.role || ',') = 0`,
+    )
+    .all(userId, roles.join(","))
+    .map((r) => r.name);
 }
 
 export function setCrewRole(
@@ -308,6 +361,8 @@ export function setCrewRole(
   userId: string,
   role: CrewRole,
 ): boolean {
+  // A repository narrows what an agent declares and never widens it.
+  if (!getAgent(db, userId)?.roles.includes(role)) return false;
   return (
     db
       .query(
@@ -328,13 +383,11 @@ export function listCrewRoles(
         "SELECT user_id, role FROM repo_crew WHERE repo_id = ?1",
       )
       .all(repoId)
-      .map(
-        (r) => [r.user_id, isCrewRole(r.role) ? r.role : "builder"] as const,
-      ),
+      .map((r) => [r.user_id, r.role] as const),
   );
   return listCrew(db, repoId).map((agent) => ({
     agent,
-    role: roles.get(agent.user.id) ?? "builder",
+    role: seatOf(roles.get(agent.user.id) ?? "", agent.roles),
   }));
 }
 
@@ -360,6 +413,7 @@ export function crewWithRole(
            JOIN agent ON agent.user_id = repo_crew.user_id
            JOIN user ON user.id = agent.user_id
            WHERE repo_crew.role = ?1
+             AND instr(',' || agent.roles || ',', ',' || ?1 || ',') > 0
              AND repo_crew.repo_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
            ORDER BY user.username COLLATE NOCASE`,
         )
@@ -396,8 +450,8 @@ export function reposWithBuilder(
     const batch = unique.slice(i, i + CHUNK);
     const rows = db
       .query<{ repo_id: string }, string[]>(
-        `SELECT DISTINCT repo_id FROM repo_crew
-         WHERE role = 'builder' AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`,
+        `SELECT DISTINCT repo_id FROM repo_crew JOIN agent ON agent.user_id = repo_crew.user_id
+         WHERE role = 'builder' AND instr(',' || agent.roles || ',', ',builder,') > 0 AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`,
       )
       .all(...batch);
     for (const row of rows) out.add(row.repo_id);

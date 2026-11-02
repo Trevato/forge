@@ -4,6 +4,7 @@
  * Refusals come first: a non-owner and a cross-origin post change nothing.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { proposePlan } from "../src/actions/plan.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
+import { getAgentByName } from "../src/core/agents.ts";
 import { listIssues, listComments } from "../src/core/issues.ts";
 import { getProposal } from "../src/core/proposals.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -90,7 +91,7 @@ describe("a wave proposal is one inbox card", () => {
     repo = made.value;
     await commitToBranch(app, alice, repo, { message: "seed", files: [{ path: "README.md", content: "# wave\n" }] });
     addToCrew(app, alice, repo, "planner");
-    setCrewRole(app.db, repo.id, getAgentByName(app.db, "planner")!.user.id, "planner");
+    seatAs(app.db, repo.id, getAgentByName(app.db, "planner")!.user.id, "planner");
   }, 30_000);
 
   afterAll(async () => {

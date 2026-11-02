@@ -18,6 +18,8 @@ export interface Prefill {
   readonly agent?: string;
   /** Values that matched nothing, as given (capped) — the page escapes them. */
   readonly unmatched: string[];
+  /** Sentences for a name that is on the forge but is not a builder. */
+  readonly refused: string[];
 }
 
 const FROM_MAX = 200;
@@ -36,8 +38,10 @@ export function prefill(
   query: { from?: string | null; crew?: string | null },
   origins: readonly PrefillOrigin[],
   agents: readonly string[],
+  notBuilders: readonly string[] = [],
 ): Prefill {
   const unmatched: string[] = [];
+  const refused: string[] = [];
   let repo: Prefill["repo"];
   let agent: string | undefined;
 
@@ -63,6 +67,8 @@ export function prefill(
   if (crew !== "") {
     if (crew.length <= CREW_MAX && CREW_SAFE.test(crew) && agents.includes(crew))
       agent = crew;
+    else if (crew.length <= CREW_MAX && notBuilders.includes(crew))
+      refused.push(`${crew} is not a builder, so it cannot take a migration. Pick one of the builders below.`);
     else unmatched.push(`crew=${shown(crew)}`);
   }
 
@@ -70,5 +76,19 @@ export function prefill(
     ...(repo ? { repo } : {}),
     ...(agent ? { agent } : {}),
     unmatched,
+    refused,
   };
+}
+
+/**
+ * The agents a migration may be handed to: builders only, the ones that do
+ * nothing else first (a specialist is the surest fit), then by name. The
+ * first is the page's default, so a planner that sorts first is never picked.
+ */
+export function migrationBuilders<A extends { roles: readonly string[]; user: { username: string } }>(
+  agents: readonly A[],
+): A[] {
+  return agents
+    .filter((a) => a.roles.includes("builder"))
+    .sort((a, b) => a.roles.length - b.roles.length || a.user.username.localeCompare(b.user.username));
 }

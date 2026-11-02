@@ -402,9 +402,11 @@ async function copyInto(
     if (!forgeCode.ok) return err(forgeCode.error);
 
     for (const b of plan.briefs) {
+      // The jobs it declares travel with it (#8907).
+      const roles = getAgentByName(app.db, b.agent)?.roles;
       const existing = getAgentByName(child.db, b.agent);
       if (existing) {
-        updateAgent(child.db, existing.user.id, { brief: b.text });
+        updateAgent(child.db, existing.user.id, { brief: b.text, ...(roles ? { roles } : {}) });
         continue;
       }
       const made = await createUser(child.db, {
@@ -414,7 +416,7 @@ async function copyInto(
         origin: "spawn",
       });
       if (!made.ok) return err(`could not make crew member ${b.agent}: ${made.error}`);
-      createAgentRow(child.db, { userId: made.value.id, brief: b.text, createdBy: founder.id });
+      createAgentRow(child.db, { userId: made.value.id, brief: b.text, roles, createdBy: founder.id });
     }
 
     // A carried crew member keeps its place on each app: the role it had on

@@ -4,6 +4,7 @@
  * brief names the target; the tick line says `reserve=startable/target`;
  * and only a pass that did not end well waits out the 20-minute floor.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, openIssue, setIssueState } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
+import { getAgentByName } from "../src/core/agents.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -105,7 +106,7 @@ describe("a planner that keeps a standing reserve", () => {
     }
     mason = getUserByName(app.db, "mason")!;
     atlas = getUserByName(app.db, "atlas")!;
-    setCrewRole(app.db, repo.id, atlas.id, "planner");
+    seatAs(app.db, repo.id, atlas.id, "planner");
     // Seven slots, every one of them busy: seven issues with a run in flight.
     for (let n = 0; n < 7; n++) {
       const opened = openIssue(app, alice, repo, { title: `Busy ${n}` });
