@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createClient, issueCode, parseAuthRequest, type OAuthClient } from "../src/core/oauth.ts";
+import { deleteToken, pruneTokens, revokeToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -164,6 +165,42 @@ describe("oauth refresh", () => {
     const b = await exchange("rw", 86_400);
     await post("/oauth/revoke", { token: String(b.body["access_token"]) });
     expect((await refresh(b.body["refresh_token"])).body["error"]).toBe("invalid_grant");
+  });
+
+  const accessIdOf = (refreshToken: unknown) =>
+    app.db
+      .query<{ token_id: string }, [string]>("SELECT token_id FROM oauth_refresh WHERE token_hash = ?1")
+      .get(new Bun.CryptoHasher("sha256").update(String(refreshToken)).digest("hex"))?.token_id ?? "";
+
+  test("a delete by someone other than the owner leaves the family refreshing", async () => {
+    const a = await exchange("rw", 86_400);
+    const rotated = await refresh(a.body["refresh_token"]);
+    expect(rotated.status).toBe(200);
+    const tokenId = accessIdOf(rotated.body["refresh_token"]);
+    expect(deleteToken(app.db, "someone-else", tokenId)).toBe(false);
+    expect((await refresh(rotated.body["refresh_token"])).status).toBe(200);
+  });
+
+  test("deleteToken and revokeToken each end the token's refresh family", async () => {
+    const a = await exchange("rw", 86_400);
+    expect(deleteToken(app.db, alice.id, accessIdOf(a.body["refresh_token"]))).toBe(true);
+    expect((await refresh(a.body["refresh_token"])).body["error"]).toBe("invalid_grant");
+    const b = await exchange("rw", 86_400);
+    const tokenId = accessIdOf(b.body["refresh_token"]);
+    const family = app.db.query<{ family: string }, [string]>("SELECT family FROM oauth_refresh WHERE token_id = ?1").get(tokenId)?.family;
+    expect(revokeToken(app.db, tokenId)).toBe(true);
+    expect((await refresh(b.body["refresh_token"])).body["error"]).toBe("invalid_grant");
+    expect(app.db.query("SELECT 1 FROM oauth_refresh WHERE family = ?1").get(family ?? "")).toBeNull();
+  });
+
+  test("an access token that merely expires still refreshes", async () => {
+    const a = await exchange("rw", 86_400);
+    app.db.query("UPDATE token SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?1").run(accessIdOf(a.body["refresh_token"]));
+    expect(pruneTokens(app.db)).toBeGreaterThan(0);
+    expect(await api(a.body["access_token"])).toBe(401);
+    const next = await refresh(a.body["refresh_token"]);
+    expect(next.status).toBe(200);
+    expect(await api(next.body["access_token"])).not.toBe(401);
   });
 
   test("spent rows stay bounded: a family keeps one predecessor however often it refreshes", async () => {

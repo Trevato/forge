@@ -14,5 +14,8 @@ curl -X POST https://<forge>/oauth/token \
   and leaves a `token.deleted` event with `via: oauth_refresh_reuse`.
 - `scope` may only narrow (`rw` to `ro`); more is `invalid_scope` and spends nothing.
 - `POST /oauth/revoke` with either token ends the family.
+- Deleting the access token on Settings › Tokens (or through the API, the terminal,
+  or the forge revoking it) ends the family too. An access token that merely
+  expires does not: the harness refreshes it.
 - Refresh tokens live 90 days from their issue, are stored hashed (`oauth_refresh`),
   and are bound to the client that got them. Sign-in-only (OpenID) grants get none.

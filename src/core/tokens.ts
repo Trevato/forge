@@ -181,11 +181,7 @@ export function deleteToken(
   userId: string,
   tokenId: string,
 ): boolean {
-  return (
-    db
-      .query("DELETE FROM token WHERE id = ?1 AND user_id = ?2")
-      .run(tokenId, userId).changes > 0
-  );
+  return deleteWithRefreshFamily(db, tokenId, userId);
 }
 
 /**
@@ -194,7 +190,40 @@ export function deleteToken(
  * a person revoking their own goes through `deleteToken`.
  */
 export function revokeToken(db: Database, tokenId: string): boolean {
-  return db.query("DELETE FROM token WHERE id = ?1").run(tokenId).changes > 0;
+  return deleteWithRefreshFamily(db, tokenId, null);
+}
+
+/**
+ * Delete a token and, when the OAuth endpoint minted it with a refresh
+ * token, every `oauth_refresh` row of its family, so a revoked harness
+ * cannot refresh its way back (#8428). The family is read before the
+ * delete: `token_id` clears with the token. Plain SQL, so this module
+ * stays free of an import of oauth.ts. Expiry (`pruneTokens`) does not
+ * come through here: an expired access token still refreshes.
+ */
+function deleteWithRefreshFamily(
+  db: Database,
+  tokenId: string,
+  userId: string | null,
+): boolean {
+  return db.transaction(() => {
+    const family = db
+      .query<{ family: string }, [string]>(
+        "SELECT family FROM oauth_refresh WHERE token_id = ?1 LIMIT 1",
+      )
+      .get(tokenId);
+    const deleted =
+      userId === null
+        ? db.query("DELETE FROM token WHERE id = ?1").run(tokenId)
+        : db
+            .query("DELETE FROM token WHERE id = ?1 AND user_id = ?2")
+            .run(tokenId, userId);
+    if (deleted.changes === 0) return false;
+    if (family !== null) {
+      db.query("DELETE FROM oauth_refresh WHERE family = ?1").run(family.family);
+    }
+    return true;
+  })();
 }
 
 /**
