@@ -27,6 +27,8 @@ export { tool as audit } from "./audit.ts";
 export { tool as backups } from "./backups.ts";
 export { tool as backups_destination } from "./backups_destination.ts";
 export { tool as backups_test } from "./backups_test.ts";
+export { tool as bet } from "./bet.ts";
+export { tool as bets } from "./bets.ts";
 export { tool as board_delete } from "./board_delete.ts";
 export { tool as board_pins } from "./board_pins.ts";
 export { tool as board_write } from "./board_write.ts";

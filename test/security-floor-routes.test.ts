@@ -43,11 +43,13 @@ const SECRET = "needs a secret scope an operator has set";
 const GO = "needs a short code minted by a share; the seed shares nothing";
 const ARCH = "needs an archived-home operation id; the seed archives nothing";
 const GATE = "needs a kept gate log, written only when a full gate runs on land";
+const BET = "needs a bet, which the seed does not propose";
 const HOOK = "needs a webhook, which the seed does not register";
 
 /** GET patterns the seed cannot fill → why. Requested with a placeholder all the same. */
 const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
+  "/:owner/:name/bets/:id": BET,
   "/:owner/:name/looks/:env/:commit/:kind.png": LOOK,
   "/:owner/:name/milestones/:number/limb/:op": LIMB,
   "/:owner/:name/variants/:group": VARIANT,

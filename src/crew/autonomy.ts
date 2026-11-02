@@ -12,6 +12,7 @@
  * repository's origin.
  */
 
+import { tickBets } from "../actions/bets.ts";
 import { onlyListDocs, resolveListConflicts } from "../actions/list-conflicts.ts";
 import { closedToday, closeStale } from "./stale_pulls.ts";
 import type { Database } from "bun:sqlite";
@@ -31,6 +32,8 @@ import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, typ
 import { checksFor } from "../checks/service.ts";
 import { queueBatch, queueDepth, smallShare } from "../core/capacity.ts";
 import { roadmapIssues, shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
+import { backedBetOf, betsInUse } from "../core/bets.ts";
+import { mayPick } from "./bets.ts";
 import { raisedAt } from "../core/thought_links.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
@@ -410,8 +413,20 @@ function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: re
   const raised = raisedAt(app.db, issues.map((i) => i.id));
   // Issues picked earlier in this tick hold their share before their runs show (#8729).
   const running = smallOfIds(app.db, [...new Set([...slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])), ...picked])]);
+  // Once the owner has backed a bet, builders pick from backed bets, the owner's raised issues and the small lane (#8713).
+  const bets = betsInUse(app.db, repo.id) ? backedBetOf(app.db, repo.id, issues.map((i) => i.id)) : undefined;
+  const allowed =
+    bets === undefined
+      ? ready
+      : ready.filter((r) =>
+          mayPick({
+            raised: raised.has(r.issue.id) || first.has(r.issue.id),
+            small: small.has(r.issue.id),
+            bet: bets.get(r.issue.id),
+          }),
+        );
   return slotOrder(
-    ready,
+    allowed,
     (r) => ({
       ranked: ranked.has(r.issue.id),
       raised: raised.has(r.issue.id) || first.has(r.issue.id),
@@ -470,6 +485,7 @@ async function driveOnce(
   taken: Set<string>,
 ): Promise<Drove> {
   if (repo.autonomy === "off") return "off";
+  tickBets(app, repo, now);
   const status = autonomyStatus(app, repo, now);
   if (status.paused !== null) return "paused";
   const by = getUserById(app.db, repo.autonomyBy!);

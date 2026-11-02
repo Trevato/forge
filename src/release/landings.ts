@@ -26,6 +26,8 @@ export interface Landing {
   /** When the pull merged. */
   readonly at: string;
   readonly live: boolean;
+  /** The bet whose scopes this pull built (#8713), set by the page that shows it. */
+  readonly bet?: string;
 }
 
 export interface Landings {

@@ -138,6 +138,7 @@ import { reconnectSubmit } from "../web/pages/frozen.ts";
 import { activityAtom, changelogAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
+import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
@@ -1033,6 +1034,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/next", nextPage);
   router.add("POST", "/:owner/:name/next", nextSubmit);
   router.add("POST", "/:owner/:name/issues/:number/first", firstSubmit);
+  router.add("GET", "/:owner/:name/bets", betsPage);
+  router.add("POST", "/:owner/:name/bets/propose", betPropose);
+  router.add("GET", "/:owner/:name/bets/:id", betPage);
+  router.add("POST", "/:owner/:name/bets/:id/:verb", betAct);
   router.add("GET", "/:owner/:name/milestones", milestonesPage);
   router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
   router.add("POST", "/:owner/:name/milestones/:number/watch", milestoneWatch);
