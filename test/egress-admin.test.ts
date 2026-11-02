@@ -4,7 +4,7 @@
  * Nobody else is offered the screen.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,8 @@ import { settleApp, settlePalette, settleUntil } from "./helpers/tui.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
+// Every wait inside settles for up to 20s; bun's 5s test default would cut a loaded check short.
+setDefaultTimeout(60_000);
 
 const ARM = "100.89.95.68:8101";
 
