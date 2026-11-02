@@ -59,6 +59,7 @@ export function mcpCard(origin: string, now: Running = running()) {
     transport: "streamable-http",
     protectedResourceMetadata: oauth,
     documentation: `${origin}/llms.txt`,
+    openapi: `${origin}/contract/openapi.json`,
     tokenFreeTools: ["report"],
     plugins: HARNESS_PLUGINS.map((p) => ({
       harness: p.harness,

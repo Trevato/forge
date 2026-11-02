@@ -56,6 +56,12 @@ describe("the MCP server card", () => {
     expect(prm.status).toBe(200);
     expect(((await prm.json()) as any).resource).toBe(card.endpoint);
 
+    // The OpenAPI description is named and live.
+    expect(card.openapi).toBe(`${base}/contract/openapi.json`);
+    const spec = await fetch(card.openapi);
+    expect(spec.status).toBe(200);
+    expect(spec.headers.get("content-type")).toContain("application/json");
+
     // The documentation link is live.
     expect((await fetch(card.documentation)).status).toBe(200);
   });
