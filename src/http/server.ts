@@ -190,6 +190,7 @@ import { ceilingAct, grantAct, modelAdd, modelPage } from "../web/pages/model.ts
 import {
   changePassword,
   iconPng,
+  favicon,
   llmsTxt,
   releasesJson,
   robotsTxt,
@@ -715,6 +716,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/manifest.webmanifest", webManifest);
   router.add("GET", "/opensearch.xml", openSearch);
   router.add("GET", "/icons/:spec.png", iconPng);
+  router.add("GET", "/favicon.ico", favicon);
   // The highlighter bundle, content-addressed. A stale hash is a 404 rather
   // than a redirect: the page that asked for it names the hash it was built
   // with, so a miss means an old tab, and an old tab should reload.

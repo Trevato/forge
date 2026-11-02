@@ -16,6 +16,7 @@
  *                                 report a problem without an account, how
  *                                 to offer a change (llmstxt.org)
  *   /icons/forge-<size>.png       the mark, rastered for the manifest and iOS
+ *   /favicon.ico                  the 32px mark, for a browser that asks by habit
  *
  * Nothing here is configured; everything is derived from what the forge
  * already knows — its URL, its first account, its public repositories, its
@@ -267,7 +268,7 @@ export function webManifest(ctx: Ctx): Response {
   );
 }
 
-const SIZES = new Set([180, 192, 512]);
+const SIZES = new Set([32, 180, 192, 512]);
 
 /** GET /icons/forge-:spec.png — `<size>` or `<size>-maskable`. */
 export function iconPng(ctx: Ctx): Response {
@@ -279,7 +280,20 @@ export function iconPng(ctx: Ctx): Response {
   // iOS rounds its own corners, so the touch icon is painted edge to edge
   // like a maskable one.
   const shape: MarkShape = m[2] !== undefined || size === 180 ? "full" : "icon";
-  const png = markPng(size, shape);
+  return pngResponse(markPng(size, shape));
+}
+
+/**
+ * GET /favicon.ico — the mark at 32px (`/icons/forge-32.png`). Every page
+ * carries its own inline SVG icon, but a browser asks here anyway on a page
+ * that is not ours (a raw file, a JSON answer); a PNG under an .ico name is
+ * read by every browser that asks, and answering spares the console a 404.
+ */
+export function favicon(): Response {
+  return pngResponse(markPng(32, "icon"));
+}
+
+function pngResponse(png: Uint8Array): Response {
   return new Response(png, {
     headers: {
       "content-type": "image/png",

@@ -11,7 +11,7 @@ const doc = readFileSync("docs/design/audit.md", "utf8");
 
 /** Routes that answer a file, a fragment, a redirect hop or a callback. */
 const NOT_PAGES =
-  /^\/(assets\/|\.well-known\/|icons\/|og\/|live\/|__forge\/|go\/|events$|system\/stream$|settings\/teams\/stream$|sw\.js$|robots\.txt$|sitemap\.xml$|manifest\.webmanifest$|opensearch\.xml$|llms\.txt$|releases\.json$|audit\.csv$|fleet\/graph\/live$|fleet\/graph\.csv$|settings\/origins\/callback$|home\/archived\/|settings\/backups\/live$)/;
+  /^\/(assets\/|\.well-known\/|icons\/|og\/|live\/|__forge\/|go\/|events$|system\/stream$|settings\/teams\/stream$|sw\.js$|robots\.txt$|favicon\.ico$|sitemap\.xml$|manifest\.webmanifest$|opensearch\.xml$|llms\.txt$|releases\.json$|audit\.csv$|fleet\/graph\/live$|fleet\/graph\.csv$|settings\/origins\/callback$|home\/archived\/|settings\/backups\/live$)/;
 
 const getRoutes = [
   ...server.matchAll(/router\.add\(\s*"GET",\s*"([^"]+)"/g),

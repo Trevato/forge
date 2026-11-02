@@ -345,6 +345,23 @@ describe("what the open web expects", () => {
     expect((await fetch(`${base}/icons/forge-64.png`)).status).toBe(404);
   });
 
+  test("/favicon.ico answers with the 32px mark instead of a 404", async () => {
+    const icon = await fetch(`${base}/icons/forge-32.png`);
+    const fav = await fetch(`${base}/favicon.ico`);
+    expect(fav.status).toBe(200);
+    expect(fav.headers.get("content-type")).toBe("image/png");
+    expect(fav.headers.get("cache-control")).toBe(icon.headers.get("cache-control"));
+    expect(fav.headers.get("cache-control")).toContain("immutable");
+    const bytes = new Uint8Array(await fav.arrayBuffer());
+    expect(bytes).toEqual(new Uint8Array(await icon.arrayBuffer()));
+    const header = pngHeader(bytes);
+    expect(header.ok && `${header.value.width}x${header.value.height}`).toBe("32x32");
+    // The security floor is on it like on every response.
+    expect(fav.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(fav.headers.get("referrer-policy")).not.toBeNull();
+    expect(fav.headers.get("content-security-policy")).not.toBeNull();
+  });
+
   test("the mark is painted, not pasted: gradient inside, nothing outside", () => {
     const decoded = decodePng(markPng(64, "icon"));
     expect(decoded.ok).toBe(true);
