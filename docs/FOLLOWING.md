@@ -293,4 +293,6 @@ The check cell's memory is on the same page under **Check cell**, and in the ter
   the repository) or `revoke` (`id`).
 - **Terminal**: `ctrl+k`, **Proposal tokens**, then the repository as
   `owner/name`. `n` mints (the child's name, then its https address) and shows
-  the secret once on its own screen; `x` revokes the one under the cursor.
+  the secret once on its own screen; `x` asks before it revokes the one under
+  the cursor ("Revoke the token for <child>?", Keep selected): `y` revokes,
+  `n`, esc or enter keeps it.
