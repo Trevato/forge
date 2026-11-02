@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { explorePage, exploreLine, parseExploreQuery } from "../src/actions/explore.ts";
+import { explorePage, exploreLine, isExploreLine, parseExploreQuery } from "../src/actions/explore.ts";
 import { suspendAccount } from "../src/actions/accounts.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
@@ -623,4 +623,10 @@ describe("explore past the first page", () => {
     expect(new Set(seen).size).toBe(seen.length);
     expect(seen.length).toBe(COUNT - 14 + 1);
   });
+});
+
+test("isExploreLine is true for each explore key and false for plain words", () => {
+  for (const line of ["kind:app", "sort:forks", "updated:7d", "owner:trevato", "archived:yes", "garden OWNER:x"])
+    expect(isExploreLine(line)).toBe(true);
+  for (const line of ["", "garden", "zed-one", "downer:x"]) expect(isExploreLine(line)).toBe(false);
 });

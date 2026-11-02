@@ -92,6 +92,13 @@ export function parseExploreQuery(line: string): ExploreQuery {
   return readExploreLine(line).query;
 }
 
+const EXPLORE_KEYS = /(^|\s)(kind|sort|updated|owner|archived):/i;
+
+/** Whether a line has any word the explorer reads as a key, so every surface takes it as the explorer's. */
+export function isExploreLine(line: string): boolean {
+  return EXPLORE_KEYS.test(line);
+}
+
 /** The query and the `kind:`/`sort:` words it did not know, as typed. */
 export interface ExploreRead {
   readonly query: ExploreQuery;

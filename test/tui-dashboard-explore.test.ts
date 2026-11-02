@@ -162,3 +162,10 @@ test("an unknown sort is named under Read as, with the words it takes", async ()
   const text = await typed("kind:app sort:nonsense");
   expect(text).toContain("sort:nonsense is not a sort — use score, forks");
 });
+
+test("owner:<name> alone lists that owner's apps as the explorer", async () => {
+  const text = await typed("owner:alice");
+  expect(text).toContain("Read as: owner:alice");
+  expect(text).toContain("alice/zed");
+  expect(text).not.toContain("bob/zed-one");
+});

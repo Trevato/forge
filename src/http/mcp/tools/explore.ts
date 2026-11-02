@@ -3,7 +3,7 @@ import { bad, good, type Tool, str } from "../shared.ts";
 
 export const tool: Tool = {
   name: "explore",
-  doc: "`{ query?, cursor? }`: the apps and people you can see, ranked, with their numbers; `kind:` `sort:` and words in one line; page on with `cursor`",
+  doc: "`{ query?, cursor? }`: the apps and people you can see, ranked, with their numbers; `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; page on with `cursor`",
   description:
     "The apps, people (and, for an admin, forges) you can see, ranked.",
   inputSchema: {
@@ -12,7 +12,7 @@ export const tool: Tool = {
       query: {
         type: "string",
         maxLength: 200,
-        description: "Words; kind: sort: updated:7d",
+        description: "Words; kind: sort: updated:7d owner: archived:",
       },
       cursor: {
         type: "string",

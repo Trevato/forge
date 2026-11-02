@@ -14,7 +14,7 @@
  * whole of this screen's design.
  */
 
-import { exploreLine, exploreNote, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
+import { exploreLine, isExploreLine, exploreNote, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
@@ -221,7 +221,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    */
   let explored: { line: string; rows: readonly ExploreRow[] } | undefined;
   let askedLine = "";
-  const exploring = (): boolean => /(^|\s)(kind|sort):/i.test(filter.query);
+  const exploring = (): boolean => isExploreLine(filter.query);
   const exploredRows = (): readonly ExploreRow[] => (exploring() ? (explored?.rows ?? []) : []);
   const syncExplore = (): void => {
     if (!exploring()) {
