@@ -159,6 +159,27 @@ export function sharedCause(t: Pick<SharedTest, "repoId" | "test">): string {
 }
 
 /**
+ * Distinct pulls whose check, created at or after `sinceMs`, failed the test
+ * a shared cause names (#8185): the reds a fix that landed then did not end,
+ * where the hour's window still holds the ones from before it.
+ */
+const FAILED_SINCE = `
+  SELECT DISTINCT run.issue_id, n.value AS test
+    FROM run,
+         json_each(CASE WHEN json_valid(run.check_detail) THEN run.check_detail ELSE '{}' END, '$.names') n
+   WHERE run.repo_id = ?1 AND run.id >= ?2 AND run.created_at >= ?3
+     AND run.kind = 'check' AND run.issue_id IS NOT NULL AND run.state = 'failed'
+     AND n.type = 'text'`;
+
+export function pullsFailedSince(db: Database, cause: string, sinceMs: number): number {
+  const repoId = cause.split(":")[1] ?? "";
+  const rows = db
+    .query<{ issue_id: string; test: string }, [string, string, string]>(FAILED_SINCE)
+    .all(repoId, idFloor(sinceMs), new Date(sinceMs).toISOString());
+  return new Set(rows.filter((r) => sharedCause({ repoId, test: r.test }) === cause).map((r) => r.issue_id)).size;
+}
+
+/**
  * The sentinel's finding key for a cause, `degraded:${keyPart(cause)}`
  * (`crew/sentinel.ts`, which reads the vitals and so is not imported here):
  * a shared cause is already lowercase base32 and base36, so only `:` moves.

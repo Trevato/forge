@@ -32,6 +32,7 @@ import { spans } from "../kernel/degraded_history.ts";
 import { QUEUE_WAIT_MAX_MS } from "../kernel/vitals.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { isOutageSummary } from "./network.ts";
+import { pullsFailedSince, SHARED_PULLS, SHARED_WINDOW_MS } from "../checks/shared_red.ts";
 import { clip } from "../text/clip.ts";
 
 const log = createLog("sentinel");
@@ -62,6 +63,8 @@ export interface Finding {
   readonly fix?: string;
   /** A degraded finding: when its cause first opened. Same cause and time, same incident (#2553). */
   readonly incident?: string;
+  /** The vitals cause a budget-breach or degraded finding reads. */
+  readonly cause?: string;
 }
 
 const QUOTE_MAX = 200;
@@ -398,6 +401,7 @@ export function degradedCauses(db: Database, now: number, forgeRepoId?: string):
       pillar: "P0 Trust: the forge says when it is not well, and is well again",
       lookFor: `\`${cause}\` stays out of the degraded list for a day, or holds under ${DEGRADED_DAY_MS / 60_000} minutes.`,
       incident: new Date(d.opened).toISOString(),
+      cause,
     });
   }
   return out;
@@ -454,6 +458,7 @@ export function budgetBreaches(db: Database, now: number, forgeRepoId?: string):
           ? "Make the named test's verdict depend only on the code under test, not on the check machine's load, disk or clock, in one pull. Pulls red on it alone wait, unparked, for main's next green check."
           : "Diagnose the cause from the evidence and hand the mechanical fix to a builder as its own issue.",
       urgent: true,
+      cause: s.cause,
     });
   }
   return out;
@@ -610,6 +615,67 @@ function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: 
   return 1;
 }
 
+interface RecentFix {
+  readonly issueId: string;
+  readonly closedAt: number;
+  /** Its issue was already told the test is still red since that close. */
+  readonly told: boolean;
+}
+
+/**
+ * A shared test's issue closed as done or split within the hour (#8185): its
+ * close is the landing on main, since a merged pull closes what it fixes only
+ * once it lands. The hour's window still holds the reds from before it.
+ */
+function recentFix(db: Database, f: Finding, now: number): RecentFix | undefined {
+  if (f.cause?.startsWith("shared:") !== true) return undefined;
+  const prior = db
+    .query<{ issue_id: string; commented_at: string | null; closed_at: string | null }, [string]>(
+      `SELECT t.issue_id, t.commented_at, i.closed_at FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+        WHERE t.key = ?1 AND i.state = 'closed' AND i.parked = 0 AND i.close_reason IN ('done', 'split')
+        ORDER BY i.closed_at DESC LIMIT 1`,
+    )
+    .get(f.key);
+  const closedAt = prior?.closed_at == null ? NaN : Date.parse(prior.closed_at);
+  if (prior === null || !(now - closedAt < SHARED_WINDOW_MS)) return undefined;
+  const told = prior.commented_at !== null && Date.parse(prior.commented_at) >= closedAt;
+  return { issueId: prior.issue_id, closedAt, told };
+}
+
+/** Whether a recent fix holds the finding back: told already, or too few reds since it landed. */
+const heldByFix = (db: Database, f: Finding, fix: RecentFix): boolean =>
+  fix.told || pullsFailedSince(db, f.cause ?? "", fix.closedAt) < SHARED_PULLS;
+
+/**
+ * A shared test fixed within the hour files nothing new (#8185). With fewer
+ * than SHARED_PULLS pulls red on it on checks created after the fix landed,
+ * it says nothing; with that many, it tells the closed issue once, as
+ * `continuesDone` does. Undefined when no fix is that recent.
+ */
+function sinceFix(app: App, repo: Repo, actor: User, f: Finding, evidence: string, at: string, now: number): 0 | 1 | undefined {
+  const fix = recentFix(app.db, f, now);
+  if (fix === undefined) return undefined;
+  if (heldByFix(app.db, f, fix)) return 0;
+  const issue = getIssueById(app.db, fix.issueId);
+  if (issue === undefined) return 0;
+  const pulls = pullsFailedSince(app.db, f.cause ?? "", fix.closedAt);
+  const said = addComment(
+    app,
+    actor,
+    repo,
+    issue,
+    `Still red after the fix landed at ${new Date(fix.closedAt).toISOString()}: ${pulls} pulls failed it on checks created since; the fix may not be live yet. At ${at}; evidence now:\n${f.evidence.map((e) => `- ${e}`).join("\n")}`,
+  );
+  if (!said.ok) {
+    log.warn("sentinel could not comment", { key: f.key, error: String(said.error) });
+    return 0;
+  }
+  app.db
+    .query("UPDATE sentinel_finding SET commented_at = ?1, last_seen = ?1, evidence = ?2 WHERE key = ?3 AND issue_id = ?4")
+    .run(at, evidence, f.key, fix.issueId);
+  return 1;
+}
+
 /**
  * A finding backed by an incident whose cause has stayed out of the degraded
  * history for a day is done: the sentinel says since when and closes it. Not a
@@ -711,7 +777,9 @@ export function hunt(
             .run(at, evidence, f.key, tracked.issue_id);
           continue;
         }
-        const told = f.incident === undefined ? undefined : continuesDone(app, repo, actor, f, evidence, at, now);
+        const told =
+          sinceFix(app, repo, actor, f, evidence, at, now) ??
+          (f.incident === undefined ? undefined : continuesDone(app, repo, actor, f, evidence, at, now));
         if (told !== undefined) {
           commented += told;
           continue;
@@ -825,7 +893,12 @@ export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
         .all()
         .map((r) => r.key),
     );
-    if (!signals.some((s) => !tracked.has(s.key))) return null;
+    // A shared test held back by its recent fix is no signal: no hunt a tick for its hour.
+    const held = (s: Finding): boolean => {
+      const fix = recentFix(app.db, s, now);
+      return fix !== undefined && heldByFix(app.db, s, fix);
+    };
+    if (!signals.some((s) => !tracked.has(s.key) && !held(s))) return null;
   }
   return hunt(app, repoPath, now);
 }
