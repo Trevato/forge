@@ -296,7 +296,18 @@ function section(
           >`}
     </h2>
     ${rows.length === 0
-      ? empty({ icon: emptyIcon, title: emptyText })
+      ? empty({
+          icon: emptyIcon,
+          title: emptyText,
+          ...(a.kind === "all"
+            ? {}
+            : {
+                action: btn("Search everything", {
+                  href: searchHref(a, { kind: "all" }),
+                  size: "sm",
+                }),
+              }),
+        })
       : listCard(rows)}
     ${after}
     ${when(
@@ -483,6 +494,9 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       </p>`,
   );
 
+  const nothing =
+    a.kind === "all" &&
+    found.repos.length + found.issues.length + found.code.length === 0;
   const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
   <div class="bar mb">${chips}</div>
   ${liveToggle}
@@ -503,13 +517,20 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
         shortly.
       </p>`,
   )}
-  ${WORDS
-    .filter(
-      ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
-    )
-    .map((w) =>
-      section(a, w, ...rows[w[0]](), w[0] === "code" ? moreCode : null),
-    )}`;
+  ${nothing
+    ? empty({
+        icon: "search",
+        title: `Nothing matches “${a.query}”`,
+        note: "Search reads app and repository names and descriptions, issues, pull requests and the code you can see.",
+        action: btn("Explore", { href: "/explore", size: "sm" }),
+      })
+    : WORDS
+        .filter(
+          ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
+        )
+        .map((w) =>
+          section(a, w, ...rows[w[0]](), w[0] === "code" ? moreCode : null),
+        )}`;
   const response = page({ ctx, title: `Search · ${a.query}`, body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
