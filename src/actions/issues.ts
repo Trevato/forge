@@ -554,8 +554,39 @@ function handedToPlanner(
   actor: User,
   closing: Closing,
 ): boolean {
-  if (issue.kind !== "issue" || issue.state !== "open") return false;
-  if (crewRole(app.db, repo.id, actor.id) !== "planner") return false;
+  return (
+    crewRole(app.db, repo.id, actor.id) === "planner" &&
+    plannerCloseRefusal(app, repo, issue, actor, closing) === undefined
+  );
+}
+
+export const PLANNER_REFUSALS = {
+  done: 'a planner closes as done only an issue with an "already done on main" note naming commits on main; none name this one',
+  dropped:
+    "a planner does not drop an issue a person's ask stands in; split it into open issues, replace it, or defer it",
+  splitSince: (since: string) =>
+    `a planner splits an issue only into open issues, other than itself and the Later gate, opened after ${since}`,
+  pull: "a planner may close only an agent's pull whose issue is closed",
+  other:
+    "a planner closes only an open issue (done already on main, dropped, or split); any other close is not the planner's",
+} as const;
+
+/**
+ * Why the planner may not close this issue as asked: the message naming the
+ * rule, or undefined when the close is the planner's (see `handedToPlanner`
+ * above). Undefined too for anyone who is not the repository's planner, whose
+ * refusal is about credentials.
+ */
+export function plannerCloseRefusal(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  actor: User,
+  closing: Closing,
+): string | undefined {
+  if (crewRole(app.db, repo.id, actor.id) !== "planner") return undefined;
+  if (issue.kind === "pull") return PLANNER_REFUSALS.pull;
+  if (issue.state !== "open") return PLANNER_REFUSALS.other;
   // Replacements must be newer than the hand-over when the crew handed the
   // issue over, and newer than the issue itself when the planner re-plans it
   // on its own pass.
@@ -570,14 +601,19 @@ function handedToPlanner(
   // Done on main: only when commits already name the issue, as the close
   // note keeps them.
   if (closing.reason === undefined || closing.reason === "done")
-    return (alreadyDone(app.db, [issue.id]).get(issue.id) ?? []).length > 0;
+    return (alreadyDone(app.db, [issue.id]).get(issue.id) ?? []).length > 0
+      ? undefined
+      : PLANNER_REFUSALS.done;
   // Dropped only when no person's ask stands in it — not one the planner
   // wrote to replace a person's, however many times it was split since.
   if (closing.reason === "dropped")
-    return limbSince === undefined && !standsForPerson(app.db, issue);
-  if (closing.reason !== "split") return false;
+    return limbSince === undefined && !standsForPerson(app.db, issue)
+      ? undefined
+      : PLANNER_REFUSALS.dropped;
+  // What is left is a split: a request names no other reason (`CLOSE_REASONS`).
+  const refused = PLANNER_REFUSALS.splitSince(since.at);
   const into = closing.into ?? [];
-  if (into.length === 0) return false;
+  if (into.length === 0) return refused;
   const gate = laterGate(app.db, repo.id);
   const found = into.map((number) => getIssue(app.db, repo.id, number));
   const parts: Issue[] = [];
@@ -588,7 +624,7 @@ function handedToPlanner(
       part.id === issue.id ||
       part.number === gate
     )
-      return false;
+      return refused;
     parts.push(part);
   }
   // Every piece landed since: closed as done at or after the hand-over.
@@ -600,14 +636,16 @@ function handedToPlanner(
         (part.closedAt ?? "") >= since.at,
     )
   )
-    return true;
+    return undefined;
   // Opened since: in the same millisecond, the id says which came first.
   return parts.every(
     (part) =>
       part.state === "open" &&
       (part.createdAt > since.at ||
         (part.createdAt === since.at && part.id > since.id)),
-  );
+  )
+    ? undefined
+    : refused;
 }
 
 /** How an issue closes: done unless said otherwise; split names its children. */

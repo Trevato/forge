@@ -791,6 +791,26 @@ describe("an issue parked twice is the planner's", () => {
     ).toBe(403);
     expect(current(again).state).toBe("open");
 
+    // Each refusal names its rule; none says the token lacks a scope.
+    const said = async (number: number, body: unknown): Promise<string> => {
+      const res = await fetch(`${base}/api/v1/repos/alice/engine/issues/${number}`, {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const answer = (await res.json()) as { error: string; message: string };
+      expect(res.status).toBe(403);
+      expect(answer.error).toBe("forbidden");
+      return answer.message;
+    };
+    expect(await said(untried.number, closed)).toContain("already done on main");
+    expect(await said(again.number, { ...closed, reason: "dropped" })).toContain(
+      "a person's ask stands in",
+    );
+    expect(
+      await said(again.number, { ...closed, reason: "split", into: [gone.number] }),
+    ).toContain("open issues, other than itself and the Later gate, opened after ");
+
     // Allowed: dropping what an agent wrote.
     expect(await patch(own.number, { ...closed, reason: "dropped" })).toBe(200);
     expect(current(own).closeReason).toBe("dropped");

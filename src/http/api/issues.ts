@@ -14,6 +14,7 @@ import {
   openIssueThrough,
   setIssueLabelsThrough,
   setIssueSealed,
+  plannerCloseRefusal,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
@@ -463,7 +464,15 @@ export function issueRoutes(router: Router<Handler>): void {
           wanted,
           closing,
         );
-        if (!changed.ok) return originAware(changed.error, 409);
+        if (!changed.ok) {
+          // A planner told no learns which rule refused it.
+          const rule =
+            changed.error === "forbidden" && wanted === "closed" && ctx.auth.user
+              ? plannerCloseRefusal(ctx.app, found.repo, issue, ctx.auth.user, closing)
+              : undefined;
+          if (rule !== undefined) return apiError("forbidden", 403, rule);
+          return originAware(changed.error, 409);
+        }
         issue = changed.value;
       }
       return json(withLabels(ctx, issue));

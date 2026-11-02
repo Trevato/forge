@@ -1,4 +1,4 @@
-import { closingFrom, setIssueStateThrough } from "../../../actions/issues.ts";
+import { closingFrom, plannerCloseRefusal, setIssueStateThrough } from "../../../actions/issues.ts";
 import { CLOSE_REASONS } from "../../../core/issues.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, issueArg, isAnswer } from "../shared.ts";
 
@@ -36,13 +36,20 @@ export const tool: Tool = {
     if (closing === undefined)
       return bad("invalid_reason", "a reason is done, dropped, or split (with `into`: up to 50 issue numbers)");
     const changed = await setIssueStateThrough(ctx.app, user, repo, issue, state, closing);
-    if (!changed.ok)
+    if (!changed.ok) {
+      // A planner told no learns which rule refused it.
+      const rule =
+        changed.error === "forbidden" && state === "closed"
+          ? plannerCloseRefusal(ctx.app, repo, issue, user, closing)
+          : undefined;
       return bad(
         changed.error,
-        changed.error === "forbidden"
-          ? "this is not yours to close or reopen"
-          : "that state could not be set",
+        rule ??
+          (changed.error === "forbidden"
+            ? "this is not yours to close or reopen"
+            : "that state could not be set"),
       );
+    }
     return good({
       says: `#${issue.number} is ${changed.value.state}.`,
       number: issue.number,

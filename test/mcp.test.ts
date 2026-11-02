@@ -584,6 +584,8 @@ describe("the forge over MCP", () => {
     expect(viaApi.json.error).toBe("forbidden");
     const refused = await tool(botToken, "close", { repo: "alice/game", number: noNote.number, reason: "done" });
     expect(refused.error).toContain("forbidden");
+    expect(refused.error).toContain("already done on main");
+    expect(viaApi.json.message).toContain("already done on main");
 
     // Its own, dropped: closed, and the answer says so.
     const own = mine("a thing to drop");
@@ -599,7 +601,15 @@ describe("the forge over MCP", () => {
     if (!asked.ok) throw new Error(String(asked.error));
     expect(
       (await tool(botToken, "close", { repo: "alice/game", number: asked.value.number, reason: "dropped" })).error,
-    ).toContain("forbidden");
+    ).toContain("a person's ask stands in");
+    // Split into an issue that is not newer than the hand-over.
+    expect(
+      (await tool(botToken, "close", { repo: "alice/game", number: asked.value.number, reason: "split", into: [noNote.number] })).error,
+    ).toContain("opened after ");
+    // A closed issue is not the planner's to close again.
+    expect(
+      (await tool(botToken, "close", { repo: "alice/game", number: own.number })).error,
+    ).toContain("any other close is not the planner's");
     // Nor does an agent reopen.
     expect((await tool(botToken, "close", { repo: "alice/game", number: own.number, state: "open" })).error).toContain(
       "forbidden",

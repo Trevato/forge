@@ -61,6 +61,7 @@ import { flowFor, historyFor, sourcesOut, systemFor, welcome } from "../system/t
 import { markReaders } from "../crew/direct.ts";
 import {
   addCommentThrough,
+  PLANNER_REFUSALS,
   setIssueStateThrough,
 } from "../actions/issues.ts";
 import {
@@ -2514,7 +2515,7 @@ export function apiRoutes(router: Router<Handler>): void {
             return apiError(
               "forbidden",
               403,
-              "a planner may close only an agent's pull whose issue is closed",
+              PLANNER_REFUSALS.pull,
             );
           return originAware(changed.error, 409);
         }
