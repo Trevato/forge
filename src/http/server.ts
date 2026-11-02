@@ -31,6 +31,7 @@ import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
 import { boardsHoldPost } from "../web/pages/boards-holds.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
+import { actingVia } from "../core/acting_via.ts";
 import {
   closeStreamsOf,
   closeStreamsOfSession,
@@ -2670,10 +2671,17 @@ async function answerGet(
   const replayAs =
     credential ??
     (auth.via === "session" && auth.user ? `user:${auth.user.id}` : undefined);
-  const response =
+  // A conversation's token writes as its person, by way of the agent:
+  // every event the handler appends carries it, at no append site's cost.
+  const acting =
+    auth.through !== undefined && auth.user !== undefined
+      ? { userId: auth.user.id, via: auth.through }
+      : undefined;
+  const response = await actingVia(acting, () =>
     replayAs === undefined
-      ? await invoke(request)
-      : await withIdempotency(app, request, url, replayAs, invoke);
+      ? invoke(request)
+      : withIdempotency(app, request, url, replayAs, invoke),
+  );
   // A page route's HTML 404 (`/:owner` claims `/nope`) is a refusal an
   // agent cannot read; one that asked for JSON gets it as JSON.
   if (

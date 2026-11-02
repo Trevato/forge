@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
 import { anyHeld, createLog, redactValues } from "../kernel/log.ts";
+import { currentVia } from "./acting_via.ts";
 import { repoVisible } from "./visibility.ts";
 
 const log = createLog("events");
@@ -19,6 +20,8 @@ export interface ForgeEvent {
   readonly actorId: string | null;
   readonly payload: Record<string, unknown>;
   readonly createdAt: string;
+  /** Set when the actor acted through the forge's agent: `conversation:<id>`. */
+  readonly via?: string;
 }
 
 export type EventListener = (event: ForgeEvent) => void;
@@ -51,6 +54,7 @@ export class EventBus {
     actorId?: string | undefined;
     payload?: Record<string, unknown> | undefined;
   }): ForgeEvent {
+    const via = currentVia(input.actorId);
     const event: ForgeEvent = {
       id: id(),
       kind: input.kind,
@@ -58,10 +62,11 @@ export class EventBus {
       actorId: input.actorId ?? null,
       payload: scrubPayload(input.payload ?? {}),
       createdAt: new Date().toISOString(),
+      ...(via === undefined ? {} : { via }),
     };
     this.db
       .query(
-        "INSERT INTO event (id, kind, repo_id, actor_id, payload, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO event (id, kind, repo_id, actor_id, payload, created_at, via) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
       )
       .run(
         event.id,
@@ -70,6 +75,7 @@ export class EventBus {
         event.actorId,
         JSON.stringify(event.payload),
         event.createdAt,
+        via ?? null,
       );
 
     for (const listener of this.listeners) {
@@ -176,6 +182,7 @@ interface EventRow {
   actor_id: string | null;
   payload: string;
   created_at: string;
+  via?: string | null;
 }
 
 const toEvent = (r: EventRow): ForgeEvent => ({
@@ -185,6 +192,7 @@ const toEvent = (r: EventRow): ForgeEvent => ({
   actorId: r.actor_id,
   payload: JSON.parse(r.payload) as Record<string, unknown>,
   createdAt: r.created_at,
+  ...(r.via ? { via: r.via } : {}),
 });
 
 /** One event by id, or undefined. No access check: the caller owes one. */

@@ -38,6 +38,7 @@ import {
   signOutHere,
 } from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
+import { VIA_FORM, WORDS_MAX } from "../core/fence.ts";
 import {
   askedIn,
   askedJson,
@@ -110,6 +111,7 @@ import {
   createToken,
   deleteToken,
   HUMAN_CHECK_MESSAGE,
+  mintConversationToken,
   PASSKEY_REQUIRED_MESSAGE,
   signUp,
   SIGNUP_CLOSED_MESSAGE,
@@ -1272,6 +1274,31 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!minted.ok && minted.error === "forbidden")
       return apiError("forbidden", 403, ADMIN_TOKEN_WORDS);
+    if (!minted.ok) return unauthorized();
+    return json(minted.value, 201);
+  });
+
+  // The token the forge's agent acts with in one conversation (#7648): only
+  // the person's own browser session mints it, same-origin, for themself.
+  // Room for `words` at their cap even when every character is escaped.
+  const CONVERSATION_BODY_MAX = 128_000;
+  router.add("POST", "/api/v1/conversation-tokens", async (ctx) => {
+    if (ctx.auth.via !== "session" || !ctx.auth.user) return unauthorized();
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+    const input = await boundedBody(ctx.request, CONVERSATION_BODY_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${CONVERSATION_BODY_MAX} bytes`);
+    const { conversation, words = "" } = input;
+    if (conversation !== undefined && !(typeof conversation === "string" && VIA_FORM.test(`conversation:${conversation}`)))
+      return apiError("invalid_conversation", 422, "conversation is 1 to 40 lowercase letters or digits");
+    if (typeof words !== "string" || words.length > WORDS_MAX)
+      return apiError("invalid_words", 422, `words is a string of at most ${WORDS_MAX} characters`);
+    const minted = mintConversationToken(ctx.app, ctx.auth.user, {
+      ...(conversation === undefined ? {} : { conversation }),
+      words,
+    });
+    if (!minted.ok && minted.error === "invalid_via")
+      return apiError("invalid_conversation", 422, "not a conversation of yours");
     if (!minted.ok) return unauthorized();
     return json(minted.value, 201);
   });

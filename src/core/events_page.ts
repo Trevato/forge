@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { audienceFilter, eventForReader } from "./event_audience.ts";
-import { listEvents } from "./events.ts";
+import { VIA_WORDS } from "./acting_via.ts";
+import { listEvents, type ForgeEvent } from "./events.ts";
+import { getUsersByIds } from "./users.ts";
 
 export const EVENTS_LIMIT_DEFAULT = 50;
 export const EVENTS_LIMIT_MAX = 200;
@@ -54,5 +56,14 @@ export function eventsPage(
   const page = found.slice(0, limit);
   const next =
     found.length > limit ? page[page.length - 1]!.id : more && scanned !== undefined ? scanned : null;
-  return { items: page.map(toReader), next_cursor: next };
+  // An event made through the agent names who and how: "trevato via the forge's agent".
+  const people = getUsersByIds(
+    db,
+    page.filter((e) => e.via !== undefined && e.actorId !== null).map((e) => e.actorId!),
+  );
+  const said = (event: ForgeEvent): ForgeEvent & { by?: string } => {
+    const person = event.via === undefined || event.actorId === null ? undefined : people.get(event.actorId);
+    return person === undefined ? event : { ...event, by: `${person.username} ${VIA_WORDS}` };
+  };
+  return { items: page.map(toReader).map(said), next_cursor: next };
 }

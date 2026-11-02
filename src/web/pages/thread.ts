@@ -27,6 +27,7 @@ import {
   setIssueLabelsThrough,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
+import { VIA_WORDS } from "../../core/acting_via.ts";
 import { listEvents } from "../../core/events.ts";
 import { markOf, marksByName, type Mark } from "../../core/marks.ts";
 import {
@@ -222,7 +223,9 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
               )}`
             : html`${actor
             ? userLink(actor.username, { mark: markOf(actor) })
-            : html`<span>someone</span>`} <span>${look.verb}</span> ${time(
+            : html`<span>someone</span>`}${event.via !== undefined && actor
+            ? html` <span>${VIA_WORDS}</span>`
+            : null} <span>${look.verb}</span> ${time(
             event.createdAt,
           )}`,
       }),

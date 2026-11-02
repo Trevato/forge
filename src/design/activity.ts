@@ -9,6 +9,7 @@
  * when the row has no actor: a deploy is the forge's own doing, and says so.
  */
 
+import { VIA_WORDS } from "../core/acting_via.ts";
 import type { ForgeEvent } from "../core/events.ts";
 
 /** The pull number an environment name carries, for `pull-12`. */
@@ -86,7 +87,8 @@ export function eventActor(
   event: ForgeEvent,
   actorName: string | undefined,
 ): string {
-  if (actorName !== undefined) return actorName;
+  if (actorName !== undefined)
+    return event.via === undefined ? actorName : `${actorName} ${VIA_WORDS}`;
   return event.kind.startsWith("run.") ||
     event.kind.startsWith("app.") ||
     event.kind.startsWith("prompt.") ||

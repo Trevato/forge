@@ -235,6 +235,21 @@ admin adds `"adminConfirm": true` to mean a token that acts as admin. `ro` and
 can make a token with admin scope; ro and rw are open to you."), and the
 Settings form offers `admin` only to an admin.
 
+**The forge's agent acts as you, and the trail says so** (#7648): `POST
+/api/v1/conversation-tokens` with `{"words": "<what you said>"}` mints the
+token the forge's agent acts with in a fresh conversation; add
+`"conversation": "<id>"` to go on with one of your own (any other is 422
+`invalid_conversation`). Only your own browser session on the same origin
+mints it (a bearer token or a password is 401, a cross-origin post 403). It
+answers 201 once with `{id, token, expiresAt, via}`: the token is `rw`, holds
+exactly what you hold, reaches the forge only through `/mcp`, fenced
+(docs/features/conversation-fence.md), and expires within the hour. Every
+event written while it is the caller has you as its actor and `via:
+"conversation:<id>"`; what the forge writes on the way (a run, a check) is
+not marked. The trail reads "alice via the forge's agent": MCP `events` and
+`GET …/events` add `by` with those words, and an issue's or pull's timeline
+says "alice via the forge's agent closed this".
+
 The same token spawns a child forge (`dryRun` is true unless `false`, so
 without it you get the plan and nothing is made). The child's admin comes
 from the operator's `--first-admin --child`, or from the `claimUrl` the spawn
