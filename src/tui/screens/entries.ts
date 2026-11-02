@@ -10,6 +10,7 @@ import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { entry as access } from "./access.ts";
 import { entry as agents } from "./agents.ts";
+import { entry as audit } from "./audit.ts";
 import { entry as boards } from "./boards.ts";
 import { entry as cloud } from "./cloud.ts";
 import { entry as crewHandover } from "./crewhandover.ts";
@@ -55,6 +56,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   telemetry,
   resilience,
   access,
+  audit,
   secrets,
   crewSplits,
   crewHandover,
