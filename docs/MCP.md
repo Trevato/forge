@@ -202,6 +202,8 @@ for a tunnel and a forge that sleeps.
 
 <!-- tools:end -->
 
+Sending a failed webhook delivery again (`redeliver`, #8075) is the terminal's `r` on a hook's Deliveries screen only; the `hooks` tool has no action for it yet.
+
 ### Adding a tool
 
 One tool, one file (#5924): `src/http/mcp/tools/<name>.ts` exports `tool`,

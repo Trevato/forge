@@ -187,6 +187,58 @@ export function enqueueForEvent(db: Database, event: ForgeEvent): number {
   return queued;
 }
 
+export type RedeliverError = "not_found" | "not_failed" | "sealed";
+
+/**
+ * Send a failed delivery again: the same row goes back to `pending` with
+ * its attempts reset and its claim cleared, and `deliverDue` picks it up on
+ * its next pass. No new row, no new event. Only a `failed` delivery of this
+ * hook moves, and in one statement, so a row a sender holds (it is
+ * `pending` while claimed) is never reset under it. A sealed report's
+ * delivery stays refused, as `enqueueForEvent` refuses it. The read, the
+ * sealed check and the update share one immediate transaction, so a report
+ * sealed in between cannot slip through.
+ */
+export function redeliver(
+  db: Database,
+  deliveryId: string,
+  webhookId: string,
+): Result<true, RedeliverError> {
+  return db.transaction(() => redeliverIn(db, deliveryId, webhookId)).immediate();
+}
+
+function redeliverIn(db: Database, deliveryId: string, webhookId: string): Result<true, RedeliverError> {
+  const row = db
+    .query<
+      { state: string; repo_id: string | null; payload: string },
+      [string, string]
+    >(
+      `SELECT d.state, e.repo_id, e.payload
+       FROM webhook_delivery d JOIN event e ON e.id = d.event_id
+       WHERE d.id = ?1 AND d.webhook_id = ?2`,
+    )
+    .get(deliveryId, webhookId);
+  if (row === null) return err("not_found");
+  if (row.state !== "failed") return err("not_failed");
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = JSON.parse(row.payload) as Record<string, unknown>;
+  } catch {
+    // an unreadable payload is treated as not sealed (it names no issue); the
+    // event table's JSON check makes this unreachable, so no test can drive it
+  }
+  if (eventSealed(db, { repoId: row.repo_id, payload })) return err("sealed");
+  const moved = db
+    .query(
+      `UPDATE webhook_delivery
+          SET state = 'pending', attempts = 0, next_try_at = NULL,
+              last_status = NULL, last_error = NULL
+        WHERE id = ?1 AND webhook_id = ?2 AND state = 'failed'`,
+    )
+    .run(deliveryId, webhookId);
+  return moved.changes === 1 ? ok(true) : err("not_failed");
+}
+
 // ---- the worker ----
 
 interface DueRow {

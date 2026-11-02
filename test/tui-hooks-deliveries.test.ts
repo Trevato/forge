@@ -137,3 +137,40 @@ test("losing admin closes the deliveries instead of showing them", async () => {
   expect(h.text()).not.toContain("refused: private address");
   h.stop();
 });
+
+const states = (): string[] =>
+  app.db
+    .query<{ state: string }, []>(
+      "SELECT d.state FROM webhook_delivery d JOIN event e ON e.id = d.event_id WHERE d.webhook_id = (SELECT id FROM webhook ORDER BY rowid LIMIT 1 OFFSET 1) ORDER BY d.rowid DESC",
+    )
+    .all()
+    .map((r) => r.state);
+
+test("r on a failed row queues it again; on a row that is not failed it does nothing", async () => {
+  const h = open();
+  await h.feed("j", "enter");
+  // Newest first: issue.opened (failed) is on top, push (ok) below it.
+  await h.feed("j", "r");
+  expect(h.text()).toMatch(/push · ok · 204 · 1/);
+  expect(h.text()).not.toContain("queued again");
+  expect(states()).toEqual(["failed", "ok"]);
+  await h.feed("k", "r");
+  const t = h.text();
+  expect(t).toContain("queued again");
+  expect(t).toMatch(/issue\.opened · pending · — · 0/);
+  expect(t).not.toContain("refused: private address");
+  await h.feed("r");
+  expect(h.text()).toMatch(/issue\.opened · pending/);
+  h.stop();
+});
+
+test("a person who lost admin cannot redeliver with r: the row stays failed", async () => {
+  app.db.run("UPDATE webhook_delivery SET state = 'failed' WHERE state = 'pending'");
+  const h = open();
+  await h.feed("j", "enter");
+  (h.session as { user: User }).user = bob;
+  await h.feed("r");
+  expect(h.text()).not.toContain("queued again");
+  expect(app.db.query("SELECT 1 FROM webhook_delivery WHERE state = 'pending'").get()).toBeNull();
+  h.stop();
+});

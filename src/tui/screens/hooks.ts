@@ -1,10 +1,11 @@
 /**
  * A repository's webhooks in the terminal, an admin's: each hook's url,
  * kinds and last delivery, never its secret. `enter` opens its last 20
- * deliveries. `a` asks for url, kinds and a secret (typed masked, 16–200
- * characters) and adds it through `createWebhook`; `p` pauses or resumes
- * the selected one through `pauseWebhook` (a paused row reads `paused` and
- * gets no deliveries); `d` removes the selected one after a confirm through
+ * deliveries; `r` there sends a failed one again through `redeliver`.
+ * `a` asks for url, kinds and a secret (typed masked, 16–200 characters)
+ * and adds it through `createWebhook`; `p` pauses or resumes the selected
+ * one through `pauseWebhook` (a paused row reads `paused` and gets no
+ * deliveries); `d` removes the selected one after a confirm through
  * `deleteWebhook`. The words of a refusal are MCP `hooks`'s.
  */
 
@@ -14,7 +15,7 @@ import {
   pauseWebhook,
 } from "../../actions/repos.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
-import { listWebhooks, recentDeliveries, type DeliveryInfo, type Webhook } from "../../core/webhooks.ts";
+import { listWebhooks, recentDeliveries, redeliver, type DeliveryInfo, type Webhook } from "../../core/webhooks.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import type { Command } from "../app/palette.ts";
 import { binding } from "../app/keys.ts";
@@ -57,7 +58,14 @@ function deliveriesScreen(f: Session, ctx: Ctx, hook: Webhook, allowed: () => bo
   let all: DeliveryInfo[] = [];
   return {
     title: "Deliveries",
-    keys: [binding(["j", "k"], "move"), binding(["esc", "q"], "back")],
+    get keys() {
+      const failed = all[state.index]?.state === "failed";
+      return [
+        binding(["j", "k"], "move"),
+        binding(["r"], "redeliver", { disabled: !failed }),
+        binding(["esc", "q"], "back"),
+      ];
+    },
     render(area, s) {
       if (!allowed()) {
         ctx.pop();
@@ -81,6 +89,15 @@ function deliveriesScreen(f: Session, ctx: Ctx, hook: Webhook, allowed: () => bo
       if (e.ctrl || e.alt) return false;
       if (!allowed() || e.key === "esc" || e.key === "q") {
         ctx.pop();
+        return true;
+      }
+      if (e.key === "r") {
+        const d = all[state.index];
+        if (d === undefined || d.state !== "failed") return false;
+        const done = redeliver(f.db, d.id, hook.id);
+        if (done.ok) ctx.toast("queued again", "success");
+        else ctx.toast("that delivery cannot be sent again", "danger");
+        ctx.invalidate();
         return true;
       }
       return state.key(e, all.length);
