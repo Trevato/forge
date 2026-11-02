@@ -12,6 +12,7 @@ import { entry as access } from "./access.ts";
 import { entry as agents } from "./agents.ts";
 import { entry as audit } from "./audit.ts";
 import { entry as boards } from "./boards.ts";
+import { entry as bulk } from "./bulk.ts";
 import { entry as cloud } from "./cloud.ts";
 import { entry as crewHandover } from "./crewhandover.ts";
 import { entry as crewSplits } from "./crewsplits.ts";
@@ -69,6 +70,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   teams,
   agents,
   invites,
+  bulk,
   subscriptions,
   cloud,
   domains,

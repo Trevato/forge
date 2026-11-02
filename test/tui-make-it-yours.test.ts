@@ -14,7 +14,7 @@ import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
-import { settleApp } from "./helpers/tui.ts";
+import { settleApp, settleUntil } from "./helpers/tui.ts";
 import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
@@ -154,7 +154,10 @@ test("a private original is never copied public: refused in the action's words",
   const h = await open(alice, made.value.repo); // a forge admin may read it
   await h.press("Y");
   await h.press("tab");
-  const text = await h.press("enter");
+  await h.press("enter");
+  // The refusal is the action's; under a loaded shard it may land a turn after the key settles.
+  await settleUntil(h.app, "a copy of a private repository stays private");
+  const text = h.app.screen.toText();
   expect(text).toContain("a copy of a private repository stays private");
   expect(getRepo(forge.db, "alice", "secret-plot")).toBeUndefined();
   h.app.stop();
