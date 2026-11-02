@@ -106,6 +106,12 @@ describe("password sign-up", () => {
     const page = await fetch(`${base}/signup`);
     const text = await page.text();
     expect(text).toContain('id="passkey-signup"');
+    const form = (text.match(/<form[\s\S]*?<\/form>/g) ?? []).join(" ");
+    const words = form.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+    expect(words.match(/optional/gi)?.length).toBe(1);
+    expect(words).toContain(
+      "Or skip the password and use a passkey: your fingerprint, face or device PIN.",
+    );
     const res = await fetch(`${base}/signup`, {
       method: "POST",
       redirect: "manual",
