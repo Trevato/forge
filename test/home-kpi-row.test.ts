@@ -124,7 +124,7 @@ describe("the builders figure from the database", () => {
     const db = new Database(":memory:");
     db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
-    db.run("CREATE TABLE pull (merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
+    db.run("CREATE TABLE pull (carried INTEGER NOT NULL DEFAULT 0, merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
     db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
     reachTables(db);
     db.run("INSERT INTO repo VALUES ('autonomous', 3, 'main', 'a'), ('autonomous', 1, 'main', 'b'), ('off', 8, 'main', 'c')");
@@ -188,7 +188,7 @@ describe("the spend figure from the database", () => {
     const db = new Database(":memory:");
     db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
-    db.run("CREATE TABLE pull (merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
+    db.run("CREATE TABLE pull (carried INTEGER NOT NULL DEFAULT 0, merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
     db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
     reachTables(db);
     db.run(
@@ -240,7 +240,7 @@ describe("home kpi row: the last off-box backup", () => {
     const db = new Database(":memory:");
     db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
-    db.run("CREATE TABLE pull (merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
+    db.run("CREATE TABLE pull (carried INTEGER NOT NULL DEFAULT 0, merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
     db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
     reachTables(db);
     expect(readKpis(db, NOW, { ceilingUsd: null, dataDir: dir }).backupAt).toBeNull();
@@ -430,7 +430,7 @@ describe("the forge ceiling hit (#5798)", () => {
     const db = new Database(":memory:");
     db.run("CREATE TABLE repo (autonomy TEXT, autonomy_slots INTEGER, default_branch TEXT, id TEXT)");
     db.run("CREATE TABLE run (id TEXT, kind TEXT, state TEXT, started_at TEXT, finished_at TEXT, serving_at TEXT, env TEXT, commit_oid TEXT, cost_usd REAL, created_at TEXT)");
-    db.run("CREATE TABLE pull (merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
+    db.run("CREATE TABLE pull (carried INTEGER NOT NULL DEFAULT 0, merged_at TEXT, merged_oid TEXT, base_oid TEXT, base_branch TEXT, issue_id TEXT)");
     db.run("CREATE TABLE issue (id TEXT, repo_id TEXT)");
     reachTables(db);
     db.run(

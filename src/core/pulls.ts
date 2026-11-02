@@ -16,12 +16,12 @@ import { refTip } from "../git/read.ts";
 import { readTips } from "../git/tips.ts";
 import {
   aheadCount,
+  contentOnBase,
   fetchInto,
   merge,
   mergeBase,
   mergeable,
   resolveOid,
-  treeOf,
   writeRef,
   type MergeError,
   type MergeStrategy,
@@ -1129,6 +1129,7 @@ export async function mergePull(
       actorId: input.actorId,
       baseOid: status.baseOid,
       headOid: status.headOid,
+      carried: true,
     });
     return ok({ mergeOid: carrier, carried: true });
   }
@@ -1189,9 +1190,7 @@ async function carriedBy(
 ): Promise<string | undefined> {
   if (strategy !== "squash" || status.ahead === 0 || !status.mergeable)
     return undefined;
-  const merged = await mergeable(dir, status.baseOid, status.headOid);
-  if (!merged.ok) return undefined;
-  if (merged.value.treeOid !== (await treeOf(dir, status.baseOid)))
+  if (!(await contentOnBase(dir, status.baseOid, status.headOid)))
     return undefined;
   const landing = await resolveOid(dir, `refs/pull/${pull.number}/merged`);
   if (
@@ -1207,12 +1206,18 @@ async function carriedBy(
 function closeAsMerged(
   db: Database,
   pullId: string,
-  landed: { mergeOid: string; actorId: string; baseOid: string; headOid: string },
+  landed: {
+    mergeOid: string;
+    actorId: string;
+    baseOid: string;
+    headOid: string;
+    carried?: boolean;
+  },
 ): void {
   const now = new Date().toISOString();
   transact(db, () => {
     db.query(
-      "UPDATE pull SET merged_at = ?1, merged_oid = ?2, merged_by = ?3, base_oid = ?4, head_oid = ?5 WHERE issue_id = ?6 AND merged_at IS NULL",
+      "UPDATE pull SET merged_at = ?1, merged_oid = ?2, merged_by = ?3, base_oid = ?4, head_oid = ?5, carried = ?7 WHERE issue_id = ?6 AND merged_at IS NULL",
     ).run(
       now,
       landed.mergeOid,
@@ -1220,6 +1225,7 @@ function closeAsMerged(
       landed.baseOid,
       landed.headOid,
       pullId,
+      landed.carried === true ? 1 : 0,
     );
     setIssueState(db, pullId, "closed");
   });

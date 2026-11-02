@@ -135,6 +135,11 @@ touch "${dataDir}/answered"
 sleep 30
 exit 0
 fi
+if grep -q LEVEL-ME "${promptFile}"; then
+git commit -q --allow-empty -m "level with main" && git push -q -u origin HEAD
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to change.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-8","terminal_reason":"completed"}'
+exit 0
+fi
 if grep -q PUSH-THEN-FAIL "${promptFile}"; then
 echo "early work $(date +%s%N)" >> CREW.md
 git add -A && git commit -qm "crew work" && git push -q -u origin HEAD

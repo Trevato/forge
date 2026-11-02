@@ -63,7 +63,7 @@ function twoHours(db: Database, now: Date): { opened: number; landed: number } {
          (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id
            WHERE i.created_at >= ?1 AND i.created_at <= ?2) AS opened,
          (SELECT COUNT(*) FROM pull p JOIN repo r ON r.id = (SELECT repo_id FROM issue WHERE id = p.issue_id)
-           WHERE p.base_branch = r.default_branch AND p.merged_at >= ?1 AND p.merged_at <= ?2) AS landed`,
+           WHERE p.base_branch = r.default_branch AND p.carried = 0 AND p.merged_at >= ?1 AND p.merged_at <= ?2) AS landed`,
     )
     .get(from, to);
   return { opened: row?.opened ?? 0, landed: row?.landed ?? 0 };

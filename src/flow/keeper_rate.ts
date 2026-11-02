@@ -19,7 +19,7 @@ export function landedBetween(db: Database, fromMs: number, toMs: number): numbe
   const row = db
     .query<{ n: number }, [string, string]>(
       `SELECT COUNT(*) AS n FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-        WHERE p.base_branch = r.default_branch AND p.merged_at >= ?1 AND p.merged_at <= ?2`,
+        WHERE p.base_branch = r.default_branch AND p.carried = 0 AND p.merged_at >= ?1 AND p.merged_at <= ?2`,
     )
     .get(new Date(fromMs).toISOString(), new Date(toMs).toISOString());
   return row?.n ?? 0;
@@ -35,7 +35,7 @@ export function hourly(db: Database, now: number, hours: number): { landed: numb
   const merged = db
     .query<{ at: string }, [string, string]>(
       `SELECT p.merged_at AS at FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-        WHERE p.base_branch = r.default_branch AND p.merged_at >= ?1 AND p.merged_at <= ?2`,
+        WHERE p.base_branch = r.default_branch AND p.carried = 0 AND p.merged_at >= ?1 AND p.merged_at <= ?2`,
     )
     .all(since, until);
   for (const m of merged) {

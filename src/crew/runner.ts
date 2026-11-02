@@ -80,7 +80,7 @@ import { cloneWithMirror } from "./mirror.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
-import { aheadCount, resolveOid } from "../git/merge.ts";
+import { aheadCount, contentOnBase, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { bar } from "../cloud/gate.ts";
 import { declarationsOf } from "../cloud/declared.ts";
@@ -2109,7 +2109,9 @@ async function landWork(
   // alternates and its own on top.
   const proposed =
     remote !== undefined && base !== undefined
-      ? await aheadCount(forkBare, base, remote)
+      ? (await contentOnBase(forkBare, base, remote))
+        ? 0
+        : await aheadCount(forkBare, base, remote)
       : 0;
   const report = [message.trim(), note]
     .filter((part): part is string => part !== undefined && part !== "")

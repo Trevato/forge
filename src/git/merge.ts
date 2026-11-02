@@ -377,6 +377,21 @@ export async function aheadCount(
 }
 
 /**
+ * The head is ahead of the base by commit count while merging it onto the
+ * base would write the base's own tree: its content is already there (a
+ * squash landed it), so there is nothing to propose. The one test `watchForPull`,
+ * `landWork` and the autonomy's carried check share.
+ */
+export async function contentOnBase(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<boolean> {
+  const merged = await mergeable(dir, baseOid, headOid);
+  return merged.ok && merged.value.treeOid === (await treeOf(dir, baseOid));
+}
+
+/**
  * Fetch a ref from another local repo (a fork) into this one, bringing its
  * objects across, and return the fetched tip. Used to pull a fork's head into
  * the base repo so a cross-repo PR can be diffed and merged entirely in the

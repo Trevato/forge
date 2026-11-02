@@ -44,9 +44,9 @@ export function readRepoFlow(db: Database, repoId: string, now = new Date()): Re
          (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id
            WHERE i.repo_id = ?1 AND i.created_at >= ?3 AND i.created_at <= ?4) AS opened6h,
          (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-           WHERE i.repo_id = ?1 AND p.base_branch = r.default_branch AND p.merged_at >= ?2 AND p.merged_at <= ?4) AS landed1h,
+           WHERE i.repo_id = ?1 AND p.base_branch = r.default_branch AND p.carried = 0 AND p.merged_at >= ?2 AND p.merged_at <= ?4) AS landed1h,
          (SELECT COUNT(*) FROM pull p JOIN issue i ON i.id = p.issue_id JOIN repo r ON r.id = i.repo_id
-           WHERE i.repo_id = ?1 AND p.base_branch = r.default_branch AND p.merged_at >= ?3 AND p.merged_at <= ?4) AS landed6h`,
+           WHERE i.repo_id = ?1 AND p.base_branch = r.default_branch AND p.carried = 0 AND p.merged_at >= ?3 AND p.merged_at <= ?4) AS landed6h`,
     )
     .get(repoId, h1, h6, to, fresh);
   return {

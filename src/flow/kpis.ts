@@ -89,7 +89,7 @@ function firstLandings(db: Database, since: string, to: string): string[] {
     .query<{ repo: string; oid: string; at: string; issue: string; landing: number }, [string, string]>(
       `SELECT i.repo_id AS repo, q.merged_oid AS oid, q.merged_at AS at, q.issue_id AS issue,
               (q.base_branch = r.default_branch AND q.merged_at >= ?1
-                AND q.merged_oid != q.base_oid) AS landing
+                AND q.carried = 0 AND q.merged_oid != q.base_oid) AS landing
          FROM pull q JOIN issue i ON i.id = q.issue_id JOIN repo r ON r.id = i.repo_id
         WHERE q.merged_at IS NOT NULL AND q.merged_at <= ?2
           AND q.merged_oid IN (
