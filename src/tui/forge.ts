@@ -414,12 +414,12 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "internal hosts an origin may reach",
         run: () => ctx.push(trustedHostsPrompt(session, ctx, blank("Trusted hosts"))),
       });
-    // Settings → Usage, as the page has it: the same gate as Flags (#1565).
-    if (mayManageFlags(session.user))
+    // Usage: the forge's spend for any signed-in user (#8308); the route list stays the page's gate, the same as Flags (#1565).
+    if (session.user !== undefined)
       commands.push({
         id: "usage",
         title: "Usage",
-        hint: "every route, unused ones first",
+        hint: "the forge's spend and headroom; an admin also sees every route",
         run: () => ctx.push(usageScreen(session, ctx)),
       });
     // What the forge spent across the apps you write, as GET /api/v1/usage and MCP `usage` answer.
