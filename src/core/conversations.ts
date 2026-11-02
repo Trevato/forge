@@ -136,6 +136,22 @@ export function listTurns(
   return ok(rows.reverse().map(turnOf));
 }
 
+/**
+ * The turns after the turn id `after`, oldest first, at most `MAX_PAGE`; an
+ * empty `after` is the whole conversation's start, an id this conversation
+ * does not have is nothing. The stream reads this to follow an answer being
+ * written and to resume from the last turn a client saw.
+ */
+export function turnsAfter(db: Database, userId: string, conversationId: string, after: string): Turn[] {
+  if (!owned(db, userId, conversationId)) return [];
+  const rows = db
+    .query(
+      "SELECT * FROM conversation_turn WHERE conversation_id = ?1 AND rowid > COALESCE(CASE WHEN ?2 = '' THEN 0 ELSE (SELECT rowid FROM conversation_turn WHERE id = ?2 AND conversation_id = ?1) END, 9223372036854775807) ORDER BY rowid LIMIT ?3",
+    )
+    .all(conversationId, after, MAX_PAGE) as TurnRow[];
+  return rows.map(turnOf);
+}
+
 /** What a Claude session id may look like: short, and only id characters. */
 export const SESSION_ID = /^[A-Za-z0-9._-]{1,128}$/;
 

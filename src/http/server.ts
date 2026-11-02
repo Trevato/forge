@@ -136,6 +136,7 @@ import {
   themeSubmit,
 } from "../web/pages/site.ts";
 import { confirmsList, confirmYes } from "../web/pages/confirms.ts";
+import { talkConfirm, talkSend, talkStream, talkView } from "../web/pages/talk.ts";
 import {
   passkeyAdd,
   passkeyDelete,
@@ -914,6 +915,10 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
   router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
+  router.add("GET", "/talk", talkView);
+  router.add("POST", "/talk", talkSend);
+  router.add("GET", "/talk/stream", talkStream);
+  router.add("POST", "/talk/confirm/:id", talkConfirm);
   router.add("GET", "/settings/confirms", confirmsList);
   router.add("POST", "/settings/confirms/:id", confirmYes);
   router.add("GET", "/settings/passkeys", passkeysPage);

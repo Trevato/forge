@@ -15,6 +15,7 @@ const allowed: readonly { file: string; button: string; reason: string }[] = [
   { file: "src/web/pages/pull.ts", button: `"Land past the gate"`, reason: "asks for a typed reason of at least 8 characters" },
   { file: "src/web/studio/change.ts", button: `"Send it back"`, reason: "a changes-requested verdict; the next review replaces it" },
   { file: "src/web/studio/notes.ts", button: "label", reason: "owner note ban; undone by unban on the same row" },
+  { file: "src/web/studio/change.ts", button: `"Send it back"`, reason: "a changes-requested review with an optional why; the next review replaces it" },
 ];
 
 type DangerPost = { file: string; line: number; button: string };

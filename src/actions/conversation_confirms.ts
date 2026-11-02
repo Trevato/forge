@@ -92,3 +92,18 @@ export async function sayYes(ctx: Ctx, user: User, confirmId: string): Promise<Y
   appendTurn(ctx.app.db, user.id, conversation.id, { role: "tool", text: JSON.stringify(turn) });
   return { ok: true, done: ran.ok, turn, ...(ran.ok ? { result: ran.value } : {}) };
 }
+
+/**
+ * The person's no: the confirm is claimed so it can never be said yes to
+ * later, nothing is run, and a `tool` turn says it was cancelled. Same door
+ * rules as a yes — the person's own session, decided by the caller.
+ */
+export function sayNo(ctx: Pick<Ctx, "app">, user: User, confirmId: string): { ok: true; turn: Record<string, unknown> } | { ok: false; error: YesRefusal } {
+  if (!CONFIRM_ID.test(confirmId)) return { ok: false, error: "not_found" };
+  const answered = answerHeld(ctx.app.db, confirmId, user.id);
+  if (!answered.ok) return answered;
+  const turn = { confirm: answered.value.id, tool: answered.value.tool, done: false, cancelled: true };
+  const conversation = openConversation(ctx.app.db, user.id);
+  appendTurn(ctx.app.db, user.id, conversation.id, { role: "tool", text: JSON.stringify(turn) });
+  return { ok: true, turn };
+}

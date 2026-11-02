@@ -416,6 +416,38 @@ describe("the yes, reached by a person", () => {
     expect(getRepoById(app.db, w.repoId)!.archivedAt).toBeNull();
   });
 
+  test("the terminal's Confirms: n, then Cancel it, spends the confirm and runs nothing", async () => {
+    const w = await world(alice);
+    const asked = JSON.parse((await call(w.token, "archive", { repo: w.repo, archived: true, dryRun: false })).text);
+    const terminal = headlessTerminal(160, 32);
+    const { app: tui } = createForgeApp(app, { sshUsername: "t", remoteAddress: "127.0.0.1", user: alice }, { terminal, exitHooks: false });
+    tui.start();
+    const key = (k: string, ctrl = false) => tui.dispatch({ type: "key", key: k, ctrl, alt: false, shift: false });
+    try {
+      key("k", true);
+      await settleApp(tui);
+      for (const ch of "Confirms") key(ch);
+      await settleApp(tui);
+      key("enter");
+      await settleApp(tui);
+      for (const h of waitingFor(app.db, alice.id)) if (h.id !== asked.needs_confirm) key("j");
+      await settleApp(tui);
+      key("n");
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("Cancel this");
+      key("right");
+      key("enter");
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("Cancelled: archive.");
+      expect(getRepoById(app.db, w.repoId)!.archivedAt).toBeNull();
+      expect(waitingFor(app.db, alice.id).some((h) => h.id === asked.needs_confirm)).toBe(false);
+      const turns = listTurns(app.db, alice.id, openConversation(app.db, alice.id).id, { limit: 200 });
+      expect(JSON.stringify(turns)).toContain("cancelled");
+    } finally {
+      tui.stop();
+    }
+  });
+
   test("the terminal's Confirms: y, then Yes, does it once", async () => {
     const w = await world(alice);
     const asked = JSON.parse((await call(w.token, "archive", { repo: w.repo, archived: true, dryRun: false })).text);

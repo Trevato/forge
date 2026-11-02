@@ -237,6 +237,7 @@ function userMenu(
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
+    { label: "Talk", href: "/talk", icon: "comment" },
     { label: "Explore", href: "/explore", icon: "search" },
     { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
@@ -314,6 +315,7 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "New repository", h: "/new", c: "Create" },
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
+  { t: "Talk to the forge", h: "/talk", c: "Go to" },
   { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
   { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
@@ -564,7 +566,9 @@ function topbar(
       <span class="topbar-tools">
         ${searchBar()}
         ${user
-          ? html`<a class="small" href="/asks" data-shortcut="g q">Asks</a
+          ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" title="Talk to the forge" data-shortcut="g t"
+                >${icon("comment")}</a
+              ><a class="small" href="/asks" data-shortcut="g q">Asks</a
               >${newMenu(ctx)}${userMenu(
                 ctx,
                 user,

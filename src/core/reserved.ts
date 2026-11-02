@@ -108,6 +108,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "releases.json",
   "sw.js",
   "tell",
+  "talk",
   "theme",
   "verify",
   "recover",
