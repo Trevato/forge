@@ -63,6 +63,11 @@ describe("app.looksAsOwner in forge.json", () => {
     for (const bad of ["flow", "//evil.example", "/a/../b", 7])
       expect(manifest({ looks: ["/"], looksAsOwner: [bad] }).ok).toBe(false);
   });
+
+  test("the forge's own looks take its admin pages as the owner", () => {
+    const own = parseManifest(readFileSync(join(import.meta.dir, "..", "forge.json"), "utf8"), undefined);
+    expect(own.ok && own.value.looksAsOwner).toEqual(expect.arrayContaining(["/resilience", "/system"]));
+  });
 });
 
 describe("the preview seed", () => {
@@ -204,6 +209,25 @@ describe("a preview hears its parent's admin as the preview admin", () => {
     });
     expect(turned.status).toBe(403);
   });
+
+  test("/resilience and /system answer the preview admin, with no store said in one line and no credential in the page", async () => {
+    const preview = servers[0]!;
+    const headers = identity("admin");
+    for (const path of ["/resilience", "/system"]) {
+      const res = await fetch(`${preview.url}${path}`, { headers, redirect: "manual" });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("set-cookie") ?? "").not.toContain("forge_session");
+      const page = await res.text();
+      for (const secret of [KEY, headers["x-forge-signature"], headers["x-forge-identity"]])
+        expect(page).not.toContain(secret);
+      const sessions = apps[0]!.db.query<{ id: string }, []>("SELECT id FROM session").all();
+      for (const { id } of sessions) expect(page).not.toContain(id);
+      if (path === "/resilience") {
+        expect(page).toContain("Backups are off here: this forge was given no bucket to keep snapshots in.");
+        expect(page).not.toMatch(/\bat .+\.ts:\d+/);
+      }
+    }
+  }, 30_000);
 
   test("production, never handed the key, hears nobody", async () => {
     const production = await forge(undefined);

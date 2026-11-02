@@ -1,5 +1,6 @@
 /**
- * The Resilience command's dialog, a forge admin's: where snapshots go now and
+ * The Resilience command's dialog, a forge admin's: the backups line /resilience
+ * opens with (`snapshot/backups_line.ts`), where snapshots go now and
  * where the off-box mirror is, the newest snapshots, then one line per
  * THREATS.md protection with its standing in the last gate, as /resilience
  * says it. Enter, Esc or q closes it.
@@ -30,6 +31,7 @@ import {
   type DestinationInput,
 } from "../../actions/destination.ts";
 import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
+import { backupsLine } from "../../snapshot/backups_line.ts";
 import { backupVerdict } from "../../snapshot/bucket.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
 import { resolveDestination } from "../../snapshot/destination.ts";
@@ -251,7 +253,7 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
     const out: string[] = [];
     if (asking !== undefined) out.push(QUESTION[asking], "");
     else if (said !== "") out.push(...wrap(said, INNER), "");
-    out.push(...verdictLines(f), "");
+    out.push(...wrap(backupsLine(f.app).says, INNER), ...verdictLines(f), "");
     out.push(...wrap(destinationLine(f), INNER), ...wrap(mirrorLine(f), INNER));
     if (note !== "") out.push(...wrap(note, INNER));
     if (mayChange()) out.push("d sets where snapshots go, x forgets it.", "m sets the mirror, f forgets it.", "t tests where snapshots go.");
