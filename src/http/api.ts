@@ -30,6 +30,7 @@ import { DOMAINS } from "../kernel/domains.ts";
 import { readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
+import { crewNow } from "../actions/crew_now.ts";
 import { readScorecards } from "../actions/scorecard.ts";
 import {
   accountSignIns,
@@ -1175,6 +1176,20 @@ export function apiRoutes(router: Router<Handler>): void {
     const card = timePhase(ctx.request, "scorecard", () => readScorecards(ctx.app, ctx.auth.user));
     if (!card) return apiError("forbidden", 403, ADMIN_WORDS.scorecard);
     return timePhase(ctx.request, "render", () => json(card));
+  });
+
+  // What the crew is doing right now, as MCP `now` answers it: a read, so
+  // any scope; the visibility checks live in `actions/crew_now.ts`.
+  router.add("GET", "/api/v1/crew/now", (ctx) => {
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    if (!ctx.auth.user) return unauthorized();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const user = ctx.auth.user;
+    const items = timePhase(ctx.request, "crew", () => crewNow(ctx, user));
+    return timePhase(ctx.request, "render", () =>
+      json({ items, next_cursor: null }),
+    );
   });
 
   // The token the forge's agent acts with in one conversation (#7648): only

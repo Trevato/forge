@@ -47,6 +47,7 @@ export { route as getApiV1BoardsSlug } from "./getApiV1BoardsSlug.ts";
 export { route as getApiV1BoardsSlugPanelsId } from "./getApiV1BoardsSlugPanelsId.ts";
 export { route as getApiV1BoardsSources } from "./getApiV1BoardsSources.ts";
 export { route as getApiV1Contribute } from "./getApiV1Contribute.ts";
+export { route as getApiV1CrewNow } from "./getApiV1CrewNow.ts";
 export { route as getApiV1CrewScorecard } from "./getApiV1CrewScorecard.ts";
 export { route as getApiV1Explore } from "./getApiV1Explore.ts";
 export { route as getApiV1Family } from "./getApiV1Family.ts";
