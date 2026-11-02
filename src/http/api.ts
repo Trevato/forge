@@ -334,6 +334,7 @@ import { conversationConfirmRoutes } from "./api/conversation_confirms.ts";
 import { conversationTalkRoutes } from "./api/conversation_talk.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
+import { cloudRoutes } from "./api/cloud.ts";
 import { secretRoutes } from "./api/secrets.ts";
 import { drillRoutes } from "./api/drills.ts";
 import { upstreamRoutes } from "./api/upstream.ts";
@@ -3356,6 +3357,8 @@ export function apiRoutes(router: Router<Handler>): void {
   egressGrantRoutes(router);
 
   promptRoutes(router);
+
+  cloudRoutes(router);
 
   secretRoutes(router);
   drillRoutes(router);
