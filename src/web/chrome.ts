@@ -72,8 +72,12 @@ export function crumbsFor(repo: Repo): { label: string; href: string }[] {
  * this address; `plain` leaves that out for a miss that must reveal nothing
  * (a dead `/go/:code`). */
 export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response {
-  const offerSignIn =
-    !opts.plain && ctx.auth.user === undefined && ctx.request.method === "GET";
+  const get = !opts.plain && ctx.request.method === "GET";
+  const offerSignIn = get && ctx.auth.user === undefined;
+  const asked = get ? askedFor(ctx.url.pathname) : "";
+  const search = asked
+    ? btn(`Search for ‘${asked}’`, { href: `/search?q=${encodeURIComponent(asked)}` })
+    : html``;
   return page(
     {
       ctx,
@@ -87,13 +91,25 @@ export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response
             ? btn("Go home", { href: "/", variant: "primary" })
             : offerSignIn
               ? html`${btn("Sign in", { href: signInHref(ctx), variant: "primary" })}
+                ${btn("Create an account", { href: "/signup" })} ${search}
                 ${btn("Go home", { href: "/" })} ${btn("Explore", { href: "/explore" })}`
-              : html`${btn("Go home", { href: "/", variant: "primary" })}
+              : html`${btn("Go home", { href: "/", variant: "primary" })} ${search}
                 ${btn("Explore", { href: "/explore" })}`,
         })}`,
     },
     404,
   );
+}
+
+/** What the reader asked for: the last path segment, URL-decoded, trimmed,
+ * at most 100 characters; empty for `/` or an undecodable segment. */
+function askedFor(pathname: string): string {
+  const segment = pathname.slice(pathname.lastIndexOf("/") + 1);
+  try {
+    return decodeURIComponent(segment).trim().slice(0, 100).trim();
+  } catch {
+    return "";
+  }
 }
 
 export const repoNotFound = notFoundPage;

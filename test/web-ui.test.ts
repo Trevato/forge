@@ -456,7 +456,7 @@ describe("web ui", () => {
     const hidden = await (await fetch(`${base}/kim/secret`)).text();
     const absent = await (await fetch(`${base}/kim/nothing`)).text();
     const scrub = (t: string) =>
-      t.replaceAll(/nonce-?="?[\w-]+/g, "nonce").replaceAll(/here\?path=[^"&\s]*/g, "here?path=").replaceAll(/next=[^"]*/g, "");
+      t.replaceAll(/nonce-?="?[\w-]+/g, "nonce").replaceAll(/here\?path=[^"&\s]*/g, "here?path=").replaceAll(/next=[^"]*/g, "").replaceAll(/q=[^"]*"/g, 'q="').replaceAll(/Search for ‘[^’]*’/g, "Search for");
     expect(scrub(hidden)).toBe(scrub(absent));
 
     const signedIn = await (
@@ -466,6 +466,28 @@ describe("web ui", () => {
     expect(signedIn).not.toContain("/signin?next=");
     expect(signedIn).toContain("Go home");
     expect(signedIn).toContain('href="/explore"');
+  });
+
+  test("a 404 offers a search for what was asked, and a stranger an account", async () => {
+    const out = await (await fetch(`${base}/kim/nothing`)).text();
+    expect(out).toContain('href="/search?q=nothing"');
+    expect(out).toContain("Search for ‘nothing’");
+    expect(out).toContain('href="/signup"');
+    expect(out).toContain("Create an account");
+
+    const odd = await (await fetch(`${base}/%3Cx%3E`)).text();
+    expect(odd).toContain("Search for ‘&lt;x&gt;’");
+    expect(odd).toContain('href="/search?q=%3Cx%3E"');
+    expect(odd).not.toContain("<x>");
+
+    const long = await (await fetch(`${base}/${"a".repeat(150)}`)).text();
+    expect(long).toContain(`q=${"a".repeat(100)}"`);
+
+    const signedIn = await (
+      await fetch(`${base}/kim/nothing`, { headers: { cookie: stranger } })
+    ).text();
+    expect(signedIn).toContain("Search for ‘nothing’");
+    expect(signedIn).not.toContain("Create an account");
   });
 
   test("safeNext refuses another origin", () => {

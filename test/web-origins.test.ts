@@ -771,6 +771,9 @@ describe("origins on the web", () => {
       redirect: "manual",
     });
     expect(unknown.status).toBe(404);
+    const plainBody = await unknown.clone().text();
+    expect(plainBody).not.toContain("/search?q=");
+    expect(plainBody).not.toContain("Create an account");
     app.db
       .query("UPDATE oauth_flow SET expires_at = ?1 WHERE id = ?2")
       .run("2020-01-01T00:00:00.000Z", flowId);
