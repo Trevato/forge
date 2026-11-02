@@ -19,6 +19,9 @@ import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
 import { emptyState } from "../ui/widgets.ts";
 import { ListState, ago, drawList, type ListRow } from "./common.ts";
+import { issueScreen } from "./issue.ts";
+import { pullScreen } from "./pull.ts";
+import { local } from "./where.ts";
 
 /** The one kind `s` keeps. */
 export const SETTINGS_KIND = "repo.settings_updated";
@@ -49,6 +52,13 @@ function subjectOf(event: ForgeEvent): string {
   return typeof ref === "string" ? ref.replace(/^refs\/heads\//, "") : "";
 }
 
+/** The issue or pull number an event names, and which; the web page's rule. */
+export function opensOf(event: ForgeEvent): { pull: boolean; number: number } | undefined {
+  const number = event.payload["number"];
+  if (typeof number !== "number" || !Number.isInteger(number) || number < 1) return undefined;
+  return { pull: event.kind.startsWith("pull."), number };
+}
+
 /** One row per event: `who verb: subject`, with its age beside it. */
 function eventRows(f: Session, events: readonly ForgeEvent[]): ListRow[] {
   const actors = getUsersByIds(f.db, events.map((e) => e.actorId ?? "").filter(Boolean));
@@ -64,12 +74,14 @@ export function eventsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const state = new ListState();
   let count = 0;
   const rows: ListRow[] = [];
+  const opens: ({ pull: boolean; number: number } | undefined)[] = [];
   let next: string | null = null;
   let kind: string | undefined;
   const read = (cursor?: string): void => {
     const page = eventsPage(f.db, repo.id, f.user, EVENTS_LIMIT_DEFAULT, cursor, kind);
     count += page.items.length;
     rows.push(...eventRows(f, page.items));
+    opens.push(...page.items.map(opensOf));
     next = page.next_cursor;
     ctx.invalidate();
   };
@@ -81,6 +93,7 @@ export function eventsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     get keys() {
       return [
         binding(["j", "k"], "move"),
+        ...(opens[state.index] === undefined ? [] : [binding(["enter"], "open")]),
         ...(next === null ? [] : [binding(["n"], "next page")]),
         binding(["s"], kind === undefined ? "settings only" : "all events"),
         binding(["esc", "q"], "back"),
@@ -100,10 +113,17 @@ export function eventsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "n") {
         if (next !== null) read(next);
+      } else if (e.key === "enter") {
+        const target = opens[state.index];
+        if (target !== undefined) {
+          const src = local(f, repo);
+          ctx.push(target.pull ? pullScreen(f, ctx, src, target.number) : issueScreen(f, ctx, src, target.number));
+        }
       } else if (e.key === "s") {
         kind = kind === undefined ? SETTINGS_KIND : undefined;
         count = 0;
         rows.length = 0;
+        opens.length = 0;
         state.index = 0;
         state.offset = 0;
         read();
