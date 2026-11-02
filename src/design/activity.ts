@@ -138,6 +138,8 @@ const WORDS: Record<string, string> = {
   "label.deleted": "removed a label",
   "webhook.created": "added a webhook",
   "webhook.deleted": "removed a webhook",
+  "webhook.paused": "paused a webhook",
+  "webhook.resumed": "resumed a webhook",
   "origin.connected": "connected an origin",
   "origin.disconnected": "disconnected an origin",
   "origin.needs_reauth": "needs to reconnect an origin",

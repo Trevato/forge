@@ -133,6 +133,23 @@ export function deleteWebhook(
   );
 }
 
+/**
+ * Pause or resume a hook. False for a hook of another repository. Nothing
+ * is backfilled: events that came while paused were never enqueued.
+ */
+export function setWebhookActive(
+  db: Database,
+  repoId: string,
+  webhookId: string,
+  active: boolean,
+): boolean {
+  return (
+    db
+      .query("UPDATE webhook SET active = ?3 WHERE id = ?1 AND repo_id = ?2")
+      .run(webhookId, repoId, active ? 1 : 0).changes > 0
+  );
+}
+
 /** Does a webhook's `kinds` spec match an event kind? */
 export function kindMatches(spec: string, kind: string): boolean {
   for (const pattern of spec.split(/\s+/).filter(Boolean)) {
@@ -210,7 +227,8 @@ export async function deliverDue(
        FROM webhook_delivery d
        JOIN webhook w ON w.id = d.webhook_id
        JOIN event e ON e.id = d.event_id
-       WHERE d.state = 'pending' AND (d.next_try_at IS NULL OR d.next_try_at <= ?1)
+       WHERE d.state = 'pending' AND w.active = 1
+         AND (d.next_try_at IS NULL OR d.next_try_at <= ?1)
        ORDER BY d.id LIMIT 50`,
     )
     .all(nowIso);
