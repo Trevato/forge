@@ -115,7 +115,10 @@ export function shippedRegion(read: Landings, choice: string, now: Date = new Da
   const onItsWay = read.onItsWay.filter(keep);
   const todayIs = dayOf(now.toISOString(), zone);
   const today = live.filter((l) => dayOf(l.at, zone) === todayIs).length;
-  const version = read.commit === null ? read.version : html`${read.version} · ${sha(read.commit)}`;
+  const commit = read.commit === null ? null : sha(read.commit);
+  // A build that is not a release has no version worth a reader's attention: the commit says it.
+  const version =
+    read.version !== "dev" ? (commit === null ? read.version : html`${read.version} · ${commit}`) : (commit ?? "a development build");
   const top = html`<p class="small muted" id="shipped-top">
     Live: ${version}. <span id="shipped-today">${shippedToday(today, zone === "UTC")}</span>
   </p>`;

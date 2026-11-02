@@ -331,3 +331,27 @@ describe("the browser regroups the changelog into the reader's days", () => {
     await window.happyDOM.close();
   });
 });
+
+describe("the top line names what is running", () => {
+  const top = async (version: string, commit: string | null) => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    const read = { live: [], onItsWay: [], version, commit, own: "a/forge" } as any;
+    return String(shippedRegion(read, "all")).match(/id="shipped-top">([\s\S]*?)<span id="shipped-today"/)![1]!;
+  };
+
+  test("a development build with a commit reads the short sha and no dev", async () => {
+    const line = await top("dev", "8a16183d0000000000000000000000000000abcd");
+    expect(line).toContain("8a16183");
+    expect(line).not.toContain("dev");
+  });
+
+  test("a development build with no commit says so", async () => {
+    expect(await top("dev", null)).toContain("Live: a development build.");
+  });
+
+  test("a release keeps version and sha", async () => {
+    const line = await top("1.2.3", "8a16183d0000000000000000000000000000abcd");
+    expect(line).toContain("1.2.3 · ");
+    expect(line).toContain("8a16183");
+  });
+});
