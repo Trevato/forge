@@ -1,12 +1,16 @@
 /**
  * docs/design/audit.md has one entry for every top-level page, and names no
  * route the router does not have (#2709). The router is read as text: the
- * static GET paths in src/http/server.ts, less the ones that are not pages.
+ * static GET paths in src/http/server.ts and settings_routes.ts, less the
+ * ones that are not pages.
  */
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-const server = readFileSync("src/http/server.ts", "utf8");
+// The settings routes register from their own module (#8309), so both are read.
+const server = ["src/http/server.ts", "src/http/settings_routes.ts"]
+  .map((file) => readFileSync(file, "utf8"))
+  .join("\n");
 const doc = readFileSync("docs/design/audit.md", "utf8");
 
 /** Routes that answer a file, a fragment, a redirect hop or a callback. */

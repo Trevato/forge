@@ -11,3 +11,5 @@ A new `forge` command is a new file in `src/cli/commands/` (exporting `command`)
 A new terminal screen offered only to site admins exports its palette `entry` from its own module and adds one line to `ENTRIES` in `src/tui/screens/entries.ts`; `after` names the commands it follows. Entries offered to everyone, and entries gated by a helper (`mayCapacity`, `mayManageFlags`, `canSeeMemory`, `telemetryReader` and the like) rather than by `isAdmin`, stay in `forgeCommands` in `src/tui/forge.ts`.
 
 A new read of a table that grows (`event`, `issue`, `run`, `comment`) names the index it walks, in the migration that adds it, and a test shows it from the query plan (`test/hot-reads-indexed.test.ts` is the pattern): no `SCAN`, no `TEMP B-TREE`. Judge by plan or row count, never the clock. A read that stays slow with the best index is a summary table, kept as the rows change, before it is a worker.
+
+A new `/settings…` page route goes in `src/http/settings_routes.ts` (`settingsRoutes`), not `src/http/server.ts`.

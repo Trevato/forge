@@ -13,21 +13,15 @@ import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
-import { parentCallback, parentLinkStart, parentStart } from "./rp.ts";
+import { parentCallback, parentStart } from "./rp.ts";
 import { prerenderComments } from "../web/prerender.ts";
-import { accessPage } from "../web/pages/access.ts";
-import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
-import { teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
-import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { pipelinePage } from "../web/pages/pipeline.ts";
-import { flagsPage, flagsSet } from "../web/pages/flags.ts";
-import { usagePage } from "../web/pages/usage.ts";
-import { spendPage } from "../web/pages/spend-tab.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { measureSubmit } from "./measure.ts";
+import { settingsRoutes } from "./settings_routes.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
 import { boardsHoldPost } from "../web/pages/boards-holds.ts";
@@ -39,14 +33,6 @@ import {
   noteCaller,
   sweepStanding,
 } from "./caller.ts";
-import {
-  accountAct,
-  retireAct,
-  retirePage,
-  accountsPage,
-  personSignInsPage,
-  signInAct,
-} from "../web/pages/accounts.ts";
 import { defect } from "../kernel/error.ts";
 import {
   armClose,
@@ -135,13 +121,8 @@ import {
   verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
-import { confirmsList, confirmYes } from "../web/pages/confirms.ts";
 import { talkConfirm, talkSend, talkStream, talkView } from "../web/pages/talk.ts";
 import {
-  passkeyAdd,
-  passkeyDelete,
-  passkeyOptions,
-  passkeysPage,
   recoverFinish,
   recoverOptions,
   recoverPage,
@@ -156,44 +137,9 @@ import { followingSubmit } from "../web/pages/following.ts";
 import { reconnectSubmit } from "../web/pages/frozen.ts";
 import { activityAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
-import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
-import {
-  backupsClear,
-  backupsDestination,
-  backupsDrill,
-  backupsLive,
-  backupsMirror,
-  backupsMirrorClear,
-  backupsMirrorNow,
-  backupsNow,
-  backupsPage,
-  backupsTest,
-  domainsMoved,
-} from "../web/pages/backups.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
-import {
-  cloudAdd,
-  cloudAudit,
-  cloudAuditPage,
-  cloudRename,
-  cloudRotate,
-  cloudPage,
-  cloudRemove,
-  cloudVerify,
-  cloudWrite,
-} from "../web/pages/cloud.ts";
-import {
-  subscriptionAdd,
-  subscriptionDelete,
-  subscriptionsPage,
-  subscriptionBudget,
-  subscriptionHeadroom,
-  subscriptionWake,
-} from "../web/pages/subscriptions.ts";
-import { peoplePage, roleAct } from "../web/pages/people.ts";
-import { ceilingAct, grantAct, modelAdd, modelPage } from "../web/pages/model.ts";
 import {
   changePassword,
   iconPng,
@@ -272,7 +218,6 @@ import {
   composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
-import { everydayCreate, everydayKeep, everydayOptions, everydaySwitch } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
 import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
@@ -358,15 +303,6 @@ import {
   fleetGraphLive,
   fleetGraphPage,
 } from "../web/pages/fleet-graph.ts";
-import {
-  agentCreate,
-  agentDelete,
-  modelReviewDecline,
-  modelReviewTake,
-  agentPage,
-  agentUpdate,
-  crewPage,
-} from "../web/pages/crew.ts";
 import { fileHoldUpdate } from "../web/pages/file_holds.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
 import {
@@ -443,25 +379,6 @@ import {
   teamPage,
 } from "../web/pages/org.ts";
 import {
-  accountPage,
-  notifyUpdate,
-  edgeLink,
-  edgeUnlink,
-  parentUnlink,
-  accountUpdate,
-  keyCreate,
-  keyDelete,
-  keysPage,
-  passwordPage,
-  resendVerifyLink,
-  passwordUpdate,
-  tokenCreate,
-  sessionDelete,
-  tokenDelete,
-  tokensPage,
-} from "../web/pages/account.ts";
-import { completeOAuthCallback } from "../actions/origins.ts";
-import {
   browseBlob,
   browseBranchesPage,
   browseCommitPage,
@@ -479,21 +396,7 @@ import {
   browsePulls,
   browseRaw,
   browseTree,
-  mirrorJobPage,
 } from "../web/pages/browse.ts";
-import {
-  originAppCreate,
-  originAppDelete,
-  originConnectToken,
-  originDisconnect,
-  originOAuthStart,
-  originSyncSubmit,
-  originsPage,
-  originReplaceToken,
-  originTrustedHosts,
-} from "../web/pages/origins.ts";
-import { originFlowPage, originFlowPoll } from "../web/pages/origin-flow.ts";
-import { originMirrorSubmit, originReposPage } from "../web/pages/origin-repos.ts";
 import { pushThrough } from "../origins/push-through.ts";
 import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
@@ -863,8 +766,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/contribute", contributePage);
   // The one path a change follows, in four words (#7703); literal, above /:owner.
   router.add("GET", "/pipeline", pipelinePage);
-  router.add("GET", "/settings/telemetry", telemetryPage);
-  router.add("POST", "/settings/telemetry", telemetrySet);
+  // Every /settings… page, in its own module (settings_routes.ts); literal, above /:owner.
+  // The usage page is handed the pattern list, so settings_routes.ts never imports server.ts.
+  settingsRoutes(router, knownPatterns);
   // Each THREATS.md protection against the last gate; literal, above /:owner.
   router.add("GET", "/resilience", resiliencePage);
   // A selection's spend and runs over time; literal, above /:owner.
@@ -898,35 +802,10 @@ export function buildRouter(): Router<Handler> {
     });
   });
   router.add("GET", "/runs/:id", runRedirect);
-  router.add("GET", "/settings", accountPage);
-  router.add("POST", "/settings", accountUpdate);
-  router.add("POST", "/settings/notify", notifyUpdate);
-  router.add("POST", "/settings/edge/link", edgeLink);
-  router.add("POST", "/settings/edge/unlink", edgeUnlink);
-  router.add("POST", "/settings/parent/link", parentLinkStart);
-  router.add("POST", "/settings/parent/unlink", parentUnlink);
-  router.add("POST", "/settings/email/verify", resendVerifyLink);
-  router.add("GET", "/settings/password", passwordPage);
-  router.add("POST", "/settings/password", passwordUpdate);
-  // The everyday account: an admin's daily account, apart from admin (#596).
-  router.add("POST", "/settings/everyday", everydayCreate);
-  router.add("POST", "/settings/everyday/options", everydayOptions);
-  router.add("POST", "/settings/everyday/switch", everydaySwitch);
-  router.add("POST", "/settings/everyday/keep", everydayKeep);
-  router.add("GET", "/settings/tokens", tokensPage);
-  router.add("POST", "/settings/tokens", tokenCreate);
-  router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
-  router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
   router.add("GET", "/talk", talkView);
   router.add("POST", "/talk", talkSend);
   router.add("GET", "/talk/stream", talkStream);
   router.add("POST", "/talk/confirm/:id", talkConfirm);
-  router.add("GET", "/settings/confirms", confirmsList);
-  router.add("POST", "/settings/confirms/:id", confirmYes);
-  router.add("GET", "/settings/passkeys", passkeysPage);
-  router.add("POST", "/settings/passkeys/options", passkeyOptions);
-  router.add("POST", "/settings/passkeys", passkeyAdd);
-  router.add("POST", "/settings/passkeys/:id/delete", passkeyDelete);
   router.add("POST", "/signin/passkey/options", signinOptions);
   router.add("POST", "/signin/passkey", signinPasskey);
   router.add("GET", "/recover", recoverPage);
@@ -935,33 +814,6 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/recover/passkey", recoverFinish);
   router.add("POST", "/signup/passkey/options", signupOptions);
   router.add("POST", "/signup/passkey", signupPasskey);
-  // The crew: a forge admin's section, hidden from everyone else.
-  router.add("GET", "/settings/subscriptions", subscriptionsPage);
-  router.add("POST", "/settings/subscriptions", subscriptionAdd);
-  router.add("POST", "/settings/subscriptions/:id/delete", subscriptionDelete);
-  router.add("POST", "/settings/subscriptions/:id/wake", subscriptionWake);
-  router.add(
-    "POST",
-    "/settings/subscriptions/:id/headroom",
-    subscriptionHeadroom,
-  );
-  router.add("POST", "/settings/subscriptions/:id/budget", subscriptionBudget);
-  router.add("GET", "/settings/secrets", secretsPage);
-  router.add("POST", "/settings/secrets", secretSet);
-  router.add("POST", "/settings/secrets/delete", secretDelete);
-  router.add("GET", "/settings/cloud", cloudPage);
-  router.add("POST", "/settings/cloud", cloudAdd);
-  router.add("POST", "/settings/cloud/verify", cloudVerify);
-  router.add("POST", "/settings/cloud/write", cloudWrite);
-  router.add("POST", "/settings/cloud/audit", cloudAudit);
-  router.add("GET", "/settings/cloud/audit", cloudAuditPage);
-  router.add("POST", "/settings/cloud/rotate", cloudRotate);
-  router.add("POST", "/settings/cloud/rename", cloudRename);
-  router.add("POST", "/settings/cloud/remove", cloudRemove);
-  router.add("GET", "/settings/access", accessPage);
-  router.add("GET", "/settings/resilience", domainsMoved);
-  router.add("GET", "/settings/capacity", capacityPage);
-  router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/boards", boardsList);
   router.add("GET", "/boards/data", boardsPage);
   router.add("POST", "/boards/new", boardNew);
@@ -971,86 +823,12 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/boards/:slug", boardShow);
   router.add("GET", "/boards/:slug/live", boardLive);
   router.add("POST", "/boards/:slug/:op", boardPost);
-  router.add("GET", "/settings/flags", flagsPage);
-  router.add("POST", "/settings/flags", flagsSet);
-  router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
-  router.add("GET", "/settings/spend", spendPage);
   router.add("GET", "/admin/limits", limitsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);
   router.add("POST", "/admin/signup", signupSet);
   router.add("POST", "/admin/invites", inviteMint);
   router.add("POST", "/admin/invites/:id/revoke", inviteRevoke);
-  router.add("GET", "/settings/backups", backupsPage);
-  router.add("GET", "/settings/backups/live", backupsLive);
-  router.add("POST", "/settings/backups/now", backupsNow);
-  router.add("POST", "/settings/backups/drill", backupsDrill);
-  router.add("POST", "/settings/backups/destination", backupsDestination);
-  router.add("POST", "/settings/backups/test", backupsTest);
-  router.add("POST", "/settings/backups/clear", backupsClear);
-  router.add("POST", "/settings/backups/mirror", backupsMirror);
-  router.add("POST", "/settings/backups/mirror/clear", backupsMirrorClear);
-  router.add("POST", "/settings/backups/mirror/now", backupsMirrorNow);
-  router.add("GET", "/settings/accounts", accountsPage);
-  router.add("GET", "/settings/people", peoplePage);
-  router.add("POST", "/settings/people/:username/role", roleAct);
-  router.add("GET", "/settings/model", modelPage);
-  router.add("POST", "/settings/model", modelAdd);
-  router.add("POST", "/settings/accounts/:username/model", grantAct);
-  router.add("POST", "/settings/accounts/:username/ceiling", ceilingAct);
-  router.add("GET", "/settings/accounts/:username", personSignInsPage);
-  router.add(
-    "POST",
-    "/settings/accounts/:username/tokens/:id/delete",
-    signInAct("token"),
-  );
-  router.add(
-    "POST",
-    "/settings/accounts/:username/sessions/:id/delete",
-    signInAct("session"),
-  );
-  router.add(
-    "POST",
-    "/settings/accounts/:username/suspend",
-    accountAct("suspend"),
-  );
-  router.add(
-    "POST",
-    "/settings/accounts/:username/unsuspend",
-    accountAct("unsuspend"),
-  );
-  router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
-  router.add("GET", "/settings/accounts/:username/retire", retirePage);
-  router.add("POST", "/settings/accounts/:username/retire", retireAct);
-  router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
-  router.add("GET", "/settings/crew", crewPage);
-  router.add("POST", "/settings/crew", agentCreate);
-  router.add("GET", "/settings/teams", teamsPage);
-  router.add("GET", "/settings/teams/stream", teamsStream);
-  router.add("POST", "/settings/teams/:slug", teamSet);
-  router.add("GET", "/settings/crew/:username", agentPage);
-  router.add("POST", "/settings/crew/:username", agentUpdate);
-  router.add("POST", "/settings/crew/:username/delete", agentDelete);
-  router.add("POST", "/settings/crew/model-review/:id/take", modelReviewTake);
-  router.add("POST", "/settings/crew/model-review/:id/decline", modelReviewDecline);
-  // Where an OAuth authorization comes back to. Deliberately a plain route
-  // and not an API one: it is a browser redirect, possibly from a phone, and
-  // the only thing it carries is a `state` this forge issued minutes ago.
-  router.add("GET", "/settings/origins/callback", async (ctx) => {
-    const done = await completeOAuthCallback(ctx.app, ctx.auth.user, {
-      state: ctx.url.searchParams.get("state") ?? "",
-      code: ctx.url.searchParams.get("code") ?? "",
-    });
-    const query = !done.ok
-      ? "error=state"
-      : done.value.status === "done"
-        ? "connected=1"
-        : `error=${encodeURIComponent(done.value.detail.slice(0, 120))}`;
-    return new Response(null, {
-      status: 303,
-      headers: { location: `/settings/origins?${query}` },
-    });
-  });
 
   // The short link for a connect in flight, and the one route here that is
   // deliberately anonymous: the device typing it is a phone that has never
@@ -1076,26 +854,6 @@ export function buildRouter(): Router<Handler> {
       headers: { location: target, "cache-control": "no-store" },
     });
   });
-
-  // Origins. Literal thirds first, so `flows` and `apps` can never be
-  // captured as an origin id by the parameterized routes below them.
-  router.add("GET", "/settings/origins", originsPage);
-  router.add("POST", "/settings/origins/token", originConnectToken);
-  router.add("POST", "/settings/origins/oauth", originOAuthStart);
-  router.add("POST", "/settings/origins/apps", originAppCreate);
-  router.add("POST", "/settings/origins/trusted-hosts", originTrustedHosts);
-  router.add("POST", "/settings/origins/apps/:id/delete", originAppDelete);
-  router.add("GET", "/settings/origins/flows/:id", originFlowPage);
-  router.add("POST", "/settings/origins/flows/:id/poll", originFlowPoll);
-  router.add("GET", "/settings/origins/:id/repos", originReposPage);
-  router.add("POST", "/settings/origins/:id/mirror", originMirrorSubmit);
-  // A mirror is a job with stages, so it has a page of its own to watch it
-  // on. The literal "mirror" third segment is registered above the :id/:job
-  // shape for the same reason `flows` and `apps` are.
-  router.add("GET", "/settings/origins/:id/mirror/:job", mirrorJobPage);
-  router.add("POST", "/settings/origins/:id/sync", originSyncSubmit);
-  router.add("POST", "/settings/origins/:id/delete", originDisconnect);
-  router.add("POST", "/settings/origins/:id/token", originReplaceToken);
 
   // Browsing a repository on an origin, live and read-only. Registered here,
   // above every parameterized repo route, so `/origins` can never be captured
@@ -1142,10 +900,6 @@ export function buildRouter(): Router<Handler> {
     "/origins/:id/r/:owner/:name/contribute",
     browseContributeSubmit,
   );
-
-  router.add("GET", "/settings/keys", keysPage);
-  router.add("POST", "/settings/keys", keyCreate);
-  router.add("POST", "/settings/keys/:id/delete", keyDelete);
 
   // git smart HTTP
   router.add("GET", "/:owner/:name.git/info/refs", (ctx) => {
