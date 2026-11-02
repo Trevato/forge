@@ -10,11 +10,24 @@
 import type { App } from "../../app.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { cancelTalk, stopTalk, TALK_WORDS, talk } from "../../actions/talk.ts";
+import {
+  archiveConversation,
+  createConversation,
+  DEFAULT_PAGE,
+  getConversation,
+  listConversations,
+  listTurns,
+  MAX_PAGE,
+  openConversation,
+  renameConversation,
+  TITLE_MAX,
+  TOO_MANY_WORDS,
+} from "../../core/conversations.ts";
 import { FILE_WORDS, fileBytes, fileOwnedBy, FILES_PER_MESSAGE, IMAGE_MAX, pendingAmong, removePending, storeFile } from "../../core/conversation_files.ts";
-import { DEFAULT_PAGE, listTurns, MAX_PAGE, openConversation } from "../../core/conversations.ts";
 import { WORDS_MAX } from "../../core/fence.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { scopeAllows } from "../../core/tokens.ts";
+import type { User } from "../../core/users.ts";
 import { worksOf } from "../../core/talk_work.ts";
 import { fileQueued, queuedOf, turnRunning } from "../../crew/conversation.ts";
 import { crossOrigin, type Handler } from "../context.ts";
@@ -57,6 +70,8 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     const text = input["text"];
     if (typeof text !== "string" || text.trim() === "" || text.length > WORDS_MAX)
       return apiError("invalid_text", 422, `text is a string of 1 to ${WORDS_MAX} characters`);
+    const named = input["conversation"];
+    if (named !== undefined && (typeof named !== "string" || !ID.test(named))) return apiError("not_found", 404, "no such conversation");
     const ids = input["files"] ?? [];
     if (!Array.isArray(ids) || ids.length > FILES_PER_MESSAGE || !ids.every((f) => typeof f === "string"))
       return apiError("invalid_files", 422, `files is a list of at most ${FILES_PER_MESSAGE} attachment ids`);
@@ -65,7 +80,7 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     // What to do when a turn runs: absent hands the words to it; `queue` waits for it; `steer` stops it and sends these at once.
     const during = input["during"];
     if (during !== undefined && during !== "queue" && during !== "steer") return apiError("invalid_during", 422, "during is queue or steer");
-    const said = talk(ctx.app, user, text, files.value, during === "queue" ? "queue" : during === "steer" ? "interrupt" : "inject");
+    const said = talk(ctx.app, user, text, files.value, during === "queue" ? "queue" : during === "steer" ? "interrupt" : "inject", named);
     if (!said.ok) {
       const [status, words] = TALK_WORDS[said.error];
       return json({ error: said.error, message: words }, status, said.error === "rate_limited" || said.error === "busy" ? { "retry-after": "60" } : {});
@@ -146,7 +161,9 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     const user = ctx.auth.user;
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (user === undefined) return unauthorized();
-    const conversation = openConversation(ctx.app.db, user.id);
+    const named = ctx.url.searchParams.get("conversation");
+    const conversation = named === null ? openConversation(ctx.app.db, user.id) : getConversation(ctx.app.db, user.id, named);
+    if (conversation === undefined) return apiError("not_found", 404, "no such conversation");
     const turns = listTurns(ctx.app.db, user.id, conversation.id, {
       limit: turnsLimit(ctx.url.searchParams.get("limit")),
       ...(ctx.url.searchParams.get("before") ? { before: ctx.url.searchParams.get("before")! } : {}),
@@ -155,6 +172,55 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     const all = turns.ok ? turns.value : [];
     const works = worksOf(ctx.app.db, user.id, conversation.id, all);
     const shown = all.map((t) => (t.role === "agent" ? { ...t, work: works.get(t.id) ?? null } : t));
-    return json({ running: turnRunning(ctx.app, user.id), queued: queuedOf(ctx.app, user.id).map((q) => ({ id: q.id, text: q.text })), turns: shown });
+    return json({ running: turnRunning(ctx.app, user.id, conversation.id), conversation: conversation.id, queued: queuedOf(ctx.app, user.id, conversation.id).map((q) => ({ id: q.id, text: q.text })), turns: shown });
   });
+
+  router.add("GET", "/api/v1/conversations", (ctx) => {
+    const user = ctx.auth.user;
+    if (user === undefined) return unauthorized();
+    return json({ conversations: listConversations(ctx.app.db, user.id, { archived: ctx.url.searchParams.get("archived") === "1" }) });
+  });
+
+  router.add("POST", "/api/v1/conversations", async (ctx) => {
+    const user = mayChange(ctx);
+    if (user instanceof Response) return user;
+    const input = await boundedBody(ctx.request, 4_000);
+    if (input === "too_large") return apiError("too_large", 413, "at most 4000 bytes");
+    const title = input["title"];
+    if (title !== undefined && typeof title !== "string") return apiError("invalid_title", 422, TITLE_WORDS);
+    const started = createConversation(ctx.app.db, user.id);
+    if (!started.ok) return apiError("too_many", 409, TOO_MANY_WORDS);
+    const made = started.value;
+    if (title === undefined || title.trim() === "") return json({ conversation: made }, 201);
+    const named = renameConversation(ctx.app.db, user.id, made.id, title);
+    return named.ok ? json({ conversation: named.value }, 201) : apiError("invalid_title", 422, TITLE_WORDS);
+  });
+
+  router.add("PATCH", "/api/v1/conversations/:id", async (ctx) => {
+    const user = mayChange(ctx);
+    if (user instanceof Response) return user;
+    const id = ctx.params["id"] ?? "";
+    if (!ID.test(id) || getConversation(ctx.app.db, user.id, id) === undefined) return apiError("not_found", 404, "no such conversation");
+    const input = await boundedBody(ctx.request, 4_000);
+    if (input === "too_large") return apiError("too_large", 413, "at most 4000 bytes");
+    const { title, archived } = input;
+    if (title !== undefined && typeof title !== "string") return apiError("invalid_title", 422, TITLE_WORDS);
+    if (archived !== undefined && typeof archived !== "boolean") return apiError("invalid", 422, "archived is true or false");
+    if (title === undefined && archived === undefined) return apiError("invalid", 422, "send title or archived");
+    if (title !== undefined && !renameConversation(ctx.app.db, user.id, id, title).ok) return apiError("invalid_title", 422, TITLE_WORDS);
+    if (archived !== undefined) archiveConversation(ctx.app.db, user.id, id, archived);
+    return json({ conversation: getConversation(ctx.app.db, user.id, id) });
+  });
+}
+
+const ID = /^[0-9a-z]{1,40}$/;
+const TITLE_WORDS = `title is text of at most ${TITLE_MAX} characters, on one line`;
+
+/** The person a change is for: signed in, same-origin, and not on a read-only token. */
+function mayChange(ctx: Parameters<Handler>[0]): User | Response {
+  const user = ctx.auth.user;
+  if (user === undefined) return unauthorized();
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+  if (ctx.auth.via === "token" && !scopeAllows(ctx.auth.scope ?? "ro", "rw")) return forbidden();
+  return user;
 }

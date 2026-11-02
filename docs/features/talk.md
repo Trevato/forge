@@ -18,6 +18,16 @@ A reply streams in over `GET /talk/stream?after=<turn id>` (server-sent events, 
 
 When the agent asks first (`needs_confirm`), the turn draws **Confirm** (the existing yes) and **Cancel** (a no: the confirm is spent, nothing runs, a turn says it was cancelled). A result shown once (an invite link) is drawn by Settings → Confirms instead, where Confirm leads.
 
+## Many conversations (#8814)
+
+A person has any number. `/talk` is their latest, with the list above it (newest activity first), **New**, and **Archived (n)** as the one filter (`/talk?archived=1`). Each opens at `/talk/<id>`, stable across reloads; Rename and Archive/Restore are plain forms (`POST /talk/:id/rename`, `/talk/:id/archive`, `POST /talk/new`), so they work without the script. Another person's id is 404 everywhere. A message with no conversation named goes to the latest one that is not archived.
+
+- **Cap:** a person holds at most 100 conversations, archived ones counted; past it New is refused (page flash, API 409 `too_many`, MCP `too_many`). Stop ends every reply the person has running, in any conversation.
+- **API:** `GET /api/v1/conversations[?archived=1]`, `POST /api/v1/conversations {title?}`, `PATCH /api/v1/conversations/:id {title?, archived?}`; `conversation` on `POST …/messages` and `GET …/turns?conversation=` picks one.
+- **MCP:** `say` with `action` list | new | rename | archive | restore, and `conversation` to speak in one.
+- **Terminal:** Palette → Conversations: `n` new, `r` rename, `x` archive or restore, `a` the archived list, Enter opens one (its last 50 turns; `s` says something in it, `r` reloads); the same calls, so the web list and stream read what it writes.
+- Sending to an archived conversation keeps it archived; the page says so above the composer.
+
 ## Edit, regenerate, retry (#8817)
 
 Three actions on the last exchange, one door, `talkAgain()` in `src/actions/talk.ts` (the same 12-a-minute throttle and refusals as sending):
@@ -28,6 +38,7 @@ Three actions on the last exchange, one door, `talkAgain()` in `src/actions/talk
 - Refused while a turn runs (`running`, 409), or when there is nothing to act on (`nothing`, 409).
 - **Web:** Edit under your last message (opens the composer holding it, `/talk?edit=1`; Send resends), Regenerate under the last reply, Retry under a failed one. All are plain forms or links, so they work without the script, which only does them in place. They post to `POST /talk/again/edit|regenerate|retry`, from your own signed-in browser only.
 - **Terminal:** `ssh <forge> talk-again edit <words>`, `ssh <forge> talk-again regenerate`, `ssh <forge> talk-again retry`.
+- With several conversations they act on the one open: the forms post to `/talk/<id>/again/<how>` (`/talk/again/<how>` on the latest); the action takes the conversation as an optional argument.
 - There is no API or MCP door for these yet.
 
 ## Stop
@@ -64,7 +75,7 @@ Prior art read: Vercel AI Elements (Apache-2.0 React on shadcn; anatomy and beha
 | Starter questions on an empty chat (links to `/talk?q=`, so they work without the script) | this pull | AI Elements `Suggestion` |
 | Stick to bottom, "Latest" jump button | this pull | AI Elements `Conversation` |
 | Thinking as one closed line; a steps line under a reply ("read 3 files, opened #12"); links to each issue, pull, file or app the turn opened or changed | this pull | AI Elements `Reasoning`, `ChainOfThought` |
-| Many conversations: new, list, search, rename, archive, URL each | next pull | needs a migration: today one row per person |
+| Many conversations: new, list, rename, archive, URL each | have (#8814) | search is not added yet |
 | Edit and resend, regenerate, Retry (see below) | have (#8817) | replaced turns are kept and marked, not deleted |
 | Queue and Steer while an answer runs | #8819 | `Queue` / `PromptInput` |
 | Cost under each reply and how full the context is (header, and in the terminal) | this pull | the run's own usage record, never an estimate |

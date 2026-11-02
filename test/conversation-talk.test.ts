@@ -19,7 +19,7 @@ import { mintViaToken } from "../src/core/via_token.ts";
 import { TALK_PER_MINUTE, talk, talkAgain } from "../src/actions/talk.ts";
 import { turnsLimit } from "../src/http/api/conversation_talk.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { appendTurn, openConversation } from "../src/core/conversations.ts";
+import { appendTurn, newConversation, openConversation } from "../src/core/conversations.ts";
 import { forgeSshSession } from "../src/tui/ssh.ts";
 import { isStop, parseTalkAgain, parseTalkCommand } from "../src/tui/ssh-talk.ts";
 import { listTurns } from "../src/core/conversations.ts";
@@ -342,6 +342,24 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","t
     expect(await standing()).toEqual(plain);
     expect(talkAgain(app, undefined, "retry").ok).toBe(false);
   });
+  test("regenerate acts on the conversation it names, not the latest", async () => {
+    const older = newConversation(app.db, alice());
+    appendTurn(app.db, alice(), older.id, { role: "person", text: "older question" });
+    appendTurn(app.db, alice(), older.id, { role: "agent", text: "older answer" });
+    const newer = newConversation(app.db, alice());
+    appendTurn(app.db, alice(), newer.id, { role: "person", text: "newer question" });
+    appendTurn(app.db, alice(), newer.id, { role: "agent", text: "newer answer" });
+    withBinary(answers("Fresh older answer."));
+    await settled(redo(app, conversationOptions(app)!, alice(), "regenerate", "", older.id));
+    await settle();
+    const text = (id: string) => (listTurns(app.db, alice(), id, { limit: 50 }) as { ok: true; value: { text: string; replaced: boolean }[] }).value;
+    expect(text(older.id).filter((t) => !t.replaced).map((t) => t.text)).toEqual(["older question", "Fresh older answer."]);
+    expect(text(newer.id).map((t) => t.text)).toEqual(["newer question", "newer answer"]);
+    const stranger = redo(app, conversationOptions(app)!, alice(), "regenerate", "", "01zzzzzzzzzzzzzzzzzzzzzzzz");
+    expect(!stranger.ok && stranger.error).toBe("not_found");
+    expect(exchangeActs(app.db, alice(), older.id, false, `/talk/${older.id}`).size).toBe(2);
+  });
+
   const post = (path: string, h: Record<string, string>, body = "") =>
     fetch(`${servers.url}${path}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...h }, body, redirect: "manual" });
   const cookie = () => ({ cookie: `forge_session=${createSession(app.db, alice()).token}` });

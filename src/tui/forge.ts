@@ -50,6 +50,7 @@ import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { modelScreen } from "./screens/model.ts";
 import { notifyScreen } from "./screens/notify.ts";
+import { talkChatsScreen } from "./screens/talk_chats.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { passkeysScreen } from "./screens/passkeys.ts";
 import { confirmsScreen } from "./screens/confirms.ts";
@@ -306,6 +307,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Confirms",
         hint: "what the forge's agent asked to do; y does it once",
         run: () => ctx.push(confirmsScreen(session, ctx)),
+      });
+    // The forge's agent keeps many conversations, as /talk lists them (#8814).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "conversations",
+        title: "Conversations",
+        hint: "your talks with the forge's agent; n starts one, r renames, x archives",
+        run: () => ctx.push(talkChatsScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push({

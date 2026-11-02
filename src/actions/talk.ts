@@ -6,6 +6,7 @@
  */
 
 import type { App } from "../app.ts";
+import { getConversation } from "../core/conversations.ts";
 import type { ConversationFile } from "../core/conversation_files.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { User } from "../core/users.ts";
@@ -19,6 +20,7 @@ export type TalkRefusal = SayRefusal | RedoRefusal | "off" | "rate_limited";
 
 /** What each refusal says, with its status. */
 export const TALK_WORDS: Readonly<Record<TalkRefusal, readonly [number, string]>> = {
+  not_found: [404, "no such conversation"],
   unauthorized: [401, "sign in to talk to the forge"],
   empty: [422, "say something"],
   too_long: [422, "the message is too long"],
@@ -50,23 +52,24 @@ const watch = (app: App, said: Said): void => {
   said.done?.catch((error: unknown) => app.log.error("conversation turn crashed", { error: String(error) }));
 };
 
-export function talk(app: App, user: User | undefined, text: string, files: readonly ConversationFile[] = [], during: During = "inject"): Result<Said, TalkRefusal> {
+export function talk(app: App, user: User | undefined, text: string, files: readonly ConversationFile[] = [], during: During = "inject", conversationId?: string): Result<Said, TalkRefusal> {
   if (user === undefined) return err("unauthorized");
+  if (conversationId !== undefined && getConversation(app.db, user.id, conversationId) === undefined) return err("not_found");
   const options = conversationOptions(app);
   if (options === undefined) return err("off");
   if (!take(app, user)) return err("rate_limited");
-  const said = say(app, options, user.id, text, files, during);
+  const said = say(app, options, user.id, text, files, during, conversationId);
   if (said.ok) watch(app, said.value);
   return said;
 }
 
-/** Edit the last message and resend it, regenerate the last reply, or retry a failed turn (#8817). */
-export function talkAgain(app: App, user: User | undefined, how: RedoHow, text = ""): Result<Said, TalkRefusal> {
+/** Edit the last message and resend it, regenerate the last reply, or retry a failed turn (#8817), in the named conversation or the latest. */
+export function talkAgain(app: App, user: User | undefined, how: RedoHow, text = "", conversationId?: string): Result<Said, TalkRefusal> {
   if (user === undefined) return err("unauthorized");
   const options = conversationOptions(app);
   if (options === undefined) return err("off");
   if (!take(app, user)) return err("rate_limited");
-  const said = redo(app, options, user.id, how, text);
+  const said = redo(app, options, user.id, how, text, conversationId);
   if (said.ok) watch(app, said.value);
   return said;
 }
@@ -82,5 +85,5 @@ export function stopTalk(app: App, user: User | undefined): Result<true, "unauth
 export const cancelTalk = (app: App, user: User | undefined, queuedId: string): boolean => user !== undefined && cancelQueued(app, user.id, queuedId);
 
 /** The person's waiting messages, oldest first. */
-export const queuedTalk = (app: App, user: User | undefined): readonly { id: string; text: string }[] =>
-  user === undefined ? [] : queuedOf(app, user.id).map((q) => ({ id: q.id, text: q.text }));
+export const queuedTalk = (app: App, user: User | undefined, conversationId?: string): readonly { id: string; text: string }[] =>
+  user === undefined ? [] : queuedOf(app, user.id, conversationId).map((q) => ({ id: q.id, text: q.text }));

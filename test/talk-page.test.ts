@@ -191,8 +191,8 @@ describe("the page", () => {
 
   test("the page's own bytes are held: stylesheet and script stay small", async () => {
     const { talkCss, talkJs } = await import("../src/web/pages/talk_client.ts");
-    expect(Buffer.byteLength(talkCss)).toBeLessThan(3_600);
-    expect(Buffer.byteLength(talkJs)).toBeLessThan(13_400);
+    expect(Buffer.byteLength(talkCss)).toBeLessThan(3_750);
+    expect(Buffer.byteLength(talkJs)).toBeLessThan(13_500);
     say(alice, "agent", "```ts\nlet x = 1;\n```");
     const page = await get("/talk", alice);
     const size = (await page.arrayBuffer()).byteLength;

@@ -124,7 +124,7 @@ import {
   verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
-import { talkAgainSend, talkConfirm, talkQueueCancel, talkSend, talkStream, talkView } from "../web/pages/talk.ts";
+import { talkAgainSend, talkArchive, talkConfirm, talkNew, talkQueueCancel, talkRename, talkSend, talkStream, talkView } from "../web/pages/talk.ts";
 import {
   recoverFinish,
   recoverOptions,
@@ -846,6 +846,12 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/talk/again/:how", talkAgainSend);
   router.add("POST", "/talk/queue/:id/cancel", talkQueueCancel);
   router.add("POST", "/talk/confirm/:id", talkConfirm);
+  router.add("POST", "/talk/new", talkNew);
+  router.add("GET", "/talk/:id", talkView);
+  router.add("POST", "/talk/:id", talkSend);
+  router.add("POST", "/talk/:id/rename", talkRename);
+  router.add("POST", "/talk/:id/archive", talkArchive);
+  router.add("POST", "/talk/:id/again/:how", talkAgainSend);
   router.add("POST", "/signin/passkey/options", signinOptions);
   router.add("POST", "/signin/passkey", signinPasskey);
   router.add("GET", "/recover", recoverPage);

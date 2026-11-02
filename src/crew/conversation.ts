@@ -19,7 +19,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
-import { appendTurn, lastExchange, listTurns, openConversation, removeTurn, restoreTurns, setAsideFrom, setClaudeSession, type Conversation } from "../core/conversations.ts";
+import { appendTurn, getConversation, lastExchange, listTurns, openConversation, removeTurn, restoreTurns, setAsideFrom, setClaudeSession, type Conversation } from "../core/conversations.ts";
 import { attach, deliver, fileOwnedBy, NOTHING, release, type ConversationFile, type Delivery } from "../core/conversation_files.ts";
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
 import { cancelHeld, WORDS_MAX } from "../core/fence.ts";
@@ -75,7 +75,8 @@ export const configureConversation = (app: App, options: ConversationOptions): v
 export const conversationOptions = (app: App): ConversationOptions | undefined => configured.get(app);
 
 /** Whether a turn of this person's conversation is running now. */
-export const turnRunning = (app: App, userId: string): boolean => live.has(openConversation(app.db, userId).id);
+export const turnRunning = (app: App, userId: string, conversationId?: string): boolean =>
+  live.has(conversationId ?? openConversation(app.db, userId).id);
 
 /** The one line the person sees when a restart cut their answer short. */
 export const RESUMED_LINE = "The forge restarted while I was answering; I am picking it up where I stopped.";
@@ -102,7 +103,7 @@ const RESUME_PROMPT =
 export const STOPPED_LINE = "Stopped.";
 
 /** Stops for the turns running, by conversation id. */
-const stoppers = new Map<string, { runId: string; stop: () => void }>();
+const stoppers = new Map<string, { runId: string; userId: string; stop: () => void }>();
 
 /**
  * Stop the person's running turn: the agent's process group ends (and every
@@ -110,15 +111,18 @@ const stoppers = new Map<string, { runId: string; stop: () => void }>();
  * Confirm is cancelled, never applied. False when no turn runs.
  */
 export function stopTurn(app: App, userId: string): boolean {
-  const conversation = openConversation(app.db, userId);
-  const stop = stoppers.get(conversation.id)?.stop;
-  if (stop === undefined) return false;
-  // Stop is the person calling it off: what waited behind the turn goes too (interrupting keeps it, `say`).
-  queues.delete(conversation.id);
-  // Cancelled first: no Confirm may land while the process is going down.
-  cancelHeld(app.db, `conversation:${conversation.id}`);
-  stop();
-  return true;
+  let stopped = false;
+  // Every turn the person has running, whichever conversation it is in.
+  for (const [conversationId, running] of stoppers) {
+    if (running.userId !== userId) continue;
+    // Cancelled first: no Confirm may land while the process is going down.
+    // Stop is the person calling it off: what waited behind the turn goes too (interrupting keeps it, `say`).
+    queues.delete(conversationId);
+    cancelHeld(app.db, `conversation:${conversationId}`);
+    running.stop();
+    stopped = true;
+  }
+  return stopped;
 }
 
 /** Turns with a session listening, by conversation id: the run id a message is steered to. */
@@ -194,7 +198,7 @@ export function mcpConfig(localUrl: string): string {
   });
 }
 
-export type SayRefusal = "unauthorized" | "empty" | "too_long" | "no_account" | "resting" | "busy" | "answering" | "queue_full" | "file_taken";
+export type SayRefusal = "not_found" | "unauthorized" | "empty" | "too_long" | "no_account" | "resting" | "busy" | "answering" | "queue_full" | "file_taken";
 
 export interface Said {
   /** `started` a new turn, `steered` words into the one running, `queued` for after it, or `interrupted` it to send these at once. */
@@ -225,21 +229,23 @@ export const QUEUE_MAX = 5;
 
 const queues = new Map<string, Queued[]>();
 
-/** The person's messages waiting for their running turn, oldest first. */
-export const queuedOf = (app: App, userId: string): readonly Queued[] => queues.get(openConversation(app.db, userId).id) ?? [];
+/** The person's messages waiting for their running turn in a conversation (the latest by default), oldest first. */
+export const queuedOf = (app: App, userId: string, conversationId?: string): readonly Queued[] =>
+  queues.get(conversationId ?? openConversation(app.db, userId).id) ?? [];
 
 /** Whether a message waiting in a queue holds this file: it cannot be removed or sent twice meanwhile. */
 export const fileQueued = (fileId: string): boolean => [...queues.values()].some((l) => l.some((q) => q.files.some((f) => f.id === fileId)));
 
 /** Take back a waiting message; false when it is gone (already sent, or never theirs). */
 export function cancelQueued(app: App, userId: string, queuedId: string): boolean {
-  const key = openConversation(app.db, userId).id;
-  const list = queues.get(key) ?? [];
-  const at = list.findIndex((q) => q.id === queuedId);
-  if (at < 0) return false;
-  list.splice(at, 1);
-  if (list.length === 0) queues.delete(key);
-  return true;
+  for (const [key, list] of queues) {
+    const at = list.findIndex((q) => q.id === queuedId);
+    if (at < 0 || getConversation(app.db, userId, key) === undefined) continue;
+    list.splice(at, 1);
+    if (list.length === 0) queues.delete(key);
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -253,8 +259,8 @@ function drain(app: App, options: ConversationOptions, conversation: Conversatio
   if (list?.length === 0) queues.delete(conversation.id);
   if (next === undefined) return;
   const userId = conversation.userId;
-  const current = openConversation(app.db, userId);
-  if (current.id !== conversation.id) return void queues.delete(conversation.id);
+  const current = getConversation(app.db, userId, conversation.id);
+  if (current === undefined || current.archivedAt !== null) return void queues.delete(conversation.id);
   const stored = appendTurn(app.db, userId, current.id, { role: "person", text: next.text });
   if (!stored.ok) return drain(app, options, current);
   // A file taken back or sent some other way while this waited is left out, not sent twice.
@@ -281,12 +287,14 @@ export function say(
   text: string,
   files: readonly ConversationFile[] = [],
   during: During = "inject",
+  conversationId?: string,
 ): Result<Said, SayRefusal> {
   const user = getUserById(app.db, userId);
   if (user === undefined) return err("unauthorized");
   if (text.trim() === "") return err("empty");
   if (text.length > WORDS_MAX) return err("too_long");
-  const conversation = openConversation(app.db, userId);
+  const conversation = conversationId === undefined ? openConversation(app.db, userId) : getConversation(app.db, userId, conversationId);
+  if (conversation === undefined) return err("not_found");
   if (during !== "inject" && live.has(conversation.id)) {
     const list = queues.get(conversation.id) ?? [];
     const waiting: Queued = { id: id(), text, files };
@@ -335,10 +343,11 @@ export type RedoRefusal = SayRefusal | "running" | "nothing";
  * starts a fresh session whose context is the turns that still stand. Refused
  * while a turn runs, or when the last exchange is not what the action is for.
  */
-export function redo(app: App, options: ConversationOptions, userId: string, how: RedoHow, text = ""): Result<Said, RedoRefusal> {
+export function redo(app: App, options: ConversationOptions, userId: string, how: RedoHow, text = "", conversationId?: string): Result<Said, RedoRefusal> {
   const user = getUserById(app.db, userId);
   if (user === undefined) return err("unauthorized");
-  const conversation = openConversation(app.db, userId);
+  const conversation = conversationId === undefined ? openConversation(app.db, userId) : getConversation(app.db, userId, conversationId);
+  if (conversation === undefined) return err("not_found");
   if (live.has(conversation.id)) return err("running");
   const { person, after } = lastExchange(app.db, userId, conversation.id);
   if (person === undefined) return err("nothing");
@@ -389,8 +398,8 @@ export function resumeInterrupted(app: App, options: ConversationOptions): Promi
     carryWrites(app.db, `conversation:${row.conversation_id}`);
     app.db.query("UPDATE conversation_run SET state = 'failed', finished_at = ?2 WHERE id = ?1").run(row.id, new Date().toISOString());
     if (row.resumes >= 1) continue;
-    const conversation = openConversation(app.db, row.user_id);
-    if (conversation.id !== row.conversation_id) continue;
+    const conversation = getConversation(app.db, row.user_id, row.conversation_id);
+    if (conversation === undefined) continue;
     appendTurn(app.db, row.user_id, conversation.id, { role: "agent", text: RESUMED_LINE });
     // A write begun and not reported is shown, not retried: the person decides.
     if (unknown.length > 0) appendTurn(app.db, row.user_id, conversation.id, { role: "agent", text: unendedLine(unknown) });
@@ -460,7 +469,7 @@ function begin(
     .run(runId, conversation.id, userId, subscriptionId, prompt, resumes, resumeSession ?? "", now.toISOString());
   live.set(conversation.id, runId);
   const stopper = new AbortController();
-  stoppers.set(conversation.id, { runId, stop: () => stopper.abort() });
+  stoppers.set(conversation.id, { runId, userId, stop: () => stopper.abort() });
   const signal = AbortSignal.any([options.signal, stopper.signal]);
   const put = (role: "agent" | "tool", text: string): void => {
     const stored = appendTurn(app.db, userId, conversation.id, { role, text: text.slice(0, 20_000) });

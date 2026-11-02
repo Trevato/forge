@@ -47,6 +47,9 @@ export const talkCss = /* css */ `
 .talk-chips:empty { display: none; }
 .talk-files { justify-content: flex-end; }
 .talk-more { text-align: center; }
+.talk-chats, .talk-here { margin-bottom: 12px; }
+.talk-chats li a { display: flex; justify-content: space-between; }
+.talk-chats [aria-current] { font-weight: 600; }
 .talk-replaced { opacity: 0.55; }
 .talk-failed form { margin-top: 6px; }
 .talk-failed .btn, .talk-act { min-height: 2.75rem; }
@@ -67,6 +70,7 @@ if (root) {
   let source = null;
   let retry = 0;
   const paged = root.dataset.paged === "1";
+  const { c: cid, here } = root.dataset;
   const say = (words) => { status.textContent = words; };
   const hint = root.querySelector("[data-hint]");
   if (hint) hint.textContent = "Enter sends, Shift+Enter adds a line";
@@ -134,7 +138,7 @@ if (root) {
   const again = async (how, body) => {
     say(how === "edit" ? "Sending…" : "Asking again…");
     try {
-      const res = await fetch("/talk/again/" + how, { method: "POST", headers: { accept: "application/json" }, body });
+      const res = await fetch(here + "/again/" + how, { method: "POST", headers: { accept: "application/json" }, body });
       const out = await res.json().catch(() => ({}));
       if (!res.ok) { say(out.message || "That was not done."); return false; }
       stuck = true;
@@ -188,7 +192,7 @@ if (root) {
     if (paged) return;
     if (source) source.close();
     dropActs();
-    source = new EventSource("/talk/stream?after=" + encodeURIComponent(last));
+    source = new EventSource("/talk/stream?c=" + encodeURIComponent(cid) + "&after=" + encodeURIComponent(last));
     source.addEventListener("turn", (e) => {
       const turn = JSON.parse(e.data);
       last = turn.id;
@@ -283,7 +287,7 @@ if (root) {
       const res = await fetch("/api/v1/conversation/messages", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text, files: attached.map((f) => f.id), during: steer && answering ? "steer" : "queue" }),
+        body: JSON.stringify({ text, conversation: cid, files: attached.map((f) => f.id), during: steer && answering ? "steer" : "queue" }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -299,7 +303,7 @@ if (root) {
       const out = await res.json().catch(() => ({}));
       if (out.how === "queued") { say("Queued: it sends after this answer."); if (!source) follow(); return; }
       if (out.how === "interrupted") { say("Stopping, then sending…"); return; }
-      if (paged) { location.href = "/talk"; return; }
+      if (paged) { location.href = here; return; }
       follow();
     } catch (_) {
       say("That was not sent: no connection.");

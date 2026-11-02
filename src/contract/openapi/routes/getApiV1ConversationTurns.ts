@@ -5,6 +5,6 @@ export const route: Route = {
   path: "/api/v1/conversation/turns",
   summary: "The signed-in person's conversation with the forge's agent: the latest turns, oldest first, and whether an answer is being written now",
   auth: true,
-  query: { limit: "integer", before: "string" },
+  query: { limit: "integer", before: "string", conversation: "string" },
   reply: { running: "boolean", turns: "array" },
 };

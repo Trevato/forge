@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { clearAccountCeiling, daySpent, setAccountCeiling } from "../src/core/account_ceiling.ts";
 import { claimDone, completeWrite, recordWrite } from "../src/core/conversation_writes.ts";
-import { listTurns, openConversation } from "../src/core/conversations.ts";
+import { listTurns, newConversation, openConversation } from "../src/core/conversations.ts";
 import { monthSpent } from "../src/core/model_grant.ts";
 import { addSubscription, getSubscription, PLATFORM, setGrants, wakeSubscription } from "../src/core/subscriptions.ts";
 import { verifyToken } from "../src/core/tokens.ts";
@@ -523,6 +523,21 @@ sleep 300
     }
     expect(alive).toBe(false);
     expect(stopTurn(app, u.value.id)).toBe(false);
+  }, 20_000);
+
+  test("Stop ends the replies running in two conversations, the older one included", async () => {
+    const older = newConversation(app.db, alice.id);
+    const newer = newConversation(app.db, alice.id);
+    const one = say(app, options(stub("two-a", "sess-two-a", "hang")), alice.id, "first", [], "inject", older.id);
+    const two = say(app, options(stub("two-b", "sess-two-b", "hang")), alice.id, "second", [], "inject", newer.id);
+    if (!one.ok || !two.ok || one.value.done === undefined || two.value.done === undefined) throw new Error("not started");
+    expect(turnRunning(app, alice.id, older.id)).toBe(true);
+    expect(turnRunning(app, alice.id, newer.id)).toBe(true);
+    expect(stopTurn(app, alice.id)).toBe(true);
+    await Promise.all([one.value.done, two.value.done]);
+    expect(turnRunning(app, alice.id, older.id)).toBe(false);
+    expect(turnRunning(app, alice.id, newer.id)).toBe(false);
+    expect(stopTurn(app, alice.id)).toBe(false);
   }, 20_000);
 });
 

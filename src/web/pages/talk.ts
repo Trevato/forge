@@ -18,7 +18,23 @@ import type { Database } from "bun:sqlite";
 import { cancelTalk, queuedTalk, TALK_WORDS, talk, talkAgain } from "../../actions/talk.ts";
 import { REFUSED, sayNo, sayYes, waitingConfirms } from "../../actions/conversation_confirms.ts";
 import { filesOfTurns, type ConversationFile } from "../../core/conversation_files.ts";
-import { DEFAULT_PAGE, lastExchange, listTurns, MAX_PAGE, openConversation, turnsAfter, type Turn } from "../../core/conversations.ts";
+import {
+  archiveConversation,
+  type Conversation,
+  DEFAULT_PAGE,
+  lastExchange,
+  getConversation,
+  listConversations,
+  listTurns,
+  MAX_PAGE,
+  createConversation,
+  TOO_MANY_WORDS,
+  openConversation,
+  renameConversation,
+  TITLE_MAX,
+  turnsAfter,
+  type Turn,
+} from "../../core/conversations.ts";
 import { contextOf, contextText, dollars, turnCosts, type Context } from "../../core/conversation_cost.ts";
 import { WORDS_MAX } from "../../core/fence.ts";
 import { thinkingOf, worksOf, type Work } from "../../core/talk_work.ts";
@@ -28,10 +44,10 @@ import { turnRunning, type RedoHow } from "../../crew/conversation.ts";
 import type { Ctx } from "../../http/context.ts";
 import { json } from "../../http/respond.ts";
 import { eventStream } from "../../http/sse.ts";
-import { signInFirst, forbiddenPage } from "../chrome.ts";
+import { signInFirst, forbiddenPage, notFoundPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
-import { flashTo, page } from "../layout.ts";
+import { flashTo, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { btn, time } from "../ui.ts";
 import { talkCss, talkJs } from "./talk_client.ts";
@@ -47,6 +63,12 @@ export const clock = { streamMs: STREAM_MS, running: turnRunning };
 const open = new Map<string, number>();
 const TURN_ID = /^[0-9a-z]{0,40}$/;
 const HERE = "/talk";
+const CONVERSATION_ID = /^[0-9a-z]{1,40}$/;
+
+/** What a conversation is called in a list: its title, else the day it began. */
+const nameOf = (c: Conversation): string => (c.title === "" ? `Chat of ${c.createdAt.slice(0, 10)}` : c.title);
+/** Where a conversation lives. */
+const urlOf = (c: Conversation): string => `${HERE}/${c.id}`;
 
 const parse = (text: string): Record<string, unknown> | undefined => {
   try {
@@ -88,23 +110,23 @@ const workHtml = (work: Work): Html =>
 const SUGGESTIONS = ["What needs my attention?", "What did the crew do today?", "Show me my apps"] as const;
 
 /** Ask again as a form, so it works without the script; the script only enhances it. */
-const againForm = (how: "regenerate" | "retry", label: string, words: string): Html =>
-  html`<form method="post" action="${HERE}/again/${how}" data-again="${how}">${btn(label, { icon: "sync", label: words })}</form>`;
+const againForm = (base: string, how: "regenerate" | "retry", label: string, words: string): Html =>
+  html`<form method="post" action="${base}/again/${how}" data-again="${how}">${btn(label, { icon: "sync", label: words })}</form>`;
 
 /**
  * What the last exchange offers, by the turn it sits under: Edit under the
  * person's last message, and under the last turn Retry when it failed or
  * Regenerate when it is a reply. Nothing while a turn runs.
  */
-export function exchangeActs(db: Database, userId: string, conversationId: string, running: boolean): Map<string, Html> {
+export function exchangeActs(db: Database, userId: string, conversationId: string, running: boolean, base: string = HERE): Map<string, Html> {
   const acts = new Map<string, Html>();
   if (running) return acts;
   const { person, after } = lastExchange(db, userId, conversationId);
   if (person === undefined) return acts;
-  acts.set(person.id, html`<a class="btn talk-act" href="${HERE}?edit=1#compose" data-act="edit" aria-label="Edit your last message">Edit</a>`);
+  acts.set(person.id, html`<a class="btn talk-act" href="${base}?edit=1#compose" data-act="edit" aria-label="Edit your last message">Edit</a>`);
   const last = after.at(-1);
-  if (last?.failed === true) acts.set(last.id, againForm("retry", "Retry", "Retry the failed turn"));
-  else if (last?.role === "agent") acts.set(last.id, againForm("regenerate", "Regenerate", "Regenerate the last reply"));
+  if (last?.failed === true) acts.set(last.id, againForm(base, "retry", "Retry", "Retry the failed turn"));
+  else if (last?.role === "agent") acts.set(last.id, againForm(base, "regenerate", "Regenerate", "Regenerate the last reply"));
   return acts;
 }
 
@@ -166,9 +188,48 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number
   return toolCard(id, call, call.split(/[\s(:{]/, 1)[0] ?? "tool", turn.createdAt, set);
 }
 
-function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: boolean): Response {
+/** The conversations list, then this one's name with Rename and Archive: each a plain form, so none needs the script. */
+function chats(ctx: Ctx, conversation: Conversation, showArchived: boolean): Html {
   const user = ctx.auth.user!;
-  const conversation = openConversation(ctx.app.db, user.id);
+  const shown = listConversations(ctx.app.db, user.id, { archived: showArchived });
+  const put = listConversations(ctx.app.db, user.id, { archived: !showArchived }).length;
+  const archived = conversation.archivedAt !== null;
+  return html`<nav class="talk-chats" aria-label="Conversations">
+      <div class="bar">
+        <form method="post" action="${HERE}/new">${btn("New", { icon: "plus", label: "New conversation" })}</form>
+        <span class="spacer"></span>
+        ${showArchived
+          ? html`<a class="small" href="${HERE}">Back to conversations</a>`
+          : put > 0
+            ? html`<a class="small" href="${HERE}?archived=1">Archived (${put})</a>`
+            : null}
+      </div>
+      <ul>
+        ${shown.length === 0
+          ? html`<li class="muted small">${showArchived ? "Nothing archived." : "No conversations yet."}</li>`
+          : shown.map((c) => html`<li ${c.id === conversation.id ? html`aria-current="page"` : null}><a href="${urlOf(c)}"><span>${nameOf(c)}</span><span class="muted small">${time(c.updatedAt)}</span></a></li>`)}
+      </ul>
+    </nav>
+    <div class="talk-here bar">
+      <strong>${nameOf(conversation)}${archived ? " (archived)" : ""}</strong>
+      <details>
+        <summary class="small">Rename</summary>
+        <form method="post" action="${urlOf(conversation)}/rename">
+          <input class="input" name="title" value="${conversation.title}" maxlength="${TITLE_MAX}" aria-label="Title" placeholder="Title" />
+          ${btn("Save")}
+        </form>
+      </details>
+      <form method="post" action="${urlOf(conversation)}/archive">
+        <input type="hidden" name="archived" value="${archived ? "0" : "1"}" />
+        ${btn(archived ? "Restore" : "Archive")}
+      </form>
+    </div>`;
+}
+
+function talkPage(ctx: Ctx, conversation: Conversation, before: string | undefined, prefill: string, latest: boolean, edit: boolean): Response {
+  const user = ctx.auth.user!;
+  const here = latest ? HERE : urlOf(conversation);
+  const showArchived = latest && ctx.url.searchParams.get("archived") === "1";
   const listed = listTurns(ctx.app.db, user.id, conversation.id, {
     limit: DEFAULT_PAGE,
     ...(before === undefined ? {} : { before }),
@@ -176,33 +237,35 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: b
   const turns = listed.ok ? listed.value : [];
   const waiting = new Set(waitingConfirms(ctx, user).map((w) => w.id));
   const sent = filesOfTurns(ctx.app.db, user.id, turns.filter((t) => t.role === "person").map((t) => t.id));
-  const running = clock.running(ctx.app, user.id);
+  const running = clock.running(ctx.app, user.id, conversation.id);
   const costs = turnCosts(ctx.app.db, conversation.id);
   const context = contextOf(ctx.app.db, conversation.id);
   const works = worksOf(ctx.app.db, user.id, conversation.id, turns);
   // Paging back, the log ends before the newest turn: it does not follow.
   const last = turns.at(-1)?.id ?? "";
-  const acts = before === undefined ? exchangeActs(ctx.app.db, user.id, conversation.id, running) : new Map<string, Html>();
+  const acts = before === undefined ? exchangeActs(ctx.app.db, user.id, conversation.id, running, here) : new Map<string, Html>();
   // Edit shows the composer holding the last message, posting to Edit instead of Send.
   const editing = edit ? lastExchange(ctx.app.db, user.id, conversation.id).person : undefined;
   const body = html`<div class="page-head"><h1>Talk</h1></div>
-    <div class="talk" data-talk data-user="${user.id}" data-paged="${before === undefined ? "0" : "1"}" data-running="${running && before === undefined ? "1" : "0"}">
+    ${chats(ctx, conversation, showArchived)}
+    <div class="talk" data-talk data-user="${user.id}" data-c="${conversation.id}" data-here="${here}" data-paged="${before === undefined ? "0" : "1"}" data-running="${running && before === undefined ? "1" : "0"}">
       <div>
         ${contextLine(context)}
         ${turns.length === DEFAULT_PAGE && turns[0] !== undefined
-          ? html`<p class="talk-more small"><a href="${HERE}?before=${turns[0].id}">Earlier</a></p>`
+          ? html`<p class="talk-more small"><a href="${here}?before=${turns[0].id}">Earlier</a></p>`
           : null}
-        ${before === undefined ? null : html`<p class="talk-more small"><a href="${HERE}">Latest</a></p>`}
+        ${before === undefined ? null : html`<p class="talk-more small"><a href="${here}">Latest</a></p>`}
         <ol class="talk-log" role="log" data-last="${last}" aria-label="Conversation with the forge">
           ${turns.length === 0
             ? html`<li class="muted talk-turn">Ask the forge anything, or tell it what to change. It acts as you, with your permissions, and asks before anything hard to undo.
-                <span class="talk-suggest">${SUGGESTIONS.map((q) => html`<a class="btn" href="${HERE}?q=${encodeURIComponent(q)}" data-suggest="${q}">${q}</a>`)}</span></li>`
+                <span class="talk-suggest">${SUGGESTIONS.map((q) => html`<a class="btn" href="${here}?q=${encodeURIComponent(q)}" data-suggest="${q}">${q}</a>`)}</span></li>`
             : turns.map((t) => turnHtml(t, waiting, costs.get(t.id), acts.get(t.id), works.get(t.id), sent.get(t.id)))}
-          ${before === undefined && running ? queuedTalk(ctx.app, user).map(queuedHtml) : null}
+          ${before === undefined && running ? queuedTalk(ctx.app, user, conversation.id).map(queuedHtml) : null}
         </ol>
         <div id="end"></div>
       </div>
-      <form class="talk-compose" id="compose" method="post" action="${editing === undefined ? HERE : `${HERE}/again/edit`}" ${editing === undefined ? null : html`data-edit`}>
+      <form class="talk-compose" id="compose" method="post" action="${editing === undefined ? here : `${here}/again/edit`}" ${editing === undefined ? null : html`data-edit`}>
+        ${conversation.archivedAt === null ? null : html`<p class="small muted" data-archived-note>Archived: sending here keeps it archived; Restore puts it back in the list.</p>`}
         <p class="talk-status small muted" role="status" aria-live="polite">${running ? "The forge is answering…" : ""}</p>
         <div class="talk-chips" data-chips role="group" aria-label="Attached files"></div>
         <textarea class="input" name="text" rows="1" maxlength="${WORDS_MAX}" required placeholder="Talk to the forge" aria-label="Talk to the forge">${editing === undefined ? prefill : editing.text}</textarea>
@@ -210,7 +273,7 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: b
           <span class="muted small" data-hint></span>
           <label class="btn talk-attach" data-attach hidden>Attach<input type="file" multiple hidden data-pick /></label>
           <span class="spacer"></span>
-          ${editing === undefined ? null : html`<a class="btn" href="${HERE}">Keep as it was</a>`}
+          ${editing === undefined ? null : html`<a class="btn" href="${here}">Keep as it was</a>`}
           <button type="button" class="btn" data-stop hidden>Stop</button>
           <button type="button" class="btn" data-steer hidden title="Stop this answer and send now">Steer</button>
           ${btn(editing === undefined ? "Send" : "Resend", { variant: "primary" })}
@@ -220,32 +283,83 @@ function talkPage(ctx: Ctx, before: string | undefined, prefill: string, edit: b
   return page({ ctx, title: "Talk", body, styleCss: talkCss, scriptJs: talkJs, description: "Talk to the forge." });
 }
 
-// GET /talk
+/** The conversation a request names (`:id`), or the person's latest when it names none; undefined when it is not theirs. */
+const conversationOf = (ctx: Ctx, user: { readonly id: string }): Conversation | undefined => {
+  const named = ctx.params["id"];
+  if (named === undefined) return openConversation(ctx.app.db, user.id);
+  return CONVERSATION_ID.test(named) ? getConversation(ctx.app.db, user.id, named) : undefined;
+};
+
+// GET /talk and GET /talk/:id
 export function talkView(ctx: Ctx): Response {
   if (ctx.auth.user === undefined) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const before = ctx.url.searchParams.get("before");
   const q = ctx.url.searchParams.get("q");
-  return timePhase(ctx.request, "render", () => talkPage(ctx, before !== null && TURN_ID.test(before) && before !== "" ? before : undefined, q !== null && SUGGESTIONS.some((s) => s === q) ? q : "", ctx.url.searchParams.get("edit") === "1" && before === null));
+  const conversation = conversationOf(ctx, ctx.auth.user);
+  if (conversation === undefined) return notFoundPage(ctx);
+  return timePhase(ctx.request, "render", () =>
+    talkPage(ctx, conversation, before !== null && TURN_ID.test(before) && before !== "" ? before : undefined, q !== null && SUGGESTIONS.some((s) => s === q) ? q : "", ctx.params["id"] === undefined, ctx.url.searchParams.get("edit") === "1" && before === null),
+  );
 }
 
-// POST /talk — the plain form, for a browser without the script.
+// POST /talk and POST /talk/:id — the plain form, for a browser without the script.
 export async function talkSend(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user === undefined) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
+  const conversation = conversationOf(ctx, user);
+  if (conversation === undefined) return notFoundPage(ctx);
+  const here = ctx.params["id"] === undefined ? HERE : urlOf(conversation);
   const text = form.get("text");
   if (typeof text !== "string" || text.trim() === "" || text.length > WORDS_MAX)
-    return flashTo(ctx, `${HERE}#end`, { tone: "danger", message: `Say something, up to ${WORDS_MAX} characters.` });
-  const said = talk(ctx.app, user, text, [], "queue");
-  if (!said.ok) return flashTo(ctx, `${HERE}#end`, { tone: "danger", message: TALK_WORDS[said.error][1] });
-  return flashTo(ctx, `${HERE}#end`, { tone: "success", message: "Sent. Reload to see the answer." });
+    return flashTo(ctx, `${here}#end`, { tone: "danger", message: `Say something, up to ${WORDS_MAX} characters.` });
+  const said = talk(ctx.app, user, text, [], "queue", conversation.id);
+  if (!said.ok) return flashTo(ctx, `${here}#end`, { tone: "danger", message: TALK_WORDS[said.error][1] });
+  return flashTo(ctx, `${here}#end`, { tone: "success", message: "Sent. Reload to see the answer." });
+}
+
+// POST /talk/new — an empty conversation, opened at its own URL.
+export async function talkNew(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (user === undefined) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const made = createConversation(ctx.app.db, user.id);
+  if (!made.ok) return flashTo(ctx, HERE, { tone: "danger", message: `Not started: ${TOO_MANY_WORDS}.` });
+  return redirect(urlOf(made.value));
+}
+
+// POST /talk/:id/rename — the title from the form; an empty one clears it.
+export async function talkRename(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (user === undefined) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const conversation = conversationOf(ctx, user);
+  if (conversation === undefined) return notFoundPage(ctx);
+  const title = form.get("title");
+  const renamed = renameConversation(ctx.app.db, user.id, conversation.id, typeof title === "string" ? title : "\n");
+  return flashTo(ctx, urlOf(conversation), renamed.ok ? { tone: "success", message: "Renamed." } : { tone: "danger", message: `A title is up to ${TITLE_MAX} characters, on one line.` });
+}
+
+// POST /talk/:id/archive — archived=1 puts it away, 0 brings it back.
+export async function talkArchive(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (user === undefined) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const conversation = conversationOf(ctx, user);
+  if (conversation === undefined) return notFoundPage(ctx);
+  const archive = form.get("archived") !== "0";
+  archiveConversation(ctx.app.db, user.id, conversation.id, archive);
+  return flashTo(ctx, archive ? HERE : urlOf(conversation), { tone: "success", message: archive ? "Archived. It is under Archived." : "Restored." });
 }
 
 const AGAIN: readonly RedoHow[] = ["edit", "regenerate", "retry"];
 
-// POST /talk/again/:how — edit and resend the last message, regenerate the last reply, retry a failed turn.
+// POST /talk/again/:how and POST /talk/:id/again/:how — edit and resend the last message, regenerate the last reply, retry a failed turn.
 export async function talkAgainSend(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user === undefined) return signInFirst(ctx);
@@ -254,16 +368,19 @@ export async function talkAgainSend(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const how = AGAIN.find((h) => h === ctx.params["how"]);
   if (how === undefined) return new Response("not found", { status: 404 });
+  const conversation = conversationOf(ctx, user);
+  if (conversation === undefined) return notFoundPage(ctx);
+  const here = ctx.params["id"] === undefined ? HERE : urlOf(conversation);
   const text = form.get("text");
   const asJson = (ctx.request.headers.get("accept") ?? "").includes("application/json");
   let status = 422;
   let message = `Say something, up to ${WORDS_MAX} characters.`;
   if (how !== "edit" || (typeof text === "string" && text.trim() !== "" && text.length <= WORDS_MAX)) {
-    const said = talkAgain(ctx.app, user, how, typeof text === "string" ? text : "");
-    if (said.ok) return asJson ? json({ ok: true }, 202) : flashTo(ctx, `${HERE}#end`, { tone: "success", message: "Asked again. Reload to see the answer." });
+    const said = talkAgain(ctx.app, user, how, typeof text === "string" ? text : "", conversation.id);
+    if (said.ok) return asJson ? json({ ok: true }, 202) : flashTo(ctx, `${here}#end`, { tone: "success", message: "Asked again. Reload to see the answer." });
     [status, message] = TALK_WORDS[said.error];
   }
-  return asJson ? json({ ok: false, message }, status) : flashTo(ctx, `${HERE}#end`, { tone: "danger", message });
+  return asJson ? json({ ok: false, message }, status) : flashTo(ctx, `${here}#end`, { tone: "danger", message });
 }
 
 // POST /talk/queue/:id/cancel — take back a message waiting for the running turn.
@@ -315,7 +432,10 @@ export function talkStream(ctx: Ctx): Response {
   const after = ctx.url.searchParams.get("after") ?? ctx.request.headers.get("last-event-id") ?? "";
   if (!TURN_ID.test(after)) return new Response("bad turn id", { status: 400 });
   const { app } = ctx;
-  const conversation = openConversation(app.db, user.id);
+  const named = ctx.url.searchParams.get("c");
+  if (named !== null && named !== "" && !CONVERSATION_ID.test(named)) return new Response("bad conversation id", { status: 400 });
+  const conversation = named === null || named === "" ? openConversation(app.db, user.id) : getConversation(app.db, user.id, named);
+  if (conversation === undefined) return new Response("no such conversation", { status: 404 });
   let cursor = after;
   return eventStream(app, ctx.request, (emit, close) => {
     const started = Date.now();
@@ -323,7 +443,7 @@ export function talkStream(ctx: Ctx): Response {
     let shown = "";
     const tick = (): void => {
       // Asked before the read: a turn that ends after this look is read whole next time.
-      const running = clock.running(app, user.id);
+      const running = clock.running(app, user.id, conversation.id);
       const fresh = turnsAfter(app.db, user.id, conversation.id, cursor);
       if (fresh.length > 0) {
         const waiting = new Set(waitingConfirms(ctx, user).map((w) => w.id));
@@ -335,7 +455,7 @@ export function talkStream(ctx: Ctx): Response {
         }
       }
       // Every tab and viewer sees what waits: sent whenever the list changes.
-      const waits = queuedTalk(app, user);
+      const waits = queuedTalk(app, user, conversation.id);
       const key = waits.map((q) => q.id).join();
       if (key !== shown && (running || shown !== "")) {
         shown = key;
@@ -349,7 +469,7 @@ export function talkStream(ctx: Ctx): Response {
         emit("done", {
           costs,
           context: context === undefined ? "" : contextText(context),
-          acts: [...exchangeActs(app.db, user.id, conversation.id, false)].map(([id, act]) => ({ id: `t-${id}`, html: act.text })),
+          acts: [...exchangeActs(app.db, user.id, conversation.id, false, ((c) => (c.id === conversation.id ? HERE : urlOf(conversation)))(openConversation(app.db, user.id)))].map(([id, act]) => ({ id: `t-${id}`, html: act.text })),
         });
         close();
       } else if (Date.now() - started >= clock.streamMs) {

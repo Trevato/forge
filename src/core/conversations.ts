@@ -1,8 +1,9 @@
 /**
- * A person's conversation with the forge: one per person, stored turn by turn
- * in the database so it reads back after a restart. Every call takes the
- * person's id and answers only for their own conversation; another person's
- * conversation is `not_found`. Plain data in, plain data out, no authz beyond
+ * A person's conversations with the forge, stored turn by turn in the
+ * database so they read back after a restart. A person has any number: each
+ * has an id (its URL), a title they may change, and may be archived. Every
+ * call takes the person's id and answers only for their own conversation;
+ * another person's conversation is `not_found`. Plain data in, plain data out, no authz beyond
  * that ownership.
  */
 import type { Database } from "bun:sqlite";
@@ -25,7 +26,13 @@ export interface Conversation {
   readonly claudeSessionId: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly title: string;
+  /** When it was put away; null while it is in the list. */
+  readonly archivedAt: string | null;
 }
+
+/** Longest title kept, in characters; longer is refused, not cut. */
+export const TITLE_MAX = 80;
 
 export interface Turn {
   readonly id: string;
@@ -45,6 +52,8 @@ interface ConversationRow {
   claude_session_id: string;
   created_at: string;
   updated_at: string;
+  title: string;
+  archived_at: string | null;
 }
 
 interface TurnRow {
@@ -63,6 +72,8 @@ const conversationOf = (r: ConversationRow): Conversation => ({
   claudeSessionId: r.claude_session_id,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+  title: r.title,
+  archivedAt: r.archived_at,
 });
 
 const turnOf = (r: TurnRow): Turn => ({
@@ -75,16 +86,85 @@ const turnOf = (r: TurnRow): Turn => ({
   failed: r.failed === 1,
 });
 
-/** The person's conversation, made on first use. */
-export function openConversation(db: Database, userId: string): Conversation {
+/** Most conversations a person holds, archived ones included; past it, New is refused. */
+export const CONVERSATIONS_MAX = 100;
+
+/** What every door says when New is refused. */
+export const TOO_MANY_WORDS = `you hold ${CONVERSATIONS_MAX} conversations, the most there can be; keep talking in one of them`;
+
+/** Start a new conversation at a person's request: refused past `CONVERSATIONS_MAX`. */
+export function createConversation(db: Database, userId: string): Result<Conversation, "too_many"> {
+  return db.transaction((): Result<Conversation, "too_many"> => {
+    const held = db.query("SELECT COUNT(*) AS n FROM conversation WHERE user_id = ?1").get(userId) as { n: number };
+    return held.n >= CONVERSATIONS_MAX ? err("too_many") : ok(newConversation(db, userId));
+  }).immediate();
+}
+
+/** Start a new, empty conversation. */
+export function newConversation(db: Database, userId: string): Conversation {
   const now = new Date().toISOString();
+  const row: ConversationRow = { id: id(), user_id: userId, claude_session_id: "", created_at: now, updated_at: now, title: "", archived_at: null };
   db.query(
-    "INSERT OR IGNORE INTO conversation (id, user_id, claude_session_id, created_at, updated_at) VALUES (?1,?2,'',?3,?3)",
-  ).run(id(), userId, now);
-  const row = db
-    .query("SELECT * FROM conversation WHERE user_id = ?1")
-    .get(userId) as ConversationRow;
+    "INSERT INTO conversation (id, user_id, claude_session_id, created_at, updated_at) VALUES (?1,?2,'',?3,?3)",
+  ).run(row.id, userId, now);
   return conversationOf(row);
+}
+
+/**
+ * Where a message with no conversation named goes: the person's most recently
+ * active conversation that is not archived, made on first use.
+ */
+export function openConversation(db: Database, userId: string): Conversation {
+  const row = db
+    .query("SELECT * FROM conversation WHERE user_id = ?1 AND archived_at IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT 1")
+    .get(userId) as ConversationRow | null;
+  return row === null ? newConversation(db, userId) : conversationOf(row);
+}
+
+/** One of the person's conversations by id; another person's is nothing. */
+export function getConversation(db: Database, userId: string, conversationId: string): Conversation | undefined {
+  const row = db
+    .query("SELECT * FROM conversation WHERE id = ?1 AND user_id = ?2")
+    .get(conversationId, userId) as ConversationRow | null;
+  return row === null ? undefined : conversationOf(row);
+}
+
+/** The person's conversations, newest activity first; `archived` picks the put-away ones instead. */
+export function listConversations(db: Database, userId: string, opts: { readonly archived?: boolean } = {}): Conversation[] {
+  const rows = db
+    .query(
+      `SELECT * FROM conversation WHERE user_id = ?1 AND archived_at IS ${opts.archived === true ? "NOT" : ""} NULL ORDER BY updated_at DESC, rowid DESC LIMIT 200`,
+    )
+    .all(userId) as ConversationRow[];
+  return rows.map(conversationOf);
+}
+
+/** Give a conversation a title (1 to `TITLE_MAX` characters, no line breaks); an empty one clears it. */
+export function renameConversation(
+  db: Database,
+  userId: string,
+  conversationId: string,
+  title: string,
+): Result<Conversation, "not_found" | "bad_title"> {
+  const clean = title.trim();
+  if (clean.length > TITLE_MAX || /[\u0000-\u001f\u007f]/.test(clean)) return err("bad_title");
+  const changed = db.query("UPDATE conversation SET title = ?3 WHERE id = ?1 AND user_id = ?2").run(conversationId, userId, clean).changes;
+  const found = changed === 0 ? undefined : getConversation(db, userId, conversationId);
+  return found === undefined ? err("not_found") : ok(found);
+}
+
+/** Put a conversation away, or bring it back (`archived` false). It keeps its turns and its URL. */
+export function archiveConversation(
+  db: Database,
+  userId: string,
+  conversationId: string,
+  archived: boolean,
+): Result<Conversation, "not_found"> {
+  const changed = db
+    .query("UPDATE conversation SET archived_at = ?3 WHERE id = ?1 AND user_id = ?2")
+    .run(conversationId, userId, archived ? new Date().toISOString() : null).changes;
+  const found = changed === 0 ? undefined : getConversation(db, userId, conversationId);
+  return found === undefined ? err("not_found") : ok(found);
 }
 
 const owned = (db: Database, userId: string, conversationId: string): boolean =>

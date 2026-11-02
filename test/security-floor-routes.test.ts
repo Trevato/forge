@@ -45,11 +45,13 @@ const ARCH = "needs an archived-home operation id; the seed archives nothing";
 const NOW = "the stage is one of check, review, land or live; the seed fills no word with a name it cannot guess";
 const GATE = "needs a kept gate log, written only when a full gate runs on land";
 const BET = "needs a bet, which the seed does not propose";
+const TALK = "needs a conversation of the signed-in person; the seed starts none";
 const HOOK = "needs a webhook, which the seed does not register";
 
 /** GET patterns the seed cannot fill → why. Requested with a placeholder all the same. */
 const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
+  "/talk/:id": TALK,
   "/:owner/:name/bets/:id": BET,
   "/:owner/:name/looks/:env/:commit/:kind.png": LOOK,
   "/:owner/:name/milestones/:number/limb/:op": LIMB,
