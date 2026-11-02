@@ -19,6 +19,7 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { formatBytes } from "../core/storage.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /** What an install prints when the machine, not the code, failed it. */
@@ -34,6 +35,15 @@ export const INFRASTRUCTURE = "infrastructure";
 export const LOCK_STALE_MS = 15 * 60_000;
 
 const LOCK_POLL_MS = 50;
+
+/**
+ * The one line an install step logs about the registry (#7546): `0 B` on a
+ * warm cache. A cell's figure is what its egress proxy received from the
+ * registry; uncontained, nothing is logged.
+ */
+export function installFetchedLine(bytes: number): string {
+  return `install fetched ${formatBytes(Math.max(0, bytes))} from the registry`;
+}
 
 export type InstallOutcome =
   | { readonly ok: true }

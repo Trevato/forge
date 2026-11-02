@@ -22,6 +22,7 @@ import {
   type CapacityChange,
   type CapacityKey,
 } from "../core/capacity.ts";
+import { egressTotals, npmBytesLastHour, type EgressTotal } from "../apps/egress.ts";
 import { passkeyIds } from "../core/passkeys.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -49,6 +50,24 @@ export interface CapacityRow {
   readonly changed?: { readonly at: string; readonly by: string };
 }
 
+/**
+ * What the egress proxies received over the last hour (#7546), the npm
+ * registry first: a warm bun cache keeps `npmBytesLastHour` near zero, so a
+ * figure in the hundreds of megabytes is the cache gone cold again (#7541).
+ */
+export interface EgressHour {
+  readonly npmBytesLastHour: number;
+  /** The ten destinations that sent most this hour, with their totals since boot. */
+  readonly destinations: readonly EgressTotal[];
+}
+
+export function egressHour(now = Date.now()): EgressHour {
+  return {
+    npmBytesLastHour: npmBytesLastHour(now),
+    destinations: egressTotals(now).slice(0, 10),
+  };
+}
+
 function admin(actor: User | undefined): Result<User, "not_found"> {
   return actor?.isAdmin === true && actor.kind !== "agent"
     ? ok(actor)
@@ -70,7 +89,7 @@ export function changedOf(db: Database, key: CapacityKey): { changed?: { at: str
 export function listCapacity(
   app: App,
   actor: User | undefined,
-): Result<{ settings: CapacityRow[]; changes: CapacityChange[] }, "not_found"> {
+): Result<{ settings: CapacityRow[]; changes: CapacityChange[]; egress: EgressHour }, "not_found"> {
   const who = admin(actor);
   if (!who.ok) return who;
   return ok({
@@ -85,6 +104,7 @@ export function listCapacity(
       ...changedOf(app.db, key),
     })),
     changes: capacityChanges(app.db),
+    egress: egressHour(),
   });
 }
 

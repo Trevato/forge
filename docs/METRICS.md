@@ -11,6 +11,8 @@ not an admin, 200 for an admin's `ro` token. It is never cached
 | `forge_egress_connections` | gauge | `repo`, `destination` | Open egress connections. |
 | `forge_egress_bytes_in` | gauge | `repo`, `destination` | Bytes received from the destination over open connections. |
 | `forge_egress_bytes_out` | gauge | `repo`, `destination` | Bytes sent to the destination over open connections. |
+| `forge_egress_received_bytes_total` | counter | `destination` | Bytes received from the destination since the process started, every app and check together. |
+| `forge_egress_sent_bytes_total` | counter | `destination` | Bytes sent to the destination since the process started. |
 | `forge_http_request_duration_seconds` | histogram | `pattern` (plus `le`) | Seconds taken to answer a request, by the route pattern matched (never the raw path), since the process started. Buckets are `route_timing`'s edges, 1 ms to 2.5 s, in seconds. |
 | `forge_check_duration_seconds` | histogram | (plus `le`) | Seconds a repository check took from start to finish, for checks that ended since the process started. Buckets 5 s to 30 min. |
 | `forge_check_queue_depth` | gauge | none | Checks queued and not yet started. |
@@ -65,3 +67,21 @@ scrape_configs:
 `forge_egress_connections`, `forge_egress_bytes_in` and `forge_egress_bytes_out`
 per `repo` and `destination` as Prometheus text, so a leaked upstream socket
 shows as a gauge that never falls (#3719).
+
+Beside them, `forge_egress_received_bytes_total` and `forge_egress_sent_bytes_total`
+count every byte since the process started, keyed by `destination` alone (never
+by run, so the series stay one per host). They show the bun cache working
+(#7546): on a warm cache,
+`rate(forge_egress_received_bytes_total{destination="registry.npmjs.org:443"}[1h])`
+stays near zero, and a cold one is hundreds of megabytes an hour (#7541).
+Without Prometheus, the same hour is read four ways:
+
+- MCP `capacity` (forge admin) answers `egress.npmBytesLastHour` and the ten
+  busiest `egress.destinations` with their totals and last hour.
+- `/settings/capacity` prints it in the Egress connections card.
+- The terminal's Egress connections screen (About, `c`, site admin) prints the
+  same line above the open connections.
+- Each check's install step in a cell logs one line, `install fetched 0 B from
+  the registry` on a warm cache: what the cell's egress proxy received. A check
+  outside a cell logs none: its repository's bun cache is shared, so no figure
+  there would be its own.

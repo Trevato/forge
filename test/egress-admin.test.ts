@@ -13,7 +13,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { listEgressGrants } from "../src/core/egress_grants.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { startEgress } from "../src/apps/egress.ts";
+import { NPM_REGISTRY, recordEgress, resetEgressTotals, startEgress } from "../src/apps/egress.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -143,6 +143,8 @@ describe("egress grants in the terminal", () => {
     });
     client.write(`CONNECT 127.0.0.1:${camera.port} HTTP/1.1\r\n\r\n`);
     while (!reply.includes("200")) await Bun.sleep(10);
+    resetEgressTotals();
+    recordEgress("check:r", NPM_REGISTRY, 3_000_000, 0);
     const admin = boot(ada);
     const other = boot(bob);
     try {
@@ -150,11 +152,15 @@ describe("egress grants in the terminal", () => {
       await admin.press("c");
       await settleUntil(admin.tui, "app:cam/main");
       expect(admin.text()).toContain(`127.0.0.1:${camera.port} · 1 open`);
+      // The registry's hour, as the Capacity page and MCP `capacity` read it (#7546).
+      expect(admin.text()).toContain("The npm registry sent 2.9 MiB over the last hour.");
       await other.openAbout();
       await other.press("c");
       expect(other.text()).not.toContain("Egress connections");
       expect(other.text()).not.toContain("app:cam/main");
+      expect(other.text()).not.toContain("npm registry");
     } finally {
+      resetEgressTotals();
       admin.tui.stop();
       other.tui.stop();
       client.terminate();

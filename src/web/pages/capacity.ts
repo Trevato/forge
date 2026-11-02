@@ -76,7 +76,7 @@ export function capacityPage(ctx: Ctx): Response {
     listCapacity(ctx.app, ctx.auth.user),
   );
   if (!listed.ok) return notFoundPage(ctx);
-  const { settings, changes } = listed.value;
+  const { settings, changes, egress } = listed.value;
   const errs = timePhase(ctx.request, "errors", () =>
     ctx.app.signals.errors.recent(10),
   );
@@ -158,14 +158,19 @@ export function capacityPage(ctx: Ctx): Response {
     },
   );
   const open = egressSnapshot();
+  // The bun cache at work (#7546): a warm cache keeps this near zero.
+  const npm = html`The npm registry sent
+    <span class="mono">${bytes(egress.npmBytesLastHour)}</span> over the last hour.`;
   const connections = card(
     open.length === 0
       ? html`<div class="card-body">
+          <p class="muted small" id="egress-npm">${npm}</p>
           <p class="muted small" id="egress-open">
             No app holds an egress connection open.
           </p>
         </div>`
       : html`<ul class="list" id="egress-open">
+          ${row({ id: "egress-npm", lead: icon("activity"), title: npm })}
           ${open.map((r) =>
             row({
               lead: icon("activity"),

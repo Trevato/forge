@@ -106,7 +106,15 @@ import { summariseCheckFailure } from "./summary.ts";
 import type { Result } from "../kernel/result.ts";
 import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
-import { cellInstall, checkInstallCache, installWithRetry, prefillInstallCache, withLock } from "./install.ts";
+import {
+  cellInstall,
+  checkInstallCache,
+  installFetchedLine,
+  installWithRetry,
+  prefillInstallCache,
+  withLock,
+} from "./install.ts";
+import { meterEgress } from "../apps/egress.ts";
 import { checkStage, type GateStage } from "./gate_reason.ts";
 import { proofsInFlight } from "./proof.ts";
 import { extraGates, GATE_DEADLINE_MS, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
@@ -1217,29 +1225,41 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
               cell: revealed,
             });
           };
-          const installed = await installWithRetry(
-            async (log) => {
-              if (shared === undefined) {
-                if (warm !== undefined) {
-                  const fill = await prefillInstallCache({
-                    cache: warm,
-                    dir,
-                    env,
-                    log,
-                    signal,
-                    timeoutMs: manifest.timeout * 1000,
-                  });
-                  if (!fill.ok) return fill;
-                  filled = fill.value;
+          // What the cell's proxy received, for the one line that shows the cache
+          // working (#7546). Uncontained, nothing is logged: the shared cache
+          // is not metered, and its growth is wrong under concurrent checks.
+          // Stopped in `finally`, so a throw never leaves the label metered.
+          const meter = cell === undefined ? undefined : meterEgress(`check:${run.id}`);
+          let fetched: number | undefined;
+          let installed: Awaited<ReturnType<typeof installWithRetry>>;
+          try {
+            installed = await installWithRetry(
+              async (log) => {
+                if (shared === undefined) {
+                  if (warm !== undefined) {
+                    const fill = await prefillInstallCache({
+                      cache: warm,
+                      dir,
+                      env,
+                      log,
+                      signal,
+                      timeoutMs: manifest.timeout * 1000,
+                    });
+                    if (!fill.ok) return fill;
+                    filled = fill.value;
+                  }
+                  return once(log);
                 }
-                return once(log);
-              }
-              mkdirSync(shared, { recursive: true });
-              const held = await withLock(`${shared}.lock`, () => once(log), { signal });
-              return held.ok ? held.value : held;
-            },
-            { log: write, signal, retryMs: options.installRetryMs },
-          );
+                mkdirSync(shared, { recursive: true });
+                const held = await withLock(`${shared}.lock`, () => once(log), { signal });
+                return held.ok ? held.value : held;
+              },
+              { log: write, signal, retryMs: options.installRetryMs },
+            );
+          } finally {
+            fetched = meter?.stop();
+          }
+          if (fetched !== undefined) write(installFetchedLine(fetched));
           if (!installed.ok)
             return {
               ok: false,

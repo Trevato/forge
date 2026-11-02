@@ -27,6 +27,7 @@ import { INFRA_SUMMARY, listRuns, type Run } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { readRunLog } from "../src/runs/log.ts";
 import { err, ok, type Result } from "../src/kernel/result.ts";
 
 const never = new AbortController().signal;
@@ -220,6 +221,10 @@ describe("a check whose install fails on the machine", () => {
     expect(runs[0]!.state).toBe("ok");
     // Uncontained, the repository's own cache is the one bun is pointed at.
     expect(existsSync(checkInstallCache(dataDir, flaky.id))).toBe(true);
+    // Uncontained, no install line: its shared cache is not metered (#7546).
+    expect(
+      readRunLog(dataDir, runs[0]!.id).lines.some((l) => l.startsWith("install fetched")),
+    ).toBe(false);
   });
 
   test("failing twice is infrastructure: queued again, not red; a second time it fails saying so", async () => {

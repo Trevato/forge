@@ -13,3 +13,13 @@ test("every destination gets its open count and bytes, labels escaped", () => {
 test("no connections leaves only the headers", () => {
   expect(egressMetrics([])).not.toContain("{");
 });
+
+test("cumulative bytes are counters keyed by destination alone (#7546)", () => {
+  const text = egressMetrics([], [
+    { destination: "registry.npmjs.org:443", bytesIn: 5_000, bytesOut: 70, bytesInLastHour: 5_000 },
+  ]);
+  expect(text).toContain("# TYPE forge_egress_received_bytes counter");
+  expect(text).toContain('forge_egress_received_bytes_total{destination="registry.npmjs.org:443"} 5000');
+  expect(text).toContain('forge_egress_sent_bytes_total{destination="registry.npmjs.org:443"} 70');
+  expect(text).not.toContain("repo=");
+});

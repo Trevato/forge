@@ -18,7 +18,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { enableApp } from "../src/actions/apps.ts";
-import { startEgress } from "../src/apps/egress.ts";
+import { NPM_REGISTRY, recordEgress, resetEgressTotals, startEgress } from "../src/apps/egress.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import {
@@ -140,6 +140,25 @@ describe("capacity: only a forge admin reads or changes it", () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("MCP capacity and the page answer the npm registry's bytes over the last hour (#7546)", async () => {
+    resetEgressTotals();
+    recordEgress("check:r1", NPM_REGISTRY, 3_000_000, 4_000);
+    recordEgress("check:r1", "example.com:443", 10, 0);
+    const read = await mcp(aliceRo, {});
+    expect(read.error).toBe(false);
+    const egress = (JSON.parse(read.text) as { egress: { npmBytesLastHour: number; destinations: { destination: string }[] } }).egress;
+    expect(egress.npmBytesLastHour).toBe(3_000_000);
+    // Other files' proxies share this process's tally; only the order of ours is asserted.
+    const named = egress.destinations.map((d) => d.destination);
+    expect(named[0]).toBe(NPM_REGISTRY);
+    expect(named).toContain("example.com:443");
+    const cookie = await login("alice");
+    const page = await (await fetch(`${servers.url}/settings/capacity`, { headers: { cookie } })).text();
+    // 3,000,000 B / 1024² = 2.86 MiB.
+    expect(page).toMatch(/id="egress-npm"[\s\S]*?2\.9 MiB/);
+    resetEgressTotals();
   });
 
   test("a member, an agent and nobody are told it is not there, at every door", async () => {

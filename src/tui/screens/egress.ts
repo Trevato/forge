@@ -11,7 +11,7 @@ import {
   revokeAppEgress,
   type EgressRow,
 } from "../../actions/egress_grants.ts";
-import { egressSnapshot } from "../../apps/egress.ts";
+import { egressSnapshot, npmBytesLastHour } from "../../apps/egress.ts";
 import { bytes } from "../../system/format.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -116,8 +116,9 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
 
 /**
  * The egress connections open right now, per app and destination: the
- * Capacity page's card, for a site admin. Read again on every draw, so it
- * moves as connections do; anyone else is offered nothing.
+ * Capacity page's card, for a site admin, under the bytes the npm registry
+ * sent over the last hour (#7546). Read again on every draw, so it moves as
+ * connections do; anyone else is offered nothing.
  */
 export function connectionsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
@@ -135,7 +136,11 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
       const c = ctx.theme.c;
       const rows = lines();
       state.clamp(rows.length);
-      const [head, list] = split(area, "v", [len(1), fill(1)]);
+      const [npm, head, list] = split(area, "v", [len(1), len(1), fill(1)]);
+      if (f.user?.isAdmin === true) {
+        const sent = `The npm registry sent ${bytes(npmBytesLastHour())} over the last hour.`;
+        s.text(npm!.x, npm!.y, truncate(sent, npm!.w), style(c.mutedFg, c.bg), npm!.x + npm!.w);
+      }
       const note =
         rows.length === 0
           ? "No app holds an egress connection open."
