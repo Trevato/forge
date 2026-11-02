@@ -57,7 +57,7 @@ import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
-import { passedAlone, recordFlakes, rerunCommand, rerunnable, pullOwnsRed } from "./flake.ts";
+import { recordCrashFlakes, passedAlone, recordFlakes, rerunCommand, rerunnable, pullOwnsRed } from "./flake.ts";
 import { diskRecovered, withDisk } from "./disk_red.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { proposeRevert } from "./revert_red.ts";
@@ -1366,6 +1366,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           }
         } catch (error) {
           write(`flake re-run failed: ${String(error)}`);
+        }
+      }
+      // A shard that crashed outside any test and ran green once more (#7781).
+      {
+        try {
+          recordCrashFlakes(app.db, app.bus, repo, checkLines, { runId: run.id, commit: run.commitOid, pull: x.isMain !== true }, ran.ok);
+        } catch (error) {
+          write(`crash flakes not recorded: ${String(error)}`);
         }
       }
       if (!ran.ok) {

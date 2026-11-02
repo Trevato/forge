@@ -920,8 +920,8 @@ describe("a failing file is run once more alone", () => {
         env,
       },
     );
-    const [out] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
-    return { code: await child.exited, out };
+    const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    return { code: await child.exited, out, err };
   };
 
   test("red only beside another file: the shard is green and the tail names it", async () => {
@@ -991,8 +991,8 @@ describe("every shard runs to the end, and a crashed one once more", () => {
     const env = { ...process.env, FORGE_CHECK_SHARDS: shards, FORGE_CELL_CPUS: "4", SHARD_CRASH_MARK: mark } as Record<string, string | undefined>;
     for (const name of Object.keys(env)) if (name.startsWith("FORGE_CHECK_") && name !== "FORGE_CHECK_SHARDS") delete env[name];
     const child = Bun.spawn(["bun", script, ...files], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env });
-    const [out] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
-    return { code: await child.exited, out };
+    const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    return { code: await child.exited, out, err };
   };
 
   test("a red file does not stop the files after it", async () => {
@@ -1009,6 +1009,8 @@ describe("every shard runs to the end, and a crashed one once more", () => {
     expect(got.out).toContain("crashed outside any test (exit 1); re-running it once. The crashed run:");
     expect(got.out).toContain("  │ error: Cannot use a closed database");
     expect(got.code).toBe(0);
+    // Green on the re-run: the crash is named for the check to record as a flake.
+    expect(got.err).toMatch(/test-shards: crash flake \d+\/\d+: error: Cannot use a closed database/);
   }, 30_000);
 
   test("a single worker quotes the crashed run too: no bare error lines, and the re-run is green", async () => {

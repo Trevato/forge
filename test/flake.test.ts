@@ -424,3 +424,25 @@ describe("the scheduled run of the files outside the gate", () => {
     expect(redFile("Red: test/a.test.ts")).toBe("test/a.test.ts");
   });
 });
+
+describe("a crash outside any test that ran green on its re-run (#7781)", () => {
+  const quoted = "  │ # Unhandled error between tests\n  │ error: Cannot use a closed database 42\n";
+  test("is named by one stable line and read back as a flake with no file", async () => {
+    const { crashFlakeLine, crashFlakes } = await import("../src/checks/flake.ts");
+    const line = crashFlakeLine("3/9", quoted);
+    expect(line).toBe("test-shards: crash flake 3/9: error: Cannot use a closed database #");
+    const got = crashFlakes(["noise", line, line, "(fail) a real failing test"]);
+    expect(got).toEqual([{ file: "", name: "(crash outside any test) error: Cannot use a closed database #" }]);
+  });
+  test("a real failing test is no crash flake", async () => {
+    const { crashFlakes } = await import("../src/checks/flake.ts");
+    expect(crashFlakes(["(fail) a [1ms]", " 1 fail"])).toEqual([]);
+  });
+});
+
+test("a crash of another Error class keeps its own cause, not one shared bucket (#7781)", async () => {
+  const { crashFlakeLine } = await import("../src/checks/flake.ts");
+  expect(crashFlakeLine("1/2", "  │ SyntaxError: bad token 7\n")).toBe("test-shards: crash flake 1/2: SyntaxError: bad token #");
+  expect(crashFlakeLine("1/2", "  │ AssertionError: x\n")).toContain("AssertionError");
+  expect(crashFlakeLine("1/2", "  │ # Unhandled error between tests\n")).toBe("test-shards: crash flake 1/2: unhandled error");
+});
