@@ -24,6 +24,7 @@ import { shippedAnswer } from "../release/answer.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
+import { STARTED } from "./started.ts";
 
 const FEED_KINDS = new Set([
   "push",
@@ -165,7 +166,7 @@ export function activityAtom(ctx: Ctx): Response {
   </entry>`;
   });
 
-  const updated = events[0]?.createdAt ?? new Date(0).toISOString();
+  const updated = events[0]?.createdAt ?? STARTED;
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <id>${xml(base)}/activity.atom</id>
@@ -214,7 +215,7 @@ export async function changelogAtom(ctx: Ctx): Promise<Response> {
     <link rel="alternate" type="text/html" href="${xml(link)}"/>
   </entry>`;
   });
-  const updated = live[0]?.at ?? new Date(0).toISOString();
+  const updated = live[0]?.at ?? STARTED;
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <id>${xml(origin)}/changelog.atom</id>

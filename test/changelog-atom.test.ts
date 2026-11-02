@@ -75,3 +75,22 @@ describe("GET /changelog.atom", () => {
     expect(html).toMatch(/rel="alternate"\s+type="application\/atom\+xml"[^>]*href="\/changelog\.atom"/);
   });
 });
+
+describe("GET /changelog.atom on an empty forge", () => {
+  test("says when the process started, not 1970, and the same twice", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-changelog-atom-empty-"));
+    const app = createApp({ dataDir, port: 0, forgeRepo: "alice/forge" });
+    const servers = await serve(app);
+    try {
+      const get = async () => (await (await fetch(`${servers.url}/changelog.atom`)).text()).match(/<updated>([^<]*)<\/updated>/)![1]!;
+      const first = await get();
+      expect(first).not.toContain("1970-01-01");
+      expect(Date.parse(first)).toBeGreaterThan(Date.parse("2026-01-01"));
+      expect(await get()).toBe(first);
+    } finally {
+      servers.stop();
+      app.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
