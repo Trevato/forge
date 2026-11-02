@@ -1,0 +1,296 @@
+/**
+ * A preview of the forge looked at as its owner (#8812): `app.looksAsOwner`
+ * names pages whose phone and desktop are taken signed in as an admin even
+ * of a public app, while every other page is still taken as nobody; a
+ * preview of the forge seeds a preview-only admin and a small world, and
+ * hears the parent's signed admin as that admin — production refuses both.
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { newApp } from "../src/actions/apps.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import { commitToBranch } from "../src/actions/repos.ts";
+import { previewEnv } from "../src/apps/data.ts";
+import { parseManifest } from "../src/apps/manifest.ts";
+import { readGrant } from "../src/apps/proxy.ts";
+import { AppsRuntime } from "../src/apps/runtime.ts";
+import { createApp, type App } from "../src/app.ts";
+import { listPins } from "../src/boards/pins.ts";
+import { looksForEnv } from "../src/core/looks.ts";
+import { listPulls } from "../src/core/pulls.ts";
+import { getRepo } from "../src/core/repos.ts";
+import { listRuns } from "../src/core/runs.ts";
+import { createUser, getUserByName, type User } from "../src/core/users.ts";
+import { readPipes } from "../src/flow/pipes.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { ok } from "../src/kernel/result.ts";
+import type { Capture, LookInput } from "../src/looks/capture.ts";
+import { startLooks, type LooksHandle } from "../src/looks/service.ts";
+import { previewIdentityKey } from "../src/spawn/preview-owner.ts";
+import { PREVIEW_ADMIN, PREVIEW_REPO, seedPreview } from "../src/spawn/preview-seed.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+quietLogs();
+
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+describe("app.looksAsOwner in forge.json", () => {
+  const manifest = (app: Record<string, unknown>) =>
+    parseManifest(JSON.stringify({ app: { run: "bun x", ...app } }), undefined);
+
+  test("names pages of app.looks; absent is none", () => {
+    const named = manifest({ looks: ["/", "/flow"], looksAsOwner: ["/flow"] });
+    expect(named.ok && named.value.looksAsOwner).toEqual(["/flow"]);
+    const absent = manifest({ looks: ["/"] });
+    expect(absent.ok && absent.value.looksAsOwner).toEqual([]);
+  });
+
+  test("a page app.looks does not name, or a path that is not one, is refused", () => {
+    const stray = manifest({ looks: ["/"], looksAsOwner: ["/flow"] });
+    expect(!stray.ok && stray.error.kind === "invalid" && stray.error.message).toContain(
+      "app.looksAsOwner names /flow",
+    );
+    for (const bad of ["flow", "//evil.example", "/a/../b", 7])
+      expect(manifest({ looks: ["/"], looksAsOwner: [bad] }).ok).toBe(false);
+  });
+});
+
+describe("the preview seed", () => {
+  let dataDir: string;
+  let app: App;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-preview-seed-"));
+    app = createApp({ dataDir, port: 0 });
+  });
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("production, or no word from the platform, refuses it and makes no one", async () => {
+    for (const env of [{ FORGE_APP_ENV: "production" }, {}, { FORGE_APP_ENV: "previewish" }]) {
+      const refused = await seedPreview(app, env);
+      expect(refused.ok).toBe(false);
+      expect(!refused.ok && refused.error).toBe("not_preview");
+    }
+    expect(getUserByName(app.db, PREVIEW_ADMIN)).toBeUndefined();
+    expect(previewIdentityKey({ FORGE_APP_ENV: "production", FORGE_APP_IDENTITY_KEY: "k" })).toBeUndefined();
+    expect(previewIdentityKey({ FORGE_APP_IDENTITY_KEY: "k" })).toBeUndefined();
+    expect(previewIdentityKey({ FORGE_APP_ENV: "preview", FORGE_APP_IDENTITY_KEY: "k" })).toBe("k");
+  });
+
+  test("a preview seeds an admin with no password, a repository with issues and a pull, a flow week and pins — once", async () => {
+    const seeded = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+    expect(seeded).toEqual(ok({ seeded: true }));
+    const admin = getUserByName(app.db, PREVIEW_ADMIN)!;
+    expect(admin.isAdmin).toBe(true);
+    const hash = app.db
+      .query<{ password_hash: string }, [string]>("SELECT password_hash FROM user WHERE id = ?1")
+      .get(admin.id);
+    expect(hash?.password_hash).toBe("");
+    expect(app.db.query("SELECT COUNT(*) AS n FROM session").get()).toEqual({ n: 0 });
+    const repo = getRepo(app.db, PREVIEW_ADMIN, PREVIEW_REPO)!;
+    expect(repo).toBeDefined();
+    const issues = app.db
+      .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = 'issue'")
+      .get(repo.id);
+    expect(issues?.n).toBe(2);
+    expect(listPulls(app.db, repo.id).length).toBe(1);
+    expect(listRuns(app.db, repo.id, { kind: "agent" }).every((r) => r.state === "ok")).toBe(true);
+    const pipes = readPipes(app.db, admin.id);
+    expect(pipes.usd).toBeGreaterThan(0);
+    expect(pipes.valves.find((v) => v.slug === `${PREVIEW_ADMIN}/${PREVIEW_REPO}`)?.level).toBe(60);
+    expect(listPins(app.db, admin.id).length).toBe(2);
+
+    expect(await seedPreview(app, { FORGE_APP_ENV: "preview" })).toEqual(ok({ seeded: false }));
+    expect(listPins(app.db, admin.id).length).toBe(2);
+  }, 30_000);
+});
+
+describe("a preview hears its parent's admin as the preview admin", () => {
+  const KEY = "the-parents-identity-key";
+  const dirs: string[] = [];
+  const apps: App[] = [];
+  const servers: Servers[] = [];
+
+  async function forge(previewIdentityKey?: string): Promise<Servers> {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-preview-owner-"));
+    dirs.push(dataDir);
+    const app = createApp({ dataDir, port: 0, ...(previewIdentityKey === undefined ? {} : { previewIdentityKey }) });
+    apps.push(app);
+    const seeded = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+    if (!seeded.ok) throw new Error(seeded.error);
+    const s = await serve(app);
+    servers.push(s);
+    return s;
+  }
+  const identity = (role: string, key = KEY, expires = Date.now() + 60_000) => {
+    const said = `u1|trevato|${role}|${expires}`;
+    return {
+      "x-forge-identity": said,
+      "x-forge-signature": createHmac("sha256", key).update(said).digest("base64url"),
+    };
+  };
+  const flow = (s: Servers, headers: Record<string, string>) =>
+    fetch(`${s.url}/flow`, { headers, redirect: "manual" });
+
+  afterAll(async () => {
+    for (const s of servers) s.stop();
+    for (const a of apps) a.close();
+    for (const d of dirs) await rm(d, { recursive: true, force: true });
+  });
+
+  test("a signed admin is the preview admin; a reader, a forged or a stale signature is nobody", async () => {
+    const preview = await forge(KEY);
+    const signedIn = await flow(preview, identity("admin"));
+    expect(signedIn.status).toBe(200);
+    const page = await signedIn.text();
+    expect(page).toContain("<h1>Flow</h1>");
+    expect(page).toContain(`${PREVIEW_ADMIN}/${PREVIEW_REPO}`);
+    // No session is made for it: nothing to show, nothing to log.
+    expect(signedIn.headers.get("set-cookie") ?? "").not.toContain("forge_session");
+    for (const headers of [
+      identity("user"),
+      identity("admin", "not-the-key"),
+      identity("admin", KEY, Date.now() - 1),
+      {},
+    ])
+      expect((await flow(preview, headers)).status).not.toBe(200);
+  }, 30_000);
+
+  test("a mutation it rides is held to the same-origin rule", async () => {
+    const preview = servers[0]!;
+    const turned = await fetch(`${preview.url}/flow/valve`, {
+      method: "POST",
+      headers: { ...identity("admin"), origin: "https://elsewhere.example" },
+      body: new URLSearchParams({ repo: `${PREVIEW_ADMIN}/${PREVIEW_REPO}`, level: "10" }),
+      redirect: "manual",
+    });
+    expect(turned.status).toBe(403);
+  });
+
+  test("production, never handed the key, hears nobody", async () => {
+    const production = await forge(undefined);
+    expect((await flow(production, identity("admin"))).status).not.toBe(200);
+  }, 30_000);
+});
+
+describe("looks of a public app", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let looks: LooksHandle;
+  let alice: User;
+  const calls: LookInput[] = [];
+  const fake: Capture = async (input) => {
+    calls.push(input);
+    writeFileSync(input.out, PNG);
+    return ok({ entries: {} });
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-looks-owner-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    runtime = new AppsRuntime(app, {
+      domain: "apps.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 2,
+    });
+    await runtime.start();
+    looks = startLooks(app, { localUrl: servers.url, capture: fake });
+    const a = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+  }, 30_000);
+
+  afterAll(async () => {
+    await looks.stop();
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a page listed as owner carries the admin grant; one not listed is still taken as nobody", async () => {
+    const made = await newApp(app, alice, { name: "plaza", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const { repo, app: record } = made.value;
+    expect(record.access).toBe("public");
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "pages",
+      base: repo.defaultBranch,
+      message: "Picture /flow as the owner",
+      files: [
+        {
+          path: "forge.json",
+          content: JSON.stringify({
+            app: {
+              run: "bun run src/server.ts",
+              health: "/healthz",
+              looks: ["/", "/flow"],
+              looksAsOwner: ["/flow"],
+            },
+          }),
+        },
+      ],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Pages",
+      baseBranch: repo.defaultBranch,
+      headBranch: "pages",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = previewEnv(opened.value.number);
+    const commit = branch.value.commitOid;
+    const deadline = Date.now() + 90_000;
+    const light = () =>
+      looksForEnv(app.db, record.id, env).filter((l) => l.commitOid === commit && l.theme === "light");
+    while (light().length < 6 && Date.now() < deadline) await Bun.sleep(100);
+    await looks.idle();
+    const rows = light();
+    const taken = (page: string, kind: string) =>
+      rows.find((l) => l.page === page && l.kind === kind)?.takenAs;
+    expect(taken("/flow", "phone")).toBe("owner");
+    expect(taken("/flow", "desktop")).toBe("owner");
+    expect(taken("/flow", "thumb")).toBe("nobody");
+    expect(taken("/", "phone")).toBe("nobody");
+    expect(taken("/", "desktop")).toBe("nobody");
+
+    const grantOf = (page: string, width: number) => {
+      const call = calls.find(
+        (c) =>
+          c.url.includes(`plaza--${opened.value.number}.`) &&
+          new URL(c.url).searchParams.get("to") === page &&
+          c.width === width &&
+          c.dark !== true &&
+          !c.out.includes("thumb"),
+      )!;
+      return readGrant(dataDir, new URL(call.url).searchParams.get("t") ?? "", { app: record, env });
+    };
+    expect(grantOf("/flow", 390)?.who).toEqual({ id: alice.id, name: "alice", role: "admin" });
+    expect(grantOf("/flow", 1280)?.who).toEqual({ id: alice.id, name: "alice", role: "admin" });
+    expect(grantOf("/", 390)?.who).toBeUndefined();
+    expect(grantOf("/", 1280)?.who).toBeUndefined();
+  }, 120_000);
+});

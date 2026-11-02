@@ -504,6 +504,7 @@ import { stopCellChildren } from "../spawn/cell.ts";
 import { portInsteadOfSocket, tcpAddress } from "../git/hook-address.ts";
 import { answerFromCell, closeHostedChildren, resolveHostedChild, resolveHostedChildApp, socketToCell } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
+import { previewOwner } from "../spawn/preview-owner.ts";
 
 // ---- auth ----
 
@@ -518,6 +519,12 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
     const user = ensureEdgeUser(app.db, login);
     if (user) return { user, scope: "admin", via: "edge" };
   }
+
+  // In a preview of this forge, the parent forge in front of it vouches for
+  // its admins as the preview admin (`spawn/preview-owner.ts`): an edge of
+  // its own, ridden by its grant cookie, so held to the same-origin rule.
+  const owner = previewOwner(app, request);
+  if (owner) return { user: owner, scope: "admin", via: "edge" };
 
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {

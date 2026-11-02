@@ -4,6 +4,7 @@
   ],
   "app": {
     "looks": ["/", "/forges", "/family", "/front", "/explore", "/board", "/boards", "/notes", "/feed", "/review", "/search", "/new", "/audit", "/releases", "/changelog", "/apps", "/repos", "/map", "/system", "/talk", "/contribute", "/flow", "/resilience", "/settings"],
+    "looksAsOwner": ["/", "/flow", "/talk"],
     "run": "bun run src/main.ts",
     "install": "",
     "health": "/healthz",

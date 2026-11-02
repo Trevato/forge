@@ -23,6 +23,8 @@ import { offerStartingBoards } from "./actions/boards.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
+import { previewIdentityKey } from "./spawn/preview-owner.ts";
+import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
 import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { startUpstreamWatch } from "./spawn/upstream.ts";
 import { startReachWatch } from "./spawn/reach.ts";
@@ -219,6 +221,8 @@ watchStalls(loopLog, undefined, undefined, undefined, (late, at) => {
   if (stall !== null) loopLog.warn(stallLine(stall));
 });
 
+const previewKey = previewIdentityKey(process.env);
+
 const app = createApp({
   dataDir,
   // A new forge starts with signup = invite (FORGE_SIGNUP below still wins).
@@ -230,6 +234,9 @@ const app = createApp({
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
   ...(edgeToken === "" ? {} : { edgeToken }),
+  // A preview of this forge hears its parent's admins as the preview admin
+  // (spawn/preview-owner.ts); production is never handed the key.
+  ...(previewKey === undefined ? {} : { previewIdentityKey: previewKey }),
   // Hosted, the host says how this forge's terminal is reached; printed
   // verbatim wherever the forge tells people how to connect.
   ...(hosted && (process.env.FORGE_APP_SSH ?? "").trim() !== ""
@@ -507,6 +514,14 @@ void bootHostedChildren(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
+// A preview of this forge seeds its admin and a small world to look at
+// (spawn/preview-seed.ts); anywhere else this is refused and says nothing.
+await seedPreview(app)
+  .then((seeded) => {
+    if (seeded.ok && seeded.value.seeded) app.log.info("preview seeded", { admin: PREVIEW_ADMIN });
+    else if (!seeded.ok && seeded.error !== "not_preview") app.log.warn("preview not seeded", { error: seeded.error });
+  })
+  .catch((error) => app.log.warn("preview not seeded", { error: String(error) }));
 // A spawned child reports its standing to its parent (spawn/heartbeat.ts).
 const heartbeatTimer = startHeartbeat(app);
 // ...and looks upstream once an hour (spawn/upstream.ts).

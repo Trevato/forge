@@ -65,6 +65,13 @@ export interface ForgeConfig {
    */
   edgeToken?: string;
   /**
+   * In a preview of this forge run as another's app, the key the parent
+   * signs its visitors' identity with (`FORGE_APP_IDENTITY_KEY`): set, a
+   * visitor it names as an admin is the preview admin
+   * (`spawn/preview-owner.ts`). Never set in production.
+   */
+  previewIdentityKey?: string;
+  /**
    * Let anyone, not only an admin, migrate from a host inside the network
    * (loopback, private ranges): a forge run for one person on one machine.
    */

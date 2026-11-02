@@ -372,8 +372,15 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     // A private app turns a signed-out visitor away to sign in, on another
     // host: its thumb is taken through the grant door as the owner, like
     // its other pictures, and never leaves the app's host (#7830).
-    const asNobody = (kind: LookKind): boolean =>
-      !sealed && (everyone || (kind === "thumb" && record.access === "public"));
+    // A page the manifest names in `app.looksAsOwner` shows a stranger
+    // nothing worth a picture — an admin's own page — so its phone and
+    // desktop are the owner's, and stay the writers', even of a public app
+    // (#8812). Its thumb is still what a stranger sees.
+    const ownerPages = new Set(status.looksAsOwner ?? []);
+    const asNobody = (kind: LookKind, page: string): boolean =>
+      !sealed &&
+      !(kind !== "thumb" && ownerPages.has(page)) &&
+      (everyone || (kind === "thumb" && record.access === "public"));
     const owner = getUserById(app.db, repo.ownerId);
     const asOwner: GrantWho | undefined =
       owner === undefined
@@ -390,7 +397,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         { app: record, env: item.env },
         GRANT_TTL_MS,
         Date.now(),
-        asNobody(kind) ? undefined : asOwner,
+        asNobody(kind, page) ? undefined : asOwner,
       );
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
       const path = lookPath(item.appId, item.env, item.commitOid, page, kind, theme);
@@ -445,7 +452,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           ...row,
           kind,
           path,
-          takenAs: asNobody(kind) ? "nobody" : "owner",
+          takenAs: asNobody(kind, page) ? "nobody" : "owner",
         });
       } else {
         rmSync(staged, { force: true });

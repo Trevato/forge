@@ -1260,7 +1260,11 @@ a signed-in admin exactly as when the owner opens it — and they are its
 writers' alone. The thumb is taken as nobody, for the tiles strangers see. A
 public app on a public repository is the world's to see, so all three of its
 pictures are taken as nobody, and a reader of its pulls sees the Look card
-too; each row records who it was `taken_as` (#727, #738). It is taken as the page loads — what an
+too; each row records who it was `taken_as` (#727, #738). A page named in
+`app.looksAsOwner` (each must also be in `app.looks`) is the exception: its
+phone and desktop are taken as the owner even of a public app, and stay the
+writers' — an admin's own page shows a stranger nothing (#8812,
+`docs/features/preview-owner-looks.md`). It is taken as the page loads — what an
 app draws after that is not in it — and one at a time, forge-wide, bounded
 in time and memory. A look is best-effort: it never blocks a check or fails
 a run; one that could not be taken is recorded with its reason, and the

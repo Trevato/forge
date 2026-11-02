@@ -213,6 +213,8 @@ export interface EnvStatus {
    * as `tty`.
    */
   readonly looks?: readonly string[] | undefined;
+  /** The pages of `looks` pictured as the owner (`app.looksAsOwner`), once known live. */
+  readonly looksAsOwner?: readonly string[] | undefined;
   /** `false` when its `forge.json` turns the forge pill off; unset is on. */
   readonly toolbar?: boolean | undefined;
   /**
@@ -537,6 +539,7 @@ export class AppsRuntime {
               createdAt: state.live.createdAt,
               tty: state.live.manifest.tty,
               looks: state.live.manifest.looks,
+              looksAsOwner: state.live.manifest.looksAsOwner,
               toolbar: state.live.manifest.toolbar,
               ...(state.live.deployStartedAt === null
                 ? {}
@@ -574,6 +577,7 @@ export class AppsRuntime {
         createdAt: state.live.createdAt,
         tty: state.live.manifest.tty,
         looks: state.live.manifest.looks,
+        looksAsOwner: state.live.manifest.looksAsOwner,
         toolbar: state.live.manifest.toolbar,
         ...(state.live.deployStartedAt === null
           ? {}
