@@ -5,12 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { createLabel } from "../src/core/issues.ts";
+import { LABEL_WORDS } from "../src/actions/label_words.ts";
+import { createLabel, listLabels } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, Session } from "../src/tui/forge.ts";
 import type { Ctx } from "../src/tui/app/app.ts";
-import { labelsCommands, labelsScreen, NOT_FOUND_LINE, NO_LABELS_LINE } from "../src/tui/screens/labels.ts";
+import { labelsCommands, labelsScreen, NOT_ALLOWED_LINE, NOT_FOUND_LINE, NO_LABELS_LINE } from "../src/tui/screens/labels.ts";
 import { repoScreen } from "../src/tui/screens/repo.ts";
 import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -134,4 +135,88 @@ test("j moves a visible > marker and scrolls later labels into view", async () =
   expect(text).toContain("l39");
   expect(text).not.toContain("l00");
   expect(text.split("\n").find((l) => l.includes("l39"))).toContain(">");
+});
+
+/** label.created events on the bus for a repository: how web viewers hear of the write. */
+const created = (repo: Repo): number =>
+  app.db
+    .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM event WHERE repo_id = ?1 AND kind = 'label.created'")
+    .get(repo.id)!.n;
+
+async function typed(repo: Repo, user: User | undefined, entry: string): Promise<string> {
+  const terminal = headlessTerminal(100, 30);
+  const { app: tui, session } = createForgeApp(app, user ? { ...guest, user } : guest, { terminal, exitHooks: false });
+  tui.start();
+  tui.ctx.push(labelsScreen(session, tui.ctx, repo));
+  await settleApp(tui);
+  const press = (key: string) => tui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+  press("n");
+  for (const ch of entry) press(ch);
+  press("enter");
+  await settleApp(tui);
+  const text = tui.screen.toText();
+  tui.stop?.();
+  return text;
+}
+
+test("an admin makes a label with n and the list shows it at once", async () => {
+  const before = created(bare);
+  const text = await typed(bare, alice, "bug d73a4a");
+  expect(created(bare)).toBe(before + 1);
+  expect(text).toContain("#d73a4a");
+  expect(text).not.toContain(NO_LABELS_LINE);
+  expect(listLabels(app.db, bare.id).map((l) => l.name)).toEqual(["bug"]);
+});
+
+test("a bad colour shows the LABEL_WORDS text and makes nothing", async () => {
+  const text = await typed(open, alice, "wontfix zzz");
+  expect(text).toContain(LABEL_WORDS.shape);
+  expect(listLabels(app.db, open.id).map((l) => l.name)).not.toContain("wontfix");
+});
+
+test("a taken name says so and makes nothing", async () => {
+  const text = await typed(open, alice, "bug 111111");
+  expect(text).toContain(LABEL_WORDS.taken);
+  expect(listLabels(app.db, open.id).filter((l) => l.name === "bug")).toHaveLength(1);
+});
+
+test("a reader is not offered n and n makes nothing", async () => {
+  const stranger = new Session(app, guest);
+  const ctx = { invalidate() {}, push() { throw new Error("pushed"); } } as unknown as Ctx;
+  const screen = labelsScreen(stranger, ctx, open);
+  expect(screen.keys.some((k) => k.keys.includes("n"))).toBe(false);
+  await screen.load!(new AbortController().signal);
+  expect(screen.key!({ type: "key", key: "n", ctrl: false, alt: false, shift: false } as never)).toBe(false);
+  const admin = labelsScreen(new Session(app, { ...guest, user: alice }), ctx, open);
+  expect(admin.keys.some((k) => k.keys.includes("n"))).toBe(true);
+});
+
+test("a write by someone no longer admin is refused with its own words, not the shape text", async () => {
+  const terminal = headlessTerminal(100, 30);
+  const { app: tui, session } = createForgeApp(app, { ...guest, user: alice }, { terminal, exitHooks: false });
+  tui.start();
+  tui.ctx.push(labelsScreen(session, tui.ctx, many));
+  await settleApp(tui);
+  const before = created(many);
+  const press = (key: string) => tui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+  press("n");
+  for (const ch of "sneaky 123456") press(ch);
+  (session as { user: User | undefined }).user = undefined; // demoted mid-prompt
+  press("enter");
+  await settleApp(tui);
+  const text = tui.screen.toText();
+  tui.stop?.();
+  expect(text).toContain(NOT_ALLOWED_LINE);
+  expect(text).not.toContain(LABEL_WORDS.shape);
+  expect(listLabels(app.db, many.id).map((l) => l.name)).not.toContain("sneaky");
+  expect(created(many)).toBe(before);
+  // and the key bar follows the role
+  expect(labelsScreen(session, tui.ctx, many).keys.some((k) => k.keys.includes("n"))).toBe(false);
+});
+
+test("a # before the colour and a name of several words are accepted", async () => {
+  const text = await typed(bare, alice, "good first issue #7057ff");
+  expect(text).toContain("good first issue");
+  expect(text).toContain("#7057ff");
+  expect(listLabels(app.db, bare.id).map((l) => l.name)).toContain("good first issue");
 });

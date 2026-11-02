@@ -5,27 +5,49 @@
  * read for, only someone who may read the repository.
  */
 
+import { LABEL_WORDS } from "../../actions/label_words.ts";
+import { requireRepoAdmin } from "../../actions/access.ts";
+import { createLabel } from "../../actions/repos.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { listLabels, type Label } from "../../core/issues.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Command } from "../app/palette.ts";
 import { style } from "../term/style.ts";
-import { ListState } from "./common.ts";
+import { ListState, promptScreen } from "./common.ts";
 import { labelChip } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 
 /** What a viewer who may not read the repository sees: what the page's 404 says. */
 export const NOT_FOUND_LINE = "No such repository";
+export const NOT_ALLOWED_LINE = "Only a repository admin can make a label.";
 export const NO_LABELS_LINE = "No labels yet.";
 
 export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let labels: Label[] | undefined;
   let hidden = false;
   const state = new ListState();
-  return {
+  // Only whoever `requireRepoAdmin` admits is offered `n`.
+  const admin = (): boolean => requireRepoAdmin(f.app, f.user, repo).ok;
+
+  /** "name hex": the last word is the colour; a leading `#` is allowed. */
+  const make = (entry: string): string | undefined => {
+    const words = entry.trim().split(/\s+/);
+    const hex = (words.pop() ?? "").replace(/^#/, "");
+    const name = words.join(" ");
+    if (name === "" || !/^[0-9a-fA-F]{6}$/.test(hex)) return LABEL_WORDS.shape;
+    const made = createLabel(f.app, f.user, repo, name, hex.toLowerCase());
+    if (!made.ok) return made.error === "taken" ? LABEL_WORDS.taken : made.error === "invalid" ? LABEL_WORDS.shape : NOT_ALLOWED_LINE;
+    labels = listLabels(f.db, repo.id);
+    ctx.invalidate();
+    return undefined;
+  };
+  const screen: Screen = {
     title: "Labels",
-    keys: [binding(["j", "k"], "move"), binding(["esc", "q"], "back")],
+    // Read each time: a demoted admin stops being offered `n`.
+    get keys() {
+      return [binding(["j", "k"], "move"), ...(admin() ? [binding(["n"], "new label")] : []), binding(["esc", "q"], "back")];
+    },
     async load() {
       // Gated here as well as on the command: the screen is exported.
       hidden = !canRead(f.db, repo, f.user);
@@ -53,11 +75,21 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       if (e.key === "j" || e.key === "down") state.move(1, labels?.length ?? 0);
       else if (e.key === "k" || e.key === "up") state.move(-1, labels?.length ?? 0);
       else if (e.key === "esc" || e.key === "q") ctx.pop();
+      else if (e.key === "n" && !e.ctrl && !e.alt && !hidden && admin()) {
+        ctx.push(
+          promptScreen(ctx, screen, {
+            title: "New label",
+            label: "name and six hex digits (bug d73a4a)",
+            onSubmit: make,
+          }),
+        );
+      }
       else return false;
       ctx.invalidate();
       return true;
     },
   };
+  return screen;
 }
 
 /** The palette's door on a repository screen, for whoever may read it. */
