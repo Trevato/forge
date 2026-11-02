@@ -10,6 +10,7 @@
  * that was never meant to be confirmed.
  */
 
+import { DISCONNECT_DETAIL } from "../../actions/origin_words.ts";
 import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
 import { envsFor } from "../../apps/runtime.ts";
@@ -679,8 +680,7 @@ const DESTRUCTIVE: {
     describe: () => ({
       verb: "Disconnect origin",
       title: "Disconnect this origin?",
-      detail:
-        "The stored credential is destroyed here immediately, and the repositories mirroring it stop syncing — they keep their git objects, issues and comments, and go on being readable as ordinary local repositories. The grant is revoked upstream only where the forge allows it (GitHub, and only when this forge has a client secret configured); everywhere else revoke the token on the origin yourself. The message after this says which happened.",
+      detail: DISCONNECT_DETAIL,
       phrase: "",
     }),
   },

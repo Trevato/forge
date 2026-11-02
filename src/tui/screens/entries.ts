@@ -14,6 +14,7 @@ import { entry as audit } from "./audit.ts";
 import { entry as boards } from "./boards.ts";
 import { entry as bulk } from "./bulk.ts";
 import { entry as cloud } from "./cloud.ts";
+import { entry as connections } from "./connections.ts";
 import { entry as crewHandover } from "./crewhandover.ts";
 import { entry as crewSplits } from "./crewsplits.ts";
 import { entry as domains } from "./domains.ts";
@@ -73,6 +74,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   bulk,
   subscriptions,
   cloud,
+  connections,
   domains,
   front,
   owner,

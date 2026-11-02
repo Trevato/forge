@@ -105,6 +105,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["subscriptions", "Crew subscriptions", "each account's budget and rest; wake one, set its budget, add or remove one"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
     ["cloud", "Cloud accounts", "provider tokens, what they are used for, today's calls"],
+    ["origins", "Connected origins", "the hosts your mirrors come from"],
     ["domains", "Failure domains", "failure domains and their last drill"],
     ["front", "Front page", "the apps a first visitor sees, ranked; an admin pins or hides"],
     ["owner", "Owner's needs", "what needs the owner, snapshots, failure domains"],
@@ -161,6 +162,10 @@ test("a site-admin agent is offered the roster without the person-only entries",
   ]);
 });
 
+test("no agent is offered Connected origins", () => {
+  expect(roster({ ...admin, kind: "agent" }).map(([id]) => id)).not.toContain("origins");
+});
+
 test("a member person is offered the signed-in roster without the admin entries", () => {
   expect(roster(member)).toEqual([
     ["home", "Home", "your repositories"],
@@ -195,6 +200,7 @@ test("a member person is offered the signed-in roster without the admin entries"
     ["can", "What I can do", "your role and what it allows here"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
     ["bulk", "Bulk actions", "your last bulk actions; u undoes one inside its day"],
+    ["origins", "Connected origins", "the hosts your mirrors come from"],
     ["front", "Front page", "the apps a first visitor sees, ranked; an admin pins or hides"],
     ["family", "Family", "the forge that sent this one, and the forges it sent"],
     ["chain", "Chain", "the forges this forge's code descends from, root first"],

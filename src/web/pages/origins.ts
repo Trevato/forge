@@ -30,6 +30,11 @@ import {
   type Reattachment,
 } from "../../actions/origins.ts";
 import {
+  NO_SUCH_ORIGIN,
+  disconnectedWords,
+  syncedWords,
+} from "../../actions/origin_words.ts";
+import {
   editableHosts,
   envHosts,
   isTrustedHost,
@@ -1077,13 +1082,13 @@ export async function originSyncSubmit(ctx: Ctx): Promise<Response> {
   if (!synced.ok)
     return flashTo(ctx, "/settings/origins", {
       tone: "danger",
-      message: "No such origin.",
+      message: NO_SUCH_ORIGIN,
     });
   const report = synced.value;
   return flashTo(ctx, "/settings/origins", {
     ...(report.error === ""
       ? {
-          message: `Synced ${report.repos} repositor${report.repos === 1 ? "y" : "ies"}.`,
+          message: syncedWords(report.repos),
         }
       : { tone: "danger" as const, message: report.error }),
   });
@@ -1104,12 +1109,10 @@ export async function originDisconnect(ctx: Ctx): Promise<Response> {
   if (!gone.ok)
     return flashTo(ctx, back, {
       tone: "danger",
-      message: "No such origin.",
+      message: NO_SUCH_ORIGIN,
     });
   return flashTo(ctx, back, {
-    message: gone.value.revokedUpstream
-      ? "Disconnected, and the grant was revoked upstream."
-      : "Disconnected. Revoke the token on the origin too if you want it dead there.",
+    message: disconnectedWords(gone.value.revokedUpstream),
   });
 }
 
