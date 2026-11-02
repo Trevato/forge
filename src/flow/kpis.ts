@@ -51,6 +51,18 @@ export type KpiTimer = <T>(name: KpiPart, fn: () => T) => T;
 
 const untimed: KpiTimer = (_name, fn) => fn();
 
+/** Crew builders running now, of the autonomous repositories' slots: one cheap query, so home reads it fresh beside the idle reason (#7624). */
+export function readBuilders(db: Database): Kpis["builders"] {
+  return (
+    db
+      .query<{ running: number; slots: number }, []>(
+        `SELECT (SELECT COUNT(*) FROM run WHERE kind = 'agent' AND state = 'running') AS running,
+                (SELECT COALESCE(SUM(autonomy_slots), 0) FROM repo WHERE autonomy != 'off') AS slots`,
+      )
+      .get() ?? { running: 0, slots: 0 }
+  );
+}
+
 /**
  * When each landing in [since, to] put something new on main. A pull counts
  * when it merged onto its repository's default branch with a commit other
@@ -123,12 +135,7 @@ export function readKpis(
     .all(since, to)
     .map((r) => Math.round(r.ms)));
 
-  const builders = time("kpis.builders", () => db
-    .query<{ running: number; slots: number }, []>(
-      `SELECT (SELECT COUNT(*) FROM run WHERE kind = 'agent' AND state = 'running') AS running,
-              (SELECT COALESCE(SUM(autonomy_slots), 0) FROM repo WHERE autonomy != 'off') AS slots`,
-    )
-    .get() ?? { running: 0, slots: 0 });
+  const builders = time("kpis.builders", () => readBuilders(db));
 
   const spend = time("kpis.spend", () => {
     const todayUsd = spentTodayEverywhere(db, now);

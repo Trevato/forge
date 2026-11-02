@@ -1,6 +1,6 @@
 /**
  * Home's KPI row and pinned panels come from the cache docs/CACHING.md
- * designs (#2717): hit when nothing was written, miss after a write, a warm
+ * designs (#2717): a hit within 60 s whatever was written (#7624), a warm
  * hit that runs none of their reads, and the owner's figures never reach
  * another viewer.
  */
@@ -32,7 +32,7 @@ afterAll(async () => {
   await f.close();
 });
 
-test("a warm home reads neither the KPIs nor the panels again; a write does", async () => {
+test("a warm home reads neither the KPIs nor the panels again, even after a write", async () => {
   const a = await home(f.ownerCookie);
   expect(a).toContain('class="stats mb"');
   expect(a).toContain("<h2>Pin A</h2>");
@@ -48,7 +48,7 @@ test("a warm home reads neither the KPIs nor the panels again; a write does", as
 
   f.app.db.query("UPDATE repo SET description = 'moved' WHERE id = ?1").run(f.repos[0]!.id);
   await home(f.ownerCookie);
-  expect([kpi.misses, panel.misses]).toEqual([km + 1, pm + 1]);
+  expect([kpi.misses, panel.misses]).toEqual([km, pm]);
 });
 
 test("the owner's KPIs and panels never render for another viewer, warm or not", async () => {

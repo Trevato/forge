@@ -141,3 +141,14 @@ test("every slot busy: no reason is shown", async () => {
   expect(await terminal()).toContain("Builders running 1 of 1");
   expect(await terminal()).not.toContain("ceiling reached");
 });
+
+test("both doors agree within home's 60 s KPI entry: the run ends, each says 0 of 1 and why (#7624)", async () => {
+  const busy = await home();
+  expect(tile(busy)).toContain("1 of 1");
+  for (const r of app.db.query<{ id: string }, []>("SELECT id FROM run WHERE kind = 'agent' AND state = 'running'").all())
+    finishRun(app.db, r.id, { state: "ok", summary: "done" });
+  const page = await home();
+  expect(tile(page)).toContain("0 of 1");
+  expect(tile(page)).toContain("ceiling reached");
+  expect(await terminal()).toContain("Builders running 0 of 1 · ceiling reached");
+});

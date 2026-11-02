@@ -509,7 +509,14 @@ figures read `run`, `pull`, `usage` and `page_vital` rows, some of which
 append no event, and a clock that moves on every row catches all of them.
 The KPI entry is keyed by UTC hour, ceiling and data directory; a panel by
 its board's slug and its own definition (an edited board is a new key, as
-the blob id would make it). Max age 30 s for both. Measured on
+the blob id would make it). The 60 s rule (#7624): the KPIs, panels and
+vitals are kept 60 s from when they were computed, whatever is written
+since (the forge writes every second, so the write stamp never hit); the
+waiting line stays on the write stamp, 30 s at most, so the asks count is
+exact. The builders figure is read fresh on every request (one query), so it
+agrees with the idle reason beside it; the terminal's dashboard reads
+`readKpis` uncached. Tests age these entries with `setHomeClock`, the one
+test seam in `home_cache.ts`. Measured on
 `bench/snappy.ts` (`--n 50`), `/` owner: 105.7 → 90.1 statements, p50
 16.0 → 15.5 ms, p95 22.5 → 20.7 ms; the fixture pins no panel, and a pin
 adds one query per panel on a miss and none on a hit.

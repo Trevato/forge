@@ -15,6 +15,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { clearMapCache } from "../src/web/map_cache.ts";
+import { kpiCache, panelCache, vitalsCache } from "../src/web/studio/home_cache.ts";
 import { p75 } from "../src/flow/reach.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { seedFlowFixture } from "./helpers/flow-fixture.ts";
@@ -95,8 +96,10 @@ describe("on production's size", () => {
 
   test("a cold home answers within a few passes over the runs, kpis read afresh", async () => {
     await get("/");
-    // A write moves the clock home's caches are keyed by: this view is cold.
+    // what this budget measures is the cold path, a miss on every one of them and on the regions home remembers (#7660).
+    // what this budget measures is the cold path, a miss on every one of them, not a warm hit.
     app.db.run("UPDATE repo SET description = description || ''");
+    for (const cache of [kpiCache(app.db), panelCache(app.db), vitalsCache(app.db)]) cache.clear();
     forgetHome(app.db);
     const unit = baseline();
     const res = await get("/");
