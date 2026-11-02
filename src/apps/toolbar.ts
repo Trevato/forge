@@ -508,6 +508,11 @@ const name = `toolbar-${hash.slice(0, 16)}`;
 export const TOOLBAR_PATH = `/assets/${name}.js`;
 export const TOOLBAR_NAME = name;
 
+/** The same script on an app's own host, where a strict `script-src 'self'` allows it. */
+export const TOOLBAR_ASSET_PATH = `/__forge/${name}.js`;
+/** Every path under this prefix on an app host is the forge's, whether or not it names the script. */
+export const TOOLBAR_ASSET_PREFIX = "/__forge/toolbar";
+
 /** The forge's answer for the script: immutable, because its name is its hash. */
 export function toolbarResponse(request: Request): Response {
   return staticResponse(request, toolbarJs, "text/javascript; charset=utf-8", `"${hash}"`);

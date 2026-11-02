@@ -53,7 +53,7 @@ import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { secureFor } from "../http/cookie_secure.ts";
-import { htmlAnswer, readPage, rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
+import { htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
 
 const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
   secureFor(url, forgeUrl) ||
@@ -816,6 +816,16 @@ export async function proxyApp(
   server: Bun.Server<AppSocket>,
 ): Promise<Response | undefined> {
   const url = new URL(request.url);
+  // The pill's script, from the app's own host: only the exact hashed path
+  // is it; any other /__forge/toolbar… path is the forge's 404, never the app's.
+  if (url.pathname.startsWith(TOOLBAR_ASSET_PREFIX) && !target.nested) {
+    return securityFloor(
+      url.pathname === TOOLBAR_ASSET_PATH &&
+        (request.method === "GET" || request.method === "HEAD")
+        ? toolbarResponse(request)
+        : notFound(),
+    );
+  }
   // A grant with this forge's own token is answered here. On a nested
   // hostname a grant this forge did not sign is the guest forge's, and
   // goes through to it like any other request.
