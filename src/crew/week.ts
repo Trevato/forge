@@ -126,15 +126,16 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   slots = Math.min(ceiling, Math.max(0, slots));
 
   const release = status === "behind" && input.idleSlots > 0 && input.startable === 0 && input.gated > 0;
-  const weekLeft = `${pct(meter.freePct)} of the week left, reset ${utc(meter.resetsAt)}`;
+  const weekLeft = `${Math.round(meter.freePct)}% of the week left, reset ${utc(meter.resetsAt)}`;
+  const burnWords = burn === null ? "unread (too few readings)" : `${pct(burn)} an hour`;
   const sentence =
-    burn === null
-      ? `Burn not known yet: ${weekLeft}; starting at ${slots} of ${ceiling} slots and adjusting within the hour.`
+    burn === null && !burning
+      ? `Burn not known yet: too few readings of the meter; ${weekLeft}; holding at ${slots} of ${ceiling} slots until it has them.`
       : status === "on pace"
-        ? `On pace: ${weekLeft}; burning ${pct(burn)} an hour, ${pct(allowed)} is allowed.`
+        ? `On pace: ${weekLeft}; burning ${burnWords}, ${pct(allowed)} is allowed.`
         : status === "ahead"
-          ? `Ahead of pace: ${weekLeft}, burning ${pct(burn)} an hour against ${pct(allowed)} allowed${runsOutAt === null ? "" : `, running out about ${utc(runsOutAt)}`}; ${slots === 0 ? "holding the crew for the reset" : `slowing to ${slots} of ${ceiling} slots`}.`
-          : `Behind pace: ${weekLeft}, burning ${pct(burn)} an hour against ${pct(allowed)} allowed; ${slots === 0 ? "holding the crew for the reset" : `speeding up to ${slots} of ${ceiling} slots`}${release ? " and releasing the next issue" : ""}.`;
+          ? `Ahead of pace: ${weekLeft}, burning ${burnWords} against ${pct(allowed)} allowed${runsOutAt === null ? "" : `, running out about ${utc(runsOutAt)}`}; ${slots === 0 ? "holding the crew for the reset" : `slowing to ${slots} of ${ceiling} slots`}.`
+          : `Behind pace: ${weekLeft}, burning ${burnWords} against ${pct(allowed)} allowed; ${slots === 0 ? "holding the crew for the reset" : `speeding up to ${slots} of ${ceiling} slots`}${release ? " and releasing the next issue" : ""}.`;
   return { status, targetPctPerHour, allowedPctPerHour: allowed, runsOutAt, slots, release, sentence };
 }
 

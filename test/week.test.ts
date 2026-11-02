@@ -110,7 +110,7 @@ describe("weekDecision", () => {
     const d = used(50, { burnPctPerHour: null });
     expect(d.slots).toBe(WEEK.unknownSlots);
     expect(d.release).toBe(false);
-    expect(d.sentence).toContain("adjusting within the hour");
+    expect(d.sentence).toContain("too few readings");
   });
 
   test("unknown capacity is not fine: the crew holds at a modest level and home says so", () => {

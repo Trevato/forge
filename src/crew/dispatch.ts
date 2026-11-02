@@ -10,7 +10,7 @@
 
 import { TEMP_FULL } from "../checks/disk_full.ts";
 import { freshPullFor } from "./fresh_pull.ts";
-import { weekHold } from "./week_hold.ts";
+import { PRIORITY_REASONS, weekHold } from "./week_hold.ts";
 import { weekFor } from "./week_read.ts";
 import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
@@ -1432,6 +1432,7 @@ function pump(
     runningIssues.size;
   const started: string[] = [];
   const goingIn = new Map<string, number>();
+  const priorityIn = new Map<string, number>();
   const noted = notedBy.get(app) ?? new Set<string>();
   notedBy.set(app, noted);
   // Builder starts go to teams in proportion to their dials (`team_share.ts`),
@@ -1463,7 +1464,10 @@ function pump(
     // repository: assigned, review, feedback and check runs as much as picks (#8873).
     if (home !== undefined && home.autonomy === "autonomous") {
       const going = (goingIn.get(home.id) ?? 0) + active.filter((r) => r.state === "running" && r.repoId === home.id).length;
-      const held = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going);
+      const priorityGoing =
+        (priorityIn.get(home.id) ?? 0) +
+        active.filter((r) => r.state === "running" && r.repoId === home.id && PRIORITY_REASONS.includes(r.reason)).length;
+      const held = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going - priorityGoing, fresh.reason, priorityGoing);
       if (held !== null) {
         if (!noted.has(fresh.id)) {
           noted.add(fresh.id);
@@ -1490,6 +1494,7 @@ function pump(
     }
     started.push(fresh.id);
     goingIn.set(fresh.repoId, (goingIn.get(fresh.repoId) ?? 0) + 1);
+    if (PRIORITY_REASONS.includes(fresh.reason)) priorityIn.set(fresh.repoId, (priorityIn.get(fresh.repoId) ?? 0) + 1);
     noted.delete(fresh.id);
     slots--;
     if (queued.issueId !== null) runningIssues.add(queued.issueId);

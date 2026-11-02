@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
+import { readForgeUsage } from "../src/actions/usage.ts";
 import { createApp, type App } from "../src/app.ts";
 import { addDependency } from "../src/core/dependencies.ts";
 import { getIssue, getIssueById, type Issue } from "../src/core/issues.ts";
@@ -54,6 +55,12 @@ function spend(usd: number, at: Date): void {
   });
 }
 
+/** The meter, read an hour ago at `freePct`: the burn is how far it has fallen since. */
+function seedReading(scope: string, freePct: number): void {
+  app.db.query("DELETE FROM week_reading").run();
+  app.db.query("INSERT INTO week_reading (scope, at, free_pct) VALUES (?1, ?2, ?3)").run(scope, new Date(NOW.getTime() - 3_600_000).toISOString(), freePct);
+}
+
 /** The week is half over; last week the provider refused at $100, so the cap is known. */
 function week(usedSoFar: number, recent = 0): void {
   app.db.query("DELETE FROM usage").run();
@@ -65,8 +72,9 @@ function week(usedSoFar: number, recent = 0): void {
     said: "weekly limit",
   });
   if (usedSoFar - recent > 0) spend(usedSoFar - recent, new Date(NOW.getTime() - DAY));
-  // `recent` dollars fall inside the burn's window: recent / 3 points an hour.
+  // The meter read `recent` points higher an hour ago: that is the burn, an hour. Zero is a flat meter.
   if (recent > 0) spend(recent, new Date(NOW.getTime() - 3_600_000));
+  seedReading(sub, 100 - usedSoFar + recent);
   forgetWeek();
 }
 
@@ -166,9 +174,8 @@ test("a fast afternoon slows the crew at once, on a week whose total is on pace"
   week(50);
   const calm = repoPace(app, repo, NOW).slots;
   expect(calm).toBe(4);
-  // 3 points an hour over the last 3 hours, in $100 of cap: $9 an hour.
-  spend(27, new Date(NOW.getTime() - 3_600_000));
-  forgetWeek();
+  // The meter fell 9 points in the last hour.
+  week(77, 9);
   expect(repoPace(app, repo, NOW).slots < calm).toBe(true);
   expect(repoPace(app, repo, NOW).reason).toContain("running out about");
 });
@@ -197,6 +204,7 @@ test("a crew on the forge's own token is metered: today's numbers, read through 
     noteLimit(app.db, "platform", { window: "week", resetsAt: at(-1.7).toISOString(), observedAt: at(-1.7 - 1 / 24).toISOString(), said: "weekly limit" });
     onPlatform(45.9, at(-1));
     onPlatform(8.1, new Date(NOW.getTime() - 3_600_000));
+    seedReading("platform", 46 + 2.7);
     forgetWeek();
     const pace = repoPace(app, repo, NOW);
     expect(pace.reason).toContain("46% of the week left");
@@ -206,4 +214,41 @@ test("a crew on the forge's own token is metered: today's numbers, read through 
   } finally {
     app.db.query("INSERT INTO subscription_grant (scope_id, agent_id, subscription_id) VALUES (?1, '', ?2)").run(repo.id, sub);
   }
+});
+
+test("the free percent home prints is the one the usage tool reports for the same state (#8910)", () => {
+  for (const used of [20, 45.4, 54.6, 70]) {
+    week(used, 0);
+    const home = /(\d+)% of the week left/.exec(weekWords(app, NOW)!)![1];
+    const usage = readForgeUsage(app, alice, NOW).subscriptions.find((s) => s.subscription === "main")!.headroom.find((w) => w.window === "week")!.pct;
+    expect(Number(home)).toBe(usage!);
+  }
+});
+
+test("readWeek stores a reading of the meter, so the burn is not seeded by hand only", () => {
+  week(30, 0);
+  app.db.query("DELETE FROM week_reading").run();
+  forgetWeek();
+  weekWords(app, NOW);
+  const rows = app.db.query("SELECT scope, free_pct FROM week_reading").all() as { scope: string; free_pct: number }[];
+  expect(rows).toEqual([{ scope: sub, free_pct: 70 }]);
+  // Read an hour on, 4 points lower: the burn is that fall, from the two stored readings.
+  spend(4, new Date(NOW.getTime() + 3_600_000));
+  forgetWeek();
+  expect(weekWords(app, new Date(NOW.getTime() + 3_600_000))).toContain("burning 4% an hour");
+});
+
+test("home reads the repository the crew works, not the first by name", async () => {
+  week(20);
+  const quiet = await createRepo(app, alice, { name: "aaa-quiet", visibility: "private" });
+  if (!quiet.ok) throw new Error(String(quiet.error));
+  expect(addToCrew(app, alice, quiet.value, "builderbot").ok).toBe(true);
+  const on = await updateRepoSettings(app, alice, quiet.value, { autonomy: "autonomous", autonomyDirection: "Ship.", autonomyCeilingUsd: 1000, autonomySlots: 4, autonomyBy: alice.id });
+  expect(on.ok).toBe(true);
+  app.db.query("INSERT INTO subscription_grant (scope_id, agent_id, subscription_id) VALUES (?1, '', ?2)").run(quiet.value.id, sub);
+  forgetWeek();
+  const words = weekWords(app, NOW)!;
+  expect(words).toContain("Nothing has landed this week");
+  expect(words).not.toContain("(0 runs");
+  expect(words).toMatch(/\(\d+ runs/);
 });

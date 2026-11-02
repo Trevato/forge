@@ -5,7 +5,8 @@ import { addToCrew } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { getRepoById } from "../src/core/repos.ts";
-import { createRun, listRuns } from "../src/core/runs.ts";
+import { setCapacity } from "../src/core/capacity.ts";
+import { claimRun, createRun, getRun, listRuns } from "../src/core/runs.ts";
 import { noteLimit, setHeadroom } from "../src/core/standing.ts";
 import { addSubscription } from "../src/core/subscriptions.ts";
 import { forgetWeek } from "../src/crew/week_read.ts";
@@ -64,4 +65,58 @@ test("past the week's reserve an assigned run stays queued, with the reason in i
   forgetWeek();
   await until(() => mine()?.state !== "queued", "the run to start");
   expect(mine()?.state).not.toBe("queued");
+}, 30_000);
+
+test("builds fill the pace slots, yet a review or assigned run still starts; a third of them waits (#8910)", async () => {
+  const { app, alice, bot } = standIn;
+  const made = await createRepo(app, alice, { name: "lane", visibility: "private" });
+  if (!made.ok) throw new Error(String(made.error));
+  const seeded = await commitToBranch(app, alice, made.value, { message: "Start", files: [{ path: "README.md", content: "# lane\n" }] });
+  if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+  expect(addToCrew(app, alice, made.value, "bot").ok).toBe(true);
+  const sub = addSubscription(app.db, standIn.dataDir, { name: "lane", token: "sk-ant-oat01-week-pump-2" });
+  if (!sub.ok) throw new Error(sub.error);
+  setHeadroom(app.db, sub.value.id, 0);
+  app.db.query("INSERT INTO subscription_grant (scope_id, agent_id, subscription_id) VALUES (?1, '', ?2)").run(made.value.id, sub.value.id);
+  setCapacity(app.db, "crew.concurrency", "10", alice.id);
+  const now = Date.now();
+  const spend = (usd: number, at: number) => {
+    const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
+    recordUsage(app.db, { runId: run.id, repoId: made.value.id, issueId: null, agentId: null, subscriptionId: sub.value.id, tokensIn: 1, tokensOut: 1, costUsd: usd, wallMs: 1000, outcome: "ok", at: new Date(at).toISOString() });
+  };
+  spend(100, now - 4 * DAY);
+  noteLimit(app.db, sub.value.id, { window: "week", resetsAt: new Date(now - 3.5 * DAY).toISOString(), observedAt: new Date(now - 3.5 * DAY - 3_600_000).toISOString(), said: "weekly limit" });
+  spend(70, now - DAY);
+  // 30% free now, 36% an hour ago: 6 points an hour, far over what is allowed, so the pace is the floor of 2 slots.
+  app.db.query("INSERT INTO week_reading (scope, at, free_pct) VALUES (?1, ?2, 36)").run(sub.value.id, new Date(now - 3_600_000).toISOString());
+  const on = await updateRepoSettings(app, alice, made.value, { autonomy: "autonomous", autonomyDirection: "Ship.", autonomyCeilingUsd: 1000, autonomySlots: 4, autonomyBy: alice.id });
+  expect(on.ok).toBe(true);
+  const repo = getRepoById(app.db, made.value.id)!;
+  forgetWeek();
+  // A run of `reason` on a fresh issue; `going` claims it, so the pump counts it as running.
+  const run = (reason: string, going: boolean) => {
+    const issue = openIssue(app, alice, repo, { title: `${reason} work`, body: "Do it." });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const made = createRun(app.db, { repoId: repo.id, kind: "agent", issueId: issue.value.id, reason, actorId: bot.id });
+    if (going) claimRun(app.db, made.id);
+    return made.id;
+  };
+  const stateOf = (id: string) => getRun(app.db, id)!.state;
+  const logOf = (id: string) => readRunLog(app.config.dataDir, id).lines.join("\n");
+  // Two builds fill the pace; one review and one assigned run are going in their own lane.
+  run("push", true);
+  run("push", true);
+  run("review", true);
+  run("assigned", true);
+  const build = run("push", false);
+  const review = run("review", false);
+  await until(() => logOf(build).includes("queued, not started: Ahead of pace"), "the build to be held");
+  await until(() => logOf(review).includes("2 of 2 places for reviews and assigned work are taken"), "the third priority run to be held");
+  expect(stateOf(build)).toBe("queued");
+  expect(stateOf(review)).toBe("queued");
+  // One priority run ends: the lane has room and the review starts, the build still waits.
+  const gone = app.db.query<{ id: string }, [string]>("SELECT id FROM run WHERE repo_id = ?1 AND reason = 'assigned'").get(repo.id)!.id;
+  app.db.query("UPDATE run SET state = 'ok' WHERE id = ?1").run(gone);
+  await until(() => stateOf(review) !== "queued", "the review to start");
+  expect(stateOf(build)).toBe("queued");
 }, 30_000);

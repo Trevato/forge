@@ -7,6 +7,7 @@ import type { App } from "../app.ts";
 import { listAutonomousRepos, type Repo } from "../core/repos.ts";
 import { standings, WINDOW_MS } from "../core/standing.ts";
 import { grantedAccounts, PLATFORM } from "../core/subscriptions.ts";
+import { burnFrom, noteReading, readingsSince } from "./week_burn.ts";
 import { efficiencyWords, WEEK, weekDecision, type Efficiency, type WeekDecision, type WeekMeter } from "./week.ts";
 
 /** The week as the provider's meter reads it: a meter, or null while no account's limit is known. */
@@ -33,20 +34,6 @@ function weekOf(app: App, repo: Repo, now: Date): Week | null {
   return week;
 }
 
-/** Spend over the last `WEEK.burnHours`, in US dollars, on `ids`. */
-function recentUsd(app: App, ids: readonly string[], now: Date): number {
-  if (ids.length === 0) return 0;
-  const since = new Date(now.getTime() - WEEK.burnHours * 3_600_000).toISOString();
-  const marks = ids.map((_, i) => `?${i + 2}`).join(",");
-  return (
-    app.db
-      .query<{ usd: number | null }, string[]>(
-        `SELECT SUM(cost_usd) AS usd FROM usage WHERE at >= ?1 AND at <= ?${ids.length + 2} AND subscription_id IN (${marks})`,
-      )
-      .get(since, ...ids, now.toISOString())?.usd ?? 0
-  );
-}
-
 function readWeek(app: App, repo: Repo, now: Date): Week | null {
   // A crew with no grant runs on the forge's own token: the account `usage`
   // prints as `platform`. It is metered too, never skipped (#8873).
@@ -71,11 +58,18 @@ function readWeek(app: App, repo: Repo, now: Date): Week | null {
     // Granted accounts with no known limit are an unknown week; the forge's own token with none is not metered at all.
     return granted.length > 0 ? { meter: null } : null;
   }
+  // The burn is read off the readings of the meter, not off dollars: the
+  // week's free share is stored as it is read and the burn is how fast it fell.
+  const freePct = (freeUsd / capUsd) * 100;
+  const scope = [...known].sort().join(",");
+  const opened = resetsAt - WINDOW_MS.week;
+  noteReading(app.db, scope, now.getTime(), freePct, WINDOW_MS.week);
+  const readings = readingsSince(app.db, scope, opened);
   return {
     meter: {
-      freePct: (freeUsd / capUsd) * 100,
+      freePct,
       keptPct: (keptUsd / capUsd) * 100,
-      burnPctPerHour: ((recentUsd(app, known, now) / capUsd) * 100) / WEEK.burnHours,
+      burnPctPerHour: burnFrom(readings, now.getTime(), WEEK.burnHours),
       resetsAt: new Date(resetsAt),
     },
   };
@@ -124,15 +118,20 @@ export function weekFor(
 }
 
 /**
- * The pace sentence and the efficiency beside it for the first autonomous
- * repository with a crew, as the idle reason picks it; null while no account
- * is metered. Home and the terminal's dashboard print the same words.
+ * The pace sentence and the efficiency beside it for the autonomous
+ * repository the crew works most this week (the most agent runs; the first by
+ * name on a tie), not whichever sorts first: a quiet repository's "nothing
+ * landed" is not the forge's. Null while no account is metered. Home and the
+ * terminal's dashboard print the same words.
  */
 export function weekWords(app: App, now: Date = new Date()): string | null {
+  let best: { words: string; runs: number } | null = null;
   for (const repo of listAutonomousRepos(app.db)) {
     if (repo.autonomy !== "autonomous" || repo.archivedAt !== null) continue;
     const week = weekFor(app, repo, now);
-    if (week !== null) return `${week.sentence} ${efficiencyWords(weekEfficiency(app, repo, now))}`;
+    if (week === null) continue;
+    const efficiency = weekEfficiency(app, repo, now);
+    if (best === null || efficiency.runs > best.runs) best = { words: `${week.sentence} ${efficiencyWords(efficiency)}`, runs: efficiency.runs };
   }
-  return null;
+  return best?.words ?? null;
 }
