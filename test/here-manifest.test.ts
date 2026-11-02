@@ -284,12 +284,12 @@ describe("the manifest: what you can do here, as who you are", () => {
     const anon = (await manifest("/")).body.actions;
     expect(anon).toContainEqual({
       do: "make an account",
-      http: "POST /api/v1/users",
+      http: "GET /signup",
       account: false,
     });
     expect(anon).toContainEqual({
       do: "sign in",
-      http: "POST /api/v1/tokens",
+      http: "GET /signin",
       account: false,
     });
     expect(anon.findIndex((a: any) => a.do === "use the MCP")).toBeLessThan(

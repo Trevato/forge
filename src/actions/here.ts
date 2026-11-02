@@ -328,9 +328,9 @@ function forgeActions(
       ? []
       : [
           ...(activeEdgeToken(app) === undefined
-            ? [{ do: "make an account", http: "POST /api/v1/users", account: false }]
+            ? [{ do: "make an account", http: "GET /signup", account: false }]
             : []),
-          { do: "sign in", http: "POST /api/v1/tokens", account: false },
+          { do: "sign in", http: "GET /signin", account: false },
         ]),
   ];
 }
