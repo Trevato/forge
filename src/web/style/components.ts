@@ -278,6 +278,9 @@ kbd {
   font-family: var(--mono); font-size: var(--fs-min); font-weight: 500; color: var(--muted-fg);
 }
 
+.keyhint { margin-left: 6px; }
+@media (pointer: coarse), (max-width: 640px) { .keyhint { display: none; } }
+
 .sha {
   font-family: var(--mono); font-size: 12.5px; padding: 1px 5px;
   border-radius: 4px; background: var(--muted); color: var(--muted-fg);

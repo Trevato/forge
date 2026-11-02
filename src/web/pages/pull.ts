@@ -92,6 +92,7 @@ import {
   card,
   field as formField,
   icon,
+  keyHint,
   labelCss,
   queuedPhrase,
   row,
@@ -772,7 +773,7 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
                 ${i === options.length - 1 ? raw("checked") : null}
               />
               <span
-                >${option.label} <span class="hint">${option.hint}</span></span
+                >${option.label} ${keyHint(option.key)} <span class="hint">${option.hint}</span></span
               >
             </label>`,
         )}

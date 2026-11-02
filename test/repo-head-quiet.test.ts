@@ -14,11 +14,11 @@ afterAll(async () => {
 });
 
 // Bytes on the snappy fixture as the owner: [before the head folded its rare steps away, measured now].
-// The budget is the measurement plus a few bytes for port digits, not room, plus the menu's "New issue" link (#8855), about 320 bytes on each.
+// The budget is the measurement plus a few bytes for port digits, not room. The shortcut keys beside tabs, the top bar and the menu's New issue (#8854) are the whole of the ~315 bytes added on each page: eleven `<kbd class="keyhint">` of ~30 bytes, shown on a pointer-fine desktop and hidden by CSS elsewhere.
 const BYTES: Record<string, { before: number; budget: number }> = {
-  "": { before: 25_929, budget: 25_190 },
-  "/issues": { before: 51_705, budget: 50_980 },
-  "/pulls": { before: 25_151, budget: 24_420 },
+  "": { before: 25_929, budget: 25_540 },
+  "/issues": { before: 51_705, budget: 51_330 },
+  "/pulls": { before: 25_151, budget: 24_760 },
 };
 
 const get = async (path: string): Promise<string> =>

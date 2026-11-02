@@ -11,3 +11,7 @@ The command palette is the keyboard-first fuzzy-find overlay (`⌘K` / `Ctrl K`,
 - `.palette-foot` — the faint one-line strip of key hints under the list, set off by a rule above it.
 
 The palette's tell row (`data-tell`, last in the list) sends the typed sentence to `/tell`. Its answer is one `.toast[data-palette-tell]` at the top of `#main`, drawn by `tellFromHere()` in `src/web/client.ts` from existing parts only: `.toast` and `.toast-body`, a link-variant small `.btn` as the dismiss ×, and focus moved to the toast (`tabindex="-1"`, `role="status"`) because the palette that held it has just closed. It clears itself after 12 seconds. No new component class.
+
+## Keys beside their actions
+
+`.keyhint` is the `<kbd>` of an action's shortcut (`keyHint()` in `ui.ts`); `btn`, `tabs`, menu links, the top bar and the review verdicts render it for every `data-shortcut`. It is hidden on phone widths and on touch-only screens (`pointer: coarse`), where there is no keyboard.

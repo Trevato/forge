@@ -7,6 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { NEW_ISSUE_KEY } from "./script_keys.ts";
 import { newIssueHref } from "./issue_from.ts";
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
 import { protectionNotice } from "../kernel/protection.ts";
@@ -56,7 +57,7 @@ import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
 import { quotaFull } from "../spawn/quota.ts";
 import { icon, inlineIcons, pointAtSprite, themeGlyph } from "./icons.ts";
-import { btn, copyField, kbd, menu, type MenuItem } from "./ui.ts";
+import { btn, copyField, kbd, keyHint, menu, type MenuItem } from "./ui.ts";
 import { SITE_LINE } from "./site_line.ts";
 
 /** One row of the command palette: title, href, category. */
@@ -194,7 +195,7 @@ const helpItem = html`<button class="menu-item js-only hide-sm" type="button" da
 const newIssueItem = (ctx: Ctx): MenuItem[] =>
   ctx.url.pathname.startsWith("/origins/")
     ? []
-    : [{ label: "New issue", href: newIssueHref(ctx.url.pathname) }];
+    : [{ label: "New issue", href: newIssueHref(ctx.url.pathname), hint: NEW_ISSUE_KEY }];
 
 function guestMenu(ctx: Ctx, theme: ThemeName | undefined): Html {
   return menu({
@@ -565,7 +566,7 @@ function topbar(
   return html`<a class="skip" href="#main">Skip to content</a>
     <header class="topbar" role="banner">
       <a href="/" class="wordmark" data-shortcut="g h"
-        ><span class="mark"></span>forge</a
+        ><span class="mark"></span>forge${keyHint("g h")}</a
       >
       ${when(
         crumbs,
@@ -585,8 +586,8 @@ function topbar(
         ${searchBar()}
         ${user
           ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" title="Talk to the forge" data-shortcut="g t"
-                >${icon("comment")}</a
-              ><a class="small" href="/asks" data-shortcut="g q">Asks</a
+                >${icon("comment")}${keyHint("g t")}</a
+              ><a class="small" href="/asks" data-shortcut="g q">Asks${keyHint("g q")}</a
               >${newMenu(ctx)}${userMenu(
                 ctx,
                 user,

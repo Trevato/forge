@@ -453,7 +453,7 @@ describe("home is the feed", () => {
     expect(home).not.toContain("things need you");
     expect(home).not.toContain("data-pick");
     expect(home).toContain('href="/asks"');
-    const link = home.match(/<a[^>]*href="\/asks"[^>]*>([^<]*)<\/a\s*>/);
+    const link = home.match(/<a[^>]*href="\/asks"[^>]*>([^<]*)(?:<kbd class="keyhint">.*?<\/kbd>)?<\/a\s*>/s);
     expect(link).not.toBeNull();
     expect(link![1]!.trim()).toBe("Asks");
     // Nothing after the link, up to the next tag, is a number.

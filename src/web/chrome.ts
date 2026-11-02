@@ -34,7 +34,7 @@ import {
   type RepoScope,
 } from "./scope.ts";
 import { repoSteps, TAB_STEPS, type RepoTab } from "./repo_steps.ts";
-import { badge, btn, empty, pill, tabs, type TabItem } from "./ui.ts";
+import { badge, btn, empty, keyHint, pill, tabs, type TabItem } from "./ui.ts";
 
 // ---- loading ----
 
@@ -219,7 +219,7 @@ function repoNav(items: TabItem[]): Html {
     <summary class="btn" data-variant="ghost" data-size="sm">More</summary>
     <div class="menu-panel">${rest.map(
       (t) =>
-        html`<a class="menu-item" href="${t.href}"${t.shortcut ? html` data-shortcut="${t.shortcut}"` : null}>${t.label}${t.count !== undefined && t.count > 0 ? pill(t.count) : null}</a>`,
+        html`<a class="menu-item" href="${t.href}"${t.shortcut ? html` data-shortcut="${t.shortcut}"` : null}>${t.label}${t.count !== undefined && t.count > 0 ? pill(t.count) : null}${t.shortcut ? keyHint(t.shortcut) : null}</a>`,
     )}</div>
   </details>`;
   return html`<div class="repo-nav">${tabs(shown, "Repository")}${more}</div>`;

@@ -194,7 +194,7 @@ function btnAttrs(o: BtnOptions): Html {
 
 /** A button or a link that looks like one. Content is the visible label. */
 export function btn(content: Html | string, o: BtnOptions = {}): Html {
-  const inner = html`${o.icon ? icon(o.icon) : null}${content}`;
+  const inner = html`${o.icon ? icon(o.icon) : null}${content}${o.shortcut ? keyHint(o.shortcut) : null}`;
   if (o.href !== undefined) {
     return html`<a
       href="${o.href}"
@@ -756,6 +756,12 @@ export function kbd(keys: string[]): Html {
   return html`${keys.map((k) => html`<kbd>${k}</kbd>`)}`;
 }
 
+/** The keys of a `g i`-style shortcut, shown beside the action that carries
+ * it; phone widths and touch-only screens hide it (`.keyhint`). */
+export function keyHint(shortcut: string): Html {
+  return html`<kbd class="keyhint">${shortcut}</kbd>`;
+}
+
 // ---- identity ----
 
 /** Twelve stable buckets, so the same name always wears the same hue. */
@@ -991,7 +997,7 @@ export function tabs(items: TabItem[], ariaLabel: string): Html {
           >${t.icon ? icon(t.icon) : null}${t.label}${t.count !== undefined &&
           t.count > 0
             ? pill(t.count)
-            : null}</a
+            : null}${t.shortcut ? keyHint(t.shortcut) : null}</a
         >`,
     )}
   </nav>`;
@@ -1061,6 +1067,8 @@ export interface MenuItem {
   post?: string;
   /** Shown but not usable: the reason, in words, under the label. */
   disabled?: string;
+  /** The key that does the same, drawn beside the label. */
+  hint?: string;
 }
 
 /** A dropdown built on `<details>` — the only construct correct with JS off. */
@@ -1116,7 +1124,7 @@ export function menu(o: {
           href="${i.href ?? "#"}"
           ${i.current ? raw('aria-current="true"') : null}
           >${i.icon ? icon(i.icon) : null}<span class="grow">${i.label}</span
-          >${i.current ? icon("check") : null}</a
+          >${i.hint ? keyHint(i.hint) : null}${i.current ? icon("check") : null}</a
         >`;
       })}
     </div>
