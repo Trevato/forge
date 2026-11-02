@@ -76,6 +76,18 @@ alone are its search, not batches; re-checks, cut-off gates and pull checks
 are not counted. Each verdict is a row of `queue_batch`, kept a week. The
 `publicOnly` rule is `readVitals`'s. Nothing shows it yet (#5930).
 
+### What a red batch was (#7639)
+
+`src/flow/culprits.ts` keeps one `queue_verdict` row per red the queue names
+(`onVerdict`, a week): `real` — the search found the one pull, handed back to
+its builder with the failing tests named, the rest of the batch landing — or
+`load` — infrastructure twice (install, setup, timeout) or a flake, no pull
+blamed or handed back. `flowFor` carries `redBatches` (counts over 24 h, the
+newest five, a sentence) in the MCP `flow` report; boards query the
+`queueVerdicts` source. Not done: a pause switch and the "fixed / still there"
+effect probe, which belong to the maintenance board (#7561) once it exists.
+The terminal Flow dialog lists them too; the how-to is `docs/features/red-batches.md`.
+
 ## Throughput
 
 `src/flow/throughput.ts` counts what each pipeline stage let out over the last

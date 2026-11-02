@@ -130,6 +130,7 @@ import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
 import { sweepStaleReds } from "./stale_reds.ts";
 import { parkPull, strikeNote } from "./park_pull.ts";
+import { keepVerdict } from "../flow/culprits.ts";
 import { keepBatch } from "../flow/red_batches.ts";
 import { recordQueueFlakes } from "../checks/flake.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
@@ -2096,6 +2097,7 @@ function queueOptions(app: App, repo: Repo): QueueOptions {
     batch: queueBatch(app.db),
     room: () => checksFor(app)?.spareSlots?.() ?? 0,
     onBatch: (repoId, red) => keepBatch(app.db, repoId, red),
+    onVerdict: (repoId, verdict) => keepVerdict(app.db, repoId, verdict),
     onFlake: (repoId, reds, tip) => {
       const owner = getRepoById(app.db, repoId);
       if (owner !== undefined) recordQueueFlakes(app.db, app.bus, owner, reds, tip);
