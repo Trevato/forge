@@ -10,6 +10,8 @@
 
 import { TEMP_FULL } from "../checks/disk_full.ts";
 import { freshPullFor } from "./fresh_pull.ts";
+import { weekHold } from "./week_hold.ts";
+import { weekFor } from "./week_read.ts";
 import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
 import { resolveListConflicts } from "../actions/list-conflicts.ts";
@@ -1429,6 +1431,7 @@ function pump(
     capacityCount(app.db, "crew.concurrency", options.concurrency) -
     runningIssues.size;
   const started: string[] = [];
+  const goingIn = new Map<string, number>();
   const noted = notedBy.get(app) ?? new Set<string>();
   notedBy.set(app, noted);
   // Builder starts go to teams in proportion to their dials (`team_share.ts`),
@@ -1456,6 +1459,19 @@ function pump(
       continue;
     }
     if (slots <= 0) break;
+    // The week's pace holds every path that starts a run in an autonomous
+    // repository: assigned, review, feedback and check runs as much as picks (#8873).
+    if (home !== undefined && home.autonomy === "autonomous") {
+      const going = (goingIn.get(home.id) ?? 0) + active.filter((r) => r.state === "running" && r.repoId === home.id).length;
+      const held = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going);
+      if (held !== null) {
+        if (!noted.has(fresh.id)) {
+          noted.add(fresh.id);
+          appendRunLog(app.config.dataDir, fresh.id, held);
+        }
+        continue;
+      }
+    }
     // An account at its concurrent-runs limit keeps this run queued, with
     // the count in its log once, until one of its runs ends.
     const owner = getRepoById(app.db, fresh.repoId)?.ownerId;
@@ -1473,6 +1489,7 @@ function pump(
       continue;
     }
     started.push(fresh.id);
+    goingIn.set(fresh.repoId, (goingIn.get(fresh.repoId) ?? 0) + 1);
     noted.delete(fresh.id);
     slots--;
     if (queued.issueId !== null) runningIssues.add(queued.issueId);

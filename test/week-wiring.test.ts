@@ -144,9 +144,9 @@ test("ahead of pace, the pace cuts the slots, and the reserve stops them", () =>
 test("home and the terminal print the same sentence, the terminal for an admin", async () => {
   week(20);
   const words = weekWords(app, NOW)!;
-  expect(words).toContain("Behind pace by $30.00");
+  expect(words).toContain("Behind pace by 30%");
   expect(words).toContain("Nothing has landed");
-  expect(String(weekLine(app, NOW))).toContain("Behind pace by $30.00");
+  expect(String(weekLine(app, NOW))).toContain("Behind pace by 30%");
   const terminal = headlessTerminal(240, 32);
   const { app: tui } = createForgeApp(
     app,
@@ -160,10 +160,48 @@ test("home and the terminal print the same sentence, the terminal for an admin",
   expect(text).toContain("Behind pace");
 });
 
-test("with no known weekly cap there is no sentence", () => {
+test("a fast afternoon slows the crew at once, on a week whose total is on pace", () => {
+  week(50);
+  const calm = repoPace(app, repo, NOW).slots;
+  expect(calm).toBe(4);
+  // 3 points an hour over the last 3 hours, in $100 of cap: $9 an hour.
+  spend(27, new Date(NOW.getTime() - 3_600_000));
+  forgetWeek();
+  expect(repoPace(app, repo, NOW).slots < calm).toBe(true);
+  expect(repoPace(app, repo, NOW).reason).toContain("running out about");
+});
+
+test("with no known weekly cap the pace is unknown and the crew holds at a modest level", () => {
   app.db.query("DELETE FROM subscription_limit").run();
   app.db.query("DELETE FROM usage").run();
   forgetWeek();
-  expect(weekWords(app, NOW)).toBeNull();
-  expect(String(weekLine(app, NOW))).toBe("");
+  expect(weekWords(app, NOW)).toContain("pace is unknown");
+  expect(String(weekLine(app, NOW))).toContain("pace is unknown");
+  expect(repoPace(app, repo, NOW).slots).toBe(2);
+});
+
+test("a crew on the forge's own token is metered: today's numbers, read through the ledger, slow it", () => {
+  // The cause of #8873: no grant meant no account, no week, no pacing.
+  app.db.query("DELETE FROM subscription_grant").run();
+  app.db.query("DELETE FROM usage").run();
+  try {
+    const at = (days: number) => new Date(NOW.getTime() + days * DAY);
+    const onPlatform = (usd: number, when: Date) => {
+      const run = createRun(app.db, { repoId: repo.id, kind: "agent" });
+      recordUsage(app.db, { runId: run.id, repoId: repo.id, issueId: null, agentId: null, subscriptionId: "platform", tokensIn: 1, tokensOut: 1, costUsd: usd, wallMs: 1000, outcome: "ok", at: when.toISOString() });
+    };
+    // Last week's limit hit at $100; the reset is 5.3 days off; $54 is spent, $8.1 of it in the last 3 hours: 46% free, 2.7 points an hour.
+    onPlatform(100, at(-2));
+    noteLimit(app.db, "platform", { window: "week", resetsAt: at(-1.7).toISOString(), observedAt: at(-1.7 - 1 / 24).toISOString(), said: "weekly limit" });
+    onPlatform(45.9, at(-1));
+    onPlatform(8.1, new Date(NOW.getTime() - 3_600_000));
+    forgetWeek();
+    const pace = repoPace(app, repo, NOW);
+    expect(pace.reason).toContain("46% of the week left");
+    expect(pace.reason).toContain("running out about");
+    expect(pace.slots < 4).toBe(true);
+    expect(weekWords(app, NOW)).toContain("46% of the week left");
+  } finally {
+    app.db.query("INSERT INTO subscription_grant (scope_id, agent_id, subscription_id) VALUES (?1, '', ?2)").run(repo.id, sub);
+  }
 });

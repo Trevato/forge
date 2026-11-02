@@ -1523,7 +1523,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   return screen;
 }
 
-/** The week's pace and efficiency, as the line an admin's home reads (#8695); none while no week's cap is known. */
+/** The week's pace and efficiency, as the line an admin's home reads (#8695); none while no account is metered. */
 function weekLines(app: App, now: Date): string[] {
   const words = weekWords(app, now);
   return words === null ? [] : [words];

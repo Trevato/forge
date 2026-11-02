@@ -6,13 +6,12 @@
 import type { App } from "../app.ts";
 import { listAutonomousRepos, type Repo } from "../core/repos.ts";
 import { standings, WINDOW_MS } from "../core/standing.ts";
-import { grantedAccounts } from "../core/subscriptions.ts";
-import { efficiencyWords, weekDecision, type Efficiency, type WeekDecision } from "./week.ts";
+import { grantedAccounts, PLATFORM } from "../core/subscriptions.ts";
+import { efficiencyWords, WEEK, weekDecision, type Efficiency, type WeekDecision, type WeekMeter } from "./week.ts";
 
+/** The week as the provider's meter reads it: a meter, or null while no account's limit is known. */
 interface Week {
-  readonly capUsd: number;
-  readonly usedUsd: number;
-  readonly resetsAt: Date;
+  readonly meter: WeekMeter | null;
 }
 
 /** How long a repository's week is remembered: `repoPace` is asked many times a tick. */
@@ -24,7 +23,7 @@ export function forgetWeek(): void {
   remembered.clear();
 }
 
-/** The week's capacity and spend over the repository's accounts; null while no account's week has a known cap. */
+/** The week's meter over the repository's accounts; an unknown meter while none has a known limit. */
 function weekOf(app: App, repo: Repo, now: Date): Week | null {
   const key = `${app.config.dataDir}\0${repo.id}`;
   const hit = remembered.get(key);
@@ -34,21 +33,52 @@ function weekOf(app: App, repo: Repo, now: Date): Week | null {
   return week;
 }
 
+/** Spend over the last `WEEK.burnHours`, in US dollars, on `ids`. */
+function recentUsd(app: App, ids: readonly string[], now: Date): number {
+  if (ids.length === 0) return 0;
+  const since = new Date(now.getTime() - WEEK.burnHours * 3_600_000).toISOString();
+  const marks = ids.map((_, i) => `?${i + 2}`).join(",");
+  return (
+    app.db
+      .query<{ usd: number | null }, string[]>(
+        `SELECT SUM(cost_usd) AS usd FROM usage WHERE at >= ?1 AND at <= ?${ids.length + 2} AND subscription_id IN (${marks})`,
+      )
+      .get(since, ...ids, now.toISOString())?.usd ?? 0
+  );
+}
+
 function readWeek(app: App, repo: Repo, now: Date): Week | null {
-  const granted = grantedAccounts(app.db, repo.id, repo.ownerId);
-  const stand = standings(app.db, granted.map((a) => a.id), now);
+  // A crew with no grant runs on the forge's own token: the account `usage`
+  // prints as `platform`. It is metered too, never skipped (#8873).
+  const granted = grantedAccounts(app.db, repo.id, repo.ownerId).map((a) => a.id);
+  const stand = standings(app.db, granted.length > 0 ? granted : [PLATFORM], now);
   let capUsd = 0;
-  let usedUsd = 0;
+  let freeUsd = 0;
+  let keptUsd = 0;
   let resetsAt: number | null = null;
-  for (const s of stand.values()) {
+  const known: string[] = [];
+  for (const [id, s] of stand) {
     const w = s.windows.find((x) => x.window === "week");
-    if (w === undefined || w.cap === null || w.kept === null || w.resetsAt === null) continue;
-    capUsd += Math.max(0, w.cap.value - w.kept.value);
-    usedUsd += w.used.value;
+    if (w === undefined || w.cap === null || w.kept === null || w.remaining === null || w.resetsAt === null) continue;
+    known.push(id);
+    capUsd += w.cap.value;
+    freeUsd += w.remaining.value;
+    keptUsd += w.kept.value;
     const at = Date.parse(w.resetsAt.value);
     if (resetsAt === null || at < resetsAt) resetsAt = at;
   }
-  return resetsAt === null ? null : { capUsd, usedUsd, resetsAt: new Date(resetsAt) };
+  if (resetsAt === null || !(capUsd > 0)) {
+    // Granted accounts with no known limit are an unknown week; the forge's own token with none is not metered at all.
+    return granted.length > 0 ? { meter: null } : null;
+  }
+  return {
+    meter: {
+      freePct: (freeUsd / capUsd) * 100,
+      keptPct: (keptUsd / capUsd) * 100,
+      burnPctPerHour: ((recentUsd(app, known, now) / capUsd) * 100) / WEEK.burnHours,
+      resetsAt: new Date(resetsAt),
+    },
+  };
 }
 
 /** Real landings, agent runs and what they cost since `since`: carried pulls and pulls that added nothing are left out. */
@@ -74,14 +104,14 @@ export function efficiencySince(app: App, repo: Repo, since: Date): Efficiency {
 /** The week's efficiency: since the week opened, or seven days back when no window is known. */
 export function weekEfficiency(app: App, repo: Repo, now: Date): Efficiency {
   const week = weekOf(app, repo, now);
-  const since = week === null ? now.getTime() - WINDOW_MS.week : week.resetsAt.getTime() - WINDOW_MS.week;
+  const since = week?.meter == null ? now.getTime() - WINDOW_MS.week : week.meter.resetsAt.getTime() - WINDOW_MS.week;
   return efficiencySince(app, repo, new Date(since));
 }
 
 /**
  * The week's decision for a repository, given the builders' idle slots and
  * the issues a builder may start and the Later gate alone holds; null while
- * the week's capacity is unknown.
+ * no account is metered.
  */
 export function weekFor(
   app: App,
@@ -95,8 +125,8 @@ export function weekFor(
 
 /**
  * The pace sentence and the efficiency beside it for the first autonomous
- * repository with a crew, as the idle reason picks it; null while no account's
- * week has a known cap. Home and the terminal's dashboard print the same words.
+ * repository with a crew, as the idle reason picks it; null while no account
+ * is metered. Home and the terminal's dashboard print the same words.
  */
 export function weekWords(app: App, now: Date = new Date()): string | null {
   for (const repo of listAutonomousRepos(app.db)) {

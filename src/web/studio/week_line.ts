@@ -1,7 +1,7 @@
 /**
  * Home's week line (#8695): one sentence on whether the crew is spending the
  * subscriptions' week on pace, and beside it what a real landing costs
- * (`weekWords`). Empty while no account's week has a known cap.
+ * (`weekWords`). Empty while no account is metered.
  */
 
 import type { App } from "../../app.ts";

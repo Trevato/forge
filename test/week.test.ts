@@ -12,18 +12,19 @@ import { efficiencyWords, WEEK, weekDecision, type WeekInput } from "../src/crew
 
 const DAY = 86_400_000;
 const NOW = new Date("2026-11-02T12:00:00Z");
-// Halfway through the week: 3.5 days to the reset.
+// Halfway through the week: 3.5 days to the reset, half of it free.
 const base: WeekInput = {
-  capUsd: 100,
-  usedUsd: 50,
-  resetsAt: new Date(NOW.getTime() + 3.5 * DAY),
+  meter: { freePct: 50, keptPct: 0, burnPctPerHour: 0.4, resetsAt: new Date(NOW.getTime() + 3.5 * DAY) },
   now: NOW,
   ceiling: 4,
   idleSlots: 2,
   startable: 0,
   gated: 3,
 };
+const meterOf = (over: Partial<NonNullable<WeekInput["meter"]>>) => ({ ...base.meter!, ...over });
 const decide = (over: Partial<WeekInput>) => weekDecision({ ...base, ...over })!;
+const used = (usedPct: number, over: Partial<NonNullable<WeekInput["meter"]>> = {}) =>
+  decide({ meter: meterOf({ freePct: 100 - usedPct, ...over }) });
 
 describe("weekDecision", () => {
   test("the same state gives the same decision", () => {
@@ -31,47 +32,88 @@ describe("weekDecision", () => {
   });
 
   test("settings are plain values", () => {
-    expect(WEEK).toEqual({ tolerance: 0.05, reserve: 0.1, floorSlots: 1 });
+    expect(WEEK).toEqual({ tolerance: 0.05, reserve: 0.1, floorSlots: 1, unknownSlots: 2, burnHours: 3 });
   });
 
   test("on pace: the target burn is the rest over the time left", () => {
     const d = decide({});
     expect(d.status).toBe("on pace");
-    expect(d.targetUsdPerDay).toBeCloseTo(50 / 3.5);
+    expect(d.targetPctPerHour).toBeCloseTo(50 / 84);
     expect(d.release).toBe(false);
     expect(d.slots).toBe(4);
-    expect(d.sentence).toContain("On pace");
+    expect(d.sentence).toContain("On pace: 50% of the week left");
   });
 
   test("behind with builders idle and nothing startable releases the next gated issue", () => {
-    const d = decide({ usedUsd: 20 });
+    const d = used(20, { burnPctPerHour: 0 });
     expect(d.status).toBe("behind");
     expect(d.release).toBe(true);
-    expect(d.sentence).toContain("Behind pace by $30.00");
+    expect(d.sentence).toContain("Behind pace by 30%");
   });
 
   test("behind does not release while work is startable, builders are busy, or nothing is gated", () => {
-    expect(decide({ usedUsd: 20, startable: 1 }).release).toBe(false);
-    expect(decide({ usedUsd: 20, idleSlots: 0 }).release).toBe(false);
-    expect(decide({ usedUsd: 20, gated: 0 }).release).toBe(false);
+    const meter = meterOf({ freePct: 80, burnPctPerHour: 0 });
+    expect(decide({ meter, startable: 1 }).release).toBe(false);
+    expect(decide({ meter, idleSlots: 0 }).release).toBe(false);
+    expect(decide({ meter, gated: 0 }).release).toBe(false);
   });
 
   test("ahead brings the slots down before the limit", () => {
-    const d = decide({ usedUsd: 70 });
+    const d = used(70, { burnPctPerHour: 0 });
     expect(d.status).toBe("ahead");
     expect(d.slots).toBe(2);
     expect(d.release).toBe(false);
-    expect(decide({ usedUsd: 89, ceiling: 2 }).slots).toBe(1);
+    expect(decide({ ceiling: 2, meter: meterOf({ freePct: 11, burnPctPerHour: 0 }) }).slots).toBe(1);
   });
 
   test("the reserve for people is a wall", () => {
-    expect(decide({ usedUsd: 90 }).slots).toBe(0);
-    expect(decide({ usedUsd: 89 }).slots).toBeGreaterThan(0);
+    expect(used(90, { burnPctPerHour: 0 }).slots).toBe(0);
+    expect(used(89, { burnPctPerHour: 0 }).slots).toBeGreaterThan(0);
   });
 
-  test("no known capacity or an ended week is no decision", () => {
-    expect(weekDecision({ ...base, capUsd: 0 })).toBeNull();
-    expect(weekDecision({ ...base, resetsAt: NOW })).toBeNull();
+  test("the operator's kept share is not the crew's to spend", () => {
+    expect(used(45, { keptPct: 50, burnPctPerHour: 0 }).slots).toBe(0);
+  });
+
+  test("a fast burn slows the crew even when the week's total is on pace", () => {
+    const calm = used(50, { burnPctPerHour: 0.3 });
+    expect(calm.slots).toBe(4);
+    const fast = used(50, { burnPctPerHour: 2.7 });
+    expect(fast.status).toBe("ahead");
+    expect(fast.slots).toBe(1);
+    expect(fast.runsOutAt).not.toBeNull();
+    expect(fast.sentence).toContain("running out about");
+  });
+
+  test("today's numbers: 46% free, 2.7 points an hour, 5.3 days to the reset, slows the crew", () => {
+    const now = new Date("2026-11-02T19:25:00Z");
+    const d = weekDecision({
+      meter: { freePct: 46, keptPct: 0, burnPctPerHour: 2.7, resetsAt: new Date("2026-11-08T02:00:00Z") },
+      now,
+      ceiling: 5,
+      idleSlots: 0,
+      startable: 0,
+      gated: 0,
+    })!;
+    expect(d.status).toBe("ahead");
+    expect(d.slots).toBeLessThan(5);
+    expect(d.slots).toBeGreaterThanOrEqual(1);
+    expect(d.sentence).toContain("46% of the week left");
+    expect(d.sentence).toContain("running out about 2026-11-03");
+    // `/talk` keeps its reserve: at the wall the crew stops, with the reserve still unspent.
+    expect(d.runsOutAt!.getTime()).toBeLessThan(now.getTime() + 17 * 3_600_000);
+  });
+
+  test("unknown capacity is not fine: the crew holds at a modest level and home says so", () => {
+    const d = decide({ meter: null });
+    expect(d.status).toBe("unknown");
+    expect(d.slots).toBe(WEEK.unknownSlots);
+    expect(d.sentence).toContain("pace is unknown");
+    expect(decide({ meter: null, ceiling: 1 }).slots).toBe(1);
+  });
+
+  test("an ended week is no decision", () => {
+    expect(weekDecision({ ...base, meter: meterOf({ resetsAt: NOW }) })).toBeNull();
   });
 });
 
