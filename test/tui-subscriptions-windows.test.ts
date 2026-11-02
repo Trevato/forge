@@ -144,23 +144,49 @@ describe("windows on the terminal's subscriptions screen", () => {
     expect(rest).toContain(`resets ${first.slice(first.indexOf("resets ") + "resets ".length)}`);
   });
 
-  test("moving the cursor redraws from memory: no query reaches the database", async () => {
-    const h = await open();
+  /** Database calls made while `run` goes, counting only those with the screen's own frame on the stack. */
+  async function screenQueries(run: () => Promise<void>): Promise<number> {
     const db = forge.db as unknown as { query: (...a: unknown[]) => unknown; prepare: (...a: unknown[]) => unknown };
     const { query, prepare } = db;
     let calls = 0;
-    db.query = (...a) => (calls++, query.apply(forge.db, a));
-    db.prepare = (...a) => (calls++, prepare.apply(forge.db, a));
+    // Other timers in this process share the database, so a call counts only when
+    // screens/subscriptions is on its stack; the limit is raised so that frame is never cut off.
+    const ours = () => {
+      const limit = Error.stackTraceLimit;
+      Error.stackTraceLimit = 200;
+      const stack = new Error().stack ?? "";
+      Error.stackTraceLimit = limit;
+      return stack.includes("screens/subscriptions");
+    };
+    db.query = (...a) => (ours() && calls++, query.apply(forge.db, a));
+    db.prepare = (...a) => (ours() && calls++, prepare.apply(forge.db, a));
     try {
-      await h.press("j");
-      await h.press("k");
+      await run();
     } finally {
       db.query = query;
       db.prepare = prepare;
     }
+    return calls;
+  }
+
+  test("moving the cursor redraws from memory: no query reaches the database", async () => {
+    const h = await open();
+    const calls = await screenQueries(async () => {
+      await h.press("j");
+      await h.press("k");
+    });
     expect(calls).toBe(0);
     expect(h.text()).toContain("windows not seen yet");
     h.stop();
+  });
+
+  test("the query counter sees the screen's own reads (it is not vacuous)", async () => {
+    let h: Awaited<ReturnType<typeof open>> | undefined;
+    const calls = await screenQueries(async () => {
+      h = await open();
+    });
+    expect(calls).toBeGreaterThan(0);
+    h?.stop();
   });
 
   test("an account with no window seen says so, whichever row the cursor is on", async () => {
