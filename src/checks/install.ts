@@ -18,6 +18,7 @@
 
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { meterEgress } from "../apps/egress.ts";
 import { dirname, join } from "node:path";
 import { formatBytes } from "../core/storage.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -45,6 +46,46 @@ const LOCK_POLL_MS = 50;
  */
 export function installFetchedLine(bytes: number): string {
   return `install fetched ${formatBytes(Math.max(0, bytes))} from the registry`;
+}
+
+/** More than this from the npm registry in one install is the shared cache missing (#8382). */
+export const NPM_MISS_BYTES = 1024 * 1024;
+
+/**
+ * The line a contained install's log ends with when its cell received more
+ * than `NPM_MISS_BYTES` from the npm registry; none under it.
+ */
+export function npmMissLine(npmBytes: number): string | undefined {
+  if (!(npmBytes > NPM_MISS_BYTES)) return undefined;
+  const mib = npmBytes / NPM_MISS_BYTES;
+  return `install fetched ${mib < 10 ? mib.toFixed(1) : Math.round(mib)} MiB from the npm registry; the shared cache missed`;
+}
+
+/**
+ * Run a contained install `step` with its cell's egress proxy metered by
+ * `label`, the registry's bytes attributed to `repoId` (#8382). After the
+ * step — in `finally`, so a failed, aborted or throwing install logs too —
+ * `write` gets `installFetchedLine` when `fetched` asks for it (a check's
+ * #7546 line), then `npmMissLine` when the registry sent more than a MiB.
+ * With no `label` the install is uncontained: nothing is metered or logged.
+ */
+export async function meteredInstall<T>(
+  label: string | undefined,
+  repoId: string | undefined,
+  step: () => Promise<T>,
+  write: (line: string) => void,
+  options: { readonly fetched?: boolean } = {},
+): Promise<T> {
+  if (label === undefined) return step();
+  const meter = meterEgress(label, repoId);
+  try {
+    return await step();
+  } finally {
+    const fetched = meter.stop();
+    if (options.fetched === true) write(installFetchedLine(fetched));
+    const missed = npmMissLine(meter.npm());
+    if (missed !== undefined) write(missed);
+  }
 }
 
 export type InstallOutcome =

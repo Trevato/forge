@@ -129,8 +129,51 @@ interface Moved {
 const MOVED_MAX = 256;
 const HOUR_MINUTES = 60;
 const moved = new Map<string, Moved>();
-/** label -> bytes in, for the labels someone is metering now (`meterEgress`). */
-const meters = new Map<string, { bytesIn: number; holders: number }>();
+/**
+ * label -> bytes in, for the labels someone is metering now (`meterEgress`),
+ * and the repository whose cell the label is: the one thing that says whose
+ * registry bytes these are (#8382), set by the caller that opened the cell.
+ */
+const meters = new Map<string, { bytesIn: number; npmIn: number; holders: number; repoId: string | undefined }>();
+/**
+ * Registry bytes per repository, minute by minute over the last hour
+ * (#8382). Only a metered install with a repository lands here; past
+ * `NPM_REPOS_MAX` repositories the quietest is dropped first.
+ */
+const npmByRepo = new Map<string, Moved>();
+const NPM_REPOS_MAX = 256;
+
+function ring(): Moved {
+  return { bytesIn: 0, bytesOut: 0, minute: Array(HOUR_MINUTES).fill(-1), minuteIn: Array(HOUR_MINUTES).fill(0) };
+}
+
+/** Add `bytesIn` to `m` at minute `minute`. */
+function addMinute(m: Moved, minute: number, bytesIn: number): void {
+  const slot = minute % HOUR_MINUTES;
+  if (m.minute[slot] !== minute) {
+    m.minute[slot] = minute;
+    m.minuteIn[slot] = 0;
+  }
+  m.minuteIn[slot] = (m.minuteIn[slot] ?? 0) + bytesIn;
+}
+
+function recordNpmRepo(repoId: string, bytesIn: number, minute: number): void {
+  let m = npmByRepo.get(repoId);
+  if (m === undefined) {
+    if (npmByRepo.size >= NPM_REPOS_MAX) {
+      let quietest: string | undefined;
+      let least = Infinity;
+      for (const [id, r] of npmByRepo) {
+        const hour = lastHour(r, minute);
+        if (hour < least) [quietest, least] = [id, hour];
+      }
+      if (quietest !== undefined) npmByRepo.delete(quietest);
+    }
+    npmByRepo.set(repoId, (m = ring()));
+  }
+  m.bytesIn += bytesIn;
+  addMinute(m, minute, bytesIn);
+}
 
 /** Count `bytesIn` received from and `bytesOut` sent to `destination`. */
 export function recordEgress(
@@ -145,19 +188,17 @@ export function recordEgress(
       ? destination
       : "other";
   let m = moved.get(key);
-  if (m === undefined)
-    moved.set(key, (m = { bytesIn: 0, bytesOut: 0, minute: Array(HOUR_MINUTES).fill(-1), minuteIn: Array(HOUR_MINUTES).fill(0) }));
+  if (m === undefined) moved.set(key, (m = ring()));
   m.bytesIn += bytesIn;
   m.bytesOut += bytesOut;
   const minute = Math.floor(now / 60_000);
-  const slot = minute % HOUR_MINUTES;
-  if (m.minute[slot] !== minute) {
-    m.minute[slot] = minute;
-    m.minuteIn[slot] = 0;
-  }
-  m.minuteIn[slot] = (m.minuteIn[slot] ?? 0) + bytesIn;
+  addMinute(m, minute, bytesIn);
   const meter = meters.get(label);
-  if (meter !== undefined) meter.bytesIn += bytesIn;
+  if (meter === undefined) return;
+  meter.bytesIn += bytesIn;
+  if (destination !== NPM_REGISTRY || bytesIn === 0) return;
+  meter.npmIn += bytesIn;
+  if (meter.repoId !== undefined) recordNpmRepo(meter.repoId, bytesIn, minute);
 }
 
 export interface EgressTotal {
@@ -198,23 +239,58 @@ export function npmBytesLastHour(now = Date.now()): number {
   return m === undefined ? 0 : lastHour(m, Math.floor(now / 60_000));
 }
 
+/** The repository that received most from the npm registry over the last hour, by id. */
+export interface NpmTopRepo {
+  readonly repoId: string;
+  readonly bytes: number;
+}
+
+/** The metered repository the registry sent most to in the last hour; none when no metered install fetched. */
+export function npmTopRepoLastHour(now = Date.now()): NpmTopRepo | undefined {
+  const minute = Math.floor(now / 60_000);
+  let top: NpmTopRepo | undefined;
+  for (const [repoId, m] of npmByRepo) {
+    const bytes = lastHour(m, minute);
+    if (bytes > 0 && (top === undefined || bytes > top.bytes || (bytes === top.bytes && repoId < top.repoId)))
+      top = { repoId, bytes };
+  }
+  return top;
+}
+
+export interface EgressMeter {
+  /** Stop counting; answers the bytes received from every destination. */
+  stop(): number;
+  /** Bytes received from the npm registry alone, up to `stop()`. */
+  npm(): number;
+}
+
 /**
  * Count what `label`'s proxy receives from now until `stop()`, which answers
  * the bytes in. Only labels being metered are kept, and each goes with its
- * last holder, so a run label never outlives the step that asked.
+ * last holder, so a run label never outlives the step that asked. `repoId`
+ * is the repository whose cell `label` names, from the caller that opened
+ * it: the registry bytes are attributed to it, never to anything the
+ * install printed.
  */
-export function meterEgress(label: string): { stop(): number } {
-  const meter = meters.get(label) ?? { bytesIn: 0, holders: 0 };
+export function meterEgress(label: string, repoId?: string): EgressMeter {
+  const meter = meters.get(label) ?? { bytesIn: 0, npmIn: 0, holders: 0, repoId };
+  // An earlier holder that knew no repository must not lose a later one's.
+  meter.repoId ??= repoId;
   meters.set(label, meter);
   meter.holders++;
   const start = meter.bytesIn;
-  let stopped = false;
+  const npmStart = meter.npmIn;
+  let stopped: { bytes: number; npm: number } | undefined;
   return {
     stop() {
-      const bytes = meter.bytesIn - start;
-      if (!stopped && --meter.holders === 0) meters.delete(label);
-      stopped = true;
-      return bytes;
+      if (stopped === undefined) {
+        stopped = { bytes: meter.bytesIn - start, npm: meter.npmIn - npmStart };
+        if (--meter.holders === 0) meters.delete(label);
+      }
+      return stopped.bytes;
+    },
+    npm() {
+      return stopped?.npm ?? meter.npmIn - npmStart;
     },
   };
 }
@@ -222,6 +298,7 @@ export function meterEgress(label: string): { stop(): number } {
 /** For tests: forget every cumulative count. */
 export function resetEgressTotals(): void {
   moved.clear();
+  npmByRepo.clear();
 }
 
 /** The ports a declared host may be reached on when its entry names none. */

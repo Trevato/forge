@@ -19,7 +19,7 @@ import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
-import { cellInstall, prefillInstallCache, withLock } from "../checks/install.ts";
+import { cellInstall, meteredInstall, prefillInstallCache, withLock } from "../checks/install.ts";
 import {
   commandPid,
   killTree,
@@ -96,6 +96,8 @@ export interface CellBase {
   readonly egressMode?: "enforce" | "report" | undefined;
   /** Whose cell, for the machine sampler: `app:<slug>/<env>`. */
   readonly label?: string | undefined;
+  /** Whose repository the cell runs, for the npm registry tally (`apps/egress.ts`). */
+  readonly repoId?: string | undefined;
 }
 
 export type StartStage = "install" | "test" | "start" | "ready";
@@ -451,9 +453,14 @@ async function install(
   const plan = installPlan(command, input, env, filled);
   const step = (): Promise<Result<void, string>> =>
     runStep("install", plan.command, { cwd: input.dir, env: plan.env, log: input.log, signal: input.signal, cell: plan.cell });
-  if (plan.lock === undefined) return step();
-  const held = await withLock(plan.lock, step, { signal: input.signal });
-  return held.ok ? held.value : held;
+  if (plan.lock !== undefined) {
+    const held = await withLock(plan.lock, step, { signal: input.signal });
+    return held.ok ? held.value : held;
+  }
+  // A contained install is metered by its cell's label (#8382): more than
+  // a MiB from the registry is the shared cache missing, and says so, even
+  // when the install failed or was aborted.
+  return meteredInstall(plan.cell?.label, input.cell?.repoId, step, input.log);
 }
 
 /**

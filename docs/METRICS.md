@@ -76,12 +76,20 @@ by run, so the series stay one per host). They show the bun cache working
 stays near zero, and a cold one is hundreds of megabytes an hour (#7541).
 Without Prometheus, the same hour is read four ways:
 
-- MCP `capacity` (forge admin) answers `egress.npmBytesLastHour` and the ten
-  busiest `egress.destinations` with their totals and last hour.
-- `/settings/capacity` prints it in the Egress connections card.
+- MCP `capacity` (forge admin) answers `egress.npmBytesLastHour`,
+  `egress.npmTopRepoLastHour` (the repository whose contained installs the
+  registry sent most this hour, attributed by the cell's own meter, never by
+  install output; null when none) and the ten busiest `egress.destinations`
+  with their totals and last hour.
+- `/settings/capacity` prints it, with the top repository, in the Egress
+  connections card.
 - The terminal's Egress connections screen (About, `c`, site admin) prints the
-  same line above the open connections.
+  same line, with the top repository, above the open connections; all three
+  read `egressHour`.
 - Each check's install step in a cell logs one line, `install fetched 0 B from
   the registry` on a warm cache: what the cell's egress proxy received. A check
   outside a cell logs none: its repository's bun cache is shared, so no figure
-  there would be its own.
+  there would be its own. A contained check, gate or app install that received
+  more than 1 MiB from `registry.npmjs.org` ends its log with `install fetched
+  N MiB from the npm registry; the shared cache missed` (#8382), failed or
+  aborted installs included.

@@ -110,13 +110,12 @@ import { JOB_VANISHED, runJobStep } from "./job_step.ts";
 import {
   cellInstall,
   checkInstallCache,
-  installFetchedLine,
+  meteredInstall,
   installWithRetry,
   prefillInstallCache,
   withLock,
 } from "./install.ts";
 import { evictSoon, lend } from "./install_evict.ts";
-import { meterEgress } from "../apps/egress.ts";
 import { checkStage, type GateStage } from "./gate_reason.ts";
 import { extraGates, GATE_DEADLINE_MS, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
@@ -1222,48 +1221,48 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           // What the cell's proxy received, for the one line that shows the cache
           // working (#7546). Uncontained, nothing is logged: the shared cache
           // is not metered, and its growth is wrong under concurrent checks.
-          // Stopped in `finally`, so a throw never leaves the label metered.
-          const meter = cell === undefined ? undefined : meterEgress(`check:${run.id}`);
-          let fetched: number | undefined;
-          let installed: Awaited<ReturnType<typeof installWithRetry>>;
-          try {
-            installed = await installWithRetry(
-              async (log) => {
-                if (shared === undefined) {
-                  if (warm !== undefined) {
-                    const fill = await prefillInstallCache({
-                      cache: warm,
-                      dir,
-                      env,
-                      log,
-                      signal,
-                      timeoutMs: manifest.timeout * 1000,
-                    });
-                    if (!fill.ok) return fill;
-                    filled = fill.value;
-                    void evictSoon(warm, process.env);
+          // Stopped in `finally`, so a throw never leaves the label metered;
+          // over a MiB from the npm registry adds the miss line (#8382).
+          const installed = await meteredInstall(
+            cell === undefined ? undefined : `check:${run.id}`,
+            repo.id,
+            () =>
+              installWithRetry(
+                async (log) => {
+                  if (shared === undefined) {
+                    if (warm !== undefined) {
+                      const fill = await prefillInstallCache({
+                        cache: warm,
+                        dir,
+                        env,
+                        log,
+                        signal,
+                        timeoutMs: manifest.timeout * 1000,
+                      });
+                      if (!fill.ok) return fill;
+                      filled = fill.value;
+                      void evictSoon(warm, process.env);
+                    }
+                    return once(log);
                   }
-                  return once(log);
-                }
-                mkdirSync(shared, { recursive: true });
-                const held = await withLock(
-                  `${shared}.lock`,
-                  async () => {
-                    const done = await once(log);
-                    if (done.ok) lend(shared, dir);
-                    return done;
-                  },
-                  { signal },
-                );
-                if (held.ok && held.value.ok) void evictSoon(shared, process.env);
-                return held.ok ? held.value : held;
-              },
-              { log: write, signal, retryMs: options.installRetryMs },
-            );
-          } finally {
-            fetched = meter?.stop();
-          }
-          if (fetched !== undefined) write(installFetchedLine(fetched));
+                  mkdirSync(shared, { recursive: true });
+                  const held = await withLock(
+                    `${shared}.lock`,
+                    async () => {
+                      const done = await once(log);
+                      if (done.ok) lend(shared, dir);
+                      return done;
+                    },
+                    { signal },
+                  );
+                  if (held.ok && held.value.ok) void evictSoon(shared, process.env);
+                  return held.ok ? held.value : held;
+                },
+                { log: write, signal, retryMs: options.installRetryMs },
+            ),
+            write,
+            { fetched: true },
+          );
           if (!installed.ok)
             return {
               ok: false,

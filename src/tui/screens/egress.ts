@@ -11,7 +11,8 @@ import {
   revokeAppEgress,
   type EgressRow,
 } from "../../actions/egress_grants.ts";
-import { egressSnapshot, npmBytesLastHour } from "../../apps/egress.ts";
+import { egressHour } from "../../actions/capacity.ts";
+import { egressSnapshot } from "../../apps/egress.ts";
 import { bytes } from "../../system/format.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -117,7 +118,8 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
 /**
  * The egress connections open right now, per app and destination: the
  * Capacity page's card, for a site admin, under the bytes the npm registry
- * sent over the last hour (#7546). Read again on every draw, so it moves as
+ * sent over the last hour (#7546) and the repository it sent most to (#8382),
+ * both from `egressHour`, as the page and MCP read them. Read again on every draw, so it moves as
  * connections do; anyone else is offered nothing.
  */
 export function connectionsScreen(f: Session, ctx: Ctx): Screen {
@@ -138,7 +140,10 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
       state.clamp(rows.length);
       const [npm, head, list] = split(area, "v", [len(1), len(1), fill(1)]);
       if (f.user?.isAdmin === true) {
-        const sent = `The npm registry sent ${bytes(npmBytesLastHour())} over the last hour.`;
+        const hour = egressHour(f.app.db);
+        const top = hour.npmTopRepoLastHour;
+        const most = top === null ? "." : `, most to ${top.repo} (${bytes(top.bytes)}).`;
+        const sent = `The npm registry sent ${bytes(hour.npmBytesLastHour)} over the last hour${most}`;
         s.text(npm!.x, npm!.y, truncate(sent, npm!.w), style(c.mutedFg, c.bg), npm!.x + npm!.w);
       }
       const note =

@@ -5,7 +5,7 @@ import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "capacity",
-  doc: "`{ key?, value?, dryRun? }` (forge admin): the forge's capacity and guards, live (crew and checks concurrency, check shards, cell egress, the new-account guard, the sign-in edge, queue depth, child forges, `egress.npmBytesLastHour`; only the first six are settable by `key`); with `key` and `value` (`\"\"` restores the default), planned first (`dryRun` is true unless `false`); applying needs an admin-scope token",
+  doc: "`{ key?, value?, dryRun? }` (forge admin): the forge's capacity and guards, live (crew and checks concurrency, check shards, cell egress, the new-account guard, the sign-in edge, queue depth, child forges, `egress.npmBytesLastHour` and `npmTopRepoLastHour`; only the first six are settable by `key`); with `key` and `value` (`\"\"` restores the default), planned first (`dryRun` is true unless `false`); applying needs an admin-scope token",
   description:
     "Forge capacity and guards, live. With `key` and `value` (\"\" restores default), plans.",
   inputSchema: {

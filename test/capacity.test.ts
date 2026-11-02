@@ -18,7 +18,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { enableApp } from "../src/actions/apps.ts";
-import { NPM_REGISTRY, recordEgress, resetEgressTotals, startEgress } from "../src/apps/egress.ts";
+import { meterEgress, NPM_REGISTRY, recordEgress, resetEgressTotals, startEgress } from "../src/apps/egress.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import {
@@ -159,6 +159,24 @@ describe("capacity: only a forge admin reads or changes it", () => {
     // 3,000,000 B / 1024² = 2.86 MiB.
     expect(page).toMatch(/id="egress-npm"[\s\S]*?2\.9 MiB/);
     resetEgressTotals();
+  });
+
+  test("MCP capacity and the page name the repository the registry sent most this hour (#8382)", async () => {
+    resetEgressTotals();
+    const made = await createRepo(app, alice, { name: "npm-heavy", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const meter = meterEgress("check:heavy", made.value.id);
+    recordEgress("check:heavy", NPM_REGISTRY, 5 * 1024 * 1024, 0);
+    meter.stop();
+    const read = await mcp(aliceRo, {});
+    const egress = (JSON.parse(read.text) as { egress: { npmTopRepoLastHour: { repo: string; bytes: number } | null } }).egress;
+    expect(egress.npmTopRepoLastHour).toEqual({ repo: "alice/npm-heavy", bytes: 5 * 1024 * 1024 });
+    const cookie = await login("alice");
+    const page = await (await fetch(`${servers.url}/settings/capacity`, { headers: { cookie } })).text();
+    expect(page).toMatch(/id="egress-npm"[\s\S]*?alice\/npm-heavy[\s\S]*?5\.0 MiB/);
+    resetEgressTotals();
+    const none = await mcp(aliceRo, {});
+    expect((JSON.parse(none.text) as { egress: { npmTopRepoLastHour: unknown } }).egress.npmTopRepoLastHour).toBeNull();
   });
 
   test("a member, an agent and nobody are told it is not there, at every door", async () => {

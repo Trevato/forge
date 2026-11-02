@@ -22,7 +22,8 @@ import {
   type CapacityChange,
   type CapacityKey,
 } from "../core/capacity.ts";
-import { egressTotals, npmBytesLastHour, type EgressTotal } from "../apps/egress.ts";
+import { egressTotals, npmBytesLastHour, npmTopRepoLastHour, type EgressTotal } from "../apps/egress.ts";
+import { getRepoById } from "../core/repos.ts";
 import { passkeyIds } from "../core/passkeys.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -57,13 +58,23 @@ export interface CapacityRow {
  */
 export interface EgressHour {
   readonly npmBytesLastHour: number;
+  /**
+   * The repository whose contained installs the registry sent most this
+   * hour (#8382), as `owner/name`, attributed by the cell that fetched;
+   * null when no metered install fetched, or its repository is gone.
+   */
+  readonly npmTopRepoLastHour: { readonly repo: string; readonly bytes: number } | null;
   /** The ten destinations that sent most this hour, with their totals since boot. */
   readonly destinations: readonly EgressTotal[];
 }
 
-export function egressHour(now = Date.now()): EgressHour {
+export function egressHour(db: Database, now = Date.now()): EgressHour {
+  const top = npmTopRepoLastHour(now);
+  const repo = top === undefined ? undefined : getRepoById(db, top.repoId);
   return {
     npmBytesLastHour: npmBytesLastHour(now),
+    npmTopRepoLastHour:
+      top === undefined || repo === undefined ? null : { repo: `${repo.ownerName}/${repo.name}`, bytes: top.bytes },
     destinations: egressTotals(now).slice(0, 10),
   };
 }
@@ -104,7 +115,7 @@ export function listCapacity(
       ...changedOf(app.db, key),
     })),
     changes: capacityChanges(app.db),
-    egress: egressHour(),
+    egress: egressHour(app.db),
   });
 }
 

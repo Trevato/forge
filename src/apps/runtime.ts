@@ -1482,6 +1482,7 @@ export class AppsRuntime {
       // Likewise an admin's flip of the egress mode.
       egressMode: egressSetting(this.app.db),
       label: `app:${record.slug}/${env}`,
+      repoId: record.repoId,
     };
   }
 

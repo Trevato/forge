@@ -160,7 +160,13 @@ export function capacityPage(ctx: Ctx): Response {
   const open = egressSnapshot();
   // The bun cache at work (#7546): a warm cache keeps this near zero.
   const npm = html`The npm registry sent
-    <span class="mono">${bytes(egress.npmBytesLastHour)}</span> over the last hour.`;
+    <span class="mono">${bytes(egress.npmBytesLastHour)}</span> over the last hour${
+      egress.npmTopRepoLastHour === null
+        ? "."
+        : html`, most to
+            <span class="mono">${egress.npmTopRepoLastHour.repo}</span>
+            (<span class="mono">${bytes(egress.npmTopRepoLastHour.bytes)}</span>).`
+    }`;
   const connections = card(
     open.length === 0
       ? html`<div class="card-body">
