@@ -32,3 +32,13 @@ A release's directory has no `node_modules`, and installing into it before prefl
 ## What can be deleted once production runs it
 
 The image-per-release path (release workflow image build and push, the `Dockerfile` `VERSION`/`COMMIT` stamping per release), `keeper/deploy.ts` `kubeDeployer` and `FORGE_KEEPER_DEPLOYMENT`/`CONTAINER`, the promote scripts and `scripts/cut-release.ts`'s image half, the droplet's `forge-release-tick` on pg-grand, and the chart's service-account patch rule.
+
+## Proving it on a hosted child (#8374, open)
+
+**Not yet run on a hosted child forge.** No child was reachable from the run that wrote this, so no seconds-dark figure is claimed and nothing here is a proof. What is open is tracked in #8378: whether a child's pod can have `net.ipv4.tcp_migrate_req=1`.
+
+A child needs `FORGE_REPO`, `FORGE_SELF_SWAP=1`, `FORGE_RELEASE_KEEPER=swap`. A hosted child has no SSH listener (`FORGE_SSH_PORT` defaults to 0 under `FORGE_APP_URL`), so SSH never blocks its swap; production keeps its terminal off (`FORGE_SSH_PORT=0`) until it can be handed over.
+
+The drill, reading `/releases` after each step (version, landed to live, probes, seconds dark): (1) land a pull and wait for the cut; (2) it swaps and verifies; (3) land a pull that boots but fails the verify (`/healthz` answers 500) and watch it swap back by name and hold; (4) restart the pod and see it return on the last good tree (`release/good.json`). The four dark-second figures go into the pull that proves it.
+
+**`tcp_migrate_req`.** Both processes bind the port with SO_REUSEPORT; when the old closes its listener the kernel resets what was queued on it unless `tcp_migrate_req=1` moves those connections to the other listener (Linux 5.14+). Without it `swapBlocked` refuses the cut and the release goes out by restart. The setting is per network namespace; a pod gets it through `securityContext.sysctls` (the kubelet needs `--allowed-unsafe-sysctls=net.ipv4.tcp_migrate_req`) or a node-level setting. This is not verified here.
