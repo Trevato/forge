@@ -461,8 +461,8 @@ export const NEW_APP_ERRORS: Record<string, string> = {
   no_such_agent: NO_SUCH_AGENT,
 };
 
-export interface NewAppFromSentenceInput extends Omit<NewAppInput, "name" | "description"> {
-  /** The sentence the app is named from; it is also the first issue's description. */
+export interface NewAppFromSentenceInput extends Omit<NewAppInput, "name"> {
+  /** The sentence the app is named from; it is also the first issue's description unless `description` is given. */
   sentence: string;
 }
 
@@ -478,16 +478,16 @@ export type NewAppFromSentence =
 export async function newAppFromSentence(
   app: App,
   actor: User | undefined,
-  { sentence, ...rest }: NewAppFromSentenceInput,
+  { sentence, description, ...rest }: NewAppFromSentenceInput,
   onPhase?: (name: string, ms: number) => void,
 ): Promise<NewAppFromSentence> {
   const base = deriveAppName(sentence);
   if (base === undefined) return { ok: false, code: "no_name" };
   let name = base;
-  let made = await newApp(app, actor, { ...rest, description: sentence, name }, onPhase);
+  let made = await newApp(app, actor, { ...rest, description: description ?? sentence, name }, onPhase);
   for (let n = 2; !made.ok && made.error === "name_taken" && n <= MAX_NAME_ATTEMPTS; n++) {
     name = `${base}-${n}`;
-    made = await newApp(app, actor, { ...rest, description: sentence, name }, onPhase);
+    made = await newApp(app, actor, { ...rest, description: description ?? sentence, name }, onPhase);
   }
   return made.ok ? { ok: true, name, ...made.value } : { ok: false, code: made.error };
 }

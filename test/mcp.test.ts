@@ -20,7 +20,7 @@ import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { addComment, createIssue, listIssues } from "../src/core/issues.ts";
 import { addDependency } from "../src/core/dependencies.ts";
-import { getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
+import { getRepo, getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { createRun, listRuns, setRunBase } from "../src/core/runs.ts";
 import { getAccountCeiling } from "../src/core/account_ceiling.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -1658,14 +1658,33 @@ describe("the forge over MCP", () => {
     expect((await tool(rw, "apps") as any).value.some((r: any) => r.app === "alice/readonly")).toBe(false);
   }, 30_000);
 
-  test("new_app with a sentence and no name derives the name; name wins when both are given", async () => {
-    const first = (await tool(rw, "new_app", { sentence: "Keep notes" })) as any;
-    expect(first.error).toBeUndefined();
-    const again = (await tool(rw, "new_app", { sentence: "Keep notes" })) as any;
-    expect(again.value.repo).toBe(`${first.value.repo}-2`);
-    const named = (await tool(rw, "new_app", { name: "wins", sentence: "Something else" })) as any;
-    expect(named.value.repo).toBe("alice/wins");
+  test("new_app names an app from a sentence alone, and -2 when taken", async () => {
+    const one = (await tool(rw, "new_app", { sentence: "a garden planner for my allotment" })) as any;
+    expect(one.value.repo).toMatch(/^alice\/[a-z0-9-]+$/);
+    expect(one.value.issue).toBe(1);
+    const two = (await tool(rw, "new_app", { sentence: "a garden planner for my allotment" })) as any;
+    expect(two.value.repo).toBe(`${one.value.repo}-2`);
+    const named = (await tool(rw, "new_app", { name: "keepname", sentence: "a garden planner" })) as any;
+    expect(named.value.repo).toBe("alice/keepname");
+    expect(named.value.issue).toBe(1);
+    // The derived path forwards visibility and agent, and `description` is the first issue over `sentence`.
+    const bot = await createAgent(app, alice, { username: "sentbot", brief: "builds" });
+    if (!bot.ok) throw new Error(String(bot.error));
+    const fwd = (await tool(rw, "new_app", {
+      sentence: "a recipe box for the family",
+      description: "Start with a list of recipes.",
+      visibility: "private",
+      agent: "sentbot",
+    })) as any;
+    expect(fwd.value.agent).toBe("sentbot");
+    const [slug] = fwd.value.repo.split("/").slice(1);
+    const made = getRepo(app.db, "alice", slug)!;
+    expect(made.visibility).toBe("private");
+    expect(listIssues(app.db, made.id, { state: "open" })[0]!.body).toContain("Start with a list of recipes.");
+    // A refusal maps as on the named path.
+    expect((await tool(rw, "new_app", { sentence: "a tide table", agent: "nobody-here" })).error).toContain("no_such_agent");
     expect((await tool(rw, "new_app", { sentence: "!!!" })).error).toContain("no_name");
+    expect((await tool(rw, "new_app", {})).error).toContain("no_name");
   }, 30_000);
 
   test("new_app with pick lets the planner name the agent", async () => {
