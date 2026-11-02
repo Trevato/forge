@@ -73,6 +73,7 @@ import {
 
 export type AccountSection =
   | "profile"
+  | "confirms"
   | "password"
   | "tokens"
   | "keys"
@@ -182,6 +183,13 @@ export function accountSections(
       href: "/settings",
       icon: "user",
       current: current === "profile",
+    },
+    // What the forge's agent asked first and waits for your yes (#7650).
+    {
+      label: "Confirms",
+      href: "/settings/confirms",
+      icon: "check",
+      current: current === "confirms",
     },
     {
       label: "Model",

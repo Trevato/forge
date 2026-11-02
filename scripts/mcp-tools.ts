@@ -40,13 +40,19 @@ export function indexText(names: readonly string[]): string {
   ].join("\n");
 }
 
-type Documented = { readonly name: string; readonly doc?: string; readonly writes: boolean };
+type Documented = {
+  readonly name: string;
+  readonly doc?: string;
+  readonly writes: boolean;
+  readonly needsAdminScope?: true;
+};
 
 export function tableText(tools: readonly Documented[]): string {
   const rows = [...tools]
     .filter((t) => t.doc !== undefined)
     .sort(byName)
-    .map((t) => `| \`${t.name}\` | ${t.doc} | ${t.writes ? "yes" : ""} |`);
+    // An admin-scope tool is marked so, as `tools/list` hides it from a lesser token (#7650).
+    .map((t) => `| \`${t.name}\` | ${t.needsAdminScope === true ? "(admin scope) " : ""}${t.doc} | ${t.writes ? "yes" : ""} |`);
   return [BEGIN, "", "| tool | does | writes |", "| ---- | ---- | ------ |", ...rows, "", END].join("\n");
 }
 

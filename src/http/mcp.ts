@@ -32,7 +32,7 @@ import { fileReport } from "../actions/reports.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
-import { type Args, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite } from "./mcp/shared.ts";
+import { type Args, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst } from "./mcp/shared.ts";
 import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
 
@@ -57,6 +57,16 @@ function adminNote(ctx: Ctx, user: User): string {
       ? " Daily work belongs on an everyday account, apart from admin."
       : ` Daily work belongs on ${daily.username}, their everyday account.`
   }`;
+}
+
+/**
+ * Said to an admin whose token is short of admin scope (#7650): which tools
+ * it hides, and the two deliberate ways to them. Empty for anyone else.
+ */
+export function hiddenAdminNote(ctx: Ctx, user: User): string {
+  if (!user.isAdmin || scopeAllows(ctx.auth.scope ?? "ro", "admin")) return "";
+  const hidden = TOOLS.filter((t) => t.needsAdminScope === true).map((t) => t.name);
+  return `Hidden from this token, as admin-scope tools: ${hidden.join(", ")}; reach them with an admin-scope token, or as the forge's agent by a confirm the person answers in the conversation.`;
 }
 
 /** A card's model beside the text, for a host that draws `ui://` resources. */
@@ -97,13 +107,14 @@ function rpcOne(
   switch (m["method"]) {
     case "initialize": {
       const asked = str(params["protocolVersion"]);
+      const hidden = hiddenAdminNote(ctx, user);
       return reply({
         protocolVersion: (PROTOCOLS as readonly string[]).includes(asked)
           ? asked
           : PROTOCOLS[0],
         capabilities: { tools: {}, resources: {} },
         serverInfo: server(),
-        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options. A tool with \`dryRun\` plans unless it is \`false\`.${adminNote(ctx, user)}${
+        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options. A tool with \`dryRun\` plans unless it is \`false\`.${adminNote(ctx, user)}${hidden === "" ? "" : ` ${hidden}`}${
           ctx.auth.through === undefined ? "" : ` ${CONVERSATION_BRIEF}`
         }`,
       });
@@ -146,9 +157,11 @@ function rpcOne(
         if (end > from && bytes > TOOLS_PAGE_BYTES) break;
         end++;
       }
+      const hidden = from === 0 ? hiddenAdminNote(ctx, user) : "";
       return reply({
         tools: all.slice(from, end),
         ...(end < all.length ? { nextCursor: all[end - 1]!.name } : {}),
+        ...(hidden === "" ? {} : { _meta: { hidden } }),
       });
     }
     case "resources/list":
@@ -174,8 +187,10 @@ function rpcOne(
           ? (params["arguments"] as Args)
           : {};
       // Before the scope floor, so an admin tool the forge's agent was
-      // steered to is held as a confirm too, not merely refused (#7649).
-      const held = tool === undefined ? undefined : heldWrite(ctx, user, tool, args);
+      // steered to is held as a confirm too, not merely refused (#7649), and
+      // one the person asked for waits for their yes (#7650).
+      const held =
+        tool === undefined ? undefined : (askedFirst(ctx, user, tool, args) ?? heldWrite(ctx, user, tool, args));
       if (held !== undefined) return reply(held);
       if (tool === undefined || !visible(tool, ctx, user))
         return refuse(-32602, `no tool named ${String(params["name"])}`);

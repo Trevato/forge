@@ -189,6 +189,7 @@ export { route as postApiV1AsksGiveBack } from "./postApiV1AsksGiveBack.ts";
 export { route as postApiV1AsksProposalIdVerb } from "./postApiV1AsksProposalIdVerb.ts";
 export { route as postApiV1BoardsPins } from "./postApiV1BoardsPins.ts";
 export { route as postApiV1BoardsQuery } from "./postApiV1BoardsQuery.ts";
+export { route as postApiV1ConversationConfirmsId } from "./postApiV1ConversationConfirmsId.ts";
 export { route as postApiV1ConversationTokens } from "./postApiV1ConversationTokens.ts";
 export { route as postApiV1Drills } from "./postApiV1Drills.ts";
 export { route as postApiV1FeedChips } from "./postApiV1FeedChips.ts";

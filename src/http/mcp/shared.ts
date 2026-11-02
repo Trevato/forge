@@ -9,6 +9,8 @@ import type { Ctx } from "../context.ts";
 import type { BoardError } from "../../actions/boards.ts";
 import { BOARD_NOT_SAVED } from "../../actions/board_words.ts";
 import { fence, fenceTag, fenceUp, hold, named, readFenced } from "../../core/fence.ts";
+import { appendTurn, openConversation } from "../../core/conversations.ts";
+import { asksFirst, confirmSentence } from "../../crew/conversation_confirm.ts";
 
 export type Args = Record<string, unknown>;
 export type Answer =
@@ -96,6 +98,48 @@ export function heldWrite(ctx: Ctx, user: User, tool: Tool, args: Args): Record<
       {
         type: "text",
         text: JSON.stringify({ needs_confirm: confirm, tool: tool.name, says: NEEDS_CONFIRM }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+/** What an asked-first call tells the forge's agent, beside the confirm's id and its sentence. */
+export const ASKS_FIRST =
+  "this action asks the person first, so nothing was done: say the sentence in `does` to them; their yes, within 10 minutes, under Settings → Confirms (/settings/confirms) or the terminal's Confirms, does it once";
+
+/**
+ * Asked first (#7650): for the forge's own agent, a call of a tool on the
+ * list in `crew/conversation_confirm.ts` — and any call of an admin-scope
+ * tool its rw token cannot reach, when the person is an admin — is kept as a
+ * confirm with one sentence of what it will do, written to the person's
+ * conversation as a `confirm` turn, and not done. Undefined: go on.
+ */
+export function askedFirst(ctx: Ctx, user: User, tool: Tool, args: Args): Record<string, unknown> | undefined {
+  const via = ctx.auth.through;
+  if (via === undefined) return undefined;
+  // What the person may not do stays unknown to their agent.
+  if ((tool.adminOnly === true || tool.needsAdminScope === true) && !user.isAdmin) return undefined;
+  const short = tool.needsAdminScope === true && !scopeAllows(ctx.auth.scope ?? "ro", "admin");
+  if (!short && (!tool.writes || plansOnly(tool, args) || !asksFirst(tool.name, args))) return undefined;
+  const confirm = hold(ctx.app.db, via, user.id, tool.name, args);
+  const does = confirmSentence(tool.name, args);
+  if (confirm !== null) {
+    const conversation = openConversation(ctx.app.db, user.id);
+    appendTurn(ctx.app.db, user.id, conversation.id, {
+      role: "confirm",
+      text: JSON.stringify({ confirm, tool: tool.name, does }),
+    });
+  }
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          confirm === null
+            ? { needs_confirm: null, tool: tool.name, says: "too many confirms are waiting in this conversation; nothing was kept" }
+            : { needs_confirm: confirm, tool: tool.name, does, says: ASKS_FIRST },
+        ),
       },
     ],
     isError: true,

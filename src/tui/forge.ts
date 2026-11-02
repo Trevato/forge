@@ -49,6 +49,7 @@ import { canScreen } from "./screens/can.ts";
 import { modelScreen } from "./screens/model.ts";
 import { notifyScreen } from "./screens/notify.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
+import { confirmsScreen } from "./screens/confirms.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { signInsScreen } from "./screens/signins.ts";
 import { originAppsScreen } from "./screens/originapps.ts";
@@ -255,6 +256,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Phone notifications",
         hint: "where the crew reaches your phone; s sets, x turns off",
         run: () => ctx.push(notifyScreen(session, ctx)),
+      });
+    // What the forge's agent asked first, waiting for the person's yes (#7650).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "confirms",
+        title: "Confirms",
+        hint: "what the forge's agent asked to do; y does it once",
+        run: () => ctx.push(confirmsScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push({

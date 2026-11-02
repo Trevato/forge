@@ -202,10 +202,26 @@ export interface Held {
 /** A conversation keeps at most this many held writes; past it, a write is refused unkept. */
 export const HELD_MAX = 50;
 
+/** Ten minutes: a held write not answered by then is past its time, and its arguments are cleared. */
+export const HELD_TTL_MS = 600_000;
+
+/**
+ * Put every held write past `HELD_TTL_MS` out of reach (#7650): stamped
+ * answered and its arguments cleared, so a secret it carried is not kept at
+ * rest and it no longer counts toward `HELD_MAX`. Run before a write is held
+ * and before the person's confirms are listed or answered.
+ */
+export function sweepHeld(db: Database, now: number = Date.now()): void {
+  db.query(
+    "UPDATE conversation_held SET answered_at = ?1, args = '{}' WHERE answered_at IS NULL AND created_at <= ?2",
+  ).run(new Date(now).toISOString(), new Date(now - HELD_TTL_MS).toISOString());
+}
+
 /**
  * Keep a held write as a confirm the person answers; its id, or null when
- * the conversation already holds `HELD_MAX` (a steered agent cannot fill
- * the table). Counted and kept in one statement.
+ * the conversation already holds `HELD_MAX` waiting (a steered agent cannot
+ * fill the table). Those past their time are swept first, so they never
+ * count; counted and kept in one statement.
  */
 export function hold(
   db: Database,
@@ -213,16 +229,20 @@ export function hold(
   userId: string,
   tool: string,
   args: Record<string, unknown>,
+  now: number = Date.now(),
 ): string | null {
   const heldId = id();
-  const kept = db
-    .query(
-      `INSERT INTO conversation_held (id, via, user_id, tool, args, created_at)
-       SELECT ?1, ?2, ?3, ?4, ?5, ?6
-        WHERE (SELECT COUNT(*) FROM conversation_held WHERE via = ?2) < ?7`,
-    )
-    .run(heldId, via, userId, tool, JSON.stringify(args), new Date().toISOString(), HELD_MAX);
-  return kept.changes === 1 ? heldId : null;
+  return db.transaction(() => {
+    sweepHeld(db, now);
+    const kept = db
+      .query(
+        `INSERT INTO conversation_held (id, via, user_id, tool, args, created_at)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6
+          WHERE (SELECT COUNT(*) FROM conversation_held WHERE via = ?2 AND answered_at IS NULL) < ?7`,
+      )
+      .run(heldId, via, userId, tool, JSON.stringify(args), new Date(now).toISOString(), HELD_MAX);
+    return kept.changes === 1 ? heldId : null;
+  })();
 }
 
 /** A conversation's held writes, oldest first. */
@@ -241,4 +261,74 @@ export function heldIn(db: Database, via: string): Held[] {
       args: JSON.parse(r.args) as Record<string, unknown>,
       createdAt: r.created_at,
     }));
+}
+
+/** Why a yes is refused: no such confirm of this person's, already answered, or past its time. */
+export type YesRefusal = "not_found" | "answered" | "expired";
+
+/** A person's confirms still waiting for their yes, oldest first; those past their time are swept first. */
+export function waitingFor(db: Database, userId: string, now: number = Date.now()): Held[] {
+  sweepHeld(db, now);
+  return db
+    .query<
+      { id: string; via: string; user_id: string; tool: string; args: string; created_at: string },
+      [string]
+    >(
+      "SELECT id, via, user_id, tool, args, created_at FROM conversation_held WHERE user_id = ?1 AND answered_at IS NULL ORDER BY id",
+    )
+    .all(userId)
+    .map((r) => ({
+      id: r.id,
+      via: r.via,
+      userId: r.user_id,
+      tool: r.tool,
+      args: JSON.parse(r.args) as Record<string, unknown>,
+      createdAt: r.created_at,
+    }));
+}
+
+/**
+ * The person's yes to a held write, claimed once (#7650): the row is
+ * stamped answered and its arguments cleared in the same transaction that
+ * reads them, so a second yes finds it answered. Only the person it was
+ * held for may answer; another person's confirm is `not_found`. A yes
+ * `HELD_TTL_MS` or more after it was held is `expired` — whether this yes
+ * or a sweep stamped it.
+ */
+export function answerHeld(
+  db: Database,
+  heldId: string,
+  userId: string,
+  now: number = Date.now(),
+): { ok: true; value: Held } | { ok: false; error: YesRefusal } {
+  return db.transaction(() => {
+    sweepHeld(db, now);
+    const row = db
+      .query<
+        { id: string; via: string; user_id: string; tool: string; args: string; created_at: string; answered_at: string | null },
+        [string, string]
+      >("SELECT * FROM conversation_held WHERE id = ?1 AND user_id = ?2")
+      .get(heldId, userId);
+    if (row === null) return { ok: false as const, error: "not_found" as const };
+    if (row.answered_at !== null)
+      return {
+        ok: false as const,
+        error: Date.parse(row.answered_at) - Date.parse(row.created_at) >= HELD_TTL_MS ? ("expired" as const) : ("answered" as const),
+      };
+    db.query("UPDATE conversation_held SET answered_at = ?2, args = '{}' WHERE id = ?1").run(
+      heldId,
+      new Date(now).toISOString(),
+    );
+    return {
+      ok: true as const,
+      value: {
+        id: row.id,
+        via: row.via,
+        userId: row.user_id,
+        tool: row.tool,
+        args: JSON.parse(row.args) as Record<string, unknown>,
+        createdAt: row.created_at,
+      },
+    };
+  })();
 }

@@ -129,6 +129,7 @@ import {
   verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
+import { confirmsList, confirmYes } from "../web/pages/confirms.ts";
 import {
   passkeyAdd,
   passkeyDelete,
@@ -883,6 +884,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
   router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
+  router.add("GET", "/settings/confirms", confirmsList);
+  router.add("POST", "/settings/confirms/:id", confirmYes);
   router.add("GET", "/settings/passkeys", passkeysPage);
   router.add("POST", "/settings/passkeys/options", passkeyOptions);
   router.add("POST", "/settings/passkeys", passkeyAdd);
