@@ -235,6 +235,7 @@ progress::-webkit-progress-value { background: var(--success); }
 progress::-moz-progress-bar { background: var(--success); }
 
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--faint); flex: none; }
+.word-text { font-weight: 600; color: var(--fg); }
 .dot[data-tone="success"] { background: var(--success); }
 .dot[data-tone="danger"] { background: var(--danger); }
 .dot[data-tone="attn"] { background: var(--attn); }

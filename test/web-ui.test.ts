@@ -820,7 +820,7 @@ describe("web ui", () => {
     }
   });
 
-  test("an issue row leads with who has it and trails its word", async () => {
+  test("an issue row leads with its word as a dot", async () => {
     const html = await (
       await fetch(`${base}/mel/proj/issues`, { headers: { cookie: owner } })
     ).text();
@@ -828,7 +828,7 @@ describe("web ui", () => {
     expect(start).toBeGreaterThan(-1);
     // From the lead to the end of the row it belongs to.
     const row = html.slice(start, html.indexOf("</a", start));
-    expect(row).toContain('class="avatar"');
+    expect(row).toContain('class="dot"');
     expect(row).toContain('<span class="row-meta">');
     expect(row).toContain('data-word="told"');
     // The word is the row's state; no dev state badge repeats it.

@@ -550,6 +550,33 @@ export function wordBadge(word: Word, id?: string): Html {
   >`;
 }
 
+/** A word at rest: one small coloured dot, the word (and its note) for a
+ * screen reader. Colour alone is not a mark, so a state that needs someone
+ * (`wordNeedsText`) is also written beside the row (see `wordText`). */
+export function wordNeedsText(word: Word): boolean {
+  return word === "working" || word === "look" || word === "stopped";
+}
+
+/** The visible word for a state that needs someone; nothing for the rest. */
+export function wordText(word: Word): Html | null {
+  return wordNeedsText(word)
+    ? html`<span class="word-text" data-word="${word}">${word}</span> · `
+    : null;
+}
+
+export function wordDot(word: Word, note?: string): Html {
+  const tone =
+    word === "look" || word === "shipped" || word === "done"
+      ? "success"
+      : word === "stopped"
+        ? "danger"
+        : word === "working"
+          ? "attn"
+          : "none";
+  const said = `${word === "told" ? "open" : word}${note ? ` — ${note}` : ""}`;
+  return html`<span class="dot" data-tone="${tone}" data-word="${word}" role="img" aria-label="${said}"></span>`;
+}
+
 // ---- what a subscription has left, and what a change costs ----
 
 /** One figure as a person reads it, and whether the forge worked it out
