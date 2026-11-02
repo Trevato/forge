@@ -6,7 +6,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,7 +33,7 @@ const options = (binary: string, signal = new AbortController().signal): Convers
 });
 
 /** A stand-in `claude`: records what it was given, answers, and holds while told to. */
-function stub(name: string, sid: string, mode: "answer" | "hang" | "steer" | "fail"): string {
+function stub(name: string, sid: string, mode: "answer" | "hang" | "steer" | "fail", gone = false): string {
   const path = join(dir, name);
   writeFileSync(
     path,
@@ -41,6 +41,8 @@ function stub(name: string, sid: string, mode: "answer" | "hang" | "steer" | "fa
 if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
 IFS= read -r first
 printf '%s\\n' "$@" > "${dir}/${name}.argv"
+pwd > "${dir}/${name}.cwd"
+case " $* " in *" --resume "*) ${gone ? "exit 1" : ":"} ;; esac
 printf '%s' "$FORGE_MCP_TOKEN" > "${dir}/${name}.token"
 printf '%s' "$first" > "${dir}/${name}.first"
 echo '{"type":"system","subtype":"init","session_id":"${sid}","model":"fake"}'
@@ -115,6 +117,21 @@ describe("a conversation turn", () => {
     if (said.ok) await said.value.done;
     const args = lines("second");
     expect(args[args.indexOf("--resume") + 1]).toBe("sess-a");
+  });
+
+  test("the turn runs in an empty directory of its own, not the data dir", () => {
+    const cwd = readFileSync(join(dir, "first.cwd"), "utf8").trim();
+    expect(cwd).toBe(realpathSync(join(dir, "conversation-cwd")));
+    expect(readdirSync(cwd)).toEqual([]);
+  });
+
+  test("a stored session that cannot be resumed starts that message fresh, once", async () => {
+    const bin = stub("gone", "sess-new", "answer", true);
+    const said = say(app, options(bin), alice.id, "still there?");
+    if (said.ok) await said.value.done;
+    expect(turns(alice).at(-1)).toBe("agent:All quiet.");
+    expect(lines("gone")).not.toContain("--resume");
+    expect(openConversation(app.db, alice.id).claudeSessionId).toBe("sess-new");
   });
 
   test("a message while a turn runs is steered into it, not started beside it", async () => {

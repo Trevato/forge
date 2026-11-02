@@ -13,6 +13,8 @@
  * resumed turn is told to check what is done before doing anything.
  */
 
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
 import { appendTurn, openConversation, removeTurn, setClaudeSession, type Conversation } from "../core/conversations.ts";
@@ -76,6 +78,16 @@ const RESUME_PROMPT =
 
 /** Turns with a session listening, by conversation id: the run id a message is steered to. */
 const live = new Map<string, string>();
+
+/**
+ * Where a turn runs: an empty directory of its own under the data dir, made at
+ * first use, so nothing a turn could name sits beside forge.db or secret.key.
+ */
+export const turnDir = (dataDir: string): string => {
+  const dir = join(dataDir, "conversation-cwd");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+};
 
 /** The `--mcp-config` JSON: this forge's `/mcp`, the token read from the child's environment, never from its argv. */
 export function mcpConfig(localUrl: string): string {
@@ -194,37 +206,46 @@ function begin(
     let outcome: ClaudeOutcome | undefined;
     let unlisten = (): void => {};
     try {
-      outcome = await runClaude({
-        binary: options.binary,
-        cwd: app.config.dataDir,
-        prompt: resumes > 0 ? RESUME_PROMPT : prompt,
-        appendSystemPrompt: CONVERSATION_BRIEF,
-        model: options.model,
-        budgetUsd: budget,
-        resume: resumeSession,
-        env: {
-          ...credentialEnv(picked),
-          ...(options.configDir === undefined ? {} : { CLAUDE_CONFIG_DIR: options.configDir }),
-          FORGE_MCP_TOKEN: minted.value.token,
-        },
-        sandbox,
-        label: "conversation",
-        timeoutMs: options.timeoutMs,
-        log: (line) => appendRunLog(app.config.dataDir, runId, line),
-        signal: options.signal,
-        mcp: { config: mcpConfig(options.localUrl), allow: [`mcp__${MCP_SERVER}`] },
-        onSteer: (send) => {
-          unlisten = listenForSteer(runId, send);
-        },
-        onSession: (sessionId) => {
-          app.db.query("UPDATE conversation_run SET session_id = ?2 WHERE id = ?1").run(runId, sessionId);
-          setClaudeSession(app.db, userId, conversation.id, sessionId);
-        },
-        onSaid: (said) => {
-          if (said.kind === "text") lastText = said.text;
-          if (said.text.trim() !== "") put(said.kind === "text" ? "agent" : "tool", said.text);
-        },
-      });
+      const cwd = turnDir(app.config.dataDir);
+      // A stored session made under another cwd cannot be resumed: Claude Code
+      // then names no session at all. That one message starts fresh, once.
+      for (let session = resumeSession; ; session = undefined) {
+        let named = false;
+        outcome = await runClaude({
+          binary: options.binary,
+          cwd,
+          prompt: resumes > 0 && session !== undefined ? RESUME_PROMPT : prompt,
+          appendSystemPrompt: CONVERSATION_BRIEF,
+          model: options.model,
+          budgetUsd: budget,
+          resume: session,
+          env: {
+            ...credentialEnv(picked),
+            ...(options.configDir === undefined ? {} : { CLAUDE_CONFIG_DIR: options.configDir }),
+            FORGE_MCP_TOKEN: minted.value.token,
+          },
+          sandbox,
+          label: "conversation",
+          timeoutMs: options.timeoutMs,
+          log: (line) => appendRunLog(app.config.dataDir, runId, line),
+          signal: options.signal,
+          mcp: { config: mcpConfig(options.localUrl), allow: [`mcp__${MCP_SERVER}`] },
+          onSteer: (send) => {
+            unlisten = listenForSteer(runId, send);
+          },
+          onSession: (sessionId) => {
+            named = true;
+            app.db.query("UPDATE conversation_run SET session_id = ?2 WHERE id = ?1").run(runId, sessionId);
+            setClaudeSession(app.db, userId, conversation.id, sessionId);
+          },
+          onSaid: (said) => {
+            if (said.kind === "text") lastText = said.text;
+            if (said.text.trim() !== "") put(said.kind === "text" ? "agent" : "tool", said.text);
+          },
+        });
+        if (session === undefined || named || options.signal.aborted) break;
+        appendRunLog(app.config.dataDir, runId, "no session to resume; starting this message fresh");
+      }
     } catch (error) {
       app.log.warn("conversation turn failed", { error: String(error) });
     } finally {
