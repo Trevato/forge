@@ -308,6 +308,11 @@ function forgeActions(
       ...tokenFree("contribute"),
     },
     {
+      do: "see what went live",
+      http: "GET /api/v1/changelog",
+      account: false,
+    },
+    {
       do: "read the HTTP contract",
       http: "GET /contract/openapi.json",
       account: false,

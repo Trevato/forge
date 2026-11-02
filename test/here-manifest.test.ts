@@ -268,6 +268,18 @@ describe("the manifest: what you can do here, as who you are", () => {
     }
   });
 
+  test("the forge's manifest names the changelog, for anyone", async () => {
+    for (const who of [undefined, "carol"]) {
+      const { body, size } = await manifest("/", who);
+      expect(body.actions).toContainEqual({
+        do: "see what went live",
+        http: "GET /api/v1/changelog",
+        account: false,
+      });
+      expect(size).toBeLessThan(2048);
+    }
+  });
+
   test("the forge's manifest names the OpenAPI document, and it answers", async () => {
     for (const who of [undefined, "carol"]) {
       const { body, size } = await manifest("/", who);
