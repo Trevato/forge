@@ -29,6 +29,8 @@ import { entry as limits } from "./limits.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
 import { entry as orgGrants } from "./orggrants.ts";
 import { entry as orgTeams } from "./orgteams.ts";
+import { entry as now } from "./nowlist.ts";
+import { entry as repos } from "./repolist.ts";
 import { entry as owner } from "./owner.ts";
 import { entry as people } from "./people.ts";
 import { entry as pinned } from "./pinned.ts";
@@ -97,6 +99,8 @@ export const ENTRIES: readonly PaletteEntry[] = [
   owner,
   forges,
   profile,
+  now,
+  repos,
 ];
 
 /** Put each entry the session is offered into `commands`, after the command it names or at the end. */

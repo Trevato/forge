@@ -65,6 +65,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/pipeline` — `pages/pipeline.ts` · the four steps a change follows (check, review, land, live), for a newcomer · a pull page's step line, `/flow` · none seen.
 - `/map` — `pages/map.ts` (1,806 lines) · the dependency map of work across the forge · `/board`, issue dependency lists, `/:owner/:name/map` · colours 3, sizes 12: the largest private vocabulary.
 - `/audit` — `pages/audit.ts` · every app's contract, who can do what · the app page's one-line policy · none seen. Names the audit of apps, not this document.
+- `/repos` — `pages/my-repos.ts` · the repositories you may write, from the account menu · `/` (your apps), `/:owner` (a profile's repositories) · none seen.
 - `/releases` — `pages/releases.ts` · the forge's kept releases and rollback · `/settings/backups` (both are "go back") · none seen.
 - `/changelog` — `pages/changelog.ts` · the last 30 releases with their dates and pulls, public · `/releases` (the signed-in kept releases) · none seen.
 - `/api` — `pages/api.ts` · the forge's OpenAPI operations by area, with search and Try it, public · the footer, the OpenAPI document, the terminal's API screen · none seen. An app's own spec is its `/:owner/:name/api` tab.

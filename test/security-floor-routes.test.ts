@@ -42,6 +42,7 @@ const FLEET = "needs a fleet operation, started by an operator action";
 const SECRET = "needs a secret scope an operator has set";
 const GO = "needs a short code minted by a share; the seed shares nothing";
 const ARCH = "needs an archived-home operation id; the seed archives nothing";
+const NOW = "the stage is one of check, review, land or live; the seed fills no word with a name it cannot guess";
 const GATE = "needs a kept gate log, written only when a full gate runs on land";
 const BET = "needs a bet, which the seed does not propose";
 const HOOK = "needs a webhook, which the seed does not register";
@@ -86,6 +87,7 @@ const UNSEEDED: Record<string, string> = {
   "/go/:code": GO,
   "/home/archived/:op": ARCH,
   "/migrate/jobs/:job": MIGRATE,
+  "/now/:stage": NOW,
   "/origins/:id/r/:owner/:name": ORIGIN,
   "/origins/:id/r/:owner/:name/blob/:ref/*path": ORIGIN,
   "/origins/:id/r/:owner/:name/branches": ORIGIN,

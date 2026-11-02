@@ -51,6 +51,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/apple-touch-icon.png": "an icon, not a page",
   "/apple-touch-icon-precomposed.png": "an icon, not a page",
   "/events": "a live event stream that never ends",
+  "/migrate": "an import form, nothing to picture until a job runs; the look slot went to /repos",
 };
 
 let dir: string;

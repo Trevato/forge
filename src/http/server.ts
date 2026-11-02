@@ -25,6 +25,8 @@ import { settingsRoutes } from "./settings_routes.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
 import { boardsHoldPost } from "../web/pages/boards-holds.ts";
+import { nowPage } from "../web/pages/now.ts";
+import { myReposPage } from "../web/pages/my-repos.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
 import { actingVia } from "../core/acting_via.ts";
 import {
@@ -752,6 +754,8 @@ export function buildRouter(): Router<Handler> {
   // is registered before /:owner/:name can claim the shape.
   router.add("GET", "/-/confirm", confirmPage);
   router.add("GET", "/new", newRepoPage);
+  router.add("GET", "/repos", myReposPage);
+  router.add("GET", "/now/:stage", nowPage);
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
   router.add("GET", "/changelog", changelogPage);

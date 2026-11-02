@@ -237,7 +237,7 @@ function userMenu(
 ): Html {
   const items: (MenuItem | Html)[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
-    { label: "Your repositories", href: "/", icon: "repo" },
+    { label: "Repositories", href: "/repos", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
     { label: "Notes", href: "/notes", icon: "comment" },
     { label: "Talk", href: "/talk", icon: "comment" },

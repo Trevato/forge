@@ -117,7 +117,7 @@ describe("home", () => {
     const page = await home(rootCookie);
     expect(page).toContain('id="now-line"');
     for (const word of ["check", "review", "land"]) expect(page).toContain(`</strong> ${word}</a>`);
-    expect(page).toMatch(/href="\/releases"><strong>\d+<\/strong> live<\/a>/);
+    expect(page).toMatch(/href="\/now\/live"><strong>\d+<\/strong> live<\/a>/);
   });
 
   test("the forge-wide pipeline counts never reach a viewer who is not a site admin", async () => {
