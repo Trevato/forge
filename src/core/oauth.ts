@@ -8,7 +8,7 @@ import { sha256 } from "../kernel/hash.ts";
 import { id, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { NONCE_MAX, oidcScopes, recordGrant, signIdToken } from "./oidc.ts";
-import { createToken } from "./tokens.ts";
+import { createToken, listTokens, type TokenInfo } from "./tokens.ts";
 import { getUserById, isActive } from "./users.ts";
 
 export const NAME_MAX = 100;
@@ -134,6 +134,32 @@ export function getClient(db: Database, clientId: string): OAuthClient | null {
         redirectUris: JSON.parse(row.redirect_uris) as string[],
         createdAt: row.created_at,
       };
+}
+
+/**
+ * The registered client name behind each of a person's tokens the OAuth
+ * endpoint minted, keyed by token id, in one query for the whole list.
+ * A hand-made token is absent.
+ */
+export function oauthClientNames(db: Database, userId: string): Map<string, string> {
+  const rows = db
+    .query<{ token_id: string; name: string }, [string]>(
+      `SELECT o.token_id, c.name FROM oauth_token o
+         JOIN token t ON t.id = o.token_id
+         JOIN oauth_client c ON c.id = o.client_id
+        WHERE t.user_id = ?1`,
+    )
+    .all(userId);
+  return new Map(rows.map((r) => [r.token_id, r.name]));
+}
+
+/** A token as every door lists it: `oauthClient` names the harness that holds it, null for a hand-made one. */
+export type ListedToken = TokenInfo & { readonly oauthClient: string | null };
+
+/** A person's tokens with the harness behind each: two reads for the whole list, whatever its length. */
+export function listTokensWithClients(db: Database, userId: string): ListedToken[] {
+  const clients = oauthClientNames(db, userId);
+  return listTokens(db, userId).map((t) => ({ ...t, oauthClient: clients.get(t.id) ?? null }));
 }
 
 // ---- the authorization request, the code, and the exchange ----

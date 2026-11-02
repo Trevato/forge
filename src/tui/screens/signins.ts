@@ -80,7 +80,7 @@ export function signInsOf(f: Session): SignIn[] {
     ...seen.value.tokens.map((t) => ({
       kind: "token" as const,
       id: t.id,
-      where: `${t.name} · ${t.scope}`,
+      where: t.oauthClient === null ? `${t.name} · ${t.scope}` : `${t.name} · ${t.scope} · ${t.oauthClient}, renews itself`,
       seen: t.lastUsedAt,
       since: t.createdAt,
       here: false,

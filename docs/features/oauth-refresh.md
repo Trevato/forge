@@ -19,3 +19,5 @@ curl -X POST https://<forge>/oauth/token \
   expires does not: the harness refreshes it.
 - Refresh tokens live 90 days from their issue, are stored hashed (`oauth_refresh`),
   and are bound to the client that got them. Sign-in-only (OpenID) grants get none.
+
+Which harness holds each OAuth token, on every door: [tokens-harness](tokens-harness.md).

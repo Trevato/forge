@@ -34,6 +34,7 @@ import { linkEdgeLogin, linkedLogin, unlinkEdgeLogin } from "../../core/edge_lin
 import { LAST_WAY_IN, linkedParent, parentIssuerOf, unlinkParent } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { listKeys } from "../../core/keys.ts";
+import { listTokensWithClients } from "../../core/oauth.ts";
 import {
   PROFILE_FALLBACK,
   PROFILE_REFUSAL_FIELD,
@@ -41,7 +42,7 @@ import {
 } from "../../actions/profile_words.ts";
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
-import { ADMIN_TOKEN_WORDS, listTokens, type TokenScope } from "../../core/tokens.ts";
+import { ADMIN_TOKEN_WORDS, type TokenScope } from "../../core/tokens.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
 import { isStandInEmail } from "../../core/users.ts";
 import { cookieValue, isAccountItself, type Ctx } from "../../http/context.ts";
@@ -597,7 +598,7 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
 }
 
 function tokensView(ctx: Ctx): Html {
-  const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
+  const tokens = timePhase(ctx.request, "tokens", () => listTokensWithClients(ctx.app.db, ctx.auth.user!.id));
   const sessions = timePhase(ctx.request, "sessions", () =>
     listSessions(ctx.app.db, ctx.auth.user!.id, cookieValue(ctx.request, "forge_session")),
   );
@@ -629,7 +630,15 @@ function tokensView(ctx: Ctx): Html {
                 ${tokens.map(
                   (t) =>
                     html`<tr>
-                      <td><strong>${t.name}</strong></td>
+                      <td>
+                        <strong>${t.name}</strong>
+                        ${when(
+                          t.oauthClient,
+                          (client) => html`<div class="muted small" data-oauth-client>
+                            ${client} · Signed in through OAuth; renews itself until you delete it
+                          </div>`,
+                        )}
+                      </td>
                       <td>${badge(t.scope)}</td>
                       <td class="muted">${time(t.createdAt)}</td>
                       <td class="muted">

@@ -784,7 +784,9 @@ export function live(
     timer = setTimeout(() => {
       timer = null;
       if (signal.aborted) return;
-      void Promise.resolve(refresh()).catch(() => undefined);
+      // A refresh that throws at once (the forge closed under it) fails as
+      // quietly as one that rejects, never as an uncaught error on the timer.
+      void Promise.resolve().then(refresh).catch(() => undefined);
     }, LIVE_COALESCE_MS);
   });
   signal.addEventListener("abort", () => {
