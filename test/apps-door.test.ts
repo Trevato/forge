@@ -12,6 +12,8 @@ import { signGrant, type AppTarget } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { createIssue } from "../src/core/issues.ts";
+import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { setSealed } from "../src/core/sealed.ts";
 import { createUser, getUserById } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -319,7 +321,7 @@ test("the door and the crew line name the phases they read, signed in, on produc
     [`notes--${pull}.${DOMAIN}`, grantFor(`pull-${pull}`)],
   ];
   const reads: Record<string, string[]> = {
-    "/__forge/": ["session", "app", "pull", "serving", "pulls", "render"],
+    "/__forge/": ["session", "app", "pull", "serving", "pulls", "working", "render"],
     "/__forge/crew": ["session", "app", "pull", "working", "side", "render"],
   };
   for (const [host, cookie] of hosts)
@@ -428,4 +430,42 @@ test("the door links a dormant preview to itself, and says so when more than fiv
   html = await (await door(`notes.${DOMAIN}`)).text();
   expect(html).toContain("More pulls are open on the forge.");
   expect((html.match(/ · check /g) ?? []).length).toBe(5);
+});
+
+test("the door names the crew run working here, linked, to who may see it", async () => {
+  const bob = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "scoutbot",
+    email: "scoutbot@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!bob.ok) throw new Error(bob.error);
+  const repoId = record.repoId;
+  const open = createIssue(app.db, { repoId, authorId: alice, title: "o", kind: "pull" });
+  const sealed = createIssue(app.db, { repoId, authorId: alice, title: "s", kind: "issue" });
+  if (!open.ok || !sealed.ok) throw new Error("issue");
+  setSealed(app.db, sealed.value.id, true);
+  const target = { app: record, env: "production" } as AppTarget;
+  const cookie = `forge_grant_${record.id.slice(-8)}=${signGrant(dataDir, target, 60_000, Date.now(), { id: alice, name: "alice", role: "admin" })}`;
+  const start = (issueId: string) => {
+    const run = createRun(app.db, { repoId, kind: "agent", issueId, actorId: bob.value.id, reason: "assigned" });
+    claimRun(app.db, run.id);
+    return run;
+  };
+  const idle = await (await door(`notes.${DOMAIN}`, cookie)).text();
+  expect(idle).not.toContain("is working on this");
+  const hidden = start(sealed.value.id);
+  // A signed-in reader who may not see the sealed issue is not told of its run.
+  const other = signGrant(dataDir, target, 60_000, Date.now(), { id: bob.value.id, name: "scoutbot", role: "user" });
+  const otherCookie = `forge_grant_${record.id.slice(-8)}=${other}`;
+  expect(await (await door(`notes.${DOMAIN}`, otherCookie)).text()).not.toContain("is working on this");
+  expect(await (await door(`notes.${DOMAIN}`)).text()).not.toContain("is working on this");
+  const run = start(open.value.id);
+  const html = await (await door(`notes.${DOMAIN}`, cookie)).text();
+  expect(html).toContain(`<a href="${servers.url}/alice/notes/runs/${run.id}">scoutbot is working on this</a>`);
+  expect(html).not.toContain("<script");
+  finishRun(app.db, run.id, { state: "ok", summary: "d" });
+  finishRun(app.db, hidden.id, { state: "ok", summary: "d" });
+  expect(await (await door(`notes.${DOMAIN}`, cookie)).text()).not.toContain("is working on this");
 });

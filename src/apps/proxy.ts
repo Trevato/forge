@@ -910,11 +910,20 @@ export async function proxyApp(
     const pulls = timePhase(request, "pulls", () =>
       doorPulls(runtime, target, signed?.who),
     );
+    const crew = crewNow(
+      runtime.app.db,
+      runtime.options.forgeUrl,
+      target.app,
+      target.env,
+      signed?.who?.id,
+      request,
+    );
     const page = timePhase(request, "render", () =>
       doorPage(
         {
           where,
           pulls,
+          ...(crew === undefined ? {} : { crew }),
           ...(serving === undefined ? {} : { serving }),
           forgeUrl: runtime.options.forgeUrl,
           ...(ssh === undefined ? {} : { ssh }),

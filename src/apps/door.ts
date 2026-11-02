@@ -7,6 +7,7 @@
 import { createHash } from "node:crypto";
 import { escapeAttr, type PillWhere } from "./toolbar.ts";
 import type { Served, Serving } from "./serving.ts";
+import type { CrewNow } from "./crew.ts";
 
 export type DoorFacts = {
   where: PillWhere;
@@ -24,6 +25,8 @@ export type DoorFacts = {
   ssh?: string | null;
   /** Open pulls a viewer may see, each with where to go: its preview or the forge. */
   pulls?: DoorPullLine[] | undefined;
+  /** Who of the crew is working here now, as the pill's crew line says it. */
+  crew?: CrewNow | undefined;
 };
 
 /** How many pulls the door lists; one more read than this means there are others. */
@@ -108,6 +111,12 @@ function pullsHtml(pulls: DoorPullLine[] | undefined, morePulls: string | undefi
   return `<h2>Open pulls</h2><ul>${items.join("")}</ul>${more}`;
 }
 
+/** The pill's crew line: who is working on this, linked to that run on the forge. */
+function crewHtml(crew: CrewNow | undefined): string {
+  if (crew === undefined) return "";
+  return `<p><a href="${escapeAttr(crew.url)}">${escapeAttr(`${crew.who} is working on this`)}</a></p>`;
+}
+
 export function doorPage(facts: DoorFacts, head: boolean): Response {
   const { where, forgeUrl } = facts;
   const links = [link(forgeUrl, "Home")];
@@ -129,7 +138,7 @@ export function doorPage(facts: DoorFacts, head: boolean): Response {
         : `<p>Terminal:</p><pre><code>${escapeAttr(facts.ssh)}</code></pre>`;
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${escapeAttr(where.app)}, ${escapeAttr(doorWhere(where))}</title><style>${STYLE}</style></head>
-<body><main><h1>${escapeAttr(where.app)}</h1><p>${whereLine(where, forgeUrl)}</p>${servingHtml(facts)}${pullsHtml(facts.pulls, morePulls)}<ul>${links.join("")}</ul>${terminal}</main></body></html>
+<body><main><h1>${escapeAttr(where.app)}</h1><p>${whereLine(where, forgeUrl)}</p>${crewHtml(facts.crew)}${servingHtml(facts)}${pullsHtml(facts.pulls, morePulls)}<ul>${links.join("")}</ul>${terminal}</main></body></html>
 `;
   return new Response(head ? null : html, {
     headers: {
