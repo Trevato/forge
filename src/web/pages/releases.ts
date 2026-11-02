@@ -19,6 +19,8 @@ import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { badge, btn, card, empty, sha, time } from "../ui.ts";
+import { holdAs, liftAs } from "../../keeper/hold.ts";
+import { keeperPanel } from "./keeper-panel.ts";
 
 /** The live line (`liveSince`) for the home, or nothing when no release is known to be live. */
 export function liveLine(ctx: Ctx): Html | undefined {
@@ -81,7 +83,7 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
   const response = page({
     ctx,
     title: "Releases",
-    body: html`<div class="page-head"><h1>Releases</h1></div>${body}`,
+    body: html`<div class="page-head"><h1>Releases</h1></div>${keeperPanel(ctx.app.db, writer)}${body}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -100,4 +102,24 @@ export async function rollbackSubmit(ctx: Ctx): Promise<Response> {
   const result = await rollBackTo(ctx.app, user, target);
   if (!result.ok) return refuse(result.line);
   return flashTo(ctx, "/releases", { message: `Rolled back to ${target.slice(0, 7)}; it reads healthy.` });
+}
+
+/** POST /releases/hold: an owner's hold with a reason, through the function MCP calls. */
+export async function releaseHoldSubmit(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const held = holdAs(ctx.app, ctx.auth.user, String(form.get("reason") ?? ""));
+  return held.ok
+    ? flashTo(ctx, "/releases", { message: `Releases held: ${held.value.reason}` })
+    : flashTo(ctx, "/releases", { tone: "danger", message: held.message });
+}
+
+/** POST /releases/hold/:id/lift: lift an owner's hold. */
+export async function liftSubmit(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const lifted = liftAs(ctx.app, ctx.auth.user, Number(ctx.params["id"]));
+  return lifted.ok
+    ? flashTo(ctx, "/releases", { message: `Hold ${lifted.value} lifted.` })
+    : flashTo(ctx, "/releases", { tone: "danger", message: lifted.message });
 }

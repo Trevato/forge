@@ -62,6 +62,7 @@ import { noteRead, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
 import { apiScreen } from "./screens/api.ts";
 import { changelogScreen } from "./screens/changelog.ts";
+import { keeperScreen } from "./screens/keeper.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
 import { fileHoldsPrompt } from "./screens/fileholds.ts";
@@ -332,6 +333,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Releases",
         hint: "the live release and the kept ones",
         run: () => ctx.push(releasesScreen(session, ctx)),
+      });
+    // The release keeper's card (#7557), gated as /releases is.
+    if (mayRead(session.app, session.user))
+      commands.push({
+        id: "keeper",
+        title: "Release keeper",
+        hint: "what holds the next cut, and each release it cut with its probes",
+        run: () => ctx.push(keeperScreen(session, ctx)),
       });
     // Stalled flow steps the viewer can unblock, as the home's cards show them (#1807).
     if (session.signedIn)

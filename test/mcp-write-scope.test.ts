@@ -31,6 +31,7 @@ const ADMIN_ARGS: Record<string, Record<string, unknown>> = {
   subscription_wake: { id: "u1" },
   subscription_headroom: { id: "u1", percent: 30 },
   prompts: { repo: "alice/game", action: "remove", id: "p1" },
+  release_hold: { reason: "freeze for the demo" },
   telemetry_grant: { agent: "robo", on: true },
   hooks: { repo: "alice/game", action: "add", url: "https://example.com/h", secret: "0123456789abcdef0123" },
   app_domains: { repo: "alice/game", action: "add", host: "game.example.com" },

@@ -203,6 +203,7 @@ describe("the forge over MCP", () => {
       "edit",
       "close",
       "read_file",
+      "release_keeper",
       "write_file",
       "asks",
       "asks_act",

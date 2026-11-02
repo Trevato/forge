@@ -66,7 +66,10 @@ describe("verify an email from the People screen", () => {
     try {
       expect(h.text()).toMatch(/v +verify/);
       expect(h.text()).toMatch(/bobby.*unverified/);
-      // newest first: bobby is the first row
+      // Newest first, but alice and bobby can share a created_at millisecond and then
+      // sort by name: put the cursor on bobby rather than assume his row.
+      if (!/▸ bobby/.test(h.text())) await h.press("j");
+      expect(h.text()).toMatch(/▸ bobby/);
       await h.press("v");
       expect(h.text()).toContain("verify bobby's email? y/n");
       await h.press("n");

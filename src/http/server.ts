@@ -163,7 +163,7 @@ import {
 } from "../web/pages/backups.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
 import { changelogPage } from "../web/pages/changelog.ts";
-import { releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
+import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   cloudAdd,
   cloudAudit,
@@ -800,6 +800,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/changelog", changelogPage);
   router.add("GET", "/:owner/:name/api", appApiPage);
   router.add("POST", "/releases/:sha/rollback", rollbackSubmit);
+  router.add("POST", "/releases/hold", releaseHoldSubmit);
+  router.add("POST", "/releases/hold/:id/lift", liftSubmit);
   router.add("GET", "/audit.csv", auditCsv);
   router.add("POST", "/audit/:owner/:name/probe", auditProbeSubmit);
   router.add("POST", "/new", newRepoSubmit);

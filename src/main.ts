@@ -71,6 +71,8 @@ import { proveRunning } from "./release/prove.ts";
 import { CHECK_EVERY_MS, setBehind, watchBehind } from "./release/behind.ts";
 import { readLandings } from "./release/landings.ts";
 import { ownTagsReader } from "./release/own_tags.ts";
+import { rollProbe, tick as keeperTick } from "./keeper/keeper.ts";
+import { keeperEnv, keeperPorts } from "./keeper/wire.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault } from "./core/capacity.ts";
 import { bootCounts, recordBoot, recordCleanExit } from "./kernel/boots.ts";
@@ -630,6 +632,26 @@ if (app.config.forgeRepo) {
   void readLandings(app);
   setInterval(() => void readLandings(app), 60_000);
 }
+// The release keeper (#7557): cut on cadence, promote, verify under page load, roll back to the named
+// known-good image and hold. Off unless FORGE_RELEASE_KEEPER=on in a cluster (keeper/wire.ts).
+const keeperOn = keeperEnv(process.env);
+if (keeperOn.on) {
+  const ports = keeperPorts(app, { forgeUrl, deployment: keeperOn.deployment, container: keeperOn.container });
+  if (typeof ports === "string") app.log.warn("the release keeper is off", { why: ports });
+  else {
+    let said = "";
+    const step = () =>
+      void keeperTick(ports)
+        .then((line) => {
+          if (line !== said) app.log.info("release keeper", { line });
+          said = line;
+        })
+        .catch((error) => app.log.warn("release keeper step failed", { error: String(error) }));
+    step();
+    setInterval(step, 60_000);
+    setInterval(() => void rollProbe(ports).catch(() => {}), 1000);
+  }
+} else app.log.info("the release keeper is off", { why: keeperOn.why });
 // Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
 // put on one before that is reported here for the owner to take off — the
 // forge never removes it on its own.
