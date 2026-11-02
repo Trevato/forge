@@ -77,7 +77,15 @@ describe("MCP backups_test", () => {
   }, 20_000);
 
   test("an unreachable one says why, and never echoes a secret", async () => {
+    // A client that fails at once, carrying the secrets in its message: the verdict
+    // must not depend on how long the real S3 client retries a closed port.
+    (Bun as any).S3Client = class {
+      async list() {
+        throw new Error(`connect ECONNREFUSED ${SECRET} AKIAEXAMPLE`);
+      }
+    };
     const r = await test_(admin, fields("http://127.0.0.1:1"));
+    (Bun as any).S3Client = realS3;
     const out = JSON.parse(r.text);
     expect(out.reached).toBe(false);
     expect(out.says).toStartWith("Could not list ");
