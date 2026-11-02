@@ -10,7 +10,8 @@
  */
 
 import { takeProposal } from "../../actions/week.ts";
-import { canRead, canWrite, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { polishSpend, polishWords } from "../../crew/small_share.ts";
 import { latestRetro, takenOf, type Retro } from "../../flow/retro.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -20,7 +21,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { ListState, drawList, hitList, live, type ListRow } from "./common.ts";
 
-const LIVE_KINDS = ["week.retro", "issue.ranked"];
+const LIVE_KINDS = ["week.retro", "issue.ranked", "repo.settings_updated"];
 
 /** The retrospective's screen of facts, one line each. */
 export function summaryLines(retro: Retro): string[] {
@@ -36,6 +37,12 @@ export function summaryLines(retro: Retro): string[] {
     `Cost most, still open: ${retro.costly.length === 0 ? "none" : retro.costly.map((l) => `#${l.number}`).join(", ")}`,
     `Stuck: ${retro.stuck.length === 0 ? "none" : retro.stuck.map((l) => `#${l.number} (${l.why})`).join("; ")}`,
   ];
+}
+
+/** The page's and the tool's polish line: polish spent this week against its share. */
+export function polishLine(f: Session, repo: Repo): string {
+  const now = getRepoById(f.db, repo.id) ?? repo;
+  return polishWords(polishSpend(f.db, now.id, now.polishShare, new Date()));
 }
 
 export function weekScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
@@ -91,9 +98,12 @@ export function weekScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       const c = ctx.theme.c;
       const lines = !loaded
         ? ["Loading…"]
-        : retro === undefined
-          ? ["The forge writes this when the weekly window closes. None has closed yet."]
-          : summaryLines(retro);
+        : [
+            ...(retro === undefined
+              ? ["The forge writes this when the weekly window closes. None has closed yet."]
+              : summaryLines(retro)),
+            polishLine(f, repo),
+          ];
       const [head, list] = split(area, "v", [len(lines.length + 1), fill(1)]);
       lines.forEach((line, i) =>
         s.text(head!.x, head!.y + i, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w),

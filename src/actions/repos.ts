@@ -66,6 +66,7 @@ import {
   requireWriter,
   type AccessError,
 } from "./access.ts";
+import { validPolishShare } from "../crew/small_share.ts";
 import { removeInstallCache } from "../crew/workdir.ts";
 import type { SettingsChanged } from "../core/settings_changed.ts";
 
@@ -283,7 +284,7 @@ export async function privateRepoForSealed(
   return sealedForkFor(app, actor, base);
 }
 
-export type UpdateSettingsError = "not_found" | "unknown_branch";
+export type UpdateSettingsError = "not_found" | "unknown_branch" | "polish_share";
 
 /** Each repository's archive transitions, one after another. */
 const archiveTurns = new WeakMap<App, Map<string, Promise<void>>>();
@@ -349,6 +350,7 @@ const AUDITED = [
   "autonomySlots",
   "plannerSlots",
   "reviewerSlots",
+  "polishShare",
 ] as const;
 
 export type { SettingsChanged };
@@ -390,6 +392,8 @@ export async function updateRepoSettings(
   // base, whoever owns it (`core/sealed.ts`).
   if (repo.sealedFor !== null && settings.visibility === "public")
     return err("not_found");
+  if (settings.polishShare !== undefined && !validPolishShare(settings.polishShare))
+    return err("polish_share");
   const branch = settings.defaultBranch;
   if (branch !== undefined && branch !== repo.defaultBranch) {
     const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);

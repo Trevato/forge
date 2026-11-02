@@ -5,7 +5,8 @@
  * and nothing else on the page changes anything.
  */
 import { takeProposal } from "../../actions/week.ts";
-import { canWrite } from "../../core/repos.ts";
+import { polishSpend, polishWords } from "../../crew/small_share.ts";
+import { canWrite, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { latestRetro, takenOf, type Line, type Retro } from "../../flow/retro.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -13,7 +14,7 @@ import { crumbsFor, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette, s
 import { backTo, field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashOrJson, page } from "../layout.ts";
-import { btn, card, row } from "../ui.ts";
+import { btn, card, meter, row, stat } from "../ui.ts";
 
 const lines = (base: string, ls: readonly Line[], none: string): Html =>
   ls.length === 0
@@ -62,6 +63,19 @@ function screen(base: string, retro: Retro, taken: ReadonlySet<number>, writer: 
         )}</ul>`}`;
 }
 
+/** Polish spent against its share: a labelled fact, with the words the terminal and the tool print under it. */
+function polishCard(ctx: Ctx, repo: Repo): Html {
+  const p = polishSpend(ctx.app.db, repo.id, repo.polishShare, new Date());
+  return card(
+    html`<div data-polish>${stat({
+      label: "Polish share",
+      value: `${p.percent.toFixed(1)}% of ${p.share}%`,
+      title: "Agent spend in the last seven days on issues labelled polish or in the small-fixes lane, against all agent spend",
+      note: html`${polishWords(p)}`,
+    })}${meter(p.share === 0 ? 100 : (p.percent / p.share) * 100, `polish has used ${p.percent.toFixed(1)}% of the week's spend; its share is ${p.share}%`, p.under ? undefined : "attn")}</div>`,
+  );
+}
+
 export function weekPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
@@ -77,6 +91,8 @@ export function weekPage(ctx: Ctx): Response {
         ? "The forge writes this when the weekly window closes. None has closed yet."
         : `Written when the window ended ${retro.weekEnd.slice(0, 10)}, once, and never edited.`} <a href="${base}/next">Next up</a></p>
     </div>
+    <h2>Polish this week</h2>
+    ${polishCard(ctx, repo)}
     ${retro === undefined ? null : screen(base, retro, takenOf(ctx.app.db, repo.id, retro.weekEnd), writer)}`;
   const response = page({ ctx, title: `The week · ${repo.name}`, crumbs: crumbsFor(repo), palette: repoPalette(ctx, repo), body });
   notePhase(ctx.request, "render", performance.now() - rendering);

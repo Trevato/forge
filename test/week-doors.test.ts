@@ -234,6 +234,7 @@ describe("the week's doors", () => {
     expect(refused.error).toContain("forbidden");
     const read = await mcp(botTok, { app: "alice/plan" });
     expect(read.value.proposals[0].taken).toBe(false);
+    expect(read.value.polish).toMatchObject({ share: 10, under: true, polishUsd: 0 });
     const took = await mcp(aliceTok, { app: "alice/plan", take: 0 });
     expect(took.value.proposals[0].taken).toBe(true);
     expect((await mcp(aliceTok, { app: "alice/plan", take: 0 })).error).toContain("already taken");

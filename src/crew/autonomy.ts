@@ -31,7 +31,7 @@ import { addLearned } from "../checks/learned.ts";
 import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
 import { queueBatch, queueDepth, smallShare } from "../core/capacity.ts";
-import { shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
+import { isPolish, polishSpend, shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
 import { backedBetOf, betsInUse } from "../core/bets.ts";
 import { mayPick } from "./bets.ts";
 import { tickPolish } from "./polish_cap.ts";
@@ -73,6 +73,7 @@ import {
   listComments,
   MAX_TITLE,
   type Issue,
+  labelsForIssues,
 } from "../core/issues.ts";
 import {
   getPull,
@@ -408,7 +409,7 @@ function freeSlots(app: App, repo: Repo, now: Date): number {
 }
 
 /** The pickable issues in slot order: the order Next up shows, small work held to its share (#7571). */
-export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: readonly Run[], slots: number, picked: ReadonlySet<string> = new Set()): Ranked[] {
+export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: readonly Run[], slots: number, picked: ReadonlySet<string> = new Set(), now: Date = new Date()): Ranked[] {
   const issues = ready.map((r) => r.issue);
   const small = smallIssues(app.db, issues);
   const first = firstAt(app.db, issues.map((i) => i.id));
@@ -418,10 +419,19 @@ export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slot
   const running = smallOfIds(app.db, [...new Set([...slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])), ...picked])]);
   // Once the owner has backed a bet, builders pick from backed bets, the owner's raised issues and the small lane (#8713).
   const bets = betsInUse(app.db, repo.id) ? backedBetOf(app.db, repo.id, issues.map((i) => i.id)) : undefined;
+  // Polish (labelled `polish`, or in the small-fixes lane) stops once it has taken its share of the week (#8853);
+  // what the owner raised, ranked or put first is never held back.
+  const polishLabels = labelsForIssues(app.db, issues.map((i) => i.id));
+  const polishOpen = polishSpend(app.db, repo.id, repo.polishShare, now).under;
+  const heldBack = (r: Ranked): boolean =>
+    !polishOpen &&
+    !raised.has(r.issue.id) && !first.has(r.issue.id) && !ranked.has(r.issue.id) &&
+    isPolish(r.issue.title, (polishLabels.get(r.issue.id) ?? []).map((l) => l.name));
+  const pickable = ready.filter((r) => !heldBack(r));
   const allowed =
     bets === undefined
-      ? ready
-      : ready.filter((r) =>
+      ? pickable
+      : pickable.filter((r) =>
           mayPick({
             raised: raised.has(r.issue.id) || first.has(r.issue.id),
             small: small.has(r.issue.id),
@@ -556,7 +566,7 @@ async function driveOnce(
     )
   );
   // The roadmap first, and small issues held to their share of the slots (#7571).
-  const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, slotted, paced.slots, taken));
+  const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, slotted, paced.slots, taken, now));
   if (next !== undefined) {
     taken.add(next.issue.id);
     const routed = await routeIssue(app, repo, next.issue, crewFor(next.issue), inFlight);

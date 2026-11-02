@@ -9,4 +9,5 @@ An open issue labelled `bug` is answered, fixed or closed as won't fix within a 
 - **Tile.** Home's **Open bugs** tile (admins only) shows the open count and how many are past their clock; it links to `/boards`.
 - **Terminal.** The **Bugs** palette entry shows the same count (admins who are people) and the alarm (cut to public for everyone else).
 - **Closing.** Closing a bug needs a reason: see `bug-close.md`.
-- **Not yet.** The polish share, shortcuts and hunters' findings of #8709 are not built.
+- **Polish share.** The setting, the week lines and the dispatch hold are in [polish-share.md](polish-share.md).
+- **Not yet.** Shortcuts and hunters' findings of #8709 are not built.

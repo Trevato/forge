@@ -8,6 +8,7 @@
  * same-origin POST and every one of them says what happened.
  */
 
+import { POLISH_SHARE_DEFAULT, POLISH_SHARE_MAX } from "../../crew/small_share.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import { getProvenance, parentUrl, sourceLabel } from "../../core/provenance.ts";
@@ -331,6 +332,27 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           >
         </label>
       </div>
+      <div class="field">
+        <input type="hidden" name="polishShareShown" value="1" />
+        <label for="polish-share">Polish share</label>
+        <input
+          class="input mono"
+          id="polish-share"
+          type="number"
+          name="polishShare"
+          min="0"
+          max="${String(POLISH_SHARE_MAX)}"
+          step="1"
+          value="${String(repo.polishShare)}"
+          inputmode="numeric"
+        />
+        <p class="hint">
+          Percent of the week's agent spend that polish may take, 0 to ${String(POLISH_SHARE_MAX)}
+          (starts at ${String(POLISH_SHARE_DEFAULT)}) — so small fixes get steady attention without crowding out the plan.
+          Over it, the crew stops picking issues labelled polish or in the small-fixes lane until the week catches up; the
+          <a href="${base}/week">week</a> shows where it stands.
+        </p>
+      </div>
       ${cellMemory === undefined
         ? null
         : html`<div class="field"><p class="hint" data-check-memory>${
@@ -412,6 +434,9 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   return response;
 }
 
+/** A form's polish share: the number if it is all digits, else NaN, which the action refuses. */
+const parseShare = (raw: string): number => (/^\d{1,3}$/.test(raw.trim()) ? Number(raw) : Number.NaN);
+
 export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
   if (gate instanceof Response) return gate;
@@ -443,6 +468,8 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
       ? { crewOutsiders: form.get("crewOutsiders") !== null }
       : {}),
     ...(branch !== "" ? { defaultBranch: branch } : {}),
+    // Sent only by a form that draws the field; anything but a whole 0–50 is refused by the action.
+    ...(form.get("polishShareShown") !== null ? { polishShare: parseShare(field(form, "polishShare")) } : {}),
   };
   const updated = await updateRepoSettings(
     ctx.app,
@@ -457,6 +484,8 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
         message:
           updated.error === "unknown_branch"
             ? "That branch does not exist in this repository."
+            : updated.error === "polish_share"
+            ? `Polish share is a whole number of percent, 0 to ${POLISH_SHARE_MAX}.`
             : "Those settings could not be saved.",
       };
   return flashTo(ctx, `${base}/settings`, flash);

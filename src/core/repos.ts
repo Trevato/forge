@@ -147,6 +147,8 @@ export interface Repo {
   readonly plannerSlots: number;
   /** Reviews at once: 0 pauses the reviewer. */
   readonly reviewerSlots: number;
+  /** Percent of a week's agent spend polish may take, 0 to 50 (#8853). */
+  readonly polishShare: number;
   readonly autonomyBy: string | null;
   /**
    * "Outsiders may trigger the crew": whether someone who cannot write here
@@ -204,6 +206,7 @@ interface RepoRow {
   autonomy_slots: number;
   planner_slots: number;
   reviewer_slots: number;
+  polish_share: number;
   autonomy_by: string | null;
   crew_outsiders: number;
   decisions_by: string;
@@ -246,6 +249,7 @@ function toRepo(row: RepoRow): Repo {
     autonomySlots: row.autonomy_slots,
     plannerSlots: row.planner_slots,
     reviewerSlots: row.reviewer_slots,
+    polishShare: row.polish_share,
     autonomyBy: row.autonomy_by,
     crewOutsiders: row.crew_outsiders === 1,
     decisionsBy: isDecisionsBy(row.decisions_by) ? row.decisions_by : "me",
@@ -1208,6 +1212,7 @@ export interface RepoSettings {
   autonomySlots?: number;
   plannerSlots?: number;
   reviewerSlots?: number;
+  polishShare?: number;
   /** Who the forge acts as when it assigns and lands on its own. */
   autonomyBy?: string | null;
   /** Whether someone who cannot write here may start or steer a run. */
@@ -1239,7 +1244,7 @@ export function updateRepoSettings(
        default_branch = ?4, require_review = ?5, require_checks = ?7,
        autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
        autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13, decisions_by = ?14,
-       plans_need_nod = ?15, planner_slots = ?16, reviewer_slots = ?17
+       plans_need_nod = ?15, planner_slots = ?16, reviewer_slots = ?17, polish_share = ?18
      WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
@@ -1259,6 +1264,7 @@ export function updateRepoSettings(
     (settings.plansNeedNod ?? repo.plansNeedNod) ? 1 : 0,
     settings.plannerSlots ?? repo.plannerSlots,
     settings.reviewerSlots ?? repo.reviewerSlots,
+    settings.polishShare ?? repo.polishShare,
   );
   forgetListings(db);
   return getRepoById(db, repo.id)!;
