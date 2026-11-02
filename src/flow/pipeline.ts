@@ -248,7 +248,7 @@ export const STEP_WINDOW_DAYS = 30;
 
 /** One measured step of the path: what it is, and how long and how often red it has been. */
 export interface StepStat {
-  readonly key: "pull-check" | "review" | "proof" | "gate" | "main-check" | "release" | "boot" | "verify";
+  readonly key: "pull-check" | "review" | "gate" | "main-check" | "release" | "boot" | "verify";
   readonly label: string;
   /** Finished runs counted (green + red); cancelled ones are no verdict and not counted. */
   readonly runs: number;
@@ -296,7 +296,7 @@ const MS = `(julianday(x.finished_at) - julianday(x.started_at)) * 86400000.0`;
 
 /**
  * Each step's median time and red rate over the last 30 days, from the runs
- * table (`run`, `proof_run`) and the merge-queue gate's trace (`check_gate`,
+ * table (`run`) and the merge-queue gate's trace (`check_gate`,
  * kept a week and without a verdict, so time only). `publicOnly` reads public
  * repositories alone, for a reader who must not learn what private ones hold.
  *
@@ -324,7 +324,6 @@ export function readStepStats(db: Database, now = new Date(), publicOnly = false
   return [
     stat("pull-check", "Pull check", runs("run", `x.kind = 'check' AND x.issue_id IS NOT NULL AND NOT ${verifyLane}`)),
     { ...stat("review", "Review run", runs("run", `x.kind = 'agent' AND x.reason = 'review'`)), redWord: "errored" },
-    stat("proof", "Proof", runs("proof_run", "1")),
     {
       ...gateStat,
       runs: gate.length,

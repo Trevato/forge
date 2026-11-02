@@ -1,6 +1,6 @@
 /**
  * The one path a change follows, in four words a person can hold (#7703):
- * check, review, land, live. Every finer step (the check queue, the proof,
+ * check, review, land, live. Every finer step (the check queue,
  * the merge queue, the release build, the boot check) sits one click down on
  * /boards; this module only says which of the four a pull is at and, in one
  * plain sentence, why it waits there.

@@ -8,7 +8,7 @@ Every change follows four steps, and a person only needs those four words:
 4. **Live**: a release builds the default branch and production serves it.
 
 `/pipeline` says this to anyone. Each step's finer parts (the check queue, the
-proof, the merge queue's gate, the release build and boot check) sit one
+merge queue's gate, the release build and boot check) sit one
 click down in a `<details>`. The live counts per stage stay on `/boards`,
 whose Pipeline panel links back to `/pipeline`.
 
@@ -67,5 +67,5 @@ label with `l`.
 
 ## Not here yet
 
-The rest of #7703 is filed as its own issues: remove the proof (#7779), re-run a shard that crashed
+The rest of #7703 is filed as its own issues: re-run a shard that crashed
 outside any test (#7781), reuse a verdict for the same tree (#7782), and measure each step (#7784).

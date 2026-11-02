@@ -118,7 +118,6 @@ import {
 import { evictSoon, lend } from "./install_evict.ts";
 import { meterEgress } from "../apps/egress.ts";
 import { checkStage, type GateStage } from "./gate_reason.ts";
-import { proofsInFlight } from "./proof.ts";
 import { extraGates, GATE_DEADLINE_MS, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
@@ -201,14 +200,6 @@ export interface ChecksHandle {
    * `signal` aborting (the queue's deadline, #3430) cuts it off the same way.
    */
   gate(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone>;
-  /**
-   * The proof before the line (#7616, `checks/proof.ts`): the gate's own
-   * run — command, environment, sharding — on the pull's head squashed onto
-   * its base, cut off as a gate is when `signal` aborts (its deadline). A
-   * lane without it (a test's stand-in) admits on the pull's own check, as
-   * before.
-   */
-  prove?(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone>;
   /**
    * The gate of `commitOid` this forge is running now, to wait on rather
    * than start again (#6611); undefined when none is.
@@ -385,8 +376,7 @@ function gateMayBeRunning(path: string, now: number): boolean {
  * directory and database with the old one, whose checks are still running in
  * theirs; those are left alone. A gate writes no run: its checkout is left
  * while it is younger than a gate's deadline, and past that while its
- * `check_gate` row is open, for as long as a check may run — the proof
- * step's full suite outlives the window, and lost its `node_modules` (#7673).
+ * `check_gate` row is open, for as long as a check may run.
  */
 export function sweepCheckouts(app: App, now: number = Date.now()): void {
   const root = checksRoot(app.config.dataDir);
@@ -608,7 +598,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (options.gate === undefined) gate.resize(limit);
     startVerify();
     // Every merge-queue gate in flight holds a slot, a line's first too (#6376).
-    while (slotted() < limit - gatesInFlight() - proofsInFlight()) {
+    while (slotted() < limit - gatesInFlight()) {
       // A pull's check waits while its main is red (`checks/red_main.ts`).
       const queued = unheld(
         listActive(app.db, "check").filter(
@@ -628,7 +618,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       const { rebases, rest: others } = rebasesFirst(app.db, queued);
       // While a gate is about to start, the last free slot is its: a pull's
       // check waits for it, a rebase's and a main check do not.
-      const held = holdsLastSlot(limit - gatesInFlight() - proofsInFlight() - slotted(), gateQueued());
+      const held = holdsLastSlot(limit - gatesInFlight() - slotted(), gateQueued());
       const next = startable(rebases) ?? startable(held ? others.filter((run) => run.issueId === null) : others);
       if (!next) return;
       const repo = getRepoById(app.db, next.repoId);
@@ -1689,12 +1679,11 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const handle: ChecksHandle = {
     request,
     gate: gateRun,
-    prove: gateRun,
     adopt: (commitOid) => {
       for (const g of gates.values()) if (g.commitOid === commitOid) return g.done;
       return undefined;
     },
-    spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - slotted() - extraGates() - proofsInFlight()),
+    spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - slotted() - extraGates()),
     verifyDue: (now) => askVerifications(now),
     lane: gate,
     stop: async (stopOptions) => {

@@ -19,7 +19,6 @@ const cases: [string, Partial<NextInput>, string, string][] = [
   ["no review", { check: "running" }, "reviewer", "no review yet"],
   ["approved and green", { approvals: 1, check: "ok" }, "queue", "approved and green"],
   ["approved, no check", { approvals: 1 }, "queue", "approved, waiting for its check"],
-  ["approved and green, proof waits", { approvals: 1, check: "ok", proof: "waits: no check slot is spare" }, "queue", "approved and green, but its proof waits: no check slot is spare"],
   ["approved, queued", { approvals: 1, check: "queued" }, "queue", "approved, its check is queued"],
   ["approved, cancelled", { approvals: 1, check: "cancelled" }, "queue", "approved, its check was cancelled"],
   ["approved, running", { approvals: 1, check: "running" }, "queue", "approved, its check is running"],

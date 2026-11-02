@@ -42,7 +42,6 @@ export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const read = (): void => {
     const listed = listRepoRuns(f.app, f.user, repo, {
       state: RUN_STATE_CYCLE[at]![0],
-      withProofs: true,
       limit: LIMIT,
     });
     list.set(listed.ok ? listed.value : []);

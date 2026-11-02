@@ -38,7 +38,6 @@ export const STEP_DETAIL: Record<Step, { waits: string; catches: string; inside:
     waits: "the merge queue, which merges approved, green pulls into the default branch in order.",
     catches: "a pull that no longer merges onto the base as it is now.",
     inside: [
-      "Before it joins the queue, a pull is proved once on the base's tip; that proof is being removed (#7779).",
       "The merge queue's gate: lint and types on the pull merged with the base's tip.",
       "A conflicting pull goes back to its builder to rebase before it can land.",
     ],
@@ -58,7 +57,7 @@ export const STEP_DETAIL: Record<Step, { waits: string; catches: string; inside:
 export const STEP_MEASURES: Record<Step, readonly StepStat["key"][]> = {
   check: ["pull-check"],
   review: ["review"],
-  land: ["proof", "gate"],
+  land: ["gate"],
   live: ["main-check", "release", "boot", "verify"],
 };
 

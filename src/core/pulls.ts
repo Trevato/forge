@@ -9,7 +9,6 @@
 import { getRepoById } from "./repos.ts";
 import { repoDir } from "../git/repos.ts";
 import { sealedByNumber } from "./sealed.ts";
-import { endProofRunsForPull } from "./proof_runs.ts";
 import type { Database } from "bun:sqlite";
 import { diffRange, type Diff, type DiffLaps } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
@@ -1222,7 +1221,6 @@ function closeAsMerged(
       landed.headOid,
       pullId,
     );
-    endProofRunsForPull(db, pullId, "pull landed");
     setIssueState(db, pullId, "closed");
   });
 }

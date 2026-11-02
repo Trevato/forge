@@ -31,13 +31,6 @@ function seed(kind: string, state: string, mins: number, daysAgo: number, set: R
     .run(state, new Date(end - mins * MIN).toISOString(), new Date(end).toISOString(), set["issue"] ?? null, set["env"] ?? "", run.id);
 }
 
-function proof(state: string, mins: number, daysAgo: number, repo = repoId) {
-  const end = Date.now() - daysAgo * DAY;
-  app.db
-    .query("INSERT INTO proof_run (id, repo_id, issue_id, head, base, state, summary, started_at, finished_at) VALUES (?1, ?2, ?3, 'h', 'b', ?4, '', ?5, ?6)")
-    .run(`p${Math.random()}`, repo, repo === repoId ? pullIssueId : privIssueId, state, new Date(end - mins * MIN).toISOString(), new Date(end).toISOString());
-}
-
 function gate(mins: number | null, daysAgo: number, repo = repoId) {
   const end = Date.now() - daysAgo * DAY;
   app.db
@@ -46,7 +39,6 @@ function gate(mins: number | null, daysAgo: number, repo = repoId) {
 }
 
 let pullIssueId = "";
-let privIssueId = "";
 
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-steps-"));
@@ -67,7 +59,6 @@ beforeAll(async () => {
   if (!po.ok) throw new Error(String(po.error));
   const privIssue = po.value.id;
   pullIssueId = pullIssue;
-  privIssueId = privIssue;
   // Pull checks: 4, 6, 10 minutes green and one 20-minute red → median 8m, 25% red.
   seed("check", "ok", 4, 1, { issue: pullIssue });
   seed("check", "ok", 6, 2, { issue: pullIssue });
@@ -82,11 +73,6 @@ beforeAll(async () => {
   // Verify lane: a verify and a verify-bisect check; even one tied to a pull is not a pull check.
   seed("check", "ok", 10, 1, { env: "verify" });
   seed("check", "failed", 30, 1, { env: "verify-bisect", issue: pullIssue });
-  // Proofs: 5 and 15 minutes green, 40 red → median 15m, 1 of 3 red; a private one is hidden.
-  proof("ok", 5, 1);
-  proof("ok", 15, 2);
-  proof("failed", 40, 3);
-  proof("failed", 1, 1, privateId);
   // Merge-queue gates: 6 and 12 minutes; an open one and a private one do not count.
   gate(6, 1);
   gate(12, 2);
@@ -124,10 +110,6 @@ test("a step's median time and red rate follow from its runs in the last 30 days
   expect(by["verify"]?.runs).toBe(2);
   expect(by["verify"]?.medianMs).toBeCloseTo(20 * MIN, -2);
   expect(by["verify"]?.redRate).toBe(0.5);
-  // 5, 15, 40 → median 15m; 1 of 3 red; the private proof is cut.
-  expect(by["proof"]?.runs).toBe(3);
-  expect(by["proof"]?.medianMs).toBeCloseTo(15 * MIN, -2);
-  expect(by["proof"]?.redRate).toBeCloseTo(1 / 3, 10);
   // Gates: time only — 6 and 12 → median 9m; no verdict; the open and private rows are cut.
   expect(by["gate"]?.runs).toBe(2);
   expect(by["gate"]?.medianMs).toBeCloseTo(9 * MIN, -2);
@@ -140,7 +122,6 @@ test("a step's median time and red rate follow from its runs in the last 30 days
   expect(statWords(by["pull-check"] as never)).toBe("median 8m · 25% red (1 of 4)");
   const all = Object.fromEntries(readStepStats(app.db, new Date(), false).map((s) => [s.key, s]));
   expect(all["pull-check"]?.runs).toBe(5);
-  expect(all["proof"]?.runs).toBe(4);
   expect(all["gate"]?.runs).toBe(3);
 });
 
@@ -169,14 +150,13 @@ test("the terminal's Flow lines carry the steps, private repositories for an adm
   expect(admin).toContain("Merge-queue gate: median 12m");
   const agent = flowLines(app.db, new Date(), undefined, { queues: [] }).join(" ").replace(/\s+/g, " ");
   expect(agent).toContain("Merge-queue gate: median 9m");
-  expect(admin).toContain("Proof: median");
 });
 
 test("the MCP flow tool and the API return the steps, an agent's cut to public repositories", () => {
   const owner = flowFor(app, { kind: "owner" } as never).steps;
   const agent = flowFor(app, { kind: "agent" } as never).steps;
-  const proofOf = (steps: typeof owner) => steps.find((s) => s.key === "proof");
-  expect(proofOf(owner)?.runs).toBe(4);
-  expect(proofOf(agent)?.runs).toBe(3);
-  expect(proofOf(owner)?.says).toContain("median");
+  const gateOf = (steps: typeof owner) => steps.find((s) => s.key === "gate");
+  expect(gateOf(owner)?.runs).toBe(3);
+  expect(gateOf(agent)?.runs).toBe(2);
+  expect(owner.some((s) => s.key === ("proof" as never))).toBe(false);
 });

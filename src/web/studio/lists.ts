@@ -603,11 +603,11 @@ export async function changesList(ctx: Ctx): Promise<Response> {
 /** Which runs a list shows: all three kinds by default, or the one that
  * `?kind=` asks for — the narrowing dev's list offered, kept so a link
  * written to it keeps meaning what it said. */
-type RunsKind = "agent" | "deploy" | "check" | "proof";
+type RunsKind = "agent" | "deploy" | "check";
 
 function readRunsKind(ctx: Ctx): RunsKind | undefined {
   const raw = ctx.url.searchParams.get("kind");
-  return raw === "agent" || raw === "deploy" || raw === "check" || raw === "proof"
+  return raw === "agent" || raw === "deploy" || raw === "check"
     ? raw
     : undefined;
 }
@@ -698,7 +698,6 @@ const RUNS_KIND_WORDS: Record<RunsKind, string> = {
   agent: "Agent runs",
   deploy: "Deploys",
   check: "Checks",
-  proof: "Proofs",
 };
 
 /**
@@ -725,7 +724,6 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     // Working is what runs now: read only the running ones, so the page
     // is not spent on finished rows it would drop.
     state: state ?? (filter === "working" ? "running" : undefined),
-    withProofs: true,
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
   });
@@ -815,7 +813,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
       )}
     </div>
     <p class="muted small mt">
-      Show ${(["agent", "deploy", "check", "proof"] as const).map(
+      Show ${(["agent", "deploy", "check"] as const).map(
         (k, i) =>
           html`${i > 0 ? " · " : ""}${k === kind
               ? html`<strong>${RUNS_KIND_WORDS[k]}</strong>`

@@ -169,31 +169,9 @@ In the database the pull's `close_reason` stays NULL (its CHECK predates the
 word) and `issue.parked = 1` carries it, so raw SQL never reads it as done.
 
 **The merge queue.** A green, approved pull in an autonomous repository
-joins its repository's queue (`src/checks/queue.ts`) once it is proved
-(#7616, `src/checks/proof.ts`): when its check has a fast tier, the full
-gate — the same command, environment and sharding — runs on its head
-squashed onto main's tip first, using one check slot. Green admits it, kept
-as a `proof` row in the decision ledger with the head and base. A red one is
-held (`proof-red` in the tick's waits; `proving` while it runs), and the
-pull gets a comment that names the failing tests, so a test the fast tier
-never reached costs no batch. A proof goes stale when main moves more than
-16 first-parent landings past it (`STALE_LANDINGS`). The pull is then proved
-again before it joins, and a pull already in the line is left out of its
-next batch until it is proved again. A proof that has not answered by the
-gate's deadline (15 minutes) is cut off and no verdict is kept, so a hung
-one never holds its pull or a check slot.
-
-A **proof** is a run of kind `proof`: the full suite on a pull's head squashed
-onto the base, before the pull joins the merge queue. It is `queued` while no
-check slot is spare, `running`, then `ok` (shown *Green*), `failed` (red) or
-`cancelled` (shown *Cut off*: the deadline passed or the forge restarted; it is
-proved again on the next sweep). A push ends the old head's unfinished proof as
-`cancelled`, "superseded by a push". The run's summary says why a proof waited
-or could not start, and the pull is told once per head in a comment and in its
-next step ("approved and green, but its proof waits: no check slot is spare").
-Read them in the runs list (`?kind=proof`), the terminal's Runs screen, the API
-(`GET …/runs?kind=proof`) and the MCP `runs` tool (`kind: "proof"`); only those
-lists mix proofs in with the other kinds.
+joins its repository's queue (`src/checks/queue.ts`) on its own check and
+its approval: there is no proof before the line (removed in #7779), and the
+queue's gate is the one full run.
 
 The queue builds one candidate: main, then each queued pull's squash on top of the one before, in
 queue order, leaving out any pull that conflicts or has nothing left to land.

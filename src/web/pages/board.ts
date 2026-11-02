@@ -155,7 +155,6 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   retry: "try again",
   lean: "which way",
   hand: "hand-over",
-  proof: "proved before the queue",
   // Never listed (`listDecisionsForRepos` leaves guards out); named for the type.
   guard: "not started",
 };

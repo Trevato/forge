@@ -24,8 +24,7 @@ import {
   setIssueState,
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
-import { adoptGate, gateCandidate, provable, proveCandidate, releaseOnLand } from "../checks/landing.ts";
-import { current, proofOf, proofRedWords, standing as proofStanding, startProof } from "../checks/proof.ts";
+import { adoptGate, gateCandidate, releaseOnLand } from "../checks/landing.ts";
 import { queueStore } from "../checks/queue_store.ts";
 import { addLearned } from "../checks/learned.ts";
 import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
@@ -1987,14 +1986,6 @@ async function admit(
   // not hold it for good; a red that reproduces stays red (#3155).
   const told = latestDecision(app.db, pull.id, "land");
   if (redOf(told)?.head === pull.headOid && !regateDue(told!, Date.now())) return err("red");
-  // The proof before the line (#7616): the whole suite, green on this head
-  // squashed onto the base's tip, or the pull does not join — a test its
-  // fast tier never reached is found here, at no batch's cost.
-  const proves = baseTip !== "" && (await provable(app, dir, pull.headOid));
-  if (proves) {
-    const wait = await proofWait(app, repo, by, pull, dir, baseTip);
-    if (wait !== undefined) return err(wait);
-  }
   // Green only against a base that has moved since is admitted as it is:
   // the candidate's full gate runs on the base tip with this pull merged,
   // which is the proof a re-check of its own would give, and a red one
@@ -2035,76 +2026,7 @@ async function admit(
       addLearned(app.config.dataDir, pull.id, red.learn);
       if (!again) addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, clashSaid(red.comment, together));
     },
-    // A proof the base has moved too far past is proved again before the batch.
-    ...(proves ? { proven: (baseOid: string) => proofHolds(app, pull, dir, baseOid) } : {}),
   });
-}
-
-/**
- * What a proof says to `pull`, said only while the pull is open on the head
- * it proved: a push or a close since makes the words about nothing.
- */
-export function toldWhileOpen(app: App, repo: Repo, by: User, pull: Pull): (words: string) => void {
-  return (words) => {
-    const now = getPull(app.db, repo.id, pull.number);
-    if (now !== undefined && now.headOid === pull.headOid && now.state === "open")
-      addComment(app, by, repo, getIssueById(app.db, pull.id) ?? now, words);
-  };
-}
-
-/**
- * Why a pull waits on its proof (#7616), or undefined when it is proved on
- * `baseTip`. An unproved pull's proof is started here, beside the sweep:
- * green admits it at once (`landIfGreen`), red is told to the pull with
- * its failing tests named.
- */
-async function proofWait(
-  app: App,
-  repo: Repo,
-  by: User,
-  pull: Pull,
-  dir: string,
-  baseTip: string,
-): Promise<"proving" | "proof-red" | undefined> {
-  const at = await proofStanding(app.db, dir, pull, baseTip);
-  if (at === "proved") return undefined;
-  if (at === "red") return "proof-red";
-  if (at === "proving") return "proving";
-  const started = await startProof({
-    db: app.db,
-    repoId: repo.id,
-    pull,
-    dir,
-    tip: baseTip,
-    run: async (commitOid, signal) => (await proveCandidate(app, repo, pull, dir, commitOid, signal)) ?? { lands: true },
-    room: () => checksFor(app)?.spareSlots() ?? 0,
-    told: toldWhileOpen(app, repo, by, pull),
-    done: (proof, verdict) => {
-      log.info(`proof ${proof.green ? "green" : "red"}`, {
-        repo: `${repo.ownerName}/${repo.name}`,
-        pull: pull.number,
-        base: proof.base.slice(0, 7),
-      });
-      const now = getPull(app.db, repo.id, pull.number);
-      if (now === undefined || now.headOid !== proof.head || now.state !== "open") return;
-      if (!verdict.lands && "reopen" in verdict) {
-        addLearned(app.config.dataDir, pull.id, verdict.learn);
-        addComment(app, by, repo, getIssueById(app.db, pull.id) ?? now, proofRedWords(pull.baseBranch, proof.base, verdict));
-        return;
-      }
-      void landIfGreen(app, repo, now).catch((error) =>
-        log.warn("could not land after its proof", { pull: pull.number, error: String(error) }),
-      );
-    },
-  });
-  if (started) log.info("proving before the line", { repo: `${repo.ownerName}/${repo.name}`, pull: pull.number, base: baseTip.slice(0, 7) });
-  return "proving";
-}
-
-/** The pull's green proof still holds on `baseOid` (#7616). */
-async function proofHolds(app: App, pull: Pull, dir: string, baseOid: string): Promise<boolean> {
-  const proof = proofOf(app.db, pull.id);
-  return proof !== undefined && proof.green && proof.head === pull.headOid && (await current(dir, proof, baseOid));
 }
 
 /**
