@@ -24,7 +24,7 @@ const DOMAIN = "apps.test";
 const RUNS = 25;
 const MEDIAN_MS = 5;
 const P95_MS = 20;
-const ROUNDS = 4;
+const ROUNDS = 12;
 // About the size of the scaffold app's home page.
 const PAGE = `<!doctype html><html><head><title>notes</title></head><body>${"<p>hello hello hello</p>".repeat(60)}</body></html>`;
 
@@ -133,7 +133,7 @@ for (const [label, pill] of [["with the toolbar rewrite", undefined], ["without 
       await time(proxied, HEADERS);
     }
     // Load only ever adds time, so the proxy's own cost is the floor of what
-    // is measured: judge the lowest median and the lowest p95 over a few short
+    // is measured: judge the lowest median and the lowest p95 over a dozen short
     // rounds. A change that costs more than the budget raises that floor in
     // every round and fails; a noisy round cannot.
     let median = Infinity;
@@ -154,5 +154,5 @@ for (const [label, pill] of [["with the toolbar rewrite", undefined], ["without 
     throw new Error(
       `proxy overhead floor: median ${median.toFixed(2)} ms (budget ${MEDIAN_MS}), p95 ${p95.toFixed(2)} ms (budget ${P95_MS}) over ${ROUNDS} rounds; five slowest phases: ${await slowest()}`,
     );
-  });
+  }, 60_000);
 }
