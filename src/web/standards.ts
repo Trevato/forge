@@ -24,6 +24,7 @@
  * FORGE_SECURITY_CONTACT.
  */
 
+import { CRAWL_DELAY_S, DEEP_SEGMENTS } from "../http/crawl.ts";
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
@@ -159,6 +160,12 @@ export function robotsTxt(ctx: Ctx): Response {
       "Disallow: /settings",
       "Disallow: /search",
       "Disallow: /api/",
+      // The deep paths, at every ref and in every mirror: each is a git walk
+      // (#8129). Repository roots, docs and the home page stay open.
+      ...DEEP_SEGMENTS.map((segment) => `Disallow: /*/*/${segment}`),
+      "Disallow: /origins/",
+      "Allow: /$",
+      `Crawl-delay: ${CRAWL_DELAY_S}`,
       "",
       `Sitemap: ${ctx.url.origin}/sitemap.xml`,
       "",

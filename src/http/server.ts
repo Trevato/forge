@@ -76,6 +76,7 @@ import {
   verifyPasswordThrottled,
 } from "../core/users.ts";
 import { activeEdgeToken, edgeIdentity } from "./edge.ts";
+import { crawlRefused, isCrawler, noteCrawler, takeCrawl, wasCrawler } from "./crawl.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
@@ -2267,7 +2268,7 @@ export async function serve(app: App): Promise<Servers> {
       const end = performance.now();
       perfRecord.add(
         tag.pattern,
-        { at: Date.now(), ms, signedIn: tag.role !== "anon", phases: parseServerTiming(header) },
+        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), phases: parseServerTiming(header) },
       );
       loopWatch.finished(tag.pattern, started, end);
     } catch {
@@ -2630,6 +2631,17 @@ async function answerGet(
   if (auth.user !== undefined) {
     noteSignedIn(request);
     noteCaller(request, app.db, auth.user.id, auth.sessionId);
+  }
+
+  // A crawler nobody is signed in behind spends from its agent's budget and
+  // is refused before any page work (`crawl.ts`); a person or token never is.
+  if (auth.user === undefined && !request.headers.has("authorization")) {
+    const crawl = takeCrawl(app, request, url.pathname);
+    if (isCrawler(request)) {
+      noteCrawler(request);
+      noteUsage(request, { pattern: matched.pattern, role: "crawler" });
+    }
+    if (crawl !== undefined) return crawlRefused(crawl);
   }
 
   // A cookie's identity never acts for another site: one door for every route.

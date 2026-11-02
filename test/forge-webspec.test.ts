@@ -24,12 +24,15 @@ quietLogs();
 
 const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1", "/alice/notes/tree/main", "/alice/notes/blob/main/a.txt"];
 
+const CACHING = "https://specification.website/#caching";
+
 /** `check path` -> [section, why it stands]. Every one is expected on every page it names; one fixed fails the test, one new fails it too. */
-const KNOWN: Record<string, [string, string]> = {};
+const KNOWN: Record<string, [string, string]> = {
+  "cache-html /alice/notes/commit/<sha>": [CACHING, "commit-addressed pages are immutable by design (#8129)"],
+};
 
 /** The owner's pages: signed in, so no-store by design; webspec's caching findings on them are not asserted away, they are named. */
 const SIGNED_IN = ["/map", "/system", "/boards", "/settings/crew", "/alice/notes/pulls/2", "/settings", "/audit", "/settings/backups", "/fleet/graph"];
-const CACHING = "https://specification.website/#caching";
 const NO_ETAG = "signed-in HTML is no-store by design: it is per-person, so there is no validator to revalidate against";
 const KNOWN_SIGNED_IN: Record<string, [string, string]> = {
   "etag /system": [CACHING, NO_ETAG],
@@ -98,7 +101,8 @@ const through = (signedIn: boolean) => async (input: string, init?: RequestInit)
 
 test("the forge's signed-out pages raise exactly the findings named in KNOWN", async () => {
   const found = await webspec("http://forge.test", PATHS, through(false), { site: true });
-  const keyOf = (f: { check: string; path: string }) => `${f.check} ${f.path}`;
+  // #8129: a page at a full commit id names bytes that never change, so the edge may keep it (#8016); the id differs per run, so the path is keyed as `<sha>`.
+  const keyOf = (f: { check: string; path: string }) => `${f.check} ${f.path.replace(/\/commit\/[0-9a-f]{40}$/, "/commit/<sha>")}`;
   // New: not named, or citing another section than the one named.
   expect(found.filter((f) => KNOWN[keyOf(f)]?.[0] !== f.section).map((f) => `${keyOf(f)}: ${f.message}`)).toEqual([]);
   // Fixed: named but no longer found, so the entry must go.

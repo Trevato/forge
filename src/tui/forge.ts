@@ -56,6 +56,7 @@ import { signInsScreen } from "./screens/signins.ts";
 import { originAppsScreen } from "./screens/originapps.ts";
 import { addEntries } from "./screens/entries.ts";
 import { capacityScreen, mayCapacity } from "./screens/capacity.ts";
+import { crawlersScreen } from "./screens/crawlers.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { readHeld } from "../flow/held.ts";
@@ -341,6 +342,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Capacity",
         hint: "concurrency and guards, live; e changes a settable one",
         run: () => ctx.push(capacityScreen(session, ctx)),
+      });
+    // What crawlers cost and who was refused, as GET /api/v1/admin/crawlers: the capacity screen's readers.
+    if (mayCapacity(session))
+      commands.push({
+        id: "crawlers",
+        title: "Crawlers",
+        hint: "their share of answering time, and who was refused",
+        run: () => ctx.push(crawlersScreen(session, ctx)),
       });
     // The forge's API operations, as /api lists them; Enter runs a GET: for anyone.
     commands.push({

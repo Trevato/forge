@@ -8,6 +8,7 @@
  * path segment and can never smuggle a path of its own.
  */
 
+import { immutableWhenAddressed } from "../../http/addressed.ts";
 import { behindLine, followingLine } from "./upstream-follow.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
 import { offerUpstream } from "./offer-upstream.ts";
@@ -1537,7 +1538,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
   });
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
-  return response;
+  return immutableWhenAddressed(ctx.auth.user === undefined, repo, ref, response);
 }
 
 /**

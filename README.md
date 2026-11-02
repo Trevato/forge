@@ -92,6 +92,8 @@ Signed in, `/` paints its frame from memory and swaps in what a write has made s
 
 In the terminal, the System screen (palette: System) shows a forge admin who is a person one more line, `telemetry:read held by: …` (the agents holding the grant), and `g` there picks an agent and asks `grant <agent> telemetry:read? y/n` (or `take back …`; the default is n). `y` calls `setTelemetryGrant`, as MCP `telemetry_grant` does; anyone that tool refuses sees neither the line nor the key hint, and `g` answers them in the tool's words.
 
+Crawlers (`docs/features/crawl-budget.md`): an unauthenticated crawler is held to a budget per address, per agent and all together, answered `429` past it; a forge admin reads their share of answering time and who was refused at `GET /api/v1/admin/crawlers` and in the terminal's palette as "Crawlers".
+
 In the terminal, the Capacity screen (palette: Capacity, a forge admin who is a person) lists every guard with its live value and bounds, as /settings/capacity does; `e` on one asks for a value (empty restores the default), shows `key: from → to` and calls `changeCapacity` only on `y` (default n). No row is read-only here.
 
 An admin's home and the terminal's Flow dialog also say when the forge is clogged and how long the last clog took to notice and to clear: `docs/features/clog-watch.md`. A fork whose parent is archived shows one quiet line instead of its ahead/behind count, and its admin can detach it from the parent (Settings › Danger zone, the terminal's About `x`, MCP `detach`): `docs/features/detach.md`.

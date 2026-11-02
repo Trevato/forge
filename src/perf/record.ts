@@ -25,6 +25,8 @@ export interface Sample {
   readonly at: number;
   readonly ms: number;
   readonly signedIn: boolean;
+  /** An unauthenticated request whose User-Agent names a crawler (`http/crawl.ts`). */
+  readonly crawler?: boolean;
   readonly phases: readonly PhaseSample[];
 }
 
@@ -127,4 +129,29 @@ export function parseServerTiming(header: string): PhaseSample[] {
     if (m) out.push({ name: m[1]!, ms: Number(m[2]), hit: m[3] !== undefined });
   }
   return out;
+}
+
+export interface CrawlerShare {
+  readonly requests: number;
+  readonly crawlerRequests: number;
+  /** Summed time to answer, ms, of every request and of the crawlers' alone. */
+  readonly ms: number;
+  readonly crawlerMs: number;
+  /** crawlerMs / ms, 0 when nothing was answered. */
+  readonly share: number;
+}
+
+/** What share of the server's answering time crawlers took, from `since` on. */
+export function crawlerShare(record: PerfRecord, since: number): CrawlerShare {
+  let requests = 0, crawlerRequests = 0, ms = 0, crawlerMs = 0;
+  for (const pattern of record.patterns())
+    for (const s of record.traffic(pattern, since)) {
+      requests++;
+      ms += s.ms;
+      if (s.crawler === true) {
+        crawlerRequests++;
+        crawlerMs += s.ms;
+      }
+    }
+  return { requests, crawlerRequests, ms, crawlerMs, share: ms > 0 ? crawlerMs / ms : 0 };
 }
