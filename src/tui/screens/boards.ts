@@ -14,7 +14,7 @@ import { formatValue } from "../../boards/chart.ts";
 import { panelData, type PanelData } from "../../boards/panel_data.ts";
 import type { Board } from "../../boards/store.ts";
 import { listPinned, movePinned, pinPanel, unpinPanel } from "../../actions/board-pins.ts";
-import { boardRefusal, deleteBoard, duplicateBoard, listAllBoards, makeBoard, showBoard, type BoardError } from "../../actions/boards.ts";
+import { boardRefusal, changeBoard, deleteBoard, duplicateBoard, listAllBoards, makeBoard, showBoard, type BoardError } from "../../actions/boards.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
@@ -79,11 +79,16 @@ export function boardLines(board: Board, at = -1, pinned: readonly string[] = []
   return lines;
 }
 
-function boardScreen(ctx: Ctx, f: Session, slug: string, board: Board): Screen {
+export function boardScreen(ctx: Ctx, f: Session, slug: string, first: Board): Screen {
+  let board = first;
   const scroll = new Scroll();
   let at = board.panels.length > 0 ? 0 : -1;
   let pinned: string[] = [];
   let data: PanelData[] = [];
+  /** The panel `x` asked about (where it sat and its title), until `y` or `n`. */
+  let asking: { readonly index: number; readonly title: string } | undefined;
+  // The gate is `changeBoard`'s, read once as the list's is.
+  const mayEdit = f.user?.isAdmin === true && f.user.kind !== "agent";
   let lines = boardLines(board, at, pinned);
   const read = async (): Promise<void> => {
     const listed = await listPinned(f.app, f.user);
@@ -107,21 +112,69 @@ function boardScreen(ctx: Ctx, f: Session, slug: string, board: Board): Screen {
       await read();
     });
   };
+  const reload = async (index: number): Promise<void> => {
+    const shown = await showBoard(f.app, f.user, slug);
+    if (shown.ok) {
+      board = shown.value;
+      at = Math.min(index, board.panels.length - 1);
+    }
+    await read();
+  };
+  /**
+   * Remove the panel asked about as the web's Remove does; pins are left as `changeBoard` leaves them.
+   * `changeBoard` removes by index, so the board is read again first: when another door moved or removed
+   * panels and `index` no longer holds `title`, nothing is removed and the screen shows the board as it is.
+   */
+  const drop = (index: number, title: string): void =>
+    runAsync(ctx, async () => {
+      const now = await showBoard(f.app, f.user, slug);
+      if (!now.ok) return void ctx.toast(refusal(now.error), "danger");
+      if (now.value.panels[index]?.title !== title) {
+        await reload(index);
+        return void ctx.toast("The board changed; nothing was removed.", "danger");
+      }
+      const done = await changeBoard(f.app, f.user, slug, { kind: "remove", index });
+      await reload(index);
+      ctx.toast(done.ok ? "panel removed" : refusal(done.error), done.ok ? "success" : "danger");
+    });
   return {
     title: plain(board.title),
-    keys: [
-      binding(["j", "k"], "scroll"), binding(["[", "]"], "panel"), binding(["p"], "pin / unpin"),
-      binding(["<", ">"], "move pin"), binding(["esc", "q"], "back"),
-    ],
+    get keys() {
+      return [
+        binding(["j", "k"], "scroll"), binding(["[", "]"], "panel"), binding(["p"], "pin / unpin"),
+        binding(["<", ">"], "move pin"),
+        ...(mayEdit && board.panels.length > 0 ? [binding(["x"], "remove panel")] : []),
+        binding(["esc", "q"], "back"),
+      ];
+    },
     load: read,
     render(area, s) {
       const c = ctx.theme.c;
+      if (asking !== undefined) {
+        s.text(area.x, area.y, truncate(`remove ${plain(asking.title)}? y/n`, area.w), style(c.fg, c.bg), area.x + area.w);
+        area = { ...area, y: area.y + 1, h: Math.max(0, area.h - 1) };
+      }
       const spans = lines.map((text, i) => [{ text, style: style(i === 0 ? c.fg : c.mutedFg, c.bg) }]);
       drawLines(s, area, c, scroll, spans);
       hitScroll(ctx, area, scroll, lines.length);
     },
     key(e) {
+      if (asking !== undefined) {
+        const asked = asking;
+        if (e.key === "y" || e.key === "n" || e.key === "esc") {
+          asking = undefined;
+          if (e.key === "y") drop(asked.index, asked.title);
+          ctx.invalidate();
+        }
+        return true;
+      }
       if (scroll.key(e, lines.length)) return true;
+      if (e.key === "x") {
+        const panel = board.panels[at];
+        if (mayEdit && panel !== undefined) asking = { index: at, title: panel.title };
+        ctx.invalidate();
+        return true;
+      }
       if (e.key === "[" || e.key === "]") {
         if (board.panels.length > 0) at = (at + (e.key === "]" ? 1 : board.panels.length - 1)) % board.panels.length;
         lines = boardLines(board, at, pinned, data);
