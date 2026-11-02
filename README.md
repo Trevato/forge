@@ -59,6 +59,8 @@ when). The terminal's palette has the same as "Crew hand-overs", a list of the
 same rows (repo#number, title, reasons): Enter opens a parked row's issue and
 `r` reads the list again. Both are a forge admin's only.
 
+Remove on a board panel asks first, on the confirm page, which names the panel and the board. The confirm posts the panel's index and title, and a panel at that index with another title is not removed ("that panel moved; nothing was removed"). The guard compares titles only: two panels with the same title swapped between the two clicks still remove the one now at that index, so give panels distinct titles (pins on home tell panels apart by title too).
+
 `/boards` carries a Held files card for anyone who administers a repository (a forge admin sees every repository's): the holds of the repositories you administer, a form to hold another path, Release on each row, and "Showing 200 of N" when the list is cut. The user menu links Boards to such a person. In the terminal, a bare line on the Held files prompt lists the same holds.
 
 A hold can be set "until green" (a checkbox on the hold form, `until: "green"` on the hold API and the MCP `hold` tool): when a check passes on the pull's current head the forge releases it and the pull's timeline says `hold released: green on <short oid>`. A plain hold is never released by a check.

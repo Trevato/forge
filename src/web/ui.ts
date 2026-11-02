@@ -1263,11 +1263,14 @@ export function confirmAction(o: {
   /** The label on this button only — the confirm page words itself. */
   verb: string;
   size?: "sm" | "lg";
+  /** The accessible name, when the verb alone is ambiguous (one of many rows). */
+  label?: string;
 }): Html {
   return btn(o.verb, {
     href: `/-/confirm?to=${encodeURIComponent(o.action)}`,
     variant: "danger",
     ...(o.size ? { size: o.size } : {}),
+    ...(o.label ? { label: o.label } : {}),
   });
 }
 

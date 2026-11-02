@@ -657,6 +657,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/boards\/([^/]+)\/remove\?index=(\d+)&title=([^&]+)$/,
+    describe: (m) => ({
+      verb: "Remove panel",
+      title: `Remove the panel ${decodedOr(m[3] ?? "")} from ${decodedOr(m[1] ?? "")}?`,
+      detail: "Only this panel goes; the board, its other panels and what it reads stay. A pin of it on home goes with it.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/hooks\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Delete webhook",
@@ -817,6 +826,15 @@ const DESTRUCTIVE: {
     }),
   },
 ];
+
+/** A path segment decoded, or as it came when it is not valid percent-encoding. */
+function decodedOr(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
 
 function describeTarget(to: string, ctx: Ctx): Destructive | undefined {
   for (const entry of DESTRUCTIVE) {

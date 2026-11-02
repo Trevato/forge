@@ -159,10 +159,7 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
         ${btn("Up", { size: "sm", name: "by", value: "-1", label: `Move ${p.title} up` })}
         ${btn("Down", { size: "sm", name: "by", value: "1", label: `Move ${p.title} down` })}
       </form>
-      <form method="post" action="/boards/${slug}/remove">
-        <input type="hidden" name="index" value="${String(i)}" />
-        ${btn("Remove", { size: "sm", variant: "danger", label: `Remove ${p.title}` })}
-      </form>
+      ${confirmAction({ action: `/boards/${slug}/remove?index=${String(i)}&title=${encodeURIComponent(p.title)}`, verb: "Remove", size: "sm", label: `Remove ${p.title}` })}
     </div>
   </li>`;
   return html`${card(

@@ -11,7 +11,6 @@ const web = join(root, "src", "web");
 
 /** Today's danger POST buttons that do not ask first, one `file — reason` per line. */
 const allowed: readonly { file: string; button: string; reason: string }[] = [
-  { file: "src/web/pages/boards-view.ts", button: `"Remove"`, reason: "board panel Remove; the panel index is in the body" },
   { file: "src/web/pages/boards-view.ts", button: `"Delete this board"`, reason: "board delete; waits for its confirm issue" },
   { file: "src/web/pages/org.ts", button: `"Remove"`, reason: "team member remove; waits for its confirm issue" },
   { file: "src/web/pages/edit.ts", button: `"Delete this file"`, reason: "the delete page is the confirmation, reached by a link" },
