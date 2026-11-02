@@ -27,6 +27,18 @@ bottleneck; the knobs stay on Settings → Capacity. The same sentence
 (`verdict`) is the terminal's admin-only Flow command and the MCP `flow` tool,
 which also returns the stages; anyone but a forge admin is refused.
 
+`readStepStats` (same module, #7784) measures the road's steps over the last
+30 days: median time (finished − started) and red rate (failed ÷ ok + failed)
+for the pull check, review, proof, merge-queue gate (time only: `check_gate`
+keeps a week and no verdict), main's check, release build and verify. The boot
+check runs inside the release build and has no run of its own. Review's rate
+counts review runs that errored, not changes asked, and says "errored". `/pipeline`
+shows them under each step's details, from public repositories alone, held in
+memory for the minute so the open page costs one read a minute. The same
+numbers, private repositories included for the owner, are the terminal's Flow
+dialog ("Steps, 30 days") and the `steps` array of the MCP `flow` tool and
+`/api/v1/telemetry/flow` (public repositories alone for an agent).
+
 ## Rebases
 
 Approved work lands before new work is built, in the check lane too (#6140).

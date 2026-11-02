@@ -8,10 +8,11 @@
  */
 import type { Ctx } from "../../http/context.ts";
 import { STEP_MEANS, STEPS, type Step } from "../../flow/path.ts";
+import { cachedStepStats, statParts, STEP_WINDOW_DAYS, type StepStat } from "../../flow/pipeline.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
-import { card, row } from "../ui.ts";
+import { card, row, stat } from "../ui.ts";
 
 /** What a pull waits on at each step, what only that step catches, and the parts inside it. */
 export const STEP_DETAIL: Record<Step, { waits: string; catches: string; inside: readonly string[] }> = {
@@ -52,12 +53,22 @@ export const STEP_DETAIL: Record<Step, { waits: string; catches: string; inside:
   },
 };
 
+/** Which measured parts sit inside each step of the path. */
+export const STEP_MEASURES: Record<Step, readonly StepStat["key"][]> = {
+  check: ["pull-check"],
+  review: ["review"],
+  land: ["proof", "gate"],
+  live: ["main-check", "release", "boot", "verify"],
+};
+
 const title = (s: Step) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
 
 // GET /pipeline
 export function pipelinePage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const rendering = performance.now();
+  // Public repositories alone: this page is open to anyone.
+  const stats = new Map(cachedStepStats(ctx.app.db, new Date(), true).map((m) => [m.key, m]));
   const body = html`<div class="page-head">
       <h1>How a change lands</h1>
       <p class="muted">
@@ -80,6 +91,13 @@ export function pipelinePage(ctx: Ctx): Response {
             body: html`<div class="card-body">
               <p class="small">It waits for ${d.waits} Only this step catches ${d.catches}</p>
               <ul class="small">${d.inside.map((line) => html`<li>${line}</li>`)}</ul>
+              <p class="small muted">Measured, last ${STEP_WINDOW_DAYS} days, public repositories: median time, then how often red.</p>
+              <div class="stats" data-measures="${s}">${STEP_MEASURES[s].map((k) => {
+                const m = stats.get(k);
+                if (m === undefined) return "";
+                const p = statParts(m);
+                return stat({ label: m.label, value: p.value, title: m.medianMs === null ? "no median" : `median ${p.value}`, note: p.note, noteTitle: p.note });
+              })}</div>
             </div>`,
           },
         });

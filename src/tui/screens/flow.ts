@@ -30,7 +30,7 @@ import { conflictedSays, rebaseLaneSays } from "../../flow/conflicted.ts";
 import { IDLE_LIMIT, type IdlePull } from "../../flow/idle_pulls.ts";
 import { pileSays } from "../../flow/pile.ts";
 import { panelFigures } from "../../flow/panel_cache.ts";
-import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
+import { readPipeline, readStepStats, STAGE_LABEL, statWords, verdict } from "../../flow/pipeline.ts";
 import { parkedSays } from "../../flow/parked.ts";
 import { firedAlarms } from "../../flow/alarms.ts";
 import { readVitals, vitalsFor, vitalsLine } from "../../flow/vitals.ts";
@@ -111,6 +111,9 @@ export function flowLines(
       (s) =>
         `${pad(STAGE_LABEL[s.key], 12)} ${pad(String(s.lastHour), 9, "right")} ${pad(String(s.day), 5, "right")}  ${s.label}`,
     ),
+    "",
+    "Steps, 30 days:",
+    ...readStepStats(db, now, agent !== undefined).flatMap((m) => wrap(`${m.label}: ${statWords(m)}`, inner)),
     "",
     `${pad("Merge queue", 15)} ${pad("queued", 6, "right")} ${pad("gating", 6, "right")} ${pad("gates", 5, "right")} ${pad("landed 1h", 9, "right")} ${pad("to land, min", 12, "right")}`,
     ...(queues.length === 0
