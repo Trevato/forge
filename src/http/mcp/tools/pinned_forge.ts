@@ -1,16 +1,16 @@
-import { deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../../actions/pinned.ts";
+import { checkPinned, deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../../actions/pinned.ts";
 import { TARGETS } from "../../../cloud/targets.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool, str } from "../shared.ts";
 
 export const tool: Tool = {
   name: "pinned_forge",
-  doc: "`{ verb, name?, target?, account?, app?, source?, version?, config? }`: a pinned forge on the owner's cloud has no crew and no automatic release. `list` shows them with every recorded change and the targets (what runs, what it costs, what is refused); `deploy` puts one on `target` with a cloud `account` (writes allowed) serving `app` owner/name from `source` at `version`; `update` is the only way its `version` or `config` change; `rollback` goes back one. A forge admin with an admin-scope token",
-  description: "Pinned forges on your cloud: list, deploy, update, rollback (admin).",
+  doc: "`{ verb, name?, target?, account?, app?, source?, version?, config? }`: a pinned forge on the owner's cloud has no crew and no automatic release. `list` shows them with every recorded change and the targets (what runs, what it costs, what is refused); `deploy` puts one on `target` with a cloud `account` (writes allowed) serving `app` owner/name from `source` at `version`; `update` is the only way its `version` or `config` change; `rollback` goes back one; `check` reads the droplet's address back and probes it (`url`, `healthy`). A forge admin with an admin-scope token",
+  description: "Pinned forges on your cloud: list, deploy, update, rollback, check (admin).",
   inputSchema: {
     type: "object",
     properties: {
-      verb: { type: "string", enum: ["list", "deploy", "update", "rollback"] },
+      verb: { type: "string", enum: ["list", "deploy", "update", "rollback", "check"] },
       name: { type: "string", maxLength: 40 },
       target: { type: "string", enum: TARGETS.map((t) => t.id) },
       account: { type: "string", maxLength: 32 },
@@ -46,9 +46,11 @@ export const tool: Tool = {
             })
           : verb === "rollback"
             ? await rollbackPinned(ctx.app, user, name)
-            : undefined;
-    if (done === undefined) return bad("bad_verb", "verb is list, deploy, update or rollback");
+            : verb === "check"
+              ? await checkPinned(ctx.app, user, name)
+              : undefined;
+    if (done === undefined) return bad("bad_verb", "verb is list, deploy, update, rollback or check");
     if (!done.ok) return bad("refused", done.error);
-    return good({ says: `${verb} ${name}: now ${done.value.version}, ${done.value.state}.`, forge: done.value });
+    return good({ says: `${verb} ${name}: now ${done.value.version}, ${done.value.state}${done.value.url ? ` at ${done.value.url}` : ""}.`, forge: done.value });
   },
 };

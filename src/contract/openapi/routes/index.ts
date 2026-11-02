@@ -195,6 +195,7 @@ export { route as postApiV1AdminAccountsUsernameUnsuspend } from "./postApiV1Adm
 export { route as postApiV1AdminAccountsUsernameVerify } from "./postApiV1AdminAccountsUsernameVerify.ts";
 export { route as postApiV1AdminInvites } from "./postApiV1AdminInvites.ts";
 export { route as postApiV1AdminPinned } from "./postApiV1AdminPinned.ts";
+export { route as postApiV1AdminPinnedNameCheck } from "./postApiV1AdminPinnedNameCheck.ts";
 export { route as postApiV1AdminPinnedNameRollback } from "./postApiV1AdminPinnedNameRollback.ts";
 export { route as postApiV1AdminPinnedNameUpdate } from "./postApiV1AdminPinnedNameUpdate.ts";
 export { route as postApiV1AdminReleasesShaRollback } from "./postApiV1AdminReleasesShaRollback.ts";

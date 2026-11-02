@@ -6,7 +6,7 @@ A pinned forge is a forge the owner put on their own cloud. It has **no crew** a
 
 - HTTP: `GET /api/v1/admin/pinned` (forges, their changes, the targets), `POST /api/v1/admin/pinned` (deploy), `POST /api/v1/admin/pinned/:name/update`, `POST /api/v1/admin/pinned/:name/rollback`.
 - Terminal: palette → **Pinned forges** (forge admin): `d` deploy, `u` update, `r` roll back; it follows the bus, so a change made at any door shows at once (`src/tui/screens/pinned.ts`).
-- MCP: `pinned_forge` with `verb` `list`, `deploy`, `update`, `rollback` — the same words and the same checks (`src/actions/pinned.ts`).
+- MCP: `pinned_forge` with `verb` `list`, `deploy`, `update`, `rollback` (and `check`) — the same words and the same checks (`src/actions/pinned.ts`).
 
 A deploy names a cloud account (Settings → Cloud accounts, **writes allowed**), the app (`owner/name`), a git `source` (https) and a `version` (a 40-character commit id or a tag like `v1.2.3` — never a branch, so nothing moves under it).
 
@@ -36,6 +36,10 @@ The cloud facts for Cloudflare and Vercel are from memory of their documentation
 
 Open-source "Deploy to" buttons (Heroku's `app.json`, Render's `render.yaml`, DigitalOcean's App Platform button, Railway templates) are a link carrying a repository and a settings file to a provider's sign-in. That is the shape for the button: a link with `app`, `source`, `version` that lands on the Deploy form after one sign-in. The older `deploy/` cloud path and the child-forge path (#4416, #2928, #3785) are the other prior art; neither pins.
 
+## Address and health check (#8745)
+
+`check` (`POST /api/v1/admin/pinned/:name/check`, MCP `pinned_forge` verb `check`, terminal `c`) reads the droplet from DigitalOcean (`GET /droplets/{id}`, read-only, no write permission needed), records its public IPv4 (`pinned_forge.address`, validated as IPv4), and probes `http://<address>:<PORT or 3000>/`. Every view carries `url` (empty until an address is read). A forge that answers is set `running`, so a `failed` one recovers by itself once its droplet is up; one that does not answer keeps its state and the result says `healthy: false`. Deploy and Update do not read the address: a new droplet has none for a while, so ask with `check`.
+
 ## Failing half-way
 
 Each id is recorded the moment it exists. A first deploy that fails before a droplet exists leaves a `failed` row with the volume's id; deploying the same name again reuses that volume. An Update deletes the old droplet and clears its id at once; a 404 on that delete counts as deleted, so after a failed create a Rollback or another Update goes straight to creating. A `failed` forge may be told the version it already has, to finish the replacement. The droplet installs the Bun in `BUN_VERSION` (`src/cloud/droplet.ts`), so the runtime moves only when a pull moves it.
@@ -44,7 +48,8 @@ Each id is recorded the moment it exists. A first deploy that fails before a dro
 
 - No canary result on a real account yet: the script is written, the run needs an owner's token (#8746, see Canary).
 - No `Deploy to…` page or link: #8744.
-- The droplet's address is not read back, so no URL is shown, no TLS or domain, no health check: #8745.
+- No TLS or domain: the URL is `http://<droplet IPv4>:<PORT or 3000>/`.
+- No page in the web studio shows the pinned forges yet; the API, MCP and terminal do.
 - AWS and Azure drivers.
 
 ## Canary (#8746)

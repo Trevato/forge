@@ -14,7 +14,7 @@ import { changeCapacity, listCapacity } from "../../actions/capacity.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
 import { setAccountCeilings, setAccountGrant } from "../../actions/model_grant.ts";
-import { deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../actions/pinned.ts";
+import { checkPinned, deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../actions/pinned.ts";
 import { TARGETS } from "../../cloud/targets.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { setRole } from "../../actions/roles.ts";
@@ -69,6 +69,13 @@ export function adminRoutes(router: Router<Handler>): void {
     const done = await updatePinned(ctx.app, ctx.auth.user, ctx.params.name!, {
       version: i.version === undefined ? undefined : str(i.version), config: i.config,
     });
+    return done.ok ? json(done.value) : pinnedFail(done.error);
+  });
+
+  router.add("POST", "/api/v1/admin/pinned/:name/check", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = await checkPinned(ctx.app, ctx.auth.user, ctx.params.name!);
     return done.ok ? json(done.value) : pinnedFail(done.error);
   });
 

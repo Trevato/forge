@@ -20,6 +20,7 @@ export interface Pinned {
   readonly config: Record<string, string>;
   readonly remote: string;
   readonly volume: string;
+  readonly address: string;
   readonly state: string;
   readonly createdAt: string;
 }
@@ -71,13 +72,13 @@ export function checkConfig(raw: unknown): Result<Record<string, string>, string
 
 interface Row {
   id: string; name: string; target: string; account: string; app: string; source: string;
-  version: string; config: string; remote: string; volume: string; state: string; created_at: string;
+  version: string; config: string; remote: string; volume: string; address: string; state: string; created_at: string;
 }
 
 const toPinned = (r: Row): Pinned => ({
   id: r.id, name: r.name, target: r.target, account: r.account, app: r.app, source: r.source,
   version: r.version, config: JSON.parse(r.config) as Record<string, string>,
-  remote: r.remote, volume: r.volume, state: r.state, createdAt: r.created_at,
+  remote: r.remote, volume: r.volume, address: r.address, state: r.state, createdAt: r.created_at,
 });
 
 export const listPinned = (db: Database): Pinned[] =>
@@ -154,12 +155,21 @@ export function previousOf(db: Database, forge: Pinned): { version: string; conf
 }
 
 /** Machine facts the target reports back; they never touch version or config. */
-export function setRemote(db: Database, name: string, f: { remote?: string; volume?: string; state?: string }): void {
-  db.query("UPDATE pinned_forge SET remote = coalesce(?1, remote), volume = coalesce(?2, volume), state = coalesce(?3, state) WHERE name = ?4")
-    .run(f.remote ?? null, f.volume ?? null, f.state ?? null, name);
+export function setRemote(db: Database, name: string, f: { remote?: string; volume?: string; address?: string; state?: string }): void {
+  db.query("UPDATE pinned_forge SET remote = coalesce(?1, remote), volume = coalesce(?2, volume), address = coalesce(?3, address), state = coalesce(?4, state) WHERE name = ?5")
+    .run(f.remote ?? null, f.volume ?? null, f.address ?? null, f.state ?? null, name);
 }
 
 /** The row of a deploy that never reached a droplet, so its name can be tried again; its recorded change stays as history. */
 export function dropPinned(db: Database, name: string): void {
   db.query("DELETE FROM pinned_forge WHERE name = ?1 AND remote = '' AND state = 'failed'").run(name);
 }
+
+/** The port the forge listens on at its droplet: the config's PORT, else the forge's own default. */
+export const portOf = (p: Pick<Pinned, "config">): string => {
+  const n = Number(p.config["PORT"]);
+  return /^\d{1,5}$/.test(p.config["PORT"] ?? "") && n >= 1 && n <= 65535 ? String(n) : "3000";
+};
+
+/** Where a pinned forge is served, once its droplet's address is known; empty before. */
+export const urlOf = (p: Pick<Pinned, "address" | "config">): string => (p.address === "" ? "" : `http://${p.address}:${portOf(p)}/`);

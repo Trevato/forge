@@ -11,30 +11,32 @@
 
 import type { App } from "../app.ts";
 import { gatedFetch } from "../cloud/gate.ts";
-import { provision, replace } from "../cloud/droplet.ts";
+import { provision, readDroplet, replace } from "../cloud/droplet.ts";
 import type { Fetch } from "../cloud/providers.ts";
 import { target as targetOf } from "../cloud/targets.ts";
 import { getCloudAccount, secretNameOf } from "../core/cloud_account.ts";
 import {
   APP, NAME, changesOf, checkConfig, getPinned, insertPinned, listPinned, previousOf,
-  dropPinned, recordChange, setRemote, validSource, validVersion, type Change, type Pinned,
+  dropPinned, recordChange, setRemote, urlOf, validSource, validVersion, type Change, type Pinned,
 } from "../core/pinned.ts";
 import { resolveSecrets } from "../core/secret_store.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /** Swapped in tests; the real forge always uses `fetch`. */
-export const net: { fetch: Fetch } = { fetch: (u, i) => fetch(u, i) };
+export const net: { fetch: Fetch; probe: Fetch } = { fetch: (u, i) => fetch(u, i), probe: (u, i) => fetch(u, i) };
 
 const admin = (a: User | undefined): Result<User, string> => (a?.isAdmin ? ok(a) : err("not_found"));
 
 export interface PinnedView extends Pinned {
+  /** Where it is served, once the droplet's address is read; empty before. */
+  readonly url: string;
   readonly crew: false;
   readonly autoRelease: false;
   readonly changes: Change[];
 }
 
-const view = (app: App, p: Pinned): PinnedView => ({ ...p, crew: false, autoRelease: false, changes: changesOf(app.db, p.id) });
+const view = (app: App, p: Pinned): PinnedView => ({ ...p, url: urlOf(p), crew: false, autoRelease: false, changes: changesOf(app.db, p.id) });
 
 export function pinnedForges(app: App, actor: User | undefined): Result<PinnedView[], string> {
   const who = admin(actor);
@@ -42,10 +44,10 @@ export function pinnedForges(app: App, actor: User | undefined): Result<PinnedVi
 }
 
 /** Open the account's token and run `go` with a gated fetch; the token never leaves this scope. */
-async function withCloud<T>(app: App, who: User, p: Pinned, purpose: string, go: (f: Fetch, token: string) => Promise<T>): Promise<Result<T, string>> {
+async function withCloud<T>(app: App, who: User, p: Pinned, purpose: string, go: (f: Fetch, token: string) => Promise<T>, writes = true): Promise<Result<T, string>> {
   const account = getCloudAccount(app.db, p.target, p.account);
   if (!account) return err("No such cloud account.");
-  if (!account.writeAllowed) return err("That cloud account is read-only; allow writes on it first.");
+  if (writes && !account.writeAllowed) return err("That cloud account is read-only; allow writes on it first.");
   const secret = secretNameOf(account.provider, account.name);
   const token = resolveSecrets(app.db, app.config.dataDir, app.bus, [secret], { actor: who.id, run: `pinned:${purpose}` })[secret];
   if (token === undefined) return err("No such credential.");
@@ -54,6 +56,16 @@ async function withCloud<T>(app: App, who: User, p: Pinned, purpose: string, go:
   } catch (e) {
     return err(`The cloud refused: ${e instanceof Error ? e.message.slice(0, 200) : "failed"}`);
   }
+}
+
+/** Read the droplet back and record its public IPv4 (empty while none is assigned). The cloud's refusal is returned, so "no address yet" and "the call was refused" differ. */
+async function readAddress(app: App, who: User, name: string): Promise<Result<string, string>> {
+  const p = getPinned(app.db, name);
+  if (!p || p.remote === "") return ok("");
+  const seen = await withCloud(app, who, p, "address", (f, token) => readDroplet(f, token, p.remote), false);
+  if (!seen.ok) return seen;
+  if (seen.value.address !== "") setRemote(app.db, name, { address: seen.value.address });
+  return ok(seen.value.address);
 }
 
 export async function deployPinned(
@@ -116,12 +128,12 @@ async function change(
     app.bus.append({ kind: kind === "update" ? "pinned.update" : "pinned.rollback", actorId: who.value.id, payload: { name, from: c.fromVersion, to: c.toVersion } });
   }
   const after = getPinned(app.db, name)!;
-  const done = await withCloud(app, who.value, after, kind, (f, token) => replace(f, token, after, { onDeleted: () => setRemote(app.db, name, { remote: "" }) }));
+  const done = await withCloud(app, who.value, after, kind, (f, token) => replace(f, token, after, { onDeleted: () => setRemote(app.db, name, { remote: "", address: "" }) }));
   if (!done.ok) {
     setRemote(app.db, name, { state: "failed" });
     return done;
   }
-  setRemote(app.db, name, { ...done.value, state: "running" });
+  setRemote(app.db, name, { ...done.value, address: "", state: "running" });
   return ok(view(app, getPinned(app.db, name)!));
 }
 
@@ -145,3 +157,35 @@ export const rollbackPinned = (app: App, actor: User | undefined, name: string):
     const prev = previousOf(app.db, p);
     return prev ? ok(prev) : err("There is no previous version: this forge has only ever run one.");
   });
+
+/**
+ * The health check: read the droplet's address back, ask the forge there for
+ * its front page, and say what it answered. A forge that answers is `running`,
+ * so one marked `failed` by a refused call recovers by itself once its droplet
+ * is up; one that does not answer keeps its state, and `healthy` is false.
+ */
+export async function checkPinned(app: App, actor: User | undefined, name: string): Promise<Result<PinnedView & { healthy: boolean }, string>> {
+  const who = admin(actor);
+  if (!who.ok) return who;
+  const p = getPinned(app.db, name);
+  if (!p) return err("No such pinned forge.");
+  if (p.remote === "") return err("This forge has no droplet yet; deploy or update it first.");
+  const read = await readAddress(app, who.value, name);
+  if (!read.ok) return read;
+  const now = getPinned(app.db, name)!;
+  let healthy = false;
+  if (now.address !== "") {
+    // The probe is audited like every other call made for this account; the address is a validated public IPv4 and the port is 1-65535.
+    const probe = gatedFetch(app.db, { provider: now.target, account: now.account }, "pinned:probe", net.probe);
+    try {
+      const res = await probe(urlOf(now), { signal: AbortSignal.timeout(5_000), redirect: "manual" });
+      healthy = res.status >= 200 && res.status < 400;
+    } catch {
+      healthy = false;
+    }
+  }
+  if (healthy && now.state !== "running") setRemote(app.db, name, { state: "running" });
+  const after = getPinned(app.db, name)!;
+  app.bus.append({ kind: "pinned.check", actorId: who.value.id, payload: { name, address: after.address, state: after.state, healthy } });
+  return ok({ ...view(app, after), healthy });
+}

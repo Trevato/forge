@@ -6,7 +6,8 @@
  * Authorization header over HTTPS, never on argv, and the boot script holds no
  * secret at all: the new forge's first visitor claims it at /first-admin.
  *
- * Calls (DigitalOcean API v2): POST /volumes, POST /droplets, DELETE /droplets/{id}.
+ * Calls (DigitalOcean API v2): POST /volumes, POST /droplets, DELETE /droplets/{id}, GET /droplets/{id}
+ * (the public IPv4 the droplet was given, read back after it boots).
  * The caller records each id the moment it exists (`onVolume`, `onDeleted`),
  * so a failure half-way leaves a row a retry can finish, never an orphan.
  */
@@ -120,4 +121,15 @@ export async function replace(f: Fetch, token: string, p: Pinned, hooks: { onDel
   }
   const d = await createDroplet(f, token, p, p.volume);
   return { remote: String(d.droplet?.id ?? "") };
+}
+
+const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/;
+
+/** Read the droplet back: its status and public IPv4 (empty while none is assigned). Only a well-formed address is returned. */
+export async function readDroplet(f: Fetch, token: string, remote: string): Promise<{ status: string; address: string }> {
+  if (!/^\d+$/.test(remote)) throw new Error("this forge has no droplet to read");
+  const d = (await call(f, token, "GET", `/droplets/${remote}`)).droplet;
+  const v4: unknown[] = Array.isArray(d?.networks?.v4) ? d.networks.v4 : [];
+  const pub = v4.find((n: any) => n?.type === "public" && typeof n.ip_address === "string" && IPV4.test(n.ip_address)) as { ip_address: string } | undefined;
+  return { status: String(d?.status ?? ""), address: pub?.ip_address ?? "" };
 }

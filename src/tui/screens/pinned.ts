@@ -2,12 +2,13 @@
  * Pinned forges in the terminal, a forge admin's (#8697): each forge with its
  * version, state and last changes, as the API lists them. `d` deploys, `u`
  * updates (the only way its version or config move), `r` rolls back to the
- * previous version, each through `actions/pinned.ts`, so the checks, the
- * record of who and when and the events the web screens follow are the API's.
+ * previous version, `c` reads the address back and probes it, each through
+ * `actions/pinned.ts`, so the checks, the record of who and when and the events
+ * the web screens follow are the API's.
  * Anyone else sees nothing and does nothing.
  */
 
-import { deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../actions/pinned.ts";
+import { checkPinned, deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../../actions/pinned.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -52,9 +53,9 @@ export function pinnedScreen(f: Session, ctx: Ctx): Screen {
 
   const screen: Screen = {
     title: "Pinned forges",
-    keys: [binding(["j", "k"], "move cursor"), binding(["d"], "deploy"), binding(["u"], "update"), binding(["r"], "roll back")],
+    keys: [binding(["j", "k"], "move cursor"), binding(["d"], "deploy"), binding(["u"], "update"), binding(["r"], "roll back"), binding(["c"], "check")],
     async load(signal) {
-      live(f, signal, { kinds: ["pinned.deployed", "pinned.update", "pinned.rollback"] }, () => ctx.invalidate());
+      live(f, signal, { kinds: ["pinned.deployed", "pinned.update", "pinned.rollback", "pinned.check"] }, () => ctx.invalidate());
     },
     render(area, s) {
       const c = ctx.theme.c;
@@ -66,7 +67,7 @@ export function pinnedScreen(f: Session, ctx: Ctx): Screen {
       const rows: ListRow[] = forges().map((p) => ({
         title: p.name,
         ...(p.state === "failed" ? { tone: "danger" as const } : {}),
-        secondary: `${p.target} · ${short(p.version)} · ${p.state}`,
+        secondary: `${p.target} · ${short(p.version)} · ${p.state}${p.url !== "" ? ` · ${p.url}` : ""}`,
         meta: p.changes[0] ? `${p.changes[0].kind} ${p.changes[0].at.slice(0, 16).replace("T", " ")}` : "",
       }));
       drawList(s, list!, c, state, rows);
@@ -83,6 +84,9 @@ export function pinnedScreen(f: Session, ctx: Ctx): Screen {
       if (e.key === "r") {
         say(`Rolling ${p.name} back…`);
         void settle(rollbackPinned(f.app, f.user, p.name), "Rolled back");
+      } else if (e.key === "c") {
+        say(`Checking ${p.name}…`);
+        void checkPinned(f.app, f.user, p.name).then((r) => say(r.ok ? `${p.name} ${r.value.healthy ? "answers" : "does not answer"}${r.value.url ? ` at ${r.value.url}` : " yet: no address"}.` : r.error));
       } else if (e.key === "u")
         ctx.push(
           promptScreen(ctx, screen, {
