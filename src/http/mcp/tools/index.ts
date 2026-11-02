@@ -70,6 +70,7 @@ export { tool as hooks } from "./hooks.ts";
 export { tool as invites } from "./invites.ts";
 export { tool as issue } from "./issue.ts";
 export { tool as issue_teams } from "./issue_teams.ts";
+export { tool as issues } from "./issues.ts";
 export { tool as labels } from "./labels.ts";
 export { tool as land_past_gate } from "./land_past_gate.ts";
 export { tool as limb } from "./limb.ts";
