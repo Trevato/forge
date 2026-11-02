@@ -105,6 +105,28 @@ export function adminRoutes(router: Router<Handler>): void {
     );
   });
 
+  // Per-account quotas (`settings/quotas.ts`), key by key: the REST twin of MCP `quotas`.
+  router.add("GET", "/api/v1/admin/quotas", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const read = readQuotas(ctx.app, ctx.auth.user);
+    return read.ok ? json({ quotas: read.value.quotas, changes: read.value.changes }) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/admin/quotas/:key", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const key = ctx.params.key!;
+    // A body without `value` is a malformed request, not a request to clear: null clears.
+    if (!("value" in input)) return apiError("invalid_quota", 422, 'send {"value": N}, or {"value": null} for no limit');
+    const changed = changeQuotas(ctx.app, ctx.auth.user, { [key]: input.value });
+    if (changed.ok) return json({ key, value: changed.value[key as keyof typeof changed.value], quotas: changed.value });
+    if (changed.error === "not_found") return notFound();
+    return apiError(changed.error, 422, changed.error === "no_such_quota" ? "no such quota" : "a quota is a positive whole number, or null for no limit");
+  });
+
   // Crew teams (`core/teams.ts`): a forge admin who is a person; the page's door.
   router.add("GET", "/api/v1/admin/teams", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
