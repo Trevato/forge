@@ -15,7 +15,7 @@ import { addComment, openIssue, setIssueLabels, setIssueState } from "../src/act
 import { createLabel, createRepo } from "../src/actions/repos.ts";
 import { closedByReview, gateHold, gateHolding, reviewedClosed } from "../src/core/gate_hold.ts";
 import { heldRows } from "../src/tui/screens/held.ts";
-import { startsTicked, triage } from "../src/core/gate_triage.ts";
+import { startsTicked, tally, triage } from "../src/core/gate_triage.ts";
 import { pillarsOf } from "../src/core/pillars.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { getIssueById, labelsFor, type Issue } from "../src/core/issues.ts";
@@ -168,6 +168,24 @@ describe("the Later gate in plain sight", () => {
     expect(triage([]).length).toBe(0);
   });
 
+  test("a pillar's issues group under it first, each group tallied by verdict", () => {
+    const themes = triage(
+      [
+        { number: 1, title: "Search the archive", waiting: 0 },
+        { number: 2, title: "Search archive export", waiting: 0 },
+        { number: 3, title: "Search archive filters", waiting: 0 },
+        { number: 4, title: "Search archive sorting", waiting: 0 },
+      ],
+      new Set(),
+      [],
+      new Map([[2, "P0 Trust"]]),
+    );
+    expect(themes[0]).toMatchObject({ name: "P0 Trust", pillar: true });
+    expect(tally(themes[0]!.items)).toEqual({ close: 0, keep: 1, merge: 0 });
+    expect(themes[1]!.name).toBe("search");
+    expect(tally(themes[1]!.items)).toEqual({ close: 3, keep: 0, merge: 0 });
+  });
+
   test("triage proposes merge for a duplicate pair and keep for what a bet names", () => {
     const themes = triage(
       [
@@ -209,6 +227,26 @@ describe("the Later gate in plain sight", () => {
     expect(survivor.body).toContain(`Merged from #${b.value.number}`);
     expect(current(b.value).state).toBe("closed");
     expect(app.db.query("SELECT 1 FROM comment WHERE issue_id = ?1 AND body LIKE ?2").get(b.value.id, `Gate review: merged into #${a.value.number}%`)).not.toBeNull();
+  });
+
+  test("the held page reads each group as one tallied line, its issues inside the disclosure", async () => {
+    const made = ["Zanzibar ledger reconcile", "Zanzibar harbour tolls", "Zanzibar customs sweep"].map(held);
+    const page = await get("/alice/engine/held");
+    const group = page.match(/<details[^>]*>\s*<summary[^>]*>\s*zanzibar[\s\S]*?<\/details>/)?.[0];
+    expect(group).toBeDefined();
+    const summary = group!.match(/<summary[^>]*>([\s\S]*?)<\/summary>/)![1]!;
+    expect(summary).toContain("3 close");
+    expect(summary).not.toMatch(/keep|merge|\b0 /);
+    const inside = group!.slice(group!.indexOf("</summary>"));
+    for (const t of ["Zanzibar ledger reconcile", "Zanzibar harbour tolls", "Zanzibar customs sweep"])
+      expect(inside).toContain(t);
+    // The terminal reads the same tally.
+    const lines = heldRows(
+      (await import("../src/tui/screens/held.ts")).readHeld({ app, db: app.db } as never, fresh())!.lines,
+      new Set(),
+    );
+    expect(lines.some((l) => JSON.stringify(l.meta).includes("zanzibar · 3 close"))).toBe(true);
+    for (const i of made) setIssueState(app, alice, fresh(), current(i), "closed");
   });
 
   test("a merge is skipped when its survivor closes in the same apply", () => {

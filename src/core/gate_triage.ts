@@ -11,9 +11,9 @@
  * A found-done issue closes first. Only done and merge start ticked (a
  * merge loses no words); the rest are the person's to tick, and one that
  * open work waits for is flagged, for closing it parks that work. A closed
- * one stays findable and one tap revives it. The lot is grouped by theme,
- * the word its titles share most. Nothing here changes an issue
- * (`actions/gate_review.ts` applies the approval).
+ * one stays findable and one tap revives it. The lot is grouped by theme:
+ * the pillar an issue serves, else the word its titles share most. Nothing
+ * here changes an issue (`actions/gate_review.ts` applies the approval).
  */
 
 export interface Held {
@@ -47,7 +47,22 @@ export interface Triaged {
 
 export interface Theme {
   readonly name: string;
+  /** The group is a pillar's, not a shared word. */
+  readonly pillar?: true;
   readonly items: readonly Triaged[];
+}
+
+/** A group's issues counted by verdict: the one line a group reads as. */
+export function tally(items: readonly Triaged[]): { close: number; keep: number; merge: number } {
+  const n = { close: 0, keep: 0, merge: 0 };
+  for (const i of items) n[i.verdict.kind]++;
+  return n;
+}
+
+/** The tally as one line, `3 close · 1 keep`: a verdict with none is left out. */
+export function tallyLine(items: readonly Triaged[]): string {
+  const n = tally(items);
+  return [`${n.close} close`, `${n.keep} keep`, `${n.merge} merge`].filter((p) => !p.startsWith("0 ")).join(" · ");
 }
 
 const STOP = new Set(
@@ -133,7 +148,9 @@ export function triage(
   serves: ReadonlyMap<number, string> = new Map(),
 ): Theme[] {
   const folds = duplicates(held.filter((h) => !done.has(h.number)));
-  const sets = new Map(held.map((h) => [h.number, new Set(words(h.title))]));
+  // Issues that serve a pillar group under it; the rest by shared title words.
+  const loose = held.filter((h) => serves.get(h.number) === undefined);
+  const sets = new Map(loose.map((h) => [h.number, new Set(words(h.title))]));
   // A theme is a word many titles share: each issue goes under the commonest
   // of its words that is common enough, ties to the shorter, then alphabetical.
   const freq = new Map<string, number>();
@@ -145,6 +162,7 @@ export function triage(
     .map(([w]) => w);
   const groups = new Map<string, Triaged[]>(chosen.map((w) => [w, []]));
   const other: Triaged[] = [];
+  const byPillar = new Map<string, Triaged[]>();
   for (const h of held) {
     const joined = anchorOf(h, anchors);
     const pillar = serves.get(h.number);
@@ -158,12 +176,19 @@ export function triage(
             ? { kind: "merge", why: `says the same as #${folds.get(h.number)}: merge into it, words appended`, reason: "merged", into: folds.get(h.number)! }
             : { kind: "close", why: "not chosen: an idea that matters comes back", reason: "dropped" };
     const row = { number: h.number, title: h.title, waiting: h.waiting, verdict };
+    if (pillar !== undefined) {
+      byPillar.set(pillar, [...(byPillar.get(pillar) ?? []), row]);
+      continue;
+    }
     const theme = chosen.find((w) => sets.get(h.number)!.has(w));
     if (theme === undefined) other.push(row);
     else groups.get(theme)!.push(row);
   }
-  const out = [...groups]
+  const pillars: Theme[] = [...byPillar]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, items]) => ({ name, pillar: true as const, items }));
+  const out = [...pillars, ...[...groups]
     .filter(([, items]) => items.length > 0)
-    .map(([name, items]) => ({ name, items }));
+    .map(([name, items]) => ({ name, items }))];
   return other.length === 0 ? out : [...out, { name: OTHER, items: other }];
 }

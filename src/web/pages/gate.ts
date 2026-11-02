@@ -6,7 +6,7 @@
 
 import { applyGateReview, reviewGate } from "../../actions/gate_review.ts";
 import { liftHold } from "../../actions/gate.ts";
-import { startsTicked, type Triaged } from "../../core/gate_triage.ts";
+import { startsTicked, tallyLine, type Theme, type Triaged } from "../../core/gate_triage.ts";
 import { pillarsOf } from "../../core/pillars.ts";
 import { THREAD_SAYS } from "../../actions/thread_words.ts";
 import { isCrew } from "../../core/agents.ts";
@@ -99,6 +99,14 @@ function reviewRow(base: string, mayLift: boolean, item: Triaged): Html {
   </li>`;
 }
 
+/** A group is one line: its name and its counts by verdict, opening to its issues. */
+function themeLine(base: string, mayLift: boolean, t: Theme): Html {
+  return disclosure(
+    html`${t.name} <span class="muted small">${tallyLine(t.items)}</span>`,
+    html`<ul class="stack stack-tight">${t.items.map((i) => reviewRow(base, mayLift, i))}</ul>`,
+  );
+}
+
 // GET /:owner/:name/held — what the gate holds, grouped by theme, with one pass proposed
 export function heldPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -131,10 +139,9 @@ export function heldPage(ctx: Ctx): Response {
       </p>
     </div>
     <p class="muted small">${counts.close} to close · ${counts.keep} to keep · ${counts.merge} to merge</p>
-    <p class="small">
-      Close is the default. A keep joins a bet or a pillar's work; a merge
-      folds a duplicate into the older issue, words appended. Nothing changes
-      until you approve.
+    <p class="muted small">
+      Close is the default; a keep joins a bet or a pillar's work; a merge
+      folds a duplicate in. Nothing changes until you approve.
     </p>
     ${mayApply && review.changes.length > 0
       ? html`<form id="apply" method="post" action="${base}/held/apply" class="bar">
@@ -143,12 +150,7 @@ export function heldPage(ctx: Ctx): Response {
         </form>`
       : null}
     <div class="stack mt">
-      ${review.themes.map((t) =>
-        disclosure(
-          html`${t.name} <span class="muted small">${t.items.length}</span>`,
-          html`<ul class="stack stack-tight">${t.items.map((i) => reviewRow(base, mayLift, i))}</ul>`,
-        ),
-      )}
+      ${review.themes.map((t) => themeLine(base, mayLift, t))}
       ${closed.length === 0
         ? null
         : disclosure(

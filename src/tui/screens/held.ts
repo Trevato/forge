@@ -16,6 +16,7 @@ import { applyGateReview, reviewGate, type GateReview } from "../../actions/gate
 import { THREAD_SAYS } from "../../actions/thread_words.ts";
 import { reviewedClosed } from "../../core/gate_hold.ts";
 import { getIssue } from "../../core/issues.ts";
+import { tallyLine } from "../../core/gate_triage.ts";
 import { pillarsOf } from "../../core/pillars.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -51,7 +52,7 @@ export function readHeld(f: Session, repo: Repo): HeldRead | undefined {
     t.items.map((i) => ({
       number: i.number,
       title: i.title,
-      theme: t.name,
+      theme: `${t.name} · ${tallyLine(t.items)}`,
       why: i.verdict.why,
       waiting: i.waiting,
       closed: false,
