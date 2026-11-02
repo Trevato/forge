@@ -818,9 +818,26 @@ export function contributeFailure(error: unknown): Response {
 
 // ---- query parsing ----
 
+/**
+ * `?limit=`: absent is `fallback`, a whole number from 1 to 200 is itself,
+ * anything else is the 422 to answer.
+ */
+export function readLimit(ctx: Ctx, fallback: number): number | Response;
+export function readLimit(ctx: Ctx, fallback: undefined): number | undefined | Response;
+export function readLimit(ctx: Ctx, fallback: number | undefined): number | undefined | Response {
+  const rawLimit = ctx.url.searchParams.get("limit");
+  if (rawLimit === null) return fallback;
+  const limit = /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+  if (limit < 1 || limit > 200)
+    return apiError("invalid_limit", 422, "limit is a whole number from 1 to 200");
+  return limit;
+}
+
 /** `?state=&label=&author=&limit=&cursor=` for issue and pull lists. */
 export function listQuery(ctx: Ctx) {
   const q = ctx.url.searchParams;
+  const limit = readLimit(ctx, undefined);
+  if (limit instanceof Response) return limit;
   const stateParam = q.get("state");
   const state: IssueState | "all" =
     stateParam === "closed" || stateParam === "all" ? stateParam : "open";
@@ -829,7 +846,7 @@ export function listQuery(ctx: Ctx) {
   const author = q.get("author");
   return {
     state,
-    limit: pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined),
+    limit: pageLimit(limit),
     ...(Number.isInteger(cursorParam) && cursorParam > 0
       ? { cursor: cursorParam }
       : {}),
@@ -872,11 +889,8 @@ export function pageParams(
   ctx: Ctx,
 ): { limit: number; cursor: string | null } | Response {
   const q = ctx.url.searchParams;
-  const rawLimit = q.get("limit");
-  const limit =
-    rawLimit === null ? 50 : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
-  if (limit < 1 || limit > 200)
-    return apiError("invalid_limit", 422, "limit is a whole number from 1 to 200");
+  const limit = readLimit(ctx, 50);
+  if (limit instanceof Response) return limit;
   const cursor = q.get("cursor");
   if (cursor !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(cursor))
     return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
@@ -921,8 +935,10 @@ export function keyedPage<T>(
 function repoQuery(ctx: Ctx) {
   const q = ctx.url.searchParams;
   const cursor = q.get("cursor");
+  const limit = readLimit(ctx, undefined);
+  if (limit instanceof Response) return limit;
   return {
-    limit: pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined),
+    limit: pageLimit(limit),
     ...(cursor ? { cursor } : {}),
   };
 }
@@ -1115,6 +1131,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
     if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
+    if (query instanceof Response) return query;
     const items = timePhase(ctx.request, "repos", () =>
       listReposByOwner(ctx.app.db, user.username, ctx.auth.user, query),
     );
@@ -1406,6 +1423,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = repoQuery(ctx);
+    if (query instanceof Response) return query;
     const items = timePhase(ctx.request, "repos", () => listReposVisibleTo(ctx.app.db, ctx.auth.user, query));
     return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id)));
   });
@@ -2243,14 +2261,14 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const { query, pulls } = timePhase(ctx.request, "list", () => {
-      const query = listQuery(ctx);
-      const pulls = listPulls(ctx.app.db, repo.id, {
+    const query = listQuery(ctx);
+    if (query instanceof Response) return query;
+    const pulls = timePhase(ctx.request, "list", () =>
+      listPulls(ctx.app.db, repo.id, {
         ...query,
         ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      });
-      return { query, pulls };
-    });
+      }),
+    );
     const states = await timePhaseAsync(ctx.request, "merge", async () =>
       pullMergeStates(
         await Promise.all(
@@ -3023,7 +3041,9 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
     const q = ctx.url.searchParams;
-    const limit = pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined);
+    const asked = readLimit(ctx, undefined);
+    if (asked instanceof Response) return asked;
+    const limit = pageLimit(asked);
     const ops = timePhase(ctx.request, "ops", () =>
       listFleetOps(ctx.app, ctx.auth.user!, limit, q.get("cursor") ?? undefined),
     );

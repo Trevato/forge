@@ -1089,15 +1089,14 @@ describe("parity: full control through actions and the API", () => {
     expect(seen).toHaveLength(total);
     expect([...seen].sort((a, b) => b - a)).toEqual(seen);
     expect(new Set(seen).size).toBe(total);
-    // Limits are clamped, never trusted.
+    // Limits are validated, never trusted: past the ceiling is a 422.
+    expect(
+      (await call("GET", "/api/v1/repos/alice/pub/issues?state=all&limit=99999")).status,
+    ).toBe(422);
     expect(
       (
-        (
-          await call(
-            "GET",
-            "/api/v1/repos/alice/pub/issues?state=all&limit=99999",
-          )
-        ).json.items as Json[]
+        (await call("GET", "/api/v1/repos/alice/pub/issues?state=all&limit=200"))
+          .json.items as Json[]
       ).length,
     ).toBe(total);
 
