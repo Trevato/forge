@@ -33,6 +33,11 @@ import { linkEdgeLogin, linkedLogin, unlinkEdgeLogin } from "../../core/edge_lin
 import { LAST_WAY_IN, linkedParent, parentIssuerOf, unlinkParent } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { listKeys } from "../../core/keys.ts";
+import {
+  PROFILE_FALLBACK,
+  PROFILE_REFUSAL_FIELD,
+  PROFILE_REFUSALS,
+} from "../../actions/profile_words.ts";
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
 import { ADMIN_TOKEN_WORDS, listTokens, type TokenScope } from "../../core/tokens.ts";
@@ -100,7 +105,7 @@ interface ProfileForm {
   displayName: string;
   email: string;
   commitEmail: CommitEmail;
-  errors?: { displayName?: string; email?: string };
+  errors?: { displayName?: string; email?: string; form?: string };
 }
 
 /** The profile form as the account stands now. */
@@ -279,6 +284,7 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
   const user = ctx.auth.user!;
   return html`${unverifiedNotice(ctx)}${roleView(ctx)}${card(
     html`<form method="post" action="/settings">
+      ${when(values.errors?.form, (m) => html`<p class="error-note">${m}</p>`)}
       <div class="field">
         <label for="f-username">Username</label>
         <input
@@ -404,16 +410,10 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
     commitEmail,
   });
   if (!updated.ok) {
+    const words = PROFILE_REFUSALS[updated.error];
+    const at = PROFILE_REFUSAL_FIELD[updated.error];
     const errors: ProfileForm["errors"] =
-      updated.error === "email_taken"
-        ? { email: "Another account already uses that address." }
-        : updated.error === "invalid_email"
-          ? { email: "That doesn't look like an email address." }
-          : updated.error === "display_name_reserved"
-            ? { displayName: "That name belongs to the crew, the owner or the forge." }
-            : updated.error === "display_name_mixed_script"
-              ? { displayName: "Write it in one alphabet: letters from different scripts can pass for other names." }
-              : {};
+      words === undefined || at === undefined ? { form: PROFILE_FALLBACK } : { [at]: words };
     return accountShell(
       ctx,
       "profile",
