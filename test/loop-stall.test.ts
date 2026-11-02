@@ -72,6 +72,27 @@ describe("slow statements", () => {
     db.close();
   });
 
+  test("every statement is counted under its caller, and the top ten are one line a minute", () => {
+    const db = new Database(":memory:");
+    const { lines, log } = recorder();
+    let wall = 60_000 * 100;
+    timeStatements(db, log, 200, () => 0, () => wall);
+    db.run("CREATE TABLE t (x INTEGER)");
+    const insert = (x: number) => db.query("INSERT INTO t VALUES (?1)").run(x);
+    for (let i = 0; i < 5; i++) insert(i);
+    expect(lines).toHaveLength(0);
+    wall += 60_000;
+    db.query("SELECT x FROM t").all();
+    const told = lines.filter((l) => l.message === "statements by caller, last minute");
+    expect(told).toHaveLength(1);
+    const top = JSON.parse(String(told[0]!.fields?.top)) as { caller: string; n: number; sql: string }[];
+    expect(top.length).toBeLessThanOrEqual(10);
+    const inserts = top.find((r) => r.sql.startsWith("INSERT"));
+    expect(inserts?.n).toBe(5);
+    expect(inserts?.caller).toContain("loop-stall.test.ts");
+    db.close();
+  });
+
   test("a lock held by another process is the slow statement, named", async () => {
     const dir = await mkdtemp(join(tmpdir(), "forge-slowsql-"));
     const file = join(dir, "db.sqlite");
