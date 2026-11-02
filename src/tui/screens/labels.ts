@@ -1,13 +1,13 @@
 /**
  * The Labels command, a repository's (#7841): each label the repository
  * defines, as the issue screen draws it — the colour chip, then its hex —
- * read with `listLabels`, name order. Read-only, no counts. Offered to, and
+ * read with `listLabels`, name order. No counts. Offered to, and
  * read for, only someone who may read the repository.
  */
 
 import { LABEL_WORDS } from "../../actions/label_words.ts";
 import { requireRepoAdmin } from "../../actions/access.ts";
-import { createLabel, deleteLabel } from "../../actions/repos.ts";
+import { createLabel, deleteLabel, updateLabel } from "../../actions/repos.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { listLabels, type Label } from "../../core/issues.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -20,7 +20,7 @@ import type { Session } from "../session.ts";
 
 /** What a viewer who may not read the repository sees: what the page's 404 says. */
 export const NOT_FOUND_LINE = "No such repository";
-export const NOT_ALLOWED_LINE = "Only a repository admin can make a label.";
+export const NOT_ALLOWED_LINE = "Only a repository admin can change a label.";
 export const NO_LABELS_LINE = "No labels yet.";
 export const DELETED_LINE = "Deleted that label.";
 export const GONE_LINE = "That label is already gone, or you can no longer delete it.";
@@ -34,16 +34,41 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const admin = (): boolean => requireRepoAdmin(f.app, f.user, repo).ok;
 
   /** "name hex": the last word is the colour; a leading `#` is allowed. */
-  const make = (entry: string): string | undefined => {
+  const parse = (entry: string): { name: string; hex: string } | undefined => {
     const words = entry.trim().split(/\s+/);
     const hex = (words.pop() ?? "").replace(/^#/, "");
     const name = words.join(" ");
-    if (name === "" || !/^[0-9a-fA-F]{6}$/.test(hex)) return LABEL_WORDS.shape;
-    const made = createLabel(f.app, f.user, repo, name, hex.toLowerCase());
-    if (!made.ok) return made.error === "taken" ? LABEL_WORDS.taken : made.error === "invalid" ? LABEL_WORDS.shape : NOT_ALLOWED_LINE;
+    return name === "" || !/^[0-9a-fA-F]{6}$/.test(hex) ? undefined : { name, hex: hex.toLowerCase() };
+  };
+  const refusal = (error: string): string =>
+    error === "taken" ? LABEL_WORDS.taken : error === "invalid" ? LABEL_WORDS.shape : NOT_ALLOWED_LINE;
+  const make = (entry: string): string | undefined => {
+    const got = parse(entry);
+    if (got === undefined) return LABEL_WORDS.shape;
+    const made = createLabel(f.app, f.user, repo, got.name, got.hex);
+    if (!made.ok) return refusal(made.error);
     labels = listLabels(f.db, repo.id);
     ctx.invalidate();
     return undefined;
+  };
+  /** The same form as `n`, prefilled with the label's name and colour. */
+  const rename = (picked: Label): void => {
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: "Edit label",
+        label: "name and six hex digits (bug d73a4a)",
+        value: `${picked.name} ${picked.color.replace(/^#/, "")}`,
+        onSubmit: (entry) => {
+          const got = parse(entry);
+          if (got === undefined) return LABEL_WORDS.shape;
+          const done = updateLabel(f.app, f.user, repo, picked.id, got.name, got.hex);
+          if (!done.ok) return done.error === "not_found" && admin() ? LABEL_WORDS.gone : refusal(done.error);
+          labels = listLabels(f.db, repo.id);
+          ctx.invalidate();
+          return undefined;
+        },
+      }),
+    );
   };
   const ask = (picked: Label): void => {
     ctx.push(
@@ -65,7 +90,7 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     title: "Labels",
     // Read each time: a demoted admin stops being offered `n`.
     get keys() {
-      return [binding(["j", "k"], "move"), ...(admin() ? [binding(["n"], "new label"), binding(["d"], "delete label")] : []), binding(["esc", "q"], "back")];
+      return [binding(["j", "k"], "move"), ...(admin() ? [binding(["n"], "new label"), binding(["e"], "edit label"), binding(["d"], "delete label")] : []), binding(["esc", "q"], "back")];
     },
     async load() {
       // Gated here as well as on the command: the screen is exported.
@@ -103,6 +128,8 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       else if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "d" && !e.ctrl && !e.alt && !hidden && admin() && labels?.[state.index] !== undefined) {
         ask(labels[state.index]!);
+      } else if (e.key === "e" && !e.ctrl && !e.alt && !hidden && admin() && labels?.[state.index] !== undefined) {
+        rename(labels[state.index]!);
       } else if (e.key === "n" && !e.ctrl && !e.alt && !hidden && admin()) {
         ctx.push(
           promptScreen(ctx, screen, {

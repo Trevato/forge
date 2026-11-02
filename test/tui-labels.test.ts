@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createRepo, deleteLabel } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { LABEL_WORDS } from "../src/actions/label_words.ts";
-import { createLabel, listLabels } from "../src/core/issues.ts";
+import { createIssue, labelsFor, setIssueLabels, createLabel, listLabels } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, Session } from "../src/tui/forge.ts";
@@ -279,4 +279,102 @@ test("a reader is not offered d and d deletes nothing", async () => {
   await screen.load!(new AbortController().signal);
   expect(screen.key!({ type: "key", key: "d", ctrl: false, alt: false, shift: false } as never)).toBe(false);
   expect(labelsScreen(new Session(app, { ...guest, user: alice }), ctx, open).keys.some((k) => k.keys.includes("d"))).toBe(true);
+});
+
+async function editing(repo: Repo, user: User | undefined, keys: string[]) {
+  const terminal = headlessTerminal(100, 30);
+  const { app: tui, session } = createForgeApp(app, user ? { ...guest, user } : guest, { terminal, exitHooks: false });
+  tui.start();
+  tui.ctx.push(labelsScreen(session, tui.ctx, repo));
+  await settleApp(tui);
+  for (const k of keys) tui.dispatch({ type: "key", key: k, ctrl: false, alt: false, shift: false });
+  await settleApp(tui);
+  const text = tui.screen.toText();
+  tui.stop?.();
+  return text;
+}
+
+const BACK = Array(20).fill("backspace");
+
+test("e opens the form prefilled; an admin renames and recolours, and the issue still carries it", async () => {
+  const r = await createRepo(app, alice, { name: "editing", visibility: "public" });
+  if (!r.ok) throw new Error("repo");
+  const label = createLabel(app.db, r.value.id, "zeta", "123456");
+  if (!label.ok) throw new Error("label");
+  const issue = createIssue(app.db, { repoId: r.value.id, authorId: alice.id, title: "carries it" });
+  if (!issue.ok) throw new Error("issue");
+  setIssueLabels(app.db, issue.value.id, [label.value.id]);
+  const mid = await editing(r.value, alice, ["e"]);
+  expect(mid).toContain("zeta 123456");
+  const text = await editing(r.value, alice, ["e", ...BACK, ..."alpha #00ff00", "enter"]);
+  expect(text).toContain("alpha");
+  expect(text).toContain("#00ff00");
+  expect(text).not.toContain("zeta");
+  const after = listLabels(app.db, r.value.id);
+  expect(after.map((l) => [l.id, l.name, l.color])).toEqual([[label.value.id, "alpha", "00ff00"]]);
+  expect(labelsFor(app.db, issue.value.id).map((l) => l.name)).toEqual(["alpha"]);
+});
+
+test("a taken name is refused in place and keeps what was typed", async () => {
+  const text = await editing(open, alice, ["e", ...BACK, ..."docs 111111", "enter"]);
+  expect(text).toContain(LABEL_WORDS.taken);
+  expect(text).toContain("docs 111111");
+  expect(listLabels(app.db, open.id).find((l) => l.name === "bug")?.color).toBe("d73a4a");
+});
+
+test("a reader is not offered e and e opens nothing", async () => {
+  const stranger = new Session(app, guest);
+  const ctx = { invalidate() {}, push() { throw new Error("pushed"); } } as unknown as Ctx;
+  const screen = labelsScreen(stranger, ctx, open);
+  expect(screen.keys.some((k) => k.keys.includes("e"))).toBe(false);
+  await screen.load!(new AbortController().signal);
+  expect(screen.key!({ type: "key", key: "e", ctrl: false, alt: false, shift: false } as never)).toBe(false);
+  expect(labelsScreen(new Session(app, { ...guest, user: alice }), ctx, open).keys.some((k) => k.keys.includes("e"))).toBe(true);
+});
+
+test("a label deleted under the open form says it is gone and changes nothing", async () => {
+  const r = await createRepo(app, alice, { name: "vanish", visibility: "public" });
+  if (!r.ok) throw new Error("repo");
+  const label = createLabel(app.db, r.value.id, "ghost", "123456");
+  if (!label.ok) throw new Error("label");
+  const terminal = headlessTerminal(100, 30);
+  const { app: tui, session } = createForgeApp(app, { ...guest, user: alice }, { terminal, exitHooks: false });
+  tui.start();
+  tui.ctx.push(labelsScreen(session, tui.ctx, r.value));
+  await settleApp(tui);
+  const press = (key: string) => tui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+  press("e");
+  press("backspace");
+  press("9");
+  deleteLabel(app, alice, r.value, label.value.id);
+  press("enter");
+  await settleApp(tui);
+  const text = tui.screen.toText();
+  tui.stop?.();
+  expect(text).toContain(LABEL_WORDS.gone);
+  expect(text).not.toContain(NOT_ALLOWED_LINE);
+  expect(listLabels(app.db, r.value.id)).toEqual([]);
+});
+
+test("an admin demoted under the open form is told so and the label is unchanged", async () => {
+  const r = await createRepo(app, alice, { name: "demoted", visibility: "public" });
+  if (!r.ok) throw new Error("repo");
+  createLabel(app.db, r.value.id, "keep", "123456");
+  const terminal = headlessTerminal(100, 30);
+  const { app: tui, session } = createForgeApp(app, { ...guest, user: alice }, { terminal, exitHooks: false });
+  tui.start();
+  tui.ctx.push(labelsScreen(session, tui.ctx, r.value));
+  await settleApp(tui);
+  const press = (key: string) => tui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+  press("e");
+  press("backspace");
+  press("9");
+  (session as { user: User | undefined }).user = undefined;
+  press("enter");
+  await settleApp(tui);
+  const text = tui.screen.toText();
+  tui.stop?.();
+  expect(text).toContain(NOT_ALLOWED_LINE);
+  expect(text).not.toContain(LABEL_WORDS.gone);
+  expect(listLabels(app.db, r.value.id).map((l) => l.name)).toEqual(["keep"]);
 });
