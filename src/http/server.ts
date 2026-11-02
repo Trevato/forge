@@ -2349,7 +2349,7 @@ export async function serve(app: App): Promise<Servers> {
         if (response.status === 401 && !response.headers.has("www-authenticate")) {
           const url = publicUrl(request, owner.config.url);
           if (url.pathname.startsWith("/api/v1/"))
-            response.headers.set("www-authenticate", bearerChallenge(url.origin));
+            response.headers.set("www-authenticate", bearerChallenge(url.origin, request));
         }
         const done = await compress(request, response).then(securityFloor).then((r) => privateWhenSignedIn(request, r));
         if (namesFrame(request)) notePhase(request, "compress", performance.now() - compressing);

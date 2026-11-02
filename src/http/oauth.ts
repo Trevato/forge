@@ -41,9 +41,18 @@ const limiterOf = (app: App): RateLimiter => {
 export const resourceMetadataUrl = (origin: string): string =>
   `${origin}/.well-known/oauth-protected-resource`;
 
-/** The challenge a refused client learns where to sign in from; /mcp and the API send this one. */
-export const bearerChallenge = (origin: string): string =>
-  `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(origin)}"`;
+/**
+ * The one challenge a refused client learns from; /mcp and the API send it.
+ * It names the scopes, and says `invalid_token` (RFC 6750 §3) when a bearer
+ * was sent and refused, so "sign in" and "re-authorize" are told apart.
+ */
+export const bearerChallenge = (origin: string, request?: Request): string => {
+  const sent = /^Bearer\s+\S/i.test(request?.headers.get("authorization") ?? "");
+  return (
+    `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(origin)}", scope="${OAUTH_SCOPES.join(" ")}"` +
+    (sent ? `, error="invalid_token"` : "")
+  );
+};
 
 const open = { "access-control-allow-origin": "*" };
 const docHeaders = { ...open, "cache-control": "public, max-age=300" };

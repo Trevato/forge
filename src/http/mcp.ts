@@ -23,7 +23,7 @@ import { scopeAllows } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx, Handler } from "./context.ts";
 import { running } from "../kernel/version.ts";
-import { resourceMetadataUrl } from "./oauth.ts";
+import { bearerChallenge } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { clientBucket } from "./peer.ts";
@@ -397,7 +397,7 @@ export function mcpRoutes(router: Router<Handler>): void {
         status: 401,
         headers: {
           "content-type": "application/json",
-          "www-authenticate": `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(ctx.url.origin)}"`,
+          "www-authenticate": bearerChallenge(ctx.url.origin, ctx.request),
           link: `<${ctx.url.origin}/llms.txt>; rel="service-doc"; type="text/markdown"`,
         },
       },
