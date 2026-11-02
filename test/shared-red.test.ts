@@ -113,6 +113,19 @@ describe("a red many pulls share", () => {
     expect(shared(red("i3", [longer]))).toBe(true);
   });
 
+  test("three pulls each changing a tool without regenerating docs/MCP.md are three pulls' own reds (#7906)", () => {
+    const table = "the gathered tools > docs/MCP.md's tool table is current: run `bun scripts/mcp-tools.ts`";
+    const index = "the gathered tools > the index is current: run `bun scripts/mcp-tools.ts`";
+    for (const i of ["i1", "i2", "i3"]) red(i, [table, index]);
+    expect(shared(red("i4", [table]))).toBe(false);
+    expect(shared(red("i5", [index]))).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+    // The rest of the suite is no gate: three pulls on it still share it.
+    const other = "the gathered tools > are ordered by code point, not the machine's locale";
+    for (const i of ["i1", "i2"]) red(i, [other]);
+    expect(shared(red("i3", [other]))).toBe(true);
+  });
+
   test("every tree gate names a suite, or a test in it, that exists", () => {
     const names = new Set<string>();
     for (const f of new Glob("test/*.test.ts").scanSync(".")) for (const n of suiteNames(readFileSync(f, "utf8"))) names.add(n);

@@ -49,6 +49,8 @@ export const NO_TEST_NAME = "(unnamed)";
  * reserving it ("keeper", "feed", "favicon.ico") failed it, main green.
  * OpenAPI coverage (#8140): each pull adding an /api/v1 route without its
  * row, or a route file without regenerating the index, failed it, main green.
+ * MCP tools (#7906): each pull adding a tool or editing its `doc` without
+ * `bun scripts/mcp-tools.ts` failed the index or table check, main green.
  * The rest are top-level tests named whole (#8184): each reads only the tree.
  */
 export const TREE_GATES: readonly string[] = [
@@ -68,6 +70,9 @@ export const TREE_GATES: readonly string[] = [
   "every docs/ link in README.md resolves",
   // A route file a pull added without regenerating the index.
   "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`",
+  // A tool file, or a tool's `doc`, a pull changed without regenerating (#7906).
+  "the gathered tools > the index is current: run `bun scripts/mcp-tools.ts`",
+  "the gathered tools > docs/MCP.md's tool table is current: run `bun scripts/mcp-tools.ts`",
 ];
 
 /** Whether a failing test's name is one of {@link TREE_GATES}': under a suite prefix (`… > `), or a test's full name exactly. */
