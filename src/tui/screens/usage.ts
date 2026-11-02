@@ -26,6 +26,7 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
+import { fleetGraphScreen } from "./fleetgraph.ts";
 import { ListState, drawList, type ListRow } from "./common.ts";
 
 const part = (counts: Readonly<Record<string, number>>, keys: readonly string[]) =>
@@ -73,6 +74,7 @@ export function usageScreen(f: Session, ctx: Ctx, repo?: Repo): Screen {
     keys: [
       binding(["j", "k"], "move cursor", { hidden: rows.length === 0 }),
       binding(["[", "]"], "returns window", { hidden: returns === undefined }),
+      binding(["f"], "fleet graph", { hidden: repo !== undefined }),
     ],
     render(area, s) {
       const c = ctx.theme.c;
@@ -91,6 +93,10 @@ export function usageScreen(f: Session, ctx: Ctx, repo?: Repo): Screen {
       if (repo === undefined) drawList(s, list!, c, state, usageRows(all));
     },
     key: (e) => {
+      if (repo === undefined && !e.ctrl && !e.alt && e.key === "f") {
+        ctx.push(fleetGraphScreen(f, ctx));
+        return true;
+      }
       if (returns !== undefined && !e.ctrl && !e.alt && (e.key === "[" || e.key === "]")) {
         const next = Math.max(0, Math.min(RETURNS_SPANS.length - 1, span + (e.key === "]" ? 1 : -1)));
         if (next === span) return true;
