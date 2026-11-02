@@ -35,7 +35,7 @@ import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
 import { signinWindow } from "../../core/signin-window.ts";
 import { field, readForm } from "../form.ts";
 import { passkeyJs } from "../passkey-client.ts";
-import { passkeyNote, passkeyState } from "../passkey-state.ts";
+import { passkeyNote } from "../passkey-state.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
@@ -285,18 +285,17 @@ function authForm(
   // Sign-in leads with the passkey: one press, nothing typed; the password
   // form below stays for accounts that were given one. The button needs a
   // script and a browser with passkeys, so the block is `data-passkey="on"`: shown
-  // only once `passkey-client.ts` marks `:root.passkey`. The form's Sign in
-  // comes in both variants, outline beside the lead and primary everywhere
-  // else, so the page always has one primary action. The sentence tells a
-  // newcomer before they look for a door that is not there.
+  // only once `passkey-client.ts` marks `:root.passkey`. No "Passkey off"
+  // badge here: a visitor signing in did not ask about passkeys, and with no
+  // script the page is the password form alone, its margin included (#7921).
+  // The form's Sign in comes in both variants, outline beside the lead and
+  // primary everywhere else, so the page always has one primary action. The
+  // sentence tells a newcomer before they look for a door that is not there.
   const passkeyFirst = when(
     kind === "signin",
-    () => html`<div class="stack stack-tight mb">
-      ${passkeyState()}
-      <div class="stack stack-tight" data-passkey="on" hidden>
+    () => html`<div class="stack stack-tight mb" data-passkey="on" hidden>
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
       ${passkeyNote("passkey-signin-note")}
-      </div>
     </div>
     ${when(SIGNUP_SENTENCES[timePhase(ctx.request, "settings", () => getSignup(ctx.app.db))], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
   );
