@@ -50,7 +50,15 @@ beforeAll(async () => {
   await runtime.start();
   // The pulls here have made-up heads: the runtime must never try to deploy (and so replace or
   // drop) the environments the test sets up, whatever the load of the machine.
-  (runtime as unknown as { requestDeploy: () => void }).requestDeploy = () => {};
+  // Nor may its event handler or its sweeper act on the pulls and environments set up here.
+  const inner = runtime as unknown as {
+    requestDeploy: () => void;
+    unsubscribe?: () => void;
+    sweeper?: ReturnType<typeof setInterval>;
+  };
+  inner.requestDeploy = () => {};
+  inner.unsubscribe?.();
+  if (inner.sweeper !== undefined) clearInterval(inner.sweeper);
   const u = await createUser(app.db, {
     origin: "seed",
     trusted: true,
