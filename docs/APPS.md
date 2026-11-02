@@ -1590,7 +1590,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_CREW_TIMEOUT_MIN`  | `45`                            | wall-clock limit of one agent run                 |
 | `FORGE_CREW_ALLOW_HOSTS`  | —                               | hosts an agent's shell may reach, comma-separated |
 | `FORGE_CLAUDE`            | `claude` on `PATH`              | the Claude Code binary                            |
-| `FORGE_CLAUDE_CONFIG_DIR` | Claude Code's own               | a `CLAUDE_CONFIG_DIR` for runs, when wanted       |
+| `FORGE_CLAUDE_CONFIG_DIR` | conversations: `$FORGE_APP_DATA/claude-config`; runs: Claude Code's own | a `CLAUDE_CONFIG_DIR`; conversation sessions live there so a release keeps them |
 | `FORGE_CHROMIUM`          | `chromium` on `PATH`            | the browser the look is taken with                |
 | `ANTHROPIC_API_KEY`       | —                               | handed to agent runs when set                     |
 | `CLAUDE_CODE_OAUTH_TOKEN` | —                               | handed to agent runs when set                     |

@@ -6,7 +6,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,6 +133,38 @@ describe("a conversation turn", () => {
     expect(turns(alice).at(-1)).toBe("agent:All quiet.");
     expect(lines("gone")).not.toContain("--resume");
     expect(openConversation(app.db, alice.id).claudeSessionId).toBe("sess-new");
+  });
+
+  test("a lost session is never shown: named first, refused after, the turn starts fresh with the stored turns (#8751)", async () => {
+    const path = join(dir, "lost");
+    writeFileSync(
+      path,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+printf '%s' "$first" >> "${dir}/lost.first"
+printf '%s\\n' "$CLAUDE_CONFIG_DIR" > "${dir}/lost.config"
+echo '{"type":"system","subtype":"init","session_id":"sess-lost","model":"fake"}'
+case " $* " in *" --resume "*)
+  echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","errors":["No conversation found with session ID: sess-lost"],"total_cost_usd":0,"num_turns":0,"session_id":"sess-lost"}'
+  exit 1 ;; esac
+echo '{"type":"assistant","session_id":"sess-lost","message":{"id":"m2","content":[{"type":"text","text":"Back."}],"usage":{"input_tokens":1,"output_tokens":1}}}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Back.","total_cost_usd":0.1,"num_turns":1,"session_id":"sess-lost","terminal_reason":"completed","usage":{"input_tokens":1,"output_tokens":1}}'
+`,
+    );
+    chmodSync(path, 0o755);
+    const before = turns(alice).length;
+    const said = say(app, options(path), alice.id, "do you remember me?");
+    if (said.ok) await said.value.done;
+    const added = turns(alice).slice(before);
+    expect(added).toEqual(["person:do you remember me?", "agent:Back."]);
+    expect(added.join()).not.toContain("No conversation found");
+    const sent = readFileSync(join(dir, "lost.first"), "utf8");
+    // The fresh attempt carries what was said before, and the message.
+    expect(sent).toContain("still there?");
+    expect(sent).toContain("do you remember me?");
+    expect(readFileSync(join(dir, "lost.config"), "utf8").trim()).toBe(join(dir, "claude-config"));
+    expect(statSync(join(dir, "claude-config")).mode & 0o077).toBe(0);
   });
 
   test("a message while a turn runs is steered into it, not started beside it", async () => {
