@@ -24,6 +24,9 @@ quietLogs();
 
 const PATHS = ["/", "/signin", "/signup", "/explore", "/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1", "/alice/notes/tree/main", "/alice/notes/blob/main/a.txt"];
 
+/** A person's browser: a request with no User-Agent counts against the crawl budget (#8129), which shrinks while the check machine is loaded, so these tests are never crawlers. */
+const BROWSER = { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36" };
+
 const CACHING = "https://specification.website/#caching";
 
 /** `check path` -> [section, why it stands]. Every one is expected on every page it names; one fixed fails the test, one new fails it too. */
@@ -90,6 +93,7 @@ afterAll(async () => {
 const through = (signedIn: boolean) => async (input: string, init?: RequestInit) => {
   const request = new Request(input, init);
   if (signedIn) request.headers.set("cookie", cookie);
+  if (!request.headers.has("user-agent")) request.headers.set("user-agent", BROWSER["user-agent"]);
   if (!request.headers.has("accept-encoding")) request.headers.set("accept-encoding", "br, gzip");
   const response = await compress(request, await http.handle(request)).then(securityFloor);
   const encoding = response.headers.get("content-encoding");
@@ -120,7 +124,7 @@ test("the owner's signed-in pages raise exactly the findings named in KNOWN_SIGN
 
 test("a page that answers 200 names its canonical address, equal to og:url; a 404 names none", async () => {
   const head = async (path: string) => {
-    const res = await http.handle(new Request(`http://forge.test${path}`));
+    const res = await http.handle(new Request(`http://forge.test${path}`, { headers: BROWSER }));
     return { status: res.status, html: await res.text() };
   };
   for (const path of ["/", "/explore", "/alice/notes", "/explore?x=1"]) {
@@ -138,12 +142,12 @@ test("a page that answers 200 names its canonical address, equal to og:url; a 40
 
 test("the walked signed-in pages answer 200 for the owner", async () => {
   for (const path of SIGNED_IN) {
-    expect((await http.handle(new Request(`http://forge.test${path}`, { headers: { cookie } }))).status).toBe(200);
+    expect((await http.handle(new Request(`http://forge.test${path}`, { headers: { cookie, ...BROWSER } }))).status).toBe(200);
   }
 });
 
 test("the walked repository pages exist", async () => {
   for (const path of ["/alice/notes", "/alice/notes/issues", "/alice/notes/issues/1"]) {
-    expect((await http.handle(new Request(`http://forge.test${path}`))).status).toBe(200);
+    expect((await http.handle(new Request(`http://forge.test${path}`, { headers: BROWSER }))).status).toBe(200);
   }
 });
