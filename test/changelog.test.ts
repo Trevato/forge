@@ -385,4 +385,24 @@ describe("the top line names what is running", () => {
     expect(line).toContain("1.2.3 · ");
     expect(line).toContain("8a16183");
   });
+
+  test("the short sha links to the commit in the forge's own repository, escaped", async () => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    const oid = "8a16183d0000000000000000000000000000abcd";
+    const out = String(shippedRegion({ live: [], onItsWay: [], version: "dev", commit: oid, own: "a/forge" } as any, "all"));
+    expect(out).toContain(`<a class="sha" href="/a/forge/commit/${oid}"`);
+    const odd = String(shippedRegion({ live: [], onItsWay: [], version: "dev", commit: oid, own: 'a/"><b>' } as any, "all"));
+    expect(odd).not.toContain("<b>");
+    expect(odd).toContain("&quot;");
+  });
+
+  test("no link when the reader cannot open the repository, or there is none", async () => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    const oid = "8a16183d0000000000000000000000000000abcd";
+    const base = { live: [], onItsWay: [], version: "dev", commit: oid, own: "a/forge" } as any;
+    const hidden = String(shippedRegion(base, "all", new Date(), "UTC", undefined, false));
+    expect(hidden).toContain('<span class="sha">8a16183</span>');
+    expect(hidden).not.toContain("/commit/");
+    expect(String(shippedRegion({ ...base, own: undefined }, "all"))).not.toContain("/commit/");
+  });
 });

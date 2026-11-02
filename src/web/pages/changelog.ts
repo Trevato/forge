@@ -8,6 +8,7 @@
 
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
+import { canRead, getRepo } from "../../core/repos.ts";
 import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
 import { readLandings, type Landing, type Landings } from "../../release/landings.ts";
@@ -118,13 +119,16 @@ export function shippedRegion(
   now: Date = new Date(),
   zone = "UTC",
   toLive?: { version: string; seconds: number },
+  readable = true,
 ): Html {
   const keep = (l: Landing) => choice === "all" || l.repo === choice;
   const live = read.live.filter(keep);
   const onItsWay = read.onItsWay.filter(keep);
   const todayIs = dayOf(now.toISOString(), zone);
   const today = live.filter((l) => dayOf(l.at, zone) === todayIs).length;
-  const commit = read.commit === null ? null : sha(read.commit);
+  // The short sha is a way in to the commit's page, unless there is no repository or the reader may not open it.
+  const commit =
+    read.commit === null ? null : sha(read.commit, readable && read.own !== undefined ? `/${read.own}/commit/${read.commit}` : undefined);
   // A build that is not a release has no version worth a reader's attention: the commit says it.
   const version =
     read.version !== "dev" ? (commit === null ? read.version : html`${read.version} · ${commit}`) : (commit ?? "a development build");
@@ -155,8 +159,10 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
     { label: "Everything", href: "/changelog?repo=all", current: choice === "all" },
     ...others.map((r) => ({ label: r, href: `/changelog?repo=${encodeURIComponent(r)}`, current: choice === r })),
   ]);
+  const ownRepo = read.own === undefined ? undefined : getRepo(ctx.app.db, ...(read.own.split("/") as [string, string]));
+  const readable = ownRepo !== undefined && canRead(ctx.app.db, ownRepo, ctx.auth.user);
   const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${filters}
-    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", newestLive(ctx.app.db))}</div>`;
+    <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", newestLive(ctx.app.db), readable)}</div>`;
   const response = page({ ctx, title: "Changelog", body, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
