@@ -328,6 +328,8 @@ An unknown `kind:` or `sort:` word is dropped and named after "Read as:", with
 the words it takes, on the page, in the terminal and in a `note` field of
 `/api/v1/explore` and the MCP `explore` tool; results still show.
 
+A signed-out visitor to `/explore` sees **Make it yours** on every public app (not on a private one, nor one only its writers may enter); it leads to sign-in and back to the plan of their copy, and nothing is copied until they confirm. Behind a platform edge the sign-in is the edge's; a newcomer it vouched for is sent to `/signup` and may need to come back. API and MCP rows say `copyable: true` for a guest too; making the copy needs a signed-in caller, and the terminal is always signed in and offers `Y` on the repository screen.
+
 ## On your machine
 
 The `forge` command keeps a local copy of the parts you work on: **[docs/ON-YOUR-MACHINE.md](docs/ON-YOUR-MACHINE.md)**.

@@ -232,7 +232,7 @@ describe("explore", () => {
     const page = await (await fetch(`${base}/explore?q=${encodeURIComponent("kind:app sort:ships")}`)).text();
     expect(page).toContain('value="kind:app sort:ships"');
     expect(page.indexOf('href="/bob/busy"')).toBeLessThan(page.indexOf('href="/alice/loved"'));
-    expect(page).not.toContain("Make it yours");
+    expect(page).toContain("Make it yours");
     expect(page).not.toContain("alice/secret");
     const signedIn = await (
       await fetch(`${base}/explore`, {
@@ -310,6 +310,44 @@ describe("explore", () => {
       await fetch(`${base}/explore`, { headers: { authorization: `Bearer ${aliceToken}` } })
     ).text();
     expect(asAlice).not.toContain('href="/alice/loved/make-it-yours"');
+  });
+
+  test("Make it yours is offered to a signed-out visitor on public apps only, linking to the make-it-yours path", async () => {
+    const rows = (await api("kind:app")).items;
+    expect(rows.find((r) => r.name === "alice/loved").copyable).toBe(true);
+    // A public repository whose app only its writers enter is shown, not
+    // copyable; a private app is not among a guest's rows at all.
+    expect(rows.find((r) => r.name === "alice/gated").copyable).toBe(false);
+    expect(rows.find((r) => r.name === "alice/secret")).toBeUndefined();
+    const page = await (await fetch(`${base}/explore`)).text();
+    expect(page).toContain('href="/alice/loved/make-it-yours"');
+    expect(page).not.toContain('href="/alice/gated/make-it-yours"');
+    expect(page).not.toContain("alice/secret");
+  });
+
+  test("the signed-out Make it yours link carries the visitor through sign-in to the plan of their copy, and makes no copy", async () => {
+    const path = "/alice/loved/make-it-yours";
+    const next = encodeURIComponent(path);
+    const res = await fetch(`${base}${path}`, { redirect: "manual" });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`/signin?next=${next}`);
+    const copies = () => (app.db.query(`SELECT COUNT(*) AS n FROM repo WHERE owner_id = ?1`).get(bob.id) as { n: number }).n;
+    const before = copies();
+    const signedIn = await fetch(`${base}/signin?next=${next}`, {
+      method: "POST",
+      body: new URLSearchParams({ username: "bob", password: "a-good-passphrase" }),
+      redirect: "manual",
+    });
+    expect(signedIn.status).toBe(303);
+    expect(signedIn.headers.get("location")).toBe(path);
+    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const plan = await fetch(`${base}${signedIn.headers.get("location")}`, { headers: { cookie } });
+    expect(plan.status).toBe(200);
+    const body = await plan.text();
+    expect(body).toContain("Make it yours");
+    expect(body).toContain("Yours as");
+    // Only the plan: the copy is made by the POST.
+    expect(copies()).toBe(before);
   });
 
   test("updated: narrows to what moved in the window, on the API and the page chips", async () => {

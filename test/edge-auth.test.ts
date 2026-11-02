@@ -6,6 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { edgeIdentity, edgeLoginUrl, edgeLogoutUrl } from "../src/http/edge.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
+import { createRepo } from "../src/actions/repos.ts";
 import { mintInvite } from "../src/core/invites.ts";
 import { setSignup } from "../src/settings/signup.ts";
 import { seedAdmin } from "./helpers/admin.ts";
@@ -87,6 +88,18 @@ describe("a forge behind the platform edge", () => {
     const page = await fetch(`${base}/`).then((r) => r.text());
     expect(page).toContain('href="/_plat/login?rd=%2F"');
     expect(page).not.toContain('href="/signin"');
+  });
+
+  test("a signed-out visitor on Make it yours is sent to the edge's sign-in, back to the same path; a vouched newcomer to /signup", async () => {
+    const olive = getUserByName(app.db, "olive")!;
+    const made = await createRepo(app, olive, { name: "loved", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const path = "/olive/loved/make-it-yours";
+    const anon = await fetch(`${base}${path}`, { redirect: "manual" });
+    expect(anon.headers.get("location")).toBe(`/_plat/login?rd=${encodeURIComponent(path)}`);
+    const stranger = { "x-plat-user": "newcomer", "x-plat-edge-token": TOKEN };
+    const vouched = await fetch(`${base}${path}`, { headers: stranger, redirect: "manual" });
+    expect(vouched.headers.get("location")).toBe("/signup");
   });
 
   test("an unknown edge login creates no user and is offered /signup", async () => {

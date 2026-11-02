@@ -380,7 +380,10 @@ function rank(
   };
 
   const copyable = (repo: Repo): boolean => {
-    if (viewer === undefined || viewer.kind === "agent" || !isActive(viewer)) return false;
+    // A signed-out visitor is offered only public apps; the page they land on
+    // sends them to sign in first, and the copy is made after.
+    if (viewer === undefined) return records.get(repo.id)!.access === "public";
+    if (viewer.kind === "agent" || !isActive(viewer)) return false;
     if (repo.ownerId === viewer.id) return false;
     const record = records.get(repo.id)!;
     return (
