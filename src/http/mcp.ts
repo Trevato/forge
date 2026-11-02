@@ -32,7 +32,7 @@ import { fileReport } from "../actions/reports.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
-import { type Args, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst } from "./mcp/shared.ts";
+import { type Args, visible, plansOnly, str, REPO_ARG, lean, fenceAnswer, heldWrite, askedFirst, readThrough } from "./mcp/shared.ts";
 import { CONVERSATION_BRIEF } from "../crew/conversation_brief.ts";
 import { TOOLS } from "./mcp/tools.ts";
 
@@ -201,6 +201,7 @@ function rpcOne(
           ],
           isError: true,
         });
+      readThrough(ctx);
       return Promise.resolve(tool.run(ctx, user, args)).then((ran) => {
         const answer = fenceAnswer(ctx, ran);
         return reply(

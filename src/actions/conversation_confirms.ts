@@ -16,7 +16,7 @@ import { actingVia } from "../core/acting_via.ts";
 import { appendTurn, MAX_TURN_CHARS, openConversation } from "../core/conversations.ts";
 import { answerHeld, HELD_TTL_MS, waitingFor, type YesRefusal } from "../core/fence.ts";
 import type { User } from "../core/users.ts";
-import { confirmSentence, keptOf, undoOf } from "../crew/conversation_confirm.ts";
+import { argumentsShown, confirmSentence, keptOf, undoOf } from "../crew/conversation_confirm.ts";
 import type { Ctx } from "../http/context.ts";
 import { TOOLS } from "../http/mcp/tools.ts";
 
@@ -25,6 +25,8 @@ export interface Waiting {
   readonly id: string;
   readonly tool: string;
   readonly does: string;
+  /** Every argument, whole: the sentence is a summary, this is what runs. */
+  readonly arguments: string;
   readonly createdAt: string;
   readonly expiresAt: string;
 }
@@ -35,6 +37,7 @@ export function waitingConfirms(ctx: Pick<Ctx, "app">, user: User, now: number =
     id: h.id,
     tool: h.tool,
     does: confirmSentence(h.tool, h.args),
+    arguments: argumentsShown(h.tool, h.args),
     createdAt: h.createdAt,
     expiresAt: new Date(Date.parse(h.createdAt) + HELD_TTL_MS).toISOString(),
   }));

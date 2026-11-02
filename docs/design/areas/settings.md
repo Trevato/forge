@@ -30,3 +30,6 @@ the text wrap and gives the control a place that is always visible. Use `.row-ac
   reads as a link; at the phone breakpoint a 44px tap target. Styled under `.edit-row` in `src/web/style/components.ts`.
 
 The terminal's Labels screen (`src/tui/screens/labels.ts`) shows the same counts to a repository admin: `N open` or `unused` after each hex, and its delete confirm says how many open issues and pulls carry the label. A reader sees neither.
+
+Settings → Confirms (`src/web/pages/confirms.ts`, #8230) is a `listCard()` of `row()`s that fold (`fold`) open on the call's full
+arguments in a `messageText()` block, with the Yes form beside the row (`after`); no new class.

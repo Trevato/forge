@@ -187,6 +187,17 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","t
     expect(((await junk.json()) as { turns: unknown[] }).turns).toHaveLength(2);
   });
 
+  test("a token that may only read cannot start a turn that acts with rw (#8230)", async () => {
+    const id = app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username = 'alice'").get()!.id;
+    const ro = createToken(app.db, id, "reader", "ro").token;
+    const res = await fetch(`${servers.url}/api/v1/conversation/messages`, { method: "POST", headers: headers(ro), body: JSON.stringify({ text: "by ro" }) });
+    expect(res.status).toBe(403);
+    const said = await mcp(ro, { text: "by ro" });
+    expect(said.error).toBe(true);
+    await settle();
+    expect(await persons()).not.toContain("by ro");
+  });
+
   test("a conversation's own token cannot reach the API door", async () => {
     const res = await fetch(`${servers.url}/api/v1/conversation/messages`, { method: "POST", headers: headers(via), body: JSON.stringify({ text: "loop" }) });
     expect(res.status).toBe(403);

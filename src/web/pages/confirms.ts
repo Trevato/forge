@@ -15,7 +15,7 @@ import { settingsLayout, signInFirst } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, empty, icon, listCard, row, time } from "../ui.ts";
+import { btn, card, empty, icon, listCard, messageText, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const BACK = "/settings/confirms";
@@ -34,10 +34,16 @@ function confirmsPage(ctx: Ctx, shown?: Html): Response {
       : listCard(
           waiting.map((w) =>
             row({
-              lead: icon("lock"),
+              lead: icon("chevronRight"),
               title: w.does,
-              meta: html`asked ${time(w.createdAt)} · until ${time(w.expiresAt)}`,
-              trail: html`<form class="row-actions" method="post" action="${BACK}/${w.id}">
+              meta: html`asked ${time(w.createdAt)} · until ${time(w.expiresAt)} · full arguments`,
+              // The row folds open on every argument as the call will run; the yes sits beside it.
+              fold: {
+                id: `confirm-${w.id}`,
+                open: false,
+                body: html`<div class="card-body">${messageText(w.arguments)}</div>`,
+              },
+              after: html`<form class="row-actions" method="post" action="${BACK}/${w.id}">
                 ${btn("Yes", { variant: "primary", size: "sm", icon: "check", label: `Yes: ${w.tool}` })}
               </form>`,
             }),

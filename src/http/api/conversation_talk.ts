@@ -2,7 +2,7 @@
  * Talking to the forge's agent over the API (#7651): `POST
  * /api/v1/conversation/messages` sends one message and `GET
  * /api/v1/conversation/turns` reads the conversation back. The identity is the
- * verified session or token's person (a conversation's own via token reaches
+ * verified session or rw token's person (a conversation's own via token reaches
  * `/mcp` alone, `http/via_gate.ts`); the body is byte-capped, a browser's
  * request is same-origin, and sending is throttled per person (`actions/talk.ts`).
  */
@@ -11,6 +11,7 @@ import { TALK_WORDS, talk } from "../../actions/talk.ts";
 import { DEFAULT_PAGE, listTurns, MAX_PAGE, openConversation } from "../../core/conversations.ts";
 import { WORDS_MAX } from "../../core/fence.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { scopeAllows } from "../../core/tokens.ts";
 import { turnRunning } from "../../crew/conversation.ts";
 import { crossOrigin, type Handler } from "../context.ts";
 import { apiError, boundedBody, forbidden, json, unauthorized } from "../respond.ts";
@@ -32,6 +33,8 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     const user = ctx.auth.user;
     if (user === undefined) return unauthorized();
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+    // A turn acts with an rw token (#8230): a token that may only read cannot start one.
+    if (ctx.auth.via === "token" && !scopeAllows(ctx.auth.scope ?? "ro", "rw")) return forbidden();
     const input = await boundedBody(ctx.request, BODY_MAX);
     if (input === "too_large") return apiError("too_large", 413, `at most ${BODY_MAX} bytes`);
     const text = input["text"];

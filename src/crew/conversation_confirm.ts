@@ -75,6 +75,25 @@ export const ASKING: Readonly<Record<string, Asking>> = {
     asks: not("action", "list"),
     undo: (a) => (a["action"] === "add" ? "`ssh_keys` with `action: \"remove\"` and its id removes it" : undefined),
   },
+  // Reach and trust: who may see, enter, deploy, stop or be linked to (#8230).
+  land_past_gate: { does: "land a pull past a broken gate" },
+  share: { does: "share a feed item with followers or the app's crew" },
+  invites: { does: "revoke an invite link", asks: (a) => a["action"] !== "list" },
+  egress_grants: { does: "grant or revoke an app's private destination", asks: not("op", "list") },
+  sever: { does: "unlink a spawned forge from its parent" },
+  parent_unlink: { does: "unlink parent-forge sign-in" },
+  quotas: { does: "change an account's quotas" },
+  spawn: { does: "spawn a child forge" },
+  app_deploy: { does: "redeploy or stop an app's production or preview" },
+  stop: { does: "stop a crew run" },
+  converge: { does: "have a fork's crew merge the parent's updates" },
+  origins: { does: "sync an origin or replace the internal hosts one may live on", asks: not("action", "list", "repos") },
+  cloud_account: { does: "change a cloud account" },
+  outsiders: { does: "let non-writers direct an app's crew, or stop them" },
+  seal: { does: "seal or unseal an issue or pull" },
+  migrate: { does: "bring a repository in from a public address" },
+  account_suspend: { does: "suspend an account or lift its suspension" },
+  account_role: { does: "make a person a member or a guest" },
   // Every admin-scope tool.
   agent: { does: "create, change or remove a crew agent" },
   app_domains: { does: "add, check or remove an app's domain" },
@@ -102,8 +121,20 @@ export function asksFirst(tool: string, args: Args): boolean {
   return asking !== undefined && (asking.asks?.(args) ?? true);
 }
 
-/** Argument names whose values are never repeated in a sentence or turn. */
-const SECRET = /token|secret|key|value|password/i;
+/**
+ * Argument names whose values are secrets, never repeated in a sentence,
+ * turn or the full view: at any depth, any tool. `key` and `value` are not
+ * among them, for they are most often what the person must read to say yes
+ * (the public key `ssh_keys` grants, the value `limits` sets).
+ */
+const SECRET = /token|secret|password|credential/i;
+
+/** Top-level `value`s that are secrets, by tool: a sealed secret, an app variable, a cloud token. */
+const SECRET_VALUE: ReadonlySet<string> = new Set(["secrets", "app_env", "cloud_account"]);
+
+/** Whether argument `k` of `tool` is a secret; `top` when it is a top-level argument. */
+const secretArg = (tool: string, k: string, top: boolean): boolean =>
+  SECRET.test(k) || (top && k === "value" && SECRET_VALUE.has(tool));
 
 /** Control, format and line-breaking characters: an argument the agent wrote cannot start a new line or reorder the sentence. */
 const UNSAID = /[\p{Cc}\p{Cf}\u2028\u2029]+/gu;
@@ -115,12 +146,52 @@ const plain = (v: string): string => {
 };
 
 /** One argument as said back: scalars as written (strings plain, cut to 60), a secret hidden, anything else counted. */
-function said(k: string, v: unknown): string {
+function said(tool: string, k: string, v: unknown): string {
   const name = plain(k);
-  if (SECRET.test(k) && k !== "id") return `${name} (hidden)`;
+  if (secretArg(tool, k, true)) return `${name} (hidden)`;
   if (typeof v === "string") return `${name} ${plain(v)}`;
   if (typeof v === "number" || typeof v === "boolean" || v === null) return `${name} ${String(v)}`;
   return Array.isArray(v) ? `${name} (${v.length})` : `${name} (…)`;
+}
+
+/** Most keys an object may hold, and how long one key, in a call that asks first. */
+const KEYS_MAX = 30;
+const KEY_CHARS_MAX = 100;
+
+/** Most characters of arguments a person is asked to approve; more is refused unkept. */
+export const ARGS_CHARS_MAX = 8000;
+
+/** Whether the person could not read these arguments whole: too many keys, a long key, or too much text. */
+export function tooBigToApprove(args: Args): boolean {
+  let over = false;
+  const walk = (v: unknown, depth: number): void => {
+    if (over || v === null || typeof v !== "object") return;
+    if (depth > 6) over = true;
+    const entries = Array.isArray(v) ? v.map((x, i) => [String(i), x] as const) : Object.entries(v);
+    if (entries.length > KEYS_MAX * 10 || (!Array.isArray(v) && entries.length > KEYS_MAX)) over = true;
+    for (const [k, x] of entries) {
+      if (k.length > KEY_CHARS_MAX) over = true;
+      walk(x, depth + 1);
+    }
+  };
+  walk(args, 0);
+  return over || (JSON.stringify(args) ?? "").length > ARGS_CHARS_MAX;
+}
+
+/** Control and format characters written out, so what is shown is what runs. */
+const escaped = (text: string): string =>
+  text.replace(/[^\P{Cc}\n]|[\p{Cf}\u2028\u2029]+/gu, (m) => Array.from(m, (c) => `\\u${c.codePointAt(0)!.toString(16).padStart(4, "0")}`).join(""));
+
+/** Every argument, whole, as the call will run: a secret hidden at any depth, invisible characters written out. */
+export function argumentsShown(tool: string, args: Args): string {
+  const hide = (v: unknown, top: boolean): unknown => {
+    if (Array.isArray(v)) return v.map((x) => hide(x, false));
+    if (v === null || typeof v !== "object") return v;
+    return Object.fromEntries(
+      Object.entries(v).map(([k, x]) => [k, secretArg(tool, k, top) ? "(hidden)" : hide(x, false)]),
+    );
+  };
+  return escaped(JSON.stringify(hide(args, true), null, 2) ?? "{}");
 }
 
 /** The one sentence the person reads before saying yes. */
@@ -128,7 +199,7 @@ export function confirmSentence(tool: string, args: Args): string {
   const does = ASKING[tool]?.does ?? `call \`${tool}\``;
   const given = Object.entries(args)
     .filter(([k]) => k !== "dryRun")
-    .map(([k, v]) => said(k, v));
+    .map(([k, v]) => said(tool, k, v));
   return `This will ${does} (\`${tool}\`${given.length === 0 ? "" : `: ${given.join(", ")}`}) as you, once you say yes within 10 minutes.`;
 }
 

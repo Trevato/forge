@@ -10,7 +10,7 @@ import type { BoardError } from "../../actions/boards.ts";
 import { BOARD_NOT_SAVED } from "../../actions/board_words.ts";
 import { fence, fenceTag, fenceUp, hold, named, readFenced } from "../../core/fence.ts";
 import { appendTurn, openConversation } from "../../core/conversations.ts";
-import { asksFirst, confirmSentence } from "../../crew/conversation_confirm.ts";
+import { asksFirst, confirmSentence, tooBigToApprove } from "../../crew/conversation_confirm.ts";
 
 export type Args = Record<string, unknown>;
 export type Answer =
@@ -91,6 +91,7 @@ export function heldWrite(ctx: Ctx, user: User, tool: Tool, args: Args): Record<
   if (tool.adminOnly === true && !user.isAdmin) return undefined;
   const words = fenceUp(ctx.app.db, via);
   if (words === undefined || named(words, tool.name, args)) return undefined;
+  if (tooBigToApprove(args)) return tooBig(tool.name);
   // Past the cap nothing more is kept, and the agent is told the same.
   const confirm = hold(ctx.app.db, via, user.id, tool.name, args);
   return {
@@ -103,6 +104,17 @@ export function heldWrite(ctx: Ctx, user: User, tool: Tool, args: Args): Record<
     isError: true,
   };
 }
+
+/** A call whose arguments a person could not read whole is refused, not kept. */
+const tooBig = (tool: string): Record<string, unknown> => ({
+  content: [
+    {
+      type: "text",
+      text: JSON.stringify({ needs_confirm: null, tool, says: "the arguments are too large for the person to read before saying yes; nothing was kept or done: ask for less, in smaller calls" }),
+    },
+  ],
+  isError: true,
+});
 
 /** What an asked-first call tells the forge's agent, beside the confirm's id and its sentence. */
 export const ASKS_FIRST =
@@ -122,6 +134,7 @@ export function askedFirst(ctx: Ctx, user: User, tool: Tool, args: Args): Record
   if ((tool.adminOnly === true || tool.needsAdminScope === true) && !user.isAdmin) return undefined;
   const short = tool.needsAdminScope === true && !scopeAllows(ctx.auth.scope ?? "ro", "admin");
   if (!short && (!tool.writes || plansOnly(tool, args) || !asksFirst(tool.name, args))) return undefined;
+  if (tooBigToApprove(args)) return tooBig(tool.name);
   const confirm = hold(ctx.app.db, via, user.id, tool.name, args);
   const does = confirmSentence(tool.name, args);
   if (confirm !== null) {
@@ -147,17 +160,25 @@ export function askedFirst(ctx: Ctx, user: User, tool: Tool, args: Args): Record
 }
 
 /**
+ * The forge's own agent is about to read an answer (#8230): the read is
+ * marked at dispatch, before the tool runs, so every later write is weighed
+ * against it — whatever the answer turns out to hold (a bare key, an
+ * object's key, a thrown error), and however the agent batched its calls.
+ * Any other caller is not marked.
+ */
+export function readThrough(ctx: Ctx): void {
+  if (ctx.auth.through !== undefined) readFenced(ctx.app.db, ctx.auth.through);
+}
+
+/**
  * An answer as the forge's own agent reads it: every string the forge did
  * not make inside a data block — a refusal's message too, which may echo a
- * name someone else chose — and the read marked so the next write is
- * weighed against it. Any other caller's answer is returned as it was.
+ * name someone else chose. Any other caller's answer is returned as it was.
  */
 export function fenceAnswer(ctx: Ctx, answer: Answer): Answer {
-  const via = ctx.auth.through;
-  if (via === undefined) return answer;
-  const wrapped = fence(answer.ok ? answer.value : answer.message, fenceTag());
+  if (ctx.auth.through === undefined) return answer;
+  const wrapped = fence(answer.ok ? answer.value : answer.message, fenceTag(), ctx.url.origin);
   if (!wrapped.fenced) return answer;
-  readFenced(ctx.app.db, via);
   return answer.ok ? { ...answer, value: wrapped.value } : { ...answer, message: wrapped.value as string };
 }
 

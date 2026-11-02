@@ -257,7 +257,14 @@ written to their conversation.
 The person says yes from their own browser session, same-origin, never a
 token, so never the agent: Settings → Confirms (`/settings/confirms`), the
 terminal's Confirms (`y`), or `POST /api/v1/conversation-confirms/:id`. All
-three call `sayYes` in `src/actions/conversation_confirms.ts`. It does the
+three call `sayYes` in `src/actions/conversation_confirms.ts`. Before the
+yes the person reads every argument as the call will run (#8230): the page's
+row folds open on them, and the terminal's yes dialog repeats them under the
+sentence. Only genuine secrets are hidden there — a sealed secret's or app
+variable's or cloud token's `value`, and any `token`, `secret`, `password` or
+`credential` — so a public key or a limit's `key` and `value` are read whole.
+A call whose arguments are too large to read whole is refused and kept
+nowhere. It does the
 stored call with its stored arguments once, as the person via the forge's
 agent, and writes a `tool` turn naming the undo when the action has one. A
 result shown only once (`mint_invite`'s link, `claim_link`, a minted proposal

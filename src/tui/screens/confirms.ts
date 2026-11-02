@@ -50,7 +50,7 @@ export function confirmsScreen(f: Session, ctx: Ctx): Screen {
       ctx.push(
         confirmScreen(ctx, screen, {
           title: "Say yes",
-          body: [w.does],
+          body: [w.does, ...w.arguments.split("\n")],
           actions: [{ label: "Cancel", variant: "ghost" }, { label: "Yes", variant: "default" }],
           onChoose: (i) => {
             if (i !== 1) return;
