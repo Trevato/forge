@@ -1248,6 +1248,30 @@ export function taskOf(
 }
 
 /**
+ * Who last assigned it: the newest `issue.assigned` or `pull.assigned`. The
+ * `+ 0` drops the column's affinity so the event expression index
+ * (`event_repo_kind_number_at`) answers it, never a scan of `event`. `INDEXED BY` makes
+ * the plan a promise: if that index is dropped or renamed this query fails to prepare
+ * (test/stall-scans.test.ts catches it) instead of quietly scanning.
+ */
+const ASSIGNER_SQL = `(SELECT e.actor_id FROM event e INDEXED BY event_repo_kind_number_at
+                WHERE e.repo_id = issue.repo_id AND e.kind = issue.kind || '.assigned'
+                  AND json_extract(e.payload, '$.number') = issue.number + 0
+                ORDER BY e.id DESC LIMIT 1)`;
+
+export const SWEEP_ASSIGNED_SQL = `SELECT issue.id, issue.repo_id FROM user
+       CROSS JOIN issue ON issue.assignee_id = user.id AND issue.state = 'open'
+       WHERE user.is_agent = 1
+         -- A pull an agent opened starts assigned to it; that is its own
+         -- work landing, not a task waiting for a run.
+         AND NOT (issue.kind = 'pull' AND issue.author_id = issue.assignee_id)
+         AND NOT EXISTS (SELECT 1 FROM run WHERE run.issue_id = issue.id AND run.kind = 'agent')
+         -- In the query, not after it: a guest's issues never take one of
+         -- the hundred places, however many of them wait.
+         AND NOT ${guestSql(ASSIGNER_SQL)}
+       ORDER BY issue.id LIMIT 100`;
+
+/**
  * The sweep behind the wake-up: an open issue assigned to an agent that
  * has never had a run (assigned while the crew was off) gets one now —
  * unless the person who last assigned it is a guest. The assignment is
@@ -1256,26 +1280,7 @@ export function taskOf(
  * no event (made by the crew itself) is the crew's, as before.
  */
 export function sweepAssigned(app: App): void {
-  // Who last assigned it: the newest `issue.assigned` or `pull.assigned`.
-  const assigner = `(SELECT e.actor_id FROM event e
-                WHERE e.repo_id = issue.repo_id AND e.kind = issue.kind || '.assigned'
-                  AND json_extract(e.payload, '$.number') = issue.number
-                ORDER BY e.id DESC LIMIT 1)`;
-  const rows = app.db
-    .query<{ id: string; repo_id: string }, []>(
-      `SELECT issue.id, issue.repo_id FROM issue
-       JOIN user ON user.id = issue.assignee_id AND user.is_agent = 1
-       WHERE issue.state = 'open'
-         -- A pull an agent opened starts assigned to it; that is its own
-         -- work landing, not a task waiting for a run.
-         AND NOT (issue.kind = 'pull' AND issue.author_id = issue.assignee_id)
-         AND NOT EXISTS (SELECT 1 FROM run WHERE run.issue_id = issue.id AND run.kind = 'agent')
-         -- In the query, not after it: a guest's issues never take one of
-         -- the hundred places, however many of them wait.
-         AND NOT ${guestSql(assigner)}
-       ORDER BY issue.id LIMIT 100`,
-    )
-    .all();
+  const rows = app.db.query<{ id: string; repo_id: string }, []>(SWEEP_ASSIGNED_SQL).all();
   for (const row of rows) {
     const issue = getIssueById(app.db, row.id);
     const repo = getRepoById(app.db, row.repo_id);
