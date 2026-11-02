@@ -22,7 +22,7 @@
  * looking at a clone or at somebody else's server.
  */
 
-import { parseFrom } from "../actions/tell.ts";
+import { parseFrom } from "../actions/tell_from.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
 import { isPinned } from "../core/pins.ts";

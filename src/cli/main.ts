@@ -7,6 +7,7 @@
  *   forge sync                clone what is missing, fetch the rest, report
  *   forge status              the same report without touching the network
  *   forge asks                what waits on you, most important first
+ *   forge tell "words"        tell the crew about this folder's repository
  *   forge search <words>      code, issues, pulls and repos you can read
  *   forge asks --ship 1 3     decide asks by their numbers: planned, then a y/N
  *   forge asks --undo <id>    take back what that decided
@@ -35,7 +36,7 @@ export { EXIT };
 /** Every command by name, built once from `commands/index.ts`. */
 const TABLE = new Map(commands.map((c) => [c.name, c]));
 
-const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo", "kind", "reason", "owner"];
+const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo", "kind", "reason", "owner", "variants", "from"];
 
 export async function main(
   argv: readonly string[],

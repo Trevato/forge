@@ -5,12 +5,12 @@
 
 import {
   parseVariants,
-  parseFrom,
   FROM_WORDS,
   tell,
   UNVERIFIED_WORDS,
   VARIANTS_MAX,
 } from "../actions/tell.ts";
+import { parseFrom, TELL_TEXT_MAX } from "../actions/tell_from.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { readInteraction } from "../feed/interact.ts";
 import {
@@ -253,8 +253,8 @@ export function feedRoutes(router: Router<Handler>): void {
     const viewer = ctx.auth.user!;
     const input = await body(ctx.request);
     const text = str(input.text).trim();
-    if (text === "" || text.length > 2000)
-      return apiError("invalid_text", 422, "text is 1 to 2000 characters");
+    if (text === "" || text.length > TELL_TEXT_MAX)
+      return apiError("invalid_text", 422, `text is 1 to ${TELL_TEXT_MAX} characters`);
     const variants = parseVariants(input.variants);
     if (variants === undefined)
       return apiError(

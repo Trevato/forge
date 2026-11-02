@@ -312,6 +312,23 @@ look    alice/shop   Pull #3 is green — look and merge  https://forge.example.
 parked  alice/notes  Issue #9 waits on a decision  https://forge.example.com/alice/notes/issues/9
 ```
 
+## forge tell
+
+Tell the crew something about a repository; it becomes an issue. The
+repository is that of this folder's `origin` when it points at the workbench,
+or `--repo`. Words are 1 to 2000 characters; start them with a dash after `--`.
+
+Flags:
+
+- `--repo owner/name` — the repository, instead of this folder's origin.
+- `--variants 1-4` — how many attempts the crew makes.
+- `--from /path` — the workbench page you were looking at.
+
+```console
+$ forge tell "make the header smaller"
+told alice/shop: issue #12  https://forge.example.com/alice/shop/issues/12
+```
+
 ## forge new
 
 Makes an app from the shell, as `POST /api/v1/apps` does, then clones its

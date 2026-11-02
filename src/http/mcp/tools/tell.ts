@@ -1,6 +1,7 @@
 import { contextNote, parseContext } from "../../../actions/tell_context.ts";
 import { keepThought } from "../../../actions/thought.ts";
-import { FROM_WORDS, parseFrom, tell, toldWords, UNVERIFIED_WORDS } from "../../../actions/tell.ts";
+import { parseFrom } from "../../../actions/tell_from.ts";
+import { FROM_WORDS, tell, toldWords, UNVERIFIED_WORDS } from "../../../actions/tell.ts";
 import { DIRECTION_NOTE } from "../../../crew/direct.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 

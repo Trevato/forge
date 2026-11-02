@@ -11,7 +11,8 @@
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
-import { parseFrom, SENT_WORDS, tell, toldWords, TOO_LONG_WORDS } from "../../actions/tell.ts";
+import { parseFrom } from "../../actions/tell_from.ts";
+import { SENT_WORDS, tell, toldWords, TOO_LONG_WORDS } from "../../actions/tell.ts";
 import { contextNote, parseContext } from "../../actions/tell_context.ts";
 import { NOT_TOLD_FROM_WORDS, NOT_TOLD_WORDS, SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
 import { keepThought } from "../../actions/thought.ts";

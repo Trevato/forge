@@ -36,10 +36,19 @@ forge asks --repo owner/name       # only that repository's; --json for the API'
 forge asks --ship 1 3              # decide by the line numbers just printed: planned, then Apply? [y/N]
 forge asks --close 2 --reason "words"   # also --dismiss 4; --yes skips the question (needed without a TTY)
 forge asks --undo <id>             # take back a decision by the receipt id it printed
+forge tell "make the header smaller"   # tell the crew, about this folder's repo (--repo owner/name overrides)
 forge map                          # the plan of this clone: working, ready, waiting
 forge search retry budget          # code, issues, pulls and repos you can read; exits 6 on "not now"
 forge search x --kind pulls --limit 5   # one kind, five hits; --json marks truncated.issues when more matched
 ```
+
+`forge tell` makes an issue of your words (1 to 2000 characters) and prints its
+address. `--variants 1-4` asks for that many attempts and `--from /path` names
+the workbench page you were looking at, as the API takes them. Words that start
+with a dash go after `--`: `forge tell -- "--fast"`.
+
+The MCP `tell` tool takes `from` but not `variants`. The terminal (tty) takes
+neither.
 
 `forge ship <number>` reads the repository from `--repo owner/name` or from
 the folder's `origin` when it points at your workbench, shows the pull's

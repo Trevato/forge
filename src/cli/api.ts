@@ -434,6 +434,36 @@ export class ForgeApi {
   }
 
   /**
+   * Tell the crew something about `owner/name` (`POST /api/v1/feed/tells`).
+   * Answers the issue it became, with its address on the workbench.
+   */
+  async tell(
+    owner: string,
+    name: string,
+    text: string,
+    more: { variants?: number | undefined; from?: string | undefined } = {},
+  ): Promise<ApiResult<{ issue: number; url: string }>> {
+    const out = await this.call<{ issue?: unknown }>("/api/v1/feed/tells", {
+      method: "POST",
+      body: JSON.stringify({
+        app: `${owner}/${name}`,
+        text,
+        ...(more.variants === undefined ? {} : { variants: more.variants }),
+        ...(more.from === undefined ? {} : { from: more.from }),
+      }),
+    });
+    if (!out.ok) return out;
+    const issue = out.value.issue;
+    if (typeof issue !== "number")
+      return err({
+        code: "bad_response",
+        message: "the forge did not say which issue the tell became",
+        status: 0,
+      });
+    return ok({ issue, url: `${this.webUrl(owner, name)}/issues/${issue}` });
+  }
+
+  /**
    * `GET /api/v1/search`: code, issues, pulls and repositories the token can
    * read. The answer is handed back as the forge gave it — the CLI prints
    * from it and `--json` prints it unchanged. `kind` and `limit` are left to
