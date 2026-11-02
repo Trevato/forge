@@ -15,6 +15,9 @@ import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
+/** Bun's 5 s default is a load measurement on a busy check machine (password hashing, git, fetches); the verdict is not. */
+const SLOW = 60_000;
+
 let dataDir: string;
 let app: App;
 let servers: Servers;
@@ -121,7 +124,7 @@ test("each pull names its author and its check word", async () => {
   expect(by["stale"]!["check"]).toBe("none");
   expect(by["deployed"]!["check"]).toBe("red");
   expect(by["green"]!["author"]).toBe("alice");
-});
+}, SLOW);
 
 test("a preview address only where an environment exists, and only for those who may enter the app", async () => {
   serveEnv(pulls["green"]!.number, "g1");
@@ -158,7 +161,7 @@ test("a preview address only where an environment exists, and only for those who
     expect(seen["green"]!["check"]).toBe("green");
   }
   expect((await listed({ cookie }))["green"]!["preview"]).toBe(address);
-});
+}, SLOW);
 
 test("a closed pull has no preview address", async () => {
   const done = addPull("done", "c1");
@@ -166,4 +169,4 @@ test("a closed pull has no preview address", async () => {
   app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(done.id);
   const by = await listed({ cookie }, "closed");
   expect(by["done"]!["preview"]).toBeNull();
-});
+}, SLOW);
