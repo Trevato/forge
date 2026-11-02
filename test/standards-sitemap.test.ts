@@ -79,3 +79,29 @@ test("robots.txt disallows the private surfaces and names the sitemap on the req
   for (const p of ["/signin", "/signup", "/settings", "/search", "/api/"]) expect(lines).toContain(`Disallow: ${p}`);
   expect(lines).toContain(`Sitemap: ${servers.url}/sitemap.xml`);
 });
+
+test("the sitemap lists /changelog after /explore, with the newest landing's day as lastmod once one has landed", async () => {
+  const before = await get("/sitemap.xml");
+  const bodyBefore = await before.text();
+  const etagBefore = before.headers.get("etag")!;
+  const o = servers.url;
+  expect(bodyBefore).toContain(`<loc>${o}/explore</loc></url>\n<url><loc>${o}/changelog</loc></url>`);
+
+  const repoId = app.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'open'").get()!.id;
+  const merge = (n: number, at: string) => {
+    app.db.query(`INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, state, created_at) VALUES (?1, ?2, ?3, 'pull', 'Landed', '', ?4, 'closed', ?5)`).run(`ci${n}`, repoId, n + 100, alice.id, at);
+    app.db.query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id, merged_at, merged_oid) VALUES (?1, 'main', ?2, '', '', ?3, ?4, '')`).run(`ci${n}`, `c/${n}`, repoId, at);
+  };
+  merge(1, "2026-03-04T10:00:00.000Z");
+  const first = await get("/sitemap.xml", { "if-none-match": etagBefore });
+  expect(first.status).toBe(200);
+  expect(await first.text()).toContain(`<loc>${o}/changelog</loc><lastmod>2026-03-04</lastmod></url>`);
+  const etagFirst = first.headers.get("etag")!;
+  expect(etagFirst).not.toBe(etagBefore);
+
+  merge(2, "2026-03-09T23:00:00.000Z");
+  const second = await get("/sitemap.xml", { "if-none-match": etagFirst });
+  expect(second.status).toBe(200);
+  expect(await second.text()).toContain("<lastmod>2026-03-09</lastmod>");
+  expect(second.headers.get("etag")).not.toBe(etagFirst);
+});

@@ -28,6 +28,8 @@ import { CRAWL_DELAY_S, DEEP_SEGMENTS } from "../http/crawl.ts";
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { metaThemeColor } from "../design/themes.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
+import { dayOf } from "../release/days.ts";
+import { readLandings } from "../release/landings.ts";
 import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
 import { sshTellCommand } from "../ssh/command.ts";
 import { llmsRepos, sitemapRepos, type LlmsListing } from "../core/listings.ts";
@@ -38,7 +40,7 @@ import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
 import { HARNESS_PLUGINS, mcpCard, mcpPointers } from "../core/mcp_card.ts";
 import { running } from "../kernel/version.ts";
-import { timePhase } from "../core/route_timing.ts";
+import { timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { shippedReleases, type Shipped } from "../release/shipped.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -188,16 +190,19 @@ function xml(s: string): string {
 }
 
 /** The sitemap and its ETag per origin, valid while the listing read is the same one. */
-const sitemapBodies = new Map<string, { rows: unknown; body: string; etag: string }>();
+const sitemapBodies = new Map<string, { rows: unknown; changed: string | null; body: string; etag: string }>();
 
-/** GET /sitemap.xml — the front page and every public repository. */
-export function sitemapXml(ctx: Ctx): Response {
+/** GET /sitemap.xml — the front page, the changelog and every public repository. */
+export async function sitemapXml(ctx: Ctx): Promise<Response> {
   // The rows are kept without an origin, and the origin is put on per answer,
   // so a caller who varies `Host` cannot make the forge read the rows again.
   const repos = timePhase(ctx.request, "repos", () => sitemapRepos(ctx.app.db));
   const origin = ctx.url.origin;
+  // The newest landing's day (UTC), the changelog's lastmod; none when nothing has landed.
+  const newest = await timePhaseAsync(ctx.request, "landings", async () => (await readLandings(ctx.app).catch(() => undefined))?.live[0]?.at);
+  const changed = newest === undefined ? null : dayOf(newest, "UTC");
   let kept = sitemapBodies.get(origin);
-  if (kept === undefined || kept.rows !== repos) {
+  if (kept === undefined || kept.rows !== repos || kept.changed !== changed) {
     // Escaping is per character, so the escaped origin and the escaped path
     // join into the escaped URL.
     const body = timePhase(ctx.request, "render", () => {
@@ -205,6 +210,7 @@ export function sitemapXml(ctx: Ctx): Response {
       const urls = [
         `<url><loc>${o}/</loc></url>`,
         `<url><loc>${o}/explore</loc></url>`,
+        `<url><loc>${o}/changelog</loc>${changed === null ? "" : `<lastmod>${changed}</lastmod>`}</url>`,
         ...repos.map((r) => {
           const mod = r.pushedAt === null ? "" : `<lastmod>${r.pushedAt.slice(0, 10)}</lastmod>`;
           return `<url><loc>${o}${xml(`/${r.path}`)}</loc>${mod}</url>`;
@@ -213,7 +219,7 @@ export function sitemapXml(ctx: Ctx): Response {
       return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
     });
     const etag = timePhase(ctx.request, "etag", () => `"${new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 32)}"`);
-    kept = { rows: repos, body, etag };
+    kept = { rows: repos, changed, body, etag };
     // Origins come from the Host header: keep a handful, not one per guess.
     if (sitemapBodies.size >= 16) sitemapBodies.clear();
     sitemapBodies.set(origin, kept);
