@@ -11,6 +11,7 @@ import { nextUp, TOP, type NextRow } from "../../core/next_up.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { sealedScope } from "../../core/sealed.ts";
+import { notStartable } from "../../crew/not_startable.ts";
 import { CUT_TOP_WORDS, cutWords, FIT_COUNT_JS, rangeWords, rowCosts, weekView, type Cut, type Priced } from "../../flow/week.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette, signInFirst } from "../chrome.ts";
@@ -169,7 +170,8 @@ export function nextPage(ctx: Ctx): Response {
   const base = repoBase(repo);
   const all = ctx.url.searchParams.get("all") === "1";
   const writer = ctx.auth.user !== undefined && ctx.auth.user.kind !== "agent" && canWrite(ctx.app.db, repo, ctx.auth.user);
-  const next = nextUp(ctx.app.db, repo, sealedScope(ctx.app.db, repo, ctx.auth.user));
+  const scope = sealedScope(ctx.app.db, repo, ctx.auth.user);
+  const next = nextUp(ctx.app.db, repo, scope, (ready) => notStartable(ctx.app, repo, ready, scope));
   const shown = all ? next.rows : next.rows.slice(0, TOP);
   const rest = next.rows.length - shown.length;
   const back = all ? `${base}/next?all=1` : `${base}/next`;

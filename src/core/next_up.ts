@@ -7,7 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { type Graph, reachOf, readyNow, repoGraph } from "./dependencies.ts";
+import { type Graph, type Ranked, reachOf, readyNow, repoGraph } from "./dependencies.ts";
 import type { Issue } from "./issues.ts";
 import { pillarsOf, servedBy } from "./pillars.ts";
 import type { Repo } from "./repos.ts";
@@ -37,7 +37,7 @@ export interface NextRow {
   readonly place: number | null;
   /** Who is on it: the crew member running it, else its assignee. */
   readonly onIt: string | null;
-  /** In one line, why it cannot start yet; null when it can. */
+  /** In one line, why it cannot start yet; null when it can. A ready row has one whenever a builder will not start it. */
   readonly why: string | null;
 }
 
@@ -108,10 +108,14 @@ export function nextUp(
   db: Database,
   repo: Repo,
   scope: { sealed?: true; sealedBy?: string } = { sealed: true },
+  /** Why a ready issue is not startable, by issue id (`crew/not_startable.ts`): a page that has the app passes it. */
+  notStartable: (ready: readonly Ranked[]) => ReadonlyMap<string, string> = () => new Map(),
 ): NextUp {
   const graph = repoGraph(db, repo.id, { ...scope, lean: true });
   const ranks = graph.ranked ?? new Map<string, number>();
-  const ready = readyNow(graph).map((r) => r.issue);
+  const readyRanked = readyNow(graph);
+  const ready = readyRanked.map((r) => r.issue);
+  const unstartable = notStartable(readyRanked);
   const readyIds = new Set(ready.map((i) => i.id));
   // Who is on an issue: the crew running it right now, else whoever it is assigned to.
   const crew = new Map<string, string>();
@@ -126,7 +130,7 @@ export function nextUp(
     ...roleOf(holds.get(issue.id)?.size ?? 0, serves.get(issue.id), ranks.has(issue.id)),
     place: ranks.get(issue.id) ?? null,
     onIt: crew.get(issue.id) ?? issue.assigneeName,
-    why: readyIds.has(issue.id) ? null : whyNot(graph, issue),
+    why: readyIds.has(issue.id) ? unstartable.get(issue.id) ?? null : whyNot(graph, issue),
   });
   const blocked = graph.issues.filter((i) => i.state === "open" && ranks.has(i.id) && !readyIds.has(i.id));
   const rows = pickOrder(ready, ranks, (i) => i.id, blocked).map(rowOf);

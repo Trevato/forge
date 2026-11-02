@@ -15,6 +15,7 @@ import { rankedWords, rankIssue, stepTo, type Place, placeOf } from "../../actio
 import { nextUp, type NextRow } from "../../core/next_up.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { sealedScope } from "../../core/sealed.ts";
+import { notStartable } from "../../crew/not_startable.ts";
 import { rangeWords, weekView, type WeekView } from "../../flow/week.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -45,7 +46,8 @@ export function nextScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       away = 0;
       week = undefined;
     } else {
-      const next = nextUp(f.db, repo, sealedScope(f.db, repo, f.user));
+      const scope = sealedScope(f.db, repo, f.user);
+      const next = nextUp(f.db, repo, scope, (ready) => notStartable(f.app, repo, ready, scope));
       rows = next.rows;
       away = next.notNowTotal;
       week = weekView(f.db, repo.id, rows, new Date());

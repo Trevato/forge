@@ -31,11 +31,9 @@ import { addLearned } from "../checks/learned.ts";
 import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
 import { queueBatch, queueDepth, smallShare } from "../core/capacity.ts";
-import { isPolish, polishSpend, shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
-import { backedBetOf, betsInUse } from "../core/bets.ts";
-import { mayPick } from "./bets.ts";
+import { shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
+import { crewFor as crewForIssue, passedWords, pickFilter, routable } from "./pick_filter.ts";
 import { tickPolish } from "./polish_cap.ts";
-import { raisedAt } from "../core/thought_links.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { CLOSED_NOTE, leftNote, reopenedByPerson, unticked } from "../core/done_on_main.ts";
@@ -73,7 +71,6 @@ import {
   listComments,
   MAX_TITLE,
   type Issue,
-  labelsForIssues,
 } from "../core/issues.ts";
 import {
   getPull,
@@ -117,7 +114,7 @@ import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
 import { holdHot, hotFiles, hotWords, learnPullFiles } from "./hot_files.ts";
-import { landedUnder, NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
+import { landedUnder, NO_PULL, stallReason, unstickOwed } from "./stalls.ts";
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { repoDir } from "../git/repos.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
@@ -392,7 +389,7 @@ function releaseForPace(app: App, repo: Repo, by: User, slotted: number, startab
   const week = weekFor(app, repo, now, { idleSlots: Math.max(0, repo.autonomySlots - slotted), startable, gated: gated.length });
   const next = gated[0];
   if (week === null || !week.release || next === undefined) return undefined;
-  const [number] = releaseFromGate(app.db, repo.id, [next.number]);
+  const [number] = releaseFromGate(app.db, repo.id, [next.number], by.id);
   if (number === undefined) return undefined;
   const why = `Released from Later to use the week's subscription: ${week.sentence}`;
   log.info("released", { repo: `${repo.ownerName}/${repo.name}`, issue: number, why });
@@ -414,30 +411,9 @@ export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slot
   const small = smallIssues(app.db, issues);
   const first = firstAt(app.db, issues.map((i) => i.id));
   const ranked = ranksInRepo(app.db, repo.id);
-  const raised = raisedAt(app.db, issues.map((i) => i.id));
   // Issues picked earlier in this tick hold their share before their runs show (#8729).
   const running = smallOfIds(app.db, [...new Set([...slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])), ...picked])]);
-  // Once the owner has backed a bet, builders pick from backed bets, the owner's raised issues and the small lane (#8713).
-  const bets = betsInUse(app.db, repo.id) ? backedBetOf(app.db, repo.id, issues.map((i) => i.id)) : undefined;
-  // Polish (labelled `polish`, or in the small-fixes lane) stops once it has taken its share of the week (#8853);
-  // what the owner raised, ranked or put first is never held back.
-  const polishLabels = labelsForIssues(app.db, issues.map((i) => i.id));
-  const polishOpen = polishSpend(app.db, repo.id, repo.polishShare, now).under;
-  const heldBack = (r: Ranked): boolean =>
-    !polishOpen &&
-    !raised.has(r.issue.id) && !first.has(r.issue.id) && !ranked.has(r.issue.id) &&
-    isPolish(r.issue.title, (polishLabels.get(r.issue.id) ?? []).map((l) => l.name));
-  const pickable = ready.filter((r) => !heldBack(r));
-  const allowed =
-    bets === undefined
-      ? pickable
-      : pickable.filter((r) =>
-          mayPick({
-            raised: raised.has(r.issue.id) || first.has(r.issue.id),
-            small: small.has(r.issue.id),
-            bet: bets.get(r.issue.id),
-          }),
-        );
+  const { allowed } = pickFilter(app, repo, ready, now);
   // The order is the one Next up shows (#8826): ranked by place, then the ready order.
   return slotOrder(
     pickOrder(allowed, ranked, (r) => r.issue.id),
@@ -554,17 +530,8 @@ async function driveOnce(
       inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
   // A builder that stalled an issue within the hour leaves it to the
   // others; one no builder may take now is skipped, not waited on (#4073).
-  const crewFor = (issue: Issue) => {
-    const shunned = shunnedBy(app.db, repo, issue.id, now);
-    return crew.filter((c) => c.role !== "builder" || !shunned.has(c.agent.user.id));
-  };
-  const pickable = (
-    await withoutRetired(
-      app,
-      repo,
-      ready.filter((r) => crewFor(r.issue).some((c) => c.role === "builder")),
-    )
-  );
+  const crewFor = (issue: Issue) => crewForIssue(app, repo, issue.id, crew, now);
+  const pickable = await withoutRetired(app, repo, routable(app, repo, ready, crew, now).kept);
   // The roadmap first, and small issues held to their share of the slots (#7571).
   const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, slotted, paced.slots, taken, now));
   if (next !== undefined) {
@@ -1403,6 +1370,8 @@ export async function autonomyTick(
         // The standing reserve the planner keeps: startable/target (#3237).
         reserve: reserveWords(reserveOf(held.startable.length, status.slots)),
         held: heldWords(held),
+        // What the picker passes over among the startable, so no ready issue goes unexplained (#8924).
+        passed: passedWords(pickFilter(app, current, held.startable, now).passed),
         // The files 5 or more open pulls touch, which no new build starts on (#5934).
         ...(held.by.hot_file.length === 0 ? {} : { hot: hotWords(hotFiles(current.id)) }),
         // Stalled issues this tick parked and freed for another builder (#4073).

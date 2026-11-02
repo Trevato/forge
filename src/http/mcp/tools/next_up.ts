@@ -1,5 +1,6 @@
 import { placeOf, rankIssue } from "../../../actions/next.ts";
 import { nextUp, TOP, type NextRow } from "../../../core/next_up.ts";
+import { notStartable } from "../../../crew/not_startable.ts";
 import { weekView, type WeekView } from "../../../flow/week.ts";
 import { sealedScope } from "../../../core/sealed.ts";
 import { bad, good, type Tool, APP_ARG, planRepo, isAnswer, issueArg } from "../shared.ts";
@@ -48,7 +49,8 @@ export const tool: Tool = {
       if (!moved.ok)
         return bad(moved.error.kind === "not_found" ? "no_such_issue" : moved.error.kind, moved.error.message);
     }
-    const next = nextUp(ctx.app.db, repo, sealedScope(ctx.app.db, repo, user));
+    const scope = sealedScope(ctx.app.db, repo, user);
+    const next = nextUp(ctx.app.db, repo, scope, (ready) => notStartable(ctx.app, repo, ready, scope));
     const all = args["all"] === true;
     const week = weekView(ctx.app.db, repo.id, next.rows, new Date());
     return good({
