@@ -58,12 +58,26 @@ export function wordsOf(text: string): string[] {
   return [...out].sort();
 }
 
-/** The findings in one review body: its list items or lines, each a request. */
+/**
+ * Rule "a lead-in is not a finding" (#8838): a line whose text, bare of
+ * bold/italic markers and trailing space, ends in a colon introduces the list
+ * that follows and asks for nothing: `Smaller points:`, `**Smaller points:**`,
+ * `_Fix in the same round:_`.
+ */
+export const isLeadIn = (line: string): boolean =>
+  line.replace(/^[\s*_]+|[\s*_]+$/g, "").endsWith(":");
+
+/**
+ * The findings in one review body: its list items or lines, each a request.
+ * A line that ends in a colon introduces the list that follows ("Smaller
+ * points, fix in the same round:"), asks for nothing, and is dropped: as a
+ * finding it repeated across every review that used it (#8838).
+ */
 export function linesOf(body: string): string[] {
   return body
     .split("\n")
-    .map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
-    .filter((l) => l.length >= 12)
+    .map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").trim())
+    .filter((l) => l.length >= 12 && !isLeadIn(l))
     .slice(0, MAX_LINES)
     .map((l) => l.slice(0, MAX_LINE));
 }

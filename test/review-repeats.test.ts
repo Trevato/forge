@@ -178,3 +178,18 @@ describe("the web door", () => {
     expect(draw("agent")).toContain("public repositories:");
   });
 });
+
+describe("a lead-in line is not a finding (#8838)", () => {
+  test("linesOf drops the line that only introduces a list", async () => {
+    const { linesOf } = await import("../src/flow/repeats.ts");
+    expect(
+      linesOf("Smaller, but please fix in the same round:\n- Move these two lines below the spread.\n- Add a test for the agent admin case."),
+    ).toEqual(["Move these two lines below the spread.", "Add a test for the agent admin case."]);
+    // reviews opening the same way are not a repeated ask
+    expect(linesOf("Smaller points, fix in the same round:")).toEqual([]);
+    for (const bare of ["**Smaller points:**", "_Fix in the same round:_", "**Smaller points, fix in the same round:** ", "*__Fix them in the same round:__*"])
+      expect(linesOf(bare)).toEqual([]);
+    // a real ask that merely contains a colon stays
+    expect(linesOf("**High:** `flowOnly` is missing from the agent refusal.")).toEqual(["**High:** `flowOnly` is missing from the agent refusal."]);
+  });
+});
