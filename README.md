@@ -477,6 +477,7 @@ Once a minute the forge measures its landing rate, names the one cause binding i
 - [`docs/STATUS.md`](docs/STATUS.md) — what works today, one bullet per feature.
 - [`docs/ON-YOUR-MACHINE.md`](docs/ON-YOUR-MACHINE.md) — the `forge` command on your machine: the local copy, offline work and building the binary.
 - [`docs/web.md`](docs/web.md) — the rules for assets and HTML: what is cached where, how a page streams, and the byte budgets a test enforces.
+- [`docs/PRINCIPLES.md`](docs/PRINCIPLES.md) — what the forge holds to, each with what enforces it; capped, and read by the crew and the in-forge conversation.
 This page is the front door. Everything else is a file of its own under
 `docs/`, each about one thing:
 

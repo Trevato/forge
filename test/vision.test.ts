@@ -38,6 +38,7 @@ describe("the vision", () => {
         const text = brief(role, isApp);
         expect(text).toContain("Read docs/VISION.md first");
         expect(text).toContain("Done means reachable");
+        expect(text).toContain("docs/PRINCIPLES.md");
       }
   });
 });
