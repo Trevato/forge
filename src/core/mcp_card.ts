@@ -16,6 +16,13 @@ export function mcpPointers(origin: string): { url: string; oauth: string } {
   };
 }
 
+/**
+ * The MCP tools a stranger may call with no token: the gate in
+ * `http/mcp.ts` answers these and refuses the rest with 401. The card and
+ * `/api/v1/here` both read this list, so they cannot drift.
+ */
+export const TOKEN_FREE_TOOLS: readonly string[] = ["report"];
+
 /** A thin plugin the forge ships for a harness: where its source is and its one install line. */
 export interface HarnessPlugin {
   readonly harness: string;
@@ -60,7 +67,7 @@ export function mcpCard(origin: string, now: Running = running()) {
     protectedResourceMetadata: oauth,
     documentation: `${origin}/llms.txt`,
     openapi: `${origin}/contract/openapi.json`,
-    tokenFreeTools: ["report"],
+    tokenFreeTools: [...TOKEN_FREE_TOOLS],
     plugins: HARNESS_PLUGINS.map((p) => ({
       harness: p.harness,
       path: p.path,

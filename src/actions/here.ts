@@ -13,7 +13,7 @@
  * saying so, because that is the next thing they need to know.
  */
 import { sshTellCommand } from "../ssh/command.ts";
-import { mcpPointers } from "../core/mcp_card.ts";
+import { mcpPointers, TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { isCrew } from "../core/agents.ts";
@@ -298,19 +298,25 @@ function forgeActions(
       do: "report a problem",
       http: "POST /api/v1/repos/{owner}/{name}/reports",
       mcp: "report",
-      account: false,
+      ...tokenFree("report"),
     },
     {
+      // The HTTP route is open, but the MCP tool is not, so no claim is made.
       do: "see how to help build this forge",
       http: "GET /api/v1/contribute",
       mcp: "contribute",
-      account: false,
+      ...tokenFree("contribute"),
     },
     ...(viewer === undefined
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),
     ...(tellSsh === undefined ? [] : [{ do: "tell the crew", ssh: tellSsh }]),
   ];
+}
+
+/** `account: false` only for an MCP tool the gate really lets through. */
+function tokenFree(tool: string): { account?: false } {
+  return TOKEN_FREE_TOOLS.includes(tool) ? { account: false } : {};
 }
 
 function repoActions(
@@ -331,7 +337,7 @@ function repoActions(
       do: "report a problem",
       http: `POST ${r}/reports`,
       mcp: "report",
-      account: false,
+      ...tokenFree("report"),
     });
   // What creates or costs waits for a proven email (`requireVerified`).
   const unproven =

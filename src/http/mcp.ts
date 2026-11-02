@@ -272,7 +272,7 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
   if (
     m["jsonrpc"] !== "2.0" ||
     m["method"] !== "tools/call" ||
-    params["name"] !== "report" ||
+    params["name"] !== REPORT_TOOL.name ||
     m["id"] === undefined
   )
     return undefined;

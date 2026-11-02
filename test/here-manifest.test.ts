@@ -260,7 +260,6 @@ describe("the manifest: what you can do here, as who you are", () => {
         do: "see how to help build this forge",
         http: "GET /api/v1/contribute",
         mcp: "contribute",
-        account: false,
       });
       expect(size).toBeLessThan(2048);
       expect(does((await manifest("/acme/game", who)).body)).not.toContain(
