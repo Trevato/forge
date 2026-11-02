@@ -408,6 +408,12 @@ leading `Bearer ` are dropped (`normalizeToken`, `src/core/subscriptions.ts`),
 and what is left is sealed if it is not empty and at most 4096 characters. Its
 shape is not judged; the provider answers a wrong key on the first call.
 
+The terminal's Crew subscriptions screen lists every account with its 5-hour
+and weekly windows under its row: used of cap, the share, and when it resets,
+in the very sentence Settings › Subscriptions prints (`windowWords`,
+`src/actions/standing_words.ts`). A sentence wider than the terminal wraps
+onto the next line, so the reset time is never cut off.
+
 A repository in auto mode with a direction and no planner on its crew is lent
 one (#7637): at the next planning turn the forge adds, through the same
 `addToCrew` an admin uses, the agent that plans on the most of the *owner's*
