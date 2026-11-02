@@ -6,20 +6,26 @@
  * `endAccountSession`, so the gate is the action's: your own account only.
  * `d` on a token revokes it after a confirm, through the action `deleteToken`
  * as Settings and the API do (your own only, and `token.deleted` is emitted).
+ * `m` makes a token through the action `createToken` (what Settings uses, so
+ * `token.created` is emitted and `ADMIN_TOKEN_WORDS` is the refusal): a name,
+ * a scope, and for admin a second explicit `y`. The secret is shown once on a
+ * screen of its own and forgotten when that screen is left. Only a person
+ * minting from a terminal session may: an agent is not offered `m`.
  * This terminal is held by its key, not a browser session, and cannot be
  * ended from here.
  */
 
 import { accountSignIns, endAccountSession } from "../../actions/signins.ts";
-import { deleteToken } from "../../actions/users.ts";
+import { createToken, deleteToken } from "../../actions/users.ts";
 import { listKeys } from "../../core/keys.ts";
+import { ADMIN_TOKEN_WORDS, type TokenScope } from "../../core/tokens.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
-import { ListState, ago, confirmScreen, drawList, type ListRow } from "./common.ts";
+import { ListState, ago, confirmScreen, drawList, later, promptScreen, type ListRow } from "./common.ts";
 
 interface SignIn {
   readonly kind: "terminal" | "browser" | "token";
@@ -68,6 +74,38 @@ export function signInsOf(f: Session): SignIn[] {
       scope: t.scope,
     })),
   ];
+}
+
+/** The secret, alone on a screen; nothing keeps it once this is popped. */
+function secretScreen(ctx: Ctx, secret: string): Screen {
+  let copied = false;
+  return {
+    title: "New token",
+    keys: [binding(["y"], "copy it"), binding(["esc", "q"], "done")],
+    render(area, s) {
+      const c = ctx.theme.c;
+      s.text(area.x, area.y, truncate("copy it now, it is never shown again.", area.w), style(c.mutedFg, c.bg), area.x + area.w);
+      // Wrapped, never cut: a hand-copied secret must be the whole secret.
+      const width = Math.max(1, area.w);
+      const lines: string[] = [];
+      for (let i = 0; i < secret.length; i += width) lines.push(secret.slice(i, i + width));
+      lines.forEach((line, i) => s.text(area.x, area.y + 2 + i, line, style(c.fg, c.bg), area.x + area.w));
+      const foot = copied ? "Copied." : "y copies it, esc is done.";
+      s.text(area.x, area.y + 3 + lines.length, truncate(foot, area.w), style(c.mutedFg, c.bg), area.x + area.w);
+      if (lines.length > 1)
+        s.text(area.x, area.y + 4 + lines.length, truncate("It wraps; y copies it whole.", area.w), style(c.mutedFg, c.bg), area.x + area.w);
+    },
+    key(e) {
+      if (e.ctrl || e.alt) return true;
+      if (e.key === "y") {
+        ctx.copy(secret);
+        copied = true;
+      } else if (e.key === "esc" || e.key === "q") {
+        ctx.pop();
+      }
+      return true;
+    },
+  };
 }
 
 export function signInsScreen(f: Session, ctx: Ctx): Screen {
@@ -120,9 +158,73 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
     );
   };
 
+  /** Pushes the secret's screen; call it once the modal has popped. */
+  const mint = (name: string, scope: TokenScope): void => {
+    const user = f.user;
+    const made = createToken(f.app, user, name, scope);
+    if (!made.ok) {
+      note = made.error === "forbidden" ? ADMIN_TOKEN_WORDS : "Sign in to make a token.";
+      ctx.invalidate();
+      return;
+    }
+    note = `Made ${name} (${scope}).`;
+    ctx.push(secretScreen(ctx, made.value.token));
+  };
+
+  /** Asks admin to say it twice; a plain y mints. */
+  const confirmAdmin = (name: string) =>
+    later(ctx, () =>
+      confirmScreen(ctx, screen, {
+        title: "Make an admin token",
+        body: [`${name} will act as admin: y to make it, n to cancel.`],
+        actions: [{ label: "Make it", variant: "danger" }, { label: "Cancel", variant: "ghost" }],
+        yesNo: true,
+        selected: 1,
+        width: 60,
+        onChoose: (i) => {
+          if (i === 0) mint(name, "admin");
+        },
+      }),
+    );
+
+  const askScope = (name: string, isAdmin: boolean) =>
+    later(ctx, () =>
+      promptScreen(ctx, screen, {
+        title: "Make a token",
+        label: isAdmin ? "Scope: ro, rw or admin" : "Scope: ro or rw",
+        value: "ro",
+        onSubmit: (word) => {
+          const scope = word.toLowerCase();
+          if (scope === "admin" && !isAdmin) return ADMIN_TOKEN_WORDS;
+          if (scope !== "ro" && scope !== "rw" && scope !== "admin") return isAdmin ? "Type ro, rw or admin." : "Type ro or rw.";
+          if (scope === "admin") return confirmAdmin(name);
+          return Promise.resolve().then(() => mint(name, scope));
+        },
+      }),
+    );
+
+  const askName = (isAdmin: boolean) =>
+    promptScreen(ctx, screen, {
+      title: "Make a token",
+      label: "Name",
+      value: "token",
+      onSubmit: (name) => {
+        if (name === "") return "A token needs a name.";
+        if ([...name].length > 64) return "Keep the name to 64 characters.";
+        return askScope(name, isAdmin);
+      },
+    });
+
+  const make = (): void => {
+    const user = f.user;
+    // An agent holds no keys to mint with; a guest has no account.
+    if (user === undefined || user.kind === "agent") return;
+    ctx.push(askName(user.isAdmin));
+  };
+
   const screen: Screen = {
     title: "Signed in",
-    keys: [binding(["j", "k"], "move cursor"), binding(["d"], "sign a browser out or revoke a token")],
+    keys: [binding(["j", "k"], "move cursor"), binding(["d"], "sign a browser out or revoke a token"), binding(["m"], "make a token")],
     render(area, s) {
       const c = ctx.theme.c;
       const all = signInsOf(f);
@@ -132,7 +234,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
           ? note
           : f.user === undefined
             ? "Sign in to see where you are signed in."
-            : "Where you are signed in. d signs a browser out or revokes a token.";
+            : "Where you are signed in. d signs a browser out or revokes a token, m makes a token.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, body!, c, state, rows(all));
     },
@@ -140,7 +242,12 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
       note = "";
       const all = signInsOf(f);
       if (state.key(e, all.length)) return true;
-      if (e.ctrl || e.alt || e.key !== "d") return false;
+      if (e.ctrl || e.alt) return false;
+      if (e.key === "m") {
+        make();
+        return true;
+      }
+      if (e.key !== "d") return false;
       const picked = all[state.index];
       if (picked === undefined) return false;
       end(picked);
