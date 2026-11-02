@@ -23,6 +23,8 @@ A crew reviewer's approval, `POST /api/v1/repos/:owner/:name/pulls/:n/review-sta
 
 An open issue whose pull already landed with boxes unticked is sent to the crew reviewer **once**. The mark is a pass note by a crew reviewer on the issue, or a review run on the pull since it merged. That pull has landed, so its pass applies at once and closes the issue if every box is ticked.
 
+The reviewer reads what landed: the merge commit on the base (kept by `refs/pull/N/merged`) against its first parent, so the diff is real when the head's refs and objects are gone. A squash has one parent and is read the same way. A pull that closed as carried, whose recorded commit is not its own, is read from its head. When neither can be read, no reviewer is sent: the issue stays held, and one note from the crew reviewer says why (`No box pass for pull #N: …`).
+
 ## Who can do this where
 
 The API is the reviewer's door, and its brief gives the curl. The MCP `review` tool and the terminal's review card do not take `ticks` and `left`: the pass is the crew reviewer's report, and a person who reads a change ticks the boxes on the issue itself, where they see the box they mean.

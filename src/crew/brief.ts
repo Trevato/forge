@@ -247,6 +247,8 @@ export interface TaskInput extends BriefInput {
     | undefined;
   /** For `review`: the pull's diff against its base, capped. */
   readonly reviewDiff?: string | undefined;
+  /** For `review` of a pull that landed: the merge commit `reviewDiff` was read from (#8739). */
+  readonly landedAs?: string | undefined;
   /** For `review`: the change touches `src/web/`, so the review is held to docs/DESIGN.md. */
   readonly design?: boolean | undefined;
   /** For `review`: an earlier review run on this pull ended with no verdict. */
@@ -481,7 +483,9 @@ function taskBody(input: TaskInput): string {
       `"comments" is optional. Each anchors to a line of the diff below: "path" is the file, "side" is "new" for an added or kept line (numbered as in the head) or "old" for a removed one (numbered as in the base), and "line" counts from the hunk header — in \`@@ -a,b +c,d @@\` the hunk's first line is c on the new side. If the API answers \`bad_anchor\`, nothing was posted: read its message, fix the anchors, and send the review once more; if it is refused again, send it without "comments" and put those points in the body.`,
       `Approve when it does what the direction asks, works in the preview, and looks right. Otherwise use "changes_requested" with a body a builder can act on: what does not work, and the one thing to fix first, concrete. You get ${REVIEW_ROUNDS} rounds of changes on a pull; after that it lands as it is, so if something is left, open an issue for it with the API instead. One review, then stop; your last message is not read by anyone.`,
       "",
-      "The change:",
+      input.landedAs === undefined
+        ? "The change:"
+        : `The change, as it landed: commit ${input.landedAs} on the base against its first parent. This pull is merged already, so judge what landed; your verdict carries the box pass.`,
       "```diff",
       input.reviewDiff ?? "(no diff available)",
       "```",

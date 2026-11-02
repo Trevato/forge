@@ -20,8 +20,10 @@ import { addComment, getIssueById, listComments, updateIssueText, type Issue } f
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
-import { landedBoxes, passed, passLanded } from "../src/crew/box_pass.ts";
+import { landedBoxes, NO_DIFF_LEAD, passed, passLanded } from "../src/crew/box_pass.ts";
 import { reviewsInFlight } from "../src/crew/review.ts";
+import { reviewInputs } from "../src/crew/runner.ts";
+import { repoDir } from "../src/git/repos.ts";
 import { taskPrompt, type TaskInput } from "../src/crew/brief.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -77,8 +79,8 @@ describe("the reviewer's pass over the boxes", () => {
     if (!opened.ok) throw new Error(String(opened.error));
     return getPull(app.db, repo.id, opened.value.number)!;
   };
-  const land = async (pull: Pull) => {
-    const merged = await mergePull(app, alice, fresh(), pull, "squash");
+  const land = async (pull: Pull, strategy: "squash" | "merge" = "squash") => {
+    const merged = await mergePull(app, alice, fresh(), pull, strategy);
     if (!merged.ok) throw new Error(String(merged.error));
   };
   const approve = async (as: User, pull: Pull, pass: Parameters<typeof passOf>) => {
@@ -188,9 +190,9 @@ describe("the reviewer's pass over the boxes", () => {
     expect(held(old)).toBe(true);
     const asked = () =>
       app.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND reason = 'review'").get(pull.id)!.n;
-    expect(passLanded(app, fresh(), heldNow(app, fresh()).by.landed.filter((i) => i.id === old.id))).toBe(1);
+    expect(await passLanded(app, fresh(), heldNow(app, fresh()).by.landed.filter((i) => i.id === old.id))).toBe(1);
     expect(asked()).toBe(1);
-    expect(passLanded(app, fresh(), heldNow(app, fresh()).by.landed.filter((i) => i.id === old.id))).toBe(0);
+    expect(await passLanded(app, fresh(), heldNow(app, fresh()).by.landed.filter((i) => i.id === old.id))).toBe(0);
     expect(asked()).toBe(1);
     await approve(vesper, pull, [[tick(old, 1, "x"), tick(old, 2, "y")], undefined]);
     expect(now(old).state).toBe("closed");
@@ -247,8 +249,88 @@ describe("the reviewer's pass over the boxes", () => {
     await land(pull);
     const landed = getPull(app.db, repo.id, pull.number)!;
     expect(passed(app, fresh(), asked, landed)).toBe(false);
-    expect(passLanded(app, fresh(), [now(asked)])).toBe(1);
+    expect(await passLanded(app, fresh(), [now(asked)])).toBe(1);
     expect(passed(app, fresh(), asked, landed)).toBe(true);
+  });
+  // #8739: the head's refs are deleted and its objects pruned, as a forge's gc would leave it.
+  const prune = async (pull: Pull) => {
+    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    for (const args of [
+      ["update-ref", "-d", `refs/heads/${pull.headBranch}`],
+      ["update-ref", "-d", `refs/pull/${pull.number}/head`],
+      ["reflog", "expire", "--expire=now", "--all"],
+      ["gc", "--prune=now", "--quiet"],
+    ]) {
+      const ran = Bun.spawnSync(["git", ...args], { cwd: bare });
+      if (ran.exitCode !== 0) throw new Error(ran.stderr.toString());
+    }
+    const gone = Bun.spawnSync(["git", "cat-file", "-e", `${pull.headOid}^{commit}`], { cwd: bare });
+    expect(gone.exitCode).not.toBe(0);
+    return bare;
+  };
+
+  test("a pull merged with its head gone is reviewed from its merge commit, a real diff in the brief", async () => {
+    const gone = issue("Gone", "- [ ] g");
+    const pull = await propose("gone", gone);
+    await land(pull);
+    const landed = getPull(app.db, repo.id, pull.number)!;
+    const bare = await prune(landed);
+    expect(await passLanded(app, fresh(), [now(gone)])).toBe(1);
+    const inputs = await reviewInputs(app, fresh(), landed, undefined, bare);
+    expect(inputs.landedAs).toBe(landed.mergedOid!);
+    expect(inputs.reviewDiff).toContain("gone.txt");
+    expect(inputs.reviewDiff).toContain("+x");
+    expect(inputs.reviewDiff).not.toContain("README.md");
+    const brief = taskPrompt({
+      agent: { user: { username: "vesper", displayName: "" }, brief: "" },
+      repo: { id: repo.id, ownerName: "alice", name: "engine", defaultBranch: "main", autonomyDirection: "Keep it small." },
+      issue: { number: pull.number, title: "gone", body: `Closes #${gone.number}`, authorName: "alice" },
+      comments: [],
+      reviews: [],
+      reason: "review",
+      branch: "gone",
+      forgeUrl: "http://forge.test",
+      role: "reviewer",
+      ...inputs,
+    } as unknown as TaskInput);
+    expect(brief).toContain(`The change, as it landed: commit ${landed.mergedOid}`);
+    expect(brief).toContain("+++ b/gone.txt");
+    expect(brief).not.toContain("(no diff available)");
+  });
+
+  test("a merge commit is read against its first parent: the pull's change, not the base's", async () => {
+    const both = issue("Both", "- [ ] b");
+    const pull = await propose("both", both);
+    const moved = await commitToBranch(app, alice, fresh(), {
+      message: "base moves",
+      files: [{ path: "base-moved.txt", content: "z\n" }],
+    });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    await land(pull, "merge");
+    const landed = getPull(app.db, repo.id, pull.number)!;
+    // Its head is its second parent, so it never goes; the base moved under it.
+    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const inputs = await reviewInputs(app, fresh(), landed, undefined, bare);
+    expect(inputs.landedAs).toBe(landed.mergedOid!);
+    expect(inputs.reviewDiff).toContain("both.txt");
+    expect(inputs.reviewDiff).not.toContain("base-moved.txt");
+  });
+
+  test("a pull with no diff left is not sent: its issue stays held and says why, once", async () => {
+    const lost = issue("Lost", "- [ ] l");
+    const pull = await propose("lost", lost);
+    await land(pull);
+    await prune(getPull(app.db, repo.id, pull.number)!);
+    // A landing whose commit is not there to read either.
+    app.db.query("UPDATE pull SET merged_oid = ?1 WHERE issue_id = ?2").run("0".repeat(40), pull.id);
+    const asked = () =>
+      app.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND reason = 'review'").get(pull.id)!.n;
+    expect(await passLanded(app, fresh(), [now(lost)])).toBe(0);
+    expect(await passLanded(app, fresh(), [now(lost)])).toBe(0);
+    expect(asked()).toBe(0);
+    const notes = listComments(app.db, lost.id).filter((c) => c.body.startsWith(NO_DIFF_LEAD));
+    expect(notes.map((c) => [c.body.slice(0, 40), c.authorId])).toEqual([[`${NO_DIFF_LEAD}${pull.number}: neither its merge commit`.slice(0, 40), vesper.id]]);
+    expect(held(lost)).toBe(true);
   });
 
   test("the reviewer's slots bound the pass: paused sends none, a full seat waits (#8734)", async () => {
@@ -260,13 +342,13 @@ describe("the reviewer's pass over the boxes", () => {
     const inFlight = () => reviewsInFlight(app.db, repo.id);
     app.db.query("UPDATE run SET state = 'cancelled' WHERE repo_id = ?1 AND state IN ('queued','running')").run(repo.id);
     slots(0);
-    expect(passLanded(app, fresh(), [now(first), now(second)])).toBe(0);
+    expect(await passLanded(app, fresh(), [now(first), now(second)])).toBe(0);
     slots(1);
-    expect(passLanded(app, fresh(), [now(first), now(second)])).toBe(1);
+    expect(await passLanded(app, fresh(), [now(first), now(second)])).toBe(1);
     expect(inFlight()).toBe(1);
-    expect(passLanded(app, fresh(), [now(first), now(second)])).toBe(0);
+    expect(await passLanded(app, fresh(), [now(first), now(second)])).toBe(0);
     app.db.query("UPDATE run SET state = 'cancelled' WHERE repo_id = ?1 AND state IN ('queued','running')").run(repo.id);
-    expect(passLanded(app, fresh(), [now(first), now(second)])).toBe(1);
+    expect(await passLanded(app, fresh(), [now(first), now(second)])).toBe(1);
     slots(8);
   });
 });

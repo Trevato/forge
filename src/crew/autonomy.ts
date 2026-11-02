@@ -468,7 +468,7 @@ export async function driveRepo(
   let held = sorted();
   if (freeParked(app, repo, by, held) > 0) held = sorted();
   // An issue a landing left open with boxes is given the reviewer's pass once (#8682).
-  passLanded(app, repo, held.by.landed);
+  await passLanded(app, repo, held.by.landed);
   holdHot(
     repo.id,
     held.by.hot_file,

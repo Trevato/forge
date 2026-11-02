@@ -132,6 +132,7 @@ import { laterGate } from "./later.ts";
 import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
 import { boxesOf, landedBoxes } from "./box_pass.ts";
+import { reviewRange } from "./review_range.ts";
 import { heldNow, stuckOf } from "./held.ts";
 import { reserveOf } from "./reserve.ts";
 import { owed } from "./team_share.ts";
@@ -235,32 +236,37 @@ export function steerRun(app: App, runId: string, text: string): boolean {
   return send(text);
 }
 
-/** What a reviewer reads: the pull's diff against its base, and its pictures. */
+/**
+ * What a reviewer reads: the pull's diff (`review_range.ts` — a landed pull's
+ * is its merge commit's), and its pictures. `landedAs` names the merge commit
+ * the diff was read from, when it was.
+ */
 export async function reviewInputs(
   app: App,
   repo: Repo,
   pull: Pull,
   record: AppRecord | undefined,
   bare: string,
-): Promise<{ reviewDiff: string; looks: string[]; design: boolean }> {
-  const base = (await resolveOid(bare, `refs/heads/${pull.baseBranch}`)) ?? "";
+): Promise<{ reviewDiff: string; looks: string[]; design: boolean; landedAs?: string }> {
+  const range = await reviewRange(bare, pull);
   let reviewDiff = "(no diff available)";
   let design = false;
-  if (base !== "") {
+  if (range !== undefined) {
     const names = await runGitCapture(
-      ["diff", "--name-only", `${base}...${pull.headOid}`],
+      ["diff", "--name-only", range.from, range.to],
       { cwd: bare },
     );
     design = touchesDesign(names.stdout.toString().split("\n").filter((n) => n !== ""));
     const out = await runGitCapture(
-      ["diff", "--stat", "-p", `${base}...${pull.headOid}`],
+      ["diff", "--stat", "-p", range.from, range.to],
       { cwd: bare },
     );
     const text = out.stdout.toString();
-    reviewDiff =
-      text.length > REVIEW_DIFF_MAX
-        ? `${text.slice(0, REVIEW_DIFF_MAX)}\n… (cut at ${REVIEW_DIFF_MAX} bytes)`
-        : text;
+    if (out.code === 0)
+      reviewDiff =
+        text.length > REVIEW_DIFF_MAX
+          ? `${text.slice(0, REVIEW_DIFF_MAX)}\n… (cut at ${REVIEW_DIFF_MAX} bytes)`
+          : text;
   }
   const looks =
     record === undefined
@@ -279,7 +285,12 @@ export async function reviewInputs(
           .map((l) =>
             l.path.startsWith("/") ? l.path : join(app.config.dataDir, l.path),
           );
-  return { reviewDiff, looks, design };
+  return {
+    reviewDiff,
+    looks,
+    design,
+    ...(range?.landed === true && reviewDiff !== "(no diff available)" ? { landedAs: range.to } : {}),
+  };
 }
 
 const REVIEW_DIFF_MAX = 60 * 1024;
