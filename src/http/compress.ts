@@ -33,6 +33,8 @@ const TYPES = new Set([
   "application/xml",
   "application/atom+xml",
   "application/rss+xml",
+  // /opensearch.xml (#8332).
+  "application/opensearchdescription+xml",
 ]);
 
 /** The encoding to use: br over gzip, a `q=0` or absent coding refused. */
