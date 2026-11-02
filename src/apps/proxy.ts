@@ -745,9 +745,12 @@ function admit(
   if (repo?.archivedAt != null) return err(archivedPage(target));
   // A preview stopped for want of attention is asked for: it deploys again
   // the ordinary way, and this request sees "starting" until it answers.
-  if (runtime.envStatus(target.app, target.env)?.dormant !== undefined)
+  // Read once; read again only when the rouse changed what it would say.
+  let status = runtime.envStatus(target.app, target.env);
+  if (status?.dormant !== undefined) {
     runtime.rouse(target.app, target.env);
-  const status = runtime.envStatus(target.app, target.env);
+    status = runtime.envStatus(target.app, target.env);
+  }
   if (status === undefined || status.port === undefined) {
     return err(unavailable(runtime, target, status, undefined, grant?.who));
   }
@@ -1183,11 +1186,13 @@ export async function proxyApp(
         ? mintProof(grantCookie, request.headers.get("host") ?? "")
         : undefined;
     if (proof !== undefined) out.set("cache-control", "private, no-store");
-    const page = withToolbar(
-      bytes,
-      runtime.options.forgeUrl,
-      pillWhere(runtime, target, vouched?.who),
-      proof,
+    const page = timePhase(request, "rewrite", () =>
+      withToolbar(
+        bytes,
+        runtime.options.forgeUrl,
+        pillWhere(runtime, target, vouched?.who),
+        proof,
+      ),
     );
     let sent = page;
     // Whether it is gzipped depends on the client, so every copy says so.

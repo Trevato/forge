@@ -589,6 +589,18 @@ export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string):
   return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data}${token} defer></script>`;
 }
 
+/**
+ * The byte offset of the last `</body`, any case, or -1. Scanned from the end
+ * so a page pays for its tail, not for a lowercase copy of the whole body.
+ */
+function lastBodyClose(buffer: Buffer): number {
+  for (let i = buffer.length - 6; i >= 0; i--) {
+    if (buffer[i] !== 0x3c || buffer[i + 1] !== 0x2f) continue;
+    if (buffer.toString("latin1", i + 2, i + 6).toLowerCase() === "body") return i;
+  }
+  return -1;
+}
+
 /** `bytes` with the pill's tag before the last `</body>`, or at the end. */
 export function withToolbar(
   bytes: Uint8Array,
@@ -598,8 +610,7 @@ export function withToolbar(
 ): Uint8Array<ArrayBuffer> {
   const tag = Buffer.from(toolbarTag(forgeUrl, where, proof));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  // latin1 is one character per byte, so an index in it is a byte offset.
-  const at = buffer.toString("latin1").toLowerCase().lastIndexOf("</body");
+  const at = lastBodyClose(buffer);
   const cut = at < 0 ? buffer.length : at;
   return Buffer.concat([buffer.subarray(0, cut), tag, buffer.subarray(cut)]);
 }
