@@ -42,6 +42,7 @@ import { given, pendingFor } from "../../core/limb_replan.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { cachedPlan } from "../map_cache.ts";
+import { milestonePath } from "../../story/wave_plan.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
 import {
   crumbsFor,
@@ -60,8 +61,7 @@ import { badge, btn, card, listCard, pill, row, time } from "../ui.ts";
 import { folded, issueRow, list, wrappedCard } from "./limb_view.ts";
 
 /** Where a milestone is: its own page. */
-export const milestoneHref = (base: string, number: number): string =>
-  `${base}/milestones/${number}`;
+export const milestoneHref = milestonePath;
 
 /** Where an action on the whole limb is previewed and confirmed (`limb.ts`). */
 export const limbHref = (
@@ -176,7 +176,7 @@ function weightWords(limb: Limb): Html {
 }
 
 /** How far a limb is, as a bar: the native element, named for a reader who cannot see it. */
-const progress = (done: number, total: number, label: string): Html =>
+export const progress = (done: number, total: number, label: string): Html =>
   html`<progress
     max="${Math.max(total, 1)}"
     value="${done}"
@@ -200,7 +200,7 @@ function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
 }
 
 /** The repository's plan, kept while nothing it reads changes. */
-const planFor = (ctx: Ctx, repo: Repo, spend: boolean, now: Date): Plan =>
+export const planFor = (ctx: Ctx, repo: Repo, spend: boolean, now: Date): Plan =>
   cachedPlan(
     {
       repoId: repo.id,

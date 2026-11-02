@@ -12,6 +12,9 @@ import { serve } from "../src/http/server.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
+import { linkIssue } from "../src/actions/dependencies.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { getIssueById, setIssueState } from "../src/core/issues.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { waveLines, wavesScreen } from "../src/tui/screens/waves.ts";
@@ -179,6 +182,41 @@ describe("waves in the terminal", () => {
     expect(outsider.text).toContain("Shown work");
     expect(outsider.text).not.toContain("Secret work");
     expect(outsider.text).not.toContain("/alice/priv/pulls/");
+  });
+
+  test("the wave screen names the milestones it moved, as the page does, and not one the viewer may not see", async () => {
+    const r = await createRepo(forge, alice, { name: "ms", visibility: "public" });
+    if (!r.ok) throw new Error("repo failed");
+    const repo = r.value;
+    await commitToBranch(forge, alice, repo, { message: "init", files: [{ path: "README.md", content: "hi\n" }] });
+    const issue = (title: string, sealed = false) => {
+      const o = openIssue(forge, alice, repo, { title, sealed });
+      if (!o.ok) throw new Error("issue failed");
+      return o.value;
+    };
+    const goal = issue("Open goal");
+    const hidden = issue("Hidden goal", true);
+    const a = issue("Part A");
+    const b = issue("Part B");
+    for (const [up, down] of [[goal, a], [goal, b], [hidden, a]] as const)
+      linkIssue(forge, alice, repo, getIssueById(forge.db, up.id)!, getIssueById(forge.db, down.id)!);
+    setIssueState(forge.db, a.id, "closed", "done");
+    const n = await mergedPull(forge, alice, repo, "Part A work");
+    forge.db.query("UPDATE issue SET body = ? WHERE repo_id = ? AND number = ?").run(`Closes #${a.number}`, repo.id, n);
+    await commitToBranch(forge, alice, repo, {
+      message: "wave",
+      files: [{ path: "waves/0.1.0.md", content: waveNaming("0.1.0", [{ owner: "alice", name: "ms", number: n }]) }],
+    });
+    const owner = await open(alice, repo, ["enter"]);
+    owner.stop();
+    expect(owner.text).toContain("Moved");
+    expect(owner.text).toContain("Open goal - 1 of 2 done");
+    expect(owner.text).toContain(`/alice/ms/milestones/${goal.number}`);
+    expect(owner.text).not.toContain("Hidden goal");
+    const outsider = await open(bob, repo, ["enter"]);
+    outsider.stop();
+    expect(outsider.text).toContain("Open goal - 1 of 2 done");
+    expect(outsider.text).not.toContain("Hidden goal");
   });
 
   test("enter on an unparsable row shows its reason", async () => {
