@@ -522,12 +522,20 @@ The KPI entry is keyed by UTC hour, ceiling and data directory; a panel by
 its board's slug and its own definition (an edited board is a new key, as
 the blob id would make it). The 60 s rule (#7624): the KPIs, panels and
 vitals are kept 60 s from when they were computed, whatever is written
-since (the forge writes every second, so the write stamp never hit); the
-waiting line stays on the write stamp, 30 s at most, so the asks count is
-exact. The builders figure is read fresh on every request (one query), so it
-agrees with the idle reason beside it; the terminal's dashboard reads
-`readKpis` uncached. Tests age these entries with `setHomeClock`, the one
-test seam in `home_cache.ts`. Measured on
+since (the forge writes every second, so the write stamp never hit). Past
+60 s the old answer is still served at once, counted a hit, and one refresh
+per key runs with `setTimeout(0)` after the response (#7625). A refresh that
+throws is logged (`home.refresh_failed`), keeps the old answer and frees the
+key for the next request. Only a cold start, or an answer past the 10 min
+ceiling (`HOME_STALE_CEILING_MS`, ten TTLs), computes inline, so refreshes
+that keep failing cannot pin an old answer forever. The refresh is off the
+request, not off the event loop: it runs on the same thread, so a request
+that lands while it runs waits for it, as it would have waited for an
+inline recompute. The waiting line stays on the write stamp, 30 s at most,
+so the asks count is exact. The builders figure is read fresh on every
+request (one query), so it agrees with the idle reason beside it; the
+terminal's dashboard reads `readKpis` uncached. Tests age these entries
+with `setHomeClock`, the one test seam in `home_cache.ts`. Measured on
 `bench/snappy.ts` (`--n 50`), `/` owner: 105.7 → 90.1 statements, p50
 16.0 → 15.5 ms, p95 22.5 → 20.7 ms; the fixture pins no panel, and a pin
 adds one query per panel on a miss and none on a hit.

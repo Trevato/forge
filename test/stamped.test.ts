@@ -79,4 +79,16 @@ describe("Stamped", () => {
     expect(m.stamped.size).toBe(0);
     expect(m.stamped.get("a", "s", m.compute)).toBe(3);
   });
+
+  test("peek returns an entry however old, and put stores one aged from now, counting nothing", () => {
+    const m = memo(3, 1000);
+    m.stamped.get("a", "s", m.compute);
+    m.clock.t = 5000;
+    expect(m.stamped.peek("a")).toEqual({ stamp: "s", value: 1, at: 0 });
+    m.stamped.put("a", "s", 7);
+    expect(m.stamped.peek("a")).toEqual({ stamp: "s", value: 7, at: 5000 });
+    expect(m.stamped.get("a", "s", m.compute)).toBe(7);
+    expect([m.stamped.hits, m.stamped.misses]).toEqual([1, 1]);
+    expect(m.stamped.peek("b")).toBeUndefined();
+  });
 });
