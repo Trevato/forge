@@ -98,6 +98,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "apple-touch-icon.png",
   "apple-touch-icon-precomposed.png",
   "llms.txt",
+  "openapi.json",
   "runs",
   "search",
   "settings",

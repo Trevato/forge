@@ -22,6 +22,7 @@ quietLogs();
 const NOT_A_PAGE: Record<string, string> = {
   "/llms.txt": "plain markdown for machines, not a page to picture",
   "/robots.txt": "plain text for crawlers",
+  "/openapi.json": "a redirect to the contract document",
   "/favicon.ico": "the tab icon, an image",
   "/releases.json": "JSON feed of /releases",
   "/sitemap.xml": "XML for crawlers",

@@ -46,6 +46,7 @@ const REDIRECTS = new Set([
   "/big",
   "/flow",
   "/login",
+  "/openapi.json",
   "/settings/origins/callback",
   "/settings/resilience",
   "/sign-in",

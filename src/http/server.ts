@@ -630,6 +630,12 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/llms.txt", llmsTxt);
   router.add("GET", "/.well-known/change-password", changePassword);
   router.add("GET", "/robots.txt", robotsTxt);
+  // The conventional path an agent guesses, answered as /api/v1/openapi.json is.
+  router.add(
+    "GET",
+    "/openapi.json",
+    () => new Response(null, { status: 308, headers: { location: "/contract/openapi.json", "cache-control": "public, max-age=86400" } }),
+  );
   router.add("GET", "/releases.json", releasesJson);
   router.add("GET", "/sitemap.xml", sitemapXml);
   router.add("GET", "/manifest.webmanifest", webManifest);
