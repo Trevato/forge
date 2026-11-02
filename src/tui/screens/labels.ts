@@ -7,14 +7,14 @@
 
 import { LABEL_WORDS } from "../../actions/label_words.ts";
 import { requireRepoAdmin } from "../../actions/access.ts";
-import { createLabel } from "../../actions/repos.ts";
+import { createLabel, deleteLabel } from "../../actions/repos.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { listLabels, type Label } from "../../core/issues.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Command } from "../app/palette.ts";
 import { style } from "../term/style.ts";
-import { ListState, promptScreen } from "./common.ts";
+import { ListState, confirmScreen, promptScreen } from "./common.ts";
 import { labelChip } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 
@@ -22,11 +22,14 @@ import type { Session } from "../session.ts";
 export const NOT_FOUND_LINE = "No such repository";
 export const NOT_ALLOWED_LINE = "Only a repository admin can make a label.";
 export const NO_LABELS_LINE = "No labels yet.";
+export const DELETED_LINE = "Deleted that label.";
+export const GONE_LINE = "That label is already gone, or you can no longer delete it.";
 
 export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let labels: Label[] | undefined;
   let hidden = false;
   const state = new ListState();
+  let note = "";
   // Only whoever `requireRepoAdmin` admits is offered `n`.
   const admin = (): boolean => requireRepoAdmin(f.app, f.user, repo).ok;
 
@@ -42,11 +45,27 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     ctx.invalidate();
     return undefined;
   };
+  const ask = (picked: Label): void => {
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: "Delete a label",
+        body: [`Delete the label ${picked.name}? Issues carrying it lose it.`],
+        actions: [{ label: "Keep", variant: "ghost" }, { label: "Delete", variant: "danger" }],
+        onChoose: (i) => {
+          if (i < 1) return;
+          note = deleteLabel(f.app, f.user, repo, picked.id).ok ? DELETED_LINE : GONE_LINE;
+          labels = listLabels(f.db, repo.id);
+          state.clamp(labels.length);
+          ctx.invalidate();
+        },
+      }),
+    );
+  };
   const screen: Screen = {
     title: "Labels",
     // Read each time: a demoted admin stops being offered `n`.
     get keys() {
-      return [binding(["j", "k"], "move"), ...(admin() ? [binding(["n"], "new label")] : []), binding(["esc", "q"], "back")];
+      return [binding(["j", "k"], "move"), ...(admin() ? [binding(["n"], "new label"), binding(["d"], "delete label")] : []), binding(["esc", "q"], "back")];
     },
     async load() {
       // Gated here as well as on the command: the screen is exported.
@@ -60,9 +79,15 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       const line = (y: number, text: string) => s.text(area.x + 1, area.y + y, text, style(c.fg, c.bg), right);
       if (hidden) return void line(0, NOT_FOUND_LINE);
       if (labels === undefined) return void line(0, "Reading…");
-      if (labels.length === 0) return void line(0, NO_LABELS_LINE);
-      const from = state.window(area.h, labels.length);
-      for (let i = 0; i < area.h; i++) {
+      if (labels.length === 0) {
+        line(0, NO_LABELS_LINE);
+        if (note !== "") line(area.h - 1, note);
+        return;
+      }
+      const rows = note === "" ? area.h : Math.max(1, area.h - 1);
+      if (note !== "") line(area.h - 1, note);
+      const from = state.window(rows, labels.length);
+      for (let i = 0; i < rows; i++) {
         const l = labels[from + i];
         if (l === undefined) break;
         const picked = from + i === state.index;
@@ -72,10 +97,13 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
     },
     key(e) {
+      note = "";
       if (e.key === "j" || e.key === "down") state.move(1, labels?.length ?? 0);
       else if (e.key === "k" || e.key === "up") state.move(-1, labels?.length ?? 0);
       else if (e.key === "esc" || e.key === "q") ctx.pop();
-      else if (e.key === "n" && !e.ctrl && !e.alt && !hidden && admin()) {
+      else if (e.key === "d" && !e.ctrl && !e.alt && !hidden && admin() && labels?.[state.index] !== undefined) {
+        ask(labels[state.index]!);
+      } else if (e.key === "n" && !e.ctrl && !e.alt && !hidden && admin()) {
         ctx.push(
           promptScreen(ctx, screen, {
             title: "New label",
@@ -83,8 +111,7 @@ export function labelsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
             onSubmit: make,
           }),
         );
-      }
-      else return false;
+      } else return false;
       ctx.invalidate();
       return true;
     },

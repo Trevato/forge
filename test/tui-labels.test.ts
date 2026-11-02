@@ -3,7 +3,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRepo } from "../src/actions/repos.ts";
+import { createRepo, deleteLabel } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { LABEL_WORDS } from "../src/actions/label_words.ts";
 import { createLabel, listLabels } from "../src/core/issues.ts";
@@ -11,7 +11,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, Session } from "../src/tui/forge.ts";
 import type { Ctx } from "../src/tui/app/app.ts";
-import { labelsCommands, labelsScreen, NOT_ALLOWED_LINE, NOT_FOUND_LINE, NO_LABELS_LINE } from "../src/tui/screens/labels.ts";
+import { DELETED_LINE, GONE_LINE, labelsCommands, labelsScreen, NOT_ALLOWED_LINE, NOT_FOUND_LINE, NO_LABELS_LINE } from "../src/tui/screens/labels.ts";
 import { repoScreen } from "../src/tui/screens/repo.ts";
 import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -219,4 +219,64 @@ test("a # before the colour and a name of several words are accepted", async () 
   expect(text).toContain("good first issue");
   expect(text).toContain("#7057ff");
   expect(listLabels(app.db, bare.id).map((l) => l.name)).toContain("good first issue");
+});
+
+async function deleting(repo: Repo, user: User | undefined, keys: string[], beforeLast?: () => void) {
+  const terminal = headlessTerminal(100, 30);
+  const { app: tui, session } = createForgeApp(app, user ? { ...guest, user } : guest, { terminal, exitHooks: false });
+  tui.start();
+  tui.ctx.push(labelsScreen(session, tui.ctx, repo));
+  await settleApp(tui);
+  const press = (key: string) => tui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+  keys.forEach((k, i) => {
+    if (i === keys.length - 1) beforeLast?.();
+    press(k);
+  });
+  await settleApp(tui);
+  const text = tui.screen.toText();
+  tui.stop?.();
+  return text;
+}
+
+test("d asks naming the label; cancel is the default and keeps it", async () => {
+  const mid = await deleting(many, alice, ["d"]);
+  expect(mid).toContain("l00");
+  expect(mid).toContain("Delete the label l00?");
+  const text = await deleting(many, alice, ["d", "enter"]);
+  expect(text).not.toContain(DELETED_LINE);
+  expect(listLabels(app.db, many.id).map((l) => l.name)).toContain("l00");
+});
+
+test("d then Delete removes the label and the list drops it", async () => {
+  createLabel(app.db, open.id, "aaa-doomed", "123456");
+  const text = await deleting(open, alice, ["d", "right", "enter"]);
+  expect(text).toContain(DELETED_LINE);
+  expect(text).not.toContain("aaa-doomed");
+  expect(listLabels(app.db, open.id).map((l) => l.name)).not.toContain("aaa-doomed");
+});
+
+test("the result line clears on the next key", async () => {
+  createLabel(app.db, open.id, "aac-doomed", "123456");
+  const text = await deleting(open, alice, ["d", "right", "enter", "j"]);
+  expect(text).not.toContain(DELETED_LINE);
+});
+
+test("a delete that fails says so and changes nothing", async () => {
+  const doomed = createLabel(app.db, open.id, "aab-gone", "123456");
+  if (!doomed.ok) throw new Error("label");
+  const text = await deleting(open, alice, ["d", "right", "enter"], () => {
+    deleteLabel(app, alice, open, doomed.value.id);
+  });
+  expect(text).toContain(GONE_LINE);
+  expect(text).not.toContain(DELETED_LINE);
+});
+
+test("a reader is not offered d and d deletes nothing", async () => {
+  const stranger = new Session(app, guest);
+  const ctx = { invalidate() {}, push() { throw new Error("pushed"); } } as unknown as Ctx;
+  const screen = labelsScreen(stranger, ctx, open);
+  expect(screen.keys.some((k) => k.keys.includes("d"))).toBe(false);
+  await screen.load!(new AbortController().signal);
+  expect(screen.key!({ type: "key", key: "d", ctrl: false, alt: false, shift: false } as never)).toBe(false);
+  expect(labelsScreen(new Session(app, { ...guest, user: alice }), ctx, open).keys.some((k) => k.keys.includes("d"))).toBe(true);
 });
