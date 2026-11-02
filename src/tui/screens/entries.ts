@@ -24,7 +24,6 @@ import { entry as forges } from "./forges.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as limits } from "./limits.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
-import { entry as orgTeams } from "./orgteams.ts";
 import { entry as owner } from "./owner.ts";
 import { entry as people } from "./people.ts";
 import { entry as quotas } from "./quotas.ts";
@@ -71,7 +70,6 @@ export const ENTRIES: readonly PaletteEntry[] = [
   quotas,
   limits,
   teams,
-  orgTeams,
   agents,
   archived,
   invites,
