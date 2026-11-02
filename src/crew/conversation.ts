@@ -26,6 +26,7 @@ import { PLATFORM, pickSubscription, type Pick } from "../core/subscriptions.ts"
 import { getUserById } from "../core/users.ts";
 import { mintViaToken, VIA_TOKEN_MAX_MS } from "../core/via_token.ts";
 import { id } from "../kernel/id.ts";
+import { running } from "../kernel/version.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { runClaude, type ClaudeOutcome } from "./claude.ts";
@@ -334,6 +335,11 @@ function begin(
           },
         });
         const lost = !outcome.ok && lostSession(outcome.result);
+        // Only the outcome and the version are kept, never the text or the session (#8795).
+        if (session !== undefined && !options.signal.aborted)
+          app.db
+            .query("UPDATE conversation_run SET resume_outcome = ?2, version = ?3 WHERE id = ?1")
+            .run(runId, named && !lost ? "resumed" : "fallback", running().version);
         if (session === undefined || (named && !lost) || options.signal.aborted) break;
         appendRunLog(app.config.dataDir, runId, "no session to resume; starting this message fresh");
         // What the failed attempt showed (its error may be printed as text) is taken back.
