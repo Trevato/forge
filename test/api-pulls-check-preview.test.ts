@@ -50,18 +50,8 @@ beforeAll(async () => {
     forgeUrl: servers.url,
     concurrency: 1,
   });
-  await runtime.start();
-  // The pulls here have made-up heads: the runtime must never try to deploy (and so replace or
-  // drop) the environments the test sets up, whatever the load of the machine.
-  // Nor may its event handler or its sweeper act on the pulls and environments set up here.
-  const inner = runtime as unknown as {
-    requestDeploy: () => void;
-    unsubscribe?: () => void;
-    sweeper?: ReturnType<typeof setInterval>;
-  };
-  inner.requestDeploy = () => {};
-  inner.unsubscribe?.();
-  if (inner.sweeper !== undefined) clearInterval(inner.sweeper);
+  // Never started: no reconcile, no event handler, no sweeper, so nothing but this test sets or drops
+  // an environment, whatever the load of the machine. The API finds the runtime by its app.
   const u = await createUser(app.db, {
     origin: "seed",
     trusted: true,
@@ -131,18 +121,9 @@ test("a preview address only where an environment exists, and only for those who
   const address = runtime.urlFor(record(), `pull-${pulls["green"]!.number}`);
 
   // A public app: every reader gets the address for the pull that has an environment, null for the rest.
-  const heldNow = () => new Set(runtime.status(record()).map((e) => e.env as string));
-  const before = heldNow();
   const open = await listed();
-  const after = heldNow();
   expect(open["green"]!["preview"]).toBe(address);
-  // The runtime brings others up (and drops them) on its own while the request runs; an address is
-  // given exactly where one exists, judged on the pulls whose environment held steady across it.
-  for (const item of Object.values(open)) {
-    const env = `pull-${item["number"]}`;
-    if (before.has(env) !== after.has(env)) continue;
-    expect(item["preview"] === null).toBe(!after.has(env));
-  }
+  for (const item of Object.values(open)) if (item["title"] !== "green") expect(item["preview"]).toBeNull();
 
   // A private app on a public repository: a guest and a plain reader get none; the writer does.
   app.db.query("UPDATE app SET access = 'private' WHERE repo_id = ?1").run(repoId);
