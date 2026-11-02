@@ -1,7 +1,8 @@
 /**
  * An app's private destinations in the terminal, a site admin's: the list the
  * settings page shows, with `g` to grant the one under the cursor once `y`
- * confirms it (a grant widens the boundary) and `x` to revoke it. The actions decide who may; anyone else is offered nothing.
+ * confirms it (a grant widens the boundary) and `x` to revoke it once `y`
+ * confirms that too. The actions decide who may; anyone else is offered nothing.
  */
 
 import {
@@ -91,7 +92,20 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         return true;
       }
       if (e.key === "x" && row !== undefined) {
-        change(revokeAppEgress(f.app, f.user, repo, row.destination), `${row.destination} is revoked.`);
+        const { destination } = row;
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: `Stop ${repo.ownerName}/${repo.name} reaching ${destination}?`,
+            body: ["The app's outbound traffic to it is refused until g grants it again."],
+            actions: [{ label: "Revoke", variant: "danger" }, { label: "Cancel", variant: "ghost" }],
+            yesNo: true,
+            width: 78,
+            onChoose: (choice) => {
+              if (choice !== 0) return;
+              change(revokeAppEgress(f.app, f.user, repo, destination), `${destination} is revoked.`);
+            },
+          }),
+        );
         return true;
       }
       return state.key(e, rows.length);

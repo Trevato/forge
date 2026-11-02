@@ -145,8 +145,35 @@ describe("private destinations in the terminal", () => {
     expect(h.text()).toContain("granted by ada");
     expect(changes().map((e) => e.kind)).toEqual(["app.egress.granted"]);
     await h.press("x");
+    expect(h.text()).toContain(`Stop acme/arm reaching ${ARM}?`);
+    expect(grants()).toEqual([ARM]);
+    await h.press("y");
     expect(grants()).toEqual([]);
     expect(changes().map((e) => e.kind).sort()).toEqual(["app.egress.granted", "app.egress.revoked"]);
+    h.stop();
+  });
+
+  test("a site admin who presses x then n or esc revokes nothing", async () => {
+    const h = boot(ada);
+    await h.toAbout();
+    await h.press("e");
+    await h.press("g");
+    await h.press("y");
+    expect(grants()).toEqual([ARM]);
+    const before = changes().length;
+    await h.press("x");
+    expect(h.text()).toContain(`Stop acme/arm reaching ${ARM}?`);
+    expect(h.text()).toContain("refused until g grants it again.");
+    await h.press("n");
+    expect(h.text()).not.toContain(`Stop acme/arm reaching ${ARM}?`);
+    await h.press("x");
+    await h.press("esc");
+    expect(h.text()).not.toContain(`Stop acme/arm reaching ${ARM}?`);
+    expect(grants()).toEqual([ARM]);
+    expect(changes().length).toBe(before);
+    await h.press("x");
+    await h.press("y");
+    expect(grants()).toEqual([]);
     h.stop();
   });
 
