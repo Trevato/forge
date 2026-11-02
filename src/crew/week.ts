@@ -8,14 +8,16 @@
  * The figures are percents of the week the provider's limit holds, the same
  * `free` share the `usage` tool prints, never a dollar cap of our own.
  *
- * - Pace: the week's elapsed share is what should be spent by now. Within
- *   `WEEK.tolerance` of it the crew is on pace; below, behind; above, ahead.
- * - Burn: the last hours' spend, held against what the week can still take.
- *   A burn that empties it before the reset slows the crew whatever the
- *   week's total says, and names when it would run out.
+ * - Allowed: what the week has left above the reserve, over the hours to the
+ *   reset. What was spent is sunk; the only question is whether the current
+ *   burn spends the rest by then. Within `WEEK.tolerance` of allowed the crew
+ *   is on pace; burning faster slows it; burning slower lets it rise to the
+ *   ceiling and, with builders idle, releases work.
+ * - No burn known yet: the crew starts at `WEEK.unknownSlots` and adjusts as
+ *   the hour's spend arrives.
  * - Unknown: no limit known is not a fine week. The crew holds at
  *   `WEEK.unknownSlots` and home says the pace is unknown.
- * - Behind with builders idle and nothing startable: the next gated issue
+ * - Under allowed with builders idle and nothing startable: the next gated issue
  *   is released, one per look.
  * - Always: `WEEK.reserve` of the week's crew capacity is kept for `/talk`
  *   and a person's own requests; the crew stops at it.
@@ -25,11 +27,11 @@ import { WINDOW_MS } from "../core/standing.ts";
 
 /** The week's settings: plain values, read here and nowhere else. */
 export const WEEK = {
-  /** How far from the even pace still counts as on pace, as a share of the week's capacity. */
-  tolerance: 0.05,
+  /** How far from allowed a burn may sit and still count as on pace, as a share of allowed. */
+  tolerance: 0.25,
   /** The share of the week's crew capacity kept for conversations and a person's own requests. */
   reserve: 0.1,
-  /** Slots ahead of pace never fall below this while the reserve holds. */
+  /** Slots never fall below this while the reserve holds. */
   floorSlots: 1,
   /** Slots the crew holds at while the week's capacity is unknown. */
   unknownSlots: 2,
@@ -68,8 +70,8 @@ export interface WeekDecision {
   readonly status: Status;
   /** Percent of the week's limit that would be spent an hour to use the crew's rest by the reset; null when unknown. */
   readonly targetPctPerHour: number | null;
-  /** Spent minus what an even pace would have spent by now, in percent of the limit; 0 when unknown. */
-  readonly offPct: number;
+  /** Percent of the limit the crew may spend an hour and still have the reserve at the reset; null when unknown. */
+  readonly allowedPctPerHour: number | null;
   /** When the burn would empty the crew's share of the week; null when it lasts to the reset or is unread. */
   readonly runsOutAt: Date | null;
   /** The slots the week allows, 0..ceiling. */
@@ -92,7 +94,7 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
     return {
       status: "unknown",
       targetPctPerHour: null,
-      offPct: 0,
+      allowedPctPerHour: null,
       runsOutAt: null,
       slots,
       release: false,
@@ -102,27 +104,23 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   const left = meter.resetsAt.getTime() - now.getTime();
   if (left <= 0 || left > WINDOW_MS.week) return null;
   const hours = left / 3_600_000;
-  const elapsed = 1 - left / WINDOW_MS.week;
   const capPct = Math.max(0, 100 - meter.keptPct);
   const used = 100 - meter.freePct;
   const wall = capPct * (1 - WEEK.reserve);
-  const should = capPct * elapsed;
-  const offPct = used - should;
-  const band = capPct * WEEK.tolerance;
   const targetPctPerHour = Math.max(0, capPct - used) / hours;
 
-  // Burn: what the last hours spent, held against what the crew may still spend before the reserve.
-  const burn = meter.burnPctPerHour;
+  // Allowed: what the crew may still spend before the reserve, over the hours left.
   const room = Math.max(0, wall - used);
   const allowed = room / hours;
-  const burning = burn !== null && burn > allowed;
+  const burn = meter.burnPctPerHour;
+  const burning = used >= wall || (burn !== null && burn > allowed * (1 + WEEK.tolerance));
+  const idling = used < wall && burn !== null && burn < allowed * (1 - WEEK.tolerance);
   const runsOutAt = burn !== null && burn > 0 && burning ? new Date(now.getTime() + (room / burn) * 3_600_000) : null;
 
-  const status: Status = offPct > band || burning ? "ahead" : offPct < -band ? "behind" : "on pace";
+  const status: Status = burning ? "ahead" : idling ? "behind" : "on pace";
 
-  let slots = ceiling;
-  if (offPct > band) slots = Math.max(WEEK.floorSlots, Math.floor((ceiling * should) / Math.max(used, 0.0001)));
-  if (burning) slots = Math.min(slots, Math.max(WEEK.floorSlots, Math.floor((ceiling * allowed) / burn)));
+  let slots = burn === null ? Math.min(ceiling, WEEK.unknownSlots) : ceiling;
+  if (burning && burn !== null && burn > 0) slots = Math.min(slots, Math.max(WEEK.floorSlots, Math.floor((ceiling * allowed) / burn)));
   // The reserve is a wall: past it the crew waits for the reset.
   if (used >= wall) slots = 0;
   slots = Math.min(ceiling, Math.max(0, slots));
@@ -130,12 +128,14 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   const release = status === "behind" && input.idleSlots > 0 && input.startable === 0 && input.gated > 0;
   const weekLeft = `${pct(meter.freePct)} of the week left, reset ${utc(meter.resetsAt)}`;
   const sentence =
-    status === "on pace"
-      ? `On pace: ${weekLeft}; ${pct(targetPctPerHour)} an hour spends it by then.`
-      : status === "ahead"
-        ? `Ahead of pace: ${weekLeft}${burn === null ? "" : `, burning ${pct(burn)} an hour`}${runsOutAt === null ? "" : `, running out about ${utc(runsOutAt)}`}; ${slots === 0 ? "holding the crew for the reset" : `slowing to ${slots} of ${ceiling} slots`}.`
-        : `Behind pace by ${pct(-offPct)}: ${weekLeft}; ${pct(targetPctPerHour)} an hour would spend it by then.`;
-  return { status, targetPctPerHour, offPct, runsOutAt, slots, release, sentence };
+    burn === null
+      ? `Burn not known yet: ${weekLeft}; starting at ${slots} of ${ceiling} slots and adjusting within the hour.`
+      : status === "on pace"
+        ? `On pace: ${weekLeft}; burning ${pct(burn)} an hour, ${pct(allowed)} is allowed.`
+        : status === "ahead"
+          ? `Ahead of pace: ${weekLeft}, burning ${pct(burn)} an hour against ${pct(allowed)} allowed${runsOutAt === null ? "" : `, running out about ${utc(runsOutAt)}`}; ${slots === 0 ? "holding the crew for the reset" : `slowing to ${slots} of ${ceiling} slots`}.`
+          : `Behind pace: ${weekLeft}, burning ${pct(burn)} an hour against ${pct(allowed)} allowed; ${slots === 0 ? "holding the crew for the reset" : `speeding up to ${slots} of ${ceiling} slots`}${release ? " and releasing the next issue" : ""}.`;
+  return { status, targetPctPerHour, allowedPctPerHour: allowed, runsOutAt, slots, release, sentence };
 }
 
 /** What each real landing cost, and how many runs it took, over a window. */

@@ -55,7 +55,7 @@ function spend(usd: number, at: Date): void {
 }
 
 /** The week is half over; last week the provider refused at $100, so the cap is known. */
-function week(usedSoFar: number): void {
+function week(usedSoFar: number, recent = 0): void {
   app.db.query("DELETE FROM usage").run();
   spend(100, new Date(NOW.getTime() - 4 * DAY));
   noteLimit(app.db, sub, {
@@ -64,7 +64,9 @@ function week(usedSoFar: number): void {
     observedAt: new Date(NOW.getTime() - 3.5 * DAY - 3_600_000).toISOString(),
     said: "weekly limit",
   });
-  if (usedSoFar > 0) spend(usedSoFar, new Date(NOW.getTime() - DAY));
+  if (usedSoFar - recent > 0) spend(usedSoFar - recent, new Date(NOW.getTime() - DAY));
+  // `recent` dollars fall inside the burn's window: recent / 3 points an hour.
+  if (recent > 0) spend(recent, new Date(NOW.getTime() - 3_600_000));
   forgetWeek();
 }
 
@@ -124,7 +126,7 @@ test("on pace, the gated issue stays behind the gate", async () => {
   if (!again.ok) throw new Error("issue");
   expect(addDependency(app.db, again.value, gate, alice.id).ok).toBe(true);
   // Nothing startable remains for the first issue once it is picked; pace is what decides.
-  week(50);
+  week(50, 1.4);
   expect(await driveRepo(app, repo, NOW)).not.toBe("released");
   expect(getIssue(app.db, repo.id, again.value.number)).toBeDefined();
   const blockers = app.db.query("SELECT COUNT(*) AS n FROM issue_dependency WHERE issue_id = ?1").get(again.value.id) as { n: number };
@@ -132,21 +134,21 @@ test("on pace, the gated issue stays behind the gate", async () => {
 });
 
 test("ahead of pace, the pace cuts the slots, and the reserve stops them", () => {
-  week(70);
-  expect(repoPace(app, repo, NOW).slots).toBe(2);
+  week(70, 6);
+  expect(repoPace(app, repo, NOW).slots).toBe(1);
   expect(repoPace(app, repo, NOW).reason).toContain("Ahead of pace");
   week(95);
   expect(repoPace(app, repo, NOW).slots).toBe(0);
-  week(50);
+  week(50, 1.4);
   expect(repoPace(app, repo, NOW).slots).toBe(4);
 });
 
 test("home and the terminal print the same sentence, the terminal for an admin", async () => {
   week(20);
   const words = weekWords(app, NOW)!;
-  expect(words).toContain("Behind pace by 30%");
+  expect(words).toContain("Behind pace: 80% of the week left");
   expect(words).toContain("Nothing has landed");
-  expect(String(weekLine(app, NOW))).toContain("Behind pace by 30%");
+  expect(String(weekLine(app, NOW))).toContain("Behind pace: 80% of the week left");
   const terminal = headlessTerminal(240, 32);
   const { app: tui } = createForgeApp(
     app,
