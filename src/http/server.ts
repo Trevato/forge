@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { isTokenScheme, tokenSecret } from "./token_header.ts";
 import { followUpstreamCheck, followUpstreamUpdate } from "../web/pages/upstream-follow.ts";
 import { secureFor } from "./cookie_secure.ts";
 import { refusedByDatabase, shownRefusal } from "./refusal.ts";
@@ -542,9 +543,12 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   const header = request.headers.get("authorization");
   if (!header) return NO_AUTH;
 
-  // Bearer is always a token.
-  if (header.startsWith("Bearer ")) {
-    const verified = verifyToken(app.db, header.slice(7));
+  // Bearer is always a token; so is `token <secret>`, the scheme a Gitea
+  // client sends — another forge connecting to this one as an origin.
+  if (isTokenScheme(header)) {
+    const secret = tokenSecret(header);
+    if (secret === null) return NO_AUTH;
+    const verified = verifyToken(app.db, secret);
     if (verified.ok) {
       return {
         user: verified.value.user,
@@ -1563,7 +1567,10 @@ function tokenCredential(request: Request, auth: Auth): string | undefined {
   if (auth.via !== "token") return undefined;
   const header = request.headers.get("authorization");
   if (header === null) return undefined;
-  if (header.startsWith("Bearer ")) return sha256(header.slice(7));
+  if (isTokenScheme(header)) {
+    const secret = tokenSecret(header);
+    return secret === null ? undefined : sha256(secret);
+  }
   if (header.startsWith("Basic ")) {
     const decoded = Buffer.from(header.slice(6), "base64").toString();
     const colon = decoded.indexOf(":");

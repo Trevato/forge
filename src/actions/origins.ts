@@ -181,6 +181,7 @@ export async function connectOrigin(
       kind: found.value.kind,
       apiUrl: found.value.apiUrl,
       webUrl: found.value.webUrl,
+      software: softwareOf(found.value.software),
       token: input.token.trim(),
     }),
   ).whoami();
@@ -196,6 +197,7 @@ export async function connectOrigin(
     login: identity.value.login,
     token: input.token.trim(),
     authKind: "pat",
+    software: softwareOf(found.value.software),
   });
   if (!stored.ok) return stored;
   return ok({
@@ -203,6 +205,9 @@ export async function connectOrigin(
     reattached: await afterConnect(app, user.value, stored.value),
   });
 }
+
+/** What `discover` named the software, as the column that keeps it: another forge or nothing. */
+const softwareOf = (named: string): string => (named.startsWith("forge ") ? "forge" : "");
 
 export type ReplaceTokenError =
   | "unauthorized"
@@ -238,6 +243,7 @@ export async function replaceOriginToken(
       kind: origin.kind,
       apiUrl: origin.apiUrl,
       webUrl: origin.webUrl,
+      software: origin.software,
       token: secret,
     }),
   ).whoami();
@@ -287,6 +293,7 @@ function storeOrigin(
     authKind: "pat" | "oauth";
     refreshToken?: string;
     expiresAt?: string | null;
+    software?: string;
   },
 ): Result<Origin, "already_connected"> {
   // Connecting an account whose credential died is re-authorizing it: the
@@ -330,6 +337,7 @@ function storeOrigin(
       ? {}
       : { refreshToken: input.refreshToken }),
     ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+    ...(input.software === undefined ? {} : { software: input.software }),
   });
   if (!created.ok) return created;
   // The payload names the host and the login and nothing else: an audit

@@ -18,3 +18,10 @@ export const PATH_IS_FILE = "that path is a file, not a directory";
 
 /** A file was asked of a path that is a directory. */
 export const PATH_IS_DIRECTORY = "that path is a directory, not a file";
+
+/**
+ * What comes across from another forge, and what does not — said on the page
+ * and in the API, so a mirror of a friend's app never reads as the whole of it.
+ */
+export const FORGE_NOT_CARRIED =
+  "Code comes across, and the repository's history. Not yet: issues, pulls, comments, labels, and how the app runs. Never by default: its data and its secrets.";

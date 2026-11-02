@@ -58,6 +58,7 @@ export function credentialFor(
     webUrl: origin.webUrl,
     login: origin.login,
     authKind: origin.authKind,
+    software: origin.software,
     token: () => resolveToken(app, origin.id),
   });
 }

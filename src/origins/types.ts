@@ -42,6 +42,11 @@ export interface Origin {
    * is how one expired token becomes a permanent error loop.
    */
   readonly needsReauth: boolean;
+  /**
+   * What the origin runs when its kind does not say: `forge` for another
+   * forge (stored as a Gitea origin, which is the dialect it speaks), else "".
+   */
+  readonly software: string;
 }
 
 /** A repository as the origin describes it — the import picker's rows. */
@@ -463,6 +468,8 @@ export interface ProviderCredential {
    * Bearer for both. @default "pat"
    */
   readonly authKind?: AuthKind;
+  /** `forge` when the origin is another forge; see `Origin.software`. */
+  readonly software?: string;
   /**
    * The bearer secret for one call. A failure here is `unauthorized` — the
    * credential is gone or unrefreshable, and the origin needs reconnecting.

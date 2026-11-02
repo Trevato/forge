@@ -17,6 +17,7 @@
  * where it was — that page and its poll live in `origin-flow.ts`.
  */
 
+import { FORGE_NOT_CARRIED } from "../../origins/words.ts";
 import {
   connectOrigin,
   deleteOriginApp,
@@ -31,6 +32,7 @@ import {
 } from "../../actions/origins.ts";
 import {
   NO_SUCH_ORIGIN,
+  connectWords,
   disconnectedWords,
   syncedWords,
 } from "../../actions/origin_words.ts";
@@ -351,6 +353,10 @@ function originCard(origin: Origin, mirrors: number): Html {
         </div>`,
       )}
       ${when(origin.needsReauth, () => reauthNote(origin, mirrors))}
+      ${when(
+        origin.software === "forge",
+        () => html`<p class="small mt">Another forge. ${FORGE_NOT_CARRIED}</p>`,
+      )}
       <div class="bar mt">
         <form method="post" action="${base}/sync">
           ${btn("Sync now", { size: "sm", icon: "sync" })}
@@ -915,18 +921,7 @@ export async function originConnectToken(ctx: Ctx): Promise<Response> {
   });
 }
 
-function connectMessage(error: string): string {
-  const words: Record<string, string> = {
-    unknown_host: "That does not look like a forge this can talk to.",
-    private_host: "That address is inside a network, not on the internet.",
-    unreachable: "That instance could not be reached.",
-    bad_token: "That token was refused by the origin.",
-    already_connected: "That account is already connected.",
-    rate_limited: "Too many connect attempts. Wait a few minutes.",
-    unauthorized: "Sign in first.",
-  };
-  return words[error] ?? "That connection could not be made.";
-}
+const connectMessage = connectWords;
 
 // POST /settings/origins/oauth
 /**

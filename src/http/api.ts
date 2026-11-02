@@ -334,6 +334,8 @@ import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
 import { flagsRoutes } from "./api/flags.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
+import { FORGE_NOT_CARRIED } from "../origins/words.ts";
+import { forgeOriginRoutes } from "./api/forge_origin.ts";
 import { userRoutes } from "./api/user.ts";
 import { appRoutes } from "./api/app.ts";
 import { appNoteRoutes } from "./api/app_notes.ts";
@@ -539,6 +541,9 @@ export function originJson(origin: Origin) {
     lastError: origin.lastError,
     needsReauth: origin.needsReauth,
     expiresAt: origin.expiresAt,
+    software: origin.software,
+    // What a forge origin does not bring, said where a client reads the origin.
+    carries: origin.software === "forge" ? FORGE_NOT_CARRIED : null,
   };
 }
 
@@ -1157,6 +1162,7 @@ export function apiRoutes(router: Router<Handler>): void {
   tokenRoutes(router);
 
   userRoutes(router);
+  forgeOriginRoutes(router);
   adminRoutes(router);
   flagsRoutes(router);
 

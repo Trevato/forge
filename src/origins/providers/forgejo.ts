@@ -92,7 +92,7 @@ export class ForgejoProvider implements Provider {
   readonly kind: OriginKind;
   readonly apiUrl: string;
   readonly webUrl: string;
-  private readonly api: ApiClient;
+  protected readonly api: ApiClient;
   /** The instance's `max_response_items`, learned once. */
   private limit: number | undefined;
   /** Our own numeric id, needed for the repo search that sees org repos. */
@@ -116,7 +116,7 @@ export class ForgejoProvider implements Provider {
    * an error here, it is a silent truncation — the one pagination bug that
    * looks like a correct empty result.
    */
-  private async pageSize(): Promise<number> {
+  protected async pageSize(): Promise<number> {
     if (this.limit !== undefined) return this.limit;
     const result = await this.api.call({ path: "/settings/api" });
     const reported = result.ok
@@ -767,7 +767,7 @@ const pageOf = (cursor: string | undefined): number => {
  * deliberately conservative, because a page shorter than `limit` here means
  * "the server clamped you", not "the list ended".
  */
-function nextPage(
+export function nextPage(
   headers: Headers,
   received: number,
   limit: number,
@@ -780,7 +780,7 @@ function nextPage(
 
 // ---- mapping ----
 
-function toRepo(raw: unknown): RemoteRepo {
+export function toRepo(raw: unknown): RemoteRepo {
   const fullName = asString(field(raw, "full_name"));
   const named = splitFullName(fullName);
   return {

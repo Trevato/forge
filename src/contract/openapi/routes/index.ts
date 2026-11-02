@@ -178,9 +178,11 @@ export { route as getApiV1UserOriginsIdMirrorJobStream } from "./getApiV1UserOri
 export { route as getApiV1UserOriginsIdRepos } from "./getApiV1UserOriginsIdRepos.ts";
 export { route as getApiV1UserOriginsOauthId } from "./getApiV1UserOriginsOauthId.ts";
 export { route as getApiV1UserPins } from "./getApiV1UserPins.ts";
+export { route as getApiV1UserRepos } from "./getApiV1UserRepos.ts";
 export { route as getApiV1UsersUsername } from "./getApiV1UsersUsername.ts";
 export { route as getApiV1UsersUsernameRepos } from "./getApiV1UsersUsernameRepos.ts";
 export { route as getApiV1UsersUsernameSignins } from "./getApiV1UsersUsernameSignins.ts";
+export { route as getApiV1Version } from "./getApiV1Version.ts";
 export { route as getContractOpenapiJson } from "./getContractOpenapiJson.ts";
 export { route as getMetrics } from "./getMetrics.ts";
 export { route as patchApiV1AdminSettings } from "./patchApiV1AdminSettings.ts";

@@ -230,13 +230,16 @@ async function viaVersionEndpoint(
   if (!doc.ok) return undefined;
   const version = asString(field(doc.value, "version"));
   if (version === "") return undefined;
+  // Another forge of this kind says so, and speaks the Gitea dialect: it is
+  // stored as a Gitea origin and shown as a forge (`docs/features/forge-origin.md`).
+  const forge = asString(field(doc.value, "software")) === "forge";
   const kind: OriginKind = version.includes("+gitea-") ? "forgejo" : "gitea";
   return {
     kind,
     apiUrl: `${web}/api/v1`,
     webUrl: web,
     via: "version-endpoint",
-    software: version,
+    software: forge ? `forge ${version}` : version,
   };
 }
 

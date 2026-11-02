@@ -35,6 +35,7 @@ interface OriginRow {
   refresh_token_enc: string;
   expires_at: string | null;
   needs_reauth: number;
+  software: string;
 }
 
 function toOrigin(row: OriginRow): Origin {
@@ -51,6 +52,7 @@ function toOrigin(row: OriginRow): Origin {
     authKind: row.auth_kind,
     expiresAt: row.expires_at,
     needsReauth: row.needs_reauth === 1,
+    software: row.software,
   };
 }
 
@@ -68,6 +70,8 @@ export interface CreateOriginInput {
   refreshToken?: string;
   /** OAuth only: when the access token stops working. */
   expiresAt?: string | null;
+  /** `forge` for another forge; see `Origin.software`. */
+  software?: string;
 }
 
 export type CreateOriginError = "already_connected";
@@ -93,8 +97,8 @@ export function createOrigin(
   const originId = id();
   db.query(
     `INSERT INTO origin (id, user_id, kind, api_url, web_url, login, token_enc,
-                         auth_kind, refresh_token_enc, expires_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+                         auth_kind, refresh_token_enc, expires_at, software)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
   ).run(
     originId,
     input.userId,
@@ -108,6 +112,7 @@ export function createOrigin(
       ? ""
       : seal(dataDir, input.refreshToken, originId),
     input.expiresAt ?? null,
+    input.software ?? "",
   );
   return ok(getOriginById(db, originId)!);
 }
