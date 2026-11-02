@@ -6,6 +6,7 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
+import { diffMemoryKey, recalledBase, rememberBase } from "./diff-memory.ts";
 import { runGit, runGitCapture } from "./env.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "./guard.ts";
 
@@ -295,8 +296,15 @@ export async function mergeBase(
   b: string,
 ): Promise<string | undefined> {
   if (!isSafeOid(a) || !isSafeOid(b)) return undefined;
+  // Two commits' merge base never changes: the next asker reads it from memory.
+  const key = diffMemoryKey(dir, a, b);
+  const known = recalledBase(key);
+  if (known !== undefined) return known;
   const result = await runGit(["merge-base", a, b], { cwd: dir });
-  return result.ok ? result.value.trim() : undefined;
+  if (!result.ok) return undefined;
+  const base = result.value.trim();
+  rememberBase(key, base);
+  return base;
 }
 
 /**

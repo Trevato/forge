@@ -257,7 +257,7 @@ import { carriedBy } from "../core/carried.ts";
 import { readGateLog } from "../checks/gate_log.ts";
 import { recentGates } from "../checks/gate_result.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
-import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
+import { blobForRender, commitLog, listRefs, listTree, refTip } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves } from "../story/waves.ts";
@@ -959,6 +959,10 @@ async function pullHeadOid(ctx: Ctx, repo: Repo, pull: Pull): Promise<string> {
     : `refs/heads/${pull.headBranch}`;
   return (await resolveOid(await pullDirOf(ctx, repo, pull), ref)) ?? pull.headOid;
 }
+
+/** A branch's tip from its ref file (no process); git is asked only when that cannot be read. */
+const baseTip = async (dir: string, ref: string): Promise<string | undefined> =>
+  (await refTip(dir, ref)) ?? (await resolveOid(dir, ref));
 
 /** Where a pull's objects are (`pullDir`): its base, or a sealed one's own place. */
 const pullDirOf = (ctx: Ctx, repo: Repo, pull: Pull): Promise<string> =>
@@ -2400,10 +2404,7 @@ export function apiRoutes(router: Router<Handler>): void {
         live &&
         checkStale(
           checkSummary(ctx.app.db, found.pull.id, status.headOid).run,
-          await resolveOid(
-            await pullDirOf(ctx, found.repo, found.pull),
-            `refs/heads/${found.pull.baseBranch}`,
-          ),
+          await baseTip(await pullDirOf(ctx, found.repo, found.pull), `refs/heads/${found.pull.baseBranch}`),
         ),
     );
     return timePhase(ctx.request, "render", () => {

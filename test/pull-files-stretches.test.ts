@@ -8,6 +8,7 @@ import { addReview, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { forgetDiffs } from "../src/git/diff-memory.ts";
 import { clearDiffCache } from "../src/web/diff-cache.ts";
 import { clearHeadReads } from "../src/web/head-reads.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -71,7 +72,10 @@ const phase = (header: string, name: string) => {
 };
 
 test("a 3,000-line, 20-file diff names its stretches cold and draws under 30 ms warm, comments on their lines", async () => {
+  // Cold means nothing remembered anywhere: the page's cache, and git's own
+  // memory of the pair and its merge base, which opening the pull filled.
   clearDiffCache();
+  forgetDiffs();
   clearHeadReads();
   const first = await fetch(url);
   await first.arrayBuffer();
