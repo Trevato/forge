@@ -1,6 +1,6 @@
 /** MCP `backups`: the Backups page's destination, snapshots and mirror, for an admin. */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,10 +83,10 @@ describe("MCP backups", () => {
 
   test("a listing that fails is a short sentence with no key in it", async () => {
     const secret = "SECRETKEY-do-not-leak";
-    // A loopback store that answers 500 at once and echoes the key in its
-    // body: the verdict rests on our code, not on how Bun parses a bad URL.
-    const fake = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(`boom ${secret} ACCESSKEY-do-not-leak`, { status: 500 }) });
-    const env = { S3_ENDPOINT: `http://127.0.0.1:${fake.port}`, S3_BUCKET: "b", S3_ACCESS_KEY: "ACCESSKEY-do-not-leak", S3_SECRET_KEY: secret };
+    // The store's client fails at once and echoes both keys, as a real one may:
+    // no socket, no proxy, no clock — the verdict rests on our code alone.
+    const failing = spyOn(Bun.S3Client.prototype, "list").mockRejectedValue(new Error(`S3Error: ${secret} ACCESSKEY-do-not-leak`));
+    const env = { S3_ENDPOINT: "http://store.invalid", S3_BUCKET: "b", S3_ACCESS_KEY: "ACCESSKEY-do-not-leak", S3_SECRET_KEY: secret };
     delete process.env["FORGE_SNAPSHOT_DIR"];
     Object.assign(process.env, env);
     try {
@@ -97,12 +97,13 @@ describe("MCP backups", () => {
       expect(out.listing.length).toBeLessThanOrEqual(200);
       // One try, not the store's five with 7.5 s of backoff between them.
       expect(out.listing).toContain("after 1 attempt:");
+      expect(failing).toHaveBeenCalledTimes(1);
       expect(out.listing).not.toContain(secret);
       expect(out.listing).not.toContain("ACCESSKEY-do-not-leak");
     } finally {
       for (const k of Object.keys(env)) delete process.env[k];
       process.env["FORGE_SNAPSHOT_DIR"] = snapDir;
-      await fake.stop(true);
+      failing.mockRestore();
     }
   }, 20_000);
 
