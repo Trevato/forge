@@ -261,14 +261,56 @@ describe("the ranked list is bounded", () => {
 });
 
 describe("the picker's order", () => {
-  test("a ranked issue comes before raised and roadmap work, and small work at its cap is still taken when ranked", async () => {
+  test("at the small cap a ranked small issue survives and keeps its place; an unranked one is left out", async () => {
     const { slotOrder } = await import("../src/crew/small_share.ts");
     const items = [
-      { id: "roadmap", raised: false, roadmap: true, small: false },
-      { id: "raised", raised: true, roadmap: false, small: false },
-      { id: "ranked-small", ranked: true, raised: false, roadmap: false, small: true },
+      { id: "a", small: false },
+      { id: "ranked-small", ranked: true, small: true },
+      { id: "b", small: true },
     ];
     const picks = slotOrder(items, (t) => t, 1, 1).map((t) => t.id);
-    expect(picks).toEqual(["ranked-small", "raised", "roadmap"]);
+    expect(picks).toEqual(["a", "ranked-small"]);
+  });
+});
+
+describe("the picker follows the page (#8826)", () => {
+  test("with two ranked and three unranked issues, five ticks start the page's rows top to bottom", async () => {
+    const { inSlotOrder } = await import("../src/crew/autonomy.ts");
+    const dir = await mkdtemp(join(tmpdir(), "forge-next-order-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    try {
+      const made = await createUser(app.db, {
+        origin: "seed", trusted: true, username: "alice", email: "alice@forge.local",
+        password: "a-good-passphrase", adminIfFirst: true,
+      });
+      if (!made.ok) throw new Error(made.error);
+      const alice = made.value;
+      const r = await createRepo(app, alice, { name: "plan", visibility: "public" });
+      if (!r.ok) throw new Error(String(r.error));
+      const repo = r.value;
+      const num: number[] = [];
+      for (const t of ["one", "two", "three", "four", "five"]) {
+        const o = openIssue(app, alice, repo, { title: `Work ${t}` });
+        if (!o.ok) throw new Error(String(o.error));
+        num.push(o.value.number);
+      }
+      // Rank the fifth, then the third above it; the rest stay unranked.
+      expect(rankIssue(app, alice, repo, num[4]!, placeOf("top")!).ok).toBe(true);
+      expect(rankIssue(app, alice, repo, num[2]!, placeOf("top")!).ok).toBe(true);
+      const page = nextUp(app.db, repo).rows.map((x) => x.issue.number);
+      expect(page.slice(0, 2)).toEqual([num[2]!, num[4]!]);
+      const started: number[] = [];
+      for (let tick = 0; tick < 5; tick++) {
+        const ready = readyNow(repoGraph(app.db, repo.id, { sealed: true })).filter(
+          (x) => !started.includes(x.issue.number),
+        );
+        const next = inSlotOrder(app, repo, ready, [], 5)[0]!;
+        started.push(next.issue.number);
+      }
+      expect(started).toEqual(page);
+    } finally {
+      app.db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

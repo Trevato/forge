@@ -282,14 +282,13 @@ the planner's, found done on main and waiting for a person to close it
 unticked and waiting for a person to answer (`landed`, `crew/landed.ts`), stalled, at its run cap, parked twice, covered by a red-main
 fix, or a setting's finding. The flow panel on `/boards` draws the same per autonomous app as one
 bar, and the terminal's Flow command prints it as a line per app
-(`flow/held.ts`, kept 5 s). Of the startable, what the owner raised again
-stays on top, then the roadmap is picked
-(#7571, `crew/small_share.ts`): an issue under an open epic or a P0/P1 pillar,
-then other work, then small issues — a title like "A test pins …" or
-"Tests: …", or a label `test`, `tests`, `tests-only` or `small` — and small issues hold
+(`flow/held.ts`, kept 5 s). Of the startable, the picker takes the order Next up shows
+(#8826, `pickOrder` in `core/next_up.ts`): the owner's ranked issues by place,
+then the ready order, what the owner raised again first. Small issues — a title like "A test pins …" or
+"Tests: …", or a label `test`, `tests`, `tests-only` or `small` (#7571, `crew/small_share.ts`) — hold
 at most `slots.smallShare` percent of the builder slots (default 30, rounded up:
 2 of 5; an admin sets it on `/settings/capacity`). At the cap a small issue is
-skipped, not waited on, raised or not. The tick line's `small: 1/2`, the
+skipped, not waited on, unless the owner ranked it. The tick line's `small: 1/2`, the
 Flow command's `small 1/2`, the app's row in Today on `/boards` (`small
 issues: 1 of 2 slots`) and the studio's crew panel show small issues in
 flight of what they may hold. When nothing is startable while builder slots are free and some of the

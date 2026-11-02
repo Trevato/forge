@@ -31,7 +31,7 @@ import { addLearned } from "../checks/learned.ts";
 import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
 import { queueBatch, queueDepth, smallShare } from "../core/capacity.ts";
-import { roadmapIssues, shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
+import { shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
 import { backedBetOf, betsInUse } from "../core/bets.ts";
 import { mayPick } from "./bets.ts";
 import { raisedAt } from "../core/thought_links.ts";
@@ -48,6 +48,7 @@ import {
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
 import { firstAt } from "../core/first.ts";
+import { pickOrder } from "../core/next_up.ts";
 import { ranksInRepo } from "../core/rank.ts";
 import { ensurePlanner } from "./planner.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
@@ -404,11 +405,10 @@ function freeSlots(app: App, repo: Repo, now: Date): number {
   return Math.max(0, repoPace(app, repo, now).slots - slotted.length);
 }
 
-/** The pickable issues in slot order: the owner's raised on top, then the roadmap, small last and none past their share (#7571). */
-function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: readonly Run[], slots: number, picked: ReadonlySet<string> = new Set()): Ranked[] {
+/** The pickable issues in slot order: the order Next up shows, small work held to its share (#7571). */
+export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: readonly Run[], slots: number, picked: ReadonlySet<string> = new Set()): Ranked[] {
   const issues = ready.map((r) => r.issue);
   const small = smallIssues(app.db, issues);
-  const roadmap = roadmapIssues(app.db, repo, issues.map((i) => i.id));
   const first = firstAt(app.db, issues.map((i) => i.id));
   const ranked = ranksInRepo(app.db, repo.id);
   const raised = raisedAt(app.db, issues.map((i) => i.id));
@@ -426,12 +426,11 @@ function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: re
             bet: bets.get(r.issue.id),
           }),
         );
+  // The order is the one Next up shows (#8826): ranked by place, then the ready order.
   return slotOrder(
-    allowed,
+    pickOrder(allowed, ranked, (r) => r.issue.id),
     (r) => ({
       ranked: ranked.has(r.issue.id),
-      raised: raised.has(r.issue.id) || first.has(r.issue.id),
-      roadmap: roadmap.has(r.issue.id),
       small: small.has(r.issue.id) && !first.has(r.issue.id),
     }),
     running,

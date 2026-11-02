@@ -4,10 +4,8 @@
  * quick to land, so left alone they fill every slot and the open-pull limit
  * while the roadmap waits. Two rules keep them in their place:
  *
- * - **Pick order:** what the owner raised again stays on top, as the map
- *   ranks it (#654); then an issue under an open epic or a P0/P1 pillar,
- *   then other roadmap-sized work, then the small ones; each keeps the
- *   map's order among its own.
+ * - **Pick order:** the order Next up shows, ranked rows then the ready tail
+ *   (`pickOrder` in core/next_up.ts); the picker has no order of its own.
  * - **A cap:** small issues hold at most `slots.smallShare` percent of the
  *   builder slots (rounded up, so one slot may still take one). At the cap a
  *   small issue is skipped, never waited on: the slot goes to other work or
@@ -20,16 +18,11 @@
 
 import type { Database } from "bun:sqlite";
 import { labelsForIssues } from "../core/issues.ts";
-import { isStructural, pillarsOf, servedBy } from "../core/pillars.ts";
-import type { Repo } from "../core/repos.ts";
 
 /** Titles that say an issue only pins a behaviour with a test, or is a small addition. */
 const SMALL_TITLE = /^(a test (pins|proves|shows|names|covers)\b|tests?( only)?:|small:)/i;
 /** Labels that say the same. */
 const SMALL_LABELS = new Set(["test", "tests", "tests-only", "small"]);
-/** The pillars whose work comes first. */
-const FIRST_PILLAR = /^P[01] /;
-
 /** Whether an issue's title or labels mark it tests-only or a small addition. */
 export function isSmall(title: string, labels: readonly string[]): boolean {
   return SMALL_TITLE.test(title.trim()) || labels.some((l) => SMALL_LABELS.has(l.toLowerCase()));
@@ -52,38 +45,27 @@ export function smallIssuesWords(share: { readonly running: number; readonly cap
 }
 
 export interface Classed {
-  /** On the owner's ranked list (#8694): before everything, small or not. */
+  /** On the owner's ranked list (#8694): never held back by the cap, small or not. */
   readonly ranked?: boolean;
-  /** Raised again by the owner: on top whatever else it is. */
-  readonly raised: boolean;
-  /** Under an open epic or a P0/P1 pillar. */
-  readonly roadmap: boolean;
   readonly small: boolean;
 }
 
 /**
- * The ready list in pick order: the owner's ranked list strictly first (#8694), then what the owner raised again, then
- * roadmap work, then other, small work last, the map's order kept within
- * each; small work — raised or not — is left out once `running` small
- * issues fill `cap`.
+ * The order is not decided here: `ordered` arrives in the order Next up shows
+ * (#8826) and keeps it. All this does is leave small work out — raised or
+ * not, unless the owner ranked it — once `running` small issues fill `cap`.
  */
 export function slotOrder<T>(
-  ready: readonly T[],
+  ordered: readonly T[],
   classOf: (t: T) => Classed,
   running: number,
   cap: number,
 ): T[] {
-  const rank = (t: T) => {
-    const c = classOf(t);
-    if (c.ranked === true) return { r: -2, small: false };
-    return { r: c.raised ? -1 : c.small ? 2 : c.roadmap ? 0 : 1, small: c.small };
-  };
   const open = running < cap;
-  return ready
-    .map((t, at) => ({ t, at, ...rank(t) }))
-    .filter((x) => open || !x.small)
-    .sort((a, b) => a.r - b.r || a.at - b.at)
-    .map((x) => x.t);
+  return ordered.filter((t) => {
+    const c = classOf(t);
+    return open || c.ranked === true || !c.small;
+  });
 }
 
 /** Which of these issues are small, from their titles and labels. */
@@ -109,25 +91,4 @@ export function smallOfIds(db: Database, ids: readonly string[]): number {
     )
     .all(...unique);
   return smallIssues(db, rows).size;
-}
-
-/**
- * Which of these issues are roadmap work: served by a P0 or P1 pillar, or
- * waited for by an open epic — an open issue other than the plan's furniture.
- */
-export function roadmapIssues(db: Database, repo: Repo, ids: readonly string[]): Set<string> {
-  const out = new Set<string>();
-  if (ids.length === 0) return out;
-  const set = pillarsOf(db, repo);
-  const served = servedBy(db, set);
-  for (const id of ids) if (FIRST_PILLAR.test(served.get(id) ?? "")) out.add(id);
-  const rows = db
-    .query<{ id: string; parent: string }, string[]>(
-      `SELECT d.blocked_by_id AS id, d.issue_id AS parent
-         FROM issue_dependency d JOIN issue i ON i.id = d.issue_id
-        WHERE i.state = 'open' AND d.blocked_by_id IN (${ids.map((_, n) => `?${n + 1}`).join(",")})`,
-    )
-    .all(...ids);
-  for (const row of rows) if (!isStructural(set, row.parent)) out.add(row.id);
-  return out;
 }

@@ -85,6 +85,24 @@ export function roleOf(
   };
 }
 
+/**
+ * The whole order, once (#8826): the ranked issues by place, then the ready
+ * ones nobody ranked, in the ready order. Next up shows it and the picker
+ * takes from it; neither keeps an order of its own. `blocked` is the open
+ * ranked issues that are not ready: the page shows them in their place, and
+ * the picker, which can only start what is ready, passes none.
+ */
+export function pickOrder<T>(
+  ready: readonly T[],
+  ranks: ReadonlyMap<string, number>,
+  idOf: (t: T) => string,
+  blocked: readonly T[] = [],
+): T[] {
+  const place = (t: T) => ranks.get(idOf(t));
+  const ranked = [...ready, ...blocked].filter((t) => place(t) !== undefined).sort((a, b) => place(a)! - place(b)!);
+  return [...ranked, ...ready.filter((t) => place(t) === undefined)];
+}
+
 /** The list for one repository; `scope` is what `sealedScope` says the viewer may see. */
 export function nextUp(
   db: Database,
@@ -95,9 +113,6 @@ export function nextUp(
   const ranks = graph.ranked ?? new Map<string, number>();
   const ready = readyNow(graph).map((r) => r.issue);
   const readyIds = new Set(ready.map((i) => i.id));
-  const ranked = graph.issues
-    .filter((i) => i.state === "open" && ranks.has(i.id))
-    .sort((a, b) => ranks.get(a.id)! - ranks.get(b.id)!);
   // Who is on an issue: the crew running it right now, else whoever it is assigned to.
   const crew = new Map<string, string>();
   for (const run of listActiveRuns(db, [repo.id])) {
@@ -113,7 +128,8 @@ export function nextUp(
     onIt: crew.get(issue.id) ?? issue.assigneeName,
     why: readyIds.has(issue.id) ? null : whyNot(graph, issue),
   });
-  const rows = [...ranked, ...ready.filter((i) => !ranks.has(i.id))].map(rowOf);
+  const blocked = graph.issues.filter((i) => i.state === "open" && ranks.has(i.id) && !readyIds.has(i.id));
+  const rows = pickOrder(ready, ranks, (i) => i.id, blocked).map(rowOf);
   const listed = new Set(rows.map((r) => r.issue.id));
   const away = graph.issues.filter(
     (i) => i.state === "open" && graph.deferred.has(i.id) && !listed.has(i.id) && !graph.structural.has(i.id),

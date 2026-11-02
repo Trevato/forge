@@ -114,7 +114,7 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     env: "FORGE_SLOTS_SMALL_SHARE",
     kind: { type: "count", min: 0, max: 100 },
     fallback: "30",
-    help: "The most of a repository's builder slots that tests-only and small-addition issues (\"A test pins …\", or a label test, tests, tests-only or small) hold at once, as a percent rounded up: 30 lets 2 of 5 slots go to them. At the cap a small issue is skipped and the slot goes to roadmap work; roadmap work is picked first either way. 100 lifts the cap; 0 starts none. Read on every pick.",
+    help: "The most of a repository's builder slots that tests-only and small-addition issues (\"A test pins …\", or a label test, tests, tests-only or small) hold at once, as a percent rounded up: 30 lets 2 of 5 slots go to them. At the cap a small issue is skipped and the slot goes to the next issue in the Next up order; a ranked small issue is still taken. 100 lifts the cap; 0 starts none. Read on every pick.",
   },
 };
 

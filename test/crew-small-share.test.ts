@@ -14,11 +14,14 @@ import { linkIssue } from "../src/actions/dependencies.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { smallShare } from "../src/core/capacity.ts";
+import { readyNow, repoGraph } from "../src/core/dependencies.ts";
+import { nextUp } from "../src/core/next_up.ts";
+import { putFirst } from "../src/core/first.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { driveRepo, smallShareWords } from "../src/crew/autonomy.ts";
+import { driveRepo, inSlotOrder, smallShareWords } from "../src/crew/autonomy.ts";
 import { isSmall, shareWords, slotOrder, smallCap, smallIssuesWords } from "../src/crew/small_share.ts";
 import { readHeld } from "../src/flow/held.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -39,16 +42,10 @@ describe("the rules", () => {
     expect(smallCap(5, 100)).toBe(5);
   });
 
-  test("roadmap first, small last, and small left out at the cap", () => {
-    const c = (t: string) => ({ raised: false, roadmap: t.startsWith("r"), small: t.startsWith("s") });
-    expect(slotOrder(["s1", "o1", "r1", "s2", "r2"], c, 0, 2)).toEqual(["r1", "r2", "o1", "s1", "s2"]);
-    expect(slotOrder(["s1", "o1", "r1"], c, 2, 2)).toEqual(["r1", "o1"]);
-  });
-
-  test("what the owner raised again stays on top, in the map's order; a raised small one still keeps to the cap", () => {
-    const c = (t: string) => ({ raised: t.endsWith("!"), roadmap: t.startsWith("r"), small: t.startsWith("s") });
-    expect(slotOrder(["r1", "o1!", "s1!", "r2"], c, 0, 2)).toEqual(["o1!", "s1!", "r1", "r2"]);
-    expect(slotOrder(["r1", "o1!", "s1!"], c, 2, 2)).toEqual(["o1!", "r1"]);
+  test("the order given is kept, and small work is left out at the cap unless ranked", () => {
+    const c = (t: string) => ({ ranked: t.endsWith("^"), small: t.startsWith("s") });
+    expect(slotOrder(["s1", "o1", "r1", "s2"], c, 0, 2)).toEqual(["s1", "o1", "r1", "s2"]);
+    expect(slotOrder(["s1", "o1", "s2^", "r1"], c, 2, 2)).toEqual(["o1", "s2^", "r1"]);
   });
 
   test("each label the docs name is small, and the words read as the doors print them", () => {
@@ -181,14 +178,42 @@ test("one small issue of two slots shows on /board's Today, the studio's crew pa
   expect(flow).toMatch(/^alice\/notes startable=\d+.* small 2\/2$/m);
 });
 
-test("what the owner raised again starts before an epic's issue", async () => {
-  const plain = open("Rename a note");
+test("what the owner raised again is first in the page's order and in the picker's, ahead of an older epic issue", async () => {
   const epic = open("Notes export");
   const child = open("Export notes as text");
+  const plain = open("Rename a note");
   expect(linkIssue(app, alice, fresh(), epic, child).ok).toBe(true);
   app.db.query("INSERT INTO issue_raise (issue_id, raised_at) VALUES (?1, ?2)").run(plain.id, new Date().toISOString());
+  const mine = new Set([plain.id, child.id]);
+  const ready = readyNow(repoGraph(app.db, repo.id, { sealed: true }));
+  const picker = inSlotOrder(app, fresh(), ready, [], 5).map((r) => r.issue.id).filter((id) => mine.has(id));
+  const page = nextUp(app.db, fresh()).rows.map((r) => r.issue.id).filter((id) => mine.has(id));
+  expect(picker).toEqual([plain.id, child.id]);
+  expect(page).toEqual(picker);
   // Both start in the one tick: slots are free for the owner's issue and the epic's.
   expect((await drive([plain, child])).map((i) => i.id).sort()).toEqual([plain.id, child.id].sort());
+});
+
+test("an epic's issue leads older plain work only as the page's ready order has it, and what a person put first leads both", async () => {
+  const older = open("Sort notes by date");
+  const epic = open("Notes import");
+  const child = open("Import notes from text");
+  expect(linkIssue(app, alice, fresh(), epic, child).ok).toBe(true);
+  const order = () => {
+    const mine = new Set([older.id, child.id]);
+    const ready = readyNow(repoGraph(app.db, repo.id, { sealed: true }));
+    const picker = inSlotOrder(app, fresh(), ready, [], 5).map((r) => r.issue.id).filter((id) => mine.has(id));
+    const page = nextUp(app.db, fresh()).rows.map((r) => r.issue.id).filter((id) => mine.has(id));
+    expect(page).toEqual(picker);
+    return picker;
+  };
+  // Finishing the child frees the epic, so the ready order (readyNow) puts it first; no second rule does.
+  expect(order()).toEqual([child.id, older.id]);
+  expect(putFirst(app, alice, fresh(), getIssueById(app.db, older.id)!).ok).toBe(true);
+  expect(order()).toEqual([older.id, child.id]);
+  // Clean up so the drives below see the same open work as before.
+  for (const i of [older, epic, child]) app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(i.id);
+  opened.splice(opened.length - 3, 3);
 });
 
 test("slots.smallShare set on /settings/capacity changes the pick: 0 starts no small issue, 100 does; out of range is refused", async () => {
