@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { setCrawlClock } from "../src/http/crawl.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { renderBlob } from "../src/web/pages/repo.ts";
 import type { RepoScope } from "../src/web/scope.ts";
@@ -32,6 +33,9 @@ beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-image-"));
   app = createApp({ dataDir, port: 0 });
   servers = await serve(app);
+  // Each page is read in a minute of its own: the anonymous deep-page budget is not under test.
+  let minute = 0;
+  setCrawlClock(app, () => (minute += 60_000));
   const a = await seedAdmin(app, { username: "alice", email: "a@f.dev", password: "a-long-image-passphrase" });
   if (!a.ok) throw new Error("signup failed");
   const repo = await createRepo(app, a.value, { name: "pics", visibility: "public" });
