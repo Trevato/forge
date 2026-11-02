@@ -59,6 +59,7 @@ import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.t
 import { parseBunTestFailure } from "./bun-test.ts";
 import { recordCrashFlakes, passedAlone, recordFlakes, rerunCommand, rerunnable, pullOwnsRed } from "./flake.ts";
 import { diskRecovered, withDisk } from "./disk_red.ts";
+import { scratchEnv } from "./disk_full.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
@@ -1160,6 +1161,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         // The cell's CPU limit, which `availableParallelism()` may not
         // report inside it; the shard count follows this (#2257).
         FORGE_CELL_CPUS: String(cellCpus),
+        // The one place besides the checkout the cell can write on disk; its
+        // own /tmp is a 256 MiB tmpfs the shards would fill (#8679).
+        ...scratchEnv(cell === undefined ? undefined : home),
         ...(base === undefined
           ? {}
           : {

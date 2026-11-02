@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { TEMP_FULL } from "../checks/disk_full.ts";
 import { freshPullFor } from "./fresh_pull.ts";
 import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
@@ -1149,6 +1150,10 @@ export async function judgeFailedCheck(
 ): Promise<CheckJudgement> {
   const run = getRun(app.db, runId);
   const failingTest = run?.checkDetail?.names[0];
+  // A shard that ran out of temp space is the machine's, whatever a decider
+  // might guess: the check runs again without spending the agent's tries.
+  if (run?.checkDetail?.environment === TEMP_FULL)
+    return { retry: "again", cause: "environment", failingTest };
   if (app.config.decider === undefined)
     return { retry: "again", cause: "change", failingTest };
   // A pull that does not merge is the change's, whatever a decider might

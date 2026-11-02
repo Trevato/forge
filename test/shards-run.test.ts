@@ -11,6 +11,35 @@ import { join } from "node:path";
 import { CRASH_RERUNS } from "../scripts/shards.ts";
 import { EXCLUDED, gateFiles, presentTests } from "../scripts/gate.ts";
 
+describe("where a shard writes", () => {
+  test("its TMPDIR sits under FORGE_CHECK_SCRATCH, and a red shard logs the free space (#8679)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "shards-scratch-"));
+    const scratch = join(dir, "scratch");
+    writeFileSync(
+      join(dir, "where.test.ts"),
+      `import { expect, test } from "bun:test";
+test("temp is on the scratch", () => {
+  console.log("TMP=" + process.env.TMPDIR);
+  expect(false).toBe(true);
+});
+`,
+    );
+    const script = new URL("../scripts/test-shards.ts", import.meta.url).pathname;
+    const child = Bun.spawn(["bun", script, "where.test.ts"], {
+      cwd: dir,
+      env: { ...process.env, FORGE_CHECK_SHARDS: "1", FORGE_CHECK_SCRATCH: scratch },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    await child.exited;
+    rmSync(dir, { recursive: true, force: true });
+    expect(out).toContain(`TMP=${scratch}/shard-`);
+    expect(out).toMatch(/test-shards: space after a red shard: scratch .*MiB free of/);
+  }, 30_000);
+});
+
 describe("the shard's output", () => {
   // A check's log is this script's stdout, line by line, as the forge
   // reads it (`checks/service.ts`). Holding a shard's output until it

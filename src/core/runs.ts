@@ -49,6 +49,8 @@ export interface CheckDetail {
   readonly failures?: readonly { readonly file: string; readonly name: string }[];
   /** The check machine's free disk share (0..1) when a red finished (#5453). */
   readonly diskFree?: number;
+  /** `temp_full`: a shard ran out of temp space, the environment's fault, not the change's (#8679). */
+  readonly environment?: "temp_full";
 }
 
 export interface Run {

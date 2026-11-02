@@ -33,6 +33,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import type { Answer, Decider, Questions } from "../src/crew/decide.ts";
 import { driveRepo, landIfGreen } from "../src/crew/autonomy.ts";
+import { summariseCheckFailure } from "../src/checks/summary.ts";
 import { answerFailedCheck, judgeFailedCheck } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -241,7 +242,26 @@ describe("the decision ledger", () => {
       state: "failed",
       summary: "test failed: 1 of 9",
     });
+    // A shard that ran out of temp space is the environment's, even when the decider would stop.
+    const full = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, full.id);
+    // The real parse of a log, not a summary written by hand.
+    const said = summariseCheckFailure(
+      ["SQLiteError: database or disk is full", "(fail) migrate > pins [3ms]", "(fail) test/a.test.ts > (unnamed) [1ms]", " 9 pass", " 2 fail"],
+      "exit 1",
+    );
+    finishRun(app.db, full.id, { state: "failed", summary: said.summary, checkDetail: said.detail });
     script["retry"] = "stop";
+    const judged = await judgeFailedCheck(app, fresh(), pull, full.id, pull.createdAt);
+    expect(judged.cause).toBe("environment");
+    expect(judged.retry).toBe("again");
     expect(
       (await judgeFailedCheck(app, fresh(), pull, failed.id, pull.createdAt))
         .retry,
@@ -357,6 +377,47 @@ describe("the decision ledger", () => {
         }),
       ).toBe("reworked");
       expect(getPull(app.db, repo.id, pull.number)?.state).toBe("open");
+
+      // A full temp space on a commit is run again once; the same red on the
+      // same commit is not run again, however often it comes (#8679).
+      const second = await commitToBranch(app, alice, repo, {
+        branch: "feature/full",
+        base: "main",
+        message: "Full",
+        files: [
+          { path: "forge.json", content: `{"check": {"run": "test -f OK.md", "install": ""}}\n` },
+          { path: "OK.md", content: "ok\n" },
+        ],
+      });
+      if (!second.ok) throw new Error(JSON.stringify(second.error));
+      const reopened = await openPull(app, scout, repo, {
+        title: "Full",
+        baseBranch: "main",
+        headBranch: "feature/full",
+      });
+      if (!reopened.ok) throw new Error(String(reopened.error));
+      const filled = reopened.value;
+      script["retry"] = "again";
+      delete script["cause"];
+      const fullRed = (): string => {
+        const run = createRun(app.db, {
+          repoId: repo.id,
+          kind: "check",
+          issueId: filled.id,
+          env: `pull-${filled.number}`,
+          commitOid: filled.headOid,
+          reason: "pull",
+        });
+        claimRun(app.db, run.id);
+        const said = summariseCheckFailure(["Error: database or disk is full", "(fail) a [1ms]", " 1 fail"], "exit 1");
+        finishRun(app.db, run.id, { state: "failed", summary: said.summary, checkDetail: said.detail });
+        return run.id;
+      };
+      const again = { kind: "check", commitOid: filled.headOid, env: `pull-${filled.number}`, since: filled.createdAt };
+      const answers: string[] = [];
+      for (let i = 0; i < 3; i++)
+        answers.push(await answerFailedCheck(app, fresh(), filled, scoutAgent, { runId: fullRed(), ...again }));
+      expect(answers).toEqual(["reran", "reworked", "reworked"]);
     } finally {
       delete script["cause"];
     }
