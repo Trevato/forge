@@ -2196,7 +2196,7 @@ function redactResult<T extends { result: string }>(r: T): T {
  * the account has one), or — with nothing granted — whatever the forge
  * itself was started with.
  */
-function credentialEnv(picked: Pick): Record<string, string> {
+export function credentialEnv(picked: Pick): Record<string, string> {
   if (picked.kind === "ready") return credentialEnvOf(picked);
   const own: Record<string, string> = {};
   for (const name of [

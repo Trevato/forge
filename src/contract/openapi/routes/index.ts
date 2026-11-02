@@ -51,6 +51,7 @@ export { route as getApiV1BoardsSlug } from "./getApiV1BoardsSlug.ts";
 export { route as getApiV1BoardsSlugPanelsId } from "./getApiV1BoardsSlugPanelsId.ts";
 export { route as getApiV1BoardsSources } from "./getApiV1BoardsSources.ts";
 export { route as getApiV1Contribute } from "./getApiV1Contribute.ts";
+export { route as getApiV1ConversationTurns } from "./getApiV1ConversationTurns.ts";
 export { route as getApiV1CrewNow } from "./getApiV1CrewNow.ts";
 export { route as getApiV1CrewScorecard } from "./getApiV1CrewScorecard.ts";
 export { route as getApiV1Explore } from "./getApiV1Explore.ts";
@@ -198,6 +199,7 @@ export { route as postApiV1AsksProposalIdVerb } from "./postApiV1AsksProposalIdV
 export { route as postApiV1BoardsPins } from "./postApiV1BoardsPins.ts";
 export { route as postApiV1BoardsQuery } from "./postApiV1BoardsQuery.ts";
 export { route as postApiV1ConversationConfirmsId } from "./postApiV1ConversationConfirmsId.ts";
+export { route as postApiV1ConversationMessages } from "./postApiV1ConversationMessages.ts";
 export { route as postApiV1ConversationTokens } from "./postApiV1ConversationTokens.ts";
 export { route as postApiV1Drills } from "./postApiV1Drills.ts";
 export { route as postApiV1FeedChips } from "./postApiV1FeedChips.ts";

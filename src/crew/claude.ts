@@ -50,6 +50,15 @@ export interface ClaudeInput {
    */
   readonly onUsage?: ((spent: Spent) => void) | undefined;
   /**
+   * Talks to the forge through MCP alone (#7651): no file or shell tools, no
+   * clone, the one server named in `config` (`--mcp-config` JSON) allowed.
+   */
+  readonly mcp?: { readonly config: string; readonly allow: readonly string[] } | undefined;
+  /** The session id, once the init record names it (a restart resumes it). */
+  readonly onSession?: ((sessionId: string) => void) | undefined;
+  /** What the agent said or called, as each assistant message arrives. */
+  readonly onSaid?: ((said: { readonly kind: "text" | "tool"; readonly text: string }) => void) | undefined;
+  /**
    * How long a session may stay silent after a result while its input is
    * still open (a steer was pending) before it is closed and settled as
    * done. A steer folded into the turn it interrupted leaves a result owed
@@ -110,7 +119,10 @@ export const TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"] as const;
  */
 export function claudeSettings(
   sandbox: SandboxPolicy,
+  mcp?: ClaudeInput["mcp"],
 ): Record<string, unknown> {
+  if (mcp !== undefined)
+    return { permissions: { allow: [...mcp.allow], deny: [...TOOLS] } };
   return {
     sandbox: {
       enabled: sandbox.enforced,
@@ -164,19 +176,20 @@ export function claudeArgs(input: ClaudeInput): string[] {
     // Restricted mode drops every tool that runs code unless it is named
     // here; "default" does not name Bash. This is the agent's whole kit.
     "--tools",
-    TOOLS.join(","),
+    input.mcp === undefined ? TOOLS.join(",") : "",
     "--permission-mode",
     "acceptEdits",
     "--permission-prompts",
     "none",
     "--strict-mcp-config",
     "--settings",
-    JSON.stringify(claudeSettings(input.sandbox)),
+    JSON.stringify(claudeSettings(input.sandbox, input.mcp)),
     "--max-budget-usd",
     input.budgetUsd.toFixed(2),
     "--append-system-prompt",
     input.appendSystemPrompt,
   ];
+  if (input.mcp !== undefined) args.push("--mcp-config", input.mcp.config);
   if (input.model !== undefined && input.model !== "")
     args.push("--model", input.model);
   if (input.resume !== undefined && input.resume !== "")
@@ -331,8 +344,10 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     if (typeof event !== "object" || event === null) return;
     const e = event as Record<string, unknown>;
     const type = e["type"];
-    if (typeof e["session_id"] === "string" && sessionId === "")
+    if (typeof e["session_id"] === "string" && sessionId === "") {
       sessionId = e["session_id"];
+      input.onSession?.(sessionId);
+    }
     if (type === "system") {
       if (e["subtype"] === "init")
         input.log(`session ${sessionId} (${String(e["model"] ?? "")})`);
@@ -341,6 +356,16 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     if (type === "assistant") {
       for (const text of assistantLines(e, workdir)) input.log(text);
       const message = e["message"];
+      if (input.onSaid && typeof message === "object" && message !== null) {
+        const content = (message as Record<string, unknown>)["content"];
+        for (const block of Array.isArray(content) ? content : []) {
+          const b = (block ?? {}) as Record<string, unknown>;
+          if (b["type"] === "text" && typeof b["text"] === "string")
+            input.onSaid({ kind: "text", text: b["text"] });
+          else if (b["type"] === "tool_use" && typeof b["name"] === "string")
+            input.onSaid({ kind: "tool", text: `${b["name"]} ${JSON.stringify(b["input"] ?? {})}` });
+        }
+      }
       if (input.onUsage && typeof message === "object" && message !== null) {
         const m = message as Record<string, unknown>;
         if (typeof m["usage"] === "object" && m["usage"] !== null) {

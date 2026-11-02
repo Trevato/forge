@@ -29,6 +29,7 @@ import { appForLogin, attachAppTty } from "../apps/tty.ts";
 import { servePulls } from "../apps/tty_pulls.ts";
 import type { Terminal } from "./term/terminal.ts";
 import type { TuiIdentity } from "./session.ts";
+import { parseTalkCommand, serveTalk } from "./ssh-talk.ts";
 import { parseTellCommand, serveTell } from "./ssh-tell.ts";
 
 const CRLF = "\r\n";
@@ -236,6 +237,12 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
             session.exit(1);
           },
         );
+        return;
+      }
+      // `talk <words>`: the forge's own agent, as the person.
+      const talked = parseTalkCommand(session.command);
+      if (talked !== undefined && door === undefined) {
+        serveTalk(forge, session, identity.user, talked);
         return;
       }
       void serveGitCommand(forge, session, identity.user).catch(

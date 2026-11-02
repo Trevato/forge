@@ -108,6 +108,12 @@ export function appendTurn(
   return ok(turnOf(row));
 }
 
+/** Take back a turn just added, as when the message it holds could not be answered. */
+export function removeTurn(db: Database, userId: string, conversationId: string, turnId: string): void {
+  if (!owned(db, userId, conversationId)) return;
+  db.query("DELETE FROM conversation_turn WHERE id = ?1 AND conversation_id = ?2").run(turnId, conversationId);
+}
+
 /**
  * A page of turns, newest last: the latest `limit` turns, or the `limit`
  * before the turn id `before`, oldest first. Order is insertion order

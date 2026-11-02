@@ -330,6 +330,7 @@ import { reportRoutes } from "./api/reports.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
 import { takeBackRoutes } from "./api/take_back.ts";
 import { conversationConfirmRoutes } from "./api/conversation_confirms.ts";
+import { conversationTalkRoutes } from "./api/conversation_talk.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
 import { secretRoutes } from "./api/secrets.ts";
@@ -1899,6 +1900,7 @@ export function apiRoutes(router: Router<Handler>): void {
   rollbackRoutes(router);
   takeBackRoutes(router);
   conversationConfirmRoutes(router);
+  conversationTalkRoutes(router);
 
   // Which stage of the one flow each open issue is in, and what went live in
   // the last day (src/flow).

@@ -53,6 +53,7 @@ import { DRAIN_LINGER_MAX_S, drainLingerMs, startDraining } from "./http/health.
 import { takePresence, warmBehind } from "./apps/presence.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew, sweepAssigned } from "./crew/dispatch.ts";
+import { configureConversation, resumeInterrupted } from "./crew/conversation.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
@@ -482,6 +483,22 @@ const crew = appsOn && !crewHeldOff
         : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
     })
   : undefined;
+// A conversation turn the last process was in the middle of is resumed once
+// from its session (crew/conversation.ts); a shutdown leaves it running again.
+const conversationsStop = new AbortController();
+if (crew !== undefined) {
+  const conversation = {
+    binary: process.env.FORGE_CLAUDE ?? "claude",
+    localUrl: servers.url,
+    budgetUsd: Number(process.env.FORGE_CREW_BUDGET_USD) || 5,
+    timeoutMs: crewRunMs,
+    ...(process.env.FORGE_CLAUDE_CONFIG_DIR === undefined ? {} : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
+    signal: conversationsStop.signal,
+  };
+  configureConversation(app, conversation);
+  for (const turn of resumeInterrupted(app, conversation))
+    turn.catch((error: unknown) => app.log.error("resumed conversation turn crashed", { error: String(error) }));
+}
 // Hosted children come back with their apps, awake before the first visit.
 // The listener is up; the children open behind it, not in front of /healthz.
 void bootHostedChildren(app);
@@ -776,6 +793,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   // The merge queue acts on nothing more: its gates run on through the
   // checks' drain, and a verdict is kept for the forge that carries on (#6611).
   stopQueue();
+  conversationsStop.abort();
   return Promise.all([
     linger,
     prompts.stop(),
