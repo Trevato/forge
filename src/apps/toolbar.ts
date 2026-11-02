@@ -576,8 +576,32 @@ export function escapeAttr(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * The nonce a response's own Content-Security-Policy admits scripts by: from
+ * `script-src`, or `default-src` when a policy has no `script-src`. Only a
+ * well-formed base64 value is returned; anything else is no nonce.
+ */
+export function cspNonce(policy: string | null): string | undefined {
+  if (policy === null) return undefined;
+  for (const one of policy.split(",")) {
+    const directives = one.split(";").map((d) => d.trim().split(/\s+/));
+    const names = (n: string) => directives.find((d) => d[0]?.toLowerCase() === n);
+    const chosen = names("script-src") ?? names("default-src");
+    for (const source of chosen?.slice(1) ?? []) {
+      const m = /^'nonce-([A-Za-z0-9+/_-]+={0,2})'$/i.exec(source);
+      if (m) return m[1];
+    }
+  }
+  return undefined;
+}
+
 /** The script tag, with where-you-are as escaped data attributes. */
-export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string): string {
+export function toolbarTag(
+  forgeUrl: string,
+  where?: PillWhere,
+  proof?: string,
+  nonce?: string,
+): string {
   const data =
     where === undefined
       ? ""
@@ -593,7 +617,8 @@ export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string):
           .join("");
   const token = proof === undefined ? "" : ` data-proof="${escapeAttr(proof)}"`;
   const forge = ` data-forge="${escapeAttr(new URL(forgeUrl).origin)}"`;
-  return `<script src="${TOOLBAR_ASSET_PATH}"${forge}${data}${token} defer></script>`;
+  const admitted = nonce === undefined ? "" : ` nonce="${escapeAttr(nonce)}"`;
+  return `<script src="${TOOLBAR_ASSET_PATH}"${admitted}${forge}${data}${token} defer></script>`;
 }
 
 /**
@@ -614,8 +639,9 @@ export function withToolbar(
   forgeUrl: string,
   where?: PillWhere,
   proof?: string,
+  nonce?: string,
 ): Uint8Array<ArrayBuffer> {
-  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof));
+  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof, nonce));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const at = lastBodyClose(buffer);
   const cut = at < 0 ? buffer.length : at;

@@ -54,7 +54,7 @@ import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { secureFor } from "../http/cookie_secure.ts";
-import { htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
+import { cspNonce, htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
 
 const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
   secureFor(url, forgeUrl) ||
@@ -1209,6 +1209,7 @@ export async function proxyApp(
         runtime.options.forgeUrl,
         pillWhere(runtime, target, vouched?.who),
         proof,
+        cspNonce(out.get("content-security-policy")),
       ),
     );
     let sent = page;
