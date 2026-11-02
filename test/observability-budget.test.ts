@@ -7,6 +7,7 @@
  * the wall clock is never the judge (#3069). Before the fix each page cost
  * hundreds of those passes.
  */
+import { forgetHome } from "../src/web/studio/home_last.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -96,6 +97,7 @@ describe("on production's size", () => {
     await get("/");
     // A write moves the clock home's caches are keyed by: this view is cold.
     app.db.run("UPDATE repo SET description = description || ''");
+    forgetHome(app.db);
     const unit = baseline();
     const res = await get("/");
     expect(res.status).toBe(200);

@@ -12,6 +12,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import type { FeedItem } from "../src/feed/rank.ts";
 import { caughtUp, FEED_FIRST_PAGE, feedJs } from "../src/web/studio/feed.ts";
 import { promote } from "./helpers/members.ts";
+import { freshHome } from "./helpers/home-fresh.ts";
 
 describe("the timeline's caught-up line", () => {
   let dataDir: string;
@@ -25,7 +26,7 @@ describe("the timeline's caught-up line", () => {
     for (let i = 0; i < n; i++)
       app.bus.append({ kind: "run.finished", repoId: repo.id, actorId: alice.id, payload: { kind: "agent", state: "ok", summary: `work ${i}`, runId: `r${i}` } });
   };
-  const home = async (path = "/") => (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
+  const home = (path = "/") => freshHome(servers.url, cookie, path);
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-caught-up-"));

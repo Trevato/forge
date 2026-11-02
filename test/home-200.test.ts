@@ -1,7 +1,7 @@
 /** #5806: the owner's home on a forge of 200 repositories and 100 open asks is read in a bounded number of statements warm, every slow phase named. */
+import { freshHome } from "./helpers/home-fresh.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
-import { waitingCache } from "../src/web/studio/home_cache.ts";
 import { expectWork } from "./helpers/work.ts";
 import { statements } from "./helpers/statements.ts";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
@@ -44,16 +44,16 @@ test("the second look at home as the owner costs a bounded number of statements,
 });
 
 const waiting = async (): Promise<number> => {
-  const text = await (await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } })).text();
+  const text = await freshHome(f.base, f.ownerCookie);
   return Number(/(\d+) waiting on you/.exec(text)?.[1] ?? 0);
 };
 
 test("the waiting line is a hit on the second look and a write puts it back", async () => {
   const first = await waiting();
   expect(first).toBeGreaterThan(0);
-  const before = waitingCache(f.app.db).hits;
   expect(await waiting()).toBe(first);
-  expect(waitingCache(f.app.db).hits).toBeGreaterThan(before);
+  const timing = (await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } })).headers.get("server-timing") ?? "";
+  expect(timing).toMatch(/waiting;dur=[\d.]+;desc="hit"/);
   // Every ask is put down in one write: the line is gone at once, not in 30 seconds.
   f.app.db.query("UPDATE issue SET assignee_id = NULL").run();
   expect(await waiting()).toBe(0);

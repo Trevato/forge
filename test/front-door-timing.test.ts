@@ -1,4 +1,5 @@
 /** The front door's Server-Timing names every phase, and a heavy feed reads fast (#3311). */
+import { forgetHome } from "../src/web/studio/home_last.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -34,6 +35,7 @@ test("the signed-in home names its session, reads and render and a cold feed rea
   await get();
   const opened = openIssue(f.app, f.owner, f.repos[0]!, { title: "A write the feed must read again" });
   if (!opened.ok) throw new Error(String(opened.error));
+  forgetHome(f.app.db);
   const res = await get();
   const all = parts(res);
   const names = all.map((p) => p.split(";")[0]!);

@@ -10,6 +10,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { dayKeepJs } from "../src/web/studio/feed.ts";
 import { promote } from "./helpers/members.ts";
+import { freshHome } from "./helpers/home-fresh.ts";
 
 const dividerLabels = (text: string): string[] => [...text.matchAll(/data-day-divider="([^"]+)"/g)].map((m) => m[1]!);
 
@@ -21,7 +22,7 @@ describe("day dividers on the home timeline", () => {
   let repoId = "";
   let aliceId = "";
 
-  const get = async (path: string) => (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
+  const get = (path: string) => freshHome(servers.url, cookie, path);
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-day-divider-"));

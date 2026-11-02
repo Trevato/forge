@@ -59,6 +59,8 @@ import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { idleReason } from "../../crew/idle_reason.ts";
 import { kpiCache, panelCache, waitingCache } from "./home_cache.ts";
+import { accessFingerprint } from "../../core/access_fingerprint.ts";
+import { homeFresh, homeRegion, homeVariant, refreshJs, type HomeRegion } from "./home_last.ts";
 import type { KpiTimer } from "../../flow/kpis.ts";
 import { archivedAppCount } from "../pages/apps.ts";
 import { pinnedPanels } from "./pinned.ts";
@@ -223,6 +225,45 @@ export function liveOnYouFragment(ctx: Ctx): Response {
 }
 
 /**
+ * How each late region of home is drawn for `user` (#7660): the page serves
+ * the last drawing from memory and `/live/home/<name>` draws it fresh.
+ */
+function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html | Promise<Html>> {
+  const { db } = ctx.app;
+  const request = ctx.request;
+  return {
+    kpis: () => {
+      const ceilingUsd = forgeCeiling(ctx.app.config);
+      const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
+      const kpiOpts = { idle: idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
+      return html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
+        ${timePhase(request, "vitals", () => vitalsRow(db))} ${clogRow(db)}
+        ${keeperRow(db, true)}
+        ${alarmLines(cachedAlarms(db, new Date(), ceilingUsd))}`;
+    },
+    waiting: () => timePhase(request, "waiting", () => waitingLine(db, user), () => waitingCache(db)),
+    panels: async () => (await timePhaseAsync(request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(db))) ?? html``,
+    asked: () => homeTabs("feed", timePhase(request, "asked", () => unshippedAsks(db, user))),
+    feed: () => timePhase(request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(db)),
+  };
+}
+
+// GET /live/home/<region> — one late region of home, drawn fresh, for the page to swap in.
+export async function liveHomeFragment(ctx: Ctx, name: HomeRegion): Promise<Response> {
+  const user = ctx.auth.user;
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  if (!user || ((name === "kpis" || name === "panels") && !user.isAdmin)) {
+    notePhase(ctx.request, "render", 0);
+    return fragment(html``, { status: 404 });
+  }
+  const rendering = performance.now();
+  const body = await homeFresh(ctx.app.db, user.id, name, homeVariant(ctx.url), accessFingerprint(ctx.app.db, user), homeDraws(ctx, user)[name]);
+  const res = fragment(html`<div>${body}</div>`, { request: ctx.request });
+  notePhaseRest(ctx.request, "render", rendering, [name, "vitals"]);
+  return res;
+}
+
+/**
  * Home, signed in, is the feed (#599), for every viewer whatever the mode
  * (#625): like opening X — the composer on top, then one timeline of posts
  * (tells, replies, runs, changes, looks), each one tap from its thing. Your
@@ -283,25 +324,16 @@ export async function studioHome(
     isNavigation(ctx.request) ? noteVisit(ctx.app.db, user.id, visitedAt) : lastVisit(ctx.app.db, user.id),
   );
   const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, user, before, visitedAt));
-  const asking = timePhase(ctx.request, "asked", () => unshippedAsks(ctx.app.db, user));
+  const draws = homeDraws(ctx, user);
+  const access = timePhase(ctx.request, "access", () => accessFingerprint(ctx.app.db, user));
+  const regionOf = (name: HomeRegion): Promise<Html> =>
+    homeRegion(ctx.app.db, ctx.request, user.id, name, homeVariant(ctx.url), access, draws[name]);
   const ask = firstSteps ?? everydayCard(ctx, user);
   const figures = user.isAdmin && steps === undefined;
-  const ceilingUsd = forgeCeiling(ctx.app.config);
-  // Each part of a cold read is its own Server-Timing entry (#7626); a cache hit names none.
-  const kpiTime: KpiTimer = (name, fn) => timePhase(ctx.request, name, fn);
-  const kpiOpts = { idle: figures ? idleReason(ctx.app, new Date()) : null, dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
   const body = html`<h1 class="sr-only">Home</h1>
-    ${ask} ${address} ${figures
-      ? timePhase(ctx.request, "kpis", () => kpiRow(ctx.app.db, kpiOpts), () => kpiCache(ctx.app.db))
-      : liveLine(ctx)}
-    ${figures ? timePhase(ctx.request, "vitals", () => vitalsRow(ctx.app.db)) : null}
-    ${figures ? clogRow(ctx.app.db) : null}
-    ${figures ? keeperRow(ctx.app.db, true) : null}
-    ${figures ? alarmLines(cachedAlarms(ctx.app.db, new Date(), ceilingUsd)) : null}
-    ${timePhase(ctx.request, "waiting", () => waitingLine(ctx.app.db, user), () => waitingCache(ctx.app.db))}
-    ${figures
-      ? await timePhaseAsync(ctx.request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(ctx.app.db))
-      : null}
+    ${ask} ${address} ${figures ? await regionOf("kpis") : liveLine(ctx)}
+    ${await regionOf("waiting")}
+    ${figures ? await regionOf("panels") : null}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home">
@@ -309,13 +341,13 @@ export async function studioHome(
       </p>`,
     )}
     ${since}
-    ${homeTabs("feed", asking)}
+    ${await regionOf("asked")}
     <div class="split" data-rail="wide">
       <div class="stack">
         ${composer(ctx, user)}
         ${flowCards(ctx, user)}
         ${feedNote()}
-        ${timePhase(ctx.request, "feed", () => feedRegion(user, ctx), () => feedCandidateCache(ctx.app.db))}
+        ${await regionOf("feed")}
       </div>
       <aside class="stack">
         ${
@@ -333,9 +365,9 @@ export async function studioHome(
     ctx,
     title: "Home",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}${ask ? `\n${passkeyJs}` : ""}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}\n${refreshJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "vitals", "waiting", "panels", "feed", "visit", "since"]);
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "vitals", "waiting", "panels", "feed", "visit", "since", "access"]);
   return res;
 }
 

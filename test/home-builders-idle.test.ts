@@ -19,6 +19,7 @@ import { type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { freshHome } from "./helpers/home-fresh.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -66,7 +67,7 @@ afterAll(async () => {
 });
 
 const home = async (): Promise<string> =>
-  (await fetch(`${servers.url}/`, { headers: { cookie: `forge_session=${createSession(app.db, admin.id).token}; forge_mode=studio` } })).text();
+  freshHome(servers.url, `forge_session=${createSession(app.db, admin.id).token}; forge_mode=studio`);
 
 async function terminal(): Promise<string> {
   const t = headlessTerminal(200, 40);

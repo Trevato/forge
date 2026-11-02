@@ -11,6 +11,7 @@ import type { App } from "../app.ts";
 import { MAX_PINS, listPins, movePin, pin, pinOf, unpin, type Pin } from "../boards/pins.ts";
 import { readBoard, type Board, type Panel } from "../boards/store.ts";
 import type { User } from "../core/users.ts";
+import { forgetRegion } from "../core/region_memory.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 export type PinError = "not_found" | "invalid" | "too_many";
@@ -50,6 +51,7 @@ export async function pinPanel(app: App, actor: User | undefined, slug: unknown,
   for (const g of gone) unpin(app.db, who.id, g);
   if (live.length >= MAX_PINS && !live.some((p) => p.slug === which.slug && p.title === which.title)) return err("too_many");
   pin(app.db, who.id, which);
+  forgetRegion(app.db, who.id, "panels");
   return ok(which);
 }
 
@@ -59,6 +61,7 @@ export function unpinPanel(app: App, actor: User | undefined, slug: unknown, tit
   const which = pinOf(slug, title);
   if (!which) return err("invalid");
   unpin(app.db, who.id, which);
+  forgetRegion(app.db, who.id, "panels");
   return ok(which);
 }
 
@@ -69,5 +72,6 @@ export function movePinned(app: App, actor: User | undefined, slug: unknown, tit
   if (!which || (by !== 1 && by !== -1)) return err("invalid");
   if (!listPins(app.db, who.id).some((x) => x.slug === which.slug && x.title === which.title)) return err("not_found");
   movePin(app.db, who.id, which, by);
+  forgetRegion(app.db, who.id, "panels");
   return ok(which);
 }

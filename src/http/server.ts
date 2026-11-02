@@ -286,6 +286,7 @@ import {
 import { keeperAnswer } from "../web/studio/keeper_row.ts";
 import { homeArchive, homeArchived, homeArchiveUndo } from "../web/studio/home_archive.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
+import { HOME_REGIONS } from "../web/studio/home_last.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
 import {
@@ -296,6 +297,7 @@ import {
   frontUpdate,
   liveAppsFragment,
   liveClientAppsFragment,
+  liveHomeFragment,
   liveOnYouFragment,
   studioDoor,
 } from "../web/studio/home.ts";
@@ -845,6 +847,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/live/on-you", liveOnYouFragment);
   router.add("GET", "/live/client-apps", liveClientAppsFragment);
   router.add("GET", "/live/feed", liveFeedFragment);
+  // The home's late regions, each drawn alone (#7660).
+  for (const name of HOME_REGIONS) router.add("GET", `/live/home/${name}`, (ctx) => liveHomeFragment(ctx, name));
   // Whether a hostname is an app's verified domain — what Caddy's
   // `on_demand_tls { ask … }` asks before it fetches a certificate for a
   // name it has never seen (docs/EXTRACT.md). 200 says yes, 404 says no,
