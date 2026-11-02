@@ -498,6 +498,7 @@ import { pushThrough } from "../origins/push-through.ts";
 import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
+import { pageParamRefused } from "./cursor_lists.ts";
 import { inNamespace } from "../core/proposal_token.ts";
 import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
 import { adminGate } from "./admin_gate.ts";
@@ -2730,6 +2731,12 @@ async function answerGet(
       ),
       stranger,
     );
+  }
+
+  // A list that pages by cursor says so to `?page=`, one guard for all of them.
+  if (isApiPath && routeMethod === "GET") {
+    const byNumber = pageParamRefused(matched.pattern, url.searchParams);
+    if (byNumber !== undefined) return withRateHeaders(byNumber, verdict);
   }
 
   const themeCookie = cookieValue(request, "forge_theme") ?? "";

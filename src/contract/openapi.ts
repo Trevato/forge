@@ -17,6 +17,11 @@ import * as each from "./openapi/routes/index.ts";
 /** Every row, sorted by operationId: the index's order. */
 export const ROUTES: readonly Route[] = Object.values(each);
 
+/** A GET that declares a `cursor` pages by it; `?page=` and `?offset=` are refused with a 400 (`http/cursor_lists.ts`). */
+export const pagesByCursor = (r: Pick<Route, "method" | "query">): boolean => r.method === "get" && r.query !== undefined && "cursor" in r.query;
+
+const PAGE_REFUSAL = "page or offset was sent: this list pages by cursor, pass next_cursor as ?cursor= (400)";
+
 /** A route's operationId, and the name of the file that holds it. */
 export function operationId(r: Pick<Route, "method" | "path">): string {
   return `${r.method}${r.path.replace(/[^A-Za-z0-9]+(.)?/g, (_, c: string | undefined) => (c ?? "").toUpperCase())}`;
@@ -28,6 +33,7 @@ const schema = (t: string) => (t === "object" ? { type: "object" } : t === "arra
 export function openapi(origin: string, version: string): Record<string, unknown> {
   const paths: Record<string, Record<string, unknown>> = {};
   for (const r of ROUTES) {
+    const refusals = pagesByCursor(r) ? { invalid_query: PAGE_REFUSAL, ...r.refusals } : r.refusals;
     const params = [...r.path.matchAll(/\{(\w+)\}/g)].map((m) => ({
       name: m[1],
       in: "path",
@@ -86,12 +92,13 @@ export function openapi(origin: string, version: string): Record<string, unknown
               }),
         },
         ...Object.fromEntries((r.alsoStatus ?? []).map((c) => [String(c), { description: "Done" }])),
+        ...(pagesByCursor(r) ? { "400": { description: PAGE_REFUSAL } } : {}),
         default: {
           description:
             "An error: { error, message }; `error` is a stable code" +
-            (r.refusals === undefined
+            (refusals === undefined
               ? ""
-              : `. Refusals: ${Object.entries(r.refusals).map(([c, w]) => `\`${c}\` (${w})`).join("; ")}`),
+              : `. Refusals: ${Object.entries(refusals).map(([c, w]) => `\`${c}\` (${w})`).join("; ")}`),
         },
       },
     };
