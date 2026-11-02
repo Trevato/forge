@@ -160,7 +160,7 @@ test("the performance record knows the crawlers' share of answering time", () =>
   record.add("/:owner/:name/blob/:ref/*path", { at, ms: 300, signedIn: false, crawler: true, phases: [] });
   record.add("/:owner/:name/blob/:ref/*path", { at, ms: 100, signedIn: true, phases: [] });
   const share = crawlerShare(record, at - 1000);
-  expect(share).toEqual({ requests: 2, crawlerRequests: 1, ms: 400, crawlerMs: 300, share: 0.75 });
+  expect(share).toEqual({ requests: 2, crawlerRequests: 1, ms: 400, crawlerMs: 300, strangerRequests: 0, strangerMs: 0, share: 0.75 });
 });
 
 test("the crawler board door is an admin's: a non-admin and an anonymous caller are told it is not there, an admin gets the shape", async () => {

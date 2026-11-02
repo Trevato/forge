@@ -11,7 +11,7 @@
  * product token of the User-Agent, a second cap only, since anyone can
  * send `Googlebot`), and one shared budget for every such crawler, so their
  * total cost has a ceiling however they rotate. A browser-looking User-Agent
- * is not counted here; `stranger_reads.ts` bounds those. Deep paths (blob, raw, commits, blame, diffs at every ref) have a
+ * is counted only on the deep paths, with a looser budget of its own. Deep paths (blob, raw, commits, blame, diffs at every ref) have a
  * far smaller budget than the rest. When the event loop is late the budgets
  * shrink, so a crawler is the first to wait. A signed-in person or a token is
  * never counted here: the check is made only for a request `resolveAuth`
@@ -29,6 +29,15 @@ export const CRAWL_BUDGET = { page: 60, deep: 6 } as const;
 export const AGENT_BUDGET = { page: 120, deep: 12 } as const;
 /** The ceiling for every crawler together. */
 export const SHARED_BUDGET = { page: 240, deep: 24 } as const;
+/**
+ * Deep pages per minute, per address, for a reader whose User-Agent looks like
+ * a browser (#8199): anyone can write that header, so what it may spend on the
+ * pages that cost a git walk is bound too. Far looser than a crawler's, since
+ * people click. There is deliberately no bucket for all such readers
+ * together: a few addresses could spend it and shut every other person out.
+ * The aggregate is held by the tree cache and by the loop-lag divisor.
+ */
+export const STRANGER_BUDGET = { address: 30 } as const;
 /** The budgets divide by this while the event loop runs late. */
 export const BEHIND_DIVISOR = 4;
 /** An average wake later than this (ms) is "behind". */
@@ -45,6 +54,9 @@ const CRAWLER = /bot\b|bot[/ ;)-]|crawl|spider|slurp|scrap|archiver|reflection|f
 /** Paths whose answer costs a git walk or a diff: the ones robots.txt disallows. */
 export const DEEP_SEGMENTS = ["blob", "raw", "commits", "commit", "blame", "compare", "diff", "tree", "history"] as const;
 const DEEP = new RegExp(`^/(?:origins/[^/]+/r/)?[^/]+/[^/]+/(?:${DEEP_SEGMENTS.join("|")})(?:/|$)`);
+
+/** Whether `pathname` is a page that costs a git walk or a diff. */
+export const isDeepPath = (pathname: string): boolean => DEEP.test(pathname);
 
 /** What a crawler never spends from: the files it is asked to read, and the probes. */
 const FREE = /^\/(?:robots\.txt|sitemap\.xml|healthz|readyz|assets\/)/;
@@ -64,7 +76,7 @@ export function isCrawler(request: Request): boolean {
   return ua.length === 0 || CRAWLER.test(ua.slice(0, 300));
 }
 
-type Scope = "address" | "agent" | "shared";
+type Scope = "address" | "agent" | "shared" | "stranger";
 interface Pair {
   readonly page: RateLimiter;
   readonly deep: RateLimiter;
@@ -73,6 +85,8 @@ interface State {
   readonly address: Pair;
   readonly agent: Pair;
   readonly shared: Pair;
+  /** Deep pages read by browser-looking strangers, per address. */
+  readonly strangerAddress: RateLimiter;
   readonly refused: Map<string, number>;
   readonly refusedBy: Record<Scope, number>;
   readonly clock: { now: () => number; behind: boolean };
@@ -108,8 +122,9 @@ function stateOf(app: App): State {
       address: pair(CRAWL_BUDGET),
       agent: pair(AGENT_BUDGET),
       shared: pair(SHARED_BUDGET),
+      strangerAddress: new RateLimiter(limits(STRANGER_BUDGET.address), () => clock.now()),
       refused: new Map(),
-      refusedBy: { address: 0, agent: 0, shared: 0 },
+      refusedBy: { address: 0, agent: 0, shared: 0, stranger: 0 },
       clock,
     };
     states.set(app, state);
@@ -136,7 +151,8 @@ export interface CrawlVerdict {
  * crawler, or inside its budget). Otherwise the refusal to answer with.
  */
 export function takeCrawl(app: App, request: Request, pathname: string): CrawlVerdict | undefined {
-  if (!isCrawler(request) || FREE.test(pathname)) return undefined;
+  if (!isCrawler(request)) return takeStrangerDeep(app, request, pathname);
+  if (FREE.test(pathname)) return undefined;
   watchLag();
   const state = stateOf(app);
   const behind = state.clock.behind || mainThreadBehind();
@@ -173,6 +189,26 @@ export function takeCrawl(app: App, request: Request, pathname: string): CrawlVe
   return undefined;
 }
 
+/**
+ * A browser-looking reader with no session and no token, on a deep page:
+ * counted per address, divided while the loop is behind, refused before any
+ * page work (#8199). The explorer's lazy folder expansion
+ * (`?fragment=explorer`) is a click, not a page, and is not counted.
+ */
+function takeStrangerDeep(app: App, request: Request, pathname: string): CrawlVerdict | undefined {
+  if (request.method !== "GET" && request.method !== "HEAD") return undefined;
+  if (!DEEP.test(pathname)) return undefined;
+  if (new URL(request.url).searchParams.get("fragment") === "explorer") return undefined;
+  watchLag();
+  const state = stateOf(app);
+  const scale = state.clock.behind || mainThreadBehind() ? BEHIND_DIVISOR : 1;
+  state.strangerAddress.setLimits(limits(Math.max(1, Math.floor(STRANGER_BUDGET.address / scale))));
+  const own = state.strangerAddress.take(bucketOf(clientAddress(request)), "ro");
+  if (own.allowed) return undefined;
+  state.refusedBy.stranger++;
+  return { retryAfter: own.retryAfter, agent: "browser", scope: "stranger" };
+}
+
 /** Requests refused so far in this process, by agent, most first. */
 export const crawlRefusals = (app: App): { agent: string; refused: number }[] =>
   [...stateOf(app).refused]
@@ -201,3 +237,8 @@ const noted = new WeakSet<Request>();
 /** The server says this request was a crawler's, for the usage count and the performance record. */
 export const noteCrawler = (request: Request): void => void noted.add(request);
 export const wasCrawler = (request: Request): boolean => noted.has(request);
+
+const notedDeep = new WeakSet<Request>();
+/** The server says this was a browser-looking stranger's read of a deep page, for the crawler board. */
+export const noteDeepStranger = (request: Request): void => void notedDeep.add(request);
+export const wasDeepStranger = (request: Request): boolean => notedDeep.has(request);

@@ -9,6 +9,7 @@
  */
 
 import { immutableWhenAddressed } from "../../http/addressed.ts";
+import { cachedTree, keepTree, resolveCommit } from "./tree_cache.ts";
 import { behindLine, followingLine } from "./upstream-follow.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
 import { offerUpstream } from "./offer-upstream.ts";
@@ -915,13 +916,16 @@ export async function renderCode(
     rail?: Html;
     /** The README, when the caller has already read it (and timed the read). */
     readme?: Html;
+    /** What the listing's links name instead of `ref`: a full commit id, whose pages a cache may keep (#8199). */
+    linkRef?: string;
   },
 ): Promise<Html> {
   const base = scope.base;
   const { ref, path } = o;
+  const linked = o.linkRef ?? ref;
   const readme =
     o.readme ??
-    (await readmeFor(scope.source, ref, o.entries, path, `${base}/blob/${encodeURIComponent(ref)}`));
+    (await readmeFor(scope.source, linked, o.entries, path, `${base}/blob/${encodeURIComponent(linked)}`));
   const historyParams = new URLSearchParams({ ref });
   if (path !== "") historyParams.set("path", path);
   const bar =
@@ -954,7 +958,7 @@ export async function renderCode(
           })}
         </div>`;
   const main = html`${bar} ${o.extra ?? null}
-    ${treeListing(base, ref, path, o.entries, o.all === true)}
+    ${treeListing(base, linked, path, o.entries, o.all === true)}
     <div class="mt">${readme}</div>`;
   return o.rail === undefined
     ? main
@@ -1441,11 +1445,35 @@ export async function treePage(ctx: Ctx): Promise<Response> {
   const path = ctx.params.path ?? "";
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const git = gitClock(ctx.request);
-  const entries = await git.read(() => scope.source.tree(ref, path));
+  const fragmentOnly = ctx.url.searchParams.get("fragment") === "explorer";
+  const all = ctx.url.searchParams.get("all") === "1";
+
+  // An anonymous reader of a public repository is served the listing of the
+  // commit the branch names, kept under that commit (`tree_cache.ts`), and
+  // its links name the commit, so the edge may keep what they lead to.
+  const anonymous = ctx.auth.user === undefined && repo.visibility === "public";
+  const commit =
+    anonymous && !fragmentOnly && isSafeRef(ref)
+      ? await resolveCommit(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), ref)
+      : undefined;
+  if (commit !== undefined) {
+    const hit = cachedTree(repo.id, commit, ref, path, all);
+    if (hit !== undefined) {
+      git.done();
+      return immutableWhenAddressed(
+        true,
+        repo,
+        ref,
+        codePage(ctx, scope, { title: `${path || ref} · ${repo.name}`, ref, explorer: hit.explorer, content: hit.content }),
+      );
+    }
+  }
+
+  const entries = await git.read(() => scope.source.tree(commit ?? ref, path));
   if (!entries.ok) return notFoundPage(ctx);
 
   // The explorer's lazy expansion asks for exactly one directory.
-  if (ctx.url.searchParams.get("fragment") === "explorer") {
+  if (fragmentOnly) {
     git.done();
     return fragment(explorerFragment(scope.base, ref, path, entries.value), {
       request: ctx.request,
@@ -1461,23 +1489,27 @@ export async function treePage(ctx: Ctx): Promise<Response> {
   git.done();
   // `render` includes the README read: it is fetched while the page is built.
   const began = performance.now();
+  const explorerHtml = explorerColumn(scope, explorer, {
+    finder: true,
+    actions: newFileAction(scope, ref, path),
+  });
+  const content = await renderCode(scope, {
+    refs,
+    ref,
+    path,
+    entries: entries.value,
+    all,
+    ...(commit === undefined ? {} : { linkRef: commit }),
+  });
+  if (commit !== undefined) keepTree(repo.id, commit, ref, path, all, { explorer: explorerHtml, content });
   const response = codePage(ctx, scope, {
     title: `${path || ref} · ${repo.name}`,
     ref,
-    explorer: explorerColumn(scope, explorer, {
-      finder: true,
-      actions: newFileAction(scope, ref, path),
-    }),
-    content: await renderCode(scope, {
-      refs,
-      ref,
-      path,
-      entries: entries.value,
-      all: ctx.url.searchParams.get("all") === "1",
-    }),
+    explorer: explorerHtml,
+    content,
   });
   notePhase(ctx.request, "render", performance.now() - began);
-  return response;
+  return immutableWhenAddressed(anonymous, repo, ref, response);
 }
 
 // GET /:owner/:name/blob/:ref/*path

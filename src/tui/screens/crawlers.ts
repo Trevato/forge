@@ -23,7 +23,8 @@ export function crawlersScreen(f: Session, ctx: Ctx): Screen {
     const b = r.refused_by_budget;
     return [
       { title: `Share of answering time: ${Math.round(r.share * 100)}%`, meta: `${r.crawler_ms} of ${r.ms} ms, ${r.crawler_requests} of ${r.requests} requests, last ${r.window_minutes} min` },
-      { title: "Refused (429) by budget", meta: `address ${b.address} · agent ${b.agent} · all crawlers ${b.shared}` },
+      { title: `Browser-looking strangers on deep git pages: ${r.deep_stranger_requests} requests`, meta: `${r.deep_stranger_ms} ms, last ${r.window_minutes} min` },
+      { title: "Refused (429) by budget", meta: `address ${b.address} · agent ${b.agent} · all crawlers ${b.shared} · browser strangers ${b.stranger}` },
       ...r.refused.map((a) => ({ title: a.agent, meta: `${a.refused} refused` })),
     ];
   };

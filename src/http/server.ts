@@ -76,7 +76,7 @@ import {
   verifyPasswordThrottled,
 } from "../core/users.ts";
 import { activeEdgeToken, edgeIdentity } from "./edge.ts";
-import { crawlRefused, isCrawler, noteCrawler, takeCrawl, wasCrawler } from "./crawl.ts";
+import { crawlRefused, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, takeCrawl, wasCrawler, wasDeepStranger } from "./crawl.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
@@ -2281,7 +2281,7 @@ export async function serve(app: App): Promise<Servers> {
       const end = performance.now();
       perfRecord.add(
         tag.pattern,
-        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), phases: parseServerTiming(header) },
+        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), phases: parseServerTiming(header) },
       );
       loopWatch.finished(tag.pattern, started, end);
     } catch {
@@ -2653,7 +2653,7 @@ async function answerGet(
     if (isCrawler(request)) {
       noteCrawler(request);
       noteUsage(request, { pattern: matched.pattern, role: "crawler" });
-    }
+    } else if (isDeepPath(url.pathname) && url.searchParams.get("fragment") !== "explorer") noteDeepStranger(request);
     if (crawl !== undefined) return crawlRefused(crawl);
   }
 

@@ -17,6 +17,8 @@ export function crawlReport(app: App, now = Date.now()) {
     crawler_requests: share.crawlerRequests,
     ms: Math.round(share.ms),
     crawler_ms: Math.round(share.crawlerMs),
+    deep_stranger_requests: share.strangerRequests,
+    deep_stranger_ms: Math.round(share.strangerMs),
     share: Math.round(share.share * 1000) / 1000,
     refused: crawlRefusals(app).slice(0, 50),
     refused_by_budget: crawlRefusalScopes(app),

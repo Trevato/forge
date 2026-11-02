@@ -6,3 +6,11 @@
 - Usage counts carry a `crawler` role. The crawlers' share of answering time over the last 15 minutes, the refusals by agent and by which budget refused (address, agent, shared) are read at `GET /api/v1/admin/crawlers` (admin) and in the terminal: `:` → "Crawlers" (a forge admin who is a person).
 
 Not done: a panel on a board page (the performance board has no page yet; the share is the API above), and a budget by time spent rather than by request count.
+
+## Anonymous readers with a browser User-Agent (#8199)
+
+- Anyone with no session and no token, whatever the User-Agent, is counted on the deep pages (`DEEP_SEGMENTS`): `STRANGER_BUDGET` is 30 a minute per address (an IPv6 client by /64), divided by 4 while the loop is late. There is no bucket for all such readers together: a handful of addresses could spend it and refuse every other person; the aggregate is held by the tree cache and the loop-lag divisor. The explorer's lazy folder expansion (`?fragment=explorer`) is not counted. Past it: 429 with `Retry-After` before page work. Other pages are not counted for browser UAs; a signed-in person or token never is.
+- `/tree/:ref` for an anonymous reader of a public repository resolves the branch to its commit from the ref files (no process), then serves the rendered listing and explorer from a cache keyed on repo, commit, ref, path and `?all` (`src/web/pages/tree_cache.ts`, 60 s, 32 MB). A push moves the commit, so the next read misses; only the ref switcher's menu can be up to 60 s old. A miss reads git as before (`ls-tree` etc. are child processes, off the main thread).
+- Intended: only this anonymous path links by commit; a signed-in person's listing keeps the branch name in its links (`linkRef` is set only there).
+- That listing's links (entries and README) name the full commit, so the blob and tree pages behind them carry the immutable headers; a tree at a full id is `immutable` for anonymous readers too.
+- The crawler board (`/api/v1/admin/crawlers`, terminal "Crawlers") adds `deep_stranger_requests`, `deep_stranger_ms` and `refused_by_budget.stranger`.

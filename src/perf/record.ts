@@ -27,6 +27,8 @@ export interface Sample {
   readonly signedIn: boolean;
   /** An unauthenticated request whose User-Agent names a crawler (`http/crawl.ts`). */
   readonly crawler?: boolean;
+  /** An unauthenticated, browser-looking read of a deep git page (#8199). */
+  readonly deepStranger?: boolean;
   readonly phases: readonly PhaseSample[];
 }
 
@@ -138,13 +140,16 @@ export interface CrawlerShare {
   /** Summed time to answer, ms, of every request and of the crawlers' alone. */
   readonly ms: number;
   readonly crawlerMs: number;
+  /** The same for anonymous readers with a browser's User-Agent on the deep git pages (#8199). */
+  readonly strangerRequests: number;
+  readonly strangerMs: number;
   /** crawlerMs / ms, 0 when nothing was answered. */
   readonly share: number;
 }
 
 /** What share of the server's answering time crawlers took, from `since` on. */
 export function crawlerShare(record: PerfRecord, since: number): CrawlerShare {
-  let requests = 0, crawlerRequests = 0, ms = 0, crawlerMs = 0;
+  let requests = 0, crawlerRequests = 0, ms = 0, crawlerMs = 0, strangerRequests = 0, strangerMs = 0;
   for (const pattern of record.patterns())
     for (const s of record.traffic(pattern, since)) {
       requests++;
@@ -152,7 +157,10 @@ export function crawlerShare(record: PerfRecord, since: number): CrawlerShare {
       if (s.crawler === true) {
         crawlerRequests++;
         crawlerMs += s.ms;
+      } else if (s.deepStranger === true) {
+        strangerRequests++;
+        strangerMs += s.ms;
       }
     }
-  return { requests, crawlerRequests, ms, crawlerMs, share: ms > 0 ? crawlerMs / ms : 0 };
+  return { requests, crawlerRequests, ms, crawlerMs, strangerRequests, strangerMs, share: ms > 0 ? crawlerMs / ms : 0 };
 }
