@@ -54,3 +54,63 @@ export function routeUsage(db: Database, patterns: readonly string[], now: Date)
       return b.total - a.total || a.pattern.localeCompare(b.pattern);
     });
 }
+
+/** What the ledger says was spent, in one span, by the account that paid. */
+export interface SpanSpend {
+  readonly runs: number;
+  readonly tokensIn: number;
+  readonly tokensOut: number;
+  readonly costUsd: number;
+}
+
+export interface ForgeSpend {
+  /** Since 00:00 UTC, the forge's zone. */
+  readonly todaySince: string;
+  /** The 24 hours before `at`: a rolling span, not the calendar day. */
+  readonly last24hSince: string;
+  readonly today: Map<string | null, SpanSpend>;
+  readonly last24h: Map<string | null, SpanSpend>;
+}
+
+/** Spend since `since` across `repoIds`, by subscription id (null: unrecorded), summed in SQL. */
+function spendSince(
+  db: Database,
+  repoIds: readonly string[],
+  since: string,
+  until: string,
+): Map<string | null, SpanSpend> {
+  const rows = db
+    .query(
+      `SELECT subscription_id AS sub, COUNT(*) AS runs, SUM(tokens_in) AS tin,
+              SUM(tokens_out) AS tout, SUM(cost_usd) AS cost
+         FROM usage
+        WHERE at >= ?1 AND at <= ?2 AND repo_id IN (SELECT value FROM json_each(?3))
+        GROUP BY subscription_id`,
+    )
+    .all(since, until, JSON.stringify(repoIds)) as {
+    sub: string | null;
+    runs: number;
+    tin: number;
+    tout: number;
+    cost: number;
+  }[];
+  return new Map(
+    rows.map((r) => [r.sub, { runs: r.runs, tokensIn: r.tin, tokensOut: r.tout, costUsd: r.cost }]),
+  );
+}
+
+/** Spend today and over the last 24 h across `repoIds`, by subscription id (null: unrecorded). */
+export function forgeSpend(db: Database, repoIds: ReadonlySet<string>, now: Date): ForgeSpend {
+  const day = new Date(now);
+  day.setUTCHours(0, 0, 0, 0);
+  const todaySince = day.toISOString();
+  const last24hSince = new Date(now.getTime() - 86_400_000).toISOString();
+  const ids = [...repoIds];
+  const until = now.toISOString();
+  return {
+    todaySince,
+    last24hSince,
+    today: spendSince(db, ids, todaySince, until),
+    last24h: spendSince(db, ids, last24hSince, until),
+  };
+}

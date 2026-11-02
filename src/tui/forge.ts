@@ -44,6 +44,7 @@ import { mayManageFlags } from "../core/flags.ts";
 import { mayEditTrustedHosts } from "../origins/trusted-hosts.ts";
 import { trustedHostsPrompt } from "./screens/trustedhosts.ts";
 import { flagsScreen } from "./screens/flags.ts";
+import { forgeUsageScreen } from "./screens/forge_usage.ts";
 import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { modelScreen } from "./screens/model.ts";
@@ -420,6 +421,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Usage",
         hint: "every route, unused ones first",
         run: () => ctx.push(usageScreen(session, ctx)),
+      });
+    // What the forge spent across the apps you write, as GET /api/v1/usage and MCP `usage` answer.
+    if (session.user !== undefined)
+      commands.push({
+        id: "forge-spend",
+        title: "Forge spend",
+        hint: "today and the last 24 hours, headroom per subscription",
+        run: () => ctx.push(forgeUsageScreen(session, ctx)),
       });
     // Proposal tokens for a repository you write, as the API and MCP have them (#2148).
     if (session.user !== undefined)

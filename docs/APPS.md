@@ -1326,7 +1326,11 @@ called the window full (a person's own use is not in the ledger, so it is
 a floor). An operator keeps a share of every window for people
 (Settings → Subscriptions, 0–90%); `crewRemaining` is what is left after
 it. Both read on `GET /api/v1/repos/:owner/:name/usage` and the MCP
-`usage` tool, under `standing`.
+`usage` tool, under `standing`. Without a repository, `GET /api/v1/usage` and
+the same tool answer for every app you can write: `today` (since 00:00 UTC)
+and `last24h` (rolling) named apart, per subscription, with each window's
+`headroom` as the percent of its limit still free (`null` until the provider
+has named a limit). Not in the terminal yet.
 
 Across repositories, the _fleet graph_ (`GET /fleet/graph`) draws a
 selection's spend and runs from the same ledger: the last 24 hours by UTC

@@ -141,6 +141,7 @@ export { route as getApiV1TelemetryHome } from "./getApiV1TelemetryHome.ts";
 export { route as getApiV1TelemetrySources } from "./getApiV1TelemetrySources.ts";
 export { route as getApiV1TelemetrySystem } from "./getApiV1TelemetrySystem.ts";
 export { route as getApiV1Tokens } from "./getApiV1Tokens.ts";
+export { route as getApiV1Usage } from "./getApiV1Usage.ts";
 export { route as getApiV1User } from "./getApiV1User.ts";
 export { route as getApiV1UserAssigned } from "./getApiV1UserAssigned.ts";
 export { route as getApiV1UserKeys } from "./getApiV1UserKeys.ts";

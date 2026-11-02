@@ -250,7 +250,7 @@ import {
 } from "../core/runs.ts";
 import { checkStale } from "../checks/stale.ts";
 import { resolveOid } from "../git/merge.ts";
-import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
+import { readForgeUsage, readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { carriedBy } from "../core/carried.ts";
@@ -3400,6 +3400,13 @@ export function apiRoutes(router: Router<Handler>): void {
       422,
       "who (1–100 characters) and some spend (tokensIn, tokensOut: whole numbers; usd: 0–10000); model, note (≤500) and issue (a number here) are optional",
     );
+  });
+
+  // The forge-wide twin: today, last24h and headroom across the apps the caller writes.
+  router.add("GET", "/api/v1/usage", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    if (!ctx.auth.user) return unauthorized();
+    return json(readForgeUsage(ctx.app, ctx.auth.user));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/usage", (ctx) => {
