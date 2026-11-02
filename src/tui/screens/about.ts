@@ -188,6 +188,10 @@ export function aboutScreen(
       return [
         binding(["y"], "copy the clone URL", { disabled: cloneUrl === "" }),
         ...(repo === undefined ? [] : [binding(["v"], "events")]),
+        // A site admin also reaches (early, so a narrow footer keeps them) the repository's private egress grants.
+        ...(f.user?.isAdmin === true && repo !== undefined
+          ? [binding(["e"], "egress"), binding(["c"], "connections")]
+          : []),
         // Only an admin is offered the key, and only an admin's press counts.
         ...(may()
           ? [
@@ -229,10 +233,6 @@ export function aboutScreen(
           : []),
         ...(mayDetach() && detachJob(repo!.id)?.phase !== "repacking"
           ? [binding(["x"], "detach from parent")]
-          : []),
-        // A site admin also reaches the repository's private egress grants.
-        ...(f.user?.isAdmin === true && repo !== undefined
-          ? [binding(["e"], "egress"), binding(["c"], "connections")]
           : []),
         ...(offered === null
           ? []
