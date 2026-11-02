@@ -11,6 +11,7 @@
  */
 
 import { actNowJs } from "./act_now.ts";
+import { pickJs } from "./pick.ts";
 import { imageViewJs } from "./render/image.ts";
 import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
@@ -2043,7 +2044,7 @@ const shellCore = /* js */ `
 `;
 
 /** The shell and the one script that makes actions answer at once (`act_now.ts`). */
-export const shellJs = `${shellCore}\n${actNowJs}`;
+export const shellJs = `${shellCore}\n${actNowJs}\n${pickJs}`;
 
 /**
  * Live regions. A page marks the parts of itself that change while it is
