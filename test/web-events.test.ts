@@ -111,8 +111,11 @@ test("a push row links to the commits, an event with no page is a row without a 
   const page = await (await get("/alice/mix/events", ownerCookie)).text();
   expect(page).toMatch(/<a href="\/alice\/mix\/commits"[^>]*>[\s\S]*?: trunk/);
   const hook = page.split("<li").find((li) => li.includes("added a webhook"))!.split("</li>")[0]!;
-  expect(hook).not.toContain("<a ");
-  expect(hook).toContain('<div class="row"');
+  const rowMarkup = hook.match(/<div class="row"[\s\S]*?<\/div>/)![0];
+  expect(rowMarkup).not.toMatch(/<a[\s>]/);
+  // the only link in the item is the kind button, outside the row.
+  expect([...hook.matchAll(/<a[\s>]/g)].length).toBe(1);
+  expect(hook).toContain('href="/alice/mix/events?kind=webhook.created"');
 });
 
 test("the repository header has an Events tab, the palette an Events entry", async () => {
@@ -131,4 +134,32 @@ test("a guest reads a public repository's events; the palette lists Events once"
     const page = await (await get(path, bobCookie)).text();
     expect(page.split("pub — Events").length - 1).toBe(1);
   }
+});
+
+test("?kind= narrows to one kind, keeps it on the cursor link, and refuses a bad one", async () => {
+  expect((await createRepo(app, alice, { name: "kinds", visibility: "public" })).ok).toBe(true);
+  const kinds = getRepo(app.db, "alice", "kinds")!;
+  app.db.query("DELETE FROM event WHERE repo_id = ?1").run(kinds.id);
+  app.bus.append({ kind: "push", repoId: kinds.id, actorId: alice.id, payload: { updates: [{ ref: "refs/heads/trunk" }] } });
+  app.bus.append({ kind: "pull.merged", repoId: kinds.id, actorId: alice.id, payload: { number: 7 } });
+  const all = await (await get("/alice/kinds/events", bobCookie)).text();
+  expect(all).toContain('href="/alice/kinds/events?kind=pull.merged"');
+  const only = await (await get("/alice/kinds/events?kind=push", bobCookie)).text();
+  expect(titles(only).length).toBe(1);
+  expect(only).toContain(": trunk");
+  expect(only).not.toContain("#7");
+  expect(only).toContain("All events");
+  expect(only).toContain("Showing: Pushes");
+  expect(all).toContain("Merged pulls");
+  const paged = await (await get("/alice/pub/events?kind=issue.opened", bobCookie)).text();
+  expect(paged).toMatch(/href="\/alice\/pub\/events\?kind=issue\.opened&amp;cursor=[^"]+"/);
+  for (const bad of ["<script>", "Push", "a%20b"])
+    expect((await get(`/alice/kinds/events?kind=${bad}`, bobCookie)).status).toBe(404);
+});
+
+test("a kind with no events says so and offers All events", async () => {
+  const page = await (await get("/alice/kinds/events?kind=deploy.finished", bobCookie)).text();
+  expect(page).toContain("No deploy.finished events");
+  expect(page).not.toContain("No events yet");
+  expect(page).toContain('href="/alice/kinds/events"');
 });

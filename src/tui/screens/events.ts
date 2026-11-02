@@ -6,14 +6,15 @@
  * only the admins. One line per event — when, who, what — in the words the
  * activity feed uses (`eventActor`, `eventVerb`). Fifty at a time; `n` reads
  * the next page from the cursor the last one returned; `s` keeps only the
- * settings changes (the same `kind` filter), each saying from what to what.
+ * settings changes (the same `kind` filter), each saying from what to what;
+ * `t` keeps only the kind of the row under the cursor, and again lifts it.
  */
 
 import { EVENTS_LIMIT_DEFAULT, eventsPage } from "../../core/events_page.ts";
 import type { ForgeEvent } from "../../core/events.ts";
 import type { Repo } from "../../core/repos.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import { eventActor, eventVerb } from "../../design/activity.ts";
+import { eventActor, eventKindLabel, eventVerb } from "../../design/activity.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
@@ -77,10 +78,22 @@ export function eventsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const opens: ({ pull: boolean; number: number } | undefined)[] = [];
   let next: string | null = null;
   let kind: string | undefined;
+  const kinds: string[] = [];
+  const narrow = (to: string | undefined): void => {
+    kind = to;
+    count = 0;
+    rows.length = 0;
+    kinds.length = 0;
+    opens.length = 0;
+    state.index = 0;
+    state.offset = 0;
+    read();
+  };
   const read = (cursor?: string): void => {
     const page = eventsPage(f.db, repo.id, f.user, EVENTS_LIMIT_DEFAULT, cursor, kind);
     count += page.items.length;
     rows.push(...eventRows(f, page.items));
+    kinds.push(...page.items.map((e) => e.kind));
     opens.push(...page.items.map(opensOf));
     next = page.next_cursor;
     ctx.invalidate();
@@ -88,22 +101,23 @@ export function eventsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   read();
   return {
     get title() {
-      return kind === undefined ? "Events" : "Events · settings";
+      return kind === undefined ? "Events" : `Events · ${eventKindLabel(kind).toLowerCase()}`;
     },
     get keys() {
       return [
         binding(["j", "k"], "move"),
         ...(opens[state.index] === undefined ? [] : [binding(["enter"], "open")]),
         ...(next === null ? [] : [binding(["n"], "next page")]),
-        binding(["s"], kind === undefined ? "settings only" : "all events"),
+        binding(["s"], kind === SETTINGS_KIND ? "all events" : "settings only"),
+        binding(["t"], kind === undefined ? "this kind only" : "all events"),
         binding(["esc", "q"], "back"),
       ];
     },
     render(area, s) {
       if (count === 0) {
         emptyState(s, area, ctx.theme.c, {
-          title: kind === undefined ? "No events yet" : "No settings changes yet",
-          body: kind === undefined ? "Pushes, merges and deploys land here." : "Press s for every event.",
+          title: kind === undefined ? "No events yet" : `No ${kind} events`,
+          body: kind === undefined ? "Pushes, merges and deploys land here." : "Press t for every event.",
         });
         return;
       }
@@ -119,15 +133,9 @@ export function eventsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
           const src = local(f, repo);
           ctx.push(target.pull ? pullScreen(f, ctx, src, target.number) : issueScreen(f, ctx, src, target.number));
         }
-      } else if (e.key === "s") {
-        kind = kind === undefined ? SETTINGS_KIND : undefined;
-        count = 0;
-        rows.length = 0;
-        opens.length = 0;
-        state.index = 0;
-        state.offset = 0;
-        read();
-      } else state.key(e, count);
+      } else if (e.key === "s") narrow(kind === SETTINGS_KIND ? undefined : SETTINGS_KIND);
+      else if (e.key === "t") narrow(kind === undefined ? kinds[state.index] : undefined);
+      else state.key(e, count);
       return true;
     },
   };

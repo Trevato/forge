@@ -154,3 +154,13 @@ test("opensOf names the number and the screen, and nothing for a number that is 
   expect(opensOf(ev("issue.opened"))).toBeUndefined();
   expect(opensOf(ev("push"))).toBeUndefined();
 });
+
+test("t keeps only the kind of the row under the cursor, and again lifts it", async () => {
+  const narrowed = await open(alice, ["G", "G", "t"]);
+  expect(narrowed.events).toContain("alice pushed: b");
+  expect(narrowed.events).toContain("Events · pushes");
+  expect(narrowed.events).not.toContain("alice opened an issue");
+  const lifted = await open(alice, ["t", "t"]);
+  expect(lifted.events).toContain("alice pushed: b59");
+  expect(lifted.events).not.toContain("Events · ");
+});
