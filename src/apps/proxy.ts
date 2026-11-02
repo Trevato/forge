@@ -46,6 +46,7 @@ import { feedback, mintProof } from "./feedback.ts";
 import { clientBucket } from "../http/peer.ts";
 import { DOOR_PULL_LIMIT, doorPage, type DoorPullLine } from "./door.ts";
 import { checkWord } from "./check_word.ts";
+import { servingWords } from "./serving_words.ts";
 import { openPulls } from "./door_pulls.ts";
 import { notePhase, startedAt, takePhases, timePhase } from "../core/route_timing.ts";
 import { readServing } from "./serving.ts";
@@ -1618,17 +1619,8 @@ export function unavailable(
   // edge, since there is nothing at this address yet. A stopped or failed
   // environment keeps its 502.
   const absent = preview && !gone && status === undefined;
-  const message =
-    reason ??
-    (deploying
-      ? "A new version is starting."
-      : state === "failed" || (state === "asleep" && status?.error !== undefined)
-        ? (status?.error ?? "The last deploy failed.")
-        : gone
-          ? "This preview is gone: its pull was closed, and its data with it."
-          : absent
-            ? "The preview is not running. It starts again with the next push to the pull, or with app_deploy redeploy."
-            : "Nothing is running here yet.");
+  const words = servingWords(status, preview ? (gone ? "closed" : "open") : null);
+  const message = reason ?? words.says;
   const links = discoveryLinks(runtime, target);
   const report = links.length > 0;
   const runLink =

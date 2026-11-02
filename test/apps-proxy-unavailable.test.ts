@@ -104,6 +104,15 @@ describe("unavailable page", () => {
     expect(res.status).toBeLessThan(500);
   });
 
+  test("a failed deploy's error is redacted, and a running one says so", async () => {
+    const secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    const failed = await page(`pull-${open}`, { state: "failed", error: `boom token=${secret}` }).text();
+    expect(failed).toContain("boom");
+    expect(failed).not.toContain(secret);
+    const running = await page(`pull-${open}`, { state: "running", port: 1 }).text();
+    expect(running).toContain("It is running.");
+  });
+
   test("a closed pull, and one that does not exist, are a 404 gone", async () => {
     for (const n of [closed, 9999]) {
       const res = page(`pull-${n}`);
