@@ -179,10 +179,13 @@ describe("the studio", () => {
       /<script type="application\/json" id="palette-index">([\s\S]*?)<\/script>/,
     )?.[1];
     if (block === undefined) throw new Error("no palette-index on the home");
-    const rows = (JSON.parse(block) as { items: { t: string; c: string }[] }).items;
+    const rows = (JSON.parse(block) as { items: { t: string; c: string; x?: string; o?: string }[] }).items;
     const at = (t: string) => rows.findIndex((r) => r.t === t);
-    expect(rows[at("alice/notes")]?.c).toBe("Apps");
-    expect(rows[at("alice/palette-later")]?.c).toBe("Repositories");
+    // A repository and its app are one row; the app shows as its label and door.
+    expect(rows[at("alice/notes")]?.c).toBe("Repositories");
+    expect(rows[at("alice/notes")]?.x).toStartWith("App · ");
+    expect(rows[at("alice/notes")]?.o).toBe("/alice/notes/app/production/open");
+    expect(rows[at("alice/palette-later")]?.x).toBeUndefined();
     expect(at("alice/notes")).toBeLessThan(at("alice/palette-later"));
   });
 

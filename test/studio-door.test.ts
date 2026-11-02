@@ -318,7 +318,9 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
         headers: cookie === undefined ? {} : { cookie },
         redirect: "manual",
       }).then((r) => r.text());
-    for (const page of [await visit(), await visit(strangerCookie)]) {
+    // The palette index lists other, public apps and their state; the page is what is under test.
+    const bare = (html: string) => html.replace(/<script[^>]*id="palette-index">.*?<\/script>/s, "");
+    for (const page of [bare(await visit()), bare(await visit(strangerCookie))]) {
       // The repository is public, so it is listed — once, plainly.
       expect(occurrences(page, 'href="/hal/ledger"')).toBe(1);
       expect(page).toContain("the books");
@@ -326,6 +328,9 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       expect(page).not.toContain("quiet");
       expect(page).not.toContain('class="studio-word"');
     }
+    // Nor does the palette hand a visitor the private app's door.
+    for (const raw of [await visit(), await visit(strangerCookie)])
+      expect(raw).not.toContain("/hal/ledger/app/production/open");
     const own = await visit(ownerCookie);
     expect(own).toContain("not running");
   });

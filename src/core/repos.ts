@@ -866,6 +866,7 @@ export function listReposByOwner(
     params.push(options.cursor);
     where += ` AND repo.id < ?${params.length}`;
   }
+  if (options.withoutArchived === true) where += " AND repo.archived_at IS NULL";
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(

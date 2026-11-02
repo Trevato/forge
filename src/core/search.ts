@@ -30,8 +30,9 @@ import { runGitCapture } from "../git/env.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
 import { GREP_LIMITS, grepSlots, type GrepSlots } from "../search/grep_slots.ts";
+import { appsForRepos } from "./apps.ts";
 import { likeEscape } from "./issues.ts";
-import { listReposVisibleTo, type Repo } from "./repos.ts";
+import { enterableApps, listReposVisibleTo, type Repo } from "./repos.ts";
 import type { User } from "./users.ts";
 
 /** The longest query we will run. Longer is a paste, not a search. */
@@ -71,6 +72,8 @@ export type RepoHit =
       readonly archived: boolean;
       readonly openIssues: number;
       readonly openPulls: number;
+      /** The repository runs an app. */
+      readonly app: boolean;
     }
   | {
       readonly source: "origin";
@@ -157,7 +160,13 @@ export function searchLocalRepos(
   query: string,
   limit: number,
 ): RepoHit[] {
-  const repos = listReposVisibleTo(db, viewer, { query, limit });
+  // A wide page, then ranked: with many forks of similar names the newest
+  // `limit` would cut the repository whose name was typed.
+  const repos = rankByName(
+    listReposVisibleTo(db, viewer, { query, limit: 100 }),
+    viewer,
+    query,
+  );
   // `listReposVisibleTo` matches owner and name; description is the extra
   // reach a search box wants, so it is unioned in rather than replacing it.
   const byDescription = describedRepos(db, viewer, query, limit);
@@ -168,17 +177,58 @@ export function searchLocalRepos(
     seen.add(repo.id);
     repos.push(repo);
   }
-  return repos.slice(0, limit).map(toRepoHit);
+  const page = repos.slice(0, limit);
+  // A private app is the writers' to know of; to anyone else the row is plain.
+  const apps = appsForRepos(
+    db,
+    page.map((r) => r.id),
+  );
+  const enterable = enterableApps(
+    db,
+    page.flatMap((repo) => {
+      const app = apps.get(repo.id);
+      return app === undefined ? [] : [{ repo, app }];
+    }),
+    viewer,
+    { named: false },
+  );
+  return page.map((r) => {
+    const app = apps.get(r.id);
+    return toRepoHit(r, app !== undefined && enterable.has(app.id));
+  });
+}
+
+/**
+ * Exact name first, then names that begin with what was typed, then the
+ * rest; within a tier the viewer's own repositories lead. Stable, so the
+ * listing's newest-first order decides among equals.
+ */
+function rankByName(
+  repos: Repo[],
+  viewer: User | undefined,
+  query: string,
+): Repo[] {
+  const q = query.trim().toLowerCase();
+  const tier = (r: Repo): number => {
+    const name = r.name.toLowerCase();
+    const exact = name === q || `${r.ownerName}/${name}`.toLowerCase() === q;
+    const t = exact ? 0 : name.startsWith(q) ? 1 : 2;
+    return t * 2 + (viewer !== undefined && r.ownerId === viewer.id ? 0 : 1);
+  };
+  return repos
+    .map((r, i) => ({ r, i, t: tier(r) }))
+    .sort((a, b) => a.t - b.t || a.i - b.i)
+    .map((x) => x.r);
 }
 
 /** The one repository a scoped search is about, when its owner, name or description holds the words. */
-export function matchOneRepo(repo: Repo, query: string): RepoHit[] {
+export function matchOneRepo(repo: Repo, query: string, app: boolean): RepoHit[] {
   const needle = query.trim().toLowerCase();
   const hay = `${repo.ownerName}/${repo.name} ${repo.description}`.toLowerCase();
-  return needle !== "" && hay.includes(needle) ? [toRepoHit(repo)] : [];
+  return needle !== "" && hay.includes(needle) ? [toRepoHit(repo, app)] : [];
 }
 
-function toRepoHit(repo: Repo): RepoHit {
+function toRepoHit(repo: Repo, app: boolean): RepoHit {
   return {
     source: "local",
     id: repo.id,
@@ -189,6 +239,7 @@ function toRepoHit(repo: Repo): RepoHit {
     archived: repo.archivedAt !== null,
     openIssues: repo.counts?.openIssues ?? 0,
     openPulls: repo.counts?.openPulls ?? 0,
+    app,
   };
 }
 

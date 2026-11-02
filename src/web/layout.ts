@@ -11,7 +11,13 @@ import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch
 import { protectionNotice } from "../kernel/protection.ts";
 import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
-import { getRepo, listReposVisibleTo } from "../core/repos.ts";
+import { appsRuntime } from "../apps/runtime.ts";
+import {
+  enterableApps,
+  getRepo,
+  listReposByOwner,
+  listReposVisibleTo,
+} from "../core/repos.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
@@ -50,6 +56,11 @@ export interface PaletteItem {
   t: string;
   h: string;
   c?: string;
+  /** A repository's bare name; its app's label and door; whether the viewer owns it. */
+  n?: string;
+  x?: string;
+  o?: string;
+  m?: 1;
 }
 
 export interface PageOptions {
@@ -341,24 +352,64 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   // One forge (#603): a conversation's remote row is built with the
   // studio's nouns, which answer for every repository.
   const studio = true;
-  // Apps first, then the other repositories, thirty in all; archived ones
+  // The viewer's own first, apps ahead of the rest in each half, thirty in
+  // all; archived ones
   // are put away, found by typing the full name into search.
-  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
-    limit: 30,
-    appsFirst: true,
-    withoutArchived: true,
-  });
+  const wanted = { limit: 30, appsFirst: true, withoutArchived: true };
+  const mine = ctx.auth.user
+    ? listReposByOwner(ctx.app.db, ctx.auth.user.username, ctx.auth.user, wanted)
+    : [];
+  const taken = new Set(mine.map((r) => r.id));
+  const repos = [
+    ...mine,
+    ...listReposVisibleTo(ctx.app.db, ctx.auth.user, wanted).filter(
+      (r) => !taken.has(r.id),
+    ),
+  ].slice(0, 30);
   const apps = appsForRepos(
     ctx.app.db,
     repos.map((r) => r.id),
   );
+  // A private app is the writers' to see; to anyone else the row is plain.
+  // Asked once for the page, never per row.
+  const enterable = enterableApps(
+    ctx.app.db,
+    repos.flatMap((repo) => {
+      const app = apps.get(repo.id);
+      return app === undefined ? [] : [{ repo, app }];
+    }),
+    ctx.auth.user,
+    { named: false },
+  );
+  const open = repos.flatMap((r) => {
+    const app = apps.get(r.id);
+    return app !== undefined && enterable.has(app.id) ? [app] : [];
+  });
+  const states = open.length > 0 ? appsRuntime(ctx.app)?.statusMany(open) : undefined;
   const items: PaletteItem[] = [
     ...extra,
-    ...repos.map((r) => ({
-      t: `${r.ownerName}/${r.name}`,
-      h: `/${r.ownerName}/${r.name}`,
-      c: apps.has(r.id) ? "Apps" : "Repositories",
-    })),
+    ...repos.map((r): PaletteItem => {
+      const found = apps.get(r.id);
+      const app = found !== undefined && enterable.has(found.id) ? found : undefined;
+      const base = `/${r.ownerName}/${r.name}`;
+      const state =
+        app === undefined
+          ? undefined
+          : states?.get(app.id)?.find((e) => e.env === "production")?.state;
+      return {
+        t: `${r.ownerName}/${r.name}`,
+        h: base,
+        c: "Repositories",
+        n: r.name,
+        ...(r.ownerId === ctx.auth.user?.id ? { m: 1 as const } : {}),
+        ...(app === undefined
+          ? {}
+          : {
+              x: `App · ${state ?? "not running"}`,
+              o: `${base}/app/production/open`,
+            }),
+      };
+    }),
     ...STATIC_PALETTE,
     ...(sendsForges(ctx)
       ? [{ t: "New forge", h: "/forges/new", c: "Create" }]
@@ -375,7 +426,12 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   // API found, folded in the browser — build the same addresses the server
   // just rendered (`tellHref`/`changeHref`, `src/web/studio/nouns.ts`). The
   // palette can never hand out a noun the page behind it would not.
-  const json = JSON.stringify({ items, studio, tell: tellTarget(ctx) }).replaceAll("<", "\\u003c");
+  const json = JSON.stringify({
+    items,
+    studio,
+    me: ctx.auth.user?.username,
+    tell: tellTarget(ctx),
+  }).replaceAll("<", "\\u003c");
   return raw(
     `<script type="application/json" id="palette-index">${json}</script>`,
   );
@@ -417,7 +473,7 @@ function overlays(): Html {
         aria-label="Results"
       ></div>
       <div class="palette-foot">
-        ${kbd(["↑", "↓"])} navigate ${kbd(["↵"])} open ${kbd(["esc"])} close
+        ${kbd(["↑", "↓"])} navigate ${kbd(["↵"])} open ${kbd(["⌘", "↵"])} its app ${kbd(["esc"])} close
       </div>
     </dialog>
     <dialog class="dialog" id="help-dialog" aria-labelledby="help-title">

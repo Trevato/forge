@@ -1614,7 +1614,12 @@ export const shellJs = /* js */ `
       rows.push(r.source === 'origin'
         ? { t: r.fullName, h: '/origins/' + r.originId + '/r/' + r.fullName, g: 'Repositories',
             d: r.originKind ? 'on ' + r.originKind : 'on an origin' }
-        : { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories' });
+        : (function () {
+            var row = { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories', n: r.name };
+            if (r.owner === loadIndex().me) row.m = 1;
+            if (r.app) { row.x = 'App'; row.o = row.h + '/app/production/open'; }
+            return row;
+          })());
     });
     // An issue lives at /issues/:n and a pull request at /pulls/:n in every
     // mode (\`tellHref\`/\`changeHref\`, src/web/studio/nouns.ts).
@@ -1745,7 +1750,12 @@ export const shellJs = /* js */ `
     var input = dlg.querySelector('.palette-input');
     var list = dlg.querySelector('.palette-list');
     var items = (loadIndex().items || []).map(function (i) {
-      return { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
+      var r = { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
+      if (i.n) r.n = String(i.n);
+      if (i.m === 1) r.m = 1;
+      if (i.x) r.x = String(i.x);
+      if (i.o && String(i.o).charAt(0) === '/') r.o = String(i.o);
+      return r;
     });
     var tellApp = (loadIndex().tell || {}).app;
     var recent = readRecent().map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
@@ -1774,6 +1784,12 @@ export const shellJs = /* js */ `
       t.className = 'grow';
       t.textContent = r.t;
       a.appendChild(t);
+      if (r.x) {
+        var x = doc.createElement('span');
+        x.className = 'cat';
+        x.textContent = r.x;
+        a.appendChild(x);
+      }
       if (r.d) {
         var d = doc.createElement('span');
         d.className = 'cat';
@@ -1827,6 +1843,14 @@ export const shellJs = /* js */ `
           var a = row(r, 'palette-o' + nodes.length);
           nodes.push(a); shown.push(r);
           box.appendChild(a);
+          // The app is its own option under its repository: reachable by
+          // arrow, touch and screen reader, not only by Cmd/Ctrl+Enter.
+          if (r.o) {
+            var ar = { t: 'Open the app of ' + r.t, h: r.o, g: g.title };
+            var aa = row(ar, 'palette-o' + nodes.length);
+            nodes.push(aa); shown.push(ar);
+            box.appendChild(aa);
+          }
         });
         frag.appendChild(box);
       });
@@ -1907,6 +1931,11 @@ export const shellJs = /* js */ `
       else if (k === 'ArrowUp') { e.preventDefault(); select(at - 1); }
       else if (k === 'Home') { e.preventDefault(); select(0); }
       else if (k === 'End') { e.preventDefault(); select(nodes.length - 1); }
+      else if (k === 'Enter' && (e.metaKey || e.ctrlKey) && shown[at] && shown[at].o) {
+        e.preventDefault();
+        remember(shown[at]);
+        location.href = shown[at].o;
+      }
       else if (k === 'Enter') {
         e.preventDefault();
         var q = input.value.trim();

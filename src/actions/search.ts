@@ -14,8 +14,9 @@
 import { isActive } from "../core/users.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import type { App } from "../app.ts";
+import { appsForRepos } from "../core/apps.ts";
 import { listOrigins } from "../core/origins.ts";
-import { canRead, listReposVisibleTo } from "../core/repos.ts";
+import { canRead, enterableApps, listReposVisibleTo } from "../core/repos.ts";
 import {
   cleanQuery,
   grepRepos,
@@ -82,6 +83,15 @@ export type SearchPhase = "repos" | "issues" | "code";
  * half — the same rows a signed-out repo listing shows — and no origins,
  * because an origin belongs to the person who connected it.
  */
+/** Whether the repository runs an app the actor may enter (a private one is its writers'). */
+function hasEnterableApp(app: App, actor: User | undefined, repo: Repo): boolean {
+  const record = appsForRepos(app.db, [repo.id]).get(repo.id);
+  return (
+    record !== undefined &&
+    enterableApps(app.db, [{ repo, app: record }], actor, { named: false }).has(record.id)
+  );
+}
+
 export async function search(
   app: App,
   actor: User | undefined,
@@ -120,7 +130,7 @@ export async function search(
   const repos = !wants("repos")
     ? []
     : input.repo !== undefined
-      ? matchOneRepo(input.repo, q)
+      ? matchOneRepo(input.repo, q, hasEnterableApp(app, actor, input.repo))
       : [
           ...searchLocalRepos(app.db, actor, q, limit),
           ...(actor ? searchOriginRepos(app.db, actor.id, q, limit) : []),
