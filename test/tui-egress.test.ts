@@ -21,7 +21,7 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
-import { settleApp } from "./helpers/tui.ts";
+import { settleApp, settlePalette, settleUntil } from "./helpers/tui.ts";
 
 quietLogs();
 
@@ -58,11 +58,15 @@ describe("private destinations in the terminal", () => {
       await press("ctrl+k");
       for (const ch of "Open a repository")
         app.dispatch({ type: "key", key: ch, ctrl: false, alt: false, shift: false });
+      await settlePalette(app);
       await press("enter");
       for (const ch of "acme/arm")
         app.dispatch({ type: "key", key: ch, ctrl: false, alt: false, shift: false });
+      await settlePalette(app);
       await press("enter");
       await press("I");
+      // The About card's footer is drawn once its repository has loaded.
+      await settleUntil(app, "About");
     };
     return { text: () => app.screen.toText(), press, toAbout, stop: () => app.stop() };
   }
