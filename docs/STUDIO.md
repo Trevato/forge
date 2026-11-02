@@ -333,7 +333,8 @@ issue, which is also what the board's line above its regions offers), and, for a
 forge's health (`needs` in `/api/v1/health`). What counts as an ask is
 defined once, in `src/web/studio/asks.ts`: the header's **Asks** count, the
 page, the dashboard's _Needs you_ link and the phone notifier all read it,
-so the numbers agree. It is server-rendered and every button is a form post,
+so the numbers agree. Each card's words, forms and buttons are drawn in
+`src/web/studio/decisions.ts`. It is server-rendered and every button is a form post,
 so it works without JavaScript.
 
 ## What you asked for
@@ -463,10 +464,14 @@ page's signals (`core/front.ts`: forks by people, pulls merged this month,
 hours in use, how lately it shipped) with the numbers on each row, and — for
 a site admin — the forges this one spawned. One line narrows it and stays in
 the URL: `kind:app|person|forge`, `sort:score|forks|ships|use|fresh|name`,
+`owner:<username>` (one account's apps and the person; each person row's
+count of apps links there), `archived:yes` (put-away repositories too),
 and words to match. An agent's working fork is how the crew builds, not a
 find, and is left out; a private app's hours are told only to those who may
 enter it. Every app row offers **Make it yours** (a fork) to someone signed
-in. The same rows: `GET /api/v1/explore?q=…` and the MCP tool `explore`
+in, and a public app's row offers it to a signed-out visitor too, by way of
+sign-in; the README says how. In the terminal, `Y` on a repository screen makes
+it yours: name, `tab` for visibility, the plan, then a confirm. The same rows: `GET /api/v1/explore?q=…` and the MCP tool `explore`
 (`actions/explore.ts`). It is in the account menu and the palette, and the
 front page's "All public apps" leads here.
 

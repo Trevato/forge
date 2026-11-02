@@ -16,6 +16,7 @@ import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { REPO_INIT_FAILED, REPO_NAME_RULES } from "../../actions/repo_words.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
+import { NO_SUCH_AGENT } from "../../actions/crew_limit_words.ts";
 import { getUserByName } from "../../core/users.ts";
 import {
   appView,
@@ -29,7 +30,8 @@ import { listAllAgents } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
 import { appNameJs, deriveAppName } from "./apps-name.ts";
 import { STARTERS, starterFromQuery, starterHref } from "./apps-starters.ts";
-import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
+import { previewEnv, type EnvName } from "../../apps/data.ts";
+import { envRefusalText, redeployedText, stoppedText } from "../../actions/env_words.ts";
 import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { firstPreviews, goldenPath, goldenPathLine } from "../../apps/golden_path.ts";
 import { appHostSuffix } from "../../apps/host.ts";
@@ -37,6 +39,7 @@ import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import type { Pull } from "../../core/pulls.ts";
 import {
+  canAdmin,
   canWrite,
   getRepoById,
   listReposVisibleTo,
@@ -45,6 +48,7 @@ import {
 import type { User } from "../../core/users.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
 import {
+  nameFrame,
   notePhase,
   takeSessionTime,
   timePhase,
@@ -63,7 +67,7 @@ import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { writableAppsOf } from "../studio/asks.ts";
 import { costLine } from "../studio/cost_line.ts";
-import { homeTabs } from "../studio/home_tabs.ts";
+import { homeTabs, unshippedAsks } from "../studio/home_tabs.ts";
 import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
@@ -129,7 +133,7 @@ function appsForViewer(ctx: Ctx, archived: boolean): AppEntry[] {
 }
 
 /** How many archived apps the viewer can see (the "N archived" line). */
-function archivedAppCount(ctx: Ctx): number {
+export function archivedAppCount(ctx: Ctx): number {
   const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
     limit: 200,
     archivedOnly: true,
@@ -140,10 +144,23 @@ function archivedAppCount(ctx: Ctx): number {
   ).size;
 }
 
-/** `production` or `preview of #12`, as a phrase that fits in a sentence. */
-export function envLabel(env: EnvName): string {
-  const number = envPull(env);
-  return number === undefined ? "production" : `preview of #${number}`;
+/** The archived list's Wake: a small form under each row the viewer administers. */
+function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
+  const out = new Map<string, Html>();
+  for (const repo of repos) {
+    if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) continue;
+    out.set(
+      repo.id,
+      html`<li>
+        <form method="post" action="${repoBase(repo)}/settings/archive">
+          <input type="hidden" name="archived" value="0" />
+          <input type="hidden" name="to" value="/apps?archived=1" />
+          ${btn(html`Wake<span class="sr-only"> ${repo.ownerName}/${repo.name}</span>`)}
+        </form>
+      </li>`,
+    );
+  }
+  return out;
 }
 
 /**
@@ -202,18 +219,19 @@ export async function appsList(ctx: Ctx): Promise<Response> {
             },
           ])}
         </div>`;
+  const wake = archivedView ? wakeForms(ctx, shown.map((e) => e.repo)) : undefined;
   const rows = await timePhaseAsync(ctx.request, "shelf", () =>
     shelfRows(
       ctx,
       shown.map((e) => e.repo),
-      { firstPreview: firstPreviews(ctx.app.db, shown.map((e) => e.record)) },
+      { firstPreview: firstPreviews(ctx.app.db, shown.map((e) => e.record)), under: wake },
     ),
   );
   const cost = timePhase(ctx.request, "cost", () =>
     costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos),
   );
   const rendering = performance.now();
-  const body = html`${when(ctx.auth.user, () => homeTabs("apps"))}
+  const body = html`${when(ctx.auth.user, (user) => homeTabs("apps", unshippedAsks(ctx.app.db, user)))}
     ${pageHead("Apps", { actions: create })}
     ${cost}
     ${filters}
@@ -442,7 +460,7 @@ const NEW_APP_ERRORS: Record<string, string> = {
     "Another app already answers to that hostname. Pick another name.",
   already_app: "That repository is already an app.",
   scaffold_failed: "The starter app could not be committed.",
-  no_such_agent: "That agent is not on this forge.",
+  no_such_agent: NO_SUCH_AGENT,
 };
 
 // POST /apps/new
@@ -699,6 +717,7 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
  * theirs, nothing else is.
  */
 export function appsOpen(ctx: Ctx): Response {
+  nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   return timePhase(ctx.request, "render", () => appsOpenResponse(ctx));
 }
@@ -764,21 +783,20 @@ async function envForm(
  * a form field; with no referer the fallback is the repository's home.
  */
 function envBack(ctx: Ctx, repo: Repo): string {
-  return safeBack(ctx) ?? repoBase(repo);
+  // Arriving from the confirm page, going "back" would ask again; the
+  // repository's page is where the person can see what changed.
+  const back = safeBack(ctx);
+  if (back === undefined || back.split("?")[0] === "/-/confirm")
+    return repoBase(repo);
+  return back;
 }
 
 function envFailure(ctx: Ctx, repo: Repo, error: string): Response {
   if (error === "not_found" || error === "no_such_env")
     return notFoundPage(ctx);
-  const words: Record<string, string> = {
-    forbidden: "You need write access to do that.",
-    no_runtime: "Nothing is serving apps on this forge.",
-    nothing_to_deploy:
-      "There is nothing to deploy: the branch has no commits, or the pull request is closed.",
-  };
   return flashTo(ctx, envBack(ctx, repo), {
     tone: "danger",
-    message: words[error] ?? "That could not be done.",
+    message: envRefusalText(error),
   });
 }
 
@@ -794,12 +812,8 @@ export async function appRedeploy(ctx: Ctx): Promise<Response> {
   // there (`envBack`); the run itself is one link away on that card.
   return redirect(envBack(ctx, repo), {
     url: ctx.url,
-    flash: {
-      message:
-        run === undefined
-          ? `${envLabel(env as EnvName)} already serves that commit.`
-          : `Redeploying ${envLabel(env as EnvName)}.`,
-    },
+    forgeUrl: ctx.app.config.url,
+    flash: { message: redeployedText(env as EnvName, run) },
   });
 }
 
@@ -811,6 +825,6 @@ export async function appStop(ctx: Ctx): Promise<Response> {
   const stopped = await stopEnv(ctx.app, user, repo, env);
   if (!stopped.ok) return envFailure(ctx, repo, stopped.error);
   return flashTo(ctx, envBack(ctx, repo), {
-    message: `Stopped ${envLabel(env as EnvName)}. Its data is kept; Redeploy brings it back.`,
+    message: stoppedText(env as EnvName),
   });
 }

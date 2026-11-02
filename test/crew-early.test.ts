@@ -16,6 +16,9 @@ import {
   openIssue,
   setIssueState,
 } from "../src/actions/issues.ts";
+import { answeredBeforeStop } from "../src/crew/already.ts";
+import { alreadyDone } from "../src/core/done_on_main.ts";
+import { updateRepoSettings } from "../src/actions/repos.ts";
 import { pullOfBranch, watchForPull } from "../src/crew/early.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { abortAgentRun } from "../src/crew/running.ts";
@@ -24,7 +27,7 @@ import { createIssue, getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { getForkOf, type Repo } from "../src/core/repos.ts";
-import { listRuns, type Run } from "../src/core/runs.ts";
+import { getRun, listRuns, type Run } from "../src/core/runs.ts";
 import type { User } from "../src/core/users.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import {
@@ -289,4 +292,62 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
     expect(lines.length).toBe(1);
     expect(pullOfBranch(app, repo, fork, branch)).toBeUndefined();
   }, 30_000);
+
+  test("a run whose pull is closed under it, after it answered already done on main, notes and holds its issue", async () => {
+    rmSync(join(dataDir, "answered"), { force: true });
+    // The note and the hold are the autonomous crew's (`settleAgentRun`).
+    const on = await updateRepoSettings(app, alice, repo, {
+      autonomy: "autonomous",
+      autonomyDirection: "Keep the garden small.",
+      autonomyCeilingUsd: 100,
+      autonomyBy: alice.id,
+    });
+    expect(on.ok).toBe(true);
+    try {
+      const issue = openIssue(app, alice, repo, {
+        title: "Weed the cress",
+        body: "PUSH-THEN-DONE-ON-MAIN",
+      });
+      if (!issue.ok) throw new Error("issue");
+      expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+      const branch = `bot/${issue.value.number}-weed-the-cress`;
+      const mine = () =>
+        listPulls(app.db, repo.id, { state: "all", limit: 200 }).filter(
+          (p) => p.headBranch === branch,
+        );
+      const until = async (ok: () => boolean) => {
+        const end = Date.now() + 15_000;
+        while (!ok() && Date.now() < end) await Bun.sleep(20);
+        return ok();
+      };
+      // The stand-in has pushed and given its answer; its pull is open.
+      expect(
+        await until(() => existsSync(join(dataDir, "answered")) && mine().length > 0),
+      ).toBe(true);
+      const pull = getIssue(app.db, repo.id, mine()[0]!.number)!;
+      expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
+      // Cancelled at once by the pull; the runner then answers for it.
+      const id = (await settled((r) => r.branch === branch)).id;
+      await until(() => getRun(app.db, id)!.state !== "cancelled");
+      const run = getRun(app.db, id)!;
+      expect(run.state).toBe("ok");
+      expect(run.summary).toMatch(/^already done: [0-9a-f]{40}$/);
+      const oid = run.summary.slice("already done: ".length);
+      await until(() => alreadyDone(app.db, [issue.value.id]).has(issue.value.id));
+      const notes = listComments(app.db, issue.value.id).map((c) => c.body);
+      expect(notes.some((b) => b.startsWith("Parked by the crew"))).toBe(false);
+      expect(alreadyDone(app.db, [issue.value.id]).get(issue.value.id)).toEqual([oid]);
+      expect(getIssue(app.db, repo.id, issue.value.number)!.assigneeId).toBeNull();
+    } finally {
+      await updateRepoSettings(app, alice, repo, { autonomy: "off" });
+    }
+  }, 30_000);
+
+  test("a run its meter stopped keeps no decline; a run only its pull stopped does", () => {
+    const decline = "DECLINED: already done on main in 0e2eaaf4";
+    expect(answeredBeforeStop(undefined, decline)).toBe(true);
+    expect(answeredBeforeStop(undefined, "DECLINED: out of scope")).toBe(false);
+    expect(answeredBeforeStop(undefined, "Added CREW.md as asked.")).toBe(false);
+    expect(answeredBeforeStop("the model grant is spent", decline)).toBe(false);
+  });
 });

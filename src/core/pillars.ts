@@ -50,6 +50,8 @@ export interface Pillars {
 const PILLAR = /^(P\d+) [^:]+(?=:)/;
 const GATE = /^Later gate:/i;
 const LATER_UMBRELLA = /^Later:/i;
+/** A title that may be the Later gate or umbrella: what `TITLED` selects for below. */
+export const LATER_TITLED = /^later/i;
 /** More umbrellas than a direction has pillars. */
 const MAX = 64;
 
@@ -258,6 +260,9 @@ export function mergedByPillar(
   ];
 }
 
+/** How many ids one query binds; far under SQLite's variable limit. */
+const CHUNK = 400;
+
 interface MergedPull {
   readonly id: string;
   readonly closes: readonly number[];
@@ -308,7 +313,6 @@ function mergedPulls(
   }));
   const numbers = [...new Set(pulls.flatMap((pull) => pull.closes))];
   const issues = new Map<number, ClosedIssue>();
-  const CHUNK = 400;
   for (let i = 0; i < numbers.length; i += CHUNK) {
     const chunk = numbers.slice(i, i + CHUNK);
     const found = db
@@ -364,7 +368,8 @@ export interface AskToLiveCount {
  * the first production deploy that went live carrying the pull (the
  * `deploy_pull` record, so no git runs here). A pull not yet live counts
  * for nothing; an issue closed by several pulls counts once, at its first
- * time live. Every name has a row, in order; two reads however many pulls.
+ * time live. Every name has a row, in order; a fixed number of reads however
+ * many pulls (the window's pulls and their issues, then the deploys carrying them).
  */
 export function askToLiveByPillar(
   db: Database,
@@ -375,19 +380,26 @@ export function askToLiveByPillar(
   scope: SealedScope = {},
 ): AskToLiveCount[] {
   const { pulls, issues } = mergedPulls(db, repoId, since, scope);
+  // Read from the window's merged pulls up, by `deploy_pull_issue` and the run's key,
+  // not from every run the repository ever made.
   const live = new Map<string, string[]>();
-  for (const row of db
-    .query<{ id: string; at: string }, [string, string]>(
-      `SELECT dp.issue_id AS id, COALESCE(r.serving_at, r.finished_at) AS at
-         FROM deploy_pull dp JOIN run r ON r.id = dp.run_id
-        WHERE r.repo_id = ?1 AND r.kind = 'deploy' AND r.env = 'production' AND r.state = 'ok'
-          AND COALESCE(r.serving_at, r.finished_at) >= ?2
-        ORDER BY COALESCE(r.serving_at, r.finished_at), r.id`,
-    )
-    .all(repoId, since)) {
-    const list = live.get(row.id) ?? [];
-    list.push(row.at);
-    live.set(row.id, list);
+  const ids = pulls.map((pull) => pull.id);
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    for (const row of db
+      .query<{ id: string; at: string }, string[]>(
+        `SELECT dp.issue_id AS id, COALESCE(r.serving_at, r.finished_at) AS at
+           FROM deploy_pull dp CROSS JOIN run r ON r.id = dp.run_id
+          WHERE dp.issue_id IN (${chunk.map((_, n) => `?${n + 3}`).join(",")})
+            AND r.repo_id = ?1 AND r.kind = 'deploy' AND r.env = 'production' AND r.state = 'ok'
+            AND COALESCE(r.serving_at, r.finished_at) >= ?2
+          ORDER BY COALESCE(r.serving_at, r.finished_at), r.id`,
+      )
+      .all(repoId, since, ...chunk)) {
+      const list = live.get(row.id) ?? [];
+      list.push(row.at);
+      live.set(row.id, list);
+    }
   }
   // One entry per asked issue: its first time live over every pull that closed it.
   const first = new Map<number, { pillar: string; createdAt: string; at: string }>();
@@ -435,7 +447,6 @@ export function reposWithUmbrellas(
   repoIds: readonly string[],
 ): Set<string> {
   const out = new Set<string>();
-  const CHUNK = 400;
   for (let i = 0; i < repoIds.length; i += CHUNK) {
     const chunk = repoIds.slice(i, i + CHUNK);
     const rows = db

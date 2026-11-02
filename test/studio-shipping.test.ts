@@ -365,6 +365,8 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(owner).toContain(">Crew<");
     expect(owner).toContain(">On its own<");
     expect(owner).toMatch(/\$42\.50\s+of\s+\$25/);
+    // The crew card says the governor's reason in one line (#7644).
+    expect(owner).toMatch(/<dt>Governor<\/dt>\s*<dd>Builders \d+: /);
     expect(owner).toContain("Remove");
     expect(owner).toContain("Save");
     // The rest is beneath, on the same page and in the same frame.

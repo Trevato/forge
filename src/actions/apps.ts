@@ -12,10 +12,13 @@ import { mayView } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAppRoom } from "./app_limit.ts";
 import type { App } from "../app.ts";
+import { checkWord, type CheckWord } from "../apps/check_word.ts";
+import { openPulls } from "../apps/door_pulls.ts";
 import { goldenPath, goldenPathLine } from "../apps/golden_path.ts";
 import { appVitals, type AppVitals } from "../apps/vitals.ts";
 import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
-import { grantUrl, originFor } from "../apps/proxy.ts";
+import { grantUrl, originFor, sideForViewer, sideReader } from "../apps/proxy.ts";
+import { plainLine } from "../apps/side.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
 import {
   isEnvName,
@@ -509,6 +512,73 @@ export function appPace(app: App, actor: User | undefined, repo: Repo): string {
   if (!requireReader(app, actor, repo).ok) return "";
   const record = getAppByRepo(app.db, repo.id);
   return record === undefined ? "" : goldenPathLine(goldenPath(app.db, record));
+}
+
+export interface AppPullLine {
+  readonly number: number;
+  readonly title: string;
+  readonly check: CheckWord;
+  /** The pull's preview address, or `undefined` when the forge serves none. */
+  readonly preview: string | undefined;
+}
+
+/**
+ * The app's open pulls with their check word and preview address, for a
+ * signed-in viewer who may read the repository; a guest gets none.
+ */
+export function appPullLines(app: App, actor: User | undefined, repo: Repo): AppPullLine[] {
+  if (actor === undefined) return [];
+  const record = getAppByRepo(app.db, repo.id);
+  if (record === undefined) return [];
+  const runtime = appsRuntime(app);
+  return openPulls(app.db, repo, actor).map((p) => ({
+    number: p.number,
+    title: p.title,
+    check: checkWord(p.run, p.headOid),
+    preview: runtime?.urlFor(record, previewEnv(p.number)),
+  }));
+}
+
+export interface AppPreview {
+  readonly number: number;
+  readonly title: string;
+  /** The preview's environment, as the studio's previews list reads it. */
+  readonly env: EnvStatus;
+}
+
+/**
+ * The open pulls that have a preview environment, newest first, each with
+ * that environment — the studio's previews list (`studio/previews.ts`) for a
+ * door that cannot draw a page. One `status()` read for every row, never one
+ * per pull. `undefined` when the actor may not read the repository or it is
+ * no app, so "no previews" is only ever said to someone who may see them.
+ */
+export function appPreviews(app: App, actor: User | undefined, repo: Repo): AppPreview[] | undefined {
+  if (!requireReader(app, actor, repo).ok) return undefined;
+  const record = getAppByRepo(app.db, repo.id);
+  if (record === undefined) return undefined;
+  const envs = new Map(envsFor(app, actor, record).map((e) => [e.env, e] as const));
+  return openPulls(app.db, repo, actor, 50).flatMap((p) => {
+    const env = envs.get(previewEnv(p.number));
+    return env === undefined ? [] : [{ number: p.number, title: p.title, env }];
+  });
+}
+
+/**
+ * The other side of the app for its production terminal, gated as the pill
+ * is (an active reader of the repository; a guest gets none): production's
+ * address, then the newest open preview when there is one.
+ */
+export function appSideLines(app: App, actor: User | undefined, repo: Repo): string[] {
+  const record = getAppByRepo(app.db, repo.id);
+  const runtime = appsRuntime(app);
+  if (record === undefined || runtime === undefined) return [];
+  if (sideReader(app.db, record, actor) === undefined) return [];
+  const preview = sideForViewer(runtime, record, "production", actor);
+  return [
+    `Production: ${runtime.urlFor(record, "production")}`,
+    ...(preview === null ? [] : [`${preview.label} ${preview.url}`]),
+  ].map(plainLine);
 }
 
 export type EnvError = "not_found" | "no_runtime" | "no_such_env";

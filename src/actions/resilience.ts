@@ -8,6 +8,7 @@
 import type { App } from "../app.ts";
 import { lastDrill, type LastDrill } from "../core/domain_drills.ts";
 import type { User } from "../core/users.ts";
+import { drillCommand } from "../kernel/domain_drill.ts";
 import { DOMAINS } from "../kernel/domains.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { snapshotsOf } from "../snapshot/service.ts";
@@ -42,6 +43,25 @@ export function listResilience(
           ? { name: null, why: d.drill.why }
           : { name: d.drill.name, last: lastDrill(app.db, d.key) },
     })),
+  );
+}
+
+/** A domain as MCP `drills` and `GET /api/v1/admin/drills` say it: drilled with its last result and command, or why not. */
+export function drillRows(rows: readonly ResilienceRow[], origin: string) {
+  return rows.map((d) =>
+    d.drill.name === null
+      ? { key: d.key, breaks: d.breaks, drilled: false, why: d.drill.why }
+      : {
+          key: d.key,
+          breaks: d.breaks,
+          drilled: true,
+          drill: d.drill.name,
+          last:
+            d.drill.last === null
+              ? null
+              : { at: d.drill.last.at, green: d.drill.last.green, why: d.drill.last.why },
+          command: drillCommand(d.key, origin),
+        },
   );
 }
 

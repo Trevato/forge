@@ -17,6 +17,10 @@ export function editMessage(kind: string): string {
       return "the origin refused this commit; nothing was changed here either";
     case "pull_failed":
       return "the commit landed, but the pull request could not be opened";
+    case "invalid_path":
+      return "that path cannot be written; use a plain relative path with no .. or .git";
+    case "path_conflict":
+      return "that path collides with a file or directory already in the tree";
     default:
       return "this edit could not be applied";
   }

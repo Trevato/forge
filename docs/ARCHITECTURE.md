@@ -174,8 +174,16 @@ that read it (add now, remove next release; a rename is two releases).
 `notAdditive` (`kernel/migrate.ts`) names a drop, a rename, a rebuild or a
 NOT NULL column without a default, and `test/schema-additive.test.ts`
 refuses one in any migration not shipped by both of the two newest releases
-recorded in `src/core/releases.json` (by id: a count, and the stamped ids),
-which the release agent bumps when it cuts one.
+recorded in `src/core/releases-before-tags.json` (by id: a count, and the
+stamped ids). That list is frozen: a release cut since #6642 is an annotated
+tag `v<version>` whose message is the same record (`bun scripts/cut-release.ts
+<version> --tag`), so a cut never moves main and never voids a gate in flight;
+`release/shipped.ts` reads the tags from the forge's own repository for
+`/releases.json`, the children's standings and the behind watch; `release/own_tags.ts`
+finds that repository (`FORGE_REPO`, any case) on every ten-minute tick and logs,
+once, why when it cannot read its tags. A check runs
+on the tree alone, so a migration landed after the freeze stays held to
+additive.
 An old process that restarts mid-roll boots on a database ahead of it and
 logs, by name, the migrations it does not know (`schema_migration` records
 each name, #783) — they only add, so it serves as it did.
@@ -410,8 +418,10 @@ ends every open event stream with a resume hint (`retry: 1000`, then
 process — from the last id it saw; the crew stops taking runs and lets the
 ones it holds finish and land (`crew.stop({ drain: true })`, bounded); a
 check in flight is cut and handed back to the queue for the new process.
-A gate on land in flight is cut too, and is no verdict: no red is told, and
-the new process's merge queue gates it again (#3155). Its app processes stop
+A merge-queue gate in flight runs on through the same drain; its verdict is
+kept in its `queue_gate` row for the new process to act on (#6611). One the
+drain cuts off is no verdict: no red is told, and the new process's merge
+queue gates the same candidate again (#3155). Its app processes stop
 (the new process already runs its own), and SSH sessions are kept until
 they leave. However little it holds, its listener stays open
 for `FORGE_DRAIN_LINGER_S` (10 s) after the SIGTERM: routers hear that it
@@ -703,9 +713,11 @@ run, and the run the check a pull's merge can require), and the crew
 (agents as accounts with nothing but a run-scoped token, dispatched off the
 outbox, working in Claude Code and proposing through pulls a person merges).
 
-Not yet: containers around app processes, custom domains, a gate that
-lands a pull on its own once review and checks agree, federation, package
-registry.
+Built since: app processes run in bubblewrap cells (`src/apps/contain.ts`),
+apps take custom domains (`src/http/mcp/tools/app_domains.ts`), and a pull
+lands on its own once review and checks agree (`src/checks/landing.ts`, the
+merge queue `src/checks/queue.ts`). Not yet: a package registry, and
+federation beyond signing in through a parent forge (`src/core/federation.ts`).
 
 ## Passports between parts
 

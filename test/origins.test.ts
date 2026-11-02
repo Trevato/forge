@@ -418,8 +418,8 @@ describe("origins: connecting, mirroring, writing through", () => {
     // Labels, issues and pulls carry the origin's numbers and its authors.
     const labels = (await (
       await api("/api/v1/repos/alice/widgets/labels")
-    ).json()) as { name: string }[];
-    expect(labels.map((l) => l.name).sort()).toEqual(["bug", "chore"]);
+    ).json()) as { items: { name: string }[] };
+    expect(labels.items.map((l) => l.name).sort()).toEqual(["bug", "chore"]);
 
     const issues = (await (
       await api("/api/v1/repos/alice/widgets/issues?state=all")

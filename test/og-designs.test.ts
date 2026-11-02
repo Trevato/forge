@@ -93,18 +93,18 @@ describe("the map's thumbnail", () => {
     expect(card.lines).toEqual(["5 open issues", "Critical path: 3 issues, #1 → #5", "Next: #6 Issue 6"]);
     const fig = card.figure;
     if (fig?.kind !== "graph") throw new Error("no graph");
-    // Only the chains are drawn: 6, on no edge, is counted, not drawn.
-    expect(fig.nodes.length).toBe(5);
+    // Only the open chains are drawn: 6, on no edge, and 2, done, are counted, not drawn.
+    expect(fig.nodes.length).toBe(4);
     expect(fig.levels).toBe(3);
     expect(fig.nodes.filter((n) => n.critical).length).toBe(3);
     expect(fig.edges.filter((e) => e.critical).length).toBe(2);
-    expect(fig.edges.filter((e) => e.done).length).toBe(1);
-    expect(fig.nodes.map((n) => n.word).toSorted()).toEqual(["blocked", "blocked", "done", "waiting", "working"]);
+    expect(fig.edges.filter((e) => e.done).length).toBe(0);
+    expect(fig.nodes.map((n) => n.word).toSorted()).toEqual(["blocked", "blocked", "waiting", "working"]);
     const svg = renderCard(card);
     wellFormed(svg);
-    // Five cards in the figure, the two critical edges in the accent.
+    // Four cards in the figure, the two critical edges in the accent.
     const figure = svg.slice(svg.indexOf("<g>"), svg.indexOf("</g>"));
-    expect(figure.match(/<rect /g)?.length).toBe(5);
+    expect(figure.match(/<rect /g)?.length).toBe(4);
     expect(figure.match(new RegExp(`<path [^>]*stroke="${T.accent}"`, "g"))?.length).toBe(2);
     expect(svg).toContain(">MAP<");
   });

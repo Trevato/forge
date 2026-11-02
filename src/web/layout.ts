@@ -9,8 +9,16 @@
 
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
 import { protectionNotice } from "../kernel/protection.ts";
+import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
-import { listReposVisibleTo } from "../core/repos.ts";
+import { appsRuntime } from "../apps/runtime.ts";
+import {
+  enterableApps,
+  getRepo,
+  listReposByOwner,
+  listReposVisibleTo,
+} from "../core/repos.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeLogoutUrl, edgeStrangerLogin } from "../http/edge.ts";
@@ -38,14 +46,21 @@ import { prefersJson } from "./form.ts";
 import { notePhase } from "../core/route_timing.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
+import { quotaFull } from "../spawn/quota.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
 import { btn, copyField, kbd, menu, type MenuItem } from "./ui.ts";
+import { SITE_LINE } from "./site_line.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
   t: string;
   h: string;
   c?: string;
+  /** A repository's bare name; its app's label and door; whether the viewer owns it. */
+  n?: string;
+  x?: string;
+  o?: string;
+  m?: 1;
 }
 
 export interface PageOptions {
@@ -104,6 +119,12 @@ export interface PageOptions {
    * origin" — so pages that do not ask for it keep the stricter policy.
    */
   scriptAsset?: string;
+  /**
+   * The page draws a PDF from the media route in an `<object>`: the browser's
+   * own viewer may load it from this origin (`object-src 'self'`). Only the
+   * blob page of a PDF asks; no other page's policy changes.
+   */
+  objectSrc?: boolean;
   /**
    * The page carries a Cloudflare Turnstile widget (`/signup`): its script,
    * frame and verification call may come from challenges.cloudflare.com, and
@@ -172,11 +193,13 @@ const NEW_FORGE: MenuItem = {
 
 /** The door shows to every person; with no room left it is disabled and says why. */
 const isPerson = (ctx: Ctx): boolean => ctx.auth.user?.kind === "user";
+const roomless = (ctx: Ctx): string | undefined =>
+  noRoom(ctx.app) ?? quotaFull(ctx.app.config.dataDir);
 const sendsForges = (ctx: Ctx): boolean =>
-  isPerson(ctx) && noRoom(ctx.app) === undefined;
+  isPerson(ctx) && roomless(ctx) === undefined;
 const forgeDoor = (ctx: Ctx): MenuItem[] => {
   if (!isPerson(ctx)) return [];
-  const why = noRoom(ctx.app);
+  const why = roomless(ctx);
   return [why === undefined ? NEW_FORGE : { ...NEW_FORGE, disabled: why }];
 };
 
@@ -220,6 +243,9 @@ function userMenu(
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
     { label: "SSH keys", href: "/settings/keys", icon: "lock" },
     { label: "Origins", href: "/settings/origins", icon: "globe" },
+    ...(!user.isAdmin && administersAny(ctx.app.db, user)
+      ? [{ label: "Boards", href: "/boards", icon: "activity" as const }]
+      : []),
     ...(user.isAdmin
       ? [
           { label: "Crew", href: "/settings/crew", icon: "bot" as const },
@@ -288,6 +314,35 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Origins", h: "/settings/origins", c: "Settings" },
 ];
 
+/** What a signed-out visitor can reach: places to go, not Create and Settings rows that end at a sign-in wall. */
+const VISITOR_PALETTE = new Set(["Home", "Apps", "Explore", "Front page", "Search"]);
+
+/** First path segments that are the forge's own pages, never an owner: no repository read for them. */
+const NOT_AN_OWNER = new Set([
+  ...STATIC_PALETTE.map((p) => p.h.split("/")[1] ?? ""),
+  "api", "releases", "audit", "admin", "tell", "login", "logout", "signup", "feed", "boards", "organizations", "static", "assets",
+]);
+
+/**
+ * Where the palette's "Tell the crew" row sends a sentence, as the feed
+ * composer's `app` field names it: the repository the page is on when the
+ * viewer may direct its crew, else the forge itself, which costs no
+ * repository read. Absent for anyone who may not tell (signed out, or an
+ * organization), and then the row is not drawn.
+ */
+function tellTarget(ctx: Ctx): { app: string } | undefined {
+  const user = ctx.auth.user;
+  if (user === undefined || user.kind === "org") return undefined;
+  const [owner, name] = ctx.url.pathname.split("/").filter((s) => s !== "");
+  const here =
+    owner !== undefined && name !== undefined && !NOT_AN_OWNER.has(owner)
+      ? getRepo(ctx.app.db, owner, name)
+      : undefined;
+  if (here !== undefined && mayDirectCrew(ctx.app.db, here, user))
+    return { app: `${here.ownerName}/${here.name}` };
+  return { app: "forge" };
+}
+
 /**
  * The palette index rides as a `<script type="application/json">` data block.
  * The HTML spec stops parsing such a block as script, so the CSP never
@@ -300,25 +355,74 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   // One forge (#603): a conversation's remote row is built with the
   // studio's nouns, which answer for every repository.
   const studio = true;
-  // Apps first, then the other repositories, thirty in all; archived ones
+  // The viewer's own first, apps ahead of the rest in each half, thirty in
+  // all; archived ones
   // are put away, found by typing the full name into search.
-  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
-    limit: 30,
-    appsFirst: true,
-    withoutArchived: true,
-  });
+  const wanted = { limit: 30, appsFirst: true, withoutArchived: true };
+  const mine = ctx.auth.user
+    ? listReposByOwner(ctx.app.db, ctx.auth.user.username, ctx.auth.user, wanted)
+    : [];
+  const taken = new Set(mine.map((r) => r.id));
+  const repos = [
+    ...mine,
+    ...listReposVisibleTo(ctx.app.db, ctx.auth.user, wanted).filter(
+      (r) => !taken.has(r.id),
+    ),
+  ].slice(0, 30);
   const apps = appsForRepos(
     ctx.app.db,
     repos.map((r) => r.id),
   );
+  // A private app is the writers' to see; to anyone else the row is plain.
+  // Asked once for the page, never per row.
+  const enterable = enterableApps(
+    ctx.app.db,
+    repos.flatMap((repo) => {
+      const app = apps.get(repo.id);
+      return app === undefined ? [] : [{ repo, app }];
+    }),
+    ctx.auth.user,
+    { named: false },
+  );
+  const open = repos.flatMap((r) => {
+    const app = apps.get(r.id);
+    return app !== undefined && enterable.has(app.id) ? [app] : [];
+  });
+  const states = open.length > 0 ? appsRuntime(ctx.app)?.statusMany(open) : undefined;
   const items: PaletteItem[] = [
     ...extra,
-    ...repos.map((r) => ({
-      t: `${r.ownerName}/${r.name}`,
-      h: `/${r.ownerName}/${r.name}`,
-      c: apps.has(r.id) ? "Apps" : "Repositories",
-    })),
-    ...STATIC_PALETTE,
+    ...repos.map((r): PaletteItem => {
+      const found = apps.get(r.id);
+      const app = found !== undefined && enterable.has(found.id) ? found : undefined;
+      const base = `/${r.ownerName}/${r.name}`;
+      const state =
+        app === undefined
+          ? undefined
+          : states?.get(app.id)?.find((e) => e.env === "production")?.state;
+      return {
+        t: `${r.ownerName}/${r.name}`,
+        h: base,
+        c: "Repositories",
+        n: r.name,
+        ...(r.ownerId === ctx.auth.user?.id ? { m: 1 as const } : {}),
+        ...(app === undefined
+          ? {}
+          : {
+              x: `App · ${state ?? "not running"}`,
+              o: `${base}/app/production/open`,
+            }),
+      };
+    }),
+    ...(ctx.auth.user
+      ? STATIC_PALETTE
+      : [
+          ...STATIC_PALETTE.filter((p) => VISITOR_PALETTE.has(p.t)),
+          {
+            t: "Sign in",
+            h: signInHref(ctx),
+            c: "Go to",
+          },
+        ]),
     ...(sendsForges(ctx)
       ? [{ t: "New forge", h: "/forges/new", c: "Create" }]
       : []),
@@ -334,7 +438,12 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   // API found, folded in the browser — build the same addresses the server
   // just rendered (`tellHref`/`changeHref`, `src/web/studio/nouns.ts`). The
   // palette can never hand out a noun the page behind it would not.
-  const json = JSON.stringify({ items, studio }).replaceAll("<", "\\u003c");
+  const json = JSON.stringify({
+    items,
+    studio,
+    me: ctx.auth.user?.username,
+    tell: tellTarget(ctx),
+  }).replaceAll("<", "\\u003c");
   return raw(
     `<script type="application/json" id="palette-index">${json}</script>`,
   );
@@ -376,7 +485,7 @@ function overlays(): Html {
         aria-label="Results"
       ></div>
       <div class="palette-foot">
-        ${kbd(["↑", "↓"])} navigate ${kbd(["↵"])} open ${kbd(["esc"])} close
+        ${kbd(["↑", "↓"])} navigate ${kbd(["↵"])} open ${kbd(["⌘", "↵"])} its app ${kbd(["esc"])} close
       </div>
     </dialog>
     <dialog class="dialog" id="help-dialog" aria-labelledby="help-title">
@@ -411,6 +520,13 @@ function flashToast(flash: Flash): Html {
 }
 
 // ---- the chrome ----
+
+/** Where a signed-out visitor's way in leads: the topbar button and the palette's Sign in share it. */
+export function signInHref(ctx: Ctx): string {
+  const token = activeEdgeToken(ctx.app);
+  if (edgeStrangerLogin(ctx.request, token, ctx.auth.user) !== undefined) return "/signup";
+  return token === undefined ? "/signin" : edgeLoginUrl(ctx.url.pathname + ctx.url.search);
+}
 
 /** The skip link and the topbar: the wordmark, the crumbs, the tools. */
 function topbar(
@@ -455,11 +571,7 @@ function topbar(
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
               )}`
           : html`${guestMenu(theme)}${btn("Sign in", {
-              href: edgeStrangerLogin(ctx.request, activeEdgeToken(ctx.app), ctx.auth.user) !== undefined
-                ? "/signup"
-                : activeEdgeToken(ctx.app) === undefined
-                  ? "/signin"
-                  : edgeLoginUrl(ctx.url.pathname + ctx.url.search),
+              href: signInHref(ctx),
             })}`}
       </span>
     </header>`;
@@ -487,6 +599,11 @@ function footer(ctx: Ctx): Html {
           >${reduced}</span
         >`}
     <span class="spacer"></span>
+    <a href="/changelog">Changelog</a>
+    <a href="/api">API</a>
+    ${ctx.auth.user !== undefined && ctx.auth.user.kind !== "org"
+      ? html`<a class="btn" data-variant="link" data-size="sm" href="/#composer">Tell the crew</a>`
+      : ""}
     <button
       class="btn js-only"
       data-variant="link"
@@ -501,12 +618,17 @@ function footer(ctx: Ctx): Html {
 
 // ---- the page ----
 
-const SITE_LINE = "Your code, your machine.";
 
 function pageDescription(options: PageOptions): string {
   const own = options.description?.trim().split(/\r?\n/)[0]?.trim() ?? "";
   const line = own === "" ? SITE_LINE : own;
   return line.length <= 200 ? line : `${line.slice(0, 197).trimEnd()}…`;
+}
+
+/** The tab title: the forge named once, whether or not the page's own title already ends in it. */
+export function tabTitle(title: string): string {
+  const own = title.replace(/(?: · forge)+$/, "");
+  return own === "" || own === "forge" ? "forge" : `${own} · forge`;
 }
 
 export function page(options: PageOptions, status = 200): Response {
@@ -546,7 +668,7 @@ export function page(options: PageOptions, status = 200): Response {
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
-        <title>${options.title} · forge</title>
+        <title>${tabTitle(options.title)}</title>
         <meta name="description" content="${pageDescription(options)}" />
         <meta property="og:site_name" content="forge" />
         <meta property="og:type" content="website" />
@@ -666,7 +788,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
     // event stream (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${bound}'; script-src 'nonce-${bound}'${options.scriptAsset === undefined ? "" : " 'self'"}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${bound}'; script-src 'nonce-${bound}'${options.scriptAsset === undefined ? "" : " 'self'"}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are
@@ -675,7 +797,7 @@ export function page(options: PageOptions, status = 200): Response {
     link: linkHeader(links),
   });
   // A flash is shown exactly once: rendering it is also what clears it.
-  if (cookieFlash) headers.append("set-cookie", clearFlashCookie(ctx.url));
+  if (cookieFlash) headers.append("set-cookie", clearFlashCookie(ctx.url, ctx.app.config.url));
   if (tagged) {
     const etag = weakEtag(text);
     headers.set("etag", etag);
@@ -694,6 +816,8 @@ export interface RedirectOptions {
   flash?: Flash;
   /** Needed only so the flash cookie learns whether to be Secure. */
   url?: URL;
+  /** The forge's own address: https there makes the cookie Secure behind a TLS-ending proxy. */
+  forgeUrl?: string | undefined;
 }
 
 export function redirect(
@@ -705,7 +829,7 @@ export function redirect(
   const headers = new Headers({ location: to });
   if (o.cookie !== undefined) headers.append("set-cookie", o.cookie);
   if (o.flash !== undefined)
-    headers.append("set-cookie", flashCookie(o.flash, o.url));
+    headers.append("set-cookie", flashCookie(o.flash, o.url, o.forgeUrl));
   return new Response(null, { status: 303, headers });
 }
 
@@ -765,7 +889,7 @@ export function missingFragment(request: Request): Response {
 
 /** Redirect back to a page carrying a message — the shape most handlers want. */
 export function flashTo(ctx: Ctx, to: string, flash: Flash): Response {
-  return redirect(to, { flash, url: ctx.url });
+  return redirect(to, { flash, url: ctx.url, forgeUrl: ctx.app.config.url });
 }
 
 /**

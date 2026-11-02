@@ -18,8 +18,9 @@
 import { createBranch, deleteBranch } from "../../actions/branches.ts";
 import type { Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
-import { listBranches, type BranchInfo } from "../../git/branches.ts";
-import { commitLog, type Commit } from "../../git/read.ts";
+import { listBranches, tipCommits, type BranchInfo } from "../../git/branches.ts";
+import { headsState } from "../../git/heads.ts";
+import type { Commit } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { RepoScope } from "../scope.ts";
@@ -41,6 +42,7 @@ import {
   sha,
   time,
 } from "../ui.ts";
+import { BRANCH_NOT_CREATED, BRANCH_NOT_DELETED } from "../../actions/branch_words.ts";
 import { frozenBlock } from "./frozen.ts";
 import { refSetFrom } from "./refs.ts";
 
@@ -50,7 +52,6 @@ import { refSetFrom } from "./refs.ts";
  * cap, so a repository with a thousand branches still renders one page.
  */
 const TIP_COMMITS = 40;
-const TIP_CONCURRENCY = 8;
 
 export interface BranchRow {
   readonly name: string;
@@ -62,26 +63,19 @@ export interface BranchRow {
   readonly tip: Commit | undefined;
 }
 
-/** The tip commit of the first `TIP_COMMITS` rows, a few at a time. */
+/** The tip commit of the first `TIP_COMMITS` rows, from one git call. */
 async function withTips(
   dir: string,
   rows: readonly Omit<BranchRow, "tip">[],
 ): Promise<BranchRow[]> {
-  const out: BranchRow[] = rows.map((r) => ({ ...r, tip: undefined }));
-  const wanted = out.slice(0, TIP_COMMITS);
-  for (let i = 0; i < wanted.length; i += TIP_CONCURRENCY) {
-    const slice = wanted.slice(i, i + TIP_CONCURRENCY);
-    const logs = await Promise.all(
-      slice.map((row) => commitLog(dir, row.oid, { limit: 1 })),
-    );
-    slice.forEach((row, j) => {
-      const log = logs[j];
-      const at = out.indexOf(row);
-      if (log?.ok === true && log.value[0] !== undefined && at !== -1)
-        out[at] = { ...row, tip: log.value[0] };
-    });
-  }
-  return out;
+  const tips = await tipCommits(
+    dir,
+    rows.slice(0, TIP_COMMITS).map((r) => r.oid),
+  );
+  return rows.map((r, i) => ({
+    ...r,
+    tip: i < TIP_COMMITS ? tips.get(r.oid) : undefined,
+  }));
 }
 
 /** Every branch this scope can see, however it has to ask. */
@@ -111,20 +105,61 @@ async function branchRows(
     return { rows, compared: false };
   }
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const listed = await listBranches(dir, repo.defaultBranch);
-  if (!listed.ok) return { rows: [], compared: false };
+  const listing = await timePhaseAsync(ctx.request, "compare", () =>
+    compareBranches(dir, repo.defaultBranch),
+  );
+  if (listing === undefined) return { rows: [], compared: false };
+  return {
+    rows: listing.rows.map((r) => ({
+      ...r,
+      protected: r.isDefault && repo.protectDefault,
+    })),
+    compared: listing.compared,
+  };
+}
+
+interface Compared {
+  readonly rows: readonly BranchRow[];
+  readonly compared: boolean;
+}
+
+/** How many repositories keep their last listing in memory. */
+const KEPT_LISTINGS = 64;
+
+/** The last listing per repository directory, with the branch state it was read at. */
+const kept = new Map<string, { readonly state: string; readonly listing: Compared }>();
+
+/**
+ * Every branch with its divergence and tip. The answer depends only on where
+ * each branch points (commits never change), so while `headsState` reads the
+ * same, the last listing is the answer and no git process runs.
+ */
+async function compareBranches(
+  dir: string,
+  defaultBranch: string,
+): Promise<Compared | undefined> {
+  const heads = headsState(dir);
+  const state = heads === undefined ? undefined : `${defaultBranch}\n${heads}`;
+  const hit = kept.get(dir);
+  if (state !== undefined && hit?.state === state) return hit.listing;
+  const listed = await listBranches(dir, defaultBranch);
+  if (!listed.ok) return undefined;
   const bare = listed.value.branches.map((b: BranchInfo) => ({
     name: b.name,
     oid: b.oid,
     isDefault: b.isDefault,
-    protected: b.isDefault && repo.protectDefault,
+    protected: false,
     ahead: b.ahead,
     behind: b.behind,
   }));
-  return {
-    rows: await withTips(dir, bare),
-    compared: listed.value.compared,
-  };
+  const listing = { rows: await withTips(dir, bare), compared: listed.value.compared };
+  kept.delete(dir);
+  // Read again after git answered: a push meanwhile means this listing may be stale.
+  if (state !== undefined && headsState(dir) === heads) {
+    kept.set(dir, { state, listing });
+    if (kept.size > KEPT_LISTINGS) kept.delete(kept.keys().next().value!);
+  }
+  return listing;
 }
 
 function divergence(row: BranchRow): Html {
@@ -337,7 +372,7 @@ export async function branchCreate(ctx: Ctx): Promise<Response> {
   if (!created.ok) {
     return flashTo(ctx, base, {
       tone: "danger",
-      message: CREATE_ERRORS[created.error] ?? "That branch was not created.",
+      message: CREATE_ERRORS[created.error] ?? BRANCH_NOT_CREATED,
     });
   }
   return flashTo(ctx, base, {
@@ -368,7 +403,7 @@ export async function branchDelete(ctx: Ctx): Promise<Response> {
   if (!deleted.ok) {
     return flashTo(ctx, base, {
       tone: "danger",
-      message: DELETE_ERRORS[deleted.error] ?? "That branch was not deleted.",
+      message: DELETE_ERRORS[deleted.error] ?? BRANCH_NOT_DELETED,
     });
   }
   return flashTo(ctx, base, { message: `Deleted ${deleted.value.name}.` });

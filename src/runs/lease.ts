@@ -60,3 +60,8 @@ export function holdLease(db: Database, runId: string): () => void {
     }
   };
 }
+
+/** The runs this process holds the lease of on `db`: whatever else is renewed is another forge's. */
+export function heldRuns(db: Database): ReadonlySet<string> {
+  return held.get(db) ?? new Set();
+}

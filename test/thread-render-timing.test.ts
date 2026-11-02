@@ -29,7 +29,7 @@ afterAll(async () => {
 });
 
 async function view(): Promise<{ ms: number; html: string }> {
-  const res = await fetch(`${f.base}${path}`, { headers: { cookie: f.ownerCookie } });
+  const res = await fetch(`${f.base}${path}?all=1`, { headers: { cookie: f.ownerCookie } });
   const text = await res.text();
   expect(res.status).toBe(200);
   expect(text.match(/data-comment-id="/g)?.length).toBeGreaterThanOrEqual(200);

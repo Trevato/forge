@@ -49,6 +49,8 @@ export interface StreamThought {
   readonly receivedAt: string;
   readonly kind: Kind | null;
   readonly reply: string | null;
+  /** The planner's reply is a question back to the person, not a placement. */
+  readonly asked: boolean;
   readonly placedAt: string | null;
   readonly placed: readonly PlacedLink[];
   readonly state: ThoughtState;
@@ -169,6 +171,7 @@ export function thoughtStream(
       receivedAt: t.receivedAt,
       kind: p?.kind ?? null,
       reply: p?.reply ?? null,
+      asked: p?.asked ?? false,
       placedAt: p?.placedAt ?? null,
       placed: links,
       state,
@@ -193,7 +196,7 @@ export function streamJson(t: StreamThought) {
     placedAt: t.placedAt,
     placed: t.placed.map((x) =>
       x.readable
-        ? { action: x.action, repo: x.repo, number: x.number, title: x.title }
+        ? { action: x.action, repo: x.repo, number: x.number, title: x.title, ...(x.pull === undefined ? {} : { pull: x.pull }) }
         : { action: x.action, repo: null, number: null, title: null },
     ),
     state: t.state,

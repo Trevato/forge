@@ -41,6 +41,10 @@ const limiterOf = (app: App): RateLimiter => {
 export const resourceMetadataUrl = (origin: string): string =>
   `${origin}/.well-known/oauth-protected-resource`;
 
+/** The challenge a refused client learns where to sign in from; /mcp and the API send this one. */
+export const bearerChallenge = (origin: string): string =>
+  `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(origin)}"`;
+
 const open = { "access-control-allow-origin": "*" };
 const docHeaders = { ...open, "cache-control": "public, max-age=300" };
 

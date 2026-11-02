@@ -17,6 +17,7 @@
  * preview are `editorJs`, and none of them is load-bearing.
  */
 
+import { fileKind, NO_BYTES } from "../render/kinds.ts";
 import { editFiles, MAX_FILE_BYTES } from "../../actions/contents.ts";
 import { contribute } from "../../actions/contribute.ts";
 import { NO_WRITE_ACCESS } from "../../actions/pull_words.ts";
@@ -555,8 +556,9 @@ function mirrorHtml(content: string, lang: string): string {
     .join("");
 }
 
+/** A file not yet named is written as prose until its name says otherwise. */
 const isMarkdownPath = (path: string): boolean =>
-  path === "" || /\.(md|markdown|mdx)$/i.test(path);
+  path === "" || fileKind(path, NO_BYTES) === "markdown";
 
 /**
  * The repository and the situation an edit route needs, or the refusal. A

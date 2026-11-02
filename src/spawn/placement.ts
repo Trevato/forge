@@ -12,12 +12,17 @@
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { SpawnPlan } from "./plan.ts";
 
+/** Where a child runs: inside the parent's process, or as a process in its own cell. */
+export type PlacementKind = "hosted" | "cell";
+
 export interface Placed {
   readonly url: string;
   readonly bodyId: string;
+  /** Absent reads as hosted. */
+  readonly kind?: PlacementKind;
 }
 
-export type PlacementRefusal = { readonly reason: "children" | "depth" | "exists" | "unknown"; readonly message: string };
+export type PlacementRefusal = { readonly reason: "children" | "depth" | "exists" | "quota" | "unknown"; readonly message: string };
 
 export interface Placement {
   place(plan: SpawnPlan): Promise<Result<Placed, PlacementRefusal>>;
@@ -143,6 +148,8 @@ export interface HostedOptions {
   readonly store?: BodyStore;
   /** Injectable so tests need no randomness. */
   readonly newId?: () => string;
+  /** What `place` says it did; hosted unless the caller is a cell placement. */
+  readonly kind?: PlacementKind;
 }
 
 const refuse = (reason: PlacementRefusal["reason"], message: string) =>
@@ -182,11 +189,31 @@ export function hostedPlacement(opts: HostedOptions): Placement {
       const url = childPublicUrl(plan.name, opts.host);
       const bodyId = newId();
       store.add({ bodyId, name: plan.name, url, depth: depth + 1, agents: 1, ssh: false });
-      return ok({ url, bodyId });
+      return ok({ url, bodyId, ...(opts.kind === undefined ? {} : { kind: opts.kind }) });
     },
     async retire(bodyId) {
       store.remove(bodyId);
       return ok();
     },
+  };
+}
+
+/**
+ * Two placements behind one: `preferred` where `holds()` says this host can,
+ * `fallback` where it cannot. A body is retired by whichever made it, told
+ * by its id's prefix. Capacity is the fallback's (they share one store).
+ */
+export function fallbackPlacement(
+  preferred: Placement,
+  fallback: Placement,
+  holds: () => Promise<boolean>,
+  owns: (bodyId: string) => boolean,
+): Placement {
+  return {
+    ...(fallback.room === undefined ? {} : { room: fallback.room }),
+    async place(plan) {
+      return (await holds()) ? preferred.place(plan) : fallback.place(plan);
+    },
+    retire: (bodyId) => (owns(bodyId) ? preferred : fallback).retire(bodyId),
   };
 }

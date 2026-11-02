@@ -45,6 +45,7 @@ import {
   addSubscription,
   getSubscriptionByName,
   lockBudget,
+  normalizeToken,
   setGrants,
   subscriptionAad,
 } from "../core/subscriptions.ts";
@@ -52,7 +53,8 @@ import { Database } from "bun:sqlite";
 import { loadKey, open } from "../kernel/secret.ts";
 import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
-import { childPublicUrl, parentOrigin, type Placement } from "../spawn/placement.ts";
+import { childPublicUrl, parentOrigin, type Placement, type PlacementKind } from "../spawn/placement.ts";
+import { quotaRefusal } from "../spawn/quota.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "../spawn/sizes.ts";
 import { chainForChild, DEFAULT_MODE, forgeLinkOf, type FollowMode, type Hop } from "../spawn/chain.ts";
@@ -63,6 +65,8 @@ export interface Spawned {
   readonly org: string;
   readonly url: string;
   readonly bodyId: string;
+  /** Where the child runs: in this process, or as a process in its own cell. */
+  readonly placement: PlacementKind;
   /** True when this call found the child already made and changed nothing. */
   readonly existed: boolean;
   /**
@@ -111,6 +115,12 @@ interface Ledger {
   readonly createdAt?: string;
   /** Absent on a ledger written before sizes; reads as small. */
   readonly size?: Size;
+  /** The template chosen (`spawn/templates.ts`); absent means `blank`. */
+  readonly template?: string;
+  /** Absent on a ledger written before cells; reads as hosted. */
+  readonly placement?: PlacementKind;
+  /** Why a child that wanted a cell is hosted instead (`spawn/host.ts`). */
+  readonly placementNote?: string;
   /**
    * What the parent shows the child to learn its private facts (when anything
    * last happened); the child keeps only its hash. Never in an answer.
@@ -244,6 +254,8 @@ async function make(
   plan: SpawnPlan,
   deps: SpawnDeps,
 ): Promise<Result<Spawned, SpawnError>> {
+  // The key as the person meant it: whitespace and a `Bearer ` prefix from the paste dropped.
+  if (deps.modelKey !== undefined) deps = { ...deps, modelKey: normalizeToken(deps.modelKey) };
   const planHash = sha256(JSON.stringify(plan));
   let ledger = await readLedger(app, plan.name);
   if (ledger) {
@@ -260,7 +272,7 @@ async function make(
         });
     }
     if (ledger.done)
-      return ok({ name: plan.name, org: plan.org, url: liveChildUrl(app, plan.name), bodyId: ledger.bodyId, existed: true });
+      return ok({ name: plan.name, org: plan.org, url: liveChildUrl(app, plan.name), bodyId: ledger.bodyId, placement: ledger.placement ?? "hosted", existed: true });
     if (ledger.statusToken === undefined || ledger.beatKey === undefined) {
       ledger.statusToken ??= secret();
       ledger.beatKey ??= secret();
@@ -269,6 +281,8 @@ async function make(
     // A retry of an unfinished child is a new attempt: its failure has a start.
     app.bus.append({ kind: "forge.spawn.started", payload: { ...(deps.drill === true ? { drill: 1 } : {}) } });
   } else {
+    const over = quotaRefusal(app.config.dataDir, plan.size ?? DEFAULT_SIZE);
+    if (over !== undefined) return err({ kind: "refused", reason: "quota", message: over });
     const placed = await deps.placement.place(plan);
     if (!placed.ok) return err({ kind: "refused", ...placed.error });
     if (!SAFE_ID.test(placed.value.bodyId)) {
@@ -285,6 +299,8 @@ async function make(
       apps: plan.apps.map((a) => a.ref),
       createdAt: new Date().toISOString(),
       size: plan.size ?? DEFAULT_SIZE,
+      ...(plan.template === undefined ? {} : { template: plan.template }),
+      placement: placed.value.kind ?? "hosted",
       statusToken: secret(),
       beatKey: secret(),
     };
@@ -308,6 +324,7 @@ async function make(
     org: plan.org,
     url: liveChildUrl(app, plan.name),
     bodyId: ledger.bodyId,
+    placement: ledger.placement ?? "hosted",
     existed: false,
     claimUrl,
   });
@@ -480,6 +497,7 @@ async function copyInto(
         url: liveChildUrl(app, plan.name),
         keepAccess: plan.keepAccess,
         size: plan.size ?? DEFAULT_SIZE,
+        ...(plan.template === undefined ? {} : { template: plan.template }),
         // Each app is a fork: where it came from, so the child can follow it.
         apps: plan.apps.map((a) => ({ repo: `${plan.org}/${a.ref.split("/")[1]}`, upstream: a.ref })),
         ...(plan.fresh === undefined ? {} : { fresh: `${plan.org}/${plan.fresh.name}` }),
@@ -689,6 +707,11 @@ export interface Child {
   /** When it was begun; null on a ledger older than the client list. */
   readonly createdAt: string | null;
   readonly size: Size;
+  /** The template it started from; absent when `blank`. */
+  readonly template?: string;
+  readonly placement: PlacementKind;
+  /** Why it is hosted when it asked for a cell; null otherwise. */
+  readonly placementNote: string | null;
 }
 
 /** The children this forge has made or begun, from its ledger, by name. */
@@ -708,6 +731,9 @@ export async function listChildren(app: App): Promise<Child[]> {
         apps: ledger.apps ?? [],
         createdAt: ledger.createdAt ?? null,
         size: isSize(ledger.size) ? ledger.size : DEFAULT_SIZE,
+        ...(typeof ledger.template === "string" ? { template: ledger.template } : {}),
+        placement: ledger.placement ?? "hosted",
+        placementNote: ledger.placementNote ?? null,
       });
   }
   return out;

@@ -10,6 +10,7 @@
 import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { refusalText } from "../../http/refusal.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
+import { AGENT_NOT_ON_CREW } from "../../actions/crew_limit_words.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
@@ -18,6 +19,7 @@ import { SIGNUP_CLOSED_MESSAGE } from "../../actions/users.ts";
 import { ORIGIN_ALREADY_CONNECTED } from "../../actions/origins.ts";
 import { NEW_ACCOUNT_GUARD_MESSAGE } from "../../core/capacity.ts";
 import { PRIVATE_ADDRESS_REFUSED } from "../../kernel/address_words.ts";
+import type { ForgeEvent } from "../../core/events.ts";
 import type { Session } from "../session.ts";
 import { G, Screen as Surface, type Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
@@ -394,6 +396,10 @@ export function confirmScreen(
     /** Index of the action chosen; -1 when dismissed. */
     onChoose: (index: number) => void;
     selected?: number;
+    /** `y` chooses the first action and `n` dismisses, for a plain yes/no question. */
+    yesNo?: boolean;
+    /** Columns of the dialog, for a body line longer than the default fits. */
+    width?: number;
   },
 ): Screen {
   let selected = o.selected ?? 0;
@@ -411,6 +417,7 @@ export function confirmScreen(
         body: o.body,
         actions: o.actions,
         selected,
+        ...(o.width !== undefined ? { width: o.width } : {}),
       });
       // Clicking a button *is* choosing it: a dialog has no browsing to do,
       // so the two-click rule that protects a list would only be in the way.
@@ -422,7 +429,10 @@ export function confirmScreen(
       );
     },
     key(e) {
-      if (e.key === "left" || e.key === "h")
+      if (o.yesNo === true && (e.key === "y" || e.key === "n")) {
+        ctx.pop();
+        o.onChoose(e.key === "y" ? 0 : -1);
+      } else if (e.key === "left" || e.key === "h")
         selected = Math.max(0, selected - 1);
       else if (e.key === "right" || e.key === "l" || e.key === "tab")
         selected = Math.min(o.actions.length - 1, selected + 1);
@@ -434,6 +444,24 @@ export function confirmScreen(
         o.onChoose(-1);
       }
       return true;
+    },
+  };
+}
+
+/**
+ * A `… y/n` confirm: `y` chooses the first action and `n` cancels, whatever
+ * the selection — each outright, rather than pressing Enter.
+ */
+export function yesNo(ctx: Ctx, dialog: Screen, choose: (choice: number) => void): Screen {
+  return {
+    ...dialog,
+    key(e) {
+      if (e.key === "y" || e.key === "n") {
+        ctx.pop();
+        choose(e.key === "y" ? 0 : -1);
+        return true;
+      }
+      return dialog.key(e);
     },
   };
 }
@@ -451,7 +479,8 @@ export function promptScreen(
     /**
      * Show the value as dots. A terminal is the one surface where somebody
      * is routinely reading over your shoulder, so a secret typed into one
-     * must never be a plain string of cells.
+     * must never be a plain string of cells. A masked value is also kept
+     * verbatim: not trimmed, and a paste keeps its newlines.
      */
     mask?: boolean;
     /** Return an error string to keep the prompt open with a message. */
@@ -490,7 +519,8 @@ export function promptScreen(
       ctx.setCursor(cursor);
     },
     paste(text) {
-      value += text.replace(/\s+/g, " ");
+      // A masked value is a credential: kept as pasted (a PEM key's lines), only CR/CRLF made LF.
+      value += o.mask === true ? text.replace(/\r\n?/g, "\n") : text.replace(/\s+/g, " ");
       return true;
     },
     key(e) {
@@ -499,7 +529,7 @@ export function promptScreen(
         return true;
       }
       if (e.key === "enter") {
-        const outcome = o.onSubmit(value.trim());
+        const outcome = o.onSubmit(o.mask === true ? value : value.trim());
         if (typeof outcome === "string") {
           error = outcome;
           return true;
@@ -659,6 +689,8 @@ export interface LiveOptions {
   readonly repoId?: string;
   /** Only these event kinds. Omit for all of them. */
   readonly kinds?: readonly string[];
+  /** Only events this accepts. Omit for all of them. */
+  readonly where?: (event: ForgeEvent) => boolean;
 }
 
 /**
@@ -685,6 +717,7 @@ export function live(
   const off = f.app.bus.subscribe((event) => {
     if (o.repoId !== undefined && event.repoId !== o.repoId) return;
     if (o.kinds !== undefined && !o.kinds.includes(event.kind)) return;
+    if (o.where !== undefined && !o.where(event)) return;
     if (timer !== null) return;
     timer = setTimeout(() => {
       timer = null;
@@ -906,7 +939,7 @@ const MESSAGES: Record<string, string> = {
   no_such_agent: "no such agent",
   scaffold_failed: "the repository was made, but the app could not be started",
   assignee_cannot_read: "they cannot see this repository",
-  agent_not_on_crew: "that agent is not on this repository's crew",
+  agent_not_on_crew: AGENT_NOT_ON_CREW,
   invalid_model: "that model name is not valid",
   brief_too_long: "that brief is too long (4000 characters at most)",
   invalid_budget: "the budget must be between 0 and 100 dollars",
@@ -1042,3 +1075,8 @@ export function ago(iso: string): string {
 }
 
 export { plural } from "../../kernel/plural.ts";
+
+/** A screen that draws nothing — the parent a palette-launched modal has. */
+export function blank(title: string): Screen {
+  return { title, keys: [], render: () => undefined, key: () => false };
+}

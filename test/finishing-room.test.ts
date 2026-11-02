@@ -34,7 +34,8 @@ const conflicts = () =>
 async function tick(): Promise<void> {
   const spy = spyOn(console, "info").mockImplementation(() => {});
   try {
-    await autonomyTick(app, new Date(), async () => 0);
+    // Seven hours on, the governor's flow windows hold nothing: the lane, not the pile, limits (#6375).
+    await autonomyTick(app, new Date(Date.now() + 7 * 3_600_000), async () => 0);
   } finally {
     spy.mockRestore();
   }

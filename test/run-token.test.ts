@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { commitToBranch, createRepo, deleteRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { createApp as insertApp } from "../src/core/apps.ts";
 import { setMember } from "../src/core/roles.ts";
 import { mintRunToken } from "../src/core/run_token.ts";
 import { createToken, verifyToken } from "../src/core/tokens.ts";
@@ -99,8 +100,10 @@ describe("a run token", () => {
     if (!made.ok) throw new Error(made.error);
     alice = made.value;
     work = await make("gods-eye-view", "public", [{ path: "README.md", content: INJECTION }]);
+    insertApp(app.db, { repoId: work.id, slug: "alice-gods-eye-view", access: "public" });
     await make("vault", "private", [{ path: "SECRET.md", content: "the private file\n" }]);
-    await make("public", "public", [{ path: "README.md", content: "hi\n" }]);
+    const open = await make("public", "public", [{ path: "README.md", content: "hi\n" }]);
+    insertApp(app.db, { repoId: open.id, slug: "alice-public", access: "public" });
     await make("gods-eye-view-2", "private", [{ path: "README.md", content: "lookalike\n" }]);
     const forked = await forkRepo(app, alice, work, "gev-fork");
     if (!forked.ok) throw new Error(String(forked.error));
@@ -205,5 +208,54 @@ describe("a run token", () => {
     const token = mintRunToken(app.db, alice.id, "run3", { repoId: work.id, forkId: doomed.id }, new Date(Date.now() + 3600_000).toISOString());
     expect((await deleteRepo(app, alice, doomed)).ok).toBe(true);
     expect(verifyToken(app.db, token.token).ok).toBe(false);
+  });
+
+  test("reads here, search, explore and the OpenAPI address inside its scope only", async () => {
+    const text = async (path: string, token = secret) => {
+      const res = await api(path, {}, token);
+      return { status: res.status, body: await res.text() };
+    };
+    // Anonymous-equivalent reads that the personal token can make, as the baseline.
+    expect((await text("/api/v1/here?path=/alice/public", personal)).status).toBe(200);
+
+    const own = await text("/api/v1/here?path=/alice/gods-eye-view");
+    expect(own.status).toBe(200);
+    expect(own.body).toContain("alice/gods-eye-view");
+    expect((await text("/api/v1/here?path=/alice/gev-fork")).status).toBe(200);
+    for (const path of ["/alice/public", "/alice/vault", "/alice/vault/issues/1", "/alice/Public", "/", "/explore", "/search", "/nobody/nothing"])
+      expect((await text(`/api/v1/here?path=${path}`)).status).toBe(404);
+
+    const open = await api("/api/v1/openapi.json", { redirect: "manual" });
+    expect(open.status).toBe(308);
+    expect(open.headers.get("location")).toBe("/contract/openapi.json");
+
+    const mine = await text("/api/v1/search?q=gods-eye");
+    expect(mine.status).toBe(200);
+    expect(mine.body).toContain("gods-eye-view");
+    expect(mine.body).not.toContain("gods-eye-view-2");
+    const scope = new Set(["gods-eye-view", "gev-fork"]);
+    for (const q of ["public", "vault", "the private file", "lookalike", "gods-eye", "hi"]) {
+      const res = await text(`/api/v1/search?q=${encodeURIComponent(q)}`);
+      expect(res.status).toBe(200);
+      const found = JSON.parse(res.body) as {
+        repos: { owner: string; name: string }[];
+        issues: { fullName?: string }[];
+        code: { repo: { owner: string; name: string } }[];
+      };
+      for (const hit of [...found.repos, ...found.code.map((c) => c.repo)]) expect(scope.has(hit.name)).toBe(true);
+      for (const hit of found.issues) expect(hit.fullName?.endsWith("/gods-eye-view") || hit.fullName?.endsWith("/gev-fork")).toBe(true);
+      expect(res.body).not.toContain("lookalike");
+    }
+    expect((await text("/api/v1/search?q=public", personal)).body).toContain("alice/public");
+
+    const explored = await text("/api/v1/explore");
+    expect(explored.status).toBe(200);
+    expect(explored.body).toContain("gods-eye-view");
+    const names = (JSON.parse(explored.body) as { items: { repo?: { name: string } }[] }).items.map((i) => i.repo?.name);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(scope.has(name ?? "")).toBe(true);
+    const wide = (JSON.parse((await text("/api/v1/explore", personal)).body) as { items: { repo?: { name: string } }[] }).items;
+    expect(wide.some((i) => i.repo?.name === "public")).toBe(true);
+    expect(JSON.parse((await text("/api/v1/explore?q=public")).body).items).toEqual([]);
   });
 });

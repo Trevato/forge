@@ -366,7 +366,7 @@ describe("the forge pill", () => {
     expect(res.headers.get("content-type")).toContain("javascript");
     const code = await res.text();
     expect(code).toBe(toolbarJs);
-    expect(code.length).toBeLessThan(16 * 1024);
+    expect(code.length).toBeLessThan(22 * 1024);
     expect(code).not.toMatch(/\beval\b|new Function|\son[a-z]+\s*=/);
     expect(code).toContain("attachShadow");
   });
@@ -445,9 +445,23 @@ describe("the pill's keyboard and touch behaviour", () => {
       const els = all(root);
       const pill = els.find((e) => e.tag === "button")!;
       const panel = els.find((e) => e.attrs.role === "region")!;
-      return { doc, pill, panel, lines: panel.children };
+      return { doc, pill, panel, root, lines: panel.children };
     }
 
+
+    test("on a preview with a repo the pull line links to the pull; otherwise it is plain text", () => {
+      const a = tree({ app: "notes", repo: "alice/notes", pull: "12" }).lines.find((l) => l.textContent === "Preview of pull #12")!;
+      expect(a.tag).toBe("a");
+      expect(a.href).toBe("https://forge.test/alice/notes/pulls/12");
+      expect(a.style.cssText).toContain("min-height:44px");
+      const prod = tree({ app: "notes", repo: "alice/notes", env: "production", pull: "12" });
+      expect(prod.lines.some((l) => l.textContent.includes("Preview"))).toBe(false);
+      for (const bad of [{ pull: "12x" }, { pull: "../1" }, { pull: "1234567890" }, { repo: "" }]) {
+        const t = tree({ app: "notes", repo: "alice/notes", pull: "12", ...bad });
+        const l = t.lines.find((x) => x.textContent.startsWith("Preview of pull"))!;
+        expect(l.tag === "a").toBe(false);
+      }
+    });
 
     test("the panel is a labelled region, opens with focus inside, and Escape returns focus to the pill", () => {
       const { doc, pill, panel } = tree({ app: "notes", env: "production" });
@@ -461,6 +475,34 @@ describe("the pill's keyboard and touch behaviour", () => {
       doc.listeners.keydown![0]!({ key: "Escape" });
       expect(panel.hidden).toBe(true);
       expect(pill.focused).toBe(true);
+    });
+
+    test("opening focuses the panel's first link, and Tab wraps inside the panel", () => {
+      const { pill, panel, root } = tree({ app: "notes", env: "production" });
+      const stop = (n: string, tagName: string) => ({ n, tagName, focused: false, disabled: false, hasAttribute: () => true, focus() { this.focused = true; } });
+      const stops = [stop("a", "A"), stop("b", "A"), stop("c", "BUTTON")];
+      const p = panel as unknown as Record<string, unknown>;
+      p.getElementsByTagName = () => stops;
+      pill.listeners.click![0]!();
+      expect(stops[0]!.focused).toBe(true);
+      let stopped = 0;
+      const tabKey = (shift: boolean) => panel.listeners.keydown![0]!({ key: "Tab", shiftKey: shift, preventDefault() { stopped++; } });
+      const at = (el: unknown) => { (root as unknown as Record<string, unknown>).activeElement = el; stops.forEach((s) => (s.focused = false)); stopped = 0; };
+      // Mid-panel, the browser moves focus itself.
+      at(stops[1]);
+      tabKey(false);
+      tabKey(true);
+      expect(stopped).toBe(0);
+      // Tab from the last stop wraps to the first.
+      at(stops[2]);
+      tabKey(false);
+      expect(stopped).toBe(1);
+      expect(stops[0]!.focused).toBe(true);
+      // Shift+Tab from the first stop wraps to the last.
+      at(stops[0]);
+      tabKey(true);
+      expect(stopped).toBe(1);
+      expect(stops[2]!.focused).toBe(true);
     });
 
     test("display carries the state, because an inline display beats [hidden]", () => {

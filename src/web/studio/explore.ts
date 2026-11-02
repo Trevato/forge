@@ -9,7 +9,8 @@
 import {
   explore,
   exploreLine,
-  parseExploreQuery,
+  exploreNote,
+  readExploreLine,
   type ExploreQuery,
   type ExploreRow,
 } from "../../actions/explore.ts";
@@ -26,24 +27,34 @@ const href = (query: ExploreQuery): string => {
 };
 
 /** A row's numbers as a person reads them; nothing that is zero. */
-function numbers(row: ExploreRow): string {
+function numbers(row: ExploreRow): { apps: string; rest: string } {
   const n = row.numbers;
-  const parts = [
-    row.kind === "person" ? `${n.apps} app${n.apps === 1 ? "" : "s"}` : "",
+  const rest = [
     n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
     n.ships > 0 ? `${n.ships} shipped this month` : "",
     n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
     row.shippedAt !== null ? `last shipped ${timeAgo(row.shippedAt)}` : "",
   ];
-  return parts.filter((p) => p !== "").join(" · ");
+  return {
+    apps: row.kind === "person" ? `${n.apps} app${n.apps === 1 ? "" : "s"}` : "",
+    rest: rest.filter((p) => p !== "").join(" · "),
+  };
 }
 
 function rowHtml(row: ExploreRow): Html {
-  const said = numbers(row);
-  const meta = [row.description, said].filter((p) => p !== "" && p !== undefined);
+  const { apps, rest } = numbers(row);
+  // One tap from a person to their apps; with none, the count is plain text.
+  const theirs = href({ kind: "app", sort: "score", text: "", archived: false, updated: "all", owner: row.name });
+  const count = apps === "" ? html`` : row.numbers.apps > 0 ? html`<a href="${theirs}">${apps}</a>` : html`${apps}`;
+  const parts = [
+    row.description === "" ? html`` : html`${row.description}`,
+    count,
+    rest === "" ? html`` : html`${rest}`,
+  ].filter((p) => p.toString() !== "");
+  const metaHtml = parts.reduce((all, p, i) => (i === 0 ? p : html`${all} · ${p}`), html``);
   return rowOf({
     title: html`<a href="${row.url}">${row.name}</a>${nameMark(row.mark)}`,
-    ...(meta.length === 0 ? {} : { meta: html`${meta.join(" · ")}` }),
+    ...(parts.length === 0 ? {} : { meta: metaHtml }),
     ...(row.copyable === true && row.repo !== undefined
       ? {
           trail: btn("Make it yours", {
@@ -56,13 +67,45 @@ function rowHtml(row: ExploreRow): Html {
   });
 }
 
+/** A button label that cannot push the page wider; the whole term is its title. */
+const shorten = (term: string): string =>
+  term.length > 24 ? `${term.slice(0, 23)}…` : term;
+
+/** Each term of a missed line, with the query that is the line without it. */
+function terms(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
+  const out: { term: string; without: ExploreQuery }[] = [];
+  if (query.kind !== "all")
+    out.push({ term: `kind:${query.kind}`, without: { ...query, kind: "all" } });
+  if (query.sort !== "score")
+    out.push({ term: `sort:${query.sort}`, without: { ...query, sort: "score" } });
+  if (query.archived)
+    out.push({ term: "archived:yes", without: { ...query, archived: false } });
+  if (query.updated !== "all")
+    out.push({ term: `updated:${query.updated}`, without: { ...query, updated: "all" } });
+  const words = query.text.split(/\s+/).filter((w) => w !== "");
+  words.forEach((word, i) =>
+    out.push({
+      term: word,
+      without: { ...query, text: words.filter((_, j) => j !== i).join(" ") },
+    }),
+  );
+  return out;
+}
+
 /** Nothing to list: a bare line means nothing is public yet, not a miss. */
 function emptyState(signedIn: boolean, query: ExploreQuery): Html {
-  if (exploreLine(query) !== "")
+  const line = exploreLine(query);
+  if (line !== "")
     return empty({
       icon: "search",
-      title: "Nothing matches",
-      note: "Clear the line to see everything you can.",
+      title: `Nothing matches ${line}`,
+      note: "Drop a term to step back:",
+      action: html`<div class="form-actions">
+        ${terms(query).map(
+          (t) => btn(shorten(t.term), { href: href(t.without), size: "sm", title: `Drop ${t.term}` }),
+        )}
+        ${btn("Clear all", { href: "/explore", size: "sm" })}
+      </div>`,
     });
   return empty({
     icon: "search",
@@ -80,7 +123,8 @@ function emptyState(signedIn: boolean, query: ExploreQuery): Html {
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
+  const { query, unknown } = readExploreLine(ctx.url.searchParams.get("q") ?? "");
+  const note = exploreNote(unknown);
   const ranking = performance.now();
   const rows = await explore(ctx.app, ctx.auth.user, query);
   notePhase(ctx.request, "rank", performance.now() - ranking);
@@ -89,6 +133,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "All", kind: "all" as const },
     { label: "Apps", kind: "app" as const },
     { label: "People", kind: "person" as const },
+    // Forges are a site admin's to see (explore.ts in actions): no chip onto an empty page.
     ...(ctx.auth.user?.isAdmin === true
       ? [{ label: "Forges", kind: "forge" as const }]
       : []),
@@ -100,12 +145,19 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "Use", sort: "use" as const },
     { label: "Fresh", sort: "fresh" as const },
   ];
+  const windows = [
+    { label: "Any time", updated: "all" as const },
+    { label: "Today", updated: "1d" as const },
+    { label: "This week", updated: "7d" as const },
+    { label: "This month", updated: "30d" as const },
+  ];
   const body = html`${pageHead("Explore", {
       sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
     })}
     <form method="get" action="/explore" class="bar mb">
       <input
-        class="input mono search"
+        type="search"
+        class="input mono"
         name="q"
         value="${exploreLine(query)}"
         placeholder="kind:app sort:forks garden"
@@ -115,6 +167,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
+    ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}</p>`}
     <div class="bar mb">
       ${seg(
         kinds.map((k) => ({
@@ -128,6 +181,13 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
           label: s.label,
           href: href({ ...query, sort: s.sort }),
           current: query.sort === s.sort,
+        })),
+      )}
+      ${seg(
+        windows.map((w) => ({
+          label: w.label,
+          href: href({ ...query, updated: w.updated }),
+          current: query.updated === w.updated,
         })),
       )}
       <a

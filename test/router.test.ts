@@ -18,3 +18,11 @@ test("match names the pattern it matched", () => {
   expect(router.match("GET", "/")?.pattern).toBe("/");
   expect(router.match("GET", "/nope")).toBeUndefined();
 });
+
+test("routes() lists method and pattern in the order added", () => {
+  const router = new Router<string>().add("GET", "/a/:b", "x").add("POST", "/a/:b", "y");
+  expect(router.routes()).toEqual([
+    { method: "GET", pattern: "/a/:b" },
+    { method: "POST", pattern: "/a/:b" },
+  ]);
+});

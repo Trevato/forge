@@ -34,6 +34,7 @@ export async function revertPull(
   actor: User | undefined,
   repo: Repo,
   pull: Pull,
+  body: string = `Reverts #${pull.number}.`,
 ): Promise<Result<Pull, RevertPullError>> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
@@ -77,7 +78,7 @@ export async function revertPull(
 
   const opened = await openPull(app, writer.value, repo, {
     title: `Revert "${pull.title}"`,
-    body: `Reverts #${pull.number}.`,
+    body,
     baseBranch: repo.defaultBranch,
     headBranch: branchName,
     revertsIssueId: pull.id,

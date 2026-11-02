@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
 import { listComments } from "../src/core/issues.ts";
@@ -238,6 +238,65 @@ sleep 120
     expect(again[0]!.summary).toContain("carries on");
   }, 40_000);
 
+  test("a draining crew hands a long run back queued within its budget (#7799)", async () => {
+    await crew?.stop();
+    crew = undefined;
+    // The run the test before put back on the queue would take the one slot.
+    for (const left of listQueued(app.db, "agent")) cancelRun(app.db, left.id, "cleared for the next test");
+    const created = await createRepo(app, alice, { name: "thicket", visibility: "private" });
+    if (!created.ok) throw new Error(String(created.error));
+    const repo = created.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# thicket\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    const issued = openIssue(app, alice, repo, { title: "Clear", body: "" });
+    if (!issued.ok) throw new Error(String(issued.error));
+    const issue = issued.value;
+    const long = join(dataDir, "long-claude");
+    writeFileSync(
+      long,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+cat > /dev/null &
+echo '{"type":"system","subtype":"init","session_id":"long-1","model":"fake"}'
+sleep 120
+`,
+    );
+    chmodSync(long, 0o755);
+    const queuedRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.id,
+      reason: "assigned",
+    });
+    crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: long,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+    const deadline = Date.now() + 20_000;
+    while (getRun(app.db, queuedRun.id)?.state !== "running" && Date.now() < deadline) await Bun.sleep(100);
+    expect(getRun(app.db, queuedRun.id)?.state).toBe("running");
+
+    const started = Date.now();
+    await crew.stop({ drain: true, drainMs: 1_000 });
+    crew = undefined;
+    expect(Date.now() - started).toBeLessThan(15_000);
+
+    const ended = getRun(app.db, queuedRun.id)!;
+    expect(ended.state === "cancelled" || ended.state === "failed").toBe(true);
+    const again = listQueued(app.db, "agent").filter((r) => r.issueId === issue.id && r.state === "queued");
+    expect(again).toHaveLength(1);
+    expect(again[0]!.summary).toContain("carries on");
+  }, 40_000);
+
   test("a draining crew lets a run in flight finish and land; nothing is queued again", async () => {
     await crew?.stop();
     crew = undefined;
@@ -401,12 +460,24 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done.","to
   }, 60_000);
 
   test("a young lock that blocks checkout is recovered by a fresh clone", async () => {
-    const { repo, clone } = await keptClone("orchard");
+    const { repo, clone } = await keptClone("copse");
     const lock = join(clone, ".git", "index.lock");
     writeFileSync(lock, "");
     const next = await followUp(repo);
     expect(next.state).toBe("ok");
     expect(existsSync(lock)).toBe(false);
+  }, 60_000);
+
+  test("a kept clone git no longer reads is moved aside and cloned afresh (#6263)", async () => {
+    const { repo, clone } = await keptClone("hedgerow");
+    // What a clone cut short by a network blip leaves: `.git` without its HEAD.
+    rmSync(join(clone, ".git", "HEAD"));
+    const next = await followUp(repo);
+    expect(next.summary ?? "").not.toContain("not a git repository");
+    expect(next.state).toBe("ok");
+    expect(existsSync(join(clone, ".git", "HEAD"))).toBe(true);
+    const parent = dirname(clone);
+    expect(readdirSync(parent).some((name) => name.startsWith(`${basename(clone)}.broken-`))).toBe(true);
   }, 60_000);
 
   test("a young lock is not worked around when the clone holds unpushed commits", async () => {

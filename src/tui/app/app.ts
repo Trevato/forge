@@ -263,6 +263,8 @@ export interface AppOpts extends SessionOpts {
     graphics: GraphicsSetting;
     icons: IconSetting;
   }) => void;
+  /** How long a toast stays up. @default 4000 */
+  readonly toastMs?: number;
   readonly root: (ctx: Ctx) => Screen;
   readonly commands?: (ctx: Ctx) => Command[];
   /** Turns the palette into the global search box. */
@@ -554,7 +556,7 @@ export class App {
   }
 
   toast(text: string, tone: Tone = "default"): void {
-    this.toastState = { text, tone, until: Date.now() + TOAST_MS };
+    this.toastState = { text, tone, until: Date.now() + (this.opts.toastMs ?? TOAST_MS) };
     this.invalidate();
   }
 

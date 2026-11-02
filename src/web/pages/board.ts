@@ -14,6 +14,7 @@
  * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
+import { usd } from "../../core/money.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
@@ -47,6 +48,7 @@ import { spendView } from "./spend.ts";
 import type { HandContext } from "../../crew/handover.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
+import { flakeLine } from "../../checks/flake.ts";
 import { laneLine } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
@@ -69,8 +71,10 @@ import {
   autonomyStatus,
   holdWords,
   plannerHold,
+  smallShareOf,
   startOfTodayUtc,
 } from "../../crew/autonomy.ts";
+import { smallIssuesWords } from "../../crew/small_share.ts";
 import { distinct, notesRegion, type Note } from "./board-notes.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
@@ -151,6 +155,7 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   retry: "try again",
   lean: "which way",
   hand: "hand-over",
+  proof: "proved before the queue",
   // Never listed (`listDecisionsForRepos` leaves guards out); named for the type.
   guard: "not started",
 };
@@ -393,6 +398,7 @@ function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean } | null {
   const others = fh.incidents.filter((i) => !said(`${i.key}: ${i.message}`));
   const ok = v.ok && fh.ok && verdict === undefined;
   const lane = laneLine(v.lane);
+  const flaky = flakeLine(v.flakes);
   const sentinel = sentinelNotice(ctx.app.db);
   const need = (key: string, line: Html): Note => ({ key, need: true, line });
   const notes: Note[] = [
@@ -412,6 +418,7 @@ function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean } | null {
           need(`degraded:${d.cause}`, html`<a data-need href="${d.href}">${dot("attn")} ${needLine(d)}</a>`),
         )),
     ...(lane === null ? [] : [{ key: "lane", need: false, line: html`<span>Lane: ${lane}</span>` }]),
+    ...(flaky === null ? [] : [{ key: "flakes", need: false, line: html`<span data-flakes>Flaky this week: ${flaky}</span>` }]),
   ];
   return { notes, ok };
 }
@@ -463,8 +470,6 @@ function asksStrip(ctx: Ctx): Html | null {
 
 // ---- what the tokens bought ----
 
-/** Dollars as the board writes them: cents under ten, whole above. */
-export const usd = (n: number): string => `$${n < 10 ? n.toFixed(2) : n.toFixed(0)}`;
 
 /**
  * The week's spend against what it landed, in one line, owner facts only:
@@ -988,6 +993,8 @@ function today(ctx: Ctx, scope: BoardScope): Html {
             <span><b>${shipped}</b> shipped</span>`,
           `${perShippedWords(week.get(repo.id))} this week`,
           holdLine,
+          // Small issues in flight of the slots they may hold (#7571).
+          repo.autonomy === "off" ? null : smallIssuesWords(smallShareOf(ctx.app, repo, now)),
           review,
         ],
         under: meter(

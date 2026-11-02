@@ -81,12 +81,10 @@ export function breakerParked(
   // `at` is when the note was left: what a dismissal of the park is compared with.
   return db
     .query<{ issueId: string; repoId: string; at: string }, string[]>(
-      `SELECT issueId, repoId, at FROM (
-         SELECT i.id AS issueId, i.repo_id AS repoId, c.body AS body, c.created_at AS at,
-                ROW_NUMBER() OVER (PARTITION BY i.id ORDER BY c.created_at DESC, c.id DESC) AS rn
-         FROM issue i JOIN comment c ON c.issue_id = i.id
-         WHERE i.state = 'open' AND i.repo_id IN (${marks})
-       ) WHERE rn = 1 AND body IN (?${repoIds.length + 1}, ?${repoIds.length + 2})`,
+      `SELECT i.id AS issueId, i.repo_id AS repoId, c.created_at AS at
+         FROM issue i JOIN comment c ON c.id = (SELECT id FROM comment WHERE issue_id = i.id
+                                                ORDER BY created_at DESC, id DESC LIMIT 1)
+         WHERE i.state = 'open' AND i.repo_id IN (${marks}) AND c.body IN (?${repoIds.length + 1}, ?${repoIds.length + 2})`,
     )
     .all(...repoIds, ...WAITING_NOTES);
 }

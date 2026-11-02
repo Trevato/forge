@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { areaFiles, classesIn, compare, countFile, documentedClasses, locate, registeredClasses, scan, webCss } from "../scripts/design-lint.ts";
+import { readdirSync, readFileSync } from "node:fs";
+import { areaFiles, classesIn, compare, countFile, designText, documentedClasses, locate, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -25,7 +25,7 @@ const SLOW = 60_000;
 describe("design check: nothing added outside the system (#2678)", () => {
   test("the tree is no worse than its baseline", () => {
     const base = JSON.parse(readFileSync("docs/design/baseline.json", "utf8"));
-    expect(compare(base, treeNow(), readFileSync("docs/DESIGN.md", "utf8"), areaFiles("."))).toEqual([]);
+    expect(compare(base, treeNow(), designText("."), areaFiles("."))).toEqual([]);
   }, SLOW);
 
   test("counts colour literals and off-scale sizes, not on-scale ones", () => {
@@ -116,11 +116,11 @@ describe("design check: nothing added outside the system (#2678)", () => {
   test("fails a register entry whose last rule is gone, so §5d only shrinks (#2700)", () => {
     const base = { files: {} };
     const problems = compare(base, { files: {}, classes: ["btn", "x-card", "x-wrapped"] }, DESIGN);
-    expect(problems).toEqual([".x-row: no stylesheet defines it any more — strike it from docs/DESIGN.md §5d"]);
+    expect(problems).toEqual([".x-row: no stylesheet defines it any more — strike it from §5d, docs/design/sections/5d-page-local-classes.md"]);
   });
 
   test("every class the stylesheets define is one DESIGN.md §5 names (#2700)", () => {
-    const named = new Set(documentedClasses(readFileSync("docs/DESIGN.md", "utf8"), areaFiles(".")));
+    const named = new Set(documentedClasses(designText("."), areaFiles(".")));
     expect(treeNow().classes.filter((k) => !named.has(k))).toEqual([]);
   }, SLOW);
 
@@ -168,7 +168,41 @@ describe("design check: nothing added outside the system (#2678)", () => {
 const namedFromReadme = (text: string) => documentedClasses("## 5. x\n" + text);
 
 describe("docs/DESIGN.md", () => {
-  test("carries no merge conflict markers", () => {
-    expect(readFileSync("docs/DESIGN.md", "utf8")).not.toMatch(/^(<<<<<<<|=======$|>>>>>>>)/m);
+  test("carries no merge conflict markers, in the spine or a section", () => {
+    expect(designText(".")).not.toMatch(/^(<<<<<<<|=======$|>>>>>>>)/m);
+  });
+
+  test("the spine links every section file once, and each link is a file (#5937)", () => {
+    const linked = sectionLinks(readFileSync("docs/DESIGN.md", "utf8"));
+    expect(new Set(linked).size).toBe(linked.length);
+    expect([...linked].sort()).toEqual(readdirSync("docs/design/sections").filter((n) => n.endsWith(".md")).sort());
+  });
+
+  test("reads the sections in the spine's order, so §5 runs from its file to §6's (#5937)", () => {
+    const text = designText(".");
+    const at = (h: string) => text.search(new RegExp(`^${h}`, "m"));
+    expect(at("## 5\\.")).toBeGreaterThan(at("## 4\\."));
+    expect(at("### 5d\\.")).toBeGreaterThan(at("## 5\\."));
+    expect(at("## 6\\.")).toBeGreaterThan(at("### 5d\\."));
+    expect(registeredClasses(text).length).toBeGreaterThan(0);
+  });
+});
+
+describe("search inputs (#4750)", () => {
+  test("no input carries class `search`; the bar sizes type=search once", () => {
+    const files = [
+      "src/web/pages/browse.ts",
+      "src/web/pages/origin-repos.ts",
+      "src/web/pages/search.ts",
+      "src/web/pages/org.ts",
+      "src/web/studio/explore.ts",
+    ];
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      expect(src).not.toMatch(/class="[^"]*\bsearch\b[^"]*"/);
+      expect(src).toContain('type="search"');
+    }
+    expect(readFileSync("src/web/style/content.ts", "utf8")).not.toContain(".bar .search");
+    expect(readFileSync("src/web/style/components.ts", "utf8")).toContain(".bar .input[type=search]");
   });
 });

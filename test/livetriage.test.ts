@@ -468,23 +468,21 @@ describe("live triage files unplaced issues", () => {
     expect(waitsFor(umbrella, work)).toBe(false);
   });
 
-  test("a bare pillar name in passing does not file it: it goes to Later", async () => {
+  test("a bare pillar name in passing does not file it, and nothing holds it", async () => {
     const work = open("Tell the story of trust", "A story about trust, in passing.");
     await liveTriage(app, fresh(), CLOCK);
     expect(waitsFor(umbrella, work)).toBe(false);
-    expect(waitsFor(work, gate)).toBe(true);
+    expect(waitsFor(work, gate)).toBe(false);
   });
 
-  test("an issue naming none goes behind the Later gate with a comment, once", async () => {
+  test("an issue naming none is never held: no gate, no label, no comment", async () => {
     const work = open("Add a colour picker");
-    await liveTriage(app, fresh(), CLOCK);
-    expect(waitsFor(work, gate)).toBe(true);
-    expect(labelsFor(app.db, work.id).map((l) => l.name)).toContain("Later");
-    expect(notes(work)[0]!.body).toContain("Later gate");
-    const again = await liveTriage(app, fresh(), CLOCK);
-    expect(again.labelled).toBe(0);
-    expect(again.missed).toBe(0);
-    expect(notes(work)).toHaveLength(1);
+    const did = await liveTriage(app, fresh(), CLOCK);
+    expect(waitsFor(work, gate)).toBe(false);
+    expect(labelsFor(app.db, work.id)).toHaveLength(0);
+    expect(notes(work)).toHaveLength(0);
+    expect(did.labelled).toBe(0);
+    expect(did.missed).toBe(0);
   });
 
   test("an issue under an hour old is left, and a placed one is not moved", async () => {
@@ -508,12 +506,12 @@ describe("live triage files unplaced issues", () => {
     expect(waitsFor(gate, gate)).toBe(false);
   });
 
-  test("a person who unlinks the gate is not overruled", async () => {
-    const work = open("Needs thought");
+  test("a person who unfiles a filed issue is not overruled", async () => {
+    const work = open("Harden P0 again");
     await liveTriage(app, fresh(), CLOCK);
-    app.db.query(`DELETE FROM issue_dependency WHERE issue_id = ?1`).run(work.id);
+    app.db.query(`DELETE FROM issue_dependency WHERE blocked_by_id = ?1`).run(work.id);
     const did = await liveTriage(app, fresh(), CLOCK);
-    expect(waitsFor(work, gate)).toBe(false);
+    expect(waitsFor(umbrella, work)).toBe(false);
     expect(did.labelled).toBe(0);
     expect(did.missed).toBe(0);
   });
@@ -543,7 +541,7 @@ describe("live triage where there is little to file under", () => {
   });
 
   /** A repository with the given furniture; `count` old issues naming no pillar. */
-  const world = async (name: string, furniture: string[], count: number) => {
+  const world = async (name: string, furniture: string[], count: number, stem = "Plain work") => {
     const made = await createRepo(app, alice, { name, visibility: "private" });
     if (!made.ok) throw new Error(String(made.error));
     const set = await updateRepoSettings(app, alice, made.value, {
@@ -562,16 +560,16 @@ describe("live triage where there is little to file under", () => {
       return getIssueById(app.db, o.value.id)!;
     };
     furniture.forEach(open);
-    const work = Array.from({ length: count }, (_, n) => open(`Plain work ${n}`));
+    const work = Array.from({ length: count }, (_, n) => open(`${stem} ${n}`));
     return { repo, work };
   };
   const comments = (on: Issue) => listComments(app.db, on.id).length;
 
-  test("pillars but no gate: an unnamed issue is left alone and counted as missed", async () => {
-    const w = await world("nogate", ["P0 Trust: be safe"], 1);
+  test("an unnamed issue is left alone, and is not counted as missed", async () => {
+    const w = await world("unnamed", ["P0 Trust: be safe"], 1);
     const did = await liveTriage(app, w.repo(), CLOCK);
     expect(did.labelled).toBe(0);
-    expect(did.missed).toBe(1);
+    expect(did.missed).toBe(0);
     expect(comments(w.work[0]!)).toBe(0);
     expect(labelsFor(app.db, w.work[0]!.id)).toHaveLength(0);
     const links = app.db
@@ -589,7 +587,7 @@ describe("live triage where there is little to file under", () => {
   });
 
   test("at most 25 issues are filed per tick; the rest are missed, then filed", async () => {
-    const w = await world("many", ["Later gate: not yet"], MOST_CHANGES + 1);
+    const w = await world("many", ["P0 Trust: be safe"], MOST_CHANGES + 1, "Plain P0 work");
     const first = await liveTriage(app, w.repo(), CLOCK);
     expect(first.labelled).toBe(MOST_CHANGES);
     expect(first.missed).toBe(1);

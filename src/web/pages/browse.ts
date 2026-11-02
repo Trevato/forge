@@ -174,7 +174,7 @@ function filterBar(
         ${when(query.label !== "", () => hidden("label", query.label))}
         ${when(query.author !== "", () => hidden("author", query.author))}
         <input
-          class="input search"
+          class="input"
           type="search"
           name="q"
           value="${query.q}"
@@ -493,6 +493,7 @@ export async function browseTree(ctx: Ctx): Promise<Response> {
       ref,
       path,
       entries: entries.value,
+      all: ctx.url.searchParams.get("all") === "1",
     }),
   });
 }
@@ -513,6 +514,7 @@ export async function browseBlob(ctx: Ctx): Promise<Response> {
     path,
     blob: blob.value,
     view: blobView(ctx.url.searchParams.get("view")),
+    all: ctx.url.searchParams.get("all") === "1",
   });
   if (ctx.url.searchParams.get("fragment") === "1")
     return fragment(pane, { request: ctx.request });
@@ -713,9 +715,9 @@ async function browseThread(
   const body = html`<div class="page-head">
       <h1>
         ${detail.issue.title}
-        <span class="number">#${detail.issue.number}</span>
+        <span class="num">#${detail.issue.number}</span>
       </h1>
-      <div class="sub bar">
+      <div class="page-head-sub bar muted small">
         ${stateBadge(state)}
         <span
           >${detail.issue.originAuthor ?? detail.issue.authorName} opened this

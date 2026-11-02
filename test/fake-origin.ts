@@ -36,6 +36,8 @@ export type FakeKind = "github" | "forgejo" | "gitea";
 export interface FakeRepo {
   id: number;
   fullName: string;
+  /** Names it answered to before a rename; a real forge redirects them. */
+  formerNames?: string[];
   description?: string;
   private?: boolean;
   fork?: boolean;
@@ -215,6 +217,11 @@ export interface FakeState {
   nextId: number;
   /** The OAuth endpoints, when a test wants the connect flows. */
   oauth?: FakeOAuth;
+  /**
+   * GitHub's `X-OAuth-Scopes` on every answer, as a classic token sends it;
+   * unset, the fake is a fine-grained token, which names none.
+   */
+  scopes?: string;
 }
 
 export interface FakeForge {
@@ -390,16 +397,28 @@ function route(
     return jsonResponse({ max_response_items: state.maxResponseItems });
 
   if (rest === "/user")
-    return jsonResponse({
-      id: 7,
-      login: state.login,
-      full_name: state.login,
-      name: state.login,
-      html_url: `${url.origin}/${state.login}`,
-    });
+    return jsonResponse(
+      {
+        id: 7,
+        login: state.login,
+        full_name: state.login,
+        name: state.login,
+        html_url: `${url.origin}/${state.login}`,
+      },
+      200,
+      state.scopes === undefined ? {} : { "x-oauth-scopes": state.scopes },
+    );
 
   if (rest === "/user/repos" || rest === "/repos/search") {
-    const rows = state.repos.map((r) => repoJson(state, r));
+    const visibility = q.get("visibility");
+    const rows = state.repos
+      .filter(
+        (r) =>
+          visibility === null ||
+          visibility === "all" ||
+          (visibility === "private") === (r.private ?? false),
+      )
+      .map((r) => repoJson(state, r));
     const payload = rest === "/repos/search" ? { ok: true, data: rows } : rows;
     return jsonResponse(payload, 200, { "x-total-count": String(rows.length) });
   }
@@ -422,7 +441,9 @@ function route(
   if (!repoMatch) return new Response("no route", { status: 404 });
   const fullName = `${repoMatch[1]}/${repoMatch[2]}`;
   const tail = repoMatch[3] ?? "";
-  const repo = state.repos.find((r) => r.fullName === fullName);
+  const repo = state.repos.find(
+    (r) => r.fullName === fullName || r.formerNames?.includes(fullName),
+  );
   if (!repo) return jsonResponse({ message: "Not Found" }, 404);
 
   // A fork the origin has accepted but not finished making is a 404 for as

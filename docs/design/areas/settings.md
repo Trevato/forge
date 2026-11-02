@@ -19,3 +19,9 @@ the text wrap and gives the control a place that is always visible. Use `.row-ac
   `src/web/pages/capacity.ts`, `src/web/pages/subscriptions.ts` and `src/web/studio/crew.ts`. Styled in
   `src/web/style/components.ts`.
 - `.record-value` — a DNS record's value on an app's domain row (`.setting-list` row meta): monospace, wraps instead of ellipsizing, and `user-select: all` so one click selects the whole value to copy.
+
+## Labels
+
+- `.preview` — the label chip at the head of a label's edit row on a repository's Labels settings, kept from
+  shrinking. Written by `labelEditor()` in `src/web/pages/labels.ts`; styled in `src/web/style/components.ts` as
+  `.edit-row > .preview`.

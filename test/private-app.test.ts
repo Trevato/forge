@@ -24,7 +24,7 @@ import { audienceFilter } from "../src/core/event_audience.ts";
 import { createRun, listRuns } from "../src/core/runs.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { pullWord } from "../src/web/studio/words.ts";
+import { pullWord, pullWords } from "../src/web/studio/words.ts";
 import { servingHistory } from "../src/web/studio/words.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -343,6 +343,47 @@ describe("a private app on a public repository stays private", () => {
     expect(await pullWord(ctxFor(carol), merged)).toEqual({ word: "shipped", note: "merged" });
     expect(await pullWord(ctxFor(undefined), merged)).toEqual({ word: "shipped", note: "merged" });
     expect((await pullWord(ctxFor(alice), merged)).note).toBe("production is serving it");
+  });
+
+  test("a page of merged pulls is worded as pullWord words them: the gate held once per page", async () => {
+    const commit = "a".repeat(40);
+    const other = "b".repeat(40);
+    const pull = (id: string, oid: string) =>
+      ({ id, mergedAt: new Date().toISOString(), mergedOid: oid, headOid: oid, state: "closed" }) as never;
+    const pulls = [pull("m1", commit), pull("m2", other)];
+    const runtimeAt = (state: string, serving: string) =>
+      ({ status: () => [{ env: "production", state, commitOid: serving, error: "SECRET-ERROR" }] }) as never;
+    const ctxFor = (viewer: User | undefined, runtime: never) => ({
+      db: app.db,
+      dir: "",
+      runtime,
+      record,
+      history: servingHistory(),
+      viewer,
+    });
+    // Production serves `commit` and has failed to bring `other` up.
+    const caught = runtimeAt("running", commit);
+    const failed = runtimeAt("failed", other);
+    for (const runtime of [caught, failed]) {
+      for (const viewer of [alice, bot, carol, undefined]) {
+        const batched = await pullWords(ctxFor(viewer, runtime), pulls);
+        const single = [
+          await pullWord(ctxFor(viewer, runtime), pulls[0]!),
+          await pullWord(ctxFor(viewer, runtime), pulls[1]!),
+        ];
+        expect(batched).toEqual(single);
+        if (viewer === carol || viewer === undefined)
+          for (const w of batched) {
+            expect(w).toEqual({ word: "shipped", note: "merged" });
+            expect(JSON.stringify(w)).not.toContain("SECRET-ERROR");
+          }
+      }
+    }
+    // The owner reads production: caught up for one, not for the other.
+    const owner = await pullWords(ctxFor(alice, caught), pulls);
+    expect(owner[0]!.note).toBe("production is serving it");
+    expect(owner[1]!.note).not.toBe("merged");
+    expect(owner[1]!.note).not.toBe("production is serving it");
   });
 
   test("the MCP's now and the tell page show a private app's runs only to those who may enter it", async () => {

@@ -10,9 +10,6 @@ export const feedCss = /* css */ `
 /* An admin's tick boxes are always shown (no Select toggle); 24 px to tap. */
 #live-apps input[type="checkbox"] { width: 24px; height: 24px; }
 @media (max-width: 899px) {
-  /* "What you asked for" is a tab on a phone: the first post comes next.
-     !important, as [hidden] is: .bar sits in a later cascade layer. */
-  .feed-head { display: none !important; }
   #live-apps { display: none; }
 }
 @media (max-width: 600px) {

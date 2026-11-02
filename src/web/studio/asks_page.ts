@@ -19,6 +19,7 @@ import {
   type Skipped,
 } from "../../actions/asks_bulk.ts";
 import { getDecision } from "../../core/decisions.ts";
+import { giveBack } from "../../actions/give_back.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
 import { muteRepo, removeMutes } from "../../core/interactions.ts";
@@ -49,9 +50,6 @@ import {
   askSentence,
   ASK_WORDS,
   ROW_PLURAL,
-  decisionButtons,
-  decisionForm,
-  decisionsFor,
   forgeNeedsFor,
   silencedRepos,
   putAsideWaves,
@@ -59,6 +57,7 @@ import {
   type Consequence,
   type Decision,
 } from "./asks.ts";
+import { decisionButtons, decisionForm, decisionsFor } from "./decisions.ts";
 import { changeHref } from "./nouns.ts";
 
 /** The kinds, in a word each, for "select by kind". */
@@ -685,6 +684,19 @@ export async function asksDecide(ctx: Ctx): Promise<Response> {
   const done = await decideAsk(ctx.app, ctx.auth.user, field(form, "ask"));
   if (!done.ok) return await asksScreen(ctx, nothingDone(done.error.message));
   return redirect(`/asks?decided=${done.value.id}#asks-bulk-result`);
+}
+
+/** POST /asks/give-back — hand a handed-over pull back to the builder that opened it; its card leaves. */
+export async function asksGiveBack(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const done = giveBack(ctx.app, ctx.auth.user, field(form, "ask"));
+  if (!done.ok)
+    return done.error.code === "not_found"
+      ? notFoundPage(ctx)
+      : await asksScreen(ctx, nothingDone(done.error.message));
+  return redirect(backTo(form, "/asks"));
 }
 
 /** POST /asks/proposal/:id/(approve|redirect|later|again) — one wave proposal, then back to the page the person came from. */

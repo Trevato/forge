@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 // One MCP tools/call over HTTP, answered as { value } or { error }.
 export const mcpTool = async (
   base: string,
@@ -18,3 +21,20 @@ export const mcpTool = async (
   const text: string = body.result.content[0].text;
   return body.result.isError === true ? { error: text } : { value: JSON.parse(text) };
 };
+
+/**
+ * The MCP door's source as one text: `src/http/mcp.ts` and every file under
+ * `src/http/mcp/` (one per tool since #5924), for tests that read the door.
+ */
+export function mcpSource(root: string): string {
+  const files = ["src/http/mcp.ts", ...readdirSync(join(root, "src/http/mcp"), { recursive: true })
+    .map(String)
+    .filter((f) => f.endsWith(".ts"))
+    .sort()
+    .map((f) => join("src/http/mcp", f))];
+  return files.map((f) => readFileSync(join(root, f), "utf8")).join("\n");
+}
+
+/** Whether `text` imports `module` (`actions/x.ts`) from any depth under src/. */
+export const importsFrom = (text: string, module: string): boolean =>
+  new RegExp(`from "(\\.\\./)+${module.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`).test(text);

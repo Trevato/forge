@@ -110,6 +110,10 @@ const MEMO_MAX = 512;
 const MEMO_MAX_SOURCE = 20_000;
 const memo = new Map<string, Html>();
 const counts = { hits: 0, misses: 0 };
+let worked = 0;
+
+/** How many times the markdown was actually parsed, memo or no memo. */
+export const markdownWorkDone = (): number => worked;
 
 /** How often a render was remembered or made; for tests to assert the memo works. */
 export function markdownMemoStats(): { hits: number; misses: number } {
@@ -137,6 +141,7 @@ export function renderMarkdown(source: string): Html {
 }
 
 function renderUncached(source: string): Html {
+  worked++;
   const text = source.replaceAll("\r\n", "\n");
   // Escaping does not move a newline, so the two arrays stay in step: `lines`
   // is what prose is built from, `raws` is what the tokenizer needs.

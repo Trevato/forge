@@ -5,10 +5,13 @@
  * (`apps/feedback.ts`) and the terminal's palette (`tui/screens/notes.ts`)
  * both go through here, so the limits and the gating are one set.
  */
+import { dropHiddenPictures } from "../core/note_pictures.ts";
 import type { App } from "../app.ts";
 import { banVisitor, bannedNotes, unbanVisitor, markSender, getNote, hideNote, insertNote, isBanned, notesOf, notesOfApp, type AppNote } from "../core/app_notes.ts";
 import type { AppRecord } from "../core/apps.ts";
 import { createLabel, getIssue, getLabel } from "../core/issues.ts";
+import { mergedPullClosing } from "../core/pulls.ts";
+import { releaseName, releaseOfPull } from "../release/record.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import { canAdmin, type Repo } from "../core/repos.ts";
 import { plainText } from "../core/reports.ts";
@@ -102,8 +105,13 @@ export function statusOf(app: App, repo: Repo, number: number): { status: NoteSt
   if (issue.state === "closed") {
     const when = (issue.closedAt ?? issue.updatedAt).slice(0, 10);
     // Only "done" is a promise kept; the other reasons say what they are.
-    if (issue.closeReason === "done" || issue.closeReason === null)
-      return { title: issue.title, status: { state: "shipped", label: `Shipped on ${when}` } };
+    if (issue.closeReason === "done" || issue.closeReason === null) {
+      const pull = mergedPullClosing(app.db, repo.id, number);
+      const release = pull === undefined ? undefined : releaseOfPull(app.db, repo.id, pull.number);
+      const label =
+        release !== undefined ? `Shipped in ${releaseName(release)}` : `Shipped on ${(pull?.mergedAt ?? issue.closedAt ?? issue.updatedAt).slice(0, 10)}`;
+      return { title: issue.title, status: { state: "shipped", label } };
+    }
     const label = issue.closeReason === "parked" ? "Set aside for now" : issue.closeReason === "split" ? "Split into smaller pieces" : "Closed without a change";
     return { title: issue.title, status: { state: "closed", label: `${label} (${when})` } };
   }
@@ -258,6 +266,8 @@ export async function moderateNote(
   }
   hideNote(app.db, note.id);
   if (action === "ban") banVisitor(app.db, record.id, note.visitor);
+  // A hidden note keeps no picture: the owner's take-down reaches the bytes.
+  dropHiddenPictures(app.db, app.config.dataDir);
   return ok(true);
 }
 
@@ -307,4 +317,11 @@ export function unbanSender(app: App, record: AppRecord, repo: Repo, actor: User
   if (note === undefined) return err("not_found");
   unbanVisitor(app.db, record.id, note.visitor);
   return ok(true);
+}
+
+/** One note as the owner sees it, hidden or not: what a moderation answers. Admins only. */
+export function ownerNote(app: App, record: AppRecord, repo: Repo, actor: User | undefined, noteId: string): OwnerNote | undefined {
+  if (actor === undefined || !canAdmin(app.db, repo, actor)) return undefined;
+  const note = getNote(app.db, record.id, noteId);
+  return note === undefined ? undefined : ownerView(app, repo, note, isBanned(app.db, record.id, note.visitor));
 }

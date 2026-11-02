@@ -1,6 +1,7 @@
 /**
- * Origins on the web: the connected accounts, the three ways to connect one,
- * and the picker that turns a remote repository into a local mirror.
+ * Origins on the web: the connected accounts and the three ways to connect
+ * one. The picker that turns a remote repository into a local mirror lives
+ * in `origin-repos.ts`.
  *
  * Three connect paths share one page because which one you get is a property
  * of the forge you are connecting, not a preference (`docs/ORIGINS.md`):
@@ -13,7 +14,7 @@
  * a value attribute, or carried in a query string. And an OAuth flow is a
  * row, not a page state — the browser can be closed, the phone can do the
  * typing, and coming back to `/settings/origins/flows/:id` resumes exactly
- * where it was.
+ * where it was — that page and its poll live in `origin-flow.ts`.
  */
 
 import {
@@ -21,11 +22,9 @@ import {
   deleteOriginApp,
   disconnectOrigin,
   listOriginApps,
-  listRemoteRepos,
   listUserOrigins,
-  pollOAuthConnect,
   registerOriginApp,
-  startMirrorJob,
+  replaceOriginToken,
   startOAuthConnect,
   syncOriginNow,
   type Reattachment,
@@ -39,29 +38,24 @@ import {
   updateTrustedHosts,
 } from "../../origins/trusted-hosts.ts";
 import { reattachMessage } from "./frozen.ts";
-import { getFlowFor } from "../../origins/oauth.ts";
+import { replaceTokenMessage } from "../../origins/token-reach.ts";
 import {
-  getOriginFor,
   listDetachedMirrors,
   mirrorsByOrigin,
   type Origin,
 } from "../../core/origins.ts";
-import { pinnedRepoIds } from "../../core/pins.ts";
-import { getRepo, getReposByIds } from "../../core/repos.ts";
+import { getReposByIds } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { forgeBaseUrl, oauthCallbackUri } from "../../http/api.ts";
-import { qrEncode, qrSvg } from "../../design/qr.ts";
+import { oauthCallbackUri } from "../../http/api.ts";
 import {
   settingsLayout,
   signInFirst,
   type SettingsSection,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, raw, when, type Html } from "../html.ts";
+import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
-import { pollJs } from "../client.ts";
-import { browseBase, isOwnRepo } from "../scope.ts";
 import {
   badge,
   btn,
@@ -70,7 +64,6 @@ import {
   empty,
   icon,
   listCard,
-  repoCounts,
   row,
   time,
   field as uiField,
@@ -80,6 +73,7 @@ import {
 
 export type AccountSection =
   | "profile"
+  | "confirms"
   | "password"
   | "tokens"
   | "keys"
@@ -189,6 +183,13 @@ export function accountSections(
       href: "/settings",
       icon: "user",
       current: current === "profile",
+    },
+    // What the forge's agent asked first and waits for your yes (#7650).
+    {
+      label: "Confirms",
+      href: "/settings/confirms",
+      icon: "check",
+      current: current === "confirms",
     },
     {
       label: "Model",
@@ -802,7 +803,7 @@ function frozenCard({ frozen, repos }: ReturnType<typeof readFrozen>): Html | nu
   );
 }
 
-function shell(ctx: Ctx, body: Html, status = 200): Response {
+export function shell(ctx: Ctx, body: Html, status = 200): Response {
   return page(
     {
       ctx,
@@ -925,11 +926,9 @@ function connectMessage(error: string): string {
  * Where a connect or a disconnect started, when it was not here: only
  * `/migrate`, named by a fixed word — never a path a form can choose.
  */
-type Then = "/migrate" | undefined;
-const thenOf = (value: string | null): Then =>
+export type Then = "/migrate" | undefined;
+export const thenOf = (value: string | null): Then =>
   value === "migrate" ? "/migrate" : undefined;
-const thenQuery = (then: Then): string =>
-  then === undefined ? "" : "then=migrate";
 
 export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   const denied = accountOnly(ctx);
@@ -977,25 +976,6 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   if (then !== undefined) query.set("then", "migrate");
   const qs = query.size === 0 ? "" : `?${query}`;
   return redirect(`/settings/origins/flows/${started.value.flowId}${qs}`);
-}
-
-/**
- * The authorize URL for a code flow, checked before it becomes a link.
- *
- * It arrives on the query string because the flow row stores a *device*
- * flow's verification URI and nothing for a code flow. A crafted link could
- * therefore reach this page, so the URL is accepted only when it points at
- * the same instance the flow already names and carries a PKCE challenge —
- * the worst a forged one can do is send you to another page on the forge you
- * asked to connect.
- */
-function authorizeLink(raw: string, webUrl: string): string | undefined {
-  const url = URL.parse(raw);
-  const instance = URL.parse(webUrl);
-  if (!url || !instance) return undefined;
-  if (url.origin !== instance.origin) return undefined;
-  if (url.searchParams.get("code_challenge") === null) return undefined;
-  return url.toString();
 }
 
 // POST /settings/origins/apps
@@ -1070,189 +1050,7 @@ export async function originAppDelete(ctx: Ctx): Promise<Response> {
   });
 }
 
-// ---- one connect in flight ----
-
-/**
- * GET /settings/origins/flows/:id — a connect in progress.
- *
- * The device grant shows the code and where to type it; the code flow shows
- * one link to the instance. Both work with no JavaScript: the page carries a
- * "check again" form, and reloading it re-polls. With script, the same form
- * is submitted for you every couple of seconds.
- */
-export function originFlowPage(ctx: Ctx): Response {
-  const denied = accountOnly(ctx);
-  if (denied) return denied;
-  const flow = getFlowFor(ctx.app.db, ctx.auth.user!.id, ctx.params.id ?? "");
-  if (!flow) return shell(ctx, notFoundNote(), 404);
-  const then = thenOf(ctx.url.searchParams.get("then"));
-
-  if (flow.status === "done")
-    return redirect(`${then ?? "/settings/origins"}?connected=1`);
-  if (flow.status === "failed")
-    return redirect(
-      `/settings/origins?error=${encodeURIComponent(flow.detail.slice(0, 120))}`,
-    );
-
-  const pollAction = `/settings/origins/flows/${flow.id}/poll${then === undefined ? "" : `?${thenQuery(then)}`}`;
-  const authorize =
-    flow.flow === "code"
-      ? authorizeLink(ctx.url.searchParams.get("to") ?? "", flow.webUrl)
-      : undefined;
-  const base = forgeBaseUrl(ctx.url, ctx.app.config.host);
-  const shortLink =
-    base === "" || flow.shortCode === "" ? "" : `${base}/go/${flow.shortCode}`;
-  const body =
-    flow.flow === "device"
-      ? html`${card(
-          html`<p class="muted small">
-              Type this code at
-              <a href="${flow.verificationUri}" rel="noreferrer noopener"
-                >${flow.verificationUri}</a
-              >. Any device with a browser will do — this page waits.
-            </p>
-            <div class="bar">
-              <p class="device-code" id="device-code">${flow.userCode}</p>
-              ${copyBtn("device-code", "Copy the code")}
-            </div>
-            ${handoff(flow.verificationUri, shortLink)}`,
-          {
-            head: html`${icon("github")}
-              <h2>Enter this code</h2>`,
-          },
-        )}`
-      : html`${card(
-          authorize === undefined
-            ? html`<p>
-                  This connect cannot be continued from here — the authorization
-                  link was lost. Start it again from Origins.
-                </p>
-                <div class="bar mt">
-                  ${btn("Back to origins", {
-                    href: "/settings/origins",
-                    variant: "primary",
-                  })}
-                </div>`
-            : html`<p>
-                  Continue to
-                  <span class="mono">${hostLabel(flow.webUrl)}</span> and
-                  approve the application. You will come straight back here.
-                </p>
-                ${handoff(authorize, shortLink, "Continue to the instance")}`,
-          {
-            head: html`${icon("forgejo")}
-              <h2>Authorize on the instance</h2>`,
-          },
-        )}`;
-
-  const waiting = html`<form
-    class="bar mt"
-    method="post"
-    action="${pollAction}"
-    data-poll="${flow.flow === "device"
-      ? String(Math.max(1, flow.intervalSecs))
-      : "0"}"
-  >
-    <span class="muted small"
-      >Waiting for you to authorize
-      ${flow.flow === "device"
-        ? "on the other device"
-        : "on the instance"}…</span
-    >
-    <span class="spacer"></span>
-    ${btn("Check again", { size: "sm", variant: "outline", icon: "sync" })}
-    ${btn("Cancel", {
-      href: "/settings/origins",
-      size: "sm",
-      variant: "ghost",
-    })}
-  </form>`;
-
-  return page({
-    ctx,
-    title: "Connecting an origin",
-    body: html`<div class="page-head"><h1>Connecting an origin</h1></div>
-      <div class="narrow-wide">
-        ${body}${waiting}
-        <p class="muted small mt">
-          No JavaScript? Refresh this page to check again — the reload re-polls.
-        </p>
-      </div>`,
-    scriptJs: pollJs,
-  });
-}
-
-/** The copy affordance: an icon button that is inert without a script, and
- * sits beside text that stays selectable either way. */
-function copyBtn(target: string, label: string): Html {
-  return html`<button
-    class="btn btn-icon js-only"
-    data-size="sm"
-    type="button"
-    data-copy="${target}"
-    aria-label="${label}"
-    title="Copy"
-  >
-    ${icon("copy")}
-  </button>`;
-}
-
-/**
- * Getting the person to the other device: a QR code they point a camera at,
- * the short link they could type instead, the full URL for a browser that is
- * already here, and one button that opens it.
- *
- * The QR carries the short link when the forge knows its own address and the
- * long URL otherwise — the shorter the payload, the coarser the modules and
- * the further away a phone can read it.
- */
-function handoff(url: string, shortLink: string, openLabel?: string): Html {
-  const payload = shortLink === "" ? url : shortLink;
-  const code = qrEncode(payload);
-  return html`<div class="bar mt">
-      ${code.ok
-        ? raw(
-            qrSvg(code.value, {
-              title: "Scan to open the link",
-              scale: qrScale(code.value.modules.length),
-            }),
-          )
-        : null}
-    </div>
-    <ul class="list setting-list mt">
-      ${shortLink === ""
-        ? null
-        : row({
-            title: "Or open this on a phone:",
-            meta: html`<span class="mono" id="flow-short">${shortLink}</span>`,
-            trail: copyBtn("flow-short", "Copy the short link"),
-          })}
-      ${row({
-        title: "The full link:",
-        meta: html`<span class="mono small" id="flow-url">${url}</span>`,
-        trail: copyBtn("flow-url", "Copy the link"),
-      })}
-    </ul>
-    <div class="bar mt">
-      ${btn(openLabel ?? "Open the verification page", {
-        href: url,
-        variant: "primary",
-        icon: "external",
-        external: true,
-      })}
-    </div>`;
-}
-
-/**
- * The module size that keeps the code at most 200 px square: the encoder sizes
- * the SVG from it, so a long URL (more modules) must not make a code wider
- * than a 360 px phone can hold beside the page's padding.
- */
-function qrScale(modules: number): number {
-  return Math.max(1, Math.min(4, Math.floor(200 / modules)));
-}
-
-function notFoundNote(): Html {
+export function notFoundNote(): Html {
   return empty({
     icon: "search",
     title: "No such connect",
@@ -1263,50 +1061,6 @@ function notFoundNote(): Html {
     }),
   });
 }
-
-/**
- * POST /settings/origins/flows/:id/poll — ask the origin once, on the user's
- * behalf. The forge does the polling, so a browser (or a phone) only ever
- * asks "has it happened yet?" and a token never crosses back to a surface.
- *
- * Answers JSON to a client that asked for it and a redirect to everyone
- * else, so the same route serves the enhancement and the plain form.
- */
-export async function originFlowPoll(ctx: Ctx): Promise<Response> {
-  const denied = accountOnly(ctx);
-  if (denied) return denied;
-  const form = await readForm(ctx, "admin");
-  if (form instanceof Response) return form;
-  const polled = await pollOAuthConnect(
-    ctx.app,
-    ctx.auth.user,
-    ctx.params.id ?? "",
-  );
-  const wantsJson = (ctx.request.headers.get("accept") ?? "").includes(
-    "application/json",
-  );
-  if (!polled.ok) {
-    return wantsJson
-      ? Response.json(
-          { status: "failed", detail: "not found" },
-          { status: 404 },
-        )
-      : redirect("/settings/origins?error=state");
-  }
-  const { status, detail } = polled.value;
-  const then = thenOf(ctx.url.searchParams.get("then"));
-  if (wantsJson) return Response.json({ status, detail });
-  if (status === "done")
-    return redirect(`${then ?? "/settings/origins"}?connected=1`);
-  if (status === "failed")
-    return redirect(
-      `/settings/origins?error=${encodeURIComponent(detail.slice(0, 120))}`,
-    );
-  return redirect(
-    `/settings/origins/flows/${ctx.params.id ?? ""}${then === undefined ? "" : `?${thenQuery(then)}`}`,
-  );
-}
-
 // ---- one origin ----
 
 // POST /settings/origins/:id/sync
@@ -1359,272 +1113,29 @@ export async function originDisconnect(ctx: Ctx): Promise<Response> {
   });
 }
 
-// ---- the picker ----
-
-// GET /settings/origins/:id/repos
-export async function originReposPage(ctx: Ctx): Promise<Response> {
-  const denied = accountOnly(ctx);
-  if (denied) return denied;
-  const origin = getOriginFor(
-    ctx.app.db,
-    ctx.auth.user!.id,
-    ctx.params.id ?? "",
-  );
-  if (!origin) return shell(ctx, notFoundNote(), 404);
-  const refresh = ctx.url.searchParams.get("refresh") === "1";
-  const query = (ctx.url.searchParams.get("q") ?? "").trim();
-
-  const listed = await listRemoteRepos(
-    ctx.app,
-    ctx.auth.user,
-    origin.id,
-    refresh,
-  );
-  const base = `/settings/origins/${origin.id}/repos`;
-  const rows = listed.ok
-    ? listed.value.filter(
-        (r) =>
-          query === "" ||
-          `${r.fullName} ${r.description}`
-            .toLowerCase()
-            .includes(query.toLowerCase()),
-      )
-    : [];
-
-  const filter = html`<form class="bar mb" method="get" action="${base}">
-    <input
-      class="input search"
-      type="search"
-      name="q"
-      value="${query}"
-      placeholder="Filter repositories"
-      aria-label="Filter repositories"
-    />
-    <button class="btn" data-size="sm" type="submit">Filter</button>
-    ${btn("Refresh from origin", {
-      href: `${base}?refresh=1${query === "" ? "" : `&q=${encodeURIComponent(query)}`}`,
-      size: "sm",
-      variant: "outline",
-      icon: "sync",
-    })}
-  </form>`;
-
-  // Two grouped reads for the whole picker: the mirrors these rows already
-  // point at, and which of those are pinned. A page of fifty remotes was a
-  // hundred single-row queries.
-  const mirrors = getReposByIds(
-    ctx.app.db,
-    rows.map((r) => r.mirroredAs ?? "").filter(Boolean),
-  );
-  const pins =
-    ctx.auth.user === undefined
-      ? new Set<string>()
-      : pinnedRepoIds(ctx.app.db, ctx.auth.user.id);
-
-  const body = !listed.ok
-    ? empty({
-        icon: "alert",
-        title: "The origin could not be reached",
-        note: "Nothing was changed. Try again, or reconnect the origin if it needs re-authorizing.",
-        action: btn("Back to origins", {
-          href: "/settings/origins",
-          variant: "primary",
-        }),
-      })
-    : rows.length === 0
-      ? empty({
-          icon: "repo",
-          title: query === "" ? "No repositories" : "No matches",
-          note:
-            query === ""
-              ? "This account has nothing this token can see."
-              : "Nothing on this origin matches that filter.",
-        })
-      : listCard(
-          rows.map((remote) => {
-            const mirror =
-              remote.mirroredAs === null
-                ? undefined
-                : mirrors.get(remote.mirroredAs);
-            const pinned = mirror !== undefined && pins.has(mirror.id);
-            // Only offer a name box when the obvious one is taken: the
-            // mirror action picks a free name by itself otherwise.
-            const collides =
-              mirror === undefined &&
-              getRepo(
-                ctx.app.db,
-                ctx.auth.user!.username,
-                remote.fullName.split("/")[1] ?? "",
-              ) !== undefined;
-            // Mirroring is no longer what enter does — the row opens the
-            // repository live, and this is the secondary verb beside it.
-            const counted = repoCounts({
-              openIssues: remote.openIssues,
-              openPulls: remote.openPulls,
-              issuesIncludePulls: remote.openIssuesIncludingPulls,
-            });
-            // Fork is the row's other verb: grabbing a repository you cannot
-            // push to is a different intention from keeping a copy of one,
-            // and making people open the repository first to find it out is
-            // a step in the way of the workflow this picker exists for.
-            const forkable =
-              !remote.canPush && !isOwnRepo(origin.login, remote.fullName);
-            const forkForm = when(
-              forkable,
-              () =>
-                html`<form
-                  class="row-fields"
-                  method="post"
-                  action="${browseBase(origin.id, remote.fullName)}/fork"
-                >
-                  ${btn("Fork", {
-                    size: "sm",
-                    variant: "ghost",
-                    icon: "fork",
-                    title: `Fork ${remote.fullName} into your account at ${hostLabel(origin.webUrl)}`,
-                  })}
-                </form>`,
-            );
-            const trail =
-              mirror !== undefined
-                ? html`${counted}${forkForm}${btn("Open mirror", {
-                    href: `/${mirror.ownerName}/${mirror.name}`,
-                    size: "sm",
-                    variant: "outline",
-                    icon: "repo",
-                  })}`
-                : html`${counted}${forkForm}
-                    <form
-                      class="row-fields"
-                      method="post"
-                      action="/settings/origins/${origin.id}/mirror"
-                    >
-                      <input
-                        type="hidden"
-                        name="fullName"
-                        value="${remote.fullName}"
-                      />
-                      ${when(
-                        collides,
-                        () =>
-                          uiField({
-                            label: "Local name",
-                            name: "name",
-                            id: `mirror-name-${remote.fullName}`,
-                            placeholder: "local name",
-                            autocomplete: "off",
-                            spellcheck: false,
-                          }),
-                      )}
-                      ${btn("Mirror", {
-                        size: "sm",
-                        variant: "outline",
-                        icon: "download",
-                      })}
-                    </form>`;
-            return row({
-              nav: true,
-              lead: icon(originIcon(origin.kind)),
-              // The row is not itself an anchor: it carries a form, and a
-              // form inside an <a> is markup the parser pulls apart. The
-              // title is the link, and `data-nav` opens it.
-              title: html`<a href="${browseBase(origin.id, remote.fullName)}"
-                  >${remote.fullName}</a
-                >
-                ${remote.private
-                  ? badge("Private", { icon: "lock", variant: "secondary" })
-                  : badge("Public", { variant: "outline" })}
-                ${when(remote.fork, () =>
-                  badge("Fork", { icon: "fork", variant: "outline" }),
-                )}`,
-              titleAttr: remote.fullName,
-              meta: html`${when(
-                mirror,
-                (m) =>
-                  html`<span class="where-place" data-state="present"
-                      ><span aria-hidden="true">●</span
-                      >mirrored as
-                      <a href="/${m.ownerName}/${m.name}"
-                        >${m.ownerName}/${m.name}</a
-                      ></span
-                    >${when(
-                      pinned,
-                      () =>
-                        html`<span class="sep" aria-hidden="true">·</span
-                          ><span
-                            class="where-place"
-                            data-state="present"
-                            title="Kept on your machine"
-                            ><span aria-hidden="true">◆</span
-                            >this machine</span
-                          >`,
-                    )}
-                    · `,
-              )}${remote.description !== ""
-                ? html`${remote.description} · `
-                : null}${remote.pushedAt === null
-                ? html`never pushed`
-                : html`pushed ${time(remote.pushedAt)}`}`,
-              trail,
-            });
-          }),
-        );
-
-  return page({
-    ctx,
-    title: `${origin.login} @ ${hostLabel(origin.webUrl)}`,
-    body: html`<div class="page-head">
-        <h1>${origin.login} @ ${hostLabel(origin.webUrl)}</h1>
-        <span class="spacer"></span>
-        ${btn("Origins", {
-          href: "/settings/origins",
-          size: "sm",
-          variant: "ghost",
-        })}
-      </div>
-      <p class="muted small mb">
-        Open any of these to read it live, right now — nothing is downloaded.
-        Mirror the ones you actually want: each on its own, because a mirror is
-        a repository you own and a hundred of them you did not choose is not a
-        feature.
-      </p>
-      ${filter} ${body}`,
-  });
-}
-
+// POST /settings/origins/:id/token
 /**
- * POST /settings/origins/:id/mirror — start the mirror, then get out of the
- * way.
- *
- * This used to run the whole import inside the request: a clone, a hook
- * install, and every label, issue, pull and comment, with a spinner-free
- * browser holding the connection open for as long as it took. It starts a
- * job now and redirects to the page that watches it, which is the same answer
- * the live-browse Mirror button gives.
+ * A new token on an origin already connected: the origin, its mirrors and
+ * its pins stay; its repositories are listed again with what it sees.
  */
-export async function originMirrorSubmit(ctx: Ctx): Promise<Response> {
+export async function originReplaceToken(ctx: Ctx): Promise<Response> {
   const denied = accountOnly(ctx);
   if (denied) return denied;
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const originId = ctx.params.id ?? "";
-  const fullName = field(form, "fullName").trim();
-  const name = field(form, "name").trim();
-
-  const started = startMirrorJob(
+  const back = thenOf(field(form, "then")) ?? "/settings/origins";
+  const replaced = await replaceOriginToken(
     ctx.app,
     ctx.auth.user,
-    originId,
-    fullName,
-    name === "" ? undefined : name,
+    ctx.params.id ?? "",
+    field(form, "token"),
   );
-  if (!started.ok)
-    return flashTo(ctx, `/settings/origins/${originId}/repos`, {
+  if (!replaced.ok)
+    return flashTo(ctx, back, {
       tone: "danger",
-      message:
-        started.error === "unauthorized"
-          ? "Sign in first."
-          : "That repository could not be mirrored.",
+      message: replaceTokenMessage(replaced.error),
     });
-  return redirect(`/settings/origins/${originId}/mirror/${started.value.id}`);
+  return flashTo(ctx, back, {
+    message: `Token replaced for ${replaced.value.login} at ${hostLabel(replaced.value.webUrl)}; its repositories are listed again.`,
+  });
 }

@@ -32,7 +32,7 @@ export function trendText(series: readonly number[]): string {
 }
 
 /** Builders running of their slots: `2 of 4`, or an em dash when no slots are set. */
-export function buildersValue(b: Kpis["builders"]): string {
+export function buildersValue(b: Pick<Kpis["builders"], "running" | "slots">): string {
   return b.slots === 0 ? "—" : `${b.running} of ${b.slots}`;
 }
 
@@ -48,6 +48,25 @@ export function spendValue(s: Kpis["spend"]): string {
 /** The same figure to the cent, for the title. */
 export function spendFull(s: Kpis["spend"]): string {
   return s.ceilingUsd === null ? cents(s.todayUsd) : `${cents(s.todayUsd)} of ${cents(s.ceilingUsd)}`;
+}
+
+/** The `HH:MMZ` of an ISO time. */
+const hhmmZ = (iso: string): string => `${iso.slice(11, 16)}Z`;
+
+/** The forge ceiling's state in words, shared by the tile and the terminal row. */
+export function spendCeilingWords(s: Kpis["spend"]): { note: string; title: string; attn: boolean } {
+  if (s.ceilingUsd === null) return { note: "no forge ceiling", title: "No forge ceiling is set", attn: false };
+  if (s.todayUsd >= s.ceilingUsd) {
+    const note = s.hitAt ? `ceiling hit ${hhmmZ(s.hitAt)}, builders idle` : "ceiling hit, builders idle";
+    return { note, title: note, attn: true };
+  }
+  return { note: "of the forge ceiling", title: "Crew spend today (UTC), of the forge ceiling", attn: false };
+}
+
+/** The terminal's tail on the spend line: only the two states worth a word. */
+function spendLineNote(s: Kpis["spend"]): string {
+  const w = spendCeilingWords(s);
+  return w.attn || s.ceilingUsd === null ? `, ${w.note}` : "";
 }
 
 const DAY_MS = 24 * 3_600_000;
@@ -108,6 +127,11 @@ export function waitingWords(count: number, oldestAt: string | null, now: Date):
   return `${count} waiting on you, oldest ${h < 1 ? "under 1" : h} h`;
 }
 
+/** The fold for asks older than 30 days, on Home and on /review. */
+export function staleWords(count: number): string {
+  return `${count} stale, archive?`;
+}
+
 /**
  * The terminal's row: the same figures in the same words, as plain
  * lines. Forge-wide like the web's, so the caller shows them to an admin only.
@@ -117,8 +141,8 @@ export function kpiLines(k: Kpis, live: { sha: string; since: string } | null, n
     `Shipped per hour ${(k.landed / k.landedHours.length).toFixed(1)}  ${sparkText(k.landedHours)}  ${k.landed} ${k.landed === 1 ? "change" : "changes"} in 24 h`,
     `Live version ${live === null ? "— nothing live yet" : `${live.sha.slice(0, 7)}, live ${live.since}`}`,
     `Median check time ${checkTime(k.medianCheckMs)}`,
-    `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}`,
-    `Crew spend today ${spendValue(k.spend)}${k.spend.ceilingUsd === null ? ", no ceiling" : ""}`,
+    `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}${k.builders.idle === null ? "" : ` · ${k.builders.idle.word}`}`,
+    `Crew spend today ${spendValue(k.spend)}${spendLineNote(k.spend)}`,
     `Last off-box backup ${backupAge(k.backupAt, now)}${backupOverdue(k.backupAt, now) ? ", overdue" : ""}`,
     `Visitors ${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}  ${trendText(k.reach.visitorDays)}  30 days`,
     `Accounts ${usersValue(k.reach)} signed in today`,

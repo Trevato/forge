@@ -15,6 +15,11 @@ import {
   type Fixture,
   type Shape,
 } from "../bench/map-home.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+// `seedFixture` raises the log floor and never lowers it: borrowed for
+// this file, and given back to whichever file runs next (#7419).
+quietLogs();
 
 const root = join(import.meta.dir, "..");
 const doc = readFileSync(join(root, "docs/CACHING.md"), "utf8");
@@ -107,7 +112,7 @@ describe("docs/CACHING.md", () => {
 
   test("each cache says what, key, invalidated by and max age", () => {
     const caches = doc.split(/^### \d\. /m).slice(1);
-    expect(caches.length).toBe(5);
+    expect(caches.length).toBe(6);
     for (const cache of caches)
       for (const part of ["**What:**", "**Key:**", "**Invalidated by:**", "**Max age:**"])
         expect(cache).toContain(part);

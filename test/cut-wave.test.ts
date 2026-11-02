@@ -3,7 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
-import { commitToBranch } from "../src/actions/repos.ts";
+import { cutWaveFor } from "../src/actions/cut_wave.ts";
+import { createAgent } from "../src/actions/crew.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
@@ -141,6 +143,8 @@ describe("Cut a wave in Settings", () => {
       redirect: "manual",
     });
     repo = getRepo(app.db, "olive", "proj")!;
+    const bot = await createAgent(app, getUserByName(app.db, "olive")!, { username: "bot" });
+    if (!bot.ok) throw new Error(String(bot.error));
   });
   afterAll(async () => {
     servers.stop();
@@ -183,5 +187,75 @@ describe("Cut a wave in Settings", () => {
     expect(parsed.ok).toBe(true);
     if (parsed.ok)
       expect(parsed.value.pulls.map((p) => p.title)).toEqual(["#1 Feature one", "#2 Feature two"]);
+  });
+
+  const branches = async () => {
+    const p = Bun.spawn(["git", "branch", "--format=%(refname:short)"], {
+      cwd: join(dataDir, "repos", "olive", "proj.git"),
+      stdout: "pipe",
+    });
+    return (await new Response(p.stdout).text()).split("\n").filter(Boolean).sort();
+  };
+  const pullCount = () =>
+    (app.db.query("SELECT COUNT(*) AS n FROM issue WHERE kind = 'pull'").get() as { n: number }).n;
+
+  test("no model is called: a successful cut makes no network request", async () => {
+    const olive = getUserByName(app.db, "olive")!;
+    const made = await createRepo(app, olive, { name: "proj2", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const repo2 = made.value;
+    await commitToBranch(app, olive, repo2, { message: "seed", files: [{ path: "a.txt", content: "a\n" }] });
+    await commitToBranch(app, olive, repo2, { branch: "x", message: "x", files: [{ path: "x.txt", content: "x" }] });
+    const p = await openPull(app, olive, repo2, { title: "Feature x", baseBranch: "main", headBranch: "x" });
+    if (!p.ok) throw new Error(p.error);
+    expect((await mergePull(app, olive, repo2, p.value, "merge")).ok).toBe(true);
+    const real = globalThis.fetch;
+    const seen: string[] = [];
+    globalThis.fetch = ((input: string | URL | Request) => {
+      seen.push(String(input));
+      throw new Error("network is off in this test");
+    }) as unknown as typeof fetch;
+    let cutDone;
+    try {
+      cutDone = await cutWaveFor(app, olive, repo2);
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(cutDone?.ok).toBe(true);
+    expect(seen).toEqual([]);
+  });
+
+  // This test commits a junk waves/0.0.9.md to main of olive/proj; later tests on that repo inherit it, so new tests that need a clean wave directory go above it or use their own repo.
+  test("an earlier wave that does not parse stops the cut, named, and nothing is written", async () => {
+    const olive = getUserByName(app.db, "olive")!;
+    await commitToBranch(app, olive, repo, {
+      message: "junk wave",
+      files: [{ path: "waves/0.0.9.md", content: "not a wave" }],
+    });
+    const beforeBranches = await branches();
+    const beforePulls = pullCount();
+    const direct = await cutWaveFor(app, olive, repo);
+    expect(direct.ok).toBe(false);
+    if (!direct.ok) expect(direct.error).toContain("waves/0.0.9.md");
+    const res = await cut("olive");
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/olive/proj/settings");
+    expect(decodeURIComponent(res.headers.get("set-cookie") ?? "")).toContain("waves/0.0.9.md");
+    expect(await branches()).toEqual(beforeBranches);
+    expect(pullCount()).toBe(beforePulls);
+  });
+
+  test("cutWaveFor refuses a non-admin, an agent and an anonymous caller, writing nothing", async () => {
+    const beforeBranches = await branches();
+    const beforePulls = pullCount();
+    const stranger = getUserByName(app.db, "stranger")!;
+    const bot = getUserByName(app.db, "bot")!;
+    expect(bot.kind).toBe("agent");
+    for (const who of [stranger, bot, undefined]) {
+      const r = await cutWaveFor(app, who, repo);
+      expect(r).toEqual({ ok: false, error: "Only a repository admin can cut a wave." });
+    }
+    expect(await branches()).toEqual(beforeBranches);
+    expect(pullCount()).toBe(beforePulls);
   });
 });

@@ -91,8 +91,34 @@ describe("invite links in the terminal", () => {
     await h.press("j");
     expect(h.text()).not.toContain("invite_");
     await h.press("x");
-    expect(listInvites(forge.db)[0]!.state).toBe("revoked");
+    expect(h.text()).toContain(`Revoke invite ${made!.id}?`);
     expect(h.text()).not.toContain("invite_");
+    expect(listInvites(forge.db)[0]!.state).toBe("open");
+    await h.press("y");
+    expect(listInvites(forge.db)[0]!.state).toBe("revoked");
+    expect(h.text()).toContain(`Revoked ${made!.id}.`);
+    expect(h.text()).not.toContain("invite_");
+    await h.press("x");
+    expect(h.text()).not.toContain("Revoke invite");
+    expect(h.text()).toContain("not open");
+    h.stop();
+  });
+
+  test("n or esc on the revoke confirm keeps the link open", async () => {
+    const h = boot("alice");
+    await open(h);
+    await h.press("m");
+    await h.press("enter");
+    const made = listInvites(forge.db).find((i) => i.state === "open")!;
+    for (const k of ["n", "esc"]) {
+      await h.press("x");
+      expect(h.text()).toContain(`Revoke invite ${made.id}?`);
+      expect(h.text()).toContain(`Expires ${made.expiresAt.slice(0, 10)}; holder can no longer sign up.`);
+      expect(h.text()).not.toContain("invite_");
+      await h.press(k);
+      expect(h.text()).not.toContain("Revoke invite");
+      expect(listInvites(forge.db).find((i) => i.id === made.id)!.state).toBe("open");
+    }
     h.stop();
   });
 

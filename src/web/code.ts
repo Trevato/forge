@@ -97,3 +97,41 @@ const firstLineOf = (content: string): string => {
 };
 
 export { detectLanguage, highlightLines };
+
+/** Highlighted lines kept by content hash, so a repeat view highlights nothing. */
+const CACHE_MAX = 32;
+const cache = new Map<string, Html[]>();
+
+export const countLines = (text: string): number => {
+  let n = 1;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) n++;
+  return n;
+};
+
+/**
+ * The first `limit` lines of a blob, highlighted. Keyed by what the file
+ * says (a blob's oid is a hash of the same bytes), its name and the limit;
+ * bounded to the last CACHE_MAX files, least recently used out.
+ */
+export function highlightPrefix(
+  text: string,
+  path: string,
+  limit: number,
+): Html[] {
+  const key = `${Bun.hash(text).toString(36)}:${text.length}:${limit}:${path.slice(path.lastIndexOf("/") + 1)}`;
+  const hit = cache.get(key);
+  if (hit) {
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit;
+  }
+  let end = -1;
+  for (let n = 0; n < limit; n++) {
+    end = text.indexOf("\n", end + 1);
+    if (end === -1) break;
+  }
+  const lines = highlightBlob(end === -1 ? text : text.slice(0, end), path);
+  cache.set(key, lines);
+  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
+  return lines;
+}

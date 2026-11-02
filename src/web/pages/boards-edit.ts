@@ -6,7 +6,7 @@
  * work to `actions/boards.ts`.
  */
 import {
-  changeBoard, deleteBoard, duplicateBoard, makeBoard, type BoardError,
+  boardRefusal, changeBoard, deleteBoard, duplicateBoard, makeBoard, type BoardError,
 } from "../../actions/boards.ts";
 import type { Edit } from "../../boards/edit.ts";
 import { movePinned, pinPanel, unpinPanel } from "../../actions/board-pins.ts";
@@ -18,19 +18,6 @@ import { flashTo } from "../layout.ts";
 import { PANEL_FIELDS, readParams, toQuery } from "./boards.ts";
 
 const num = (v: string) => (/^-?\d{1,4}$/.test(v) ? Number(v) : NaN);
-
-function sentence(e: BoardError): string {
-  if (typeof e === "object") return `That was refused: ${e.refused}.`;
-  const words: Partial<Record<string, string>> = {
-    invalid: "That is not a board.",
-    exists: "A board with that name is already there.",
-    no_slug: "A title needs letters or digits.",
-    too_many: "There are too many boards already.",
-    branch_moved: "The boards changed while you were saving; try again.",
-    repo: "The boards repo could not be made.",
-  };
-  return words[e] ?? "That could not be saved.";
-}
 
 /** A panel as the form says it: title, size, chart, and the query the shared fields build. */
 function panelOf(form: Form): Record<string, unknown> {
@@ -57,7 +44,7 @@ function editOf(op: string, form: Form): Edit | undefined {
 
 const done = (ctx: Ctx, to: string, message: string) => flashTo(ctx, to, { message });
 const failed = (ctx: Ctx, to: string, e: BoardError) =>
-  e === "not_found" ? notFoundPage(ctx) : flashTo(ctx, to, { tone: "danger", message: sentence(e) });
+  e === "not_found" ? notFoundPage(ctx) : flashTo(ctx, to, { tone: "danger", message: boardRefusal(e) });
 
 // POST /boards/new
 export async function boardNew(ctx: Ctx): Promise<Response> {

@@ -7,13 +7,13 @@
  * a repaint (`layout.fragment`, `client.liveRegionsJs`).
  */
 
-import { mayViewId, sealedScope } from "../../core/sealed.ts";
+import { eventRows, mayView, sealedScope } from "../../core/sealed.ts";
 import { envPull } from "../../apps/data.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
-import { getIssueById, listIssues, type Issue } from "../../core/issues.ts";
+import { getIssuesByIds, listIssues } from "../../core/issues.ts";
 import { listPulls, openPullsClosing, type Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { latestRunsForIssues, listRuns, type Run } from "../../core/runs.ts";
@@ -30,9 +30,11 @@ import { changeHref, tellHref } from "./nouns.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
 import { stopForm } from "./run.ts";
-import { tellWord } from "./tell.ts";
+import { tellWords } from "./tell.ts";
 import { voiceFor, type Actor } from "./voice.ts";
 import {
+  knowPulls,
+  knowRunPulls,
   pullWord,
   runWord,
   servingHistory,
@@ -77,19 +79,23 @@ export async function nowCard(
   const base = repoBase(repo);
   const { openPulls, builderCount, ownerFacts, wordCtx, deployTailing } = o;
   // A run on a sealed report, and the report, are for who may see it.
-  const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 }).filter((r) =>
-    mayViewId(db, repo, r.issueId, ctx.auth.user),
+  const recent = listRuns(db, repo.id, { kind: "agent", limit: 8 });
+  const sealed = eventRows(
+    db,
+    recent.map((r) => ({ repoId: repo.id, payload: { issueId: r.issueId } })),
   );
+  const runs = recent.filter((r) => {
+    const row = r.issueId === null ? undefined : sealed.get(r.issueId);
+    return row === undefined || mayView(db, repo, row, ctx.auth.user);
+  });
   const actors = getUsersByIds(
     db,
     runs.map((r) => r.actorId).filter((id): id is string => id !== null),
   );
-  const issues = new Map<string, Issue>();
-  for (const r of runs)
-    if (r.issueId !== null && !issues.has(r.issueId)) {
-      const i = getIssueById(db, r.issueId);
-      if (i) issues.set(r.issueId, i);
-    }
+  const issues = getIssuesByIds(
+    db,
+    runs.flatMap((r) => (r.issueId === null ? [] : [r.issueId])),
+  );
   const proposed = new Set(openPulls.map((p) => p.id));
   const openByIssue = openPullsClosing(db, repo.id);
   const openTells = listIssues(db, repo.id, {
@@ -151,6 +157,10 @@ export async function nowCard(
       (r, idx, all) => all.findIndex((x) => x.issueId === r.issueId) === idx,
     )
     .slice(0, 6);
+  // The words below ask per open change and per finished run; read them for
+  // all the rows at once, so the card is a handful of queries, not one apiece.
+  knowPulls(wordCtx, openPulls);
+  knowRunPulls(wordCtx, rowsNow);
   // Who signs a "Now" row is the one rule for it, `voiceFor`
   // (`studio/voice.ts`): a person is named to anyone who can see the row —
   // the same name `/pulls` and the pull request's own page give — and only the
@@ -228,6 +238,24 @@ export async function nowCard(
     ];
   });
 
+  const heldWords = await tellWords(wordCtx, repo, held, new Map());
+  const heldRows = held.map((i, n) => {
+    const { word, note } = heldWords[n] ?? { word: "told" as const, note: "held" };
+    const who = voiceFor(
+      { name: i.assigneeName ?? undefined, isAgent: false },
+      ownerFacts,
+      "someone",
+    );
+    return row({
+      href: tellHref(base, i.number),
+      nav: true,
+      lead: avatar(who),
+      title: i.title,
+      meta: html`${who} · ${note} · ${time(i.createdAt)}`,
+      trail: wordBadge(word),
+    });
+  });
+
   const nowRows: Html[] = [
     ...busyRows,
     ...(await Promise.all(
@@ -267,32 +295,7 @@ export async function nowCard(
     // note the issue's own page and the issues list already show for it.
     // `personHeld` has already established the holder is a person, so
     // `voiceFor` names them to every viewer who can see the row.
-    ...(await Promise.all(
-      held.map(async (i) => {
-        const { word, note } = (await tellWord(
-          wordCtx,
-          repo,
-          i,
-          undefined,
-        )) ?? {
-          word: "told" as const,
-          note: "held",
-        };
-        const who = voiceFor(
-          { name: i.assigneeName ?? undefined, isAgent: false },
-          ownerFacts,
-          "someone",
-        );
-        return row({
-          href: tellHref(base, i.number),
-          nav: true,
-          lead: avatar(who),
-          title: i.title,
-          meta: html`${who} · ${note} · ${time(i.createdAt)}`,
-          trail: wordBadge(word),
-        });
-      }),
-    )),
+    ...heldRows,
     ...stuck.map((i) => {
       return row({
         lead: avatar("crew"),

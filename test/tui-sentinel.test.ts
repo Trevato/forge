@@ -56,7 +56,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   app.close();
-  await rm(dataDir, { recursive: true, force: true });
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 describe("the sentinel command", () => {

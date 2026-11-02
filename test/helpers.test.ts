@@ -13,7 +13,17 @@ import { join } from "node:path";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { logLevel, setLogLevel, type LogLevel } from "../src/kernel/log.ts";
 import { firstFetchRetry } from "../src/origins/mirror.ts";
-import { fastFirstFetch, quietLogs, withoutEnv } from "./helpers/globals.ts";
+import {
+  mirrorOutboundForTest,
+  provideMirrorOutboundForTest,
+} from "../src/origins/git-mirror.ts";
+import type { OutboundOptions } from "../src/kernel/outbound.ts";
+import {
+  fastFirstFetch,
+  mirrorOutbound,
+  quietLogs,
+  withoutEnv,
+} from "./helpers/globals.ts";
 import { missing } from "./helpers/tools.ts";
 
 describe("a git client's environment under test", () => {
@@ -87,22 +97,27 @@ describe("a global a file borrows is given back", () => {
   // rather than a coincidence with the defaults.
   const ASIDE = "https://machine.example.test";
   const WAITS: readonly number[] = [1, 2, 3];
+  const VET: OutboundOptions = { allow: ["192.0.2.7"] };
   let found: {
     level: LogLevel;
     waits: readonly number[];
     url: string | undefined;
+    vet: OutboundOptions;
   };
   beforeAll(() => {
     found = {
       level: logLevel(),
       waits: firstFetchRetry.ms,
       url: process.env.FORGE_URL,
+      vet: mirrorOutboundForTest(),
     };
     setLogLevel("warn");
     firstFetchRetry.ms = WAITS;
     process.env.FORGE_URL = ASIDE;
+    provideMirrorOutboundForTest(VET);
   });
   afterAll(() => {
+    provideMirrorOutboundForTest(found.vet);
     setLogLevel(found.level);
     firstFetchRetry.ms = found.waits;
     if (found.url === undefined) delete process.env.FORGE_URL;
@@ -113,11 +128,13 @@ describe("a global a file borrows is given back", () => {
     quietLogs();
     fastFirstFetch([50]);
     withoutEnv("FORGE_URL");
+    mirrorOutbound({});
 
     test("they hold what it asked for", () => {
       expect(logLevel()).toBe("error");
       expect(firstFetchRetry.ms).toEqual([50]);
       expect(process.env.FORGE_URL).toBeUndefined();
+      expect(mirrorOutboundForTest()).toEqual({});
       // What the file sets under a cleared name goes when it does.
       process.env.FORGE_URL = "https://set.inside.test";
     });
@@ -127,5 +144,6 @@ describe("a global a file borrows is given back", () => {
     expect(logLevel()).toBe("warn");
     expect(firstFetchRetry.ms).toBe(WAITS);
     expect(process.env.FORGE_URL).toBe(ASIDE);
+    expect(mirrorOutboundForTest()).toBe(VET);
   });
 });

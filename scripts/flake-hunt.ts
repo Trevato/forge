@@ -236,8 +236,9 @@ async function openRedIssues(): Promise<Map<string, OpenRed>> {
 }
 
 /** The files outside the gate, one at a time; red ones reported to the forge. */
-async function outside(): Promise<number> {
-  const files = outsideFiles(presentTests());
+async function scheduled(): Promise<number> {
+  const present = presentTests();
+  const files = outsideFiles(present);
   const fileIssues = rest.includes("--file-issues");
   const open = fileIssues ? await openRedIssues() : new Map<string, OpenRed>();
   const runs: FileRun[] = [];
@@ -368,7 +369,7 @@ async function admit(): Promise<number> {
   return admitted(results) ? 0 : 1;
 }
 
-if (mode === "outside") process.exit(await outside());
+if (mode === "outside") process.exit(await scheduled());
 else if (mode === "hunt") process.exit(await hunt());
 else if (mode === "quarantine") process.exit(await quarantineAll());
 else if (mode === "admit") process.exit(await admit());

@@ -99,7 +99,7 @@ describe("link the parent forge from settings", () => {
     expect(users(child)).toBe(users0);
     const after = await (await fetch(`${childServers.url}/settings`, { headers: { cookie: carolCookie } })).text();
     expect(after).not.toContain("not linked");
-    expect(after).toContain("/settings/parent/unlink");
+    expect(after).toContain(`/-/confirm?to=${encodeURIComponent("/settings/parent/unlink")}`);
   });
 
   test("a linked person then signs in through the parent as the same account", async () => {

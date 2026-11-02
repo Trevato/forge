@@ -26,7 +26,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { defect } from "./error.ts";
 import { sha256 } from "./hash.ts";
@@ -82,6 +82,28 @@ export function migrationId(sql: string): string {
 export type MigrationPins = Readonly<Record<string, string>>;
 
 /**
+ * Every pin: `legacy` (the one file that held them all, now frozen) and one
+ * `<name>.pin` file in `dir` per migration since, holding its id. The pull
+ * that adds a migration adds its pin file, so pins never meet in a shared
+ * file and never wait for a release.
+ */
+export function readPins(dir: string, legacy: MigrationPins): MigrationPins {
+  const all: Record<string, string> = { ...legacy };
+  for (const file of readdirSync(dir).sort()) {
+    if (!file.endsWith(".pin"))
+      defect("db.migration_name", `${file} in ${dir} is not <name>.pin`);
+    const name = file.slice(0, -".pin".length);
+    if (name in legacy)
+      defect("db.pin_repinned", `${file} would re-pin ${name}, which is already pinned`);
+    const id = readFileSync(join(dir, file), "utf8").trim();
+    if (!/^[0-9a-f]{64}$/.test(id))
+      defect("db.pin_malformed", `${file} does not hold a sha256 id`);
+    all[name] = id;
+  }
+  return all;
+}
+
+/**
  * How `files` differ from what was pinned: one line for each pinned
  * migration whose text says something else now, or that is gone. A
  * migration on main is history — an edited one is a new one, and a
@@ -100,22 +122,6 @@ export function pinBreaks(
       breaks.push(`${name} was edited after it was pinned — add a new migration instead`);
   }
   return breaks;
-}
-
-/**
- * `pins` with every migration in `files` it lacks added; a pin already
- * there is never rewritten. Sorted by name, so the file it is written to
- * changes only where a migration was added.
- */
-export function pinned(
-  files: readonly MigrationFile[],
-  pins: MigrationPins,
-): MigrationPins {
-  const next: Record<string, string> = { ...pins };
-  for (const m of files) next[m.name] ??= migrationId(m.sql);
-  return Object.fromEntries(
-    Object.entries(next).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-  );
 }
 
 /**

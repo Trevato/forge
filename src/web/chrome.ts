@@ -20,7 +20,7 @@ import {
   getRepo,
   visibleForks,
 } from "../core/repos.ts";
-import type { Repo } from "../core/repos.ts";
+import { canEnterApp, type Repo } from "../core/repos.ts";
 import { parentUrl, shownTrail, sourceLabel } from "../core/provenance.ts";
 import type { Database } from "bun:sqlite";
 import type { Ctx } from "../http/context.ts";
@@ -38,6 +38,8 @@ import {
   type RepoScope,
 } from "./scope.ts";
 import { changesHref, tellsHref } from "./studio/nouns.ts";
+import { knownSpec, warmSpec } from "../apps/api_spec.ts";
+import { appsRuntime } from "../apps/runtime.ts";
 import { badge, btn, empty, tabs, type TabItem } from "./ui.ts";
 
 // ---- loading ----
@@ -80,9 +82,13 @@ export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response
           icon: "search",
           title: "Nothing here",
           note: "The page you asked for does not exist, or is not visible to you.",
-          action: offerSignIn
-            ? btn("Sign in", { href: signInHref(ctx), variant: "primary" })
-            : btn("Go home", { href: "/", variant: "primary" }),
+          action: opts.plain
+            ? btn("Go home", { href: "/", variant: "primary" })
+            : offerSignIn
+              ? html`${btn("Sign in", { href: signInHref(ctx), variant: "primary" })}
+                ${btn("Go home", { href: "/" })} ${btn("Explore", { href: "/explore" })}`
+              : html`${btn("Go home", { href: "/", variant: "primary" })}
+                ${btn("Explore", { href: "/explore" })}`,
         })}`,
     },
     404,
@@ -119,7 +125,10 @@ export type RepoTab =
   | "branches"
   | "app"
   | "runs"
-  | "settings";
+  | "api"
+  | "settings"
+  /** A page that belongs to no tab (waves): nothing is marked current. */
+  | "none";
 
 export interface RepoHeaderOptions {
   /** Rendered at the right of the title line (fork, clone, watch). */
@@ -176,8 +185,9 @@ export function scopeHeader(
       ? undefined
       : forkParentFor(ctx.app.db, repo, ctx.auth.user);
 
-  const isApp =
-    repo !== undefined && getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const record =
+    repo === undefined ? undefined : getAppByRepo(ctx.app.db, repo.id);
+  const isApp = record !== undefined;
   // An app speaks the studio's words (told, changes), a plain repository
   // git's (issues, pulls, commits, branches) — for every viewer (#603).
   const studio = isApp;
@@ -283,6 +293,19 @@ export function scopeHeader(
       current: active === "runs",
       shortcut: "g r",
     });
+  // An app that serves /openapi.json gets its API reference one tab over.
+  // The spec is read in the background and remembered, so a header never waits.
+  if (repo !== undefined && record !== undefined && canEnterApp(ctx.app.db, repo, record, ctx.auth.user)) {
+    const port = appsRuntime(ctx.app)?.envStatus(record, "production")?.port;
+    warmSpec(record, port);
+    if (knownSpec(record.id) != null)
+      items.push({
+        label: "API",
+        href: `${base}/api`,
+        icon: "command",
+        current: active === "api",
+      });
+  }
   if (ctx.auth.user !== undefined && sshCommand(ctx.app) !== undefined)
     items.push({
       label: "Terminal",
@@ -309,8 +332,8 @@ export function scopeHeader(
     )}
     <span
       >${scope.kind === "local"
-        ? html`<a class="owner" href="/${owner}">${owner}</a>`
-        : html`<span class="owner">${owner}</span>`}<span class="slash">/</span
+        ? html`<a class="muted" href="/${owner}">${owner}</a>`
+        : html`<span class="muted">${owner}</span>`}<span class="sep">/</span
       ><a href="${base}">${facts.name}</a></span
     >
     ${facts.visibility === "private"
@@ -327,7 +350,7 @@ export function scopeHeader(
     ${repo === undefined ? null : audienceLine(ctx, repo, admin, base)}
     ${when(
       !options.compact && facts.description !== "",
-      () => html`<p class="repo-desc">${facts.description}</p>`,
+      () => html`<p class="muted small">${facts.description}</p>`,
     )}
     ${repo === undefined ? null : lineageLine(ctx.app.db, repo, parent)}
     ${when(
@@ -395,7 +418,7 @@ export function lineageLine(
 function audienceLine(ctx: Ctx, repo: Repo, admin: boolean, base: string): Html {
   const { level, sentence } = audienceOf(audienceFacts(ctx.app.db, repo, ctx.auth.user));
   const split = level === "split" ? html`${badge("Split", { tone: "attn" })} ` : null;
-  return html`<p class="repo-desc">
+  return html`<p class="muted small">
     ${split}${admin ? html`<a href="${base}/settings">${sentence}</a>` : sentence}
   </p>`;
 }
@@ -455,7 +478,7 @@ export function pageHead(
     ${o.lead ?? null}
     <h1>${title}</h1>
     ${o.actions ? html`<span class="spacer"></span>${o.actions}` : null}
-    ${o.sub ? html`<span class="sub">${o.sub}</span>` : null}
+    ${o.sub ? html`<span class="page-head-sub muted small">${o.sub}</span>` : null}
   </div>`;
 }
 

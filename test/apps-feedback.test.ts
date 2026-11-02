@@ -11,14 +11,14 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
-import { PROOF_LOST } from "../src/apps/note_words.ts";
 import { toolbarJs } from "../src/apps/toolbar.ts";
 import { filtered, moderateNote, noteClock, PER_APP_DAY, PER_SENDER, PER_SOURCE, saysFromApp } from "../src/actions/app_notes.ts";
 import { feedback, REQUEST_MAX } from "../src/apps/feedback.ts";
 import { getAppBySlug } from "../src/core/apps.ts";
 import { getNote, isBanned } from "../src/core/app_notes.ts";
 import { grantedCookie } from "./helpers/identity.ts";
-import { getIssue, labelsFor, setIssueState } from "../src/core/issues.ts";
+import { recordRelease } from "../src/release/record.ts";
+import { createIssue, getIssue, labelsFor, setIssueState } from "../src/core/issues.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -280,6 +280,31 @@ describe("the forge button takes notes from anyone", () => {
     expect((await post("one more", "", source)).status).toBe(429);
   });
 
+  test("a note's fix says the release it is in, or the date it merged", async () => {
+    const made = await newApp(app, alice, { name: "shipping", description: "Words", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const repo = getRepo(app.db, "alice", "shipping")!;
+    const land = (n: number, mergedAt: string) => {
+      const pr = createIssue(app.db, { repoId: repo.id, authorId: alice.id, title: `fix ${n}`, body: `Closes #${n}`, kind: "pull" });
+      if (!pr.ok) throw new Error("pull");
+      app.db.query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at) VALUES (?1, 'main', 'fix', 'a', 'b', ?2)`).run(pr.value.id, mergedAt);
+      return pr.value.number;
+    };
+    const label = async (text: string, ip: string, mergedAt: string, released: boolean) => {
+      const first = await post(text, "", ip, "shipping");
+      const cookie = cookieOf(first);
+      const n = Number(((await first.json()) as { note: { url: string } }).note.url.split("/").pop());
+      const pull = land(n, mergedAt);
+      if (released) recordRelease(app.db, { sha: "c0ffee".repeat(6), repoId: repo.id, pullNumber: pull, ok: true, line: "ok" });
+      setIssueState(app.db, getIssue(app.db, repo.id, n)!.id, "closed", "done");
+      const [note] = ((await (await at("shipping", "/__forge/notes", {}, cookie)).json()) as { notes: { status: { state: string; label: string } }[] }).notes;
+      expect(note!.status.state).toBe("shipped");
+      return note!.status.label;
+    };
+    expect(await label("released fix", "10.7.0.1", "2026-03-04T10:00:00Z", true)).toBe("Shipped in c0ffeec0ffee");
+    expect(await label("merged fix", "10.7.0.2", "2026-03-04T10:00:00Z", false)).toBe("Shipped on 2026-03-04");
+  });
+
   test("a body is read only up to the cap, whatever it declares", async () => {
     const record = getAppBySlug(app.db, "notes")!;
     let pulled = 0;
@@ -504,9 +529,47 @@ describe("the forge button takes notes from anyone", () => {
     expect(((await again.json()) as { name: string }).name).toBe("@alice");
   });
 
-  test("the panel says so when its proof chain breaks", () => {
-    expect(toolbarJs).toContain("broke()");
-    expect(toolbarJs).toContain(PROOF_LOST);
+  test("a refused note still hands on the next proof, and the next note goes as the person", async () => {
+    const owner = await grantedCookie(app, servers.url, alice, getAppBySlug(app.db, "notes")!);
+    const loaded = await page("notes", owner);
+    let proof = loaded.proof;
+    let limited: Response | undefined;
+    for (let i = 0; i <= PER_SENDER + 1 && limited === undefined; i++) {
+      const res = await postAs("notes", owner, proof, `chain ${i}`);
+      proof = res.headers.get("x-forge-proof") ?? undefined;
+      expect(proof).toBeTruthy();
+      if (res.status === 429) limited = res;
+    }
+    expect(limited).toBeDefined();
+    const bad = await at("notes", "/__forge/note", { method: "POST", headers: withProof(proof), body: "{" }, owner);
+    expect(bad.status).toBe(400);
+    proof = bad.headers.get("x-forge-proof") ?? undefined;
+    expect(proof).toBeTruthy();
+    const rude = await at("notes", "/__forge/note", { method: "POST", headers: withProof(proof), body: JSON.stringify({ text: "this is sh1t" }) }, owner);
+    expect(rude.status).toBe(422);
+    proof = rude.headers.get("x-forge-proof") ?? undefined;
+    expect(proof).toBeTruthy();
+    const mine = (await (await at("notes", "/__forge/notes", { headers: withProof(proof) }, owner)).json()) as { name: string };
+    expect(mine.name).toMatch(/^@/);
+  });
+
+  test("a send the network rejected is retried with the same proof and goes as the person", async () => {
+    const owner = await grantedCookie(app, servers.url, alice, getAppBySlug(app.db, "notes")!);
+    const loaded = await page("notes", owner);
+    // The first send never arrives, so the door never sees it; the panel keeps its token.
+    const retry = await postAs("notes", owner, loaded.proof, "second try");
+    expect(retry.status === 201 || retry.status === 429).toBe(true);
+    expect(retry.headers.get("x-forge-proof")).toBeTruthy();
+    if (retry.status === 201) expect(((await retry.json()) as { name: string }).name).toMatch(/^@/);
+  });
+
+  test("the panel keeps its proof unless an answer brings the next", () => {
+    const call = /function call\([\s\S]*?\n  \}\n/.exec(toolbarJs)![0];
+    expect(call).toContain("if (next) proof = next;");
+    expect(call).not.toMatch(/proof = ""/);
+    expect(call).not.toContain("broke");
+    expect(call).not.toContain("function (e)");
+    expect(toolbarJs).not.toContain("broke()");
   });
 
   test("the panel takes the proof from its tag, strips it, and sends it with each call", () => {
@@ -525,5 +588,38 @@ describe("the forge button takes notes from anyone", () => {
     expect(toolbarJs).toContain("Tell the builders");
     expect(toolbarJs).toContain("What is this?");
     expect(toolbarJs).toContain("font:16px");
+  });
+
+  test("an unknown /__forge/note* path is the app's, not the forge's", async () => {
+    const res = await at("notes", "/__forge/notebook");
+    // No app runs behind it here, so the proxy's own "unavailable" answers;
+    // what matters is that the notes door did not claim it.
+    expect(await res.text()).not.toContain("not_found");
+    expect(res.headers.get("content-type") ?? "").not.toContain("json");
+  });
+
+  test("every /__forge/ answer wears the security floor, signed in and out", async () => {
+    const signedIn = cookieOf(await post("Hello", "", "10.0.0.77"));
+    const paths = ["/__forge/", "/__forge/crew", "/__forge/notes", "/__forge/note", "/__forge/note/moderate", "/__forge/measure", "/__forge/signin", "/__forge/signout", "/__forge/report", "/__forge/grant", "/__forge/grant?t=bad"];
+    for (const slug of ["notes", "diary"]) {
+      for (const cookie of ["", signedIn]) {
+        for (const path of paths) {
+          for (const method of ["GET", "POST"]) {
+            const res = await at(slug, path, { method, ...(method === "POST" ? { body: "{}" } : {}) }, cookie, "10.0.0.78");
+            const who = `${method} ${slug}${path} ${cookie ? "in" : "out"} -> ${res.status}`;
+            expect(res.headers.get("x-content-type-options"), who).toBe("nosniff");
+            expect(res.headers.get("referrer-policy"), who).toBeTruthy();
+            const csp = res.headers.get("content-security-policy");
+            expect(csp, who).toBeTruthy();
+            if (!(res.headers.get("content-type") ?? "").startsWith("text/html"))
+              expect(csp, who).toBe("default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+            else {
+              expect(csp, who).toContain("default-src");
+              expect(csp, who).toContain("frame-ancestors 'none'");
+            }
+          }
+        }
+      }
+    }
   });
 });

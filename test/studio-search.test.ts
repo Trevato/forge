@@ -798,7 +798,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     putLive();
     const serving = await studioPage();
     expect(serving).toContain("serving");
-    expect(serving).toContain('action="/alice/notes/app/production/stop"');
+    expect(serving).toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
     // The page a person stays on is the one that refreshes itself: its live
     // mount asks for the app's state on a deploy event.
     expect(serving).toContain('data-app="1"');
@@ -817,7 +817,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     expect(html).toContain('id="app-head"');
     expect(html).toContain("not running");
     expect(html).toContain('action="/alice/notes/app/production/redeploy"');
-    expect(html).not.toContain('action="/alice/notes/app/production/stop"');
+    expect(html).not.toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
   });
 
   test("pressed on a change's page, Stop comes back to that change", async () => {
@@ -931,7 +931,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     });
     const owner = await studioPage();
     expect(owner).toContain(`action="/alice/notes/app/${env}/redeploy"`);
-    expect(owner).toContain(`action="/alice/notes/app/${env}/stop"`);
+    expect(owner).toContain(`href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2F${env}%2Fstop"`);
     expect(owner).toContain(`href="/alice/notes/app/${env}/open"`);
     expect(owner).toContain('href="/alice/notes/settings/app"');
 
@@ -940,7 +940,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     ).text();
     expect(stranger).toContain(`href="/alice/notes/app/${env}/open"`);
     expect(stranger).not.toContain("/redeploy");
-    expect(stranger).not.toContain("/stop");
+    expect(stranger).not.toContain("%2Fstop");
     expect(stranger).not.toContain('href="/alice/notes/settings/app"');
   });
 });

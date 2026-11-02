@@ -11,6 +11,7 @@
  * Both are GETs that change nothing a stranger could use: a callback with
  * no matching cookie and state is refused before anything is fetched.
  */
+import { secureFor } from "./cookie_secure.ts";
 import { createHash, randomBytes } from "node:crypto";
 import type { App } from "../app.ts";
 import {
@@ -37,6 +38,7 @@ import { signInFirst } from "../web/chrome.ts";
 import { sessionCookie } from "../web/pages/site.ts";
 import { cookieValue, type Ctx } from "./context.ts";
 import { KeySet } from "./jwks.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
 
 export const STATE_COOKIE = "forge_rp";
 const SCOPE = "openid profile";
@@ -101,24 +103,26 @@ async function clientId(ctx: Ctx, issuer: string, redirectUri: string): Promise<
 }
 
 function failure(ctx: Ctx, message: string, status: number): Response {
-  const response = page(
-    {
-      ctx,
-      title: "Sign in",
-      body: html`<div class="narrow">
-        <div class="page-head"><h1>Could not sign you in</h1></div>
-        <p role="alert">${message}</p>
-        <p><a href="/signin">Back to sign in</a></p>
-      </div>`,
-    },
-    status,
+  const response = timePhase(ctx.request, "render", () =>
+    page(
+      {
+        ctx,
+        title: "Sign in",
+        body: html`<div class="narrow">
+          <div class="page-head"><h1>Could not sign you in</h1></div>
+          <p role="alert">${message}</p>
+          <p><a href="/signin">Back to sign in</a></p>
+        </div>`,
+      },
+      status,
+    ),
   );
   response.headers.set("cache-control", "no-store");
   return response;
 }
 
-const cookieHeader = (value: string, maxAge: number, url: URL, forgeUrl?: string): string => {
-  const secure = url.protocol === "https:" || forgeUrl?.startsWith("https://") ? "; Secure" : "";
+export const cookieHeader = (value: string, maxAge: number, url: URL, forgeUrl?: string): string => {
+  const secure = secureFor(url, forgeUrl) ? "; Secure" : "";
   return `${STATE_COOKIE}=${value}; Path=/signin/parent; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 };
 
@@ -133,6 +137,7 @@ export async function parentLinkStart(ctx: Ctx): Promise<Response> {
 }
 
 async function begin(ctx: Ctx, linkUser?: string): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const issuer = parentIssuer(ctx.app);
   if (issuer === undefined) return failure(ctx, "This forge has no parent to sign in through.", 404);
   // Each start writes a row and the table is bounded: a flood must not push
@@ -173,6 +178,7 @@ async function begin(ctx: Ctx, linkUser?: string): Promise<Response> {
 }
 
 export async function parentCallback(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const q = ctx.url.searchParams;
   const state = q.get("state") ?? "";
   const code = q.get("code") ?? "";
@@ -192,19 +198,21 @@ export async function parentCallback(ctx: Ctx): Promise<Response> {
     return refuse("The parent forge did not sign you in.");
   try {
     const client = await clientId(ctx, login.issuer, login.redirectUri);
-    const res = await fetch(`${login.issuer}/oauth/token`, {
-      method: "POST",
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        client_id: client,
-        redirect_uri: login.redirectUri,
-        code_verifier: login.verifier,
-      }),
-      redirect: "error",
-      signal: AbortSignal.timeout(5000),
+    const { res, body } = await timePhaseAsync(ctx.request, "parent", async () => {
+      const res = await fetch(`${login.issuer}/oauth/token`, {
+        method: "POST",
+        body: new URLSearchParams({
+          grant_type: "authorization_code",
+          code,
+          client_id: client,
+          redirect_uri: login.redirectUri,
+          code_verifier: login.verifier,
+        }),
+        redirect: "error",
+        signal: AbortSignal.timeout(5000),
+      });
+      return { res, body: await answerOf(res) };
     });
-    const body = await answerOf(res);
     if (!res.ok || typeof body.id_token !== "string")
       return refuse("The parent forge did not accept the sign-in.", 502);
     const keys = keysOf(ctx.app, login.issuer);

@@ -6,6 +6,7 @@
 
 import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
+import { landVision } from "../crew/vision.ts";
 import { isCrew } from "../core/agents.ts";
 import {
   getIssueById,
@@ -362,6 +363,8 @@ export async function mergePull(
   strategy: MergeStrategy,
   /** The merge queue's guard: land only onto this base, as this tree (#2036). */
   expect?: LandingExpect,
+  /** `pastGate`: the owner's break-glass (`checks/bypass.ts`) skips the checks requirement. */
+  opts: { readonly pastGate?: boolean } = {},
 ): Promise<
   Result<{ mergeOid: string; carried: boolean }, AccessError | MergePullError>
 > {
@@ -408,7 +411,7 @@ export async function mergePull(
       gate: {
         db: app.db,
         requireReview: repo.requireReview,
-        requireChecks: repo.requireChecks,
+        requireChecks: repo.requireChecks && opts.pastGate !== true,
       },
       strategy,
       ...(expect === undefined ? {} : { expect }),
@@ -435,6 +438,8 @@ export async function mergePull(
       mergeOid: merged.value.mergeOid,
     },
   });
+  // A vision pull, landed by an admin, rewrites the direction's fenced block.
+  await landVision(app, writer.value, repo, pull);
   // What the pull said it closes, closes: the issue is done when the change
   // lands, as the person who landed it — which is what frees the map. Not
   // the plan's own issues: no change finishes an umbrella or opens the
@@ -555,15 +560,20 @@ export async function submitReview(
       pull.id,
       [sent.value],
     );
+    const stored = getReviewByRemoteId(app.db, pull.id, sent.value.remoteId);
     app.bus.append({
       kind: "pull.reviewed",
       repoId: repo.id,
       actorId: user.id,
-      payload: { number: pull.number, state: input.state, via: "origin" },
+      payload: {
+        number: pull.number,
+        state: input.state,
+        via: "origin",
+        ...(stored ? { reviewId: stored.id } : {}),
+      },
     });
     // Line comments stay here, as `addReview`'s always have on a mirror.
     for (const line of anchored.value) postLine(app, pull, user, line);
-    const stored = getReviewByRemoteId(app.db, pull.id, sent.value.remoteId);
     return stored ? ok(stored) : err("origin_refused");
   }
 
@@ -608,6 +618,7 @@ export async function submitReview(
       number: pull.number,
       state: input.state,
       body: (input.body ?? "").trim(),
+      reviewId: recorded.value.id,
     },
   });
   return recorded;
@@ -749,7 +760,12 @@ export async function approveHere(
     kind: "pull.reviewed",
     repoId: repo.id,
     actorId: user.id,
-    payload: { number: pull.number, state: "approved", via: "here" },
+    payload: {
+      number: pull.number,
+      state: "approved",
+      via: "here",
+      reviewId: recorded.value.id,
+    },
   });
   return recorded;
 }

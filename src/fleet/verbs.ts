@@ -11,6 +11,7 @@
  */
 
 import { NOT_A_MEMBER } from "../core/roles.ts";
+import { AGENT_NOT_ON_CREW } from "../actions/crew_limit_words.ts";
 import type { App } from "../app.ts";
 import {
   addComment,
@@ -117,7 +118,7 @@ const WORDS: Record<string, string> = {
   mirrored: "mirrored: change it at the origin",
   unknown_label: "no such label here",
   assignee_cannot_read: "the assignee cannot read this repository",
-  agent_not_on_crew: "that agent is not on this repository's crew",
+  agent_not_on_crew: AGENT_NOT_ON_CREW,
   already_merged: "a merged pull stays closed",
   finished: "already finished",
   not_agent: "only an agent run is queued again",
@@ -128,7 +129,8 @@ const WORDS: Record<string, string> = {
   unknown_branch: "unknown branch",
 };
 
-const words = (code: string): string => WORDS[code] ?? code;
+/** An action's refusal code in words; the terminal says the same (#7294). */
+export const words = (code: string): string => WORDS[code] ?? code;
 
 /** A Result from an action, as a verb's answer. */
 const done = (result: Result<unknown, string>): string | undefined =>

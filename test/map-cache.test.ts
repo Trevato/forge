@@ -18,6 +18,11 @@ import { layout } from "../src/web/pages/map.ts";
 import type { Graph } from "../src/core/dependencies.ts";
 import { seedFixture, type Fixture, type Shape } from "../bench/map-home.ts";
 import { countStatements } from "../bench/run.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+// `seedFixture` raises the log floor and never lowers it: borrowed for
+// this file, and given back to whichever file runs next (#7419).
+quietLogs();
 
 const SMALL: Shape = {
   repos: 6,

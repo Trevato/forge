@@ -10,6 +10,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listAt } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -75,12 +76,7 @@ describe("MCP telemetry_grant", () => {
   });
 
   const list = async (token: string) => {
-    const res = await fetch(`${servers.url}/mcp`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-    });
-    return ((await res.json()) as any).result.tools.map((t: any) => t.name) as string[];
+    return (await listAt(servers.url, token)).result.tools.map((t: any) => t.name) as string[];
   };
 
   test("only an admin-scope token is listed the tool", async () => {

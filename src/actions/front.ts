@@ -45,6 +45,7 @@ import { keepLook } from "../looks/service.ts";
 import { canRead, getRepo, getReposByIds, type Repo } from "../core/repos.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
+import { timePhase } from "../core/route_timing.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { limitValue } from "../settings/limits.ts";
 
@@ -150,10 +151,47 @@ function scoresFor(app: App, repoIds: readonly string[], now: number): Scores {
 /** Forget the remembered ranking: the picks changed. */
 export function forgetFrontScores(app: App): void {
   remembered.delete(app);
+  built.delete(app);
 }
 
-/** The front page as a stranger is shown it. */
-export function frontPage(app: App, now = Date.now()): FrontPage {
+/** How long a built page is kept when nothing in the database changed: an app's state is not in it. */
+const PAGE_MS = 3_000;
+
+/**
+ * The built page, kept for `PAGE_MS` while the database is untouched: any
+ * write on this connection, or by another, changes the key, so a repository
+ * made private, a pick, a picture or a suspension shows on the next request.
+ */
+const built = new WeakMap<App, { key: string; at: number; page: FrontPage }>();
+
+/**
+ * The shelf's data version: one row that triggers bump when a column the
+ * shelf renders changes (`front_epoch`). Its size never depends on how many
+ * apps there are, and a session, a heartbeat or a push does not move it.
+ */
+export function frontKey(app: App): string {
+  const row = app.db
+    .query<{ n: number }, []>("SELECT n FROM front_epoch")
+    .get();
+  return String(row?.n);
+}
+
+/** The front page as a stranger is shown it; `request` is told what the key cost. */
+export function frontPage(app: App, now = Date.now(), request?: Request): FrontPage {
+  const key =
+    request === undefined
+      ? frontKey(app)
+      : timePhase(request, "key", () => frontKey(app));
+  const kept = built.get(app);
+  const wall = performance.now();
+  if (kept !== undefined && kept.key === key && wall - kept.at < PAGE_MS)
+    return kept.page;
+  const page = buildFrontPage(app, now);
+  built.set(app, { key, at: wall, page });
+  return page;
+}
+
+function buildFrontPage(app: App, now: number): FrontPage {
   const db = app.db;
   const picks = frontPicks(db);
   const records = listPublicApps(db, READ);
@@ -448,13 +486,30 @@ export function frontInput(
   return { pinned, hidden, weights };
 }
 
+/** One app on the front page as JSON. */
+export type FrontRowJson = {
+  readonly repo: string;
+  readonly description: string;
+  readonly url: string;
+  readonly state: EnvState | null;
+  readonly picture: string | null;
+  readonly pinned: boolean;
+  readonly score: number;
+  readonly signals: FrontSignals;
+};
+
+/** The front page as JSON, as `frontJson` answers it. */
+export type FrontJson = {
+  readonly featured: (FrontRowJson & { readonly crew: CrewAtWork }) | null;
+  readonly apps: readonly FrontRowJson[];
+  readonly total: number;
+  readonly picks?: FrontPicksJson;
+};
+
 /** The front page as JSON: what a stranger is shown; a site admin also gets the picks. */
-export function frontJson(
-  app: App,
-  viewer: User | undefined,
-): Record<string, unknown> {
+export function frontJson(app: App, viewer: User | undefined): FrontJson {
   const front = frontPage(app);
-  const row = (e: FrontEntry) => ({
+  const row = (e: FrontEntry): FrontRowJson => ({
     repo: `${e.repo.ownerName}/${e.repo.name}`,
     description: e.repo.description,
     url: `/${e.repo.ownerName}/${e.repo.name}`,

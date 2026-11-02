@@ -59,7 +59,7 @@ beforeAll(async () => {
   const promoted = setRole(app, users[0]!, "olive", "member");
   if (!promoted.ok) throw new Error(promoted.error);
   olive = users[1]!;
-  const r = await createRepo(app, users[1]!, { name: "yard", visibility: "public" });
+  const r = await createRepo(app, users[1]!, { name: "yard", visibility: "public", description: "Where the mowers sleep" });
   if (!r.ok) throw new Error(String(r.error));
 });
 
@@ -97,4 +97,13 @@ test("the title says Public or Private once; the audience line adds no second ba
   const pub = await head("/olive/yard", cookie);
   expect(pub.match(/class="badge"/g)?.length).toBe(1);
   expect(pub).toContain(">Public</span");
+});
+
+test("the head draws the owner, separator and description with shared classes", async () => {
+  const h = await head("/olive/yard");
+  expect(h).toContain('<a class="muted" href="/olive">olive</a>');
+  expect(h).toContain('<span class="sep">/</span');
+  expect(h).toContain('<p class="muted small">Where the mowers sleep</p>');
+  expect(h).not.toContain('class="owner"');
+  expect(h).not.toContain('class="slash"');
 });

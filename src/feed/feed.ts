@@ -14,10 +14,12 @@ import { affinityFor } from "./affinity.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import { deliveredFor, drainQueue, senderWeight } from "../core/shares.ts";
 import { getUserById, type User } from "../core/users.ts";
-import { candidatesFor, type Candidate } from "./items.ts";
+import { candidatesFor, quietRunsFor, type Candidate } from "./items.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
+import { foldBursts } from "./fold.ts";
 import { rank, type FeedItem } from "./rank.ts";
+import { settledOf } from "./settled.ts";
 
 export const FEED_LIMIT_DEFAULT = 20;
 export const FEED_LIMIT_MAX = 50;
@@ -51,6 +53,48 @@ export function feedCandidateCache(db: Database): Stamped<Candidate[]> {
   return cache;
 }
 
+export interface QuietRuns {
+  readonly count: number;
+  /** The repository with the most of them: where the runs list is worth opening. */
+  readonly repoId: string | null;
+}
+
+const quietCaches = new WeakMap<Database, Stamped<QuietRuns>>();
+
+/** The runs left out of the last day's timeline, less what the viewer muted or switched off. */
+export function quietRunCount(
+  db: Database,
+  viewer: User,
+  now: number,
+  chips: Chips,
+  muted: ReadonlySet<string>,
+  cached: boolean,
+): QuietRuns {
+  const count = (): QuietRuns => {
+    const per = new Map<string, number>();
+    for (const q of quietRunsFor(db, viewer, now)) {
+      if (muted.has(q.repoId) || chipHides(chips, { kind: "run", actorId: q.actorId })) continue;
+      per.set(q.repoId, (per.get(q.repoId) ?? 0) + 1);
+    }
+    let top: string | null = null;
+    let total = 0;
+    for (const [repoId, n] of per) {
+      total += n;
+      if (top === null || n > per.get(top)!) top = repoId;
+    }
+    return { count: total, repoId: top };
+  };
+  const stamp = writeStamp(db);
+  if (!cached || stamp === undefined) return count();
+  let cache = quietCaches.get(db);
+  if (cache === undefined) {
+    cache = new Stamped<QuietRuns>({ maxEntries: 200, maxAgeMs: FEED_CANDIDATES_MAX_AGE_MS });
+    quietCaches.set(db, cache);
+  }
+  const key = `${viewer.id}|${[...chips.people].sort().join(",")}`;
+  return cache.get(key, stamp, count);
+}
+
 function viewerCandidates(
   db: Database,
   viewer: User,
@@ -75,18 +119,33 @@ export function parseCursor(
   return m ? { score: Number(m[1]), id: m[2]! } : undefined;
 }
 
+/** The page as the API gives it: the quiet runs as a count. */
 export function readFeed(
   db: Database,
   viewer: User,
-  options: {
+  options: FeedOptions = {},
+): { items: FeedItem[]; next_cursor: string | null; quietRuns: number } {
+  const { quiet, ...page } = readFeedPage(db, viewer, options);
+  return { ...page, quietRuns: quiet.count };
+}
+
+type FeedOptions = {
     limit?: number;
     cursor?: { score: number; id: string };
     now?: number;
     chips?: Chips;
     /** The home pins asks above the feed: they must not fill its page. */
     withoutAsks?: boolean;
-  } = {},
-): { items: FeedItem[]; next_cursor: string | null } {
+    /** Told how long the settled-state read took, for Server-Timing. */
+    phase?: (name: string, ms: number) => void;
+};
+
+/** The page, with the quiet runs it left out and where most of them are. */
+export function readFeedPage(
+  db: Database,
+  viewer: User,
+  options: FeedOptions = {},
+): { items: FeedItem[]; next_cursor: string | null; quiet: QuietRuns } {
   const now = options.now ?? Date.now();
   const limit = Math.min(options.limit ?? FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX);
   const muted = mutedRepos(db, viewer.id);
@@ -118,8 +177,10 @@ export function readFeed(
           c.kind === "choose" ||
           !muted.has(c.repoId)),
   );
-  const pageable =
-    options.withoutAsks === true ? candidates.filter((c) => c.kind !== "ask") : candidates;
+  // After every filter, so a burst folds only what the viewer would see.
+  const pageable = foldBursts(
+    options.withoutAsks === true ? candidates.filter((c) => c.kind !== "ask") : candidates,
+  ).filter((c) => !dismissed.has(c.id)); // a folded post is dismissed under its own id
   const cursor = options.cursor;
   // Without a cursor only the page and one more (to know there is a next) are placed.
   let ranked = rank(
@@ -135,12 +196,20 @@ export function readFeed(
         ? ranked.slice(at + 1)
         : ranked.filter((i) => i.score < cursor.score);
   }
-  const items = ranked.slice(0, limit);
+  const page = ranked.slice(0, limit);
+  const started = performance.now();
+  const settled = settledOf(db, page);
+  options.phase?.("settled", performance.now() - started);
+  const items = page.map((i) => {
+    const state = settled.get(i.id);
+    return state === undefined ? i : { ...i, settled: state };
+  });
   const last = items[items.length - 1];
   return {
     items,
     next_cursor:
       ranked.length > limit && last !== undefined ? cursorOf(last) : null,
+    quiet: quietRunCount(db, viewer, now, chips, muted, options.now === undefined),
   };
 }
 

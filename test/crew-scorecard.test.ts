@@ -9,6 +9,7 @@ import {
   claimRun,
   createRun,
   finishRun,
+  noteRunProgress,
 } from "../src/core/runs.ts";
 import {
   crewScorecards,
@@ -93,6 +94,41 @@ describe("a scorecard per crew member", () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the page has no model-per-day table before a run, and has one for an admin after", async () => {
+    const get = () =>
+      fetch(`${base}/settings/crew`, { headers: { cookie } }).then((r) => r.text());
+    expect(await get()).not.toContain(`id="crew-model-days"`);
+    const run = createRun(app.db, { repoId, kind: "agent", actorId: agentId });
+    claimRun(app.db, run.id);
+    noteRunProgress(app.db, run.id, { model: "opus", modelReason: "p0", costUsd: 0.5 });
+    finishRun(app.db, run.id, { state: "ok", summary: "" });
+    const page = await get();
+    expect(page).toContain(`id="crew-model-days"`);
+    expect(page).toContain("Per model per day");
+    app.db.query("DELETE FROM run WHERE id = ?1").run(run.id);
+  });
+
+  test("an admin's page shows the wasted runs per day, and a guest's shows nothing", async () => {
+    const get = (headers: Record<string, string>) =>
+      fetch(`${base}/settings/crew`, { headers }).then((r) => r.text());
+    expect(await get({ cookie })).not.toContain(`id="crew-wasted-days"`);
+    for (const summary of ["no changes pushed", "already done: abc", "opened pull #9"]) {
+      const run = createRun(app.db, { repoId, kind: "agent", actorId: agentId });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state: "ok", summary, costUsd: 0.25 });
+    }
+    const page = await get({ cookie });
+    const table = page.slice(page.indexOf(`id="crew-wasted-days"`));
+    expect(page).toContain("Wasted runs per day");
+    const day = new Date().toISOString().slice(0, 10);
+    expect(table).toContain(`<td class="mono">${day}</td>
+              <td class="num">2</td>
+              <td class="num">3</td>
+              <td class="num">$0.50</td>`);
+    expect(await get({})).not.toContain(`id="crew-wasted-days"`);
+    app.db.query("DELETE FROM run WHERE kind = 'agent'").run();
   });
 
   test("an agent with no pull is a row of dashes, not zeros", async () => {

@@ -152,7 +152,7 @@ export async function runView(
       : null}
   >
     <h1>${title}</h1>
-    <div class="sub bar">
+    <div class="page-head-sub bar muted small">
       ${wordBadge(word, "run-word")}
       ${when(
         issue,
@@ -341,6 +341,7 @@ export async function runView(
       )}
       ${when(!logHidden, () => logBox({
         id: "run-log",
+        anchors: true,
         who,
         cap: all
           ? Math.max(lines.length, RUN_TRANSCRIPT_CAP)

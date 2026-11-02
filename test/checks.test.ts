@@ -18,6 +18,7 @@ import { summariseCheckFailure } from "../src/checks/summary.ts";
 import { SLOW_SECONDS, summaryLines } from "../scripts/gate-summary.ts";
 import { tally } from "../scripts/shards.ts";
 import {
+  holdsLastSlot,
   pickNext,
   requeueAbandonedChecks,
   startChecks,
@@ -230,6 +231,29 @@ describe("summariseCheckFailure: what a failed check's summary says first", () =
     });
   });
 
+  const failing = (n: number) => [
+    ...Array.from({ length: n }, (_, i) => `(fail) t${i + 1} [1.00ms]`),
+    " 5 pass",
+    ` ${n} fail`,
+  ];
+
+  test("three failures name all three; five name three and how many more", () => {
+    expect(summariseCheckFailure(failing(3), "x").summary).toBe(
+      '3 of 8 tests — "t1", "t2" and "t3"',
+    );
+    expect(summariseCheckFailure(failing(5), "x").summary).toBe(
+      '5 of 10 tests — "t1", "t2", "t3" and 2 more',
+    );
+  });
+
+  test("a name list longer than the limit is still bounded to one line", () => {
+    const long = "y".repeat(100);
+    const lines = ["a", "b", "c", "d"].map((c) => `(fail) ${c}${long} [1.00ms]`);
+    const { summary } = summariseCheckFailure([...lines, " 0 pass", " 4 fail"], "x");
+    expect(summary.length).toBe(200);
+    expect(summary.endsWith("…")).toBe(true);
+  });
+
   test("a very long name is bounded to one line", () => {
     const long = "x".repeat(500);
     const lines = [`(fail) ${long} [1.00ms]`, " 0 pass", " 1 fail"];
@@ -298,6 +322,15 @@ describe("summariseCheckFailure: a red gate is summarised by its red test, never
     expect(summariseCheckFailure(log(crashed), "check exited with code 1").summary).toBe(
       "shard 1 exited 137 without naming a test: test/standards.test.ts",
     );
+  });
+
+  test("a killed shard's line is the summary, and the old line is still recognised", () => {
+    expect(
+      summariseCheckFailure(["shard 258 killed after 412 s, running test/x.test.ts"], "check exited with code 1").summary,
+    ).toBe("shard 258 killed after 412 s, running test/x.test.ts");
+    expect(
+      summariseCheckFailure(["shard 258 exited 143 without naming a test: a b"], "check exited with code 1").summary,
+    ).toBe("shard 258 exited 143 without naming a test: a b");
   });
 
   test("without names or a tally, the last line before the gate summary block, never a line of it", () => {
@@ -549,7 +582,7 @@ describe("checks", () => {
       names: ["first failing test", "second failing test"],
     });
     expect(failed.summary).toBe(
-      'check failed: 2 of 3 tests — "first failing test"',
+      'check failed: 2 of 3 tests — "first failing test" and "second failing test"',
     );
   }, 30_000);
 
@@ -809,6 +842,15 @@ describe("checks", () => {
       ).toBe(true);
     }, 60_000);
 
+  test("a queued gate keeps the last free slot from pull checks", () => {
+    // One slot free, a gate queued: the pull check passes, the gate starts.
+    expect(holdsLastSlot(1, true)).toBe(true);
+    // With no gate queued the pull check takes it, as every slot.
+    expect(holdsLastSlot(1, false)).toBe(false);
+    // More than one free: the pull check starts, one is still left.
+    expect(holdsLastSlot(2, true)).toBe(false);
+  });
+
   test("pickNext takes the newest queued check, unless one has starved", () => {
     const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
     const b = createRun(app.db, { repoId: repo.id, kind: "check", env: "b" });
@@ -833,6 +875,27 @@ describe("checks", () => {
 
     // These never named a real commit: cancel them rather than leave them
     // for the live checks service running beside this test to trip over.
+    for (const run of [a, b, c]) cancelRun(app.db, run.id);
+  });
+
+  test("pickNext puts an approved pull's check first, newest among them, and the starved before all", () => {
+    const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
+    const b = createRun(app.db, { repoId: repo.id, kind: "check", env: "b" });
+    const c = createRun(app.db, { repoId: repo.id, kind: "check", env: "c" });
+    const now = Date.parse(c.createdAt);
+    const only = (...ids: string[]) => (run: { id: string }) => ids.includes(run.id);
+    // An older approved check beats a newer unapproved one.
+    expect(pickNext([a, b, c], now, only(a.id))?.id).toBe(a.id);
+    // Newest first among the approved.
+    expect(pickNext([a, b, c], now, only(a.id, b.id))?.id).toBe(b.id);
+    // With none approved, the order is unchanged.
+    expect(pickNext([a, b, c], now, () => false)?.id).toBe(c.id);
+    // A starved unapproved check still goes first.
+    const later = now + STARVATION_MS + 1_000;
+    const old = { ...a, createdAt: new Date(now - 1_000).toISOString() };
+    const fresh = { ...b, createdAt: new Date(later).toISOString() };
+    const approvedFresh = { ...c, createdAt: new Date(later + 1).toISOString() };
+    expect(pickNext([fresh, approvedFresh, old], later, only(approvedFresh.id))?.id).toBe(old.id);
     for (const run of [a, b, c]) cancelRun(app.db, run.id);
   });
 

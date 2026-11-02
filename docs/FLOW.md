@@ -27,6 +27,43 @@ bottleneck; the knobs stay on Settings → Capacity. The same sentence
 (`verdict`) is the terminal's admin-only Flow command and the MCP `flow` tool,
 which also returns the stages; anyone but a forge admin is refused.
 
+## Rebases
+
+Approved work lands before new work is built, in the check lane too (#6140).
+A check on a pull whose last builder's run brought it up to date (a
+`conflict` run; a review after it does not count) goes before any other
+queued check (`checks/finishing_first.ts`). So the room for more rebases
+(`crew/conflict_room.ts`) is the check slots minus the rebases' checks and the
+bring-up-to-date runs in flight; a new build's check does not stand in front
+of a rebase and takes no room. The finishing pass (`crew/finishing.ts`) gives
+the update to the builder who can push the pull's branch — the fork's owner,
+else its author — and when that builder already has a run in flight the
+update queues behind it: lent to another builder, it could never push
+(#7006).
+
+New work is the other way round: the decider's choice of builder is a
+ranking, and the most preferred builder with nothing in flight takes the
+issue (`rankedBuilder` in `crew/route.ts`), so the slots run more than one
+builder. The tick line's `idle` field counts the builders with nothing in
+flight beside `active` and `slots`.
+
+The tick line's `lane` field, the `Rebases:` line on `/flow` and in the
+terminal's Flow, and `rebases` in the MCP `flow` tool all read
+`conflicted N, rebasing M, room R`: the conflicted pulls (with the approved
+ones still waiting for room, which have no run yet), the bring-up-to-date runs
+and their checks in flight, and the runs the lane has room to start now.
+
+## Red batches
+
+`src/flow/red_batches.ts` `readRedBatches(db, now, publicOnly)` says, of the
+merge-queue batches judged in the last 6 hours, how many went red:
+`{ finished, red, rate }`, `rate` null when none finished. A batch is one
+candidate the queue judged (`checks/queue.ts` calls `onBatch` beside its
+in-memory hourly count): a red batch's bisection prefixes and its head gated
+alone are its search, not batches; re-checks, cut-off gates and pull checks
+are not counted. Each verdict is a row of `queue_batch`, kept a week. The
+`publicOnly` rule is `readVitals`'s. Nothing shows it yet (#5930).
+
 ## Throughput
 
 `src/flow/throughput.ts` counts what each pipeline stage let out over the last
@@ -63,3 +100,20 @@ tick logs as `held=`, read through `flow/held.ts`, which keeps the rows 5 s.
 The terminal's Flow command prints the same rows, one line per repository
 (`alice/engine startable=0 stalled=4 run_cap=1`). A granted agent sees
 public repositories only, on both.
+
+One of those filters is the hot-file WIP limit (#5934, `crew/hot_files.ts`):
+a ready issue that names a file 5 or more open pulls already touch is held as
+`hot_file` until that pile drains under 5, so a sixth pull never joins a
+file every landing would make the rest rebase. An issue's expected files are
+the repository paths its title and body name (`src/http/mcp.ts`,
+`` `README.md` ``); an open pull's files are read from git once per head
+before the picker sorts. The tick line names the hot files (`hot=src/http/mcp.ts=61`),
+and each repository's writers see one post on the feed — on the web and
+through the MCP `feed` tool — saying which build waits on which file, gone
+when the hold lifts. A pull whose diff touches more than 60 files counts
+toward no file's heat and is named on the feed (`too wide to count: #4840
+(1,081 files)`), even when no build is held.
+
+## Flow reads, in one page
+
+`bun scripts/flow-report.ts [--db <path>] [--public] [--json]` (database read-only, default `forge.db` under `FORGE_DATA`; `--json` for raw values) prints one line per read of `src/flow/report.ts`: `build_yield` (agent runs finished in 24 h: how many pushed, landed, closed), `review_latency` (median hours from opening to first verdict), `outsiders` (open pulls by non-writers and non-crew, oldest in hours), `checks_pile` (open pulls red or waiting for a check slot), `gate_minutes` (check-slot minutes in 1 h and 6 h), `oldest_approved` (the longest-waiting approved pull), `idle_pulls` (crew pulls untouched for 72 h), `lead_time` (opening to landing, 24 h) and `openers` (who opened the last hour's pulls). The script reads everything; `--public` cuts it to public repositories.

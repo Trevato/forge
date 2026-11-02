@@ -83,7 +83,7 @@ afterAll(async () => {
   app.close();
   if (cells === undefined) delete process.env["FORGE_CELLS"];
   else process.env["FORGE_CELLS"] = cells;
-  await rm(dataDir, { recursive: true, force: true });
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 test("ready: a toned card and row holding the Merge form's action and fields", async () => {

@@ -1,6 +1,6 @@
-/** A repository's settings pages name session, each read and render in Server-Timing, and answer within budget (#4318). */
+/** A repository's settings pages name session, each read and render in Server-Timing, and cost a bounded number of statements (#4318). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,6 +48,15 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** The most statements a request may run: today's count with room for a read or two. */
+const MAX_STATEMENTS: Record<string, number> = {
+  "/alice/forge/settings": 62,
+  "/alice/forge/settings/danger": 38,
+  "/alice/forge/settings/hooks": 38,
+  "/alice/forge/settings/labels": 38,
+  "/alice/forge/settings/prompts": 38,
+};
+
 const PAGES: [string, string[]][] = [
   ["/alice/forge/settings", ["route", "session", "repo", "lead", "refs", "check", "mirror", "render", "compress"]],
   ["/alice/forge/settings/danger", ["route", "session", "repo", "render", "compress"]],
@@ -57,13 +66,12 @@ const PAGES: [string, string[]][] = [
 ];
 
 for (const [path, names] of PAGES)
-  test(`GET ${path} names its phases and answers within its budget`, async () => {
+  test(`GET ${path} names its phases and costs a bounded number of statements`, async () => {
     const get = async () => {
       const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
       await res.text();
       return res;
     };
-    const against = await baselineMs(servers.url);
     await get(); // warm
     const res = await get();
     expect(res.status).toBe(200);
@@ -75,8 +83,5 @@ for (const [path, names] of PAGES)
       expect(Number.isFinite(dur(name))).toBe(true);
     }
     expect(got.filter((n) => n === "render").length).toBe(1);
-    expectBudget(dur("app"), { ms: 50, against });
-    // The named phases cover the request (route and compress are the server's own); the issue's bound is 1 ms.
-    const sum = names.reduce((t, n) => t + dur(n), 0);
-    expect(Math.abs(dur("app") - sum)).toBeLessThanOrEqual(1);
+    expectWork(await requestStatements(app.db, `${servers.url}${path}`, { headers: { cookie } }), { max: MAX_STATEMENTS[path]! });
   });

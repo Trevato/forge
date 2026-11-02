@@ -21,10 +21,10 @@ const SENTENCES = {
 };
 
 const DOORS = [
+  "src/actions/steer_words.ts",
   "src/web/studio/actions.ts",
   "src/tui/screens/tell.ts",
   "src/tui/screens/report.ts",
-  "src/web/pages/runs.ts",
   "src/web/studio/toolbar.ts",
   "src/web/client.ts",
 ];
@@ -40,7 +40,7 @@ describe("tell words", () => {
     test(`${door} types none of them out`, () => {
       const text = read(door);
       for (const sentence of Object.values(SENTENCES)) expect(text).not.toContain(sentence);
-      expect(text).toContain("actions/tell_words.ts");
+      expect(text).toMatch(/tell_words\.ts/);
     });
   }
 
@@ -48,4 +48,20 @@ describe("tell words", () => {
     const { shellJs } = await import("../src/web/client.ts");
     expect(shellJs).toContain(`note.textContent = '${NOT_TOLD_WORDS}';`);
   });
+
+  const STEER_DOORS = ["src/web/pages/runs.ts", "src/tui/screens/runlist.ts", "src/http/mcp/tools/steer.ts"];
+  for (const door of STEER_DOORS) {
+    test(`${door} reads the steer refusals from steer_words.ts, typing none out`, () => {
+      const text = read(door);
+      for (const sentence of [
+        "Only an agent's run can be steered.",
+        "You need write access to steer a run.",
+        "Sign in to steer a run.",
+        "There is no such run here.",
+        ...Object.values(SENTENCES),
+      ])
+        expect(text).not.toContain(sentence);
+      expect(text).toContain("actions/steer_words.ts");
+    });
+  }
 });

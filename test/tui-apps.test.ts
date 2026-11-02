@@ -303,7 +303,9 @@ describe("terminal: apps, runs and the crew", () => {
       expect(h.text()).toContain("opened pull #2 with the melody");
       expect(h.text()).toContain("$0.42");
       await h.press("tab", "enter");
-      await h.until(`/alice/site/runs/${run.id}`);
+      await h.until("cloning alice/site");
+      // The log screen's state line, not the web address.
+      expect(h.text()).toContain("ok · agent · opened pull #2 with the melody · $0.42");
     } finally {
       h.stop();
     }

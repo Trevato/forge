@@ -1,6 +1,6 @@
-/** `/asked` names session, each read and render in Server-Timing, and answers a person with 500 asks within budget (#3358). */
+/** `/asked` names session, each read and render in Server-Timing, and costs a bounded number of statements for a person with 500 asks (#3358). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,21 +72,18 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("GET /asked names its phases and answers within its budget with 500 asks", async () => {
-  const against = await baselineMs(servers.url);
+test("GET /asked names its phases and costs a bounded number of statements with 500 asks", async () => {
   const get = () => fetch(`${servers.url}/asked?show=all`, { headers: { cookie } });
   await (await get()).text();
   // The best of three: a shared runner's stall hits one request, not the page's cost.
-  let best = Infinity;
   for (let i = 0; i < 3; i++) {
     const res = await get();
     const body = await res.text();
     expect(res.status).toBe(200);
-    expect(body).toContain("500 asked · 250 shipped");
+    expect(body).toContain("500 asked · 250 landed");
     const parts = (res.headers.get("server-timing") ?? "").split(", ");
     for (const name of ["app", "session", "repos", "counts", "asks", "thoughts", "flags", "render"])
       expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
-    best = Math.min(best, Number(/app;dur=([\d.]+)/.exec(parts.join(", "))![1]));
   }
-  expectBudget(best, { ms: 50, against });
+  expectWork(await requestStatements(app.db, `${servers.url}/asked?show=all`, { headers: { cookie } }), { max: 35 });
 });

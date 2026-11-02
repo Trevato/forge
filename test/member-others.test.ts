@@ -106,7 +106,7 @@ describe("a member and another account", () => {
     const post = (path: string, form: Record<string, string> = {}) =>
       fetch(`${servers.url}${path}`, {
         method: "POST",
-        headers: { cookie, origin: servers.url },
+        headers: { cookie, origin: "https://forge.example" },
         body: new URLSearchParams(form),
         redirect: "manual",
       });

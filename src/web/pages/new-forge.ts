@@ -14,6 +14,7 @@ import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { quotaFull } from "../../spawn/quota.ts";
 import { childHost, childUrlOf, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
   LEFT_BEHIND,
@@ -23,6 +24,8 @@ import {
   MIN_BUDGET_USD,
 } from "../../spawn/plan.ts";
 import { DEFAULT_SIZE, SIZES, sizesView } from "../../spawn/sizes.ts";
+import { DEFAULT_TEMPLATE, TEMPLATES, templateOf } from "../../spawn/templates.ts";
+import { FOLLOW_LABELS, FOLLOW_WORDS } from "../../spawn/follow_words.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -41,6 +44,7 @@ interface Values {
   readonly budgetUsd: string;
   readonly modelEndpoint: string;
   readonly size: string;
+  readonly template: string;
   /** The last post carried a key: it is never sent back, so it is asked for again. */
   readonly hadKey: boolean;
 }
@@ -57,6 +61,7 @@ const EMPTY: Values = {
   budgetUsd: "",
   modelEndpoint: "",
   size: DEFAULT_SIZE,
+  template: DEFAULT_TEMPLATE,
   hadKey: false,
 };
 
@@ -101,13 +106,16 @@ function checks(
 /** What the form reads before it draws: room, then (when there is room) the repositories and the crew. */
 interface Reads {
   readonly full: string | undefined;
+  /** Why even a small forge would pass the host's child quota; the form still draws. */
+  readonly quota: string | undefined;
   readonly repos: ReturnType<typeof listReposVisibleTo>;
   readonly crew: ReturnType<typeof listAgents>;
 }
 
 function readsFor(ctx: Ctx, user: User | undefined): Reads {
   const full = timePhase(ctx.request, "room", () => noRoom(ctx.app));
-  if (full) return { full, repos: [], crew: [] };
+  if (full) return { full, quota: undefined, repos: [], crew: [] };
+  const quota = quotaFull(ctx.app.config.dataDir);
   // A stranger sees only public repositories, and no crew: nothing private
   // travels to a child they have not claimed.
   const repos = timePhase(ctx.request, "repos", () =>
@@ -117,7 +125,7 @@ function readsFor(ctx: Ctx, user: User | undefined): Reads {
     user === undefined
       ? []
       : timePhase(ctx.request, "crew", () => listAgents(ctx.app.db));
-  return { full, repos, crew };
+  return { full, quota, repos, crew };
 }
 
 /** The three sizes, the one asked for chosen (small when the value is not one of them). */
@@ -133,6 +141,16 @@ function sizeOptions(chosen: string): { value: string; label: string; selected?:
   }));
 }
 
+/** The templates in order, Blank first; the one asked for chosen (Blank when it is not one of them). */
+function templateOptions(chosen: string): { value: string; label: string; selected?: boolean }[] {
+  const at = TEMPLATES.some((t) => t.id === chosen) ? chosen : DEFAULT_TEMPLATE;
+  return TEMPLATES.map((t) => ({
+    value: t.id,
+    label: `${t.title}: ${lower(t.says)}`,
+    selected: t.id === at,
+  }));
+}
+
 function formView(
   ctx: Ctx,
   user: User | undefined,
@@ -141,7 +159,7 @@ function formView(
   plan: Html | null,
   reads: Reads,
 ): Html {
-  const { full, repos, crew } = reads;
+  const { full, quota, repos, crew } = reads;
   if (full)
     return html`<div class="narrow-wide">
       ${pageHead("New forge")}
@@ -160,6 +178,7 @@ function formView(
         : "Your own forge, or one for someone else: the apps you choose, a crew, and one link to claim.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
+    ${quota ? html`<p role="status" id="quota-full">This forge cannot hold another child: ${quota}.</p>` : null}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
       : null}
@@ -215,7 +234,7 @@ function formView(
           ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
         })}
         <fieldset class="field" ${errors["followMode"] ? html`data-invalid` : null}>
-          <legend>How it follows this forge's code (recorded for now; nothing acts on it yet)</legend>
+          <legend>How it follows this forge's code</legend>
           <label class="check">
             <input
               type="radio"
@@ -224,7 +243,7 @@ function formView(
               ${values.followMode !== "take-updates" ? html`checked` : null}
             />
             <span
-              >Recorded for now: tell me <span class="muted small">your choice is kept; nothing tells you yet.</span></span
+              >${FOLLOW_LABELS["tell-me"]} <span class="muted small">${FOLLOW_WORDS["tell-me"]}</span></span
             >
           </label>
           <label class="check">
@@ -235,7 +254,7 @@ function formView(
               ${values.followMode === "take-updates" ? html`checked` : null}
             />
             <span
-              >Recorded for now: take updates <span class="muted small">your choice is kept; nothing acts on it yet.</span></span
+              >${FOLLOW_LABELS["take-updates"]} <span class="muted small">${FOLLOW_WORDS["take-updates"]}</span></span
             >
           </label>
           ${errors["followMode"]
@@ -307,6 +326,13 @@ function formView(
               ...(errors["budgetUsd"] ? { error: errors["budgetUsd"] } : {}),
             })}
         ${selectField({
+          label: "Template",
+          name: "template",
+          hint: "What the child starts from besides the apps you fork. Blank is the default.",
+          options: templateOptions(values.template),
+          ...(errors["template"] ? { error: errors["template"] } : {}),
+        })}
+        ${selectField({
           label: "Size (optional)",
           name: "size",
           hint: "Room for the child to grow into. Small is the default and is not recorded.",
@@ -336,7 +362,7 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
   const copied = (body["copied"] as string[] | undefined) ?? [];
   const bytes = Number(body["bytes"] ?? 0);
   const note = body["keyNote"];
-  const plan = body["plan"] as { budgetUsd?: number | null } | undefined;
+  const plan = body["plan"] as { budgetUsd?: number | null; template?: string } | undefined;
   const budget = plan?.budgetUsd ?? null;
   const address = childUrlOf(ctx.app, values.name);
   return card(
@@ -350,6 +376,9 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
                 ? "You keep owner access after it is claimed; the claim page tells them."
                 : "You leave once it is claimed; they can invite you back."}
             </li>`}
+        ${plan?.template === undefined
+          ? null
+          : html`<li>It starts from the <b>${templateOf(plan.template).title}</b> template.</li>`}
         ${budget === null
           ? null
           : html`<li>Its crew runs on the key you give, up to $${budget} for the key's whole life.</li>`}
@@ -445,6 +474,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     budgetUsd: field(form, "budgetUsd").trim(),
     modelEndpoint: field(form, "modelEndpoint").trim(),
     size: field(form, "size").trim() || DEFAULT_SIZE,
+    template: field(form, "template").trim() || DEFAULT_TEMPLATE,
     hadKey: field(form, "modelKey").trim() !== "",
   };
   const key = field(form, "modelKey").trim();
@@ -463,6 +493,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     ...(values.budgetUsd === "" ? {} : { budgetUsd: Number(values.budgetUsd) }),
     // Small is the default: it is not recorded, so the plan stays as it was.
     ...(values.size === DEFAULT_SIZE ? {} : { size: values.size }),
+    ...(values.template === DEFAULT_TEMPLATE ? {} : { template: values.template }),
     dryRun: planOnly,
   });
   if (door.status >= 400)

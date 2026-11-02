@@ -442,7 +442,8 @@ describe("the audit reads every app's policy from git", () => {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();
-    expect(notes).toContain('class="policy-line"');
+    expect(notes).not.toContain("policy-line");
+    expect(notes).toContain('class="badge"');
     expect(notes).toContain("2 resources");
     expect(notes).toContain('href="/audit#alice-notes"');
     // The audit page carries that anchor.
@@ -456,6 +457,40 @@ describe("the audit reads every app's policy from git", () => {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();
-    expect(bare).not.toContain('class="policy-line"');
+    expect(bare).not.toContain("policy-line");
+    expect(bare).not.toContain("The table");
+  });
+
+  test("an app's policy line badges the last verdict: success when it obeys, danger when it does not", async () => {
+    const notes = getRepo(app.db, "alice", "notes")!;
+    const record = getAppByRepo(app.db, notes.id)!;
+    const page = async () =>
+      (
+        await fetch(`${servers.url}/alice/notes`, {
+          headers: { cookie: `${cookie}; forge_mode=studio` },
+        })
+      ).text();
+    const probe = (verdict: "ok" | "mismatch", said: string[]) =>
+      recordProbe(app.db, record.id, {
+        repo: notes,
+        commitOid: "c".repeat(40),
+        at: "",
+        verdict,
+        knocks: [],
+        said,
+      });
+    probe("ok", []);
+    const ok = await page();
+    expect(ok).toContain('data-variant="success"');
+    expect(ok).toContain("obeys its table");
+    expect(ok).toContain("setting-list");
+    expect(ok).toMatch(/data-variant="success"\s*>\s*(<svg[\s\S]*?<\/svg>)?obeys</);
+    expect(ok).not.toContain("policy-line");
+    probe("mismatch", ["note.delete as anon: the table says no, the app said 404"]);
+    const bad = await page();
+    expect(bad).toContain('data-variant="danger"');
+    expect(bad).toContain("one door disobeys its table");
+    expect(bad).toMatch(/data-variant="danger"\s*>\s*(<svg[\s\S]*?<\/svg>)?disobeys</);
+    expect(bad).not.toContain("policy-line");
   });
 });

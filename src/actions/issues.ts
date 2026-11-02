@@ -67,6 +67,7 @@ import {
   importIssue,
 } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { clearFirst } from "../core/first.ts";
 import { inheritPillar } from "./pillars.ts";
 import {
   requireParticipant,
@@ -456,6 +457,7 @@ export function setIssueState(
       : [];
   const changed = app.db.transaction(() => {
     const written = writeState(app.db, issue.id, state, reason);
+    if (written && state === "closed") clearFirst(app.db, issue.id);
     if (written && doneBy.length > 0)
       insertComment(app.db, {
         issueId: issue.id,
@@ -490,6 +492,7 @@ export function setIssueState(
         ? { reason }
         : {}),
       ...(children.length > 0 ? { into: children.map((c) => c.number) } : {}),
+      ...(closing.stale === true && issue.kind === "pull" ? { stale: true } : {}),
     },
   });
   // The parts serve what the whole served.
@@ -614,6 +617,8 @@ export interface Closing {
   readonly into?: readonly number[];
   /** The crew's live triage closed it, not the person whose name it carries. */
   readonly triage?: boolean;
+  /** A crew pull closed for staying conflicted 72 hours (`crew/stale_pulls.ts`). */
+  readonly stale?: boolean;
 }
 
 /**

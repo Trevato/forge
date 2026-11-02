@@ -6,6 +6,7 @@
  * `feed` tool answers the same posts. Nothing private, nor an admin's
  * configuration, reaches a reader's timeline.
  */
+import { freshHome } from "./helpers/home-fresh.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -166,7 +167,9 @@ describe("home is the feed", () => {
     expect(text).not.toContain("home-tabs");
     // Nothing stands between the composer and the first post: the crew's
     // missing key sits beside the timeline (after it on a phone), and
-    // "What you asked for" is a tab there.
+    // "What you asked for" is the Asked tab, the one door to /asked.
+    expect(text).not.toContain("feed-head");
+    expect(text).not.toContain('href="/asked">What you asked for');
     const note = text.indexOf('id="crew-key-note"');
     if (note !== -1) expect(note).toBeGreaterThan(feed);
     expect(text).toMatch(/class="tabs"[\s\S]*?href="\/asked"/);
@@ -320,13 +323,13 @@ describe("home is the feed", () => {
       )
       .get(alice.id);
     expect(row).toEqual({ text, source: "composer" });
-    const page = await get("/", aliceCookie).then((r) => r.text());
+    const page = await freshHome(servers.url, `${aliceCookie}; forge_mode=studio`);
     expect(page).toContain("&lt;script&gt;alert(1)&lt;/script&gt; &amp; more");
     expect(page).not.toContain("<script>alert(1)</script>");
     expect(page).toContain("Received");
     expect(page).toContain('<option value="forge">the forge</option>');
     // It is the author's alone, and another site's form is refused.
-    const bobs = await get("/", bobCookie).then((r) => r.text());
+    const bobs = await freshHome(servers.url, `${bobCookie}; forge_mode=studio`);
     expect(bobs).not.toContain("alert(1)");
     const forged = await fetch(`${servers.url}/tell`, {
       method: "POST",
@@ -339,23 +342,50 @@ describe("home is the feed", () => {
   });
 
   test("a person with no apps can still send to the forge, and a day-old thought leaves the feed", async () => {
-    const empty = await get("/", bobCookie).then((r) => r.text());
+    const empty = await freshHome(servers.url, `${bobCookie}; forge_mode=studio`);
     expect(empty).toContain('name="app" value="forge"');
     expect(empty).toContain("No apps yet");
     const old = new Date(Date.now() - 2 * 86_400_000).toISOString();
     app.db
       .query("INSERT INTO thought (id, author, text, source, received_at) VALUES ('old1', ?1, 'ancient musing', 'composer', ?2)")
       .run(bob.id, old);
-    expect(await get("/", bobCookie).then((r) => r.text())).not.toContain("ancient musing");
+    expect(await freshHome(servers.url, `${bobCookie}; forge_mode=studio`)).not.toContain("ancient musing");
     await fetch(`${servers.url}/tell`, {
       method: "POST",
       headers: { cookie: bobCookie, origin: servers.url },
       body: new URLSearchParams({ app: "forge", text: "fresh musing" }),
       redirect: "manual",
     });
-    const after = await get("/", bobCookie).then((r) => r.text());
+    const after = await freshHome(servers.url, `${bobCookie}; forge_mode=studio`);
     expect(after).toContain("fresh musing");
     expect(after).not.toContain("ancient musing");
+  });
+
+  test("a release post reads the version and first pull, links the commit, and falls back without a version", async () => {
+    const oid = "a".repeat(40);
+    const serving = (payload: Record<string, unknown>) =>
+      app.bus.append({ kind: "app.serving", repoId: garden.id, payload: { app: "garden", env: "production", commitOid: oid, ...payload } });
+    serving({ version: "0.7.251", pulls: [{ title: "Water <b>early</b>", number: 1 }, { title: "Mulch", number: 2 }, { title: "Weed", number: 3 }] });
+    const page = await freshHome(servers.url, `${aliceCookie}; forge_mode=studio`);
+    expect(page).toContain("0.7.251 is serving: Water &lt;b&gt;early&lt;/b&gt; and 2 more");
+    expect(page).not.toContain("<b>early</b>");
+    expect(page).toContain(`href="/alice/garden/commit/${oid}"`);
+    const mcp = async () => {
+      const token = createToken(app.db, alice.id, "rel", "ro").token;
+      const res = await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "feed", arguments: { limit: 50 } } }),
+      });
+      return JSON.parse(((await res.json()) as any).result.content[0].text).items as any[];
+    };
+    const rel = (await mcp()).filter((i) => i.what.includes("is serving"));
+    expect(rel[0].what).toBe("0.7.251 is serving: Water <b>early</b> and 2 more");
+    expect(rel[0].link).toBe(`/alice/garden/commit/${oid}`);
+    serving({ version: "not-a-version", pulls: [{ title: "Nope", number: 4 }] });
+    const items = (await mcp()).filter((i) => i.what === "a new version is serving");
+    expect(items.length).toBe(1);
+    expect(items[0].link).toBe("/alice/garden");
   });
 
   test("the MCP feed answers the same posts, page by page", async () => {

@@ -161,9 +161,13 @@ function statusLabel(status: FileDiff["status"]): string {
   }
 }
 
-function fileAnchor(file: FileDiff): string {
+export function pathAnchor(path: string): string {
   // Stable per-path id for deep-linking; not security-sensitive.
-  return "d-" + escapeHtml(file.path).replace(/[^a-zA-Z0-9]+/g, "-");
+  return "d-" + escapeHtml(path).replace(/[^a-zA-Z0-9]+/g, "-");
+}
+
+function fileAnchor(file: FileDiff): string {
+  return pathAnchor(file.path);
 }
 
 /** Per-character changed mask for a line, from its word-diff segments. */

@@ -11,6 +11,7 @@ export function grantRun(
   commitOid: string,
   userId: string,
 ): void {
+  if (commitOid === "") return;
   db.query(
     `INSERT INTO pull_run_grant (issue_id, commit_oid, user_id) VALUES (?1, ?2, ?3)
      ON CONFLICT (issue_id, commit_oid) DO UPDATE SET

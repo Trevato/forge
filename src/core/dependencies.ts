@@ -10,11 +10,13 @@
 
 import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { getIssuesByIds, type CloseReason, type Issue } from "./issues.ts";
-import { pillarsOf, structuralIds } from "./pillars.ts";
-import { getRepoById } from "./repos.ts";
+import { getIssuesByIds, getIssuesOfRepo, type CloseReason, type Issue } from "./issues.ts";
+import { pillarsOf, structuralIds, type Pillars } from "./pillars.ts";
+import { getRepoById, type Repo } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
-import { raisedAt } from "./thought_links.ts";
+import { flowLabelled } from "./flow_label.ts";
+import { raisedAt, raisedInRepo } from "./thought_links.ts";
+import { firstAt, firstInRepo } from "./first.ts";
 import { limbRanks, limbTree, readPlaces } from "./limb_order.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
@@ -182,6 +184,27 @@ export function dependenciesOf(
   return { blockedBy: pick(blockedBy), blocks: pick(blocks) };
 }
 
+/** An edge `d` whose blocker `b` closed without being done and nobody confirmed. */
+const HELD_EDGE = "d.confirmed = 0 AND b.close_reason IN ('dropped','split')";
+
+/**
+ * The blockers of `issueId` that closed as dropped or split and that no
+ * person has confirmed, by number: what holds the issue though it is closed.
+ */
+export function heldBlockers(db: Database, issueId: string): Issue[] {
+  const ids = db
+    .query<{ blocked_by_id: string }, [string]>(
+      `SELECT d.blocked_by_id FROM issue_dependency d
+         JOIN issue b ON b.id = d.blocked_by_id AND b.state = 'closed'
+        WHERE d.issue_id = ?1 AND ${HELD_EDGE}
+        ORDER BY b.number`,
+    )
+    .all(issueId)
+    .map((r) => r.blocked_by_id);
+  const found = getIssuesByIds(db, ids);
+  return ids.map((id) => found.get(id)).filter((i): i is Issue => i !== undefined);
+}
+
 // ---- the graph of one repository ----
 
 /** An open issue held by a blocker that closed without being done. */
@@ -228,6 +251,10 @@ export interface Graph {
    * ready ahead of the rest, the latest raise first.
    */
   readonly raised?: ReadonlyMap<string, string>;
+  /** Open issues labelled `flow`: ready, they go before all other ready work (`readyNow`). */
+  readonly flow?: ReadonlySet<string>;
+  /** When a writer put an issue first (#7806): ready ahead of everything else. */
+  readonly first?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -241,7 +268,7 @@ export interface Graph {
  * would take along before anything is written.
  */
 export function deferredIn(
-  graph: Pick<Graph, "issues" | "edges">,
+  graph: { issues: readonly Pick<Issue, "id" | "state">[]; edges: readonly Edge[] },
   gate: string | undefined,
   later: string | undefined,
   also: Iterable<string> = [],
@@ -278,11 +305,76 @@ export function deferredIn(
 
 const GRAPH_MAX = 400;
 
+/**
+ * Which of these issues sit on either end of a dependency edge, in one read
+ * of the edges themselves. An issue on no edge can only be deferred by being
+ * the Later umbrella (`pillars.ts` finds it by a title starting "Later"), so
+ * a page that words a few tells can skip the whole-repository graph for them.
+ */
+export function linkedIssueIds(db: Database, ids: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  if (ids.length === 0) return out;
+  const rows = db
+    .query<{ a: string; b: string }, [string]>(
+      `SELECT issue_id AS a, blocked_by_id AS b FROM issue_dependency
+        WHERE issue_id IN (SELECT value FROM json_each(?1))
+        UNION
+       SELECT issue_id, blocked_by_id FROM issue_dependency
+        WHERE blocked_by_id IN (SELECT value FROM json_each(?1))`,
+    )
+    .all(JSON.stringify(ids));
+  for (const r of rows) {
+    out.add(r.a);
+    out.add(r.b);
+  }
+  return out;
+}
+
+/**
+ * `repoGraph(...).deferred` for a repository, reading only what it needs: the
+ * open issues and the edges that start at one. Closed issues and the edges
+ * between them never change what is deferred, so a repository with thousands
+ * of finished issues costs what its open ones do. Nothing is deferred
+ * without an open Later gate, which is checked before any edge is read.
+ */
+export function deferredOf(db: Database, repo: Repo): ReadonlyMap<string, string> {
+  const set = pillarsOf(db, repo);
+  const gate = set.gate?.id;
+  if (gate === undefined || set.gate?.state !== "open") return new Map();
+  const issues = db
+    .query<{ id: string; number: number; title: string }, [string, number]>(
+      `SELECT id, number, title FROM issue
+        WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open' AND sealed = 0
+        ORDER BY number LIMIT ?2`,
+    )
+    .all(repo.id, GRAPH_MAX)
+    .map((i) => ({ ...i, state: "open" as const }));
+  const open = new Set(issues.map((i) => i.id));
+  const edges = db
+    .query<{ issue_id: string; blocked_by_id: string }, [string]>(
+      `SELECT d.issue_id, d.blocked_by_id FROM issue_dependency d
+         JOIN issue i ON i.id = d.issue_id
+        WHERE i.repo_id = ?1 AND i.state = 'open' AND i.kind = 'issue'`,
+    )
+    .all(repo.id)
+    .filter((r) => open.has(r.issue_id) && open.has(r.blocked_by_id))
+    .map((r) => ({ issueId: r.issue_id, blockedById: r.blocked_by_id }));
+  const graph = { issues, edges };
+  return deferredWhy(graph, deferredIn(graph, gate, set.later?.id), gate, set.later?.id);
+}
+
 export function repoGraph(
   db: Database,
   repoId: string,
   /** Include sealed issues (`sealed.ts`): for a viewer who may see them, and the crew. */
-  options: { readonly sealed?: boolean; readonly sealedBy?: string } = {},
+  options: {
+    readonly sealed?: boolean;
+    readonly sealedBy?: string;
+    /** The repository's pillars, when the caller has read them already. */
+    readonly pillars?: Pillars;
+    /** Issues come without their bodies, when the caller shows none (a plan). */
+    readonly lean?: boolean;
+  } = {},
 ): Graph {
   const edges = db
     .query<{ issue_id: string; blocked_by_id: string }, [string]>(
@@ -300,24 +392,41 @@ export function repoGraph(
          FROM issue_dependency d
          JOIN issue i ON i.id = d.issue_id AND i.state = 'open'
          JOIN issue b ON b.id = d.blocked_by_id AND b.state = 'closed'
-        WHERE i.repo_id = ?1 AND d.confirmed = 0
-          AND b.close_reason IN ('dropped','split')
+        WHERE i.repo_id = ?1 AND ${HELD_EDGE}
         ORDER BY b.number`,
     )
     .all(repoId);
-  const open = db
-    .query<{ id: string }, [string, number]>(
-      `SELECT id FROM issue WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open'
-       ORDER BY number LIMIT ?2`,
-    )
-    .all(repoId, GRAPH_MAX)
-    .map((r) => r.id);
+  // A big graph wants most of its repository: one read of it beats chunked
+  // lookups, and the open issues are found in it.
+  const whole = edges.length > GRAPH_MAX ? getIssuesOfRepo(db, repoId, "issue", options.lean) : undefined;
+  const open =
+    whole === undefined
+      ? db
+          .query<{ id: string }, [string, number]>(
+            `SELECT id FROM issue WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open'
+             ORDER BY number LIMIT ?2`,
+          )
+          .all(repoId, GRAPH_MAX)
+          .map((r) => r.id)
+      : [...whole.values()]
+          .filter((i) => i.kind === "issue" && i.state === "open")
+          .sort((a, b) => a.number - b.number)
+          .slice(0, GRAPH_MAX)
+          .map((i) => i.id);
   const ids = new Set<string>(open);
   for (const e of edges) {
     ids.add(e.issueId);
     ids.add(e.blockedById);
   }
-  const issues = [...getIssuesByIds(db, [...ids]).values()]
+  const found = new Map<string, Issue>();
+  const strays: string[] = [];
+  for (const id of ids) {
+    const issue = whole?.get(id);
+    if (issue === undefined) strays.push(id);
+    else found.set(id, issue);
+  }
+  for (const [id, issue] of getIssuesByIds(db, strays)) found.set(id, issue);
+  const issues = [...found.values()]
     .filter(
       (i) =>
         options.sealed === true ||
@@ -330,7 +439,8 @@ export function repoGraph(
     (e) => present.has(e.issueId) && present.has(e.blockedById),
   );
   const repo = getRepoById(db, repoId);
-  const set = repo === undefined ? undefined : pillarsOf(db, repo);
+  const set =
+    repo === undefined ? undefined : (options.pillars ?? pillarsOf(db, repo));
   const places = readPlaces(db, repoId);
   return {
     ...(set === undefined || places.size === 0
@@ -341,7 +451,15 @@ export function repoGraph(
             places,
           ),
         }),
-    raised: raisedAt(db, issues.map((i) => i.id)),
+    raised:
+      whole === undefined
+        ? raisedAt(db, issues.map((i) => i.id))
+        : raisedInRepo(db, repoId),
+    flow: flowLabelled(db, repoId),
+    first:
+      whole === undefined
+        ? firstAt(db, issues.map((i) => i.id))
+        : firstInRepo(db, repoId),
     issues,
     unadopted:
       repo === undefined ? new Set() : unadoptedAmong(db, repo, issues),
@@ -372,7 +490,7 @@ const NAMED_LIMBS = 2;
  * it — and then which: the deferred limbs above it, by number and title.
  */
 function deferredWhy(
-  graph: Pick<Graph, "issues" | "edges">,
+  graph: { issues: readonly Pick<Issue, "id" | "number" | "title">[]; edges: readonly Edge[] },
   deferred: ReadonlySet<string>,
   gate: string | undefined,
   later: string | undefined,
@@ -393,8 +511,8 @@ function deferredWhy(
       ]);
   }
   // The deferred limbs an issue hangs from: what above it was itself filed.
-  const limbs = (id: string, seen: Set<string>): Issue[] => {
-    const found: Issue[] = [];
+  const limbs = (id: string, seen: Set<string>): Pick<Issue, "id" | "number" | "title">[] => {
+    const found: Pick<Issue, "id" | "number" | "title">[] = [];
     for (const waiter of waiters.get(id) ?? []) {
       if (seen.has(waiter)) continue;
       seen.add(waiter);
@@ -548,10 +666,23 @@ export function readyNow(graph: Graph): Ranked[] {
   const of = (r: Ranked) => rank?.get(r.issue.id) ?? Number.MAX_SAFE_INTEGER;
   if (rank !== undefined) ready.sort((a, b) => of(a) - of(b));
   const raised = graph.raised;
-  if (raised === undefined || raised.size === 0) return ready;
-  // What the owner said again comes first (stable: the rest keep their order).
-  const at = (r: Ranked) => raised.get(r.issue.id) ?? "";
-  return ready.sort((a, b) => at(b).localeCompare(at(a)));
+  if (raised !== undefined && raised.size > 0) {
+    // What the owner said again comes first (stable: the rest keep their order).
+    const at = (r: Ranked) => raised.get(r.issue.id) ?? "";
+    ready.sort((a, b) => at(b).localeCompare(at(a)));
+  }
+  // The `flow` label is the one place that says what goes first: no mode, no state.
+  const flow = graph.flow;
+  if (flow !== undefined && flow.size > 0) {
+    const labelled = (r: Ranked) => (flow.has(r.issue.id) ? 0 : 1);
+    ready.sort((a, b) => labelled(a) - labelled(b));
+  }
+  // What a person put first comes before all of it, the latest first. It only
+  // orders what is already ready: no rank lifts the Later gate or a blocker.
+  const first = graph.first;
+  if (first === undefined || first.size === 0) return ready;
+  const when = (r: Ranked) => first.get(r.issue.id) ?? "";
+  return ready.sort((a, b) => when(b).localeCompare(when(a)));
 }
 
 /**

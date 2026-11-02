@@ -7,7 +7,7 @@
  * `--rollback`, then this process drains.
  */
 
-import { getRepoById } from "../../core/repos.ts";
+import { getReposByIds, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { running } from "../../kernel/version.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -19,6 +19,8 @@ import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { badge, btn, card, empty, sha, time } from "../ui.ts";
+import { holdAs, liftAs } from "../../keeper/hold.ts";
+import { keeperPanel } from "./keeper-panel.ts";
 
 /** The live line (`liveSince`) for the home, or nothing when no release is known to be live. */
 export function liveLine(ctx: Ctx): Html | undefined {
@@ -29,9 +31,9 @@ export function liveLine(ctx: Ctx): Html | undefined {
   </p>`;
 }
 
-function pullCell(ctx: Ctx, r: Release): Html {
+function pullCell(repos: ReadonlyMap<string, Repo>, r: Release): Html {
   if (r.pullNumber === null) return html`—`;
-  const repo = getRepoById(ctx.app.db, r.repoId);
+  const repo = repos.get(r.repoId);
   return repo === undefined
     ? html`#${r.pullNumber}`
     : html`<a href="/${repo.ownerName}/${repo.name}/pulls/${r.pullNumber}">#${r.pullNumber}</a>`;
@@ -45,6 +47,9 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
   const reading = performance.now();
   const releases = listReleases(ctx.app.db);
   notePhase(ctx.request, "releases", performance.now() - reading);
+  const looking = performance.now();
+  const repos = getReposByIds(ctx.app.db, releases.flatMap((r) => (r.pullNumber === null ? [] : [r.repoId])));
+  notePhase(ctx.request, "repos", performance.now() - looking);
   const live = running().commit;
   const writer = mayRollBack(ctx.app, user);
   const checking = performance.now();
@@ -60,7 +65,7 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
     rows.push(html`<tr>
       <td>${sha(r.sha)} ${when(isLive, () => badge("live", { tone: "success" }))}
         ${when(!r.ok, () => badge("preflight failed", { tone: "danger" }))}</td>
-      <td>${pullCell(ctx, r)}</td>
+      <td>${pullCell(repos, r)}</td>
       <td>${time(r.createdAt)}</td>
       <td>${isLive ? html`since ${time(BOOTED)}` : html`—`}</td>
       <td>${when(button, () =>
@@ -78,7 +83,7 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
   const response = page({
     ctx,
     title: "Releases",
-    body: html`<div class="page-head"><h1>Releases</h1></div>${body}`,
+    body: html`<div class="page-head"><h1>Releases</h1></div>${keeperPanel(ctx.app.db, writer)}${body}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -97,4 +102,24 @@ export async function rollbackSubmit(ctx: Ctx): Promise<Response> {
   const result = await rollBackTo(ctx.app, user, target);
   if (!result.ok) return refuse(result.line);
   return flashTo(ctx, "/releases", { message: `Rolled back to ${target.slice(0, 7)}; it reads healthy.` });
+}
+
+/** POST /releases/hold: an owner's hold with a reason, through the function MCP calls. */
+export async function releaseHoldSubmit(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const held = holdAs(ctx.app, ctx.auth.user, String(form.get("reason") ?? ""));
+  return held.ok
+    ? flashTo(ctx, "/releases", { message: `Releases held: ${held.value.reason}` })
+    : flashTo(ctx, "/releases", { tone: "danger", message: held.message });
+}
+
+/** POST /releases/hold/:id/lift: lift an owner's hold. */
+export async function liftSubmit(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const lifted = liftAs(ctx.app, ctx.auth.user, Number(ctx.params["id"]));
+  return lifted.ok
+    ? flashTo(ctx, "/releases", { message: `Hold ${lifted.value} lifted.` })
+    : flashTo(ctx, "/releases", { tone: "danger", message: lifted.message });
 }

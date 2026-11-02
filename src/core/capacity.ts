@@ -20,10 +20,12 @@ export type CapacityKey =
   | "checks.concurrency"
   | "checks.shards"
   | "queue.depth"
+  | "queue.batch"
   | "children.max"
   | "cells.egress"
   | "guard_new_accounts"
-  | "signin.edge";
+  | "signin.edge"
+  | "slots.smallShare";
 
 interface Definition {
   /** What the settings page and the API call it. */
@@ -72,6 +74,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     fallback: "2",
     help: "How many merge-queue candidates of one repository gate at once, each on top of the one before: while one gates on main the next gates on it, and lands right after it if both are green. 1 gates one candidate at a time. A gate beyond the first takes a free check slot only, never one of the two kept for pull checks.",
   },
+  "queue.batch": {
+    label: "Merge queue batch size",
+    env: "FORGE_QUEUE_BATCH",
+    kind: { type: "count", min: 1, max: 32 },
+    fallback: "8",
+    help: "The most pulls one merge-queue candidate carries. A bigger batch lands more pulls per green gate; a red one costs more search gates to find its culprit (one bad pull in 16 is found in two rounds, at most √16 = 4 gates each). The queue starts each line here, halves the batch after a red gate and doubles it back after two green gates in a row, never past this. Read on every sweep.",
+  },
   "children.max": {
     label: "Forges this one may send",
     env: "FORGE_CHILDREN_MAX",
@@ -99,6 +108,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "choice", values: ["on", "off"] },
     fallback: "on",
     help: "on reads the platform edge's identity headers (when the forge has an edge secret) and offers its sign-in; off ignores them on every door, so people sign in with the forge's own methods — password and passkey. Accounts the edge made keep their names but have no password until they set one. Takes effect on the next request.",
+  },
+  "slots.smallShare": {
+    label: "Builder slots small issues may hold (%)",
+    env: "FORGE_SLOTS_SMALL_SHARE",
+    kind: { type: "count", min: 0, max: 100 },
+    fallback: "30",
+    help: "The most of a repository's builder slots that tests-only and small-addition issues (\"A test pins …\", or a label test, tests, tests-only or small) hold at once, as a percent rounded up: 30 lets 2 of 5 slots go to them. At the cap a small issue is skipped and the slot goes to roadmap work; roadmap work is picked first either way. 100 lifts the cap; 0 starts none. Read on every pick.",
   },
 };
 
@@ -316,6 +332,16 @@ export function egressSetting(db: Database): "enforce" | "report" {
 /** How many merge-queue candidates of one repository gate at once (#4053). */
 export function queueDepth(db: Database): number {
   return Number(capacityValue(db, "queue.depth"));
+}
+
+/** The most pulls one merge-queue candidate carries (#6674); the line adapts below it. */
+export function queueBatch(db: Database): number {
+  return Number(capacityValue(db, "queue.batch"));
+}
+
+/** The percent of builder slots small issues may hold (#7571). */
+export function smallShare(db: Database): number {
+  return Number(capacityValue(db, "slots.smallShare"));
 }
 
 /** Whether the platform edge's identity is read at all; on every request. */

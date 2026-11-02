@@ -33,7 +33,7 @@ their own vocabulary instead of composing the named one.
 
 ## Finding 2 — the pages, and what each is for
 
-There are 62 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
+Every top-level page has one entry here: every static `GET` route in `src/http/server.ts`
 that returns a page (`test/design-audit.test.ts` holds this list to the router,
 both ways). Each entry reads `route` — module · what it is for · what
 duplicates it · what breaks `docs/DESIGN.md`. "Breaks" counts colour literals
@@ -62,6 +62,8 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/map` — `pages/map.ts` (1,806 lines) · the dependency map of work across the forge · `/board`, issue dependency lists, `/:owner/:name/map` · colours 3, sizes 12: the largest private vocabulary.
 - `/audit` — `pages/audit.ts` · every app's contract, who can do what · the app page's one-line policy · none seen. Names the audit of apps, not this document.
 - `/releases` — `pages/releases.ts` · the forge's kept releases and rollback · `/settings/backups` (both are "go back") · none seen.
+- `/changelog` — `pages/changelog.ts` · the last 30 releases with their dates and pulls, public · `/releases` (the signed-in kept releases) · none seen.
+- `/api` — `pages/api.ts` · the forge's OpenAPI operations by area, with search and Try it, public · the footer, the OpenAPI document, the terminal's API screen · none seen. An app's own spec is its `/:owner/:name/api` tab.
 - `/contribute` — `pages/contribute.ts` · what this forge is and where outside work is welcome, open to anyone · `/llms.txt`, MCP `contribute` tool · none seen.
 - `/search` — `pages/search.ts` · find across what I can read · the palette (`palette.ts`) · none seen.
 - `/-/confirm` — `pages/search.ts` (`confirmPage`) · the "are you sure" step for a destructive action · none · none seen.
@@ -106,6 +108,8 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/signin` — `pages/site.ts` · sign in · `/signin/parent` · colours 3 (file).
 - `/signin/parent` — `http/rp.ts` · sign in with the forge that sent this one · `/signin` · no page (redirect).
 - `/signin/parent/callback` — `http/rp.ts` · the return leg of that sign-in · none · no page (redirect).
+- `/login` — `http/server.ts` (`signinAlias`) · the address people type to sign in · it is `/signin`, keeping a same-origin `next` · none (308, no page of its own).
+- `/sign-in` — `http/server.ts` (`signinAlias`) · the same, hyphenated · it is `/signin` · none (308, no page of its own).
 - `/signup` — `pages/site.ts` · make an account · `/signup` passkey flow (`signup-passkey.ts`) · colours 3 (file).
 - `/verify` — `pages/site.ts` · confirm an email address · none · colours 3 (file).
 - `/recover` — `pages/passkeys.ts` · get back in without a password · `/settings/passkeys` · none seen.
@@ -114,6 +118,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/tokens` — `pages/account.ts` · my API tokens · `/settings/keys` (credentials of two kinds on two pages) · colour 1.
 - `/settings/keys` — `pages/account.ts` · my SSH keys · `/settings/tokens` · colour 1.
 - `/settings/passkeys` — `pages/passkeys.ts` · my passkeys · `/settings/password` · none seen.
+- `/settings/confirms` — `pages/confirms.ts` · what the forge's agent asked to do and waits for my yes · the terminal's Confirms (y) · none seen.
 - `/settings/secrets` — `pages/secrets.ts` · secrets apps may read · none · none seen.
 - `/settings/subscriptions` — `pages/subscriptions.ts` (624 lines) · the model subscriptions the crew spends from, with spend tables (`pages/spend.ts`) · `/board/returns` · none seen.
 - `/settings/accounts` — `pages/accounts.ts` · every account on the forge · `/settings/people` · none seen.

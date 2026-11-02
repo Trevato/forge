@@ -229,6 +229,16 @@ describe("raise and lower a limb in the terminal", () => {
     }
   });
 
+  test("the limb under the cursor says its pace, to a guest as to an owner", async () => {
+    for (const who of [alice, undefined]) {
+      const h = boot(who);
+      await h.toMilestones("alice/order");
+      // Nothing under Trust has closed.
+      expect(h.text()).toContain("no movement in 7 days");
+      h.stop();
+    }
+  });
+
   test("a guest sees a public order, never a private one, and moves nothing", async () => {
     const h = boot(undefined);
     await h.toMilestones("alice/vault");

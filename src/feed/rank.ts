@@ -7,7 +7,8 @@
  */
 
 import { decay, type Affinity, type Weighted, type Why } from "./affinity.ts";
-import type { Candidate, FeedAsk } from "./items.ts";
+import type { Candidate, FeedAsk, FeedLook } from "./items.ts";
+import type { Settled } from "./settled.ts";
 
 export interface FeedItem {
   readonly id: string;
@@ -24,6 +25,13 @@ export interface FeedItem {
   readonly score: number;
   /** For an ask: the decision, options, default and rank. */
   readonly ask?: FeedAsk;
+  /** A folded post: its first titles with their links, and how many more. */
+  readonly lines?: readonly { readonly text: string; readonly link: string }[];
+  readonly more?: number;
+  /** For a look: which picture it is of. */
+  readonly look?: FeedLook;
+  /** For a post about a pull or an issue that is over: how it ended. Absent while open. */
+  readonly settled?: Settled;
 }
 
 const RECENCY_MAX = 4;
@@ -150,6 +158,8 @@ export function rank(
       reason: reasonOf(s!.c, aff, now),
       score: Math.round(bestScore * 1e6) / 1e6,
       ...(s!.c.ask === undefined ? {} : { ask: s!.c.ask }),
+      ...(s!.c.lines === undefined ? {} : { lines: s!.c.lines, more: s!.c.more ?? 0 }),
+      ...(s!.c.look === undefined ? {} : { look: s!.c.look }),
     });
   }
   return out;

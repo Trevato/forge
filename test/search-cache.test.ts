@@ -28,7 +28,7 @@ beforeAll(async () => {
   git(root, "clone", "-q", "--bare", work, join(root, "u", "r0.git"));
   for (let i = 0; i < 200; i++) {
     if (i > 0) await cp(join(root, "u", "r0.git"), join(root, "u", `r${i}.git`), { recursive: true });
-    repos.push({ id: `id${i}`, ownerName: "u", name: `r${i}`, defaultBranch: "main" } as Repo);
+    repos.push({ id: `id${i}`, ownerName: "u", name: `r${i}`, defaultBranch: "main", archivedAt: null } as Repo);
   }
 }, 60_000);
 
@@ -48,7 +48,7 @@ test("a repeat search answers identically and far faster than the greps", async 
   expect((performance.now() - t) * 4).toBeLessThan(cold);
   expect(grepCount()).toBe(ran);
   expect(again).toEqual(first);
-  expect(first.hits[0]).toEqual({ repo: { owner: "u", name: "r0" }, path: "a.txt", line: 1, text: "needle" });
+  expect(first.hits[0]).toEqual({ repo: { owner: "u", name: "r0" }, archived: false, path: "a.txt", line: 1, text: "needle" });
 });
 
 test("a new commit is a new key, never the old answer", async () => {
@@ -68,7 +68,7 @@ test("a repo without commits answers nothing", async () => {
   const bare = join(root, "u", "empty.git");
   await mkdir(bare, { recursive: true });
   git(bare, "init", "-q", "--bare", "-b", "main");
-  const empty = { id: "e", ownerName: "u", name: "empty", defaultBranch: "main" } as Repo;
+  const empty = { id: "e", ownerName: "u", name: "empty", defaultBranch: "main", archivedAt: null } as Repo;
   expect((await grepRepos(root, [empty], "needle")).hits).toEqual([]);
 });
 

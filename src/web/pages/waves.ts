@@ -6,20 +6,31 @@
  * it does for any other page of a private repository.
  */
 
-import { canRead, getRepo } from "../../core/repos.ts";
+import { canAdmin, canRead, getRepo } from "../../core/repos.ts";
 import { notFound } from "../../http/respond.ts";
 import { holds, stamp, xml } from "../feeds.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
-import { VERSION } from "../../story/wave.ts";
-import { readWave, readWaves } from "../../story/waves.ts";
+import { VERSION, type Wave } from "../../story/wave.ts";
+import { movedForViewer } from "../../story/wave_moved.ts";
+import { carriedPulls, pullPath } from "../../story/wave_pulls.ts";
+import { pullRefs, readWave, readWaves } from "../../story/waves.ts";
 import { NO_WAVES } from "../../story/words.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
 import { escapeHtml, html } from "../html.ts";
 import { page } from "../layout.ts";
-import { empty, listCard, row } from "../ui.ts";
+import { btn, empty, listCard, pill, row } from "../ui.ts";
 import { localScope } from "../scope.ts";
+import { milestoneHref, planFor, progress } from "./milestones.ts";
+
+const WHAT_A_WAVE =
+  "A wave is a release note in waves/<version>.md that names its highlights and the pulls merged since the last one.";
+
+/** A wave's row title: `<version> · <date> · <headline> · N pulls`, N being the pulls this viewer can see. */
+export function waveLine(w: Wave, visible: number): string {
+  return `${w.version} · ${w.date} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
+}
 
 // GET /:owner/:name/waves
 export async function wavesPage(ctx: Ctx): Promise<Response> {
@@ -41,8 +52,8 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
     e.ok
       ? row({
           href: fileHref(e.file),
-          title: e.wave.headline,
-          meta: html`${e.wave.version} · ${e.wave.date}`,
+          // The wave's own page lists these same pulls, so the two agree.
+          title: waveLine(e.wave, carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length),
         })
       : row({
           href: fileHref(e.file),
@@ -51,10 +62,20 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
         }),
   );
 
-  const body = html`${scopeHeader(ctx, scope, "code", { compact: true })}
+  const body = html`${scopeHeader(ctx, scope, "none", { compact: true })}
     <div class="mt">
       ${entries.length === 0
-        ? empty({ title: "No waves yet", note: NO_WAVES })
+        ? empty({
+            title: "No waves yet",
+            note: `${WHAT_A_WAVE} ${NO_WAVES}`,
+            ...(canAdmin(ctx.app.db, repo, ctx.auth.user)
+              ? {
+                  action: html`<form method="post" action="${repoBase(repo)}/settings/wave">
+                    ${btn("Cut a wave", { variant: "primary" })}
+                  </form>`,
+                }
+              : {}),
+          })
         : listCard(rows, { head: html`<h2>Waves</h2>` })}
     </div>`;
 
@@ -135,9 +156,6 @@ ${entries.join("\n")}
   });
 }
 
-/** Only http(s) becomes a link; anything else is shown as plain text. */
-export const webUrl = (s: string): boolean => /^https?:\/\//i.test(s);
-
 // GET /:owner/:name/waves/:version
 export async function wavePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -151,6 +169,22 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
     ),
   );
   if (!entry) return notFoundPage(ctx);
+  const carried = entry.ok
+    ? timePhase(ctx.request, "pulls", () =>
+        carriedPulls(ctx.app.db, pullRefs(entry.wave), ctx.auth.user),
+      )
+    : [];
+  const moved = entry.ok
+    ? timePhase(ctx.request, "moved", () =>
+        movedForViewer({
+          db: ctx.app.db,
+          repo,
+          refs: pullRefs(entry.wave),
+          viewer: ctx.auth.user,
+          plan: () => planFor(ctx, repo, false, new Date()),
+        }),
+      )
+    : [];
   const rendering = performance.now();
   const scope = localScope(ctx, repo);
   const back = html`<a href="${repoBase(repo)}/waves">All waves</a>`;
@@ -164,18 +198,36 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
             (h) => html`<li><strong>${h.title}</strong> — ${h.why}</li>`,
           )}
         </ul>
-        <h2>Pulls</h2>
-        <ul>
-          ${entry.wave.pulls.map((p) =>
-            webUrl(p.url)
-              ? html`<li><a href="${p.url}" rel="noopener noreferrer">${p.title}</a></li>`
-              : html`<li>${p.title}</li>`,
-          )}
-        </ul>`
+        ${moved.length === 0
+          ? ""
+          : listCard(
+              moved.map((m) =>
+                row({
+                  href: milestoneHref(repoBase(repo), m.number),
+                  title: m.title,
+                  meta: progress(m.done, m.total, `${m.done} of ${m.total} done`),
+                  trail: pill(`${m.done} of ${m.total} done`),
+                }),
+              ),
+              { head: html`<h2>Moved</h2>` },
+            )}
+        ${carried.length === 0
+          ? html`<p class="muted">No pulls to show here.</p>`
+          : listCard(
+              carried.map((p) =>
+                row({
+                  href: pullPath(p),
+                  title: html`#${p.number} ${p.title}`,
+                  meta: html`${p.mergedAt === null ? p.state : `merged ${p.mergedAt.slice(0, 10)}`}`,
+                  state: p.mergedAt === null ? p.state : ("merged" as const),
+                }),
+              ),
+              { head: html`<h2>Pulls</h2>` },
+            )}`
     : html`<h1>${entry.file}</h1>
         <p class="muted">Not a wave: ${entry.reason}</p>`;
 
-  const body = html`${scopeHeader(ctx, scope, "code", { compact: true })}
+  const body = html`${scopeHeader(ctx, scope, "none", { compact: true })}
     <div class="mt">${content}<p>${back}</p></div>`;
 
   const response = page({

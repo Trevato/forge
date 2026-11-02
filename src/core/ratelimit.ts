@@ -62,9 +62,11 @@ export function limitsFromEnv(
   const perMinute = positive(raw, DEFAULT_LIMIT);
   return {
     perMinute,
-    adminPerMinute: positive(
-      env["FORGE_RATE_LIMIT_ADMIN"],
-      Math.max(perMinute, DEFAULT_ADMIN_LIMIT),
+    // An admin token is never held tighter than an ordinary one, whatever
+    // FORGE_RATE_LIMIT_ADMIN says.
+    adminPerMinute: Math.max(
+      perMinute,
+      positive(env["FORGE_RATE_LIMIT_ADMIN"], DEFAULT_ADMIN_LIMIT),
     ),
     enabled: true,
   };

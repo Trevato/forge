@@ -13,6 +13,7 @@
 import { sealedScope } from "../core/sealed.ts";
 import type { App } from "../app.ts";
 import { isCrew } from "../core/agents.ts";
+import { mapHeldFor, type HoldName } from "../crew/held.ts";
 import { addDependency, repoGraph, readyNow } from "../core/dependencies.ts";
 import { findPillar, pillarsOf, type Pillar } from "../core/pillars.ts";
 import {
@@ -154,6 +155,8 @@ export interface Planned {
   readonly ready: number[];
   /** Numbers of the issues this plan put behind the Later gate. */
   readonly later: number[];
+  /** Opened issues that are ready but would not start now, with the map's words for why. */
+  readonly held: { key: string; number: number; by: HoldName; detail: string }[];
   /** The Later gate's number, when the plan put something behind it. */
   readonly gate?: number;
 }
@@ -437,9 +440,17 @@ export function openPlan(
   const deferred = items
     .filter((item) => item.later !== undefined)
     .map((item) => number.get(item.key)!);
+  const scope = sealedScope(app.db, repo, actor);
+  const graph = repoGraph(app.db, repo.id, scope);
+  const { holds } = mapHeldFor(app, repo, graph, scope, new Set(opened.map((o) => o.number)));
+  const held = opened.flatMap((o) => {
+    const hold = holds.get(o.number);
+    return hold === undefined ? [] : [{ ...o, by: hold.by, detail: hold.detail }];
+  });
   return ok({
     opened,
-    ready: readyNow(repoGraph(app.db, repo.id, sealedScope(app.db, repo, actor))).map((r) => r.issue.number),
+    ready: readyNow(graph).map((r) => r.issue.number),
+    held,
     later: deferred,
     ...(deferred.length > 0 && gate ? { gate: gate.number } : {}),
   });

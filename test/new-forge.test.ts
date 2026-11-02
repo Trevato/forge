@@ -20,6 +20,7 @@ import { usePlacement, useProbe } from "../src/spawn/door.ts";
 import { childrenForMemory, maxChildren, setCapacity } from "../src/core/capacity.ts";
 import { hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { tool as spawnTool } from "../src/http/mcp/tools/spawn.ts";
 
 quietLogs();
 
@@ -132,6 +133,32 @@ describe("+ New forge", () => {
     expect(html).toContain("user accounts");
   });
 
+  test("the Template field lists Blank first and selected; starter reaches the plan from the door's own body; an unknown id is refused on the field", async () => {
+    const page = (await (await get(admin, "/forges/new")).text()).replace(/\s+/g, " ");
+    const at = page.indexOf('name="template"');
+    expect(at).toBeGreaterThan(0);
+    const field = page.slice(at, page.indexOf("</select>", at));
+    expect(field).toMatch(/<option value="blank" selected >\s*Blank/);
+    expect(field.indexOf('value="blank"')).toBeLessThan(field.indexOf('value="starter"'));
+    expect(field).toContain("Starter app");
+
+    const plan = await post(admin, [["name", "tpl"], ["do", "plan"], ["template", "starter"]]);
+    expect(plan.status).toBe(200);
+    const planned = (await plan.text()).replace(/\s+/g, " ");
+    expect(planned).toContain("starts from the <b>Starter app</b> template");
+    expect(planned).toMatch(/<option value="starter" selected >/);
+
+    const blank = await post(admin, [["name", "tpl"], ["do", "plan"], ["template", "blank"]]);
+    expect(await blank.text()).not.toContain("template.</li>");
+
+    const bad = await post(admin, [["name", "tpl"], ["do", "plan"], ["template", "nope"]]);
+    expect(bad.status).toBe(422);
+    const body = await bad.text();
+    expect(body).toContain("template must be blank or starter");
+    expect(body).toContain('value="tpl"');
+    expect(await children()).toBe(0);
+  });
+
   test("a post from another origin is refused, and nothing is made", async () => {
     const res = await post(
       admin,
@@ -228,13 +255,13 @@ describe("+ New forge", () => {
     const key = await post(admin, [
       ["name", "kai"],
       ["apps", "alice/bakery"],
-      ["modelKey", "sk-ant-api03 pasted with a space"],
+      ["modelKey", "\u200b"],
       ["budgetUsd", "5"],
       ["do", "plan"],
     ]);
     expect(key.status).toBe(422);
     expect(await key.text()).toMatch(
-      /id="f-modelKey-err"[^>]*>[^<]*one line with no spaces/,
+      /id="f-modelKey-err"[^>]*>[^<]*is empty/,
     );
   });
 
@@ -302,11 +329,17 @@ describe("+ New forge", () => {
 
   test("the page promises no update that does not happen", async () => {
     const html = (await (await get(admin, "/forges/new")).text()).replace(/\s+/g, " ");
-    expect(html).toContain("Recorded for now: tell me");
-    expect(html).toContain("Recorded for now: take updates");
-    expect(html).toContain("nothing acts on it yet");
+    expect(html).toContain("Tell me <span class=\"muted small\">tells the owner in their inbox when this forge&#39;s code moves.</span>");
+    expect(html).toContain("Take updates <span class=\"muted small\">opens a pull with the new code, and a person merges it.</span>");
+    expect(html).toContain("<legend>How it follows this forge's code</legend>");
+    expect(html).not.toMatch(/recorded for now|nothing acts on it yet/i);
     expect(html).not.toContain("when this forge changes");
     expect(html).not.toMatch(/as long as its own changes merge/);
+  });
+
+  test("MCP spawn says what each follow mode does, as the page does", () => {
+    const followMode = (spawnTool.inputSchema.properties as Record<string, { description?: string }>)["followMode"];
+    expect(followMode?.description).toBe("tell-me: an inbox card; take-updates: a pull a person merges");
   });
 
   test("a forge at its depth limit shows no door, and its page says why", async () => {

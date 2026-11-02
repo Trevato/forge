@@ -14,15 +14,19 @@
  * whole of this screen's design.
  */
 
+import { exploreLine, isExploreLine, exploreNote, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
-import { forgeLane, forgeNeeds } from "../../actions/health.ts";
+import { governorSeen } from "../../crew/governed.ts";
+import { forgeFlakes, forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
-import { clientAppRows, clientDoings, doingLine } from "../../core/client-apps.ts";
+import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
+import { lastVisit } from "../../core/home_visit.ts";
+import { sinceDigest } from "../../web/studio/since.ts";
 import { askForSomething } from "./tell.ts";
 import { mayView } from "../../core/sealed.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../../actions/fleet.ts";
@@ -32,15 +36,22 @@ import { getProposal } from "../../core/proposals.ts";
 import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
 import { askLinesFor } from "../../web/studio/asks.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
+import { giveBack } from "../../actions/give_back.ts";
+import { passReasonOf } from "../../crew/guard.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
 import { putAsideWaves } from "../../web/studio/asks.ts";
 import type { Proposal } from "../../core/proposals.ts";
+import type { App } from "../../app.ts";
 import {
   applyAsksBulk,
+  BULK_MAX,
   latestUndoable,
+  previewAsksBulk,
   undoAsksBulk,
 } from "../../actions/asks_bulk.ts";
+import { reviewSetOf, type ReviewSet } from "../../web/studio/review_set.ts";
+import { staleWords } from "../../flow/kpi_words.ts";
 import { mutedRepos, removeMutes } from "../../core/interactions.ts";
 import { chipsOf, KIND_CHIPS, setChip } from "../../core/feed_chips.ts";
 import type { Operation } from "../../core/fleet_ops.ts";
@@ -88,6 +99,7 @@ import {
   plural,
   linkScreen,
 } from "./common.ts";
+import { readVitals, vitalsLine } from "../../flow/vitals.ts";
 import { readKpis } from "../../flow/kpis.ts";
 import { kpiLines } from "../../flow/kpi_words.ts";
 import { BOOTED } from "../../release/gate.ts";
@@ -97,6 +109,14 @@ import { issueScreen } from "./issue.ts";
 import { listPinned } from "../../actions/board-pins.ts";
 import { migrateScreen } from "./migrate.ts";
 import { newRepoScreen } from "./newrepo.ts";
+import { firedAlarms } from "../../flow/alarms.ts";
+import { lastClearedNote } from "../../flow/clog_tick.ts";
+import { forgeCeiling } from "../../flow/ceiling.ts";
+import { alarmIdleCrew } from "../../flow/alarm_idle_crew.ts";
+import { idleLine, idleReason } from "../../crew/idle_reason.ts";
+import { noReleaseAlarm } from "../../flow/alarm_no_release.ts";
+import { redMainAlarm } from "../../flow/alarm_red_main.ts";
+import { alarmStuck } from "../../flow/alarm_stuck.ts";
 import { pullScreen } from "./pull.ts";
 import { repoScreen } from "./repo.ts";
 import { local } from "./where.ts";
@@ -107,7 +127,7 @@ const FIGURES_ROOM = 6;
 
 /** The forge-wide daily ceiling, from config, for the spend figure; the data directory, for the backup's age. */
 export const kpiForge = (app: { config: { crewCeilingUsd?: number; dataDir: string } }) => ({
-  ceilingUsd: app.config.crewCeilingUsd ?? null,
+  ceilingUsd: forgeCeiling(app.config),
   dataDir: app.config.dataDir,
 });
 
@@ -132,6 +152,8 @@ interface OnYouItem {
   readonly hand?: true;
   /** A pull the crew handed to a person: closed, marked and opened like any row. */
   readonly over?: true;
+  /** A pull a pass assigned to this person: why, and who it goes back to (`b`). */
+  readonly passed?: string;
   /** For a handed-over row: the crew's advice, when it wrote one. */
   readonly overAdvice?: string;
   /** A pull no person has touched for a day, with the crew's advice when it wrote one. */
@@ -158,30 +180,71 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** The rows marked for one verb, by issue id. */
   const marked = new Set<string>();
   let lastSet: Operation | undefined;
+  /** What Home and /review count: live asks waiting on the viewer, and the stale ones folded apart. */
+  let waitingSet: ReviewSet | undefined;
   /** The repositories marked for archiving, by id; only ones the viewer administers. */
   const markedRepos = new Set<string>();
   /** The receipt of the last archive made here, which `u` reverses once. */
   let lastArchive: string | undefined;
-  /** Why planning is paused, for the autonomous apps where it is; as on the board. */
+  /**
+   * Why planning is paused, for the autonomous apps where it is, as on the
+   * board; else why the governor holds the crew below its slots (#7644).
+   */
   let holds = new Map<string, string>();
   let forge: string[] | undefined;
   /** What the crews wait on this person for, one line each, as the board's notes say it. */
   let waits: string[] = [];
   /** A client's apps, one sentence each on whether its agents work or wait (#1812). */
   let clientLines: string[] = [];
+  /** "Since you were here" and its lines: read from the web home's last-visit row, never written here. */
+  let sinceLines: string[] = [];
   /** The ids of those apps, so the key that asks for something stays on them. */
   let clientRepoIds = new Set<string>();
   /** The live address of each of those apps that is running, by repo id; `o` shows it. */
   let clientLive = new Map<string, string>();
   /** The check lane, as the board's strip says it; null when nothing is queued. */
   let lane: string | null = null;
+  /** The week's flaky tests, one line; null when none flaked. */
+  let flaky: string | null = null;
   /** What the decider did today, the board's Today line; null on a quiet day or for a reader. */
   let decider: string | null = null;
   /** Home's three figures, as the web's row says them; empty unless an admin looks (they count every repository). */
   let figures: string[] = [];
+  /** One line per fired flow alarm; an admin reads every repository, anyone else public ones alone. */
+  let alarms: string[] = [];
   /** The panels this admin pinned to the web home, by title and board, in their order. */
   let panelLines: string[] = [];
   const filter = new Filter();
+  /**
+   * A search line with `kind:` or `sort:` is the explorer's (#7325): the rows
+   * `/explore` ranks, answered by the same action, for the line last settled.
+   */
+  let explored: { line: string; rows: readonly ExploreRow[] } | undefined;
+  let askedLine = "";
+  const exploring = (): boolean => isExploreLine(filter.query);
+  const exploredRows = (): readonly ExploreRow[] => (exploring() ? (explored?.rows ?? []) : []);
+  const syncExplore = (): void => {
+    if (!exploring()) {
+      explored = undefined;
+      askedLine = "";
+      return;
+    }
+    const query = parseExploreQuery(filter.query);
+    const line = exploreLine(query);
+    if (line === askedLine) return;
+    askedLine = line;
+    // The rows kept belong to the old line; none are shown under the new one.
+    explored = undefined;
+    runAsync(ctx, async () => {
+      const page = await explorePage(f.app, f.user, query, null).catch(() => null);
+      // A newer line was typed while this one was ranked; its answer wins.
+      if (askedLine !== line) return;
+      const rows = page?.items ?? [];
+      explored = { line, rows };
+      at("repos").clamp(rows.length);
+      ctx.invalidate();
+    });
+  };
   /** One cursor per pane: moving in one must never move another. */
   const cursors: Record<PaneId, ListState> = {
     repos: new ListState(),
@@ -199,16 +262,29 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     clientRepoIds = new Set(apps.map((a) => a.repo.id));
     clientLive = new Map(apps.flatMap((a) => (a.live === undefined ? [] : [[a.repo.id, a.live] as const])));
     const now = new Date();
-    const doings = clientDoings(f.app.db, apps.map((a) => a.repo.id), now);
+    const ids = apps.map((a) => a.repo.id);
+    const doings = clientDoings(f.app.db, ids);
+    const finished = clientFinished(f.app.db, ids);
     clientLines =
       apps.length === 0
         ? ["Your apps will appear here."]
         : apps.map((a) => {
-            const doing = doingLine(doings.get(a.repo.id), now.getTime());
+            const doing = [
+              finishedLine(finished.get(a.repo.id), now.getTime()),
+              doingLine(doings.get(a.repo.id)),
+            ]
+              .filter((x) => x !== "")
+              .join(" ");
             const mark = a.live === undefined ? "" : " (running, o opens it)";
             const line = `${a.repo.name}${mark}: ${agentsLine(a.working, a.queued)}`;
             return doing === "" ? line : `${line} ${doing}`;
           });
+    ctx.invalidate();
+  };
+
+  const loadSinceLines = (): void => {
+    const d = f.user ? sinceDigest(f.app.db, f.user, lastVisit(f.app.db, f.user.id), Date.now()) : undefined;
+    sinceLines = d === undefined ? [] : [d.heading, ...d.lines.map((l) => `  ${l.says}`)];
     ctx.invalidate();
   };
 
@@ -226,6 +302,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
+    waitingSet = f.user === undefined ? undefined : reviewSetOf(f.db, f.user, new Date());
     waves = f.user === undefined ? [] : wavesFor();
     asideWaves = f.user === undefined ? [] : putAsideWaves(f.db, f.user);
     for (const id of [...marked])
@@ -236,9 +313,22 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       all.flatMap((repo) => {
         const hold =
           repo.autonomy === "autonomous" ? plannerHold(f.app, repo, now) : null;
-        return hold === null ? [] : [[repo.id, holdWords(hold)] as const];
+        if (hold !== null) return [[repo.id, holdWords(hold)] as const];
+        const governor = governorSeen(f.app, f.user, repo, now);
+        return governor?.held === true ? [[repo.id, governor.why] as const] : [];
       }),
     );
+    alarms =
+      f.user?.isAdmin === true
+        ? [
+            alarmStuck(f.db, now),
+            redMainAlarm(f.db, now),
+            alarmIdleCrew(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }),
+            noReleaseAlarm(f.db, now),
+          ]
+            .filter((a) => a.fired)
+            .map((a) => a.says)
+        : [alarmStuck(f.db, now, { publicOnly: true })].filter((a) => a.fired).map((a) => a.says);
     forge = forgeNeeds(f.app, f.user);
     if (forge !== undefined) {
       const fh = forgeHealth();
@@ -252,12 +342,20 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     const facts = f.user === undefined ? new Set<string>() : ownerFactRepoIds(f.db, all, f.user);
     waits = ownerWaits(f.db, all.filter((r) => facts.has(r.id))).map(waitLine);
     lane = forgeLane(f.app, f.user);
+    flaky = forgeFlakes(f.app, f.user);
     decider = deciderLine(f.app, f.user);
     const commit = running().commit;
+    const cleared = lastClearedNote(f.db, now);
     figures =
       f.user?.isAdmin !== true
         ? []
-        : kpiLines(readKpis(f.db, now, kpiForge(f.app)), commit === null ? null : { sha: commit, since: ago(BOOTED) });
+        : [
+            ...idleLines(f.app, now),
+            ...kpiLines(readKpis(f.db, now, { ...kpiForge(f.app), idle: () => idleReason(f.app, now) }), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
+            vitalsLine(readVitals(f.db, now)),
+            ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }).map((a) => a.says),
+            ...(cleared === undefined ? [] : [cleared]),
+          ];
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user
@@ -312,7 +410,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       )
         return [];
       if (muted.has(repo.id)) return [];
-      return [{ issue, repo, waiting: waitingOf(issue.id) }];
+      const passed =
+        issue.kind === "pull" && !issue.assigneeIsAgent && issue.assigneeId === f.user?.id
+          ? passReasonOf(f.db, issue.id, issue.assigneeId)
+          : undefined;
+      return [{ issue, repo, waiting: waitingOf(issue.id), ...(passed === undefined ? {} : { passed }) }];
     });
     return [...assigned, ...handOvers(assigned, rows, waitingOf)];
   };
@@ -535,6 +637,48 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     );
   };
 
+  /** The asks older than 30 days, dismissed in one step: the bulk preview first, nothing before the choice. */
+  const archiveStale = (): void => {
+    const stale = (waitingSet?.stale ?? []).slice(0, BULK_MAX);
+    if (stale.length === 0 || f.user === undefined) return;
+    const items = stale.map((a) => a.id);
+    const plan = previewAsksBulk(f.app, f.user, "dismiss", items);
+    if (!plan.ok) {
+      ctx.toast(plan.error.message, "danger");
+      return;
+    }
+    if (plan.value.counts.change === 0) {
+      ctx.toast("nothing to archive", "attn");
+      return;
+    }
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: `Archive ${plural(plan.value.counts.change, "stale ask")}?`,
+        body: [
+          ...plan.value.rows.map((r) => r.label),
+          ...((waitingSet?.stale.length ?? 0) > BULK_MAX ? [`First ${BULK_MAX} of ${waitingSet?.stale.length}; run it again for the rest.`] : []),
+        ],
+        actions: [
+          { label: "Archive", variant: "danger" },
+          { label: "Cancel", variant: "ghost" },
+        ],
+        onChoose: (choice) => {
+          if (choice !== 0) return;
+          runAsync(ctx, async () => {
+            const done = await applyAsksBulk(f.app, f.user, "dismiss", items);
+            if (!done.ok) {
+              ctx.toast(done.error.message, "danger");
+              return;
+            }
+            const n = done.value.rows.filter((r) => r.outcome === "ok").length;
+            reload();
+            ctx.toast(`archived ${n}${n > 0 ? " — u undoes it" : ""}`, n > 0 ? "success" : "attn");
+          });
+        },
+      }),
+    );
+  };
+
   const undoArchive = (): void => {
     const id = lastArchive;
     if (id === undefined) return;
@@ -583,6 +727,22 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       reload();
       ctx.toast(done.value.reason + (done.value.setAside ? " · U undoes" : ""), "success");
     });
+  };
+
+  /** Give the handed-over pull under the cursor back to its builder, through the action the web uses. */
+  const giveBackHere = (): void => {
+    const here = onYou[at("onyou").index];
+    if (here === undefined) return;
+    if (here.over !== true && here.passed === undefined) {
+      ctx.toast("only a handed-over pull goes back to the crew", "attn");
+      return;
+    }
+    const done = giveBack(f.app, f.user, `${here.over === true ? "handover" : "assigned"}:${here.issue.id}`);
+    reload();
+    ctx.toast(
+      done.ok ? `#${done.value.pull} given back to @${done.value.builder}` : done.error.message,
+      done.ok ? "success" : "danger",
+    );
   };
 
   const undoHand = (): void => {
@@ -641,7 +801,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** Yours with an empty filter; anything you can see once you type —
    * the one way to find someone else's repository from here. */
   const shown = (): Repo[] =>
-    (filter.query !== "" ? all : repos).filter((repo) =>
+    exploring() ? [] : (filter.query !== "" ? all : repos).filter((repo) =>
       filter.matches(`${repo.ownerName}/${repo.name} ${repo.description}`),
     );
 
@@ -659,7 +819,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   const at = (pane: PaneId): ListState => cursors[pane];
   const size = (pane: PaneId): number =>
     pane === "repos"
-      ? shown().length
+      ? exploring()
+        ? exploredRows().length
+        : shown().length
       : pane === "onyou"
         ? onYou.length + waves.length
         : pins.length;
@@ -673,6 +835,18 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** `enter` on a repository row, wherever the row came from. */
   const openRepo = (repo: Repo | undefined): void => {
     if (repo !== undefined) ctx.push(repoScreen(f, ctx, local(f, repo)));
+  };
+
+  /** `enter` on an explorer row: an app opens as any repository; the rest are the web's. */
+  const openExplored = (row: ExploreRow | undefined): void => {
+    if (row === undefined) return;
+    if (row.kind === "app" && row.repo !== undefined) {
+      const repo = getRepo(f.db, row.repo.owner, row.repo.name);
+      if (repo !== undefined && canRead(f.db, repo, f.user)) return openRepo(repo);
+      ctx.toast(`${row.name} is not here any more`, "attn");
+      return;
+    }
+    ctx.toast(`${row.name} has no terminal page; the web has it at ${row.url}`, "attn");
   };
 
   const openPin = (pin: Pin | undefined): void => {
@@ -726,7 +900,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   /** `enter` on whatever the focused pane's cursor is on. */
   const openHere = (): void => {
-    if (focus === "repos") openRepo(shown()[at("repos").index]);
+    if (focus === "repos") {
+      if (exploring()) openExplored(exploredRows()[at("repos").index]);
+      else openRepo(shown()[at("repos").index]);
+    }
     else if (focus === "onyou") openAssigned(onYou[at("onyou").index]);
     else openPin(pins[at("machine").index]);
   };
@@ -744,6 +921,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ...(focus === "onyou" && onYou[at("onyou").index]?.hand === true
           ? [binding(["D"], "let the decider")]
           : []),
+        ...(focus === "onyou" && (onYou[at("onyou").index]?.over === true || onYou[at("onyou").index]?.passed !== undefined)
+          ? [binding(["b"], "give back to the crew")]
+          : []),
         ...(focus === "onyou" && waveHere() !== undefined
           ? [binding(["y"], "approve wave"), binding(["R"], "redirect"), binding(["l"], "later")]
           : []),
@@ -757,6 +937,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               binding(["S"], "ship"),
             ]
           : []),
+        ...(focus === "onyou" && (waitingSet?.stale.length ?? 0) > 0 ? [binding(["Z"], "archive stale")] : []),
         ...(lastSet !== undefined || lastArchive !== undefined ? [binding(["u"], "undo")] : []),
         ...(silenced.size > 0 ? [binding(["L"], "listen again")] : []),
         binding(["d"], "unpin", {
@@ -780,6 +961,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // functions of the outbox, so one subscription refreshes all of them.
       live(f, signal, {}, reload);
       reload();
+      loadSinceLines();
       return Promise.all([loadClientLines(), loadPanelLines()]).then(() => undefined);
     },
     render(area, s) {
@@ -788,6 +970,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // A site admin's forge strip, as the board's: "All fine" or a line
       // per cause. Anyone else gets no rows and no reads.
       let body = area;
+      if (alarms.length > 0) {
+        const [strip, rest] = split(body, "v", [len(alarms.length), fill(1)]);
+        alarms.forEach((line, i) =>
+          s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(c.attn, c.bg), strip!.x + strip!.w),
+        );
+        body = rest!;
+      }
       if (clientLines.length > 0) {
         const lines = clientLines.slice(0, 5);
         const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
@@ -799,6 +988,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             style(c.fg, c.bg),
             strip!.x + strip!.w,
           ),
+        );
+        body = rest!;
+      }
+      if (sinceLines.length > 0) {
+        const lines = sinceLines.slice(0, 4);
+        const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
+        lines.forEach((line, i) =>
+          s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(i === 0 ? c.mutedFg : c.fg, c.bg), strip!.x + strip!.w),
         );
         body = rest!;
       }
@@ -830,6 +1027,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (forge !== undefined) {
         const lines = forge.length === 0 ? ["All fine"] : withMore(forge, 3);
         if (lane !== null) lines.push(`Lane: ${lane}`);
+        if (flaky !== null) lines.push(`Flaky this week: ${flaky}`);
         const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
         lines.forEach((line, i) =>
           s.text(
@@ -866,7 +1064,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
       // A site admin is told once, under the filter, when the forge runs
       // with less than its default protection — the web footer's line.
-      const reduced = f.user?.isAdmin === true ? protectionNotice() : undefined;
+      const read = exploring() ? readExploreLine(filter.query) : undefined;
+      const note = read === undefined ? "" : exploreNote(read.unknown);
+      const readAs =
+        read === undefined
+          ? undefined
+          : `Read as: ${exploreLine(read.query) || "everything"}${note === "" ? "" : ` · ${note}`}`;
+      const reduced = readAs ?? (f.user?.isAdmin === true ? protectionNotice() : undefined);
       const [box, warn, list] = split(
         main,
         "v",
@@ -899,7 +1103,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     },
     key(e) {
       if (filter.key(e)) {
-        at("repos").clamp(shown().length);
+        syncExplore();
+        at("repos").clamp(exploring() ? exploredRows().length : shown().length);
         focus = "repos";
         return true;
       }
@@ -919,15 +1124,21 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           return true;
         }
         if (e.key === "x") return closeSet(), true;
+        if (e.key === "Z") return archiveStale(), true;
         if (e.key === "m") return clear("mute"), true;
         if (e.key === "S") return shipSet(), true;
         if (e.key === "D" && item !== undefined) return handToDecider(), true;
+        if (e.key === "b" && item !== undefined) return giveBackHere(), true;
         if (e.key === "h") return hideAuthor(), true;
         if (e.key === "y") return actOnWave("approve"), true;
         if (e.key === "R") return redirectWave(), true;
         if (e.key === "l") return actOnWave("later"), true;
       }
       if (e.key === "B" && f.user && asideWaves.length > 0) return bringBackWaves(), true;
+      if (focus === "repos" && f.user !== undefined && exploring() && (e.key === "space" || e.key === "a" || e.key === "p")) {
+        ctx.toast("pin, mark and archive act on your repositories; esc clears the explorer line", "attn");
+        return true;
+      }
       if (focus === "repos" && f.user !== undefined) {
         const repo = shown()[at("repos").index];
         if (e.key === "space" && repo !== undefined && mayArchive(repo)) {
@@ -1036,7 +1247,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               : ISSUE_MARK;
         return {
           title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : item.late !== undefined ? "waiting " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
-          meta: `${item.waiting.word} · on ${item.waiting.on}${item.late?.advice ?? item.overAdvice ?? ""}`,
+          meta: `${item.waiting.word} · on ${item.waiting.on}${item.passed === undefined ? "" : ` · handed to you: ${item.passed}`}${item.late?.advice ?? item.overAdvice ?? ""}`,
         };
       }),
         ...waves.map(
@@ -1062,6 +1273,16 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** What the card says about mutes, marks and the day's undo. */
   function onYouFooter(): string | undefined {
     const parts: string[] = [];
+    // The same figures as Home's line and /review: live asks counted, stale ones folded apart.
+    if (waitingSet !== undefined && waitingSet.count > 0) parts.push(`${waitingSet.count} waiting on you`);
+    if (waitingSet !== undefined && waitingSet.stale.length > 0) parts.push(`${staleWords(waitingSet.stale.length)} Z previews`);
+    // The decider keys come first: the card clips its footer from the right.
+    // A pass's reason leads the line: a row's meta is dropped where the pane is narrow.
+    const passed = onYou[at("onyou").index]?.passed;
+    if (passed !== undefined) parts.push(`handed to you: ${passed.length > 60 ? `${passed.slice(0, 59)}…` : passed}`);
+    if (lastHand !== undefined) parts.push("U undo decider");
+    if (onYou[at("onyou").index]?.hand === true) parts.push("D let the decider");
+    if (onYou[at("onyou").index]?.over === true || onYou[at("onyou").index]?.passed !== undefined) parts.push("b give back to the crew");
     if (f.user !== undefined) {
       const chips = chipsOf(f.db, f.user.id);
       const off: string[] = KIND_CHIPS.filter((k) => chips.kinds.has(k));
@@ -1078,13 +1299,53 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         `${silenced.size} ${silenced.size === 1 ? "repository" : "repositories"} muted · L listen again`,
       );
     if (lastSet !== undefined) parts.push(`u undo ${lastSet.verb}`);
-    if (lastHand !== undefined) parts.push("U undo decider");
-    if (onYou[at("onyou").index]?.hand === true) parts.push("D let the decider");
     if (asideWaves.length > 0) parts.push(`${asideWaves.length} ${asideWaves.length === 1 ? "wave" : "waves"} put aside · B bring back`);
     return parts.length > 0 ? parts.join(" · ") : undefined;
   }
 
+  /** A row's numbers as the page says them; nothing that is zero. */
+  function numbersOf(row: ExploreRow): string {
+    const n = row.numbers;
+    return metaOf(
+      row.kind === "person" ? plural(n.apps, "app") : "",
+      n.forks > 0 ? plural(n.forks, "fork") : "",
+      n.ships > 0 ? `${n.ships} shipped this month` : "",
+      n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
+      row.shippedAt !== null ? `shipped ${ago(row.shippedAt)}` : "",
+    );
+  }
+
+  function drawExplored(s: Surface, r: Rect, c: Tokens): void {
+    const rows = exploredRows();
+    const on = focus === "repos";
+    if (rows.length === 0) {
+      emptyState(s, r, c, {
+        title: explored === undefined ? "Ranking…" : `Nothing matches ${explored.line}`,
+        body: "Drop a word to step back; esc clears the line.",
+      });
+      return;
+    }
+    drawList(
+      s,
+      r,
+      c,
+      at("repos"),
+      rows.map((row): ListRow => ({ title: row.name, secondary: row.description, meta: numbersOf(row) })),
+      on,
+    );
+    hitList(ctx, r, at("repos"), rows.length, {
+      select: () => {
+        focus = "repos";
+      },
+      open: (index) => {
+        focus = "repos";
+        openExplored(rows[index]);
+      },
+    });
+  }
+
   function drawRepos(s: Surface, r: Rect, c: Tokens, set: IconSet): void {
+    if (exploring()) return drawExplored(s, r, c);
     const rows = shown();
     const on = focus === "repos";
     if (rows.length === 0) {
@@ -1149,7 +1410,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       note(s, inner, c, [
         "Nothing pinned yet.",
         "p pins the repository under the cursor;",
-        'see "Origins" in the README for forge sync.',
+        'for forge sync, see docs/ON-YOUR-MACHINE.md.',
       ]);
       return;
     }
@@ -1177,6 +1438,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   }
 
   return screen;
+}
+
+/** Why the builders are idle, as the one line an admin's home reads; none while they are not. */
+function idleLines(app: App, now: Date): string[] {
+  const reason = idleReason(app, now);
+  return reason === null ? [] : [idleLine(reason)];
 }
 
 /**

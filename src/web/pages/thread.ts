@@ -27,6 +27,7 @@ import {
   setIssueLabelsThrough,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
+import { VIA_WORDS } from "../../core/acting_via.ts";
 import { listEvents } from "../../core/events.ts";
 import { markOf, marksByName, type Mark } from "../../core/marks.ts";
 import {
@@ -36,10 +37,12 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { editIssue, type Closing } from "../../actions/issues.ts";
+import { putFlowFirst } from "../../actions/flow_first.ts";
 import {
   getIssue,
   labelsFor,
   listComments,
+  THREAD_WINDOW,
   MAX_BODY,
   MAX_TITLE,
 } from "../../core/issues.ts";
@@ -130,6 +133,8 @@ export function threadContext(
 export interface Entry {
   at: string;
   node: Html;
+  /** A conversation comment: the window is cut on these (`commentAnchor`, core/issues.ts, counts the same). */
+  comment?: true;
 }
 
 const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
@@ -165,6 +170,11 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       verb: "let this head run",
     },
     "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
+    "pull.released": {
+      icon: "check",
+      tone: "success",
+      verb: "released the hold",
+    },
   };
 
 /**
@@ -196,14 +206,26 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
     const look = EVENT_LOOK[event.kind]!;
     const actor =
       event.actorId !== null ? actors.get(event.actorId) : undefined;
+    // The forge's own release of an until-green hold carries its line and no actor.
+    const note =
+      event.kind === "pull.released" && typeof event.payload.note === "string"
+        ? event.payload.note
+        : undefined;
     entries.push({
       at: event.createdAt,
       node: tlEvent({
         icon: look.icon,
         tone: look.tone,
-        body: html`${actor
+        body:
+          note !== undefined && !actor
+            ? html`<span>the forge</span> <span>${note}</span> ${time(
+                event.createdAt,
+              )}`
+            : html`${actor
             ? userLink(actor.username, { mark: markOf(actor) })
-            : html`<span>someone</span>`} <span>${look.verb}</span> ${time(
+            : html`<span>someone</span>`}${event.via !== undefined && actor
+            ? html` <span>${VIA_WORDS}</span>`
+            : null} <span>${look.verb}</span> ${time(
             event.createdAt,
           )}`,
       }),
@@ -226,6 +248,20 @@ function interruptionEntries(ctx: Ctx, issue: Issue): Entry[] {
       body: html`<span>the crew's run was ${run.summary}</span> ${time(run.at)}`,
     }),
   }));
+}
+
+/** The forge's own line where a vision pull landed without an admin: the direction was kept as it was. */
+function forgeEntries(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
+  if (issue.kind !== "pull") return [];
+  return listEvents(ctx.app.db, { repoId: repo.id, kind: "repo.vision_kept", limit: 50 })
+    .filter((e) => e.payload["pull"] === issue.number)
+    .map((e) => ({
+      at: e.createdAt,
+      node: tlEvent({
+        icon: "merge",
+        body: html`<span>the forge kept the repository's direction as it was: only ${String(e.payload["why"] ?? "an admin's merge rewrites it")}</span> ${time(e.createdAt)}`,
+      }),
+    }));
 }
 
 export interface ConversationOptions {
@@ -305,6 +341,7 @@ export function conversation(
   ]);
   const entries: Entry[] = comments.map((c) => ({
     at: c.createdAt,
+    comment: true as const,
     node: threadComment(c.id, c.authorName, c.createdAt, c.body, {
       originAuthor: c.originAuthor,
       originKind: glyph,
@@ -313,8 +350,34 @@ export function conversation(
   }));
   entries.push(...stateEvents(ctx, repo, issue));
   entries.push(...interruptionEntries(ctx, issue));
+  entries.push(...forgeEntries(ctx, repo, issue));
   entries.push(...(options.extra ?? []));
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  // The opening post and the newest THREAD_WINDOW comments with the state
+  // changes between them; everything before the oldest of those waits behind
+  // `?all=1` (a plain link, so it works without JavaScript). The cut is on
+  // comments so that `commentAnchor` counts the very same thing and every
+  // link the forge writes to a comment lands.
+  const everything = ctx.url.searchParams.get("all") === "1";
+  let hidden = 0;
+  if (!everything) {
+    let seen = 0;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i]!.comment && ++seen === THREAD_WINDOW) {
+        hidden = i;
+        break;
+      }
+    }
+  }
+  const shown = hidden === 0 ? entries : entries.slice(hidden);
+  const more = new URLSearchParams(ctx.url.searchParams);
+  more.set("all", "1");
+  const earlier =
+    hidden === 0
+      ? null
+      : html`<p class="tl-earlier small">
+          <a href="${ctx.url.pathname}?${more.toString()}">Show ${String(hidden)} earlier items</a>
+        </p>`;
 
   const opening = tlComment(
     commentCard({
@@ -334,7 +397,7 @@ export function conversation(
     node: html`<div class="timeline" id="conversation">
       ${opening}${when(options.editAction, (action) =>
         editForm(issue, action),
-      )}${entries.map((e) => e.node)}
+      )}${earlier}${shown.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
   };
@@ -353,7 +416,7 @@ export function threadComment(
     mark?: Mark | undefined;
   } = {},
 ): Html {
-  return html`<div class="tl-item" data-kind="comment" data-comment-id="${id}">
+  return html`<div class="tl-item" id="c-${id}" data-kind="comment" data-comment-id="${id}">
     <span class="tl-dot">${icon("comment")}</span>${commentCard({
       id,
       author,
@@ -903,6 +966,25 @@ export async function labelsSubmit(
         ? "Labels cleared."
         : `Labels set to ${applied.value.map((l) => l.name).join(", ")}.`,
   });
+}
+
+/** POST …/issues/:number/flow — put the issue first, or take it back. Writers only. */
+export async function flowSubmit(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const asked = field(form, "flow");
+  const dest = backTo(form, `${repoBase(found.repo)}/issues/${found.issue.number}`);
+  if (asked !== "0" && asked !== "1") return flashTo(ctx, dest, { tone: "danger", message: NOT_CHANGED });
+  const applied = await putFlowFirst(ctx.app, ctx.auth.user, found.repo, found.issue, asked === "1");
+  if (!applied.ok)
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: originError(applied.error) ?? THREAD_SAYS.labelsForbidden,
+    });
+  return flashTo(ctx, dest, { message: asked === "1" ? "Flow first." : "No longer first." });
 }
 
 // ---- teams ----

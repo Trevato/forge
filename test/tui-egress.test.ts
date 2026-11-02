@@ -134,12 +134,41 @@ describe("private destinations in the terminal", () => {
     expect(h.text()).toContain(CAMERA);
     expect(h.text()).toContain("asked for, not granted");
     await h.press("g");
+    expect(h.text()).toContain(`Let acme/arm reach ${ARM}?`);
+    expect(grants()).toEqual([]);
+    await h.press("y");
     expect(grants()).toEqual([ARM]);
+    expect(h.text()).toContain(`${ARM} is granted.`);
+    // Already granted: `g` asks nothing and grants nothing again.
+    await h.press("g");
+    expect(h.text()).not.toContain(`Let acme/arm reach ${ARM}?`);
     expect(h.text()).toContain("granted by ada");
     expect(changes().map((e) => e.kind)).toEqual(["app.egress.granted"]);
     await h.press("x");
     expect(grants()).toEqual([]);
     expect(changes().map((e) => e.kind).sort()).toEqual(["app.egress.granted", "app.egress.revoked"]);
+    h.stop();
+  });
+
+  test("a site admin who presses g then n grants nothing", async () => {
+    const before = changes().length;
+    const h = boot(ada);
+    await h.toAbout();
+    await h.press("e");
+    await h.press("g");
+    expect(h.text()).toContain(`Let acme/arm reach ${ARM}?`);
+    expect(h.text()).toContain("The app's outbound traffic to it is allowed until you revoke it with x.");
+    await h.press("n");
+    expect(h.text()).not.toContain(`Let acme/arm reach ${ARM}?`);
+    expect(grants()).toEqual([]);
+    expect(changes().length).toBe(before);
+    const view = await egressView(forge, ada, repo);
+    expect(view.ok && view.value.rows.find((r) => r.destination === ARM)?.granted).toBe(false);
+    await h.press("g");
+    expect(h.text()).toContain(`Let acme/arm reach ${ARM}?`);
+    await h.press("esc");
+    expect(h.text()).not.toContain(`Let acme/arm reach ${ARM}?`);
+    expect(grants()).toEqual([]);
     h.stop();
   });
 

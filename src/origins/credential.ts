@@ -49,7 +49,9 @@ export function credentialFor(
   app: App,
   origin: Origin,
 ): Result<ProviderCredential, CredentialError> {
-  if (sealedSecrets(app.db, origin.id) === undefined) return err("no_token");
+  // A row whose secret was blanked is as unconnected as a missing row.
+  const sealed = sealedSecrets(app.db, origin.id);
+  if (sealed === undefined || sealed.token === "") return err("no_token");
   return ok({
     kind: origin.kind,
     apiUrl: origin.apiUrl,

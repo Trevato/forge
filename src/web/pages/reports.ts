@@ -16,7 +16,10 @@ import {
   OUTSIDE_TITLE,
   REQUEST_MAX,
   TITLE_MAX,
+  byFiler,
+  filerWords,
   outsideWords,
+  type FiledBy,
   type Report,
 } from "../../core/reports.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
@@ -28,6 +31,7 @@ import {
   timePhase,
 } from "../../core/route_timing.ts";
 import { clientBucket } from "../../http/peer.ts";
+import { proofOf } from "../../http/report_filer.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -38,9 +42,10 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
+import { pageAddress } from "../studio/toolbar.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, empty, field as formField, time } from "../ui.ts";
+import { btn, card, empty, field as formField, messageText, time } from "../ui.ts";
 
 /** The repository, when it takes reports: public, and so seen by anyone. */
 function publicRepo(ctx: Ctx): Repo | undefined {
@@ -83,6 +88,13 @@ function reportForm(
             something is wrong. You need no account. A person reads it first;
             nothing acts on it before they do.
           </p>
+          ${ctx.auth.user
+            ? html`<p class="hint">
+                Sent as @${ctx.auth.user.username}: the people who keep it see
+                who sent it.
+              </p>`
+            : html`<p class="hint">Sent anonymously: you are not signed in.</p>`}
+          ${when(values.page !== "", () => html`<p class="small mono">About this page: ${values.page}</p>`)}
           <form class="mt" method="post" action="${base}/report">
             ${formField({
               label: "What is wrong",
@@ -152,7 +164,7 @@ function reportBody(ctx: Ctx, repo: Repo): Response {
   return reportForm(ctx, repo, {
     title: "",
     body: "",
-    page: ctx.url.searchParams.get("from") ?? "",
+    page: pageAddress(ctx.url.searchParams.get("from") ?? ""),
   });
 }
 
@@ -186,7 +198,13 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
   // person is told, and nothing is kept.
   if (field(form, "website") !== "")
     return flashTo(ctx, sent, { message: "Report sent." });
-  const filed = fileReport(ctx.app, repo, values, clientBucket(ctx.request));
+  const filed = fileReport(
+    ctx.app,
+    repo,
+    values,
+    clientBucket(ctx.request),
+    proofOf(ctx),
+  );
   if (filed.ok) return flashTo(ctx, sent, { message: "Report sent." });
   const refusal = filed.error;
   if (refusal.error === "not_found") return notFoundPage(ctx);
@@ -220,7 +238,7 @@ function reportCard(base: string, report: Report): Html {
     html`<p><strong>${report.title}</strong></p>
       ${when(
         report.body !== "",
-        () => html`<pre class="commit-body">${report.body}</pre>`,
+        () => messageText(report.body),
       )}
       ${when(report.page, (p) => html`<p class="hint">Sent from ${p}</p>`)}
       <form
@@ -240,7 +258,7 @@ function reportCard(base: string, report: Report): Html {
       </form>`,
     {
       tone: "attn",
-      head: html`From outside, not checked · ${time(report.createdAt)}`,
+      head: html`From outside, ${filerWords(report.filedBy)}, not checked · ${time(report.createdAt)}`,
       foot: html`${btn("Accept as an issue", {
           variant: "primary",
           icon: "issue",
@@ -251,6 +269,16 @@ function reportCard(base: string, report: Report): Html {
         </form>`,
     },
   );
+}
+
+const sameFiler = (a: FiledBy, b: FiledBy): boolean =>
+  a.how === b.how && a.name === b.name;
+
+/** A group's heading: the proven name, the claim as a claim, or anonymous. */
+function groupTitle(by: FiledBy): string {
+  if (by.how === "signed") return `@${by.name}`;
+  if (by.how === "claimed") return `“${by.name}”, claimed without a token`;
+  return "Anonymous";
 }
 
 // GET /:owner/:name/reports
@@ -280,8 +308,10 @@ export function reportsPage(ctx: Ctx): Response {
       })}
       <h1 class="mt">Reports from outside</h1>
       <p class="hint">
-        Sent without an account. No agent sees one until you accept it; then it
-        is your issue, with the words quoted.
+        Sent from outside, grouped by who sent them: an account a token or
+        session proved, a name claimed without one, or anonymous. No agent
+        sees one until you accept it; then it is your issue, with the words
+        quoted.
       </p>
       <div class="mt">
         ${waiting.value.length === 0
@@ -290,7 +320,14 @@ export function reportsPage(ctx: Ctx): Response {
               title: "Nothing waiting",
               note: `Anyone can report a problem at ${base}/report.`,
             })
-          : waiting.value.map((r) => reportCard(base, r))}
+          : byFiler(waiting.value).map(
+              (g) => html`<section class="mt">
+                <h2>${groupTitle(g)} · ${g.count}</h2>
+                ${waiting.value
+                  .filter((r) => sameFiler(r.filedBy, g))
+                  .map((r) => reportCard(base, r))}
+              </section>`,
+            )}
       </div>`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);

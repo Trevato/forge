@@ -347,6 +347,17 @@ describe("routing an issue", () => {
     expect(kept?.builder.user.username).toBe("scout");
     expect(kept?.by).toBe("rule");
     expect(asked).toHaveLength(1);
+    // The preference is a ranking: with scout busy and mason idle, mason
+    // takes it; with both busy, the favourite does (#7006).
+    const next = openIssue(withJev, alice, repo, { title: "Ship another banner" });
+    if (!next.ok) throw new Error(String(next.error));
+    const crew = listCrewRoles(withJev.db, repo.id);
+    const mason = getUserByName(withJev.db, "mason")!;
+    const busy = await routeIssue(withJev, repo, next.value, crew, new Map([[scout.id, 1]]));
+    expect(busy?.builder.user.username).toBe("mason");
+    expect(busy?.p).toBe(0.1);
+    const allBusy = await routeIssue(withJev, repo, next.value, crew, new Map([[scout.id, 1], [mason.id, 1]]));
+    expect(allBusy?.builder.user.username).toBe("scout");
     withJev.close();
   });
 });

@@ -94,16 +94,20 @@ export function createWebhook(
     secretValue,
     (input.kinds ?? "*").trim() || "*",
   );
-  return ok({ webhook: getWebhook(db, webhookId)!, secret: secretValue });
+  return ok({ webhook: getWebhook(db, input.repoId, webhookId)!, secret: secretValue });
 }
 
 export function getWebhook(
   db: Database,
+  repoId: string,
   webhookId: string,
 ): Webhook | undefined {
   const row = db
-    .query<WebhookRow, [string]>("SELECT * FROM webhook WHERE id = ?1")
-    .get(webhookId);
+    .query<
+      WebhookRow,
+      [string, string]
+    >("SELECT * FROM webhook WHERE id = ?1 AND repo_id = ?2")
+    .get(webhookId, repoId);
   return row ? toWebhook(row) : undefined;
 }
 

@@ -10,6 +10,7 @@
 import type { CheckDetail, Run } from "../core/runs.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
 import { oneLine } from "./words.ts";
+import { clip } from "../text/clip.ts";
 import { webvitals, type Entries } from "../release/webvitals.ts";
 
 /**
@@ -20,16 +21,13 @@ import { webvitals, type Entries } from "../release/webvitals.ts";
 export const GATE_SUMMARY_HEADING = "── gate summary";
 
 /** The sharded gate's line for a red shard that named no test (`tally` in scripts/shards.ts). */
-const UNNAMED_SHARD = /^shard [0-9]+ exited -?[0-9]+ without naming a test: /;
+const UNNAMED_SHARD =
+  /^shard [0-9]+ (?:exited -?[0-9]+ without naming a test: |killed after [0-9]+ s, running )/;
 
 /** A summary is one line on a card; a name from a subprocess is bounded to fit it. */
 const SUMMARY_MAX = 200;
 
-function truncate(text: string): string {
-  return text.length > SUMMARY_MAX
-    ? `${text.slice(0, SUMMARY_MAX - 1)}…`
-    : text;
-}
+const truncate = (text: string): string => clip(text, SUMMARY_MAX);
 
 export interface CheckFailure {
   /** The one line a card shows, already bounded. */
@@ -55,9 +53,19 @@ export function summariseCheckFailure(
   const detail = parseBunTestFailure(lines);
   if (detail !== undefined) {
     const total = detail.passed + detail.failed;
-    const name = detail.names[0] ?? "";
+    const names = [...new Set(detail.names)].slice(0, 3);
+    const quoted = names.map((n) => `"${n}"`);
+    const more = detail.failed - names.length;
+    const list =
+      names.length === 0
+        ? '""'
+        : more > 0
+          ? `${quoted.join(", ")} and ${more} more`
+          : quoted.length > 1
+            ? `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}`
+            : quoted[0]!;
     return {
-      summary: truncate(`${detail.failed} of ${total} tests — "${name}"`),
+      summary: truncate(`${detail.failed} of ${total} tests — ${list}`),
       detail,
     };
   }

@@ -32,11 +32,12 @@ spec:
       annotations:
         plat.sh/user-env-rev: {{ .Values.userEnvRev | default "init" | quote }}
     spec:
-      # An hour for an SSH session to end on its own before the old pod is
-      # killed anyway.
-      # The crew drains for three minutes, then runs are cut and resume on
-      # the next pod; a little more than that here.
-      terminationGracePeriodSeconds: 300
+      # The crew, checks and merge-queue gates under way get ten seconds
+      # (FORGE_CREW_DRAIN_S, FORGE_CHECKS_DRAIN_S), then are handed back
+      # queued to resume on the next pod: the old pod stops writing at once,
+      # so the new one's queue work waits seconds, not minutes (#7799). The
+      # long grace stays for SSH sessions that are still connected.
+      terminationGracePeriodSeconds: 720
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

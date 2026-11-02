@@ -18,6 +18,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { promote } from "./helpers/members.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { listVia } from "./mcp-list.ts";
 
 describe("confirm_wait over MCP", () => {
   let dataDir: string;
@@ -123,7 +124,7 @@ describe("confirm_wait over MCP", () => {
   });
 
   test("is listed with a schema", async () => {
-    const listed = await post(rw, "tools/list", {});
+    const listed = await listVia((p) => post(rw, "tools/list", p));
     const t = listed.result.tools.find((x: any) => x.name === "confirm_wait");
     expect(t.inputSchema.required).toEqual(["app", "issue", "blocker"]);
   });

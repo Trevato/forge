@@ -7,12 +7,17 @@
  */
 import type { App } from "../app.ts";
 import { SOURCES } from "../boards/sources.ts";
-import { conflictedPulls, conflictedSays } from "../flow/conflicted.ts";
+import { conflictedPulls, conflictedSays, rebaseLane, rebaseLaneSays } from "../flow/conflicted.ts";
+import { firedAlarms } from "../flow/alarms.ts";
+import { readVitals, vitalsFor, vitalsLine, vitalsMisses } from "../flow/vitals.ts";
+import { parkedSays, readParked } from "../flow/parked.ts";
+import { readKeeper } from "../flow/keeper.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { type QueueReading, readQueues } from "../flow/queue.ts";
 import { reviewersBusy, reviewingSays } from "../flow/reviewing.ts";
 import { requestedSays, requestedWaits } from "../flow/requested.ts";
 import { readThroughput, stageOut, throughputSays } from "../flow/throughput.ts";
+import { readVerified, verifiedSays } from "../flow/verified.ts";
 import type { Reader } from "../actions/telemetry.ts";
 import { agentView, live } from "./live.ts";
 import type { SystemView } from "./view.ts";
@@ -27,13 +32,29 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
   const flow = readThroughput(app.db, stages.map((s) => s.key), now);
   const dup = systemFor(app, reader).duplicates;
   const conflicted = conflictedPulls(app.db, reader.kind === "agent");
+  const lane = rebaseLane(app.db, conflicted);
   const requested = requestedWaits(app.db, reader.kind === "agent");
   const busy = reviewersBusy(app.db, reader.kind === "agent");
+  // Dollars only for the owner and an agent holding telemetry:read (#6424).
+  const vitals = vitalsFor(readVitals(app.db, now, reader.kind === "agent"), reader.kind === "owner" || reader.spend === true);
+  const parked = readParked(app.db, now, reader.kind === "agent");
   return {
     says: verdict(stages, now.getTime()),
+    // The cause binding landings now and the keeper's last act (#7645).
+    keeper: readKeeper(app.db, reader.kind === "owner"),
+    // How long each main has gone unverified after landing (#7786); private repositories for the owner only.
+    verified: readVerified(app, reader.kind === "owner").map((row) => ({ ...row, says: verifiedSays(row, now.getTime()) })),
+    // Issues the crew parked in the last 24 h and 7 d, the newest three named (#6471).
+    parked: { says: parkedSays(parked), ...parked },
+    // Open pulls, opened and landed in 1 h and 6 h, and conflicted, against #5924's targets (#5935).
+    vitals: { says: vitalsLine(vitals), misses: vitalsMisses(vitals), ...vitals },
+    // The four alarms (#5930) that are firing now; empty when none is.
+    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent" }),
     // Review runs in flight per reviewer, cut to public repositories for an agent (#4733).
     reviewing: { says: reviewingSays(busy), reviewers: busy },
     conflicted: { says: conflictedSays(conflicted, now.getTime()), pulls: conflicted },
+    // conflicted N, rebasing M, room R: a stall in the lane reads in a minute (#6140).
+    rebases: { ...lane, says: rebaseLaneSays(lane) },
     // Pulls with changes requested, by whom they wait on (#2172).
     requested: {
       builder: { says: requestedSays(requested.builder, "builder", now.getTime()), pulls: requested.builder },
@@ -78,17 +99,67 @@ export function sourcesOut() {
 
 /** The node's 15-s points for the last hour: the `machine` source's `node` and `forge` targets, nothing per-cell. */
 export function historyFor(app: App) {
-  return app.db
+  return historyOver(app, 1);
+}
+
+/** Most points one series carries in `historyOver`. */
+export const HISTORY_POINTS = 300;
+
+type HistoryPoint = {
+  target: string;
+  at: string;
+  cpuCores: number | null;
+  /** The busiest sample in the bucket, so a short spike survives the averaging. */
+  cpuCoresMax: number | null;
+  memoryBytes: number | null;
+  load: number | null;
+};
+
+/**
+ * The same points over the last `hours` (15-s steps inside the day, 5-min beyond it), each target
+ * averaged down to at most `HISTORY_POINTS`, so the answer is bounded however long the window.
+ */
+export function historyOver(app: App, hours: number) {
+  const step = hours <= 24 ? 15 : 300;
+  const rows = app.db
     .query<
-      { target: string; at: string; cpu_cores: number | null; memory_bytes: number | null; load: number | null },
-      []
+      { target: string; at: string; cpu_cores: number | null; cpu_cores_max: number | null; memory_bytes: number | null; load: number | null },
+      [number, string]
     >(
-      `SELECT target, at, cpu_cores, memory_bytes, load FROM machine_sample
-        WHERE step = 15 AND target IN ('node','forge')
-          AND at >= strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour') ORDER BY at, target`,
+      `SELECT target, at, cpu_cores, cpu_cores_max, memory_bytes, load FROM machine_sample
+        WHERE step = ?1 AND target IN ('node','forge')
+          AND at >= strftime('%Y-%m-%dT%H:%M:%fZ','now', ?2) ORDER BY at, target`,
     )
-    .all()
-    .map((r) => ({ target: r.target, at: r.at, cpuCores: r.cpu_cores, memoryBytes: r.memory_bytes, load: r.load }));
+    .all(step, `-${hours} hours`)
+    .map((r) => ({
+      target: r.target,
+      at: r.at,
+      cpuCores: r.cpu_cores,
+      cpuCoresMax: r.cpu_cores_max ?? r.cpu_cores,
+      memoryBytes: r.memory_bytes,
+      load: r.load,
+    }));
+  const mean = (xs: (number | null)[]) => {
+    const v = xs.filter((x): x is number => x !== null);
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  };
+  const out: HistoryPoint[] = [];
+  for (const target of ["node", "forge"]) {
+    const own = rows.filter((r) => r.target === target);
+    const size = Math.ceil(own.length / HISTORY_POINTS) || 1;
+    for (let i = 0; i < own.length; i += size) {
+      const g = own.slice(i, i + size);
+      out.push({
+        target,
+        at: g[0]!.at,
+        cpuCores: mean(g.map((r) => r.cpuCores)),
+        cpuCoresMax: g.reduce<number | null>((m, r) => (r.cpuCoresMax === null ? m : Math.max(m ?? -Infinity, r.cpuCoresMax)), null),
+        memoryBytes: mean(g.map((r) => r.memoryBytes)),
+        load: mean(g.map((r) => r.load)),
+      });
+    }
+  }
+  return out.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.target < b.target ? -1 : 1));
 }
 
 export const WELCOME_LABEL = "help wanted";

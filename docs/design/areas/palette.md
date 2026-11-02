@@ -6,3 +6,8 @@ The command palette is the keyboard-first fuzzy-find overlay (`⌘K` / `Ctrl K`,
 - `.palette-heading` — a group's small, uppercase, faint heading; the group's `aria-labelledby` points at it.
 - `.palette-item` — one result row: an icon, the title truncated on one line, and its category pushed to the end. The row the keyboard or pointer has selected (`aria-selected="true"`) carries the one highlight; the finder keeps plain hover.
 - `.palette-empty` — the note centred in the list when nothing matches the query.
+- `.palette-input` — the search field across the top of the dialog: full width, borderless but for a rule beneath it, 48px tall, with no focus ring of its own (the system outline under forced colours).
+- `.palette-list` — the scrolling results area under the input: a fixed height (not a ceiling) so the dialog does not jump as rows come and go.
+- `.palette-foot` — the faint one-line strip of key hints under the list, set off by a rule above it.
+
+The palette's tell row (`data-tell`, last in the list) sends the typed sentence to `/tell`. Its answer is one `.toast[data-palette-tell]` at the top of `#main`, drawn by `tellFromHere()` in `src/web/client.ts` from existing parts only: `.toast` and `.toast-body`, a link-variant small `.btn` as the dismiss ×, and focus moved to the toast (`tabindex="-1"`, `role="status"`) because the palette that held it has just closed. It clears itself after 12 seconds. No new component class.

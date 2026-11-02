@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { beatKeyOf, childDirOf } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
-import { createUser } from "../src/core/users.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -245,6 +245,17 @@ describe("family heartbeats", () => {
     expect((await familyView(parent, true, () => ({ total: 0, running: 0, notRunning: [] }))).children[0]?.apps).toBeNull();
   });
 
+  test("the terminal's family lines say where each child runs, as /forges does", async () => {
+    const view = await familyView(parent, true);
+    const lineOf = (v: typeof view) => familyLines(v).find(([k]) => k === "child maria")?.[1] ?? "";
+    expect(view.children[0]?.placement).toBe("hosted");
+    expect(lineOf(view)).toEndWith(" · hosted");
+    const placed = (placement: string) => ({ ...view, children: view.children.map((c) => ({ ...c, placement })) });
+    expect(lineOf(placed("own cell"))).toEndWith(" · own cell");
+    expect(lineOf(placed("hosted: its cell did not come up"))).toEndWith(" · hosted: its cell did not come up");
+    expect(lineOf({ ...view, children: view.children.map((c) => ({ ...c, placement: null })) })).not.toContain("hosted");
+  });
+
   test("the terminal's Family card shows the apps line", async () => {
     const view = await familyView(parent, true, two);
     const { app } = createForgeApp(
@@ -335,9 +346,14 @@ describe("family heartbeats", () => {
     expect(sent[0]?.sig).toBe(sign(key, sent[0]!.body));
     expect(Object.keys(JSON.parse(sent[0]!.body)).sort()).toEqual([
       "at",
+      "ceilingUsd",
       "children",
+      "claimed",
+      "everyday",
+      "lastTellAt",
       "name",
       "openProposals",
+      "spendTodayUsd",
       "version",
     ]);
     // A forge that was not spawned has no one to tell.
@@ -437,5 +453,25 @@ describe("family heartbeats", () => {
       await writeFile(parentJson, original);
       await rm(join(dataDir, "upstream.json"), { force: true });
     }
+  });
+
+  test("a stored beat with spend shows on /forges and in the MCP forges tool", async () => {
+    const body = beat({ at: Date.now() + 60_000, spendTodayUsd: 8.5, ceilingUsd: 10 });
+    expect((await post(body, sign(key, body))).status).toBe(200);
+    const page = await (await fetch(`${servers.url}/forges`, { headers: { cookie: adminCookie } })).text();
+    expect(page).toContain('data-spend="warn"');
+    expect(page).toContain("$8.50 of $10 today");
+    const alice = getUserByName(parent.db, "alice")!;
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${createToken(parent.db, alice.id, "mcp", "rw").token}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "forges", arguments: {} } }),
+    });
+    const out = JSON.parse(((await res.json()) as any).result.content[0].text);
+    expect(out.forges.find((f: any) => f.name === "maria")).toMatchObject({ spendTodayUsd: 8.5, ceilingUsd: 10 });
   });
 });

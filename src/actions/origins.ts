@@ -85,6 +85,7 @@ import {
   type FlowRow,
 } from "../origins/oauth.ts";
 import { forgetProvider, providerFor } from "../origins/providers/index.ts";
+import { forgetTokenReach } from "../origins/token-reach.ts";
 import {
   requestSyncNow,
   syncOrigin,
@@ -203,6 +204,72 @@ export async function connectOrigin(
   });
 }
 
+export type ReplaceTokenError =
+  | "unauthorized"
+  | "not_found"
+  | "rate_limited"
+  | "bad_token"
+  | "unreachable"
+  | "other_account";
+
+/**
+ * Put a new pasted token on an origin that is already connected — one that
+ * sees more, or one that still works. The row keeps its id, so its mirrors
+ * and pins stay attached; the token must answer for the same account, or
+ * it is a different origin and Connect is the way to add it. The picker's
+ * rows are listed again at once with what the new token sees.
+ */
+export async function replaceOriginToken(
+  app: App,
+  actor: User | undefined,
+  originId: string,
+  token: string,
+): Promise<Result<Origin, ReplaceTokenError>> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const origin = getOriginFor(app.db, user.value.id, originId);
+  if (!origin) return err("not_found");
+  if (tooManyAttempts(app, user.value.id)) return err("rate_limited");
+  const secret = token.trim();
+  if (secret === "") return err("bad_token");
+
+  const identity = await providerFor(
+    staticCredential({
+      kind: origin.kind,
+      apiUrl: origin.apiUrl,
+      webUrl: origin.webUrl,
+      token: secret,
+    }),
+  ).whoami();
+  if (!identity.ok)
+    return err(
+      identity.error.error === "unreachable" ? "unreachable" : "bad_token",
+    );
+  if (identity.value.login.toLowerCase() !== origin.login.toLowerCase())
+    return err("other_account");
+
+  renewOrigin(app.db, app.config.dataDir, origin.id, {
+    token: secret,
+    authKind: "pat",
+  });
+  forgetProvider({ dataDir: app.config.dataDir, originId: origin.id });
+  forgetTokenReach(app.config.dataDir, origin.id);
+  app.bus.append({
+    kind: "origin.connected",
+    actorId: user.value.id,
+    payload: {
+      originId: origin.id,
+      host: origin.webUrl,
+      login: origin.login,
+      authKind: "pat",
+      renewed: true,
+    },
+  });
+  const renewed = getOriginById(app.db, origin.id)!;
+  await listRemoteRepos(app, user.value, origin.id, true);
+  return ok(renewed);
+}
+
 /** A connected origin, and the frozen mirrors connecting it brought back. */
 export type Connected = Origin & {
   readonly reattached: readonly Reattachment[];
@@ -237,6 +304,7 @@ function storeOrigin(
       ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
     });
     forgetProvider({ dataDir: app.config.dataDir, originId: existing.id });
+    forgetTokenReach(app.config.dataDir, existing.id);
     app.bus.append({
       kind: "origin.connected",
       actorId: user.id,
@@ -316,6 +384,7 @@ export async function disconnectOrigin(
 
   deleteOrigin(app.db, user.value.id, originId);
   forgetProvider({ dataDir: app.config.dataDir, originId });
+  forgetTokenReach(app.config.dataDir, originId);
   app.bus.append({
     kind: "origin.disconnected",
     actorId: user.value.id,

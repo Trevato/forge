@@ -105,3 +105,25 @@ test("small, chosen or left alone, records no size", async () => {
   expect(back.screen).toContain("The plan");
   expect(back.size).toBeUndefined();
 });
+
+test("a full child quota is said when the screen opens, before anything is typed", async () => {
+  const terminal = headlessTerminal(120, 40);
+  const { app: tui, session } = createForgeApp(
+    app,
+    { sshUsername: "alice", remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user: admin },
+    { terminal, exitHooks: false },
+  );
+  process.env["FORGE_CHILD_CPUS"] = "1";
+  await Bun.write(join(dir, "spawn", "held.json"), JSON.stringify({ name: "held", bodyId: "b", size: "small" }));
+  try {
+    tui.start();
+    tui.ctx.push(newForgeScreen(session, tui.ctx));
+    await settleApp(tui);
+    expect(tui.screen.toText()).toContain("cannot hold another child");
+    expect(tui.screen.toText()).toContain("FORGE_CHILD_CPUS=1");
+    expect(tui.screen.toText()).toContain("Name");
+  } finally {
+    delete process.env["FORGE_CHILD_CPUS"];
+    tui.stop?.();
+  }
+});

@@ -166,6 +166,8 @@ export const utilities = /* css */ `
 .grow { flex: 1; min-width: 0; }
 .spacer { flex: 1; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nowrap { white-space: nowrap; }
+.break { overflow-wrap: anywhere; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .stack-tight { gap: 4px; }
 .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -185,6 +187,7 @@ export const utilities = /* css */ `
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 [hidden] { display: none !important; }
+[data-region] { display: contents; }
 
 @media (min-width: 720px) {
   .shell { padding: 0 24px 96px; }

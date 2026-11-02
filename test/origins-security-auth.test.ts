@@ -1178,6 +1178,9 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     expect(
       (await api("/api/v1/repos/alice/widgets", { none: true })).status,
     ).toBe(404);
+    // The settings trail says from what to what, in the one shape every writer uses.
+    const narrowed = listEvents(app.db, { kind: "repo.settings_updated", limit: 1 })[0]!;
+    expect(narrowed.payload["changed"]).toEqual({ visibility: { from: "public", to: "private" } });
 
     // Upstream goes public again. The sync does NOT widen the mirror back:
     // narrowing is the origin's call to make for us, widening is the owner's

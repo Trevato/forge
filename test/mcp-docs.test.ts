@@ -8,38 +8,9 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listAt } from "./mcp-list.ts";
 
 quietLogs();
-
-/**
- * Tools that answer in tools/list and have no row yet. This list only shrinks:
- * document a tool, then delete its line. One name per line, so two pulls never edit the same line.
- * The test fails until a documented tool's line is deleted here.
- */
-const undocumented = new Set<string>([
-  "sizes",
-  "here",
-  "share",
-  "variant",
-  "asks",
-  "asks_act",
-  "asks_decide",
-  "asks_proposal",
-  "proposal_tokens",
-  "asks_undecide",
-  "issue_teams",
-  "model_grant",
-  "model_ceiling",
-  "spend",
-  "attach_look",
-  "capacity",
-  "scorecard",
-  "flow",
-  "limits",
-  "teams",
-  "quotas",
-  "report",
-]);
 
 let dataDir: string;
 let servers: Servers;
@@ -59,16 +30,7 @@ beforeAll(async () => {
   });
   if (!made.ok) throw new Error(JSON.stringify(made.error));
   const token = createToken(app.db, made.value.id, "admin", "admin").token;
-  const res = await fetch(`${servers.url}/mcp`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-  });
-  served = JSON.parse(await res.text()).result.tools.map((t: { name: string }) => t.name);
+  served = (await listAt(servers.url, token)).result.tools.map((t: { name: string }) => t.name);
 });
 
 afterAll(async () => {
@@ -94,21 +56,10 @@ async function documented(): Promise<string[]> {
 test("every tool in tools/list has a row in docs/MCP.md", async () => {
   const rows = new Set(await documented());
   expect(rows.size).toBeGreaterThan(0);
-  expect(served.filter((n) => !rows.has(n) && !undocumented.has(n))).toEqual([]);
+  expect(served.filter((n) => !rows.has(n))).toEqual([]);
 });
 
 test("every row in docs/MCP.md names a tool that exists", async () => {
   const live = new Set(served);
   expect((await documented()).filter((n) => !live.has(n))).toEqual([]);
-});
-
-test("no undocumented name has a row in docs/MCP.md: delete each stale line", async () => {
-  const rows = new Set(await documented());
-  const stale = [...undocumented].filter((n) => rows.has(n));
-  expect(stale.map((n) => `${n}: documented, delete it from the undocumented set`)).toEqual([]);
-});
-
-test("every undocumented name is a tool tools/list answers", () => {
-  const unknown = [...undocumented].filter((n) => !served.includes(n));
-  expect(unknown.map((n) => `${n}: not in tools/list, delete it from the undocumented set`)).toEqual([]);
 });

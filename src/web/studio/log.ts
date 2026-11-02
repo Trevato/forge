@@ -71,6 +71,8 @@ export function logBox(opts: {
   /** The lines are already the tail of a longer log (`readRunLog` cut it):
    * the link then reads all of what was read, not all of the run. */
   truncated?: boolean;
+  /** Give each row an `id` of `L<its number in the log>`: one log to a page. */
+  anchors?: boolean;
 }): Html {
   const { shown, hidden } = logWindow(opts.lines, opts.cap);
   return html`<div
@@ -95,7 +97,7 @@ export function logBox(opts: {
               >.`}
         </p>`,
     )}
-    ${shown.map((l) => logLine(l, opts.who))}
+    ${shown.map((l, i) => logLine(l, opts.who, opts.anchors === true ? `L${hidden + i + 1}` : undefined))}
     ${when(
       opts.pulse === true,
       () =>

@@ -106,6 +106,26 @@ export function ttyRefusalText(
 }
 
 /**
+ * Who may open an app's terminal or ask it a question over ssh: the one
+ * gate, so every door refuses in the same words. An app you may not see is
+ * not there.
+ */
+export function appGate(
+  forge: Forge,
+  user: User | undefined,
+  target: { app: AppRecord },
+): TtyRefusal | undefined {
+  const repo = getRepoById(forge.db, target.app.repoId);
+  if (!repo || !canRead(forge.db, repo, user)) return "not_found";
+  if (target.app.access === "private" && user === undefined) return "private";
+  // A private app's terminal is its writers' and crew's: a person the app
+  // names may enter the app, not its terminal (#752).
+  if (!canEnterApp(forge.db, repo, target.app, user, { named: false }))
+    return "not_found";
+  return undefined;
+}
+
+/**
  * Run the app's terminal on `host` until it exits. Every reason it cannot
  * is a refusal the caller says in words; a program that ran resolves with
  * its exit code once the pty is closed.
@@ -116,16 +136,9 @@ export async function runAppTty(
   user: User | undefined,
   target: { app: AppRecord; env: EnvName },
 ): Promise<Result<number, { refusal: TtyRefusal; detail: string }>> {
-  const repo = getRepoById(forge.db, target.app.repoId);
-  // The same conflation as everywhere: an app you may not see is not there.
-  if (!repo || !canRead(forge.db, repo, user))
-    return err({ refusal: "not_found", detail: "" });
-  if (target.app.access === "private" && user === undefined)
-    return err({ refusal: "private", detail: "" });
-  // A private app's terminal is its writers' and crew's: a person the app
-  // names may enter the app, not its terminal (#752).
-  if (!canEnterApp(forge.db, repo, target.app, user, { named: false }))
-    return err({ refusal: "not_found", detail: "" });
+  const refused = appGate(forge, user, target);
+  if (refused !== undefined) return err({ refusal: refused, detail: "" });
+  const repo = getRepoById(forge.db, target.app.repoId)!;
   if (host.term === undefined) return err({ refusal: "no_pty", detail: "" });
   const runtime = appsRuntime(forge);
   // A terminal opened on a sleeping environment wakes it first.

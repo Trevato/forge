@@ -17,7 +17,9 @@ import { routeIssue, type Routed } from "../crew/route.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireParticipant } from "./access.ts";
 import { assignIssue, openIssue, type MirrorError } from "./issues.ts";
+import { parseFrom } from "./tell_from.ts";
 import { requireVerified } from "./verify.ts";
+import { VERIFY_FIRST } from "./verify_words.ts";
 
 export interface Told {
   readonly issue: Issue;
@@ -43,22 +45,12 @@ export function parseVariants(raw: unknown): number | undefined {
   return raw >= 1 && raw <= VARIANTS_MAX ? raw : undefined;
 }
 
-/** The longest `from` a tell may carry. */
-export const FROM_MAX = 512;
-
 /**
- * `from` as the doors take it: absent is none; otherwise a same-forge path
- * (leading single `/`, no scheme, no backslash, no control or space) of at
- * most 512 characters. Undefined for no.
+ * An app's own address as a place a tell was said: scheme and host (and
+ * port) only. Only the app terminal's door builds one and says `fromApp`; every other
+ * caller takes `parseFrom`'s paths alone.
  */
-export function parseFrom(raw: unknown): string | null | undefined {
-  if (raw === undefined || raw === null) return null;
-  if (typeof raw !== "string" || raw.length === 0 || raw.length > FROM_MAX)
-    return undefined;
-  if (!raw.startsWith("/") || raw.startsWith("//")) return undefined;
-  if (/[\\\s\x00-\x1f\x7f<>()\[\]`"'*]/.test(raw)) return undefined;
-  return raw;
-}
+const APP_ADDRESS = /^https?:\/\/[a-z0-9][a-z0-9.-]*(?::\d{1,5})?$/i;
 
 /** What a bad `from` is refused with, at every door. */
 export const FROM_WORDS =
@@ -87,6 +79,7 @@ export async function tell(
   said: string,
   variants = 1,
   from: string | null = null,
+  fromApp = false,
 ): Promise<Result<Told, TellError>> {
   // A tell is a run: only someone who may direct the crew here says one,
   // and a refused tell opens nothing (`crew/direct.ts`).
@@ -100,7 +93,11 @@ export async function tell(
   if (text === "") return err("empty");
   // One long line becomes only a title, so the body cap never sees it.
   if (text.length > MAX_BODY) return err("body_too_long");
-  if (from !== null && parseFrom(from) !== from) return err("bad_from");
+  if (from !== null && !(fromApp && APP_ADDRESS.test(from))) {
+    const path = parseFrom(from);
+    if (typeof path !== "string") return err("bad_from");
+    from = path;
+  }
   const firstLine = text.split(/\n/)[0]!.trim();
   const title =
     firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
@@ -153,7 +150,7 @@ export async function tell(
 }
 
 /** What every door says when a tell is refused for an unverified address. */
-export const UNVERIFIED_WORDS = "verify your email first";
+export const UNVERIFIED_WORDS = VERIFY_FIRST;
 
 /** What both doors say when `tell` refuses a text over `MAX_BODY`. */
 export const TOO_LONG_WORDS = "That is too long to tell in one go.";

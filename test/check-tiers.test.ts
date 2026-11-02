@@ -510,6 +510,14 @@ describe("the tiers in the forge's own checks service", () => {
     expect(again.ok).toBe(true);
     expect(again.lines.join("\n")).toContain("already proven green by gate-");
     expect(again.lines.join("\n")).not.toContain("FULL-GREEN");
+
+    // Each gate leaves its slot minutes, opened and closed, for the flow (#6426).
+    const traced = app.db
+      .query<{ n: number }, [string, string]>(
+        "SELECT COUNT(*) AS n FROM check_gate WHERE issue_id = ?1 AND commit_oid = ?2 AND finished_at >= started_at",
+      )
+      .get(pull.id, branched.value.commitOid);
+    expect(traced?.n).toBe(2);
   });
 
   test("a check's environment carries its cell's CPU limit (#2257)", async () => {
@@ -567,6 +575,8 @@ describe("the tiers in the forge's own checks service", () => {
     const pull = listPulls(app.db, repo.id, { state: "open", limit: 5 })[0]!;
     const done = await checks.gate(repo, pull, red.value.commitOid);
     expect(done.ok).toBe(false);
+    // Red in the check step, not before it: the queue searches it (#5276).
+    expect(done.stage).toBe("check");
     const failed = failuresOf(done.lines);
     expect(failed).toEqual({ tests: ["boom"], files: ["test/x.test.ts"] });
     const verdict = landVerdict(false, failed.tests, failed.files);

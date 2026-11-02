@@ -22,7 +22,7 @@
  * looking at a clone or at somebody else's server.
  */
 
-import { parseFrom } from "../actions/tell.ts";
+import { parseFrom } from "../actions/tell_from.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
 import { isPinned } from "../core/pins.ts";
@@ -114,9 +114,9 @@ export interface ProposeTarget {
 const forkNameFor = (login: string, fullName: string): string =>
   `${login}/${fullName.split("/")[1] ?? fullName}`;
 
-/** `codeberg.org` out of `https://codeberg.org/octo/widgets`. */
+/** `codeberg.org` out of `https://codeberg.org/octo/widgets`; "" for anything that is not a URL with a host. */
 export function hostOf(url: string): string {
-  return URL.parse(url)?.host ?? url;
+  return URL.parse(url)?.host ?? "";
 }
 
 // ---- building one ----

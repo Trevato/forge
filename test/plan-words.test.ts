@@ -14,7 +14,7 @@ const READERS = [
   "src/actions/plan.ts",
   "src/actions/limb_replan.ts",
   "src/tui/screens/limbs.ts",
-  "src/contract/openapi.ts",
+  "src/contract/openapi/routes/postApiV1ReposOwnerNameIssuesNumberDependencies.ts",
 ];
 
 const source = (path: string) =>

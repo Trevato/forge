@@ -34,6 +34,7 @@ export async function homeArchive(ctx: Ctx): Promise<Response> {
   if (ids.length === 0 || ids.length > MAX_ROWS)
     return redirect("/", {
       url: ctx.url,
+      forgeUrl: ctx.app.config.url,
       flash: { tone: "danger", message: "Tick the apps to archive first." },
     });
   const op = await applyFleetIds(
@@ -47,6 +48,7 @@ export async function homeArchive(ctx: Ctx): Promise<Response> {
   if (!op.ok)
     return redirect("/", {
       url: ctx.url,
+      forgeUrl: ctx.app.config.url,
       flash: { tone: "danger", message: op.error.message },
     });
   return redirect(`/home/archived/${op.value.id}`);
@@ -110,6 +112,7 @@ export async function homeArchiveUndo(ctx: Ctx): Promise<Response> {
   if (!undone.ok)
     return redirect("/", {
       url: ctx.url,
+      forgeUrl: ctx.app.config.url,
       flash: { tone: "danger", message: undone.error.message },
     });
   return redirect(`/home/archived/${undone.value.id}`);

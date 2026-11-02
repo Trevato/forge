@@ -437,7 +437,7 @@ describe("web pages end to end", () => {
     const path = match![1]!;
     expect(
       (await fetch(base, { headers: { cookie } })).headers.get("cache-control"),
-    ).toBe("no-cache");
+    ).toBe("private, no-cache");
 
     const response = await fetch(`${base}${path}`);
     expect(response.status).toBe(200);
@@ -575,7 +575,7 @@ describe("web pages end to end", () => {
     }
   });
 
-  test("a path under no route at all gets the forge's page for a browser, and no_route for anyone else", async () => {
+  test("a path under no route at all gets the forge's page unless the caller asks for JSON", async () => {
     const browser = await fetch(`${base}/ada/engine/frobnicate`, {
       headers: {
         accept:
@@ -593,12 +593,15 @@ describe("web pages end to end", () => {
     expect(html).toContain("404");
     expect(html).toContain("Go home");
 
-    // No Accept header at all — a plain script or `curl` — keeps the JSON
-    // contract, same as before this page existed.
+    // No Accept header at all — curl, a crawler, a link unfurler — gets the page
+    // too (#6733); a caller that asks for JSON keeps the contract.
     const plain = await fetch(`${base}/ada/engine/frobnicate`);
     expect(plain.status).toBe(404);
-    expect(plain.headers.get("content-type")).toContain("application/json");
-    const body = (await plain.json()) as { error: string; message: string };
+    expect(plain.headers.get("content-type")).toContain("text/html");
+    const asked = await fetch(`${base}/ada/engine/frobnicate`, { headers: { accept: "application/json" } });
+    expect(asked.status).toBe(404);
+    expect(asked.headers.get("content-type")).toContain("application/json");
+    const body = (await asked.json()) as { error: string; message: string };
     expect(body.error).toBe("no_route");
     expect(body.message).toContain("/ada/engine/frobnicate");
 
@@ -609,6 +612,27 @@ describe("web pages end to end", () => {
     expect(api.headers.get("content-type")).toContain("application/json");
     const apiBody = (await api.json()) as { error: string };
     expect(apiBody.error).toBe("no_route");
+  });
+
+  test("a page's 404 is JSON for a caller whose Accept prefers JSON, HTML otherwise", async () => {
+    const agent = await fetch(`${base}/nope`, {
+      headers: { accept: "application/json" },
+    });
+    expect(agent.status).toBe(404);
+    expect(agent.headers.get("content-type")).toContain("application/json");
+    expect(agent.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(agent.headers.get("referrer-policy")).toBeTruthy();
+    expect(agent.headers.get("content-security-policy")).toBeTruthy();
+    const body = (await agent.json()) as { error: string; message: string; docs: string };
+    expect(body.error).toBe("not_found");
+    expect(body.message.length).toBeGreaterThan(0);
+    expect(body.docs).toBe(`${base}/llms.txt`);
+
+    for (const accept of ["text/html,application/xhtml+xml,*/*;q=0.8", "*/*", undefined]) {
+      const other = await fetch(`${base}/nope`, accept ? { headers: { accept } } : {});
+      expect(other.status).toBe(404);
+      expect(other.headers.get("content-type")).toContain("text/html");
+    }
   });
 });
 

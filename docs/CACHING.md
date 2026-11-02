@@ -183,6 +183,10 @@ and rounds to 0.0):
   event on the repository (see "Gaps") and spend reported by another
   process.
 
+### 2b. The API map: the finished answer, by the write clock (#3321)
+
+`GET /api/v1/repos/:owner/:name/map` keeps its whole answer in `web/map_snapshot.ts`, keyed by repository, the viewer's sealed scope and the UTC minute (the week's merge window slides with time) and valid only under the forge's write clock, so a plan, or any write, drops it before the next read. A hit still names the five phases, flagged as hits. Test: `test/map-seed-timing.test.ts`.
+
 ## Home (`/`)
 
 ### 3. The feed's first page: per viewer
@@ -267,10 +271,36 @@ fixture; all three caches hit):
 | `panels`      |       0.1 |       0.1 |
 | `feed`        |       7.1 |      10.0 |
 
+### 6. The waiting line: per viewer (#5806)
+
+- **What:** how many asks wait on the viewer and the oldest's time (the
+  `waitingOn` scan over up to 200 repositories); the words are made fresh
+  for each request.
+- **Key:** `waiting:{viewerId}`, read for the signed-in viewer only, so no
+  one reads another's count. `waiting` in `Server-Timing` carries `desc="hit"`.
+- **Invalidated by:** every write, through the write clock (dismissals,
+  assignments, pulls, holds), as the KPI row is.
+- **Max age:** 30 seconds.
+- **Measured** (`test/home-200.test.ts`: 200 repositories, 100 assigned asks,
+  owner, second look): the miss cost `waiting` 7.5 ms, the largest read after
+  `feed`; a hit is under 0.1 ms. Every phase over 20 ms is named in the
+  test's output; none is over 20 ms in the sandbox.
+
 ### Not cached on home
 
 The anonymous door (1.5 ms, 10 statements), the app shelf, and the
 "On you" card. Each costs less than its cache's key would.
+
+## Telemetry does not invalidate (#7896)
+
+The write clock counts every row the connection changes, and a signed-in
+visit itself writes: route timings a second after the request, usage
+counts, flag reads, the session's last-seen time, the home visit, page
+vitals, machine and memory samples. Counted, they kept every cache cold
+for the next visitor. These writers run inside `quietly` (`core/write_clock.ts`),
+which leaves their rows out of the stamp. Wrap only a write to a table no
+cached page is built from; a page that shows telemetry is bounded by the
+30 seconds a cache entry lives. `test/write-clock-quiet.test.ts` proves it.
 
 ## The writes that invalidate
 
@@ -490,7 +520,22 @@ figures read `run`, `pull`, `usage` and `page_vital` rows, some of which
 append no event, and a clock that moves on every row catches all of them.
 The KPI entry is keyed by UTC hour, ceiling and data directory; a panel by
 its board's slug and its own definition (an edited board is a new key, as
-the blob id would make it). Max age 30 s for both. Measured on
+the blob id would make it). The 60 s rule (#7624): the KPIs, panels and
+vitals are kept 60 s from when they were computed, whatever is written
+since (the forge writes every second, so the write stamp never hit). Past
+60 s the old answer is still served at once, counted a hit, and one refresh
+per key runs with `setTimeout(0)` after the response (#7625). A refresh that
+throws is logged (`home.refresh_failed`), keeps the old answer and frees the
+key for the next request. Only a cold start, or an answer past the 10 min
+ceiling (`HOME_STALE_CEILING_MS`, ten TTLs), computes inline, so refreshes
+that keep failing cannot pin an old answer forever. The refresh is off the
+request, not off the event loop: it runs on the same thread, so a request
+that lands while it runs waits for it, as it would have waited for an
+inline recompute. The waiting line stays on the write stamp, 30 s at most,
+so the asks count is exact. The builders figure is read fresh on every
+request (one query), so it agrees with the idle reason beside it; the
+terminal's dashboard reads `readKpis` uncached. Tests age these entries
+with `setHomeClock`, the one test seam in `home_cache.ts`. Measured on
 `bench/snappy.ts` (`--n 50`), `/` owner: 105.7 → 90.1 statements, p50
 16.0 → 15.5 ms, p95 22.5 → 20.7 ms; the fixture pins no panel, and a pin
 adds one query per panel on a miss and none on a hit.

@@ -37,8 +37,12 @@ const FEED_KINDS = new Set([
 ]);
 const FEED_ENTRIES = 40;
 
+// eslint-disable-next-line no-control-regex
+const NOT_XML = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g;
+
+/** Escapes for XML text and attributes; characters XML 1.0 forbids are dropped. */
 export function xml(s: string): string {
-  return s.replace(/[<>&'"]/g, (c) =>
+  return s.replace(NOT_XML, "").replace(/[<>&'"]/g, (c) =>
     c === "<"
       ? "&lt;"
       : c === ">"

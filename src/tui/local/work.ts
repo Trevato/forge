@@ -261,6 +261,9 @@ export function workScreen(local: Local, ctx: Ctx, repo: LocalRepo): Screen {
                 () =>
                   git.discardPath(repo.dir, entry.path, {
                     ...(untracked ? { untracked: true } : {}),
+                    ...(item.section === "unstaged"
+                      ? { unstagedOnly: true }
+                      : {}),
                   }),
                 reload,
               );

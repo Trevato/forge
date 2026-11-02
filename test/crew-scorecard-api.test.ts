@@ -16,6 +16,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listVia } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -111,6 +112,26 @@ describe("the crew scorecard over the API and MCP", () => {
     expect(idle).toEqual({ username: "idle", all: null, recent: null, splits: [] });
   });
 
+  test("wastedDays rides on the API and the MCP tool", async () => {
+    const issue = app.db.query<{ repo_id: string }, []>("SELECT repo_id FROM issue LIMIT 1").get()!;
+    const smith = app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username = 'smith'").get()!;
+    const put = (summary: string, cost: number) =>
+      app.db
+        .query(
+          `INSERT INTO run (id, repo_id, kind, actor_id, state, summary, cost_usd)
+           VALUES (?1, ?2, 'agent', ?3, 'ok', ?4, ?5)`,
+        )
+        .run(crypto.randomUUID(), issue.repo_id, smith.id, summary, cost);
+    put("no changes pushed", 0.5);
+    put("opened pull #1", 1);
+    const day = new Date().toISOString().slice(0, 10);
+    const api = (await get(admin).then((r) => r.json())) as { wastedDays: any[] };
+    expect(api.wastedDays.find((d) => d.day === day)).toEqual({ day, wasted: 1, runs: 2, spentUsd: 0.5 });
+    const called = await rpc(admin, "tools/call", { name: "scorecard", arguments: {} });
+    expect(JSON.parse(called.result.content[0].text).wastedDays).toEqual(api.wastedDays);
+    app.db.query("DELETE FROM run WHERE kind = 'agent'").run();
+  });
+
   test("a non-admin gets 403, no token 401", async () => {
     expect((await get(member)).status).toBe(403);
     expect((await get()).status).toBe(401);
@@ -132,7 +153,7 @@ describe("the crew scorecard over the API and MCP", () => {
     const called = await rpc(admin, "tools/call", { name: "scorecard", arguments: {} });
     expect(JSON.parse(called.result.content[0].text)).toEqual(api);
     const names = (token: string) =>
-      rpc(token, "tools/list").then((r) => r.result.tools.map((t: { name: string }) => t.name));
+      listVia((p) => rpc(token, "tools/list", p)).then((r) => r.result.tools.map((t: { name: string }) => t.name));
     expect(await names(admin)).toContain("scorecard");
     expect(await names(member)).not.toContain("scorecard");
     const refused = await rpc(member, "tools/call", { name: "scorecard", arguments: {} });

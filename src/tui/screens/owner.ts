@@ -13,6 +13,7 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { ListState, drawList, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 export function ownerRows(v: OwnerView): ListRow[] {
   const needs: ListRow[] =
@@ -68,3 +69,12 @@ export function ownerScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** What needs the owner: needs, snapshot store, every failure domain (#1236). */
+export const entry: PaletteEntry = {
+  id: "owner",
+  title: "Owner's needs",
+  hint: "what needs the owner, snapshots, failure domains",
+  offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
+  run: (session, ctx) => ctx.push(ownerScreen(session, ctx)),
+};

@@ -25,6 +25,7 @@ import { CHECK_ASKED } from "../../actions/pull_ask_words.ts";
 import { reviewWords } from "../../actions/review_words.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
+import { RED_ALONE_WAIT, redAloneAt, redMark, type RedMark } from "../../checks/queue.ts";
 import { tierLine, type TierState } from "../../checks/tiers.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
@@ -53,9 +54,9 @@ import {
   type Side,
 } from "../../core/reviews.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
-import { resolveOid } from "../../git/merge.ts";
-import { commitLog } from "../../git/read.ts";
+import { canAdmin, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { bypassOffered, landPastGate, type BypassError } from "../../checks/bypass.ts";
+import { commitLog, readerFor } from "../../git/read.ts";
 import { wallOf } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -67,7 +68,9 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
-import { diffCacheCounts, diffKey, keptDiff } from "../diff-cache.ts";
+import type { DiffLaps } from "../../git/diff.ts";
+import { diffCacheCounts, diffKey, keptDiff, keptRender } from "../diff-cache.ts";
+import { keptRead } from "../head-reads.ts";
 import { diffSyntax } from "../diff-syntax.ts";
 import {
   renderDiff,
@@ -85,6 +88,7 @@ import {
   badge,
   btn,
   card,
+  field as formField,
   icon,
   labelCss,
   queuedPhrase,
@@ -103,6 +107,7 @@ import { previewEnv } from "../../apps/data.ts";
 import { specFindings } from "./pull-spec.ts";
 import { pullPreviewFindings } from "../../core/preview_findings.ts";
 import { crewActivityCard } from "./runs.ts";
+import { nextOfPull } from "../../flow/next_actor.ts";
 import { holdCard } from "../studio/hold.ts";
 import {
   changeHead,
@@ -302,6 +307,39 @@ export function checksLine(
   </p>`;
 }
 
+/** One muted line when the merge queue holds the pull as red alone; nothing otherwise. */
+export function redAloneLine(mark: RedMark | undefined): Html {
+  if (mark === undefined) return html``;
+  const exact = redAloneAt(mark);
+  if (exact === "") return html``;
+  return html`<p class="muted small">
+    ${icon("clock")}red alone at
+    <time datetime="${new Date(mark.at).toISOString()}">${exact}</time>, ${RED_ALONE_WAIT}
+  </p>`;
+}
+
+/** Whether a head declares a fast tier: a commit's files never change. */
+const fastByHead = new Map<string, boolean>();
+export async function declaresFast(dir: string, head: string): Promise<boolean> {
+  const known = fastByHead.get(head);
+  if (known !== undefined) return known;
+  const [forgeJson, packageJson] = await Promise.all([
+    readFileAt(dir, head, "forge.json"),
+    readFileAt(dir, head, "package.json"),
+  ]);
+  const declared = parseCheck(forgeJson, packageJson);
+  const fast = declared.ok && declared.value?.fast != null;
+  // Nothing read: remember that only for a commit known to exist (its tree
+  // reads); an unreadable one may simply not have landed yet.
+  if (forgeJson === undefined && packageJson === undefined) {
+    const tree = await readerFor(dir).object(`${head}^{tree}`);
+    if (!tree.ok) return fast;
+  }
+  if (fastByHead.size >= 500) fastByHead.delete(fastByHead.keys().next().value!);
+  fastByHead.set(head, fast);
+  return fast;
+}
+
 /**
  * The tiers' words for a pull whose check declares a fast tier (#1198);
  * nothing when it does not, or when no check has run on this head.
@@ -313,12 +351,7 @@ async function tierOf(
 ): Promise<string> {
   const run = check.run;
   if (run === null || run.kind !== "check") return "";
-  const [forgeJson, packageJson] = await Promise.all([
-    readFileAt(dir, head, "forge.json"),
-    readFileAt(dir, head, "package.json"),
-  ]);
-  const declared = parseCheck(forgeJson, packageJson);
-  if (!declared.ok || declared.value?.fast == null) return "";
+  if (!(await declaresFast(dir, head))) return "";
   const state: TierState | undefined =
     check.state === "ok"
       ? "green"
@@ -373,7 +406,8 @@ function pullChecksLine(
     `${thread}/checks-line`,
   );
   const found = !isApp ? null : pullPreviewFindings(ctx.app.db, repo.id, previewEnv(pull.number));
-  return html`${line}${found === null ? "" : specFindings(found)}`;
+  const red = redAloneLine(redMark(repo.id, pull.id, status.headOid));
+  return html`${line}${red}${found === null ? "" : specFindings(found)}`;
 }
 
 /** One §5 row in a toned card; `.setting-list` wraps the sentence and drops the action under it on a phone. */
@@ -555,12 +589,25 @@ function mergeBox(
       "Waiting on checks.",
       html`${why} ${reviewsChip(status.reviews, by)} ${checks}`,
       when(mayMerge, () =>
-        btn("Merge pull request", {
+        html`${btn("Merge pull request", {
           variant: "primary",
           icon: "merge",
           disabled: true,
           title: "A passing deploy of this head is required first",
-        }),
+        })}${when(
+          bypassOffered(ctx.app, ctx.auth.user, repo),
+          () => html`<form method="post" action="${thread}/land-past">
+            ${formField({
+              name: "reason",
+              label: "Land past the gate",
+              hint: "Landing has stopped. Say why this pull lands without its checks; it goes on the pull's trail. Review and conflicts still count.",
+              required: true,
+              minlength: 8,
+              maxlength: 500,
+            })}
+            <div class="form-actions">${btn("Land past the gate", { variant: "danger", icon: "merge" })}</div>
+          </form>`,
+        )}`,
       ),
     );
   }
@@ -781,7 +828,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const { repo, pull } = found;
   const began = performance.now();
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const spent = { diff: 0, checks: 0, reviews: 0 };
+  const spent = { diff: 0, git: 0, checks: 0, reviews: 0 };
   /** Run `work`, adding the time it took to `spent[key]`. */
   const lap = async <T>(key: keyof typeof spent, work: () => T | Promise<T>): Promise<T> => {
     const started = performance.now();
@@ -807,7 +854,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
 
   // The review gate travels with the status, so the merge box and
   // `mergePull` are answering the same question from the same numbers.
-  const status = await lap("diff", () =>
+  const status = await lap("git", () =>
     pullStatus(dir, pull, {
       db: ctx.app.db,
       requireReview: repo.requireReview,
@@ -815,11 +862,16 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   );
   // The diff and its highlighting depend on two oids and nothing else, so
   // the next reader of this head gets them from memory (`diff-cache.ts`).
+  // On a miss the stretches say where the time went; a hit has none.
+  const stretches: DiffLaps & { highlight?: number } = {};
   const cacheBefore = diffCacheCounts();
-  const { diff, syntax } = await lap("diff", () =>
+  const { diff, syntax, failed } = await lap("diff", () =>
     keptDiff(diffKey(status.baseOid, status.headOid), async () => {
-      const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid);
-      return { from, diff, failed, syntax: await diffSyntax(dir, diff, from, status.headOid) };
+      const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid, stretches);
+      const highlighting = performance.now();
+      const syntax = await diffSyntax(dir, diff, from, status.headOid);
+      stretches.highlight = performance.now() - highlighting;
+      return { from, diff, failed, syntax };
     }),
   );
   const cacheAfter = diffCacheCounts();
@@ -827,7 +879,9 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   // A merged or closed pull is history; the wall is a question about landing.
   const wall =
     pull.mergedAt === null && pull.state === "open"
-      ? await lap("diff", () => wallOf(dir, status.baseOid, status.headOid))
+      ? await lap("git", () =>
+          keptRead(`wall:${status.baseOid}:${status.headOid}`, () => wallOf(dir, status.baseOid, status.headOid)),
+        )
       : undefined;
   const reviewLines = tick("reviews", () => listReviewComments(ctx.app.db, pull.id));
   const reviewComments = byAnchor(reviewLines);
@@ -840,11 +894,11 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const check = tick("checks", () => checkSummary(ctx.app.db, pull.id, status.headOid));
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
   const tier = await lap("checks", () => tierOf(dir, status.headOid, check));
-  const stale = await lap("checks", async () =>
+  // `status.baseOid` is the live base tip already: no second reading of it.
+  const stale =
     pull.state === "open" && pull.mergedAt === null
-      ? checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`))
-      : false,
-  );
+      ? checkStale(check.run, status.baseOid)
+      : false;
   const threads = await lap("reviews", () => pullThreads(ctx.app, pull));
   const threadViews = threadStateViews(ctx, repo, threads);
   const unresolved = threads.filter((t) => t.resolvedAt === null).length;
@@ -868,6 +922,13 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ...(active ? { active } : {}),
   };
 
+  // Nothing viewer-specific is drawn when no comment, thread or form is; then
+  // the markup is a function of the diff and the link bases (`keptRender`).
+  const renderKey =
+    reviewLines.length === 0 && threadViews.size === 0 && active === undefined && !failed
+      ? `${diffKey(status.baseOid, status.headOid)}|${diffOptions.fileLinkBase}|${diffOptions.reviewBase ?? ""}|${diffOptions.reviewPage ?? ""}`
+      : undefined;
+
   const headRepo = pull.crossRepo
     ? getRepoById(ctx.app.db, pull.headRepoId)
     : undefined;
@@ -875,10 +936,13 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ? `${headRepo.ownerName}/${headRepo.name}:${pull.headBranch}`
     : pull.headBranch;
 
-  const log = await lap("diff", () =>
-    commitLog(dir, status.headOid, {
-      limit: Math.min(Math.max(status.ahead, 1), 100),
-    }),
+  const logLimit = Math.min(Math.max(status.ahead, 1), 100);
+  const log = await lap("git", () =>
+    keptRead(
+      `log:${status.headOid}:${logLimit}`,
+      () => commitLog(dir, status.headOid, { limit: logLimit }),
+      (r) => r.ok,
+    ),
   );
   const commits = log.ok ? log.value : [];
   const commitsCard = card(
@@ -914,7 +978,8 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
       compact: true,
       ownTitle: true,
     })}
-    ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "files")}
+    ${changeHead(ctx, repo, pull, nextOfPull(ctx.app.db, pull, { headOid: status.headOid, conflicts: status.conflicts.length }))}
+    ${changeTabs(repo, pull, "files")}
     <p class="files-where muted small" id="files">
       <span class="mono">${headLabel} → ${pull.baseBranch}</span>
       <span class="sep" aria-hidden="true">·</span>
@@ -950,7 +1015,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
         ${crewActivityCard(ctx, repo, pull)}
       </aside>
     </div>
-    <div class="mt">${renderDiff(diff, diffOptions)}</div>
+    <div class="mt">${keptRender(renderKey, () => renderDiff(diff, diffOptions))}</div>
     ${liveMount({ repo: base })}`;
 
   const response = page({
@@ -962,14 +1027,16 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
-  const { diff: diffMs, checks, reviews } = spent;
+  const { diff: diffMs, git, checks, reviews } = spent;
   notePhase(ctx.request, "diff", diffMs, diffHit);
+  for (const [name, ms] of Object.entries(stretches)) notePhase(ctx.request, `diff-${name}`, ms);
+  notePhase(ctx.request, "git", git);
   notePhase(ctx.request, "checks", checks);
   notePhase(ctx.request, "reviews", reviews);
   notePhase(
     ctx.request,
     "render",
-    Math.max(0, performance.now() - began - diffMs - checks - reviews),
+    Math.max(0, performance.now() - began - diffMs - git - checks - reviews),
   );
   return response;
 }
@@ -1324,6 +1391,34 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, dest, { message: "Pull request merged." });
 }
 
+// POST /:owner/:name/pulls/:number/land-past — the owner's break-glass (#7790).
+export async function pullLandPastSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  const user = ctx.auth.user;
+  if (!user || user.kind === "agent" || !canAdmin(ctx.app.db, found.repo, user))
+    return new Response("forbidden", { status: 403 });
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const landed = await landPastGate(ctx.app, user, found.repo, found.pull, field(form, "reason") ?? "");
+  if (!landed.ok) return flashTo(ctx, dest, { tone: "danger", message: bypassWords(landed.error) });
+  return flashTo(ctx, dest, { message: "Landed past the gate; the reason is on the trail." });
+}
+
+function bypassWords(e: BypassError): string {
+  switch (e.kind) {
+    case "reason":
+      return "Say why in 8 to 500 characters: it goes on the pull's trail.";
+    case "not_stopped":
+      return "Landing has not stopped, so there is no way past the gate: wait for the checks.";
+    case "merge":
+      return `Not landed: ${mergeFailure(e.error)}`;
+    default:
+      return "Only an owner can land a pull past the gate.";
+  }
+}
+
 /**
  * GET /:owner/:name/pulls/:number/checks-line — the checks line alone, for
  * the region that shows it. Authorized as the page is: a viewer who cannot
@@ -1381,7 +1476,7 @@ export async function pullChecksLineFor(
   const tier = await tierOf(dir, status.headOid, check);
   const stale =
     pull.state === "open" && pull.mergedAt === null
-      ? checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`))
+      ? checkStale(check.run, status.baseOid)
       : false;
   return pullChecksLine(ctx, repo, pull, status, check, isApp, tier, stale);
 }

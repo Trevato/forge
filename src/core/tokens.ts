@@ -71,7 +71,7 @@ export function verifyToken(
   db: Database,
   presented: string,
 ): Result<
-  { user: User; scope: TokenScope; proposal?: Proposal; run?: RunScope },
+  { user: User; scope: TokenScope; proposal?: Proposal; run?: RunScope; via?: string },
   "invalid_token"
 > {
   const row = db
@@ -87,14 +87,16 @@ export function verifyToken(
         p_origin: string | null;
         r_repo: string | null;
         r_fork: string | null;
+        v_via: string | null;
       },
       [string]
     >(
       `SELECT t.id, t.user_id, t.scope, t.last_used_at, t.expires_at,
               p.repo_id AS p_repo, p.child AS p_child, p.origin AS p_origin,
-              r.repo_id AS r_repo, r.fork_id AS r_fork
+              r.repo_id AS r_repo, r.fork_id AS r_fork, v.via AS v_via
          FROM token t LEFT JOIN proposal_token p ON p.token_id = t.id
                       LEFT JOIN run_token r ON r.token_id = t.id
+                      LEFT JOIN via_token v ON v.token_id = t.id
         WHERE t.token_hash = ?1`,
     )
     .get(sha256(presented));
@@ -134,6 +136,8 @@ export function verifyToken(
       scope: row.scope,
       run: { repoId: row.r_repo, forkId: row.r_fork! },
     });
+  // The forge's own agent, speaking for this person (`core/via_token.ts`).
+  if (row.v_via !== null) return ok({ user, scope: row.scope, via: row.v_via });
   return ok({ user, scope: row.scope });
 }
 

@@ -22,7 +22,7 @@ const make = new Function(`${outboxJs}; return forgeOutbox;`)() as (
   send: Send,
 ) => {
   add(url: string, body: unknown): void;
-  flush(): Promise<{ sent: number; left: number }>;
+  flush(): Promise<{ sent: number; refused?: number; left: number }>;
   size(): number;
   clear(): void;
 };
@@ -47,14 +47,14 @@ describe("the outbox", () => {
     });
     box.add("/api/v1/feed/interactions", { n: 1 });
     box.add("/api/v1/feed/tells", { n: 2 });
-    expect(await box.flush()).toEqual({ sent: 0, left: 2 });
+    expect(await box.flush()).toEqual({ sent: 0, refused: 0, left: 2 });
     // a reload: a new outbox over the same storage still holds them
     up = true;
     const reopened = make(store, async (_u, init) => {
       seen.push(init.body);
       return { status: 201 };
     });
-    expect(await reopened.flush()).toEqual({ sent: 2, left: 0 });
+    expect(await reopened.flush()).toEqual({ sent: 2, refused: 0, left: 0 });
     expect(seen).toEqual(['{"n":1}', '{"n":2}']);
   });
 
@@ -83,9 +83,9 @@ describe("the outbox", () => {
     const box = make(store, async () => ({ status: statuses[calls++] ?? 201 }));
     box.add("/a", {});
     box.add("/b", {});
-    expect(await box.flush()).toEqual({ sent: 0, left: 2 });
+    expect(await box.flush()).toEqual({ sent: 0, refused: 0, left: 2 });
     expect(calls).toBe(1);
-    expect(await box.flush()).toEqual({ sent: 2, left: 0 });
+    expect(await box.flush()).toEqual({ sent: 1, refused: 1, left: 0 });
   });
 
   test("two flushes at once send an entry once", async () => {

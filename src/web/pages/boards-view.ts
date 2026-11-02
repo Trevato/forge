@@ -15,11 +15,14 @@ import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveRegionsJs } from "../client.ts";
-import { notFoundPage } from "../chrome.ts";
+import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
-import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
+import { btn, card, chartBox, confirmAction, empty, field, selectField } from "../ui.ts";
 import { flowPanel } from "./flow-panel.ts";
+import { boardsHoldsCard } from "./boards-holds.ts";
+import { forgeCeiling } from "../../flow/ceiling.ts";
+import { alarmLines, cachedAlarms } from "../studio/alarm_lines.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { panelData, runFor } from "../../boards/panel_data.ts";
 import { cellsOf, paramsOf, queryFields, readParams } from "./boards.ts";
@@ -81,9 +84,15 @@ const denied = (ctx: Ctx) => {
 // GET /boards
 export async function boardsList(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  if (ctx.auth.user === undefined) return signInFirst(ctx);
   const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
-  if (!listed.ok) return notFoundPage(ctx);
-  const make = html`<form method="post" action="/boards/new" class="bform">
+  if (!listed.ok) {
+    // Not a forge admin: the page is the holds of the repositories they administer, or not found.
+    const holds = boardsHoldsCard(ctx.app.db, ctx.auth.user);
+    if (holds === null) return notFoundPage(ctx);
+    return page({ ctx, title: "Boards", body: html`<div class="page-head"><h1>Boards</h1></div>${holds}` });
+  }
+  const make = html`<form method="post" action="/boards/new" class="bar">
     ${field({ label: "New board", name: "title", id: "new-board-title", required: true, maxlength: MAX_TITLE, placeholder: "Title" })}
     ${btn("Make board", { variant: "primary" })}
   </form>`;
@@ -108,7 +117,8 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     title: "Boards",
     body: html`<div class="page-head"><h1>Boards</h1>
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
-      ${card(make)} ${body} ${flow}`,
+      ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))}
+      ${card(make)} ${body} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -116,7 +126,7 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
 
 function panelForm(slug: string, op: string, p: Panel | undefined, index: number, fields: Html): Html {
   const id = op === "edit" ? `panel-${String(index)}` : "panel-new";
-  return html`<form method="post" action="/boards/${slug}/${op}" class="bform">
+  return html`<form method="post" action="/boards/${slug}/${op}" class="bar">
     ${op === "edit" ? html`<input type="hidden" name="index" value="${String(index)}" />` : null}
     ${field({ label: "Panel title", name: "title", id: `${id}-title`, required: true, maxlength: MAX_TITLE, value: p?.title ?? "", placeholder: "Panel title" })}
     ${selectField({ label: "Width", name: "w", id: `${id}-w`, options: sizes(MAX_W, "wide", p?.w ?? 1) })}
@@ -164,11 +174,11 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
       () => card(panelForm(slug, "add", undefined, 0, adding), { head: html`<h2>Add a panel</h2>` }),
     )}
     ${card(
-      html`<form method="post" action="/boards/${slug}/rename" class="bform">
+      html`<div class="bar"><form method="post" action="/boards/${slug}/rename" class="bar">
           ${field({ label: "Board title", name: "title", id: "board-title", required: true, maxlength: MAX_TITLE, value: board.title })}
           ${btn("Rename")}
         </form>
-        <form method="post" action="/boards/${slug}/settings" class="bform">
+        <form method="post" action="/boards/${slug}/settings" class="bar">
           ${selectField({ label: "Range", name: "range", id: "board-range", options: RANGES.map((r) => ({ value: r, label: r, selected: r === board.range })) })}
           ${selectField({ label: "Live", name: "refresh", id: "board-refresh", options: [
             { value: "off", label: "off", selected: board.refresh === "off" },
@@ -176,8 +186,8 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
           ] })}
           ${btn("Save settings")}
         </form>
-        <form method="post" action="/boards/${slug}/duplicate" class="bform">${btn("Duplicate")}</form>
-        <form method="post" action="/boards/${slug}/delete" class="bform">${btn("Delete this board", { variant: "danger" })}</form>`,
+        <form method="post" action="/boards/${slug}/duplicate">${btn("Duplicate")}</form>
+        ${confirmAction({ action: `/boards/${slug}/delete`, verb: "Delete this board" })}</div>`,
       { head: html`<h2>Board</h2>` },
     )}`;
 }

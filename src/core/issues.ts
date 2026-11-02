@@ -9,6 +9,7 @@ import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { transact } from "../kernel/db.ts";
 import { repoVisible } from "./visibility.ts";
+import { endProofRunsForPull } from "./proof_runs.ts";
 
 export type IssueKind = "issue" | "pull";
 export type IssueState = "open" | "closed";
@@ -98,6 +99,14 @@ const SELECT = `
   FROM issue JOIN user ON user.id = issue.author_id
   LEFT JOIN user AS assignee ON assignee.id = issue.assignee_id`;
 
+/** `SELECT` without the body: a plan reads titles and states, and a body is most of a row's bytes. */
+const SELECT_LEAN = SELECT.replace(
+  "issue.*,",
+  `issue.id, issue.repo_id, issue.number, issue.kind, issue.title, '' AS body, issue.author_id,
+         issue.state, issue.created_at, issue.updated_at, issue.closed_at, issue.close_reason,
+         issue.parked, issue.origin_author, issue.origin_html_url, issue.assignee_id, issue.sealed,`,
+);
+
 function toIssue(row: IssueRow): Issue {
   return {
     id: row.id,
@@ -162,6 +171,28 @@ export function getIssuesByIds(
       .all(...batch);
     for (const row of rows) out.set(row.id, toIssue(row));
   }
+  return out;
+}
+
+/**
+ * Every conversation of one repository in one read, by id: cheaper than
+ * `getIssuesByIds` once most of a repository is wanted.
+ */
+export function getIssuesOfRepo(
+  db: Database,
+  repoId: string,
+  /** Only issues, or only pulls: a pull's body is the bulk of a repository's rows. */
+  kind?: IssueKind,
+  /** Leave the bodies empty: for a reader that never shows one. */
+  lean = false,
+): Map<string, Issue> {
+  const out = new Map<string, Issue>();
+  for (const row of db
+    .query<IssueRow, [string, string]>(
+      `${lean ? SELECT_LEAN : SELECT} WHERE issue.repo_id = ?1 AND (?2 = '' OR issue.kind = ?2)`,
+    )
+    .all(repoId, kind ?? ""))
+    out.set(row.id, toIssue(row));
   return out;
 }
 
@@ -518,6 +549,8 @@ export function setIssueState(
        WHERE id = ?4 AND state != ?1`,
     )
     .run(state, closedAt, now, issueId, why, parked).changes;
+  // A closed pull's waiting proof would sit queued for good (#7706).
+  if (changed > 0 && state === "closed") endProofRunsForPull(db, issueId, "pull closed");
   return changed > 0 ? getIssueById(db, issueId) : undefined;
 }
 
@@ -635,8 +668,35 @@ export interface ListCommentsOptions {
   kind?: "comment" | "review" | "all";
   /** Only comments after this id (ids sort oldest first). */
   after?: string;
+  /** Only comments before this id. */
+  before?: string;
+  /** With `limit`: the newest ones, still answered oldest first. */
+  newest?: boolean;
   /** At most this many. */
   limit?: number;
+}
+
+/** How many of a thread's newest comments an issue read embeds, on the API and in the MCP (#6198). */
+export const EMBEDDED_COMMENTS = 50;
+
+/** How many timeline items a thread page shows before it folds the earlier ones behind `?all=1`. */
+export const THREAD_WINDOW = 50;
+
+/**
+ * Where a comment's own anchor lands on its thread page: `#c-<id>` when it
+ * is among the newest comments the page shows, `?all=1#c-<id>` when it is
+ * folded away. One COUNT, not the whole thread. The page cuts its window on
+ * comments too (`conversation()`, web/pages/thread.ts): the newest
+ * THREAD_WINDOW comments, with the state lines between them riding along.
+ * Both count the same thing, so the anchor always lands.
+ */
+export function commentAnchor(db: Database, issueId: string, commentId: string): string {
+  const after = db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND kind = 'comment' AND id > ?2",
+    )
+    .get(issueId, commentId)!.n;
+  return `${after >= THREAD_WINDOW ? "?all=1" : ""}#c-${commentId}`;
 }
 
 export function listComments(
@@ -649,6 +709,11 @@ export function listComments(
     kind === "all"
       ? "comment.issue_id = ?1"
       : `comment.issue_id = ?1 AND comment.kind = '${kind}'`;
+  const args: string[] = [issueId];
+  let range = "";
+  if (options.after !== undefined) range += ` AND comment.id > ?${args.push(options.after)}`;
+  if (options.before !== undefined) range += ` AND comment.id < ?${args.push(options.before)}`;
+  const newest = options.newest === true && options.limit !== undefined;
   const rows = db
     .query<
       {
@@ -661,15 +726,16 @@ export function listComments(
         origin_author: string | null;
         heard_ok: string | null;
       },
-      [string]
+      string[]
     >(
       `SELECT comment.*, user.username AS author_name, heard.id AS heard_ok
        FROM comment JOIN user ON user.id = comment.author_id
        LEFT JOIN run heard ON heard.id = comment.heard_in AND heard.state = 'ok'
-       WHERE ${where}${options.after === undefined ? "" : " AND comment.id > ?2"}
-       ORDER BY comment.id${options.limit === undefined ? "" : ` LIMIT ${Math.trunc(options.limit)}`}`,
+       WHERE ${where}${range}
+       ORDER BY comment.id${newest ? " DESC" : ""}${options.limit === undefined ? "" : ` LIMIT ${Math.trunc(options.limit)}`}`,
     )
-    .all(...((options.after === undefined ? [issueId] : [issueId, options.after]) as [string]));
+    .all(...args);
+  if (newest) rows.reverse();
   return rows.map((row) => ({
     id: row.id,
     issueId: row.issue_id,
@@ -694,6 +760,15 @@ export function countComments(db: Database, issueId: string): number {
     >("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND kind = 'comment'")
     .get(issueId);
   return row?.n ?? 0;
+}
+
+/** Every comment a thread holds, review lines included: what the API's `commentsTotal` says. */
+export function countThread(db: Database, issueId: string): number {
+  return (
+    db
+      .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1")
+      .get(issueId)?.n ?? 0
+  );
 }
 
 // ---- labels ----

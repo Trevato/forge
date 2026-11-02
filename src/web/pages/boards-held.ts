@@ -32,7 +32,7 @@ export function heldCard(rows: readonly HeldRow[]): Html {
       <p class="muted small">
         Each ready issue a builder could start, or the first filter that holds
         it: a run on it, an open pull, the planner, stalled, its run cap,
-        parked twice, a red-main fix. When nothing can
+        parked twice, a red-main fix, a file 5 or more open pulls touch. When nothing can
         start and builders are free, the planner is asked to re-plan what is
         stalled or capped.
       </p>
@@ -55,6 +55,17 @@ export function heldCard(rows: readonly HeldRow[]): Html {
                       <td>${heldCount("startable", r.startable)} ${startableMeter(r)}</td>
                       <td>
                         ${HOLDS.filter((h) => r.counts[h] > 0).map((h) => html`${heldCount(h, r.counts[h])} `)}
+                        ${r.hot.length === 0
+                          ? null
+                          : html`<ul class="small" data-held-hot>
+                              ${r.hot.map(
+                                (h) =>
+                                  html`<li data-held-hot-issue="${String(h.number)}">
+                                    #${String(h.number)} waits: ${h.detail}
+                                    <span class="held-pulls">${h.pulls.map((n) => html`<a class="mono" href="/${r.repo}/pulls/${String(n)}">#${String(n)}</a>`)}</span>
+                                  </li>`,
+                              )}
+                            </ul>`}
                       </td>
                     </tr>`,
                 )}

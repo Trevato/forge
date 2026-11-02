@@ -35,6 +35,7 @@ import { autonomyStatus, ensureDirectionIssue } from "./autonomy.ts";
 import { certain, decideOr, type Answers, type Questions } from "./decide.ts";
 import { linkThoughts, raiseIssue } from "../core/thought_links.ts";
 import { crewOffInPreview } from "./preview.ts";
+import { proposeVision } from "./vision.ts";
 
 const log = createLog("triage");
 
@@ -198,6 +199,14 @@ export interface Thought {
   readonly text: string;
 }
 
+const SLUG = /^(?:https?:\/\/[^\s/]+\/)?[\w.-]+\/[\w.-]+(?:\.git)?\/?$/;
+
+/** Nothing to act on: empty, or only a repository slug or a URL to one. */
+export function isNote(text: string): boolean {
+  const t = text.trim();
+  return t === "" || SLUG.test(t);
+}
+
 /** Place one thought. Always answers: a best placement, and a question when unsure. */
 export async function placeThought(
   app: App,
@@ -207,6 +216,9 @@ export async function placeThought(
   now = new Date(),
 ): Promise<Placement> {
   const slug = `${repo.ownerName}/${repo.name}`;
+  // A note has no kind of its own: "decision" by "rule" with an empty `placed` stands in for it.
+  if (isNote(thought.text))
+    return finish(app, thought, "decision", "rule", true, [], `Kept as a note: what should change in ${slug}?`, now);
   const set = pillarsOf(app.db, repo);
   const direction = ensureDirectionIssue(app, by, repo);
   const open = openIssues(app, repo, set, direction);
@@ -345,6 +357,14 @@ export async function placeThought(
     comment(direction, kind === "vision" ? "The direction changes:" : "A decision:");
     placed.push({ action: "amended", repo: slug, number: direction.number });
     say.push(`${kind === "vision" ? "Noted as direction" : "Recorded as a decision"} on #${direction.number}.`);
+    if (kind === "vision") {
+      const proposed = await proposeVision(app, by, repo, thought, now);
+      if (proposed.ok) {
+        const n = proposed.pull.number;
+        placed.push({ action: "proposed", repo: slug, number: n, pull: n });
+        say.push(`Proposed the edit to docs/VISION.md as #${n}; you land it.`);
+      } else log.warn("could not propose the vision edit", { thought: thought.id, why: proposed.why });
+    }
   }
   if (say.length === 0) say.push("Kept; nothing on the map changed.");
   return finish(app, thought, kind, decided.by, question !== "", placed, [say.join(" "), question].filter(Boolean).join(" "), now);

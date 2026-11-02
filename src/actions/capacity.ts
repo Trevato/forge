@@ -26,6 +26,16 @@ import { passkeyIds } from "../core/passkeys.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
+/** The six guards a caller may set by `key`: the MCP tool's enum and the terminal's `e`. */
+export const SETTABLE_CAPACITY = [
+  "crew.concurrency",
+  "checks.concurrency",
+  "checks.shards",
+  "cells.egress",
+  "guard_new_accounts",
+  "signin.edge",
+] as const satisfies readonly CapacityKey[];
+
 export interface CapacityRow {
   readonly key: CapacityKey;
   readonly label: string;

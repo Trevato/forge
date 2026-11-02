@@ -4,7 +4,9 @@
  * A run token (`core/run_token.ts`) reaches the repository its run works on
  * and the crew member's fork of it the run pushes to — their API under
  * `/api/v1/repos/<owner>/<name>` and their git — and may read the
- * repository's fork parent. Every other request answers `not_found`,
+ * repository's fork parent, and reads `here`, `search`, `explore` and the
+ * OpenAPI address, whose handlers answer from those two repositories alone.
+ * Every other request answers `not_found`,
  * the same as a repository the crew member cannot see: other repositories
  * (the crew member's own, the owner's private ones), the account, tokens,
  * secrets, admin, MCP and the web pages. Allow-listed, so a route added
@@ -50,6 +52,18 @@ function gitRead(method: string, url: URL, repo: Repo): boolean {
   return method === "POST" && rest === "/git-upload-pack";
 }
 
+/** Forge-wide reads a run token may make; each handler narrows its answer to `runRepos`. */
+const FORGE_READS = new Set(["/api/v1/here", "/api/v1/search", "/api/v1/explore", "/api/v1/openapi.json"]);
+
+/** The repositories a run token reaches by name: its own and its fork. Undefined for any other credential. */
+export function runRepos(app: App, auth: Auth): Repo[] | undefined {
+  if (auth.run === undefined) return undefined;
+  return [auth.run.repoId, auth.run.forkId]
+    .filter((id, i, all) => all.indexOf(id) === i)
+    .map((id) => getRepoById(app.db, id))
+    .filter((r): r is Repo => r !== undefined);
+}
+
 /** The refusal for this request, or undefined when it may proceed. */
 export function runGate(
   app: App,
@@ -64,6 +78,8 @@ export function runGate(
   if (repo === undefined || fork === undefined) return hidden();
   const path = url.pathname;
   const method = request.method;
+
+  if ((method === "GET" || method === "HEAD") && FORGE_READS.has(path)) return undefined;
 
   for (const own of [repo, fork]) {
     const api = under(path, "/api/v1/repos", own);

@@ -1,7 +1,7 @@
 /**
  * An app's private destinations in the terminal, a site admin's: the list the
- * settings page shows, with `g` to grant the one under the cursor and `x` to
- * revoke it. The actions decide who may; anyone else is offered nothing.
+ * settings page shows, with `g` to grant the one under the cursor once `y`
+ * confirms it (a grant widens the boundary) and `x` to revoke it. The actions decide who may; anyone else is offered nothing.
  */
 
 import {
@@ -19,7 +19,7 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import type { Session } from "../session.ts";
-import { ListState, drawList, type ListRow } from "./common.ts";
+import { ListState, confirmScreen, drawList, runAsync, type ListRow } from "./common.ts";
 
 export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const state = new ListState();
@@ -35,7 +35,7 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     state.clamp(rows.length);
     ctx.invalidate();
   };
-  void reload();
+  runAsync(ctx, reload);
   const lines = (): ListRow[] =>
     rows.map((r) => ({
       title: r.destination,
@@ -43,15 +43,14 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         ? `granted by ${r.grantedBy} ${(r.grantedAt ?? "").slice(0, 16).replace("T", " ")} UTC`
         : "asked for, not granted",
     }));
-  const change = async (
-    done: Promise<{ ok: boolean }> | { ok: boolean },
-    said: string,
-  ): Promise<void> => {
-    const result = await done;
-    await reload();
-    if (result.ok) ctx.toast(said, "success");
-    else ctx.toast("that could not be changed", "danger");
-  };
+  // Tracked, so the app counts the write and the reload behind it as busy.
+  const change = (done: Promise<{ ok: boolean }> | { ok: boolean }, said: string): void =>
+    runAsync(ctx, async () => {
+      const result = await done;
+      await reload();
+      if (result.ok) ctx.toast(said, "success");
+      else ctx.toast("that could not be changed", "danger");
+    });
 
   const screen: Screen = {
     title: "Private egress",
@@ -74,11 +73,25 @@ export function egressScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     key(e) {
       const row = canChange ? rows[state.index] : undefined;
       if (e.key === "g" && row !== undefined) {
-        void change(grantAppEgress(f.app, f.user, repo, row.destination), `${row.destination} is granted.`);
+        if (row.granted) return true;
+        const { destination } = row;
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: `Let ${repo.ownerName}/${repo.name} reach ${destination}?`,
+            body: ["The app's outbound traffic to it is allowed until you revoke it with x."],
+            actions: [{ label: "Grant" }, { label: "Cancel", variant: "ghost" }],
+            yesNo: true,
+            width: 78,
+            onChoose: (choice) => {
+              if (choice !== 0) return;
+              change(grantAppEgress(f.app, f.user, repo, destination), `${destination} is granted.`);
+            },
+          }),
+        );
         return true;
       }
       if (e.key === "x" && row !== undefined) {
-        void change(revokeAppEgress(f.app, f.user, repo, row.destination), `${row.destination} is revoked.`);
+        change(revokeAppEgress(f.app, f.user, repo, row.destination), `${row.destination} is revoked.`);
         return true;
       }
       return state.key(e, rows.length);

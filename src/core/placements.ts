@@ -9,7 +9,7 @@ import type { Database } from "bun:sqlite";
 export const KINDS = ["work", "amendment", "vision", "decision", "reversal"] as const;
 export type Kind = (typeof KINDS)[number];
 
-export type Action = "opened" | "amended" | "deferred" | "superseded" | "linked";
+export type Action = "opened" | "amended" | "deferred" | "superseded" | "linked" | "proposed";
 
 /** One thing done on the map: an issue of `repo` (owner/name), and the pillar it serves. */
 export interface Placed {
@@ -17,6 +17,8 @@ export interface Placed {
   repo: string;
   number: number;
   pillar?: string;
+  /** For `proposed`: `number` is a pull of `repo`, and this is its number again. It marks a vision pull. */
+  pull?: number;
 }
 
 export interface Placement {
@@ -63,11 +65,25 @@ export function placementOf(db: Database, thoughtId: string): Placement | undefi
   return row ? toPlacement(row) : undefined;
 }
 
+/** Whether a placement of kind `vision` proposed pull `number` of `repo` (owner/name): the one mark of a vision pull. */
+export function isVisionPull(db: Database, repo: string, number: number): boolean {
+  const rows = db
+    .query<Row, [string]>("SELECT * FROM placement WHERE kind = 'vision' AND placed LIKE ?1")
+    .all(`%"pull":${number}%`);
+  return rows.some((r) => toPlacement(r).placed.some((p) => p.action === "proposed" && p.repo === repo && p.pull === number));
+}
+
+/** The placements of these thoughts: one query per chunk, never one per thought (#7509). */
 export function placementsOf(db: Database, thoughtIds: readonly string[]): Map<string, Placement> {
   const out = new Map<string, Placement>();
-  for (const id of thoughtIds) {
-    const p = placementOf(db, id);
-    if (p) out.set(id, p);
+  const unique = [...new Set(thoughtIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<Row, string[]>(`SELECT * FROM placement WHERE thought_id IN (${batch.map(() => "?").join(",")})`)
+      .all(...batch);
+    for (const r of rows) out.set(r.thought_id, toPlacement(r));
   }
   return out;
 }

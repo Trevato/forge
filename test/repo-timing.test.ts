@@ -51,10 +51,10 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("a repository home names session, appof, refs, tree, readme, following and render in order", async () => {
+test("a repository home names session, appof, refs, tree, readme, following, wave, behind and render in order", async () => {
   const res = await fetch(`${servers.url}/alice/r`, { headers: { cookie } });
   expect(res.status).toBe(200);
   await res.arrayBuffer();
   const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
-  expect(names).toEqual(["app", "session", "appof", "refs", "tree", "readme", "following", "render"]);
+  expect(names).toEqual(["app", "session", "appof", "refs", "tree", "readme", "following", "wave", "behind", "render"]);
 });

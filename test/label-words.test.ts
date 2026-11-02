@@ -11,6 +11,7 @@ import { LABEL_WORDS } from "../src/actions/label_words.ts";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { adminCookie } from "./helpers/admin.ts";
+import { importsFrom, mcpSource } from "./helpers/mcp.ts";
 
 describe("a label's shape refusal", () => {
   let dataDir: string;
@@ -59,8 +60,8 @@ describe("a label's shape refusal", () => {
   // MCP `repo_labels` checks the name and colour itself before createLabel can
   // answer "invalid", so its branch is held to the module by reading the door.
   test("MCP repo_labels reads the sentence from the module", async () => {
-    const source = await Bun.file(join(import.meta.dir, "../src/http/mcp.ts")).text();
-    expect(source).toContain('from "../actions/label_words.ts"');
+    const source = mcpSource(join(import.meta.dir, ".."));
+    expect(importsFrom(source, "actions/label_words.ts")).toBe(true);
     expect(source).toContain("LABEL_WORDS.shape");
   });
 

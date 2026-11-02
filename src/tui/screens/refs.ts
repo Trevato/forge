@@ -7,6 +7,7 @@
  */
 
 import { createBranch, deleteBranch } from "../../actions/branches.ts";
+import { NAME_THE_BRANCH } from "../../actions/branch_words.ts";
 import { listBranches } from "../../git/branches.ts";
 import type { RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -209,7 +210,7 @@ export function branchesScreen(
             ? "created here"
             : `created on ${mirrored.fullName} first, then here`,
         onSubmit: (name) => {
-          if (name === "") return "give the branch a name";
+          if (name === "") return NAME_THE_BRANCH;
           return (async () => {
             const made = await createBranch(f.app, f.user, repo, {
               name,

@@ -20,3 +20,9 @@ export function liveSince<T, V>(tag: Tag<T, V>, sha: V, since: V): T {
 
 /** What the empty releases view says will fill it. */
 export const NO_RELEASES_YET = "A pull landed on the forge's own repository is recorded here.";
+
+/** Why a kept release offers no rollback: it is the one serving. */
+export const ALREADY_LIVE = "This release is the one serving; there is nothing to roll back to.";
+
+/** Why a kept release offers no rollback: its preflight failed or its schema is behind the live database's. */
+export const NOT_ROLLABLE = "This release cannot be rolled back to: its preflight failed or its schema is behind the live database's.";

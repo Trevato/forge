@@ -9,7 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { ancestorsOf } from "../../git/merge.ts";
+import { ancestries } from "./ancestry.ts";
 import {
   NO_TESTS_TAIL,
   TESTS_PASSED_TAIL,
@@ -17,16 +17,23 @@ import {
   type EnvStatus,
 } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
-import { canEnterApp, getRepoById } from "../../core/repos.ts";
+import { canEnterApp, getRepoById, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Efficiency } from "../../core/efficiency.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
-import { waitsForReviewer } from "../../crew/review.ts";
-import { getIssueById } from "../../core/issues.ts";
-import { getPull, pullForBranch, type Pull } from "../../core/pulls.ts";
+import { reviewWaitsFor, waitsForReviewer } from "../../crew/review.ts";
+import { getIssueById, getIssuesByIds } from "../../core/issues.ts";
+import {
+  getPull,
+  joinMany,
+  pullForBranch,
+  pullsForBranches,
+  type Pull,
+} from "../../core/pulls.ts";
 import {
   checkSummary,
+  checksForHeads,
   STOPPED_SUMMARY,
   type CheckDetail,
   type CheckSummary,
@@ -94,6 +101,130 @@ export interface WordCtx {
   readonly viewer: User | undefined;
 }
 
+/** What a page read ahead for its rows, so `pullWord` and `runWord` do not read per row. */
+interface Ahead {
+  readonly checks: Map<string, CheckSummary>;
+  readonly reviewers: Map<string, string | undefined>;
+  readonly runPulls: Map<string, Pull | undefined>;
+  readonly parked: Map<string, boolean>;
+  /** Production as a merged pull sees it; `null` when the viewer may not see it. */
+  production?: { env: EnvStatus | undefined } | null;
+}
+// Keyed by the page's `WordCtx`, which is made fresh for each request and
+// dropped with it, so nothing here outlives the render it was read for.
+const ahead = new WeakMap<WordCtx, Ahead>();
+const aheadOf = (ctx: WordCtx): Ahead => {
+  let a = ahead.get(ctx);
+  if (a === undefined)
+    ahead.set(ctx, (a = { checks: new Map(), reviewers: new Map(), runPulls: new Map(), parked: new Map() }));
+  return a;
+};
+
+/**
+ * Read, for all these pulls at once, what `pullWord` asks per open pull: its
+ * check at its head, and the reviewer a green agent pull waits for. The
+ * words that follow are the ones a read apiece gives, in a handful of queries.
+ */
+export function knowPulls(ctx: WordCtx, pulls: readonly Pull[]): void {
+  const a = aheadOf(ctx);
+  const open = pulls.filter(
+    (p) => p.mergedAt === null && p.state !== "closed" && !a.checks.has(p.id),
+  );
+  if (open.length === 0) return;
+  const runs = checksForHeads(ctx.db, new Map(open.map((p) => [p.id, p.headOid])));
+  const green: Pull[] = [];
+  for (const p of open) {
+    const latest = runs.get(p.id)?.[0];
+    a.checks.set(
+      p.id,
+      latest ? { state: latest.state, run: latest } : { state: "none", run: null },
+    );
+    if (latest?.state === "ok") green.push(p);
+  }
+  const repos = new Map<string, Repo | undefined>();
+  for (const p of green)
+    if (!repos.has(p.repoId)) repos.set(p.repoId, getRepoById(ctx.db, p.repoId));
+  const have = green.flatMap((pull) => {
+    const repo = repos.get(pull.repoId);
+    return repo ? [{ repo, pull }] : [];
+  });
+  const waits = reviewWaitsFor(ctx.db, have);
+  for (const p of green) a.reviewers.set(p.id, waits.get(p.id)?.reviewer);
+}
+
+/**
+ * `pullWord` for a page of pulls: checks, reviewers, close reasons and
+ * production's status are read together first, so the page costs a handful
+ * of queries rather than several per row. Each word is the one `pullWord`
+ * gives, in the order of `pulls`.
+ */
+export async function pullWords(
+  ctx: WordCtx,
+  pulls: readonly Pull[],
+): Promise<{ word: Word; note: string }[]> {
+  knowPulls(ctx, pulls);
+  const a = aheadOf(ctx);
+  const closed = pulls.filter((p) => p.mergedAt === null && p.state === "closed");
+  if (closed.length > 0) {
+    const issues = getIssuesByIds(ctx.db, closed.map((p) => p.id));
+    for (const p of closed)
+      a.parked.set(p.id, issues.get(p.id)?.closeReason === "parked");
+  }
+  if (
+    a.production === undefined &&
+    pulls.some((p) => p.mergedAt !== null) &&
+    ctx.runtime !== undefined &&
+    ctx.record !== undefined
+  ) {
+    const repo = getRepoById(ctx.db, ctx.record.repoId);
+    a.production =
+      repo === undefined ||
+      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
+        ? null
+        : {
+            env: ctx.runtime
+              .status(ctx.record)
+              .find((e) => e.env === "production"),
+          };
+  }
+  return await Promise.all(pulls.map((p) => pullWord(ctx, p)));
+}
+
+/** `knowPulls` for the pull each of these finished runs produced (`pullFromRun`). */
+export function knowRunPulls(ctx: WordCtx, runs: readonly Run[]): void {
+  const a = aheadOf(ctx);
+  const want = runs.filter((r) => !a.runPulls.has(r.id));
+  if (want.length === 0) return;
+  const about = getIssuesByIds(
+    ctx.db,
+    want.flatMap((r) => (r.issueId === null ? [] : [r.issueId])),
+  );
+  const direct = new Map(
+    joinMany(ctx.db, [...about.values()].filter((i) => i.kind === "pull")).map(
+      (p) => [p.id, p] as const,
+    ),
+  );
+  const byBranch = new Map<string, Map<string, Pull>>();
+  for (const repoId of new Set(want.map((r) => r.repoId)))
+    byBranch.set(
+      repoId,
+      pullsForBranches(
+        ctx.db,
+        repoId,
+        want.filter((r) => r.repoId === repoId).map((r) => r.branch),
+      ),
+    );
+  const found: Pull[] = [];
+  for (const r of want) {
+    const pull =
+      (r.issueId === null ? undefined : direct.get(r.issueId)) ??
+      (r.branch === "" ? undefined : byBranch.get(r.repoId)?.get(r.branch));
+    a.runPulls.set(r.id, pull);
+    if (pull !== undefined) found.push(pull);
+  }
+  knowPulls(ctx, found);
+}
+
 /**
  * The pull an agent run produced, if it produced one — not a foreign key
  * (a pull is its own issue, unrelated in the schema to the issue it
@@ -122,7 +253,7 @@ async function caughtUp(
   const key = `${ctx.dir}\0${production.commitOid}`;
   let ancestry = ctx.history.get(key);
   if (ancestry === undefined) {
-    ancestry = ancestorsOf(ctx.dir, production.commitOid);
+    ancestry = ancestries.of(ctx.dir, production.commitOid);
     ctx.history.set(key, ancestry);
   }
   return (await ancestry)?.has(commitOid) ?? false;
@@ -218,15 +349,21 @@ export async function pullWord(
       return { word: "shipped", note: "merged" };
     // A private app's production — its state, its deploy's error — is for
     // those who may enter it (`canEnterApp`); anyone else reads "merged".
-    const repo = getRepoById(ctx.db, ctx.record.repoId);
-    if (
-      repo === undefined ||
-      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
-    )
-      return { word: "shipped", note: "merged" };
-    const production = ctx.runtime
-      .status(ctx.record)
-      .find((e) => e.env === "production");
+    const read = ahead.get(ctx)?.production;
+    if (read === null) return { word: "shipped", note: "merged" };
+    let production: EnvStatus | undefined;
+    if (read !== undefined) production = read.env;
+    else {
+      const repo = getRepoById(ctx.db, ctx.record.repoId);
+      if (
+        repo === undefined ||
+        !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
+      )
+        return { word: "shipped", note: "merged" };
+      production = ctx.runtime
+        .status(ctx.record)
+        .find((e) => e.env === "production");
+    }
     if (await caughtUp(ctx, production, commitOid))
       return { word: "shipped", note: "production is serving it" };
     return mergedPullWord(production, commitOid);
@@ -235,17 +372,23 @@ export async function pullWord(
     return {
       word: "stopped",
       note:
-        getIssueById(ctx.db, pull.id)?.closeReason === "parked"
+        (ahead.get(ctx)?.parked.get(pull.id) ??
+          getIssueById(ctx.db, pull.id)?.closeReason === "parked")
           ? "parked by the crew"
           : "closed without shipping",
     };
-  const check = checkSummary(ctx.db, pull.id, pull.headOid);
+  const check =
+    ahead.get(ctx)?.checks.get(pull.id) ??
+    checkSummary(ctx.db, pull.id, pull.headOid);
   // A repository that is not an app never deploys a head, so it never gets
   // a look: an open change there waits on a person, and says so.
   if (ctx.record === undefined && check.state === "none")
     return { word: "waiting", note: "open — waiting on a person" };
   if (check.state === "ok") {
-    const reviewer = waitsForReviewer(ctx.db, pull.repoId, pull);
+    const known = ahead.get(ctx)?.reviewers;
+    const reviewer = known?.has(pull.id)
+      ? known.get(pull.id)
+      : waitsForReviewer(ctx.db, pull.repoId, pull);
     if (reviewer !== undefined)
       return { word: "waiting", note: `waiting for ${reviewer}'s review` };
   }
@@ -286,7 +429,8 @@ export async function runWord(
           ? "interrupted by a restart"
           : run.summary || run.state,
     };
-  const pull = pullFromRun(ctx.db, run);
+  const known = ahead.get(ctx)?.runPulls;
+  const pull = known?.has(run.id) ? known.get(run.id) : pullFromRun(ctx.db, run);
   if (pull !== undefined) return await pullWord(ctx, pull);
   if (run.kind !== "agent")
     return {

@@ -50,6 +50,9 @@ export function provideMirrorOutboundForTest(options: OutboundOptions): void {
   outbound = options;
 }
 
+/** Test seam: what `vetHost` is told now, so a test that changes it can put it back. */
+export const mirrorOutboundForTest = (): OutboundOptions => outbound;
+
 export const MIRROR_REFUSED = "refused: the remote's host is a private address";
 export const MIRROR_UNRESOLVED = "the remote's host could not be resolved";
 

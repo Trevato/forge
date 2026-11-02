@@ -472,6 +472,7 @@ describe("browsing an origin repository on the web", () => {
     expect(pulls).toContain("Tighten the bolt");
     const pull = await bodyOf(alice, `${browse}/pulls/9`);
     expect(pull).toContain("tighten");
+    expect(pull).toContain('class="page-head-sub bar muted small"');
     // A live pull is merged where it lives, and the box says where.
     expect(pull).toContain("Merge on");
   });

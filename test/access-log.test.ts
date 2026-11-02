@@ -16,12 +16,14 @@ import { createUser } from "../src/core/users.ts";
 import {
   accessDir,
   clientHash,
+  DAY_BYTES,
+  unwrittenFor,
+  SILENT_AFTER_S,
   flushAccess,
   keptPath,
   prune,
   readAccess,
   recordAccess,
-  TOTAL_BYTES,
 } from "../src/http/access_log.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { newApp } from "../src/actions/apps.ts";
@@ -196,11 +198,12 @@ describe("the access log's keeping", () => {
       prune(dir, now);
       expect(readdirSync(keep)).toEqual(["access-2026-09-30.log"]);
       // Over the cap: the oldest goes first, today's file always stays.
-      const big = "x".repeat(TOTAL_BYTES / 2 + 1);
+      const cap = 1024;
+      const big = "x".repeat(cap / 2 + 1);
       writeFileSync(join(keep, "access-2026-10-10.log"), big);
       writeFileSync(join(keep, "access-2026-10-11.log"), big);
       writeFileSync(join(keep, "access-2026-10-13.log"), "today\n");
-      prune(dir, now);
+      prune(dir, now, cap);
       expect(readdirSync(keep).sort()).toEqual([
         "access-2026-10-11.log",
         "access-2026-10-13.log",
@@ -292,6 +295,75 @@ describe("the access log and app hostnames", () => {
       servers.stop();
       app.close();
       await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the access log never goes silent (#6841)", () => {
+  const seen = (path: string) => ({
+    request: new Request(`http://forge.test${path}`),
+    status: 200,
+    ms: 1,
+    client: "1.2.3.4",
+  });
+
+  test("two writers append to one day's file, and a day rollover keeps writing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "access-silent-"));
+    try {
+      const day1 = new Date("2026-10-27T23:59:59Z");
+      const day2 = new Date("2026-10-28T00:00:01Z");
+      recordAccess(dir, seen("/issues/a"), day1);
+      flushAccess(day1);
+      // a new pod: same directory, its own first request
+      recordAccess(dir, seen("/issues/b"), day1);
+      flushAccess(day1);
+      recordAccess(dir, seen("/issues/c"), day2);
+      flushAccess(day2);
+      const files = readdirSync(accessDir(dir)).sort();
+      expect(files).toEqual(["access-2026-10-27.log", "access-2026-10-28.log"]);
+      const first = readFileSync(join(accessDir(dir), files[0]!), "utf8");
+      expect(first.trim().split("\n")).toHaveLength(2);
+      expect(readFileSync(join(accessDir(dir), files[1]!), "utf8")).toContain("/issues/c");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a day's file at its cap sheds its older half and keeps appending", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "access-cap-"));
+    try {
+      const at = new Date("2026-10-27T10:00:00Z");
+      mkdirSync(accessDir(dir), { recursive: true });
+      const file = join(accessDir(dir), "access-2026-10-27.log");
+      const filler = `${JSON.stringify({ t: "x", path: "/old" })}\n`;
+      writeFileSync(file, filler.repeat(Math.ceil(DAY_BYTES / filler.length) + 1));
+      recordAccess(dir, seen("/issues/new"), at);
+      flushAccess(at);
+      const text = readFileSync(file, "utf8");
+      expect(text).toContain("/issues/new");
+      expect(text.length).toBeLessThan(DAY_BYTES);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a line that cannot land is kept as unwritten until one does; an idle forge has none", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "access-ago-"));
+    try {
+      flushAccess();
+      expect(unwrittenFor()).toBeUndefined();
+      // the access dir is a file: every append fails
+      writeFileSync(accessDir(dir), "not a directory");
+      const at = new Date();
+      recordAccess(dir, seen("/issues/x"), at);
+      flushAccess(at);
+      expect(unwrittenFor(at.getTime() + 600_000)).toBeGreaterThan(SILENT_AFTER_S);
+      await rm(accessDir(dir));
+      recordAccess(dir, seen("/issues/y"), at);
+      flushAccess(at);
+      expect(unwrittenFor()).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

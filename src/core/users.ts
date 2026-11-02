@@ -218,8 +218,9 @@ interface CreateUserFields {
  * other trace is removed; anything else stays.
  */
 export function discardFreshUser(db: Database, userId: string): void {
-  const removed = db.query("DELETE FROM user WHERE id = ?1 AND password_hash = ''").run(userId).changes;
-  if (removed === 1) reopenInvite(db, userId);
+  // RETURNING counts the account, not the trigger's write to `front_epoch`.
+  const removed = db.query("DELETE FROM user WHERE id = ?1 AND password_hash = '' RETURNING id").all(userId);
+  if (removed.length === 1) reopenInvite(db, userId);
 }
 
 /**

@@ -50,14 +50,12 @@ export function limbTree(
   for (const edge of graph.edges) {
     waits.add(edge.issueId);
     if (isStructural(set, edge.blockedById)) continue;
-    waitsFor.set(edge.issueId, [
-      ...(waitsFor.get(edge.issueId) ?? []),
-      edge.blockedById,
-    ]);
-    waitedBy.set(edge.blockedById, [
-      ...(waitedBy.get(edge.blockedById) ?? []),
-      edge.issueId,
-    ]);
+    const waiting = waitsFor.get(edge.issueId);
+    if (waiting === undefined) waitsFor.set(edge.issueId, [edge.blockedById]);
+    else waiting.push(edge.blockedById);
+    const waiters = waitedBy.get(edge.blockedById);
+    if (waiters === undefined) waitedBy.set(edge.blockedById, [edge.issueId]);
+    else waiters.push(edge.issueId);
   }
   // Work behind the gate is Later's whether or not the Later umbrella waits
   // for it: its milestone counts what the map's Later row counts.

@@ -36,6 +36,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   // the admins' (`repo.upstream_follow`).
   "repo.following",
   "issue.labeled",
+  "issue.first",
   "issue.closed",
   "issue.commented",
   "usage.delta",
@@ -70,6 +71,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "pull.reopened",
   "pull.opened",
   "pull.merged",
+  "pull.bypassed",
   "issue.opened",
   "spend.reported",
   "forge.proposal",
@@ -112,7 +114,9 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "board.saved",
   "board.deleted",
   "repo.created",
+  "repo.vision_kept",
   "repo.forked",
+  "repo.detached",
   "repo.deleted",
   "label.updated",
   "label.deleted",
@@ -131,6 +135,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "issue.unblocked",
   "issue.confirmed",
   "capacity.changed",
+  "crew.governed",
 ]);
 
 /**
@@ -152,6 +157,16 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("drill.") ||
     // A snapshot moving is the forge owner's too, and has no repository.
     kind.startsWith("backup.") ||
+    // The weekly model review's changes and results are the owner's (`actions/model_review.ts`).
+    kind.startsWith("crew.model_") ||
+    // A child forge answering no one at its public address is the owner's to hear (`spawn/reach.ts`).
+    kind.startsWith("forge.child_") ||
+    // A clog is the whole forge's flow, the owner's to hear (`flow/clog_tick.ts`).
+    kind.startsWith("clog.") ||
+    // What the throughput keeper did to lift a brake is the owner's too (`flow/keeper.ts`).
+    kind.startsWith("keeper.") ||
+    // Events the retired FLOW ONLY switch wrote stay the admins' to hear.
+    kind === "flow_only.cleared" ||
     // A report from outside waits for a person who decides; its arrival is
     // theirs to see, never the readers' (`actions/reports.ts`).
     kind.startsWith("report.") ||
@@ -167,7 +182,14 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     // address is often a private repository's.
     kind === "repo.upstream_follow" ||
     kind === "repo.upstream_checked" ||
-    kind === "repo.crew_outsiders"
+    kind === "repo.crew_outsiders" ||
+    // A clog starting names the forge's own pile-up: the owner's to hear (#6524).
+    kind.startsWith("clog.") ||
+    // The release keeper's steps name images and probe numbers: the forge owner's (`keeper/keeper.ts`, #7557).
+    kind.startsWith("release.") ||
+    // A file held against new work is its admins' book-keeping (#6522).
+    kind === "repo.file_held" ||
+    kind === "repo.file_released"
   )
     return "admins";
   // A fleet operation spans repositories; its receipt is its actor's. So is

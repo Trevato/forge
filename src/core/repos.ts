@@ -15,6 +15,7 @@ import {
   detachFork,
   forkBareRepo,
   initBareRepo,
+  repoDirExists,
   repoDir,
 } from "../git/repos.ts";
 import { id } from "../kernel/id.ts";
@@ -550,6 +551,45 @@ export function listAllForks(db: Database): Repo[] {
     .map(toRepo);
 }
 
+/** What a repository forks, nearest first, to `maxDepth` generations: one query. */
+export function listAncestors(
+  db: Database,
+  repoId: string,
+  maxDepth: number,
+): Repo[] {
+  return db
+    .query<RepoRow, [string, number]>(
+      `WITH RECURSIVE up(id, d) AS (
+         SELECT fork_parent_id, 1 FROM repo
+           WHERE id = ?1 AND fork_parent_id IS NOT NULL
+         UNION ALL
+         SELECT r.fork_parent_id, up.d + 1 FROM repo r JOIN up ON r.id = up.id
+           WHERE r.fork_parent_id IS NOT NULL AND up.d < ?2)
+       ${SELECT} JOIN up ON up.id = repo.id ORDER BY up.d`,
+    )
+    .all(repoId, maxDepth)
+    .map(toRepo);
+}
+
+/** Every fork below a repository, to `maxDepth` generations: one query, by id. */
+export function listDescendants(
+  db: Database,
+  repoId: string,
+  maxDepth: number,
+): Repo[] {
+  return db
+    .query<RepoRow, [string, number]>(
+      `WITH RECURSIVE down(id, d) AS (
+         SELECT id, 1 FROM repo WHERE fork_parent_id = ?1
+         UNION ALL
+         SELECT r.id, down.d + 1 FROM repo r JOIN down ON r.fork_parent_id = down.id
+           WHERE down.d < ?2)
+       ${SELECT} WHERE repo.id IN (SELECT id FROM down) ORDER BY repo.id`,
+    )
+    .all(repoId, maxDepth)
+    .map(toRepo);
+}
+
 export function listForks(db: Database, repoId: string): Repo[] {
   return db
     .query<
@@ -578,6 +618,16 @@ export function forkParentFor(
     : undefined;
 }
 
+/**
+ * Forget a fork's parent. Only once the fork owns its objects (`detachFork`):
+ * a row without a parent over a store that still borrows one is a fork that
+ * breaks when the parent goes.
+ */
+export function clearForkParent(db: Database, repoId: string): void {
+  db.query("UPDATE repo SET fork_parent_id = NULL WHERE id = ?1").run(repoId);
+  forgetListings(db);
+}
+
 /** The forks of this repository the viewer may see — the list, and its count. */
 export function visibleForks(
   db: Database,
@@ -585,6 +635,66 @@ export function visibleForks(
   viewer: User | undefined,
 ): Repo[] {
   return listForks(db, repoId).filter((fork) => canRead(db, fork, viewer));
+}
+
+/** A fork the viewer may see, the visible forks beneath it, and how many lie one level further. */
+export interface ForkNode {
+  readonly repo: Repo;
+  readonly forks: readonly ForkNode[];
+  /** Visible forks of this one, counted but not listed; only the second level carries it. */
+  readonly deeper: number;
+}
+
+const forksOfMany = (db: Database, ids: readonly string[]): Repo[] =>
+  ids.length === 0
+    ? []
+    : db
+        .query<RepoRow, string[]>(
+          `${SELECT} WHERE repo.fork_parent_id IN (${ids.map(() => "?").join(",")}) ORDER BY repo.id`,
+        )
+        .all(...ids)
+        .map(toRepo);
+
+/** The visible forks of these parents, grouped by parent id: one query. */
+function visibleForksByParent(
+  db: Database,
+  parents: readonly Repo[],
+  viewer: User | undefined,
+): Map<string, Repo[]> {
+  const byParent = new Map<string, Repo[]>();
+  for (const fork of forksOfMany(db, parents.map((p) => p.id))) {
+    if (fork.forkParentId === null || !canRead(db, fork, viewer)) continue;
+    const siblings = byParent.get(fork.forkParentId) ?? [];
+    siblings.push(fork);
+    byParent.set(fork.forkParentId, siblings);
+  }
+  return byParent;
+}
+
+/**
+ * The visible forks of a repository, each with its own visible forks, and
+ * for those a count of the visible forks one level further: three queries
+ * at most, one per level. A fork the viewer cannot read hides itself and
+ * everything under it.
+ */
+export function forkTree(
+  db: Database,
+  repoId: string,
+  viewer: User | undefined,
+): ForkNode[] {
+  const first = visibleForks(db, repoId, viewer);
+  const secondBy = visibleForksByParent(db, first, viewer);
+  const second = [...secondBy.values()].flat();
+  const thirdBy = visibleForksByParent(db, second, viewer);
+  return first.map((repo) => ({
+    repo,
+    deeper: 0,
+    forks: (secondBy.get(repo.id) ?? []).map((child) => ({
+      repo: child,
+      forks: [],
+      deeper: thirdBy.get(child.id)?.length ?? 0,
+    })),
+  }));
 }
 
 export function getRepo(
@@ -752,6 +862,7 @@ export function listReposByOwner(
     params.push(options.cursor);
     where += ` AND repo.id < ?${params.length}`;
   }
+  if (options.withoutArchived === true) where += " AND repo.archived_at IS NULL";
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
@@ -763,7 +874,10 @@ export function listReposByOwner(
 }
 
 /**
- * Delete a repo. Row first, then disk — inverse of creation, same invariant.
+ * Delete a repo. Disk first, then the row: when the directory will not go,
+ * the repository stays listed and a retry finds it (`delete_failed`). A
+ * directory that is already missing leaves nothing to orphan, so the row still
+ * goes and `delete_failed` is still reported.
  * Before removing the objects, detach every fork that borrows them (repack so
  * the fork owns its objects, then drop its alternates link) — otherwise a
  * fork would be silently corrupted. This is the detach-before-delete rule.
@@ -785,19 +899,23 @@ export async function deleteRepo(
       });
       return err("delete_failed");
     }
-    db.query("UPDATE repo SET fork_parent_id = NULL WHERE id = ?1").run(
-      fork.id,
-    );
+    clearForkParent(db, fork.id);
   }
 
-  db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
-  forgetListings(db);
   const dir = repoDir(reposRoot, repo.ownerName, repo.name);
   // A pooled `cat-file` holds this directory open. Closing it first is what
   // keeps the space actually free after the unlink instead of pinned to a
   // descriptor nobody will ever read again.
   closeReader(dir);
+  const present = await repoDirExists(dir);
+  // The directory goes first: when it will not, the row stays, so the
+  // repository is still listed and a retry finds it. With no directory there
+  // is nothing to orphan, so the row goes and the missing repository is
+  // still reported.
   const removed = await deleteRepoDir(dir);
+  if (!removed.ok && present) return err("delete_failed");
+  db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
+  forgetListings(db);
   if (!removed.ok) return err("delete_failed");
   return ok();
 }
@@ -1113,13 +1231,14 @@ export function moveArchived(
   archived: boolean,
   at: string = new Date().toISOString(),
 ): boolean {
+  // RETURNING counts the repository, not the trigger's write to `front_epoch`.
   const changes = archived
     ? db
-        .query("UPDATE repo SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL")
-        .run(repoId, at).changes
+        .query("UPDATE repo SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL RETURNING id")
+        .all(repoId, at).length
     : db
-        .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL")
-        .run(repoId).changes;
+        .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL RETURNING id")
+        .all(repoId).length;
   if (changes === 1) forgetListings(db);
   return changes === 1;
 }

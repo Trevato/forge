@@ -10,8 +10,10 @@
  * behaviour that a page depends on to be usable.
  */
 
+import { imageViewJs } from "./render/image.ts";
 import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
+import { MEDIA_PLAY_JS } from "./render/player.ts";
 import { NOT_TOLD_WORDS } from "../actions/tell_words.ts";
 
 /**
@@ -1274,10 +1276,14 @@ export const shellJs = /* js */ `
 (function () {
   var doc = document;
   ${modalJs}
+  ${imageViewJs}
 
   // Controls that only mean something with a script running stay hidden
   // until one is: no dead buttons on a page with JavaScript switched off.
   doc.documentElement.classList.add('js');
+
+  // ---- a file the browser cannot play: its note, with Download ----
+  ${MEDIA_PLAY_JS}
 
   // ---- menus (details) ----
   function closeMenus(except) {
@@ -1387,6 +1393,9 @@ export const shellJs = /* js */ `
       var lo = Number(m[1]); var hi = Number(m[2] || m[1]);
       if (hi < lo) { var t = lo; lo = hi; hi = t; }
       anchor = lo;
+      // An anchor past the cut: the page that draws every line.
+      var cut = doc.getElementById('code-cut');
+      if (cut && !doc.getElementById('L' + lo)) { location.replace(cut.getAttribute('href') + location.hash); return; }
       for (var n = lo; n <= hi; n++) {
         var row = doc.getElementById('L' + n);
         if (row) row.setAttribute('data-hl', '');
@@ -1488,12 +1497,13 @@ export const shellJs = /* js */ `
       var box = doc.querySelector('[data-search-input]');
       if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
     } else if (e.key === '?') { seq.length = 0; e.preventDefault(); openHelp(); }
+    else if (e.key === ':') { seq.length = 0; e.preventDefault(); openPalette(); }
   });
 
   // ---- help overlay, generated from the shortcuts actually on the page ----
   var STATIC_KEYS = [
     ['j / k', 'Move between rows'], ['o or Enter', 'Open the focused row'],
-    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], ['?', 'This help'],
+    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], [':', 'Command palette'], ['?', 'This help'],
     ['Esc', 'Leave a box, close a menu or dialog'],
   ];
   // The rows a page earns by what it carries: a box to type in, a form
@@ -1604,7 +1614,12 @@ export const shellJs = /* js */ `
       rows.push(r.source === 'origin'
         ? { t: r.fullName, h: '/origins/' + r.originId + '/r/' + r.fullName, g: 'Repositories',
             d: r.originKind ? 'on ' + r.originKind : 'on an origin' }
-        : { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories' });
+        : (function () {
+            var row = { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories', n: r.name };
+            if (r.owner === loadIndex().me) row.m = 1;
+            if (r.app) { row.x = 'App'; row.o = row.h + '/app/production/open'; }
+            return row;
+          })());
     });
     // An issue lives at /issues/:n and a pull request at /pulls/:n in every
     // mode (\`tellHref\`/\`changeHref\`, src/web/studio/nouns.ts).
@@ -1677,6 +1692,56 @@ export const shellJs = /* js */ `
     }).catch(function () { location.href = href; });
   }
 
+  // The palette's tell: the feed composer's own POST (same action, same
+  // same-origin check), with this page's path as where it was said. The
+  // answer is one line at the top of the page, in the flash's own classes.
+  function tellFromHere(app, text) {
+    var main = doc.getElementById('main');
+    function say(tone, message, href) {
+      if (!main) return;
+      var old = main.querySelector('.toast[data-palette-tell]');
+      if (old) old.remove();
+      var t = doc.createElement('div');
+      t.className = 'toast';
+      t.setAttribute('data-tone', tone);
+      t.setAttribute('data-palette-tell', '');
+      t.setAttribute('role', 'status');
+      var b = doc.createElement('div');
+      b.className = 'toast-body';
+      b.appendChild(doc.createTextNode(message));
+      if (href && href.charAt(0) === '/' && href.charAt(1) !== '/') {
+        b.appendChild(doc.createTextNode(' \u00b7 '));
+        var a = doc.createElement('a');
+        a.setAttribute('href', href);
+        a.textContent = 'See it';
+        b.appendChild(a);
+      }
+      t.appendChild(b);
+      var x = doc.createElement('button');
+      x.type = 'button';
+      x.className = 'btn';
+      x.setAttribute('data-variant', 'link');
+      x.setAttribute('data-size', 'sm');
+      x.setAttribute('aria-label', 'Dismiss');
+      x.textContent = '\u00d7';
+      x.onclick = function () { t.remove(); };
+      t.appendChild(x);
+      t.tabIndex = -1;
+      main.insertBefore(t, main.firstChild);
+      // The palette has just closed: the answer takes the focus, then clears itself.
+      t.focus({ preventScroll: false });
+      window.setTimeout(function () { if (t.parentNode) t.remove(); }, 12000);
+    }
+    fetch('/tell', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+      body: new URLSearchParams({ app: app, text: text, from: location.pathname })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.ok) say('success', d.flash, d.href);
+      else say('danger', d.error || '${NOT_TOLD_WORDS}');
+    }).catch(function () { say('danger', '${NOT_TOLD_WORDS}'); });
+  }
+
   var closePalette = null;
   function openPalette() {
     var dlg = doc.getElementById('palette');
@@ -1685,8 +1750,14 @@ export const shellJs = /* js */ `
     var input = dlg.querySelector('.palette-input');
     var list = dlg.querySelector('.palette-list');
     var items = (loadIndex().items || []).map(function (i) {
-      return { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
+      var r = { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
+      if (i.n) r.n = String(i.n);
+      if (i.m === 1) r.m = 1;
+      if (i.x) r.x = String(i.x);
+      if (i.o && String(i.o).charAt(0) === '/') r.o = String(i.o);
+      return r;
     });
+    var tellApp = (loadIndex().tell || {}).app;
     var recent = readRecent().map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
     var recentHrefs = recent.map(function (r) { return r.h; });
     var served = [];       // rows the server found, for the query servedFor
@@ -1713,6 +1784,12 @@ export const shellJs = /* js */ `
       t.className = 'grow';
       t.textContent = r.t;
       a.appendChild(t);
+      if (r.x) {
+        var x = doc.createElement('span');
+        x.className = 'cat';
+        x.textContent = r.x;
+        a.appendChild(x);
+      }
       if (r.d) {
         var d = doc.createElement('span');
         d.className = 'cat';
@@ -1766,9 +1843,47 @@ export const shellJs = /* js */ `
           var a = row(r, 'palette-o' + nodes.length);
           nodes.push(a); shown.push(r);
           box.appendChild(a);
+          // The app is its own option under its repository: reachable by
+          // arrow, touch and screen reader, not only by Cmd/Ctrl+Enter.
+          if (r.o) {
+            var ar = { t: 'Open the app of ' + r.t, h: r.o, g: g.title };
+            var aa = row(ar, 'palette-o' + nodes.length);
+            nodes.push(aa); shown.push(ar);
+            box.appendChild(aa);
+          }
         });
         frag.appendChild(box);
       });
+      // Tell from anywhere: once there are words, the last row says them to the crew.
+      if (tellApp && q.length >= 3) {
+        var tbox = doc.createElement('div');
+        tbox.className = 'palette-group';
+        tbox.setAttribute('role', 'group');
+        // A mutation is a button in a POST form, as /tell takes it without
+        // script too; the click is caught below and sent in place.
+        var tf = doc.createElement('form');
+        tf.method = 'post'; tf.action = '/tell';
+        [['app', tellApp], ['text', q], ['from', location.pathname]].forEach(function (kv) {
+          var hid = doc.createElement('input');
+          hid.type = 'hidden'; hid.name = kv[0]; hid.value = kv[1];
+          tf.appendChild(hid);
+        });
+        var ta = doc.createElement('button');
+        ta.type = 'submit';
+        ta.className = 'palette-item';
+        ta.id = 'palette-o' + nodes.length;
+        ta.setAttribute('role', 'option');
+        ta.setAttribute('aria-selected', 'false');
+        ta.setAttribute('data-tell', q);
+        var tt = doc.createElement('span');
+        tt.className = 'grow';
+        tt.textContent = 'Tell the crew: ' + q;
+        ta.appendChild(tt);
+        tf.appendChild(ta);
+        nodes.push(ta); shown.push({ t: tt.textContent, h: '#tell', g: 'Tell' });
+        tbox.appendChild(tf);
+        frag.appendChild(tbox);
+      }
       if (nodes.length === 0) frag.appendChild(emptyLine(q));
       list.textContent = '';
       list.appendChild(frag);
@@ -1816,6 +1931,11 @@ export const shellJs = /* js */ `
       else if (k === 'ArrowUp') { e.preventDefault(); select(at - 1); }
       else if (k === 'Home') { e.preventDefault(); select(0); }
       else if (k === 'End') { e.preventDefault(); select(nodes.length - 1); }
+      else if (k === 'Enter' && (e.metaKey || e.ctrlKey) && shown[at] && shown[at].o) {
+        e.preventDefault();
+        remember(shown[at]);
+        location.href = shown[at].o;
+      }
       else if (k === 'Enter') {
         e.preventDefault();
         var q = input.value.trim();
@@ -1853,6 +1973,12 @@ export const shellJs = /* js */ `
       var a = e.target && e.target.closest ? e.target.closest('.palette-item') : null;
       var i = a ? nodes.indexOf(a) : -1;
       if (i === -1) return;
+      if (a.hasAttribute('data-tell')) {
+        e.preventDefault();
+        close();
+        tellFromHere(tellApp, a.getAttribute('data-tell'));
+        return;
+      }
       remember(shown[i]);
       var h = a.getAttribute('href') || '';
       if (/^\\/[^\\/?#]+\\/[^\\/?#]+\\/tell\\?from=/.test(h) && !e.metaKey && !e.ctrlKey && !e.shiftKey) {

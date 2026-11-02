@@ -118,6 +118,23 @@ describe("MCP labels", () => {
     expect(names()).toEqual(["bug", "ui"]);
   });
 
+  test("`add` and `remove` change only the named labels; `flow` is made on first add, by a writer only", async () => {
+    await issueLabels();
+    expect((await tool(bobRw, { repo: "alice/game", number, labels: ["flow"], action: "add" })).error).toContain(
+      "You need write access",
+    );
+    expect(names()).toEqual(["bug", "ui"]);
+    await tool(aliceRw, { repo: "alice/game", number, labels: ["ui"] });
+    const added = await tool(aliceRw, { repo: "alice/game", number, labels: ["flow"], action: "add" });
+    expect(added.value.labels.sort()).toEqual(["flow", "ui"]);
+    expect(names()).toEqual(["bug", "flow", "ui"]);
+    const removed = await tool(aliceRw, { repo: "alice/game", number, labels: ["FLOW"], action: "remove" });
+    expect(removed.value.labels).toEqual(["ui"]);
+    expect((await tool(aliceRw, { repo: "alice/game", number, labels: [], action: "toggle" })).error).toContain(
+      "action is set, add or remove",
+    );
+  });
+
   test("bad input stops at the boundary", async () => {
     for (const labels of ["bug", [1], [{}], null, Array(51).fill("a"), ["x".repeat(65)]]) {
       const r = await tool(aliceRw, { repo: "alice/game", number, labels });

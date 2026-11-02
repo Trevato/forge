@@ -215,4 +215,34 @@ describe("the chips of a forge", () => {
     expect(((await tool(bobToken, "feed", { hide_kinds: ["x"] })) as any).error).toContain("hide_kinds");
     expect(((await tool(bobToken, "feed", { hide_people: [5] })) as any).error).toContain("hide_people");
   });
+
+  test("every drawn kind chip shows what pressing it takes off the page, and pressing it changes the posts", async () => {
+    const cookie = { cookie: `forge_session=${createSession(app.db, bob.id).token}` };
+    const region = async () => await (await fetch(`${servers.url}/live/feed`, { headers: cookie })).text();
+    const posts = (html: string) => [...html.matchAll(/data-item="[^"]*"[^>]*data-kind="(\w+)"/g)].map((m) => m[1]!);
+    const drawn = (html: string) =>
+      [...html.matchAll(/data-chip="kind"\s+data-value="(\w+)"\s+aria-pressed="true"\s*>([^<]*)</g)].map((m) => [m[1]!, m[2]!.trim()] as const);
+    const before = await region();
+    const chips = drawn(before);
+    // Nothing decided on this page, so no Decisions chip; the others carry a count.
+    expect(chips.map(([k]) => k).sort()).toEqual(["crew", "releases", "reviews"]);
+    expect(chips.map(([, label]) => label).sort()).toEqual(["Crew words 1", "Pull requests 1", "Releases 1"]);
+    for (const [chip] of chips) {
+      const had = posts(before);
+      await call(bobToken, "POST", "/api/v1/feed/chips", { kind: "kind", value: chip, hidden: true });
+      const after = await region();
+      expect(posts(after).length).toBe(had.length - 1);
+      expect(after).toMatch(new RegExp(`data-value="${chip}"\\s+aria-pressed="false"`));
+      await call(bobToken, "POST", "/api/v1/feed/chips", { kind: "kind", value: chip, hidden: false });
+    }
+    expect(posts(await region())).toEqual(posts(before));
+  });
+
+  test("a count is the posts drawn of its kind, whatever asks the home pins aside", async () => {
+    const cookie = { cookie: `forge_session=${createSession(app.db, alice.id).token}` };
+    emit("pull.opened", carol, { number: 2, title: "Wait for me" });
+    const page = await (await fetch(`${servers.url}/live/feed`, { headers: cookie })).text();
+    const drawnPulls = [...page.matchAll(/data-item="[^"]*"[^>]*data-kind="pull"/g)].length;
+    expect(page).toMatch(new RegExp(`Pull requests ${drawnPulls}\\s*<`));
+  });
 });

@@ -143,5 +143,5 @@ export async function reviewAct(ctx: Ctx): Promise<Response> {
   const after = orderedAsks(ctx.app.db, user).filter((a) => !acted(a));
   const later = new Set(before.slice(at + 1).map((a) => a.id));
   const next = at < 0 ? after[0] : (after.find((a) => later.has(a.id)) ?? after[0]);
-  return redirect(back(next), { flash: { message: done }, url: ctx.url });
+  return redirect(back(next), { flash: { message: done }, url: ctx.url, forgeUrl: ctx.app.config.url });
 }

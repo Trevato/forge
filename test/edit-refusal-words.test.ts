@@ -10,6 +10,8 @@ const WORDS: Array<[string, string]> = [
   ["branch_moved", "the branch moved while this edit was being written; re-read and retry"],
   ["land_refused", "the origin refused this commit; nothing was changed here either"],
   ["pull_failed", "the commit landed, but the pull request could not be opened"],
+  ["invalid_path", "that path cannot be written; use a plain relative path with no .. or .git"],
+  ["path_conflict", "that path collides with a file or directory already in the tree"],
 ];
 
 for (const [kind, sentence] of WORDS) {

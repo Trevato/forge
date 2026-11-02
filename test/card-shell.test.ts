@@ -173,6 +173,17 @@ describe("the card shell", () => {
   });
 });
 
+describe("the Wave card links its limbs", () => {
+  const json = { repo: { owner: "a", name: "b" }, limbs: [{ number: 3, name: "x", done: 1, total: 2, building: 0 }, { number: 0, name: "y" }] };
+  test("a good origin links a positive number; a bad origin or repo does not", () => {
+    const good = cardFor("milestones", json, "https://f.example")!;
+    expect(good.rows[0]!.link).toBe("https://f.example/a/b/milestones/3");
+    expect(good.rows[1]!.link).toBeUndefined();
+    expect(cardFor("milestones", json, "javascript:x")!.rows[0]!.link).toBeUndefined();
+    expect(cardFor("milestones", { ...json, repo: {} }, "https://f.example")!.rows[0]!.link).toBeUndefined();
+  });
+});
+
 describe("app card links", () => {
   const origin = "https://forge.example";
   test("apps rows link to the app page only for an http(s) origin and owner/name", () => {

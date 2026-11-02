@@ -26,8 +26,24 @@ returned is filed again. It files in `FORGE_SENTINEL_REPO` (default
 `trevato/forge`) as the `sentinel` agent, else the first admin.
 
 **What it shows.** To a site admin only: the board's forge strip and the
-terminal palette's `Sentinel` command show the count of open findings and the
+terminal palette's `Sentinel` command (as a toast) show the count of open findings and the
 last hunt's time. A hunt is synchronous, so there is no "hunting" state to show.
+
+A check that has never been green is filed only for the sentinel's own repository. In any other repository it stays on that repository's checks and the degraded list.
+
+A capacity setting away from its default is not a finding: the sentinel files
+nothing for it (#3269). On `/settings/capacity` the row of each such setting
+carries one muted line, "changed from X N days ago by who", and its **Put back**
+button (in the row's own form, beside Save) restores the default through
+`changeCapacity` (same validation, record, event and reversal). The line stays
+until the value is back at the default; nothing else reminds anyone. The
+JSON API and MCP carry the same fact: a setting away from its default has a
+`changed` field (`at`, `by`) in the capacity listing (`listCapacity`).
+
+The `setting:<key>` findings filed before that are all closed; none raises an
+ask, and the capacity page's Put back is the one answer. The `sentinel_kept`
+table they once used is unread; a migration drops it once the additive rule
+(`test/schema-additive.test.ts`) allows a drop.
 
 **What it never quotes.** Evidence passes through `scrub` (`redactSecrets` and
 any 32-character unbroken token) before it is filed, since the repository may

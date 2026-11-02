@@ -7,7 +7,7 @@
 
 import { listProposals, mintProposal, revokeProposal } from "../../actions/proposal_tokens.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
-import type { Ctx } from "../../http/context.ts";
+import { isAccountItself, type Ctx } from "../../http/context.ts";
 import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -79,7 +79,7 @@ export async function proposalTokenMint(ctx: Ctx): Promise<Response> {
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
   // Never minted by another token: a credential cannot grow credentials.
-  if (ctx.auth.via !== "session" && ctx.auth.via !== "password")
+  if (!isAccountItself(ctx.auth))
     return new Response("forbidden", { status: 403 });
   const minted = mintProposal(ctx.app, ctx.auth.user, repo, {
     child: field(form, "child"),

@@ -5,16 +5,23 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   BOARD_NOT_SAVED,
   MILESTONE_WATCH_PERSON_ONLY,
   VOTE_NOT_RECORDED,
 } from "../src/actions/board_words.ts";
+import { importsFrom, mcpSource } from "./helpers/mcp.ts";
 
 const ROOT = join(import.meta.dir, "..");
-const read = (path: string): string => readFileSync(join(ROOT, path), "utf8");
+/** api.ts with the route modules moved out of it (src/http/api/), as mcpSource does for the MCP. */
+const apiSource = (): string =>
+  ["src/http/api.ts", ...readdirSync(join(ROOT, "src/http/api")).filter((f) => f.endsWith(".ts")).sort().map((f) => `src/http/api/${f}`)]
+    .map((f) => readFileSync(join(ROOT, f), "utf8"))
+    .join("\n");
+const read = (path: string): string =>
+  path === "src/http/mcp.ts" ? mcpSource(ROOT) : path === "src/http/api.ts" ? apiSource() : readFileSync(join(ROOT, path), "utf8");
 
 const SENTENCES = {
   BOARD_NOT_SAVED: "that board could not be saved",
@@ -32,7 +39,7 @@ describe("board, vote and milestone-watch refusals", () => {
   for (const file of FILES) {
     test(`${file} imports the sentences and types none of them`, () => {
       const text = read(file);
-      expect(text).toContain('from "../actions/board_words.ts"');
+      expect(importsFrom(text, "actions/board_words.ts")).toBe(true);
       for (const [name, sentence] of Object.entries(SENTENCES)) {
         expect(text).not.toContain(sentence);
         expect(text).toContain(name);

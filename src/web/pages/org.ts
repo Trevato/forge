@@ -12,6 +12,7 @@
 import {
   addTeamMember,
   createOrg,
+  createOrgWords,
   createTeam,
   deleteTeam,
   removeTeamMember,
@@ -33,7 +34,7 @@ import { LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -58,7 +59,6 @@ import {
   time,
   field as uiField,
 } from "../ui.ts";
-import { NAME_RESERVED } from "../../actions/signup_words.ts";
 
 const PER_PAGE = 20;
 
@@ -104,7 +104,7 @@ function repoSection(
   return html`<div class="bar mt mb">
       <form class="bar" method="get" action="/${owner.username}" role="search">
         <input
-          class="input search"
+          class="input"
           type="search"
           name="q"
           value="${query}"
@@ -302,17 +302,26 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
 // drawn by the same shelf the home draws its *Your apps* card from, then
 // their other repositories, then — for an org — its members and teams.
 export async function ownerProfile(ctx: Ctx): Promise<Response> {
-  const owner = getUserByName(ctx.app.db, ctx.params.owner ?? "");
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const owner = timePhase(ctx.request, "owner", () =>
+    getUserByName(ctx.app.db, ctx.params.owner ?? ""),
+  );
   if (!owner || hiddenFrom(owner, ctx.auth.user)) return notFoundPage(ctx);
 
   const isOrg = owner.kind === "org";
-  const access = isOrg
-    ? orgAccess(ctx.app.db, owner.id, ctx.auth.user)
-    : "none";
+  const access = timePhase(ctx.request, "access", () =>
+    isOrg ? orgAccess(ctx.app.db, owner.id, ctx.auth.user) : "none",
+  );
   const canManage = isOrg && accessAllows(access, "admin");
   const isSelf =
     ctx.auth.user !== undefined && (ctx.auth.user.id === owner.id || canManage);
-  const apps = await appsSection(ctx, owner, isSelf);
+  const apps = await timePhaseAsync(ctx.request, "apps", () =>
+    appsSection(ctx, owner, isSelf),
+  );
+  const repos = timePhase(ctx.request, "repos", () =>
+    repoSection(ctx, owner, isSelf, apps.count > 0),
+  );
+  const rendering = performance.now();
   // Said to the people it concerns: its members and the forge's owner.
   const ownerless =
     isOrg && access !== "none" && personOwners(ctx.app.db, owner.id).length === 0;
@@ -347,7 +356,7 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
         )
       : null}
     ${apps.html}
-    ${repoSection(ctx, owner, isSelf, apps.count > 0)}
+    ${repos}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
     )}
@@ -373,10 +382,12 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
     )}
     ${isOrg ? orgSecrets(ctx, owner.username) : null}`;
 
-  const listed = listReposByOwner(ctx.app.db, owner.username, undefined, {
-    limit: LIST_LIMIT_MAX,
-  });
-  return page({
+  const listed = timePhase(ctx.request, "listed", () =>
+    listReposByOwner(ctx.app.db, owner.username, undefined, {
+      limit: LIST_LIMIT_MAX,
+    }),
+  );
+  const res = page({
     ctx,
     title: owner.username,
     description: ownerLine({
@@ -387,6 +398,8 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
     }),
     body,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return res;
 }
 
 function orgSecrets(ctx: Ctx, name: string): Html | null {
@@ -444,6 +457,7 @@ function orgForm(ctx: Ctx, value: string, error?: string): Response {
 
 // GET /organizations/new
 export function newOrgPage(ctx: Ctx): Response {
+  nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   return timePhase(ctx.request, "render", () =>
     ctx.auth.user ? orgForm(ctx, "") : signInFirst(ctx),
@@ -457,19 +471,7 @@ export async function newOrgSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const name = field(form, "name");
   const created = createOrg(ctx.app, ctx.auth.user, name);
-  if (!created.ok) {
-    const messages: Record<string, string> = {
-      name_taken: "That name is already taken.",
-      name_reserved: NAME_RESERVED,
-      invalid_name: "Letters, digits, dots and dashes only.",
-      unauthorized: "Sign in to create an organization.",
-    };
-    return orgForm(
-      ctx,
-      name,
-      messages[created.error] ?? "That name won't work.",
-    );
-  }
+  if (!created.ok) return orgForm(ctx, name, createOrgWords(created.error));
   return flashTo(ctx, `/${created.value.username}`, {
     message: `Created ${created.value.username}. You are its first owner.`,
   });
@@ -548,10 +550,11 @@ export function teamPage(ctx: Ctx): Response {
             trail: when(
               !protectedTeam || members.length > 1,
               () =>
-                html`<form method="post" action="${teamBase}/remove">
-                  <input type="hidden" name="user" value="${m.username}" />
-                  ${btn("Remove", { variant: "danger", size: "sm" })}
-                </form>`,
+                confirmAction({
+                  action: `${teamBase}/remove?user=${encodeURIComponent(m.username)}`,
+                  verb: "Remove",
+                  size: "sm",
+                }),
             ),
           }),
         ),
@@ -639,7 +642,13 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
 export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
   const r = await teamAction(ctx);
   if (r instanceof Response) return r;
-  const username = field(r.form, "user").trim();
+  // The confirm page posts to its `to` path exactly, so the member arrives
+  // in the query; a form that names one still wins.
+  const username = (
+    field(r.form, "user") ||
+    ctx.url.searchParams.get("user") ||
+    ""
+  ).trim();
   const dest = `/${r.org.username}/-/teams/${r.team.id}`;
   const removed = removeTeamMember(
     ctx.app,

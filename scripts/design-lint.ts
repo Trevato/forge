@@ -33,7 +33,10 @@
  * A red names the file:line, the literal and what to use instead, so one pass
  * fixes it; run `bun scripts/design-lint.ts` before pushing. A new class is named
  * in its own `docs/design/areas/<area>.md` rather than in DESIGN.md, which
- * every pull would otherwise edit (#4063).
+ * every pull would otherwise edit (#4063). DESIGN.md itself is a spine that
+ * links one file per section under `docs/design/sections/` (#5937); `designText`
+ * reads the spine and those files in its order, so the § numbers mean what
+ * they did when it was one file.
  *
  * Known gaps, so nobody mistakes the gate for more than it is: colours built
  * in JS strings other than the forms above, `oklch()`,
@@ -42,7 +45,7 @@
  *
  * The theme palettes (`src/design/themes.ts`) are where colours live and are
  * not scanned. Plain data in, plain data out: `scan` takes files, `compare`
- * takes the baseline, a scan and the text of DESIGN.md.
+ * takes the baseline, a scan and the text of DESIGN.md with its sections.
  */
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -230,6 +233,17 @@ export function documentedClasses(design: string, areas: readonly string[] = [])
   return [...new Set([...namedIn(section(design, "5.")), ...areas.flatMap(namedIn)])].sort();
 }
 
+/** The section files the spine links, in its order: `](design/sections/<file>.md)`. */
+export function sectionLinks(spine: string): string[] {
+  return [...spine.matchAll(/\]\(design\/sections\/([a-z0-9-]+\.md)\)/g)].map((m) => m[1]!);
+}
+
+/** DESIGN.md as one text: the spine, then each section it links, in order (#5937). */
+export function designText(root: string): string {
+  const spine = readFileSync(join(root, DESIGN), "utf8");
+  return [spine, ...sectionLinks(spine).map((f) => readFileSync(join(root, SECTIONS, f), "utf8"))].join("\n");
+}
+
 /** The area files under docs/design/areas/: each is wholly vocabulary, one file per component area (#4063). */
 export function areaFiles(root: string): string[] {
   try {
@@ -289,25 +303,26 @@ export function compare(base: Baseline, now: Scan, design: string, areas: readon
   }
   const defined = new Set(now.classes);
   for (const k of registeredClasses(design)) {
-    if (!defined.has(k)) out.push(`.${k}: no stylesheet defines it any more — strike it from docs/DESIGN.md §5d`);
+    if (!defined.has(k)) out.push(`.${k}: no stylesheet defines it any more — strike it from §5d, docs/design/sections/5d-page-local-classes.md`);
   }
   return out;
 }
 
 const BASELINE = "docs/design/baseline.json";
 const DESIGN = "docs/DESIGN.md";
+const SECTIONS = "docs/design/sections";
 const AREAS = "docs/design/areas";
 
 if (import.meta.main) {
   const root = process.cwd();
   const now = scan(root);
   if (process.argv.includes("--update")) {
-    const baseline: Baseline = { files: now.files };
+    const baseline = { ...JSON.parse(readFileSync(join(root, BASELINE), "utf8")), files: now.files }; // keeps `coldRead` (#5882)
     writeFileSync(join(root, BASELINE), JSON.stringify(baseline, null, 2) + "\n");
     console.log(`wrote ${BASELINE}`);
   } else {
     const base: Baseline = JSON.parse(readFileSync(join(root, BASELINE), "utf8"));
-    const problems = compare(base, now, readFileSync(join(root, DESIGN), "utf8"), areaFiles(root));
+    const problems = compare(base, now, designText(root), areaFiles(root));
     for (const p of problems) console.error(p);
     if (problems.length) process.exit(1);
     console.log("design: no colour, size or component added outside the system");

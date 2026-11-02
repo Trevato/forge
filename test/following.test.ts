@@ -733,9 +733,10 @@ describe("a fork that follows its parent", () => {
         ),
       );
       expect(page).not.toMatch(/class="[^"]*\blineage(-children|-here)?\b/);
-      const bobAt = page.indexOf('href="/bob/game"');
+      const family = page.indexOf("The family");
+      const bobAt = page.indexOf('href="/bob/game"', family);
       const nested = page.indexOf("row-children", bobAt);
-      const fayAt = page.indexOf('href="/fay/game-fay"');
+      const fayAt = page.indexOf('href="/fay/game-fay"', family);
       expect(bobAt).toBeGreaterThan(-1);
       expect(nested).toBeGreaterThan(bobAt);
       expect(fayAt).toBeGreaterThan(nested);

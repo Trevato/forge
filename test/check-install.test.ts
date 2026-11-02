@@ -3,8 +3,8 @@
  * install failure is retried once, and failing the same way twice is the
  * machine's — queued again, never the pull's red.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,11 @@ import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import {
   checkInstallCache,
+  cellInstall,
+  copying,
+  fillTimeoutMs,
+  LOCK_STALE_MS,
+  prefillInstallCache,
   INFRASTRUCTURE,
   installWithRetry,
   transientLine,
@@ -226,5 +231,222 @@ describe("a check whose install fails on the machine", () => {
     expect(second.state).toBe("failed");
     expect(second.summary).toContain(`${INFRASTRUCTURE}:`);
     expect(runs.length).toBe(2);
+  });
+});
+
+describe("prefillInstallCache (#7543)", () => {
+  setDefaultTimeout(60_000);
+  const scratch = async (): Promise<string> => mkdtemp(join(tmpdir(), "prefill-test-"));
+
+  /** A registry on loopback serving one package, `fixture-pkg@1.0.0`; counts its requests. */
+  const registry = async (): Promise<{ url: string; hits: string[]; stop: () => void; dir: string }> => {
+    const dir = await scratch();
+    mkdirSync(join(dir, "pkg", "package"), { recursive: true });
+    writeFileSync(join(dir, "pkg", "package", "package.json"), JSON.stringify({ name: "fixture-pkg", version: "1.0.0" }));
+    const made = Bun.spawnSync(["tar", "-czf", join(dir, "fixture.tgz"), "-C", join(dir, "pkg"), "package"]);
+    if (made.exitCode !== 0) throw new Error("tar is needed for the fixture registry");
+    const tarball = new Uint8Array(await Bun.file(join(dir, "fixture.tgz")).arrayBuffer());
+    const hits: string[] = [];
+    const server: ReturnType<typeof Bun.serve> = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req): Response {
+        const path = new URL(req.url).pathname;
+        hits.push(path);
+        if (path === "/fixture-pkg/-/fixture-pkg-1.0.0.tgz") return new Response(tarball);
+        if (path === "/fixture-pkg")
+          return Response.json({
+            name: "fixture-pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "fixture-pkg",
+                version: "1.0.0",
+                dist: { tarball: `http://127.0.0.1:${server.port}/fixture-pkg/-/fixture-pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        return new Response("not found", { status: 404 });
+      },
+    });
+    return { url: `http://127.0.0.1:${server.port}/`, hits, stop: () => void server.stop(true), dir };
+  };
+
+  /** A checkout depending on the fixture, with the lockfile bun writes against it. */
+  const checkout = async (reg: string, dir: string): Promise<string> => {
+    const co = join(dir, "co");
+    mkdirSync(co);
+    writeFileSync(join(co, "package.json"), JSON.stringify({ name: "x", version: "1.0.0", dependencies: { "fixture-pkg": "1.0.0" } }));
+    const env = { PATH: process.env["PATH"] ?? "", HOME: dir, BUN_CONFIG_REGISTRY: reg };
+    // Async: the fixture registry answers from this process's event loop.
+    const made = Bun.spawn(["bun", "install", "--lockfile-only"], {
+      cwd: co,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, "lock-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if ((await made.exited) !== 0) throw new Error(`fixture lockfile: ${await new Response(made.stderr).text()}`);
+    return co;
+  };
+
+  const envFor = (dir: string, reg: string): Record<string, string> => ({
+    PATH: process.env["PATH"] ?? "",
+    HOME: dir,
+    BUN_CONFIG_REGISTRY: reg,
+  });
+
+  test("copying asks every bun install in a contained command for the copyfile backend, once", () => {
+    expect(copying("bun install --frozen-lockfile")).toBe("bun install --backend=copyfile --frozen-lockfile");
+    expect(copying("cd x && bun install")).toBe("cd x && bun install --backend=copyfile");
+    expect(copying("bun install --backend=hardlink")).toBe("bun install --backend=hardlink");
+    expect(copying("npm ci")).toBe("npm ci");
+  });
+
+  test("a contained install reads the shared cache; an unfilled one keeps its own", () => {
+    const filled = cellInstall("bun install", { A: "1" }, "/c/bun");
+    expect(filled.command).toBe("bun install --backend=copyfile");
+    expect(filled.env).toEqual({ A: "1", BUN_INSTALL_CACHE_DIR: "/c/bun" });
+    expect(cellInstall("bun install", { A: "1" }, undefined)).toEqual({ command: "bun install", env: { A: "1" } });
+  });
+
+  test("a checkout with no lockfile fills nothing, says so, and is not a failure", async () => {
+    const dir = await scratch();
+    const lines: string[] = [];
+    const filled = await prefillInstallCache({ cache: join(dir, "cache"), dir, env: {}, log: (l) => lines.push(l), signal: never });
+    expect(filled).toEqual({ ok: true, value: false });
+    expect(lines.join("\n")).toContain("no bun lockfile");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a fill needs only the pinned registry, and a warm cache needs none", async () => {
+    const reg = await registry();
+    try {
+      const co = await checkout(reg.url, reg.dir);
+      const cache = join(reg.dir, "cache");
+      const first = await prefillInstallCache({ cache, dir: co, env: envFor(reg.dir, reg.url), log: () => {}, signal: never });
+      expect(first).toEqual({ ok: true, value: true });
+      expect(reg.hits).toContain("/fixture-pkg/-/fixture-pkg-1.0.0.tgz");
+      reg.stop();
+      const again = await prefillInstallCache({
+        cache,
+        dir: co,
+        env: envFor(reg.dir, reg.url),
+        log: () => {},
+        signal: never,
+      });
+      expect(again).toEqual({ ok: true, value: true });
+      expect(existsSync(`${cache}.lock`)).toBe(false);
+    } finally {
+      reg.stop();
+      await rm(reg.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a fill's timeout is clamped under the lock's staleness", () => {
+    expect(fillTimeoutMs(undefined)).toBe(LOCK_STALE_MS / 2);
+    expect(fillTimeoutMs(LOCK_STALE_MS * 4)).toBe(LOCK_STALE_MS / 2);
+    expect(fillTimeoutMs(1000)).toBe(1000);
+  });
+
+  test("bun installs from a filled cache that is read-only, copying, with no registry", async () => {
+    const reg = await registry();
+    try {
+      const co = await checkout(reg.url, reg.dir);
+      const cache = join(reg.dir, "cache");
+      const filled = await prefillInstallCache({ cache, dir: co, env: envFor(reg.dir, reg.url), log: () => {}, signal: never });
+      expect(filled).toEqual({ ok: true, value: true });
+      reg.stop();
+      Bun.spawnSync(["chmod", "-R", "a-w", cache]);
+      const probe = join(cache, "probe");
+      let writable = true;
+      try {
+        writeFileSync(probe, "x");
+      } catch {
+        writable = false;
+      }
+      // (root ignores modes; the install is then merely run, not proven read-only)
+      if (process.getuid?.() !== 0) expect(writable).toBe(false);
+      const proc = Bun.spawn(["bun", "install", "--frozen-lockfile", "--backend=copyfile"], {
+        cwd: co,
+        env: { ...envFor(reg.dir, "http://127.0.0.1:1/"), BUN_INSTALL_CACHE_DIR: cache },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = (await new Response(proc.stdout).text()) + (await new Response(proc.stderr).text());
+      const code = await proc.exited;
+      Bun.spawnSync(["chmod", "-R", "u+w", cache]);
+      expect({ code, out }).toMatchObject({ code: 0 });
+      expect(existsSync(join(co, "node_modules", "fixture-pkg", "package.json"))).toBe(true);
+    } finally {
+      reg.stop();
+      await rm(reg.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a package the registry will not serve fails on the fetch, not the lockfile, and frees the lock", async () => {
+    const reg = await registry();
+    try {
+      const co = await checkout(reg.url, reg.dir);
+      reg.stop();
+      const lines: string[] = [];
+      const cache = join(reg.dir, "empty-cache");
+      const filled = await prefillInstallCache({ cache, dir: co, env: envFor(reg.dir, reg.url), log: (l) => lines.push(l), signal: never });
+      expect(filled.ok).toBe(false);
+      expect(lines.join("\n")).not.toMatch(/lockfile had changes|frozen/i);
+      expect(reg.hits.filter((h) => h.endsWith(".tgz"))).toEqual([]); // the tarball was asked for and never served
+      expect(existsSync(`${cache}.lock`)).toBe(false);
+    } finally {
+      await rm(reg.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the pull's own bunfig.toml and .npmrc do not choose where the forge fetches", async () => {
+    const reg = await registry();
+    const decoy = await registry();
+    try {
+      const co = await checkout(reg.url, reg.dir);
+      writeFileSync(join(co, "bunfig.toml"), `[install]\nregistry = "${decoy.url}"\n`);
+      writeFileSync(join(co, ".npmrc"), `registry=${decoy.url}\n`);
+      const filled = await prefillInstallCache({
+        cache: join(reg.dir, "cache"),
+        dir: co,
+        env: envFor(reg.dir, reg.url),
+        log: () => {},
+        signal: never,
+      });
+      expect(filled).toEqual({ ok: true, value: true });
+      expect(decoy.hits).toEqual([]);
+      expect(reg.hits.length).toBeGreaterThan(0);
+    } finally {
+      reg.stop();
+      decoy.stop();
+      await rm(reg.dir, { recursive: true, force: true });
+      await rm(decoy.dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a lockfile naming another host, or a git dependency, is not filled from", async () => {
+    const reg = await registry();
+    try {
+      const co = await checkout(reg.url, reg.dir);
+      const cache = join(reg.dir, "cache");
+      const lock = join(co, "bun.lock");
+      const good = readFileSync(lock, "utf8");
+      for (const bad of [
+        `${good}\n// ["x", "http://169.254.169.254/x.tgz"]`,
+        `${good}\n// ["y", "y@github:someone/repo#abc"]`,
+      ]) {
+        writeFileSync(lock, bad);
+        const lines: string[] = [];
+        const filled = await prefillInstallCache({ cache, dir: co, env: envFor(reg.dir, reg.url), log: (l) => lines.push(l), signal: never });
+        expect(filled).toEqual({ ok: true, value: false });
+        expect(lines.join("\n")).toContain("cache not filled");
+      }
+      expect(reg.hits.filter((h) => h.endsWith(".tgz"))).toEqual([]);
+      expect(existsSync(cache)).toBe(false);
+    } finally {
+      reg.stop();
+      await rm(reg.dir, { recursive: true, force: true });
+    }
   });
 });

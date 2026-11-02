@@ -14,8 +14,9 @@
 import { isActive } from "../core/users.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import type { App } from "../app.ts";
+import { appsForRepos } from "../core/apps.ts";
 import { listOrigins } from "../core/origins.ts";
-import { listReposVisibleTo } from "../core/repos.ts";
+import { canRead, enterableApps, listReposVisibleTo } from "../core/repos.ts";
 import {
   cleanQuery,
   grepRepos,
@@ -26,6 +27,8 @@ import {
   MAX_CODE_HITS,
   MAX_SEARCH_REPOS,
   type IssueHit,
+  type RepoHit,
+  type CodeHit,
   type SearchKind,
   type SearchResults,
 } from "../core/search.ts";
@@ -68,13 +71,27 @@ export interface SearchInput {
   repo?: Repo;
   /** Start no new grep after this many ms and report `moreCode`. @default unset: grep every repository */
   codeBudgetMs?: number;
+  /** Told how long each part took, once per part asked for, for Server-Timing. */
+  phase?: (name: SearchPhase, ms: number) => void;
 }
+
+/** The parts a search is timed in. */
+export type SearchPhase = "repos" | "issues" | "code";
 
 /**
  * Search everything the actor can reach. Anonymous callers get the public
  * half — the same rows a signed-out repo listing shows — and no origins,
  * because an origin belongs to the person who connected it.
  */
+/** Whether the repository runs an app the actor may enter (a private one is its writers'). */
+function hasEnterableApp(app: App, actor: User | undefined, repo: Repo): boolean {
+  const record = appsForRepos(app.db, [repo.id]).get(repo.id);
+  return (
+    record !== undefined &&
+    enterableApps(app.db, [{ repo, app: record }], actor, { named: false }).has(record.id)
+  );
+}
+
 export async function search(
   app: App,
   actor: User | undefined,
@@ -92,11 +109,15 @@ export async function search(
     code: [],
     truncated: { repos: false, issues: false, code: false },
     moreCode: false,
+    codeSkipped: false,
   };
   if (q === "") return empty;
 
   const wants = (which: SearchKind) => kind === "all" || kind === which;
 
+  const phase = input.phase ?? (() => {});
+  // The visibility pass is the first of the repos' work, so its clock starts here.
+  const reposAt = performance.now();
   // One visibility pass. Issues and code both search "the repos this actor
   // may read", so it is resolved once and shared rather than re-derived.
   const visible =
@@ -109,12 +130,16 @@ export async function search(
   const repos = !wants("repos")
     ? []
     : input.repo !== undefined
-      ? matchOneRepo(input.repo, q)
+      ? matchOneRepo(input.repo, q, hasEnterableApp(app, actor, input.repo))
       : [
           ...searchLocalRepos(app.db, actor, q, limit),
           ...(actor ? searchOriginRepos(app.db, actor.id, q, limit) : []),
         ];
 
+  // Named whenever it did work: asked for, or the pass issues and code share.
+  if (wants("repos") || (input.repo === undefined && visible.length > 0)) phase("repos", performance.now() - reposAt);
+
+  const issuesAt = performance.now();
   const issues: IssueHit[] = wants("issues")
     ? searchLocalIssues(
         app.db,
@@ -134,7 +159,9 @@ export async function search(
   if (wants("issues") && input.live === true && actor !== undefined) {
     issues.push(...(await liveIssues(app, actor, q, limit)));
   }
+  if (wants("issues")) phase("issues", performance.now() - issuesAt);
 
+  const codeAt = performance.now();
   const code = wants("code") && input.withCode !== false
     ? await grepRepos(
         app.reposRoot,
@@ -142,8 +169,11 @@ export async function search(
         q,
         Math.min(limit * 5, MAX_CODE_HITS),
         input.codeBudgetMs ?? Infinity,
+        // The slot is keyed on the actor the session resolved, never on input.
+        { memberId: actor?.id },
       )
-    : { hits: [], truncated: false, more: false };
+    : { hits: [], truncated: false, more: false, skipped: false };
+  if (wants("code")) phase("code", performance.now() - codeAt);
 
   return {
     repos,
@@ -155,6 +185,7 @@ export async function search(
       code: code.truncated,
     },
     moreCode: code.more,
+    codeSkipped: code.skipped,
   };
 }
 
@@ -214,4 +245,43 @@ async function liveIssues(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Search only `repos`, the ones a repository-scoped credential reaches, and
+ * only those the actor can read. Nothing outside them is searched, so
+ * nothing outside them can appear; origins are never asked.
+ */
+export async function searchWithin(
+  app: App,
+  actor: User | undefined,
+  repos: readonly Repo[],
+  input: SearchInput,
+): Promise<SearchResults> {
+  const hits = { repos: [] as RepoHit[], issues: [] as IssueHit[], code: [] as CodeHit[] };
+  const truncated = { repos: false, issues: false, code: false };
+  let moreCode = false;
+  let codeSkipped = false;
+  // One figure per part, summed over the repositories, not one per repository.
+  const spent: Partial<Record<SearchPhase, number>> = {};
+  const sum = (name: SearchPhase, ms: number) => {
+    spent[name] = (spent[name] ?? 0) + ms;
+  };
+  for (const repo of repos) {
+    if (!canRead(app.db, repo, actor)) continue;
+    const one = await search(app, actor, { ...input, live: false, repo, phase: sum });
+    hits.repos.push(...one.repos);
+    hits.issues.push(...one.issues);
+    hits.code.push(...one.code);
+    truncated.repos ||= one.truncated.repos;
+    truncated.issues ||= one.truncated.issues;
+    truncated.code ||= one.truncated.code;
+    moreCode ||= one.moreCode;
+    codeSkipped ||= one.codeSkipped;
+  }
+  for (const name of ["repos", "issues", "code"] as const) {
+    const ms = spent[name];
+    if (ms !== undefined) input.phase?.(name, ms);
+  }
+  return { ...hits, truncated, moreCode, codeSkipped };
 }
