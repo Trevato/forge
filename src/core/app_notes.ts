@@ -137,3 +137,13 @@ export function isBanned(db: Database, appId: string, visitor: string): boolean 
 export function markSender(db: Database, issueId: string, name: string): void {
   db.query("UPDATE issue SET origin_author = ?1 WHERE id = ?2").run(name, issueId);
 }
+
+/** Every visible note of a repository's apps, oldest first: what the planner reads. */
+export function notesOfRepo(db: Database, repoId: string, limit = 200): AppNote[] {
+  return db
+    .query<Row, [string, number]>(
+      "SELECT * FROM app_note WHERE repo_id = ?1 AND hidden = 0 ORDER BY created_at, id LIMIT ?2",
+    )
+    .all(repoId, limit)
+    .map(fromRow);
+}

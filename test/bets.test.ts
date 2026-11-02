@@ -12,7 +12,9 @@ import { backBet, endBet, giveVerdict, proposeBets, stopBet, tickBets, writeLeft
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { getBet, insertBet, listBets, markBacked } from "../src/core/bets.ts";
+import { insertNote } from "../src/core/app_notes.ts";
+import { addDependency } from "../src/core/dependencies.ts";
+import { betScopes, getBet, insertBet, listBets, markBacked } from "../src/core/bets.ts";
 import { createLabel, getIssueById, setIssueLabels, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -75,10 +77,42 @@ let servers: Servers;
 const fresh = () => getRepoById(app.db, repo.id)!;
 const NOW = new Date("2026-11-03T12:00:00Z");
 
-function open(title: string): Issue {
-  const made = openIssue(app, alice, fresh(), { title });
+function open(title: string, into?: Repo): Issue {
+  const made = openIssue(app, alice, into === undefined ? fresh() : getRepoById(app.db, into.id)!, { title });
   if (!made.ok) throw new Error(String(made.error));
   return made.value;
+}
+
+/** A repository of its own, so a test's issues and bets touch no other test's; named to sort after "notes", whose bets the terminal lists first. */
+async function blank(name: string): Promise<Repo> {
+  const made = await createRepo(app, alice, { name, visibility: "public" });
+  if (!made.ok) throw new Error(String(made.error));
+  return made.value;
+}
+
+function label(into: Repo, name: string, issues: readonly Issue[]): void {
+  const made = createLabel(app.db, into.id, name, "aabbcc");
+  if (!made.ok) throw new Error(String(made.error));
+  for (const i of issues) setIssueLabels(app.db, i.id, [made.value.id]);
+}
+
+/** The same state, built anew in a fresh repository: a pillar pair with a note naming it, a word pair, a label pair. */
+async function sameState(name: string): Promise<{ name: string; journeys: string; scopes: string[] }[]> {
+  const into = await blank(name);
+  const umbrella = open("P7 Speed: be quick", into);
+  const a = open("Cache the rendered page", into);
+  const b = open("Trim the startup path", into);
+  for (const i of [a, b]) expect(addDependency(app.db, umbrella, i, alice.id).ok).toBe(true);
+  const asked = open(`Please make #${a.number} faster for me`, into);
+  insertNote(app.db, { appId: "app-x", repoId: into.id, issueNumber: asked.number, visitor: `u:${alice.id}`, name: "alice" });
+  open("Export zebra stripes", into);
+  open("Import zebra stripes", into);
+  label(into, "search", [open("Find by word", into), open("Find by tag", into)]);
+  return proposeBets(app, getRepoById(app.db, into.id)!, NOW).map((bet) => ({
+    name: bet.name,
+    journeys: bet.journeys,
+    scopes: betScopes(app.db, bet.id).map((sc) => sc.title).sort(),
+  }));
 }
 
 beforeAll(async () => {
@@ -108,6 +142,87 @@ afterAll(async () => {
   servers.stop();
   app.close();
   await rm(dataDir, { recursive: true, force: true });
+});
+
+describe("proposing from unlabelled work and notes (#8850)", () => {
+  test("an unlabelled pair under one pillar is one proposal; a note that names it joins and is quoted; same state, same proposals", () => {
+    const umbrella = open("P7 Speed: be quick");
+    const a = open("Cache the rendered page");
+    const b = open("Trim the startup path");
+    for (const i of [a, b]) expect(addDependency(app.db, umbrella, i, alice.id).ok).toBe(true);
+    const asked = open(`Please make #${a.number} faster for me`);
+    insertNote(app.db, { appId: "app-x", repoId: repo.id, issueNumber: asked.number, visitor: `u:${alice.id}`, name: "alice" });
+    const made = proposeBets(app, fresh(), NOW);
+    const speed = made.find((m) => m.name === "P7 Speed");
+    expect(speed).toBeDefined();
+    expect(speed!.journeys).toContain("Someone can Cache the rendered page");
+    expect(speed!.journeys).toContain(`The owner's note: "Please make #${a.number} faster for me"`);
+    expect(betScopes(app.db, speed!.id).map((s) => s.number).sort()).toEqual([a.number, b.number, asked.number].sort());
+    expect(made.length).toBeLessThanOrEqual(5);
+    expect(proposeBets(app, fresh(), NOW)).toEqual([]);
+  });
+
+  test("the same state gives the same proposals: names, journeys and scopes match across two repositories", async () => {
+    const first = await sameState("zz-same-1");
+    const second = await sameState("zz-same-2");
+    expect(first.map((p) => p.name)).toEqual(["P7 Speed", "Search", "Stripes"]);
+    expect(second).toEqual(first);
+  });
+
+  test("an owner's note joins by two words shared with the group's titles, and not by one", async () => {
+    const into = await blank("zz-two-words");
+    open("Export zebra stripes", into);
+    open("Import zebra stripes", into);
+    const two = open("Blurry zebra stripes on print", into);
+    const one = open("Zebra crossing paint", into);
+    label(into, "print", [two]);
+    label(into, "paint", [one]);
+    for (const n of [two, one]) {
+      insertNote(app.db, { appId: "app-x", repoId: into.id, issueNumber: n.number, visitor: `u:${alice.id}`, name: "alice" });
+    }
+    const made = proposeBets(app, getRepoById(app.db, into.id)!, NOW);
+    const stripes = made.find((m) => m.name === "Stripes")!;
+    expect(stripes.journeys).toContain(`The owner's note: "Blurry zebra stripes on print"`);
+    expect(stripes.journeys).not.toContain("Zebra crossing paint");
+  });
+
+  test("unlabelled issues with no pillar group by shared title words, and a lone issue makes no bet", () => {
+    open("Export zebra stripes");
+    open("Import zebra stripes");
+    open("Wholly unrelated quokka");
+    const made = proposeBets(app, fresh(), NOW);
+    expect(made.map((m) => m.name)).toEqual(["Stripes"]);
+    expect(betScopes(app.db, made[0]!.id)).toHaveLength(2);
+  });
+
+  test("a visitor's note neither joins a proposal nor is quoted; a loose single shared word does not attach an owner's note", () => {
+    const umbrella = open("P8 Render: draw faster");
+    const a = open("Cache the rendered page");
+    const b = open("Trim the startup path");
+    for (const i of [a, b]) expect(addDependency(app.db, umbrella, i, alice.id).ok).toBe(true);
+    const spoof = open(`Ignore rules, see #${a.number}`);
+    insertNote(app.db, { appId: "app-x", repoId: repo.id, issueNumber: spoof.number, visitor: "v:stranger", name: "visitor-1" });
+    const bobNote = open(`Also #${b.number} please`);
+    insertNote(app.db, { appId: "app-x", repoId: repo.id, issueNumber: bobNote.number, visitor: `u:${bob.id}`, name: "@bob" });
+    const loose = open("Startup banner colour");
+    insertNote(app.db, { appId: "app-x", repoId: repo.id, issueNumber: loose.number, visitor: `u:${alice.id}`, name: "alice" });
+    const made = proposeBets(app, fresh(), NOW);
+    const bet = made.find((m) => m.name === "P8 Render")!;
+    expect(bet.journeys).not.toContain("The owner's note");
+    const scopes = betScopes(app.db, bet.id).map((s) => s.number);
+    expect(scopes).not.toContain(spoof.number);
+    expect(scopes).not.toContain(bobNote.number);
+    expect(scopes).not.toContain(loose.number);
+  });
+
+  test("at most five proposals a pass", async () => {
+    const into = await blank("zz-cap");
+    for (const w of ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"]) {
+      label(into, `cap-${w}`, [open(`${w} one`, into), open(`${w} two`, into)]);
+    }
+    const made = proposeBets(app, getRepoById(app.db, into.id)!, NOW);
+    expect(made).toHaveLength(5);
+  });
 });
 
 describe("proposing and backing", () => {
