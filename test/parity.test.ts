@@ -360,7 +360,7 @@ describe("parity: full control through actions and the API", () => {
     expect(settingsEvents.length).toBeGreaterThanOrEqual(2);
     expect(
       settingsEvents.some((e) =>
-        (e.payload.changed as string[]).includes("defaultBranch"),
+        "defaultBranch" in (e.payload.changed as object),
       ),
     ).toBe(true);
   });

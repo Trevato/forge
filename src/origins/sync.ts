@@ -40,6 +40,7 @@ import {
 } from "../core/origins.ts";
 import { storageStale } from "../core/storage.ts";
 import { getRepoById } from "../core/repos.ts";
+import { settingMoved } from "../core/settings_changed.ts";
 import { pullDiff, type Pull, getPull } from "../core/pulls.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
@@ -326,7 +327,7 @@ async function syncMirrorUnguarded(
         kind: "repo.settings_updated",
         repoId: repo.id,
         actorId: origin.userId,
-        payload: { changed: ["visibility"], visibility: wanted, via: "origin" },
+        payload: { changed: settingMoved("visibility", repo.visibility, wanted), visibility: wanted, via: "origin" },
       });
       repo = getRepoById(app.db, repo.id)!;
     }

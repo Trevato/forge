@@ -5,7 +5,8 @@
  * filter runs there, so a webhook's URL and an app's variable names reach
  * only the admins. One line per event — when, who, what — in the words the
  * activity feed uses (`eventActor`, `eventVerb`). Fifty at a time; `n` reads
- * the next page from the cursor the last one returned.
+ * the next page from the cursor the last one returned; `s` keeps only the
+ * settings changes (the same `kind` filter), each saying from what to what.
  */
 
 import { EVENTS_LIMIT_DEFAULT, eventsPage } from "../../core/events_page.ts";
@@ -19,8 +20,27 @@ import type { Session } from "../session.ts";
 import { emptyState } from "../ui/widgets.ts";
 import { ListState, ago, drawList, type ListRow } from "./common.ts";
 
+/** The one kind `s` keeps. */
+export const SETTINGS_KIND = "repo.settings_updated";
+
+/** A setting's value on one line, clipped: `true`, `"a yard"`. */
+function shown(value: unknown): string {
+  const text = JSON.stringify(value) ?? String(value);
+  return text.length > 40 ? `${text.slice(0, 39)}…` : text;
+}
+
+/** What a settings change moved: `requireReview false → true, …`. */
+export function settingsMoved(event: ForgeEvent): string {
+  const changed = event.payload["changed"];
+  if (changed === null || typeof changed !== "object" || Array.isArray(changed)) return "";
+  return Object.entries(changed as Record<string, { from?: unknown; to?: unknown }>)
+    .map(([k, v]) => `${k} ${shown(v?.from)} → ${shown(v?.to)}`)
+    .join(", ");
+}
+
 /** What an event is about, when it says: `#12`, or the branch a push moved. */
 function subjectOf(event: ForgeEvent): string {
+  if (event.kind === SETTINGS_KIND) return settingsMoved(event);
   const number = event.payload["number"];
   if (typeof number === "number") return `#${number}`;
   if (event.kind !== "push") return "";
@@ -45,8 +65,9 @@ export function eventsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let count = 0;
   const rows: ListRow[] = [];
   let next: string | null = null;
+  let kind: string | undefined;
   const read = (cursor?: string): void => {
-    const page = eventsPage(f.db, repo.id, f.user, EVENTS_LIMIT_DEFAULT, cursor);
+    const page = eventsPage(f.db, repo.id, f.user, EVENTS_LIMIT_DEFAULT, cursor, kind);
     count += page.items.length;
     rows.push(...eventRows(f, page.items));
     next = page.next_cursor;
@@ -54,19 +75,22 @@ export function eventsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   };
   read();
   return {
-    title: "Events",
+    get title() {
+      return kind === undefined ? "Events" : "Events · settings";
+    },
     get keys() {
       return [
         binding(["j", "k"], "move"),
         ...(next === null ? [] : [binding(["n"], "next page")]),
+        binding(["s"], kind === undefined ? "settings only" : "all events"),
         binding(["esc", "q"], "back"),
       ];
     },
     render(area, s) {
       if (count === 0) {
         emptyState(s, area, ctx.theme.c, {
-          title: "No events yet",
-          body: "Pushes, merges and deploys land here.",
+          title: kind === undefined ? "No events yet" : "No settings changes yet",
+          body: kind === undefined ? "Pushes, merges and deploys land here." : "Press s for every event.",
         });
         return;
       }
@@ -76,6 +100,13 @@ export function eventsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "n") {
         if (next !== null) read(next);
+      } else if (e.key === "s") {
+        kind = kind === undefined ? SETTINGS_KIND : undefined;
+        count = 0;
+        rows.length = 0;
+        state.index = 0;
+        state.offset = 0;
+        read();
       } else state.key(e, count);
       return true;
     },

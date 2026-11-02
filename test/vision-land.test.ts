@@ -131,7 +131,9 @@ describe("landing a vision pull", () => {
     expect(text).toContain(`Done means reachable ${n}.`);
     expect(text.length).toBeLessThanOrEqual(DIRECTION_LIMIT);
     const e = listEvents(app.db, { repoId: repo.id, kind: "repo.settings_updated", limit: 1 })[0]!;
-    expect(e.payload["changed"]).toEqual(["autonomyDirection"]);
+    expect(e.payload["changed"]).toEqual({
+      autonomyDirection: { from: `Ship small.\n\n${BLOCK_START}\nold\n${BLOCK_END}\n\nNever page me.`, to: text },
+    });
     expect(e.actorId).toBe(owner.id);
   });
 

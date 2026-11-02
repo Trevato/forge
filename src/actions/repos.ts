@@ -66,6 +66,7 @@ import {
   type AccessError,
 } from "./access.ts";
 import { removeInstallCache } from "../crew/workdir.ts";
+import type { SettingsChanged } from "../core/settings_changed.ts";
 
 export interface CreateRepoInput {
   /** Owner name: the actor themselves (default) or an org they can write to. */
@@ -333,6 +334,31 @@ function moveArchive(app: App, repoId: string, archived: boolean): Promise<boole
   });
 }
 
+/** The settings `updateRepoSettings` audits, in the order the trail names them. */
+const AUDITED = [
+  "visibility",
+  "description",
+  "protectDefault",
+  "defaultBranch",
+  "requireReview",
+  "requireChecks",
+  "crewOutsiders",
+  "decisionsBy",
+  "plansNeedNod",
+] as const;
+
+export type { SettingsChanged };
+
+/** Each audited setting `settings` moves on `repo`, from what to what. */
+export function settingsChanged(repo: Repo, settings: RepoSettings): SettingsChanged {
+  const changed: SettingsChanged = {};
+  for (const k of AUDITED) {
+    const to = settings[k];
+    if (to !== undefined && to !== repo[k]) changed[k] = { from: repo[k], to };
+  }
+  return changed;
+}
+
 /**
  * Change settings. A new default branch must exist; git HEAD is moved first
  * and the row follows (git is truth, the index is derived from it).
@@ -374,21 +400,11 @@ export async function updateRepoSettings(
     archived === undefined ? false : await moveArchive(app, repo.id, archived);
   const updated = getRepoById(app.db, repo.id);
   if (updated === undefined) return err("not_found");
-  // `changed` is the audit line: it names settings.
-  const changed: string[] = (
-    [
-      "visibility",
-      "description",
-      "protectDefault",
-      "defaultBranch",
-      "requireReview",
-      "requireChecks",
-      "crewOutsiders",
-      "decisionsBy",
-      "plansNeedNod",
-    ] as const
-  ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
-  if (moved) changed.push("archived");
+  // `changed` is the audit line: each setting this call moved, from what to
+  // what. None of these is a secret; a secret setting would say only
+  // that it changed (`{ secret: true }`), never its value.
+  const changed = settingsChanged(repo, settings);
+  if (moved) changed["archived"] = { from: !archived, to: archived === true };
   app.bus.append({
     kind: "repo.settings_updated",
     repoId: repo.id,
@@ -397,7 +413,7 @@ export async function updateRepoSettings(
   });
   // Who may start and steer the crew is its own line in the record, on and
   // off: on is a door opened to everyone who can read (`crew/direct.ts`).
-  if (changed.includes("crewOutsiders"))
+  if ("crewOutsiders" in changed)
     app.bus.append({
       kind: "repo.crew_outsiders",
       repoId: repo.id,

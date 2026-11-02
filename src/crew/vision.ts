@@ -14,6 +14,7 @@ import { createLog } from "../kernel/log.ts";
 import { editFiles } from "../actions/contents.ts";
 import { pullDir, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
+import { settingMoved } from "../core/settings_changed.ts";
 import type { User } from "../core/users.ts";
 import { blobForRender, listTree, readerFor } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -224,6 +225,6 @@ export async function landVision(app: App, merger: User, repo: Repo, pull: Pull)
     kind: "repo.settings_updated",
     repoId: repo.id,
     actorId: merger.id,
-    payload: { changed: ["autonomyDirection"], pull: pull.number },
+    payload: { changed: settingMoved("autonomyDirection", fresh.autonomyDirection, next.text), pull: pull.number },
   });
 }

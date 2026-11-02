@@ -114,7 +114,7 @@ import {
   SIGNUP_CLOSED_MESSAGE,
 } from "../actions/users.ts";
 import { OFFSET_LIMIT_MAX, offsetPage, offsetQuery } from "./offset_page.ts";
-import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor } from "../core/events_page.ts";
+import { EVENTS_LIMIT_MAX, eventsLimit, eventsPage, validEventsCursor, validEventsKind } from "../core/events_page.ts";
 import { audienceFor } from "../core/audience.ts";
 import {
   forkParentFor,
@@ -1512,8 +1512,11 @@ export function apiRoutes(router: Router<Handler>): void {
     const cursor = q.get("cursor");
     if (cursor !== null && !validEventsCursor(cursor))
       return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
+    const kind = q.get("kind");
+    if (kind !== null && !validEventsKind(kind))
+      return apiError("invalid_kind", 422, "kind is an event kind, like repo.settings_updated");
     const page = timePhase(ctx.request, "events", () =>
-      eventsPage(ctx.app.db, repo.id, ctx.auth.user, limit, cursor ?? undefined),
+      eventsPage(ctx.app.db, repo.id, ctx.auth.user, limit, cursor ?? undefined, kind ?? undefined),
     );
     return timePhase(ctx.request, "render", () => json(page));
   });
