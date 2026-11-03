@@ -8,6 +8,7 @@ import { deletePin, notePin, pinBuild } from "../../actions/builds.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { listBuildPins } from "../../git/builds.ts";
 import { repoDir } from "../../git/repos.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { loadRepo } from "../api.ts";
 import type { Handler } from "../context.ts";
 import { body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
@@ -20,7 +21,14 @@ export function buildRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json({ items: await listBuildPins(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name)), next_cursor: null });
+    const items = await listBuildPins(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name));
+    // The tag is of the exact bytes sent, so a new, noted or deleted pin changes it;
+    // private because a private repository's pins are for its readers only.
+    const text = JSON.stringify({ items, next_cursor: null });
+    const etag = weakEtag(text);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/builds", async (ctx) => {
