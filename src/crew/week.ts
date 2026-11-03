@@ -80,6 +80,8 @@ export interface WeekDecision {
   readonly release: boolean;
   /** One sentence for home and the log. */
   readonly sentence: string;
+  /** The same sentence without the free percent and run-out time, for under the crew line that already states them. */
+  readonly besideCrewLine: string;
 }
 
 const utc = (d: Date): string => `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
@@ -91,6 +93,7 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   const { meter, now, ceiling } = input;
   if (meter === null) {
     const slots = Math.min(ceiling, WEEK.unknownSlots);
+    const sentence = `The week's pace is unknown: the provider has not yet reported a measure of the week, so the crew holds at ${slots} of ${ceiling} slots.`;
     return {
       status: "unknown",
       targetPctPerHour: null,
@@ -98,7 +101,8 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
       runsOutAt: null,
       slots,
       release: false,
-      sentence: `The week's pace is unknown: the provider has not yet reported a measure of the week, so the crew holds at ${slots} of ${ceiling} slots.`,
+      sentence,
+      besideCrewLine: sentence,
     };
   }
   const left = meter.resetsAt.getTime() - now.getTime();
@@ -127,17 +131,21 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
 
   const release = status === "behind" && input.idleSlots > 0 && input.startable === 0 && input.gated > 0;
   const gone = Math.round((1 - left / WINDOW_MS.week) * 100);
-  const weekLeft = `${Math.round(meter.freePct)}% of the week left with ${gone}% of its time gone, reset ${utc(meter.resetsAt)}`;
+  const timeGone = `${gone}% of its time gone, reset ${utc(meter.resetsAt)}`;
   const burnWords = burn === null ? "unread (too few readings)" : `${pct(burn)} an hour`;
-  const sentence =
-    burn === null && !burning
+  // `full`: the free percent and run-out time are said here; otherwise the crew line above says them.
+  const say = (full: boolean): string => {
+    const weekLeft = full ? `${Math.round(meter.freePct)}% of the week left with ${timeGone}` : `the week has ${timeGone}`;
+    const runOut = full && runsOutAt !== null ? `, running out about ${utc(runsOutAt)}` : "";
+    return burn === null && !burning
       ? `Burn not known yet: too few readings of the meter; ${weekLeft}; holding at ${slots} of ${ceiling} slots until it has them.`
       : status === "on pace"
         ? `On pace: ${weekLeft}; burning ${burnWords}, ${pct(allowed)} is allowed.`
         : status === "ahead"
-          ? `Ahead of pace: ${weekLeft}, burning ${burnWords} against ${pct(allowed)} allowed${runsOutAt === null ? "" : `, running out about ${utc(runsOutAt)}`}; ${slots === 0 ? "holding the crew for the reset" : `slowing to ${slots} of ${ceiling} slots`}.`
+          ? `Ahead of pace: ${weekLeft}, burning ${burnWords} against ${pct(allowed)} allowed${runOut}; ${slots === 0 ? "holding the crew for the reset" : `slowing to ${slots} of ${ceiling} slots`}.`
           : `Behind pace: ${weekLeft}, burning ${burnWords} against ${pct(allowed)} allowed; ${slots === 0 ? "holding the crew for the reset" : `speeding up to ${slots} of ${ceiling} slots`}${release ? " and releasing the next issue" : ""}.`;
-  return { status, targetPctPerHour, allowedPctPerHour: allowed, runsOutAt, slots, release, sentence };
+  };
+  return { status, targetPctPerHour, allowedPctPerHour: allowed, runsOutAt, slots, release, sentence: say(true), besideCrewLine: say(false) };
 }
 
 /** What each real landing cost, and how many runs it took, over a window. */

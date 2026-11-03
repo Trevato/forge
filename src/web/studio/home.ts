@@ -56,7 +56,7 @@ import { heldLine } from "./held.ts";
 import { appChips, movingRegion, tellBox } from "./living.ts";
 import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
 import { kpiRow, waitingLine } from "./kpi_row.ts";
-import { weekLine } from "./week_line.ts";
+import { homeWeek } from "./week_line.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { idleReason } from "../../crew/idle_reason.ts";
@@ -239,7 +239,7 @@ export function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html |
       const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
       const kpiOpts = { idle: () => idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
       return html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
-        ${weekLine(ctx.app)}
+        ${homeWeek(ctx.app, user)}
         ${alarmLines(cachedAlarms(db, new Date(), ceilingUsd))}`;
     },
     waiting: () => timePhase(request, "waiting", () => waitingLine(db, user), () => waitingCache(db)),

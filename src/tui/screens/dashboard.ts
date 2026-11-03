@@ -119,7 +119,7 @@ import { lastClearedNote } from "../../flow/clog_tick.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { alarmIdleCrew } from "../../flow/alarm_idle_crew.ts";
 import { idleLine, idleReason } from "../../crew/idle_reason.ts";
-import { weekWords } from "../../crew/week_read.ts";
+import { weekBlock } from "../../crew/week_read.ts";
 import { noReleaseAlarm } from "../../flow/alarm_no_release.ts";
 import { redMainAlarm } from "../../flow/alarm_red_main.ts";
 import { alarmStuck } from "../../flow/alarm_stuck.ts";
@@ -400,7 +400,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ? []
         : [
             ...idleLines(f.app, now),
-            ...weekLines(f.app, now),
+            ...weekBlock(f.app, now),
             ...kpiLines(readKpis(f.db, now, { ...kpiForge(f.app), idle: () => idleReason(f.app, now) }), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
             vitalsLine(readVitals(f.db, now)),
             ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }).map((a) => a.says),
@@ -1520,12 +1520,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   }
 
   return screen;
-}
-
-/** The week's pace and efficiency, as the line an admin's home reads (#8695); none while no account is metered. */
-function weekLines(app: App, now: Date): string[] {
-  const words = weekWords(app, now);
-  return words === null ? [] : [words];
 }
 
 /** Why the builders are idle, as the one line an admin's home reads; none while they are not. */

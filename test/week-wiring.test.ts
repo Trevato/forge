@@ -16,14 +16,14 @@ import { noteMeasure } from "../src/core/measure.ts";
 import { setHeadroom } from "../src/core/standing.ts";
 import { addSubscription } from "../src/core/subscriptions.ts";
 import { recordUsage } from "../src/core/usage.ts";
-import { type User } from "../src/core/users.ts";
+import { createUser, type User } from "../src/core/users.ts";
 import { driveRepo, repoPace } from "../src/crew/autonomy.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
 import { capacityDefault } from "../src/core/capacity.ts";
-import { forgetWeek, weekWords } from "../src/crew/week_read.ts";
+import { crewLineWords, forgetWeek, weekWords } from "../src/crew/week_read.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
-import { weekLine } from "../src/web/studio/week_line.ts";
+import { homeWeek, weekLine } from "../src/web/studio/week_line.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { serve } from "../src/http/server.ts";
@@ -219,6 +219,10 @@ test("with no measurement of the week the pace is unknown and the crew holds at 
   forgetWeek();
   expect(weekWords(app, NOW)).toContain("pace is unknown");
   expect(String(weekLine(app, NOW))).toContain("pace is unknown");
+  // Nothing measured: no percent to state, so no crew line on either door.
+  expect(crewLineWords(app, NOW)).toBeNull();
+  expect(String(homeWeek(app, alice, NOW))).not.toContain("crew-pace");
+  expect(String(homeWeek(app, alice, NOW))).toContain("pace is unknown");
   expect(repoPace(app, repo, NOW).slots).toBe(2);
 });
 
@@ -297,4 +301,50 @@ test("a week that fell 8 points in 3 hours slows the picks; a flat meter does no
   const flat = repoPace(app, repo, NOW);
   expect(flat.slots).toBe(4);
   expect(weekWords(app, NOW)).toContain("burning 0% an hour");
+});
+
+test("home's crew line gives the owner the percent left and when it runs out, escaped, and nobody else", () => {
+  week(70, 6);
+  const runsOut = repoPace(app, repo, NOW);
+  expect(runsOut.reason).toContain("running out about");
+  const words = crewLineWords(app, NOW)!;
+  expect(words).toMatch(/^30% of the week left, runs out (Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d\d:\d\d UTC at this pace$/);
+  const owner = String(homeWeek(app, alice, NOW));
+  expect(owner).toContain(words);
+  expect(owner).toContain('id="crew-pace"');
+  // The sentence under the line does not say the percent or the run-out again.
+  expect(owner.split("30% of the week left").length - 1).toBe(1);
+  expect(owner).not.toContain("running out about");
+  expect(owner).toContain("Ahead of pace: the week has");
+  expect(owner).toContain('<p class="small muted break" id="crew-pace">');
+  const other = { isAdmin: false } as User;
+  for (const viewer of [other, undefined]) {
+    const page = String(homeWeek(app, viewer, NOW));
+    expect(page).not.toContain("crew-pace");
+    expect(page).toContain("Ahead of pace: 30% of the week left");
+  }
+  week(20);
+  expect(crewLineWords(app, NOW)).toBe("80% of the week left, lasts to the reset at this pace");
+});
+
+async function terminalFor(user: User): Promise<string> {
+  const terminal = headlessTerminal(240, 32);
+  const { app: tui } = createForgeApp(app, { sshUsername: user.username, remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user }, { terminal, exitHooks: false });
+  tui.start();
+  await settleApp(tui);
+  const text = tui.screen.toText();
+  tui.stop();
+  return text;
+}
+
+test("the terminal's home carries the crew line for the admin, the same words as the web, and for nobody else", async () => {
+  week(70, 6);
+  const words = crewLineWords(app, NOW)!;
+  expect(words).toContain("30% of the week left, runs out");
+  const admin = await terminalFor(alice);
+  expect(admin).toContain(words);
+  expect(admin.split("30% of the week left").length - 1).toBe(1);
+  const made = await createUser(app.db, { origin: "seed", trusted: true, username: "carol", email: "c@forge.test", password: "a-long-passphrase" });
+  if (!made.ok) throw new Error(made.error);
+  expect(await terminalFor(made.value)).not.toContain("of the week left, ");
 });

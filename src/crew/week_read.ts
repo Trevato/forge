@@ -147,20 +147,75 @@ function heldWords(app: App): string {
 }
 
 /**
- * The pace sentence and the efficiency beside it for the autonomous
- * repository the crew works most this week (the most agent runs; the first by
- * name on a tie), not whichever sorts first: a quiet repository's "nothing
- * landed" is not the forge's. With no measurement it says the pace is unknown; null only when no autonomous repository has a pace to state (a reset past or over a week off). Home and the
- * terminal's dashboard print the same words.
+ * The autonomous repository the crew works most this week (the most agent
+ * runs; the first by name on a tie) among those with a pace to state, and
+ * what `read` makes of it. The one pick `weekWords` and `crewPace` share.
  */
-export function weekWords(app: App, now: Date = new Date()): string | null {
-  let best: { words: string; runs: number } | null = null;
+function busiest<T>(app: App, now: Date, read: (repo: Repo, week: WeekDecision) => T | null): T | null {
+  let best: { value: T; runs: number } | null = null;
   for (const repo of listAutonomousRepos(app.db)) {
     if (repo.autonomy !== "autonomous" || repo.archivedAt !== null) continue;
     const week = crewWeekFor(app, repo, now);
     if (week === null) continue;
-    const efficiency = weekEfficiency(app, repo, now);
-    if (best === null || efficiency.runs > best.runs) best = { words: `${week.sentence} The week allows the whole crew ${week.slots} of ${crewCeiling(app, repo)} slots across every repository. ${efficiencyWords(efficiency)}${heldWords(app)}`, runs: efficiency.runs };
+    const value = read(repo, week);
+    if (value === null) continue;
+    const runs = weekEfficiency(app, repo, now).runs;
+    if (best === null || runs > best.runs) best = { value, runs };
   }
-  return best?.words ?? null;
+  return best?.value ?? null;
+}
+
+/**
+ * The pace sentence and the efficiency beside it for the busiest autonomous
+ * repository (`busiest`), not whichever sorts first: a quiet repository's "nothing
+ * landed" is not the forge's. With no measurement it says the pace is unknown; null only when no autonomous repository has a pace to state (a reset past or over a week off). Home and the
+ * terminal's dashboard print the same words. `besideCrewLine` drops the free
+ * percent and run-out time, for under the crew line that states them.
+ */
+export function weekWords(app: App, now: Date = new Date(), besideCrewLine = false): string | null {
+  return busiest(app, now, (repo, week) => `${besideCrewLine ? week.besideCrewLine : week.sentence} The week allows the whole crew ${week.slots} of ${crewCeiling(app, repo)} slots across every repository. ${efficiencyWords(weekEfficiency(app, repo, now))}${heldWords(app)}`);
+}
+
+/** The crew line's figures: the week's free percent and when this burn empties it (null: it lasts to the reset). */
+export interface CrewPace {
+  readonly freePct: number;
+  readonly runsOutAt: Date | null;
+}
+
+/**
+ * The same week `weekWords` states, as numbers: the meter's free share and
+ * the pacer's own `runsOutAt`, for the same repository (`busiest`).
+ * Null while the week is unmeasured, past, or has no autonomous repository.
+ */
+export function crewPace(app: App, now: Date = new Date()): CrewPace | null {
+  return busiest(app, now, (repo, week) => {
+    const meter = weekOf(app, repo, now).meter;
+    return meter === null ? null : { freePct: meter.freePct, runsOutAt: week.runsOutAt };
+  });
+}
+
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/** `Thu 14:00 UTC`, the pacer's run-out moment. */
+function dayTime(d: Date): string {
+  return `${DAYS[d.getUTCDay()]} ${d.toISOString().slice(11, 16)} UTC`;
+}
+
+/** The crew line in a few words: `41% of the week left, runs out Thu 14:00 UTC at this pace`; null while the week is unmeasured. Home and the terminal print it. */
+export function crewLineWords(app: App, now: Date = new Date()): string | null {
+  const pace = crewPace(app, now);
+  if (pace === null) return null;
+  const left = `${Math.round(Math.min(100, Math.max(0, pace.freePct)))}% of the week left`;
+  return pace.runsOutAt === null ? `${left}, lasts to the reset at this pace` : `${left}, runs out ${dayTime(pace.runsOutAt)} at this pace`;
+}
+
+/**
+ * The owner's week on Home and the terminal: the crew line, then the week
+ * sentence without the figures the line already gives, so the percent is
+ * said once. With no crew line (an unmeasured week) the full sentence alone.
+ */
+export function weekBlock(app: App, now: Date = new Date()): string[] {
+  const crew = crewLineWords(app, now);
+  const words = weekWords(app, now, crew !== null);
+  return [...(crew === null ? [] : [crew]), ...(words === null ? [] : [words])];
 }
