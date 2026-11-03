@@ -34,8 +34,18 @@ import { ok } from "../src/kernel/result.ts";
 import type { Capture, LookInput } from "../src/looks/capture.ts";
 import { startLooks, type LooksHandle } from "../src/looks/service.ts";
 import { previewIdentityKey } from "../src/spawn/preview-owner.ts";
-import { PREVIEW_ADMIN, PREVIEW_PULL, PREVIEW_REPO, PREVIEW_WAVE, PREVIEW_WAVE_HEADLINE, seedPreview } from "../src/spawn/preview-seed.ts";
+import {
+  PREVIEW_ADMIN,
+  PREVIEW_PULL,
+  PREVIEW_PULL_PAGE,
+  PREVIEW_REPO,
+  PREVIEW_REPO_HOME,
+  PREVIEW_WAVE,
+  PREVIEW_WAVE_HEADLINE,
+  seedPreview,
+} from "../src/spawn/preview-seed.ts";
 import { PREVIEW_CONFIG_FILES } from "../src/spawn/preview-config.ts";
+import { ownerLooksFor } from "../src/spawn/preview-looks.ts";
 import { localSource } from "../src/view/local.ts";
 import { isFormConfig, parseConfig } from "../src/web/render/config-format.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -267,8 +277,8 @@ describe("a preview hears its parent's admin as the preview admin", () => {
 
 describe("the forge's own owner looks, over the preview seed", () => {
   // Each page forge.json takes as the owner, and what shows it is not blank (#8865).
-  const repoHome = `/${PREVIEW_ADMIN}/${PREVIEW_REPO}`;
-  const pullPage = `${repoHome}/pulls/${String(PREVIEW_PULL)}`;
+  const repoHome = PREVIEW_REPO_HOME;
+  const pullPage = PREVIEW_PULL_PAGE;
   const KEY = "the-parents-identity-key";
   let dataDir: string;
   let app: App;
@@ -297,10 +307,10 @@ describe("the forge's own owner looks, over the preview seed", () => {
     return res.text();
   };
 
-  test("forge.json takes home, /flow, the seeded repository and its pull as the owner, desk and phone", () => {
+  test("forge.json takes the seed's other pages as the owner, and the seed's pull is the one the named list pictures", () => {
     const manifest = parseManifest(readFileSync(join(import.meta.dir, "..", "forge.json"), "utf8"), undefined);
     if (!manifest.ok) throw new Error(JSON.stringify(manifest.error));
-    for (const page of ["/", "/flow", repoHome, pullPage, `${repoHome}/waves`, `${repoHome}/milestones`]) {
+    for (const page of ["next", "bets", "waves", "milestones"].map((p) => `${repoHome}/${p}`)) {
       expect(manifest.value.looks).toContain(page);
       expect(manifest.value.looksAsOwner).toContain(page);
     }
@@ -359,7 +369,7 @@ describe("looks of a public app", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-looks-owner-"));
-    app = createApp({ dataDir, port: 0 });
+    app = createApp({ dataDir, port: 0, forgeRepo: "alice/forge" });
     servers = await serve(app);
     runtime = new AppsRuntime(app, {
       domain: "apps.test",
@@ -452,4 +462,63 @@ describe("looks of a public app", () => {
     expect(grantOf("/", 390)?.who).toBeUndefined();
     expect(grantOf("/", 1280)?.who).toBeUndefined();
   }, 120_000);
+
+  test("a preview of the forge's own repository takes home, /flow, the repository's head and the pull as the owner at desk and phone, whatever forge.json lists", async () => {
+    const made = await newApp(app, alice, { name: "forge", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const { repo, app: record } = made.value;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "pages",
+      base: repo.defaultBranch,
+      message: "List only home",
+      files: [
+        {
+          path: "forge.json",
+          content: JSON.stringify({ app: { run: "bun run src/server.ts", health: "/healthz", looks: ["/"] } }),
+        },
+      ],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, { title: "Pages", baseBranch: repo.defaultBranch, headBranch: "pages" });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = previewEnv(opened.value.number);
+    const commit = branch.value.commitOid;
+    const pages = ["/", "/flow", PREVIEW_REPO_HOME, PREVIEW_PULL_PAGE];
+    const deadline = Date.now() + 90_000;
+    const light = () =>
+      looksForEnv(app.db, record.id, env).filter((l) => l.commitOid === commit && l.theme === "light");
+    while (light().length < pages.length * 3 && Date.now() < deadline) await Bun.sleep(100);
+    await looks.idle();
+    const rows = light();
+    for (const page of pages) {
+      for (const [kind, width] of [["desktop", 1280], ["phone", 390]] as const) {
+        expect({ page, kind, takenAs: rows.find((l) => l.page === page && l.kind === kind)?.takenAs }).toEqual({
+          page,
+          kind,
+          takenAs: "owner",
+        });
+        const call = calls.find(
+          (c) =>
+            c.url.includes(`forge--${opened.value.number}.`) &&
+            new URL(c.url).searchParams.get("to") === page &&
+            c.width === width &&
+            c.dark !== true &&
+            !c.out.includes("thumb"),
+        );
+        expect(call).toBeDefined();
+        const grant = readGrant(dataDir, new URL(call!.url).searchParams.get("t") ?? "", { app: record, env });
+        expect(grant?.who).toEqual({ id: alice.id, name: "alice", role: "admin" });
+      }
+      // The thumb is what a stranger sees, still.
+      expect(rows.find((l) => l.page === page && l.kind === "thumb")?.takenAs).toBe("nobody");
+    }
+  }, 120_000);
+
+  test("production of the forge, and a preview of any other repository, add none", () => {
+    const forge = { ownerName: "alice", name: "forge" };
+    expect(ownerLooksFor("alice/forge", forge, "production")).toEqual([]);
+    expect(ownerLooksFor("alice/forge", { ownerName: "alice", name: "plaza" }, previewEnv(1))).toEqual([]);
+    expect(ownerLooksFor(undefined, forge, previewEnv(1))).toEqual([]);
+    expect(ownerLooksFor("alice/forge", forge, previewEnv(1)).length).toBeGreaterThan(0);
+  });
 });

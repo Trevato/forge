@@ -34,17 +34,17 @@ import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { createUser, getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { PREVIEW_CONFIG_FILES } from "./preview-config.ts";
+import { PREVIEW_ADMIN, PREVIEW_PULL, PREVIEW_PULL_PAGE, PREVIEW_REPO } from "./preview-looks.ts";
 
-/** The preview-only site admin's name. */
-export const PREVIEW_ADMIN = "preview-admin";
-/** The repository the admin's pages are about. */
-export const PREVIEW_REPO = "sample";
-/**
- * The seeded pull's number: two issues come first and share its count.
- * forge.json `app.looksAsOwner` names its page, so the seed refuses any
- * other number rather than leave that look on a 404.
- */
-export const PREVIEW_PULL = 3;
+export {
+  PREVIEW_ADMIN,
+  PREVIEW_OWNER_LOOKS,
+  PREVIEW_PULL,
+  PREVIEW_PULL_PAGE,
+  PREVIEW_REPO,
+  PREVIEW_REPO_HOME,
+} from "./preview-looks.ts";
+
 /** The seeded wave's version and headline, which the owner's /waves look shows. */
 export const PREVIEW_WAVE = "0.1.0";
 export const PREVIEW_WAVE_HEADLINE = "The sample says hello";
@@ -295,7 +295,7 @@ function seedMilestone(app: App, milestone: Issue, holding: readonly Issue[]): R
 
 /** The wave for /waves: `waves/<version>.md` on the default branch, naming the seeded pull. */
 async function seedWave(app: App, admin: User, repo: Repo, pullTitle: string): Promise<Result<void, string>> {
-  const url = `https://preview.invalid/${PREVIEW_ADMIN}/${PREVIEW_REPO}/pulls/${String(PREVIEW_PULL)}`;
+  const url = `https://preview.invalid${PREVIEW_PULL_PAGE}`;
   const text = [
     "---",
     `version: ${PREVIEW_WAVE}`,

@@ -13,6 +13,14 @@ every thumb too. Pictures taken as the owner are the writers' alone
 there that `app.looks` does not name is a manifest error. The forge names
 `/`, `/flow` and `/talk`.
 
+**Four looks every forge preview takes.** Whatever `forge.json` lists, a
+preview of the forge's own repository (`FORGE_REPO`) is pictured as its
+owner at desk and phone width on home with its pins, /flow,
+`/preview-admin/sample` and the seeded pull's page: the named list
+`PREVIEW_OWNER_LOOKS` in `src/spawn/preview-looks.ts`, which the looks
+service adds to the manifest's pages (#8974). Production, and every other
+app, take only what their manifest lists.
+
 **The preview has an owner to be.** When the platform says
 `FORGE_APP_ENV=preview`, the forge seeds a site admin, `preview-admin`, and
 a small world for it once (`src/spawn/preview-seed.ts`): a public repository
