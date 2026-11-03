@@ -13,6 +13,11 @@ Its check needs nothing here: a check never carries the repository's
 secrets, a guest's or anyone's (`src/checks/service.ts` builds its
 environment from the forge's own names only).
 
+`test/guest-pull-env.test.ts` proves both from the processes themselves: a
+guest's real check prints its environment and none of the app's variables
+or a forge token is in it, before approval and after; its real preview
+answers with neither until a writer approves, then with both.
+
 The pull page says it is a guest to everyone; writers see **Approve this
 guest**, a same-origin form posting to `/:owner/:name/pulls/:number/approve-guest`.
 In the terminal the pull screen says the same, and a writer presses `G`.
