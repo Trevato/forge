@@ -44,6 +44,7 @@ import { holdPull, releasePull } from "../../actions/holds.ts";
 import { getHold, type Hold } from "../../core/holds.ts";
 import { bypassOffered, cleanReason, landPastGate } from "../../checks/bypass.ts";
 import { revertPull } from "../../actions/revert.ts";
+import { landSlice, sliceChoices } from "../../actions/pull_slices.ts";
 import { takeBackWords } from "../../actions/revert_words.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
@@ -115,6 +116,7 @@ import {
   drawLines,
   hitScroll,
   errorText,
+  pickerScreen,
   live,
   openLink,
   plural,
@@ -769,6 +771,60 @@ export function pullScreen(
   };
 
   /**
+   * Whether `S` is on offer: an open, unmerged pull from a fork on a local
+   * repository, for a person who may write — the page's slices form, by the
+   * same rule (#9010). `landSlice` holds the gate; this only shows the key.
+   */
+  const mayLandSlice = (): boolean => {
+    if (repo === undefined || repo.origin !== null || !mayWrite()) return false;
+    if (f.user === undefined || f.user.kind === "agent") return false;
+    const row = getPull(f.db, repo.id, number);
+    return row !== undefined && row.crossRepo && row.originHeadRepo === null && row.mergedAt === null && row.state === "open";
+  };
+
+  /** `S` — pick where the slice ends, then land the author's commits up to it as they are. */
+  const landSlices = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    runAsync(ctx, async () => {
+      const ends = await sliceChoices(f.app, target, row);
+      if (ends.length === 0) {
+        ctx.toast("nothing left to land");
+        return;
+      }
+      ctx.push(
+        pickerScreen(ctx, screen, {
+          title: `Land #${number} up to`,
+          items: ends.map((c, i) => ({
+            id: c.oid,
+            label: `${c.oid.slice(0, 7)} ${c.subject}`,
+            ...(i === ends.length - 1 ? { hint: "head: the last slice" } : {}),
+          })),
+          onPick: ([upTo]) => {
+            if (upTo === undefined) return;
+            runAsync(ctx, async () => {
+              const live = getPull(f.db, target.id, number);
+              if (live === undefined) return;
+              const landed = await landSlice(f.app, f.user, target, live, upTo);
+              if (!landed.ok) {
+                ctx.toast(`not landed: ${errorText(String(typeof landed.error === "string" ? landed.error : landed.error.kind))}`, "danger");
+                return;
+              }
+              await reload();
+              ctx.toast(
+                landed.value.last ? "last slice landed: the pull is merged" : `slice landed, ${landed.value.left} left`,
+                "success",
+              );
+            });
+          },
+        }),
+      );
+    });
+  };
+
+  /**
    * Whether `L` is on offer: an open pull, an owner who is a person, and
    * landing stopped (`checks/bypass.ts`). The same rule the page's form follows.
    */
@@ -1037,6 +1093,7 @@ export function pullScreen(
               binding(["m"], "merge", { disabled: state() !== "ready" }),
               ...(wall !== undefined && mayWrite() ? [binding(["w"], "the access wall: allow or send back")] : []),
               ...(mayLandPast() ? [binding(["L"], "land past the gate")] : []),
+              ...(mayLandSlice() ? [binding(["S"], "land a slice")] : []),
               ...(tab === 1 && view.threadHere() !== null
                 ? [
                     binding(
@@ -1239,6 +1296,10 @@ export function pullScreen(
               },
             }),
           );
+        return true;
+      }
+      if (e.key === "S" && mayLandSlice()) {
+        landSlices();
         return true;
       }
       if (e.key === "L" && mayLandPast()) {

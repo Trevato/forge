@@ -283,6 +283,7 @@ export { route as postApiV1ReposOwnerNamePullsNumberLooks } from "./postApiV1Rep
 export { route as postApiV1ReposOwnerNamePullsNumberMerge } from "./postApiV1ReposOwnerNamePullsNumberMerge.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberReviewStates } from "./postApiV1ReposOwnerNamePullsNumberReviewStates.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberReviews } from "./postApiV1ReposOwnerNamePullsNumberReviews.ts";
+export { route as postApiV1ReposOwnerNamePullsNumberSlices } from "./postApiV1ReposOwnerNamePullsNumberSlices.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberTakeBack } from "./postApiV1ReposOwnerNamePullsNumberTakeBack.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve } from "./postApiV1ReposOwnerNamePullsNumberThreadsAnchorResolve.ts";
 export { route as postApiV1ReposOwnerNamePullsNumberVariant } from "./postApiV1ReposOwnerNamePullsNumberVariant.ts";

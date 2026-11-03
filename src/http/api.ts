@@ -95,6 +95,7 @@ import {
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { landSlice } from "../actions/pull_slices.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
 import { pullLooks } from "../looks/readable.ts";
@@ -2630,6 +2631,35 @@ export function apiRoutes(router: Router<Handler>): void {
         return originAware(merged.error, 409);
       }
       return json({ merged: true, ...merged.value });
+    },
+  );
+
+  // Land the author's commits up to `upTo` as their own merge commit (#9010).
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/slices",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const landed = await landSlice(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        str(input.upTo),
+      );
+      if (!landed.ok) {
+        if (typeof landed.error !== "string")
+          return json({ error: landed.error.kind }, 409);
+        if (landed.error === "bad_slice" || landed.error === "sealed" || landed.error === "not_fork")
+          return json({ error: landed.error }, 422);
+        if (landed.error === "held") return json({ error: "held" }, 409);
+        return originAware(landed.error, 409);
+      }
+      return json(landed.value);
     },
   );
 

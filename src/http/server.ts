@@ -334,6 +334,7 @@ import {
   pullFilesPage,
   pullChecksFragment,
   pullMergeSubmit,
+  pullSliceSubmit,
   pullLandPastSubmit,
   pullChecksSubmit,
   pullReviewStateSubmit,
@@ -1157,6 +1158,7 @@ export function buildRouter(): Router<Handler> {
     threadResolveSubmit(false),
   );
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/slice", pullSliceSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/land-past", pullLandPastSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/state", (ctx) =>
     stateSubmit(ctx, "pull"),

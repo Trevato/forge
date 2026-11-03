@@ -76,6 +76,8 @@ import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { DiffLaps } from "../../git/diff.ts";
 import { diffCacheCounts, diffKey, keptDiff, keptRender } from "../diff-cache.ts";
 import { keptRead } from "../head-reads.ts";
+import { landedSlices, sliceEnds, type LandedSlice } from "../../git/slices.ts";
+import { landSlice } from "../../actions/pull_slices.ts";
 import { diffSyntax } from "../diff-syntax.ts";
 import {
   renderDiff,
@@ -99,6 +101,7 @@ import {
   labelCss,
   queuedPhrase,
   row,
+  selectField,
   sha,
   time,
   type Tone,
@@ -966,6 +969,24 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ),
   );
   const commits = log.ok ? log.value : [];
+  // A fork's pull may land in slices; which did is read from the base (#9010).
+  // A person lands them: the crew proposes (rule 1 in docs/APPS.md).
+  const mayLand = mayMerge && ctx.auth.user?.kind !== "agent";
+  const slices = pull.crossRepo
+    ? await lap("git", () =>
+        keptRead(`slices:${repo.id}:${pull.number}:${status.baseOid}`, () =>
+          landedSlices(dir, status.baseOid, pull.number, pull.createdAt),
+        ),
+      )
+    : [];
+  const ends =
+    pull.crossRepo && mayLand && pull.state === "open" && pull.mergedAt === null && status.ahead > 1
+      ? await lap("git", () =>
+          keptRead(`slice-ends:${repo.id}:${status.baseOid}:${status.headOid}`, () =>
+            sliceEnds(dir, status.baseOid, status.headOid),
+          ),
+        )
+      : [];
   const commitsCard = card(
     commits.length === 0
       ? html`<p class="muted small">No commits to show.</p>`
@@ -1024,6 +1045,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${holdCard(ctx, repo, pull, { act: false })}
     ${teamsCard(teamVerdicts(ctx.app.db, { ...pull, headOid: status.headOid }))}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}
+    ${slicesCard(base, thread, slices, status.ahead, ends, pull.state === "open" && pull.mergedAt === null, mayLand)}
     ${await combinedCard(dir, pull, status.headOid, status.baseOid)}
     <div class="split">
       <div>
@@ -1440,6 +1462,97 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
     });
   }
   return flashTo(ctx, dest, { message: "Pull request merged." });
+}
+
+// POST /:owner/:name/pulls/:number/slice — land the author's commits up to one (#9010).
+export async function pullSliceSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const landed = await landSlice(ctx.app, ctx.auth.user, found.repo, found.pull, field(form, "upTo") ?? "");
+  if (!landed.ok)
+    return flashTo(ctx, `${dest}/files`, {
+      tone: "danger",
+      message:
+        landed.error === "bad_slice"
+          ? "That commit is not one of this pull's that the base still lacks. Nothing landed."
+          : landed.error === "sealed"
+            ? "This pull's work is sealed apart from the base; it lands whole."
+            : landed.error === "not_fork"
+              ? "Only a pull from a fork lands in slices; this one lands whole."
+              : landed.error === "held"
+                ? "A hold stands on this pull: nothing of it lands until it is released."
+                : landed.error === "forbidden" && ctx.auth.user.kind === "agent"
+                  ? "The crew proposes and a person lands: an agent cannot land a slice."
+                  : mergeFailure(landed.error),
+    });
+  return flashTo(ctx, landed.value.last ? dest : `${dest}/files`, {
+    message: landed.value.last
+      ? "Last slice landed: the pull is merged."
+      : `Slice landed. ${landed.value.left} commit${landed.value.left === 1 ? "" : "s"} left.`,
+  });
+}
+
+/**
+ * The slices card (#9010): which slices of a fork's pull landed, what is
+ * left, and — for a writer — a form to land the author's commits up to one
+ * of them as their own merge commit.
+ */
+function slicesCard(
+  base: string,
+  thread: string,
+  slices: readonly LandedSlice[],
+  left: number,
+  commits: readonly { oid: string; subject: string }[],
+  open: boolean,
+  mayMerge: boolean,
+): Html {
+  if (slices.length === 0 && !(open && mayMerge && left > 1)) return html``;
+  return card(
+    html`${when(
+        slices.length > 0,
+        () => html`<ul class="list">
+          ${slices.map(
+            (s, i) => html`<li>
+              <a class="row" href="${base}/commit/${s.mergeOid}">
+                <span class="row-main">
+                  <span class="row-title">Slice ${i + 1}: up to ${sha(s.upTo)}</span>
+                  <span class="row-meta">merged as they are</span>
+                </span>
+                <span class="row-trail">${sha(s.mergeOid)}</span>
+              </a>
+            </li>`,
+          )}
+        </ul>`,
+      )}
+      <p class="muted small">
+        ${open ? html`${left} commit${left === 1 ? "" : "s"} left to land.` : html`Nothing left: the last slice was the author's head.`}
+      </p>
+      ${when(
+        open && mayMerge && commits.length > 1,
+        () => html`<form method="post" action="${thread}/slice">
+          ${selectField({
+            label: "Land the author's commits up to",
+            name: "upTo",
+            id: "slice-up-to",
+            hint: "Each slice is its own merge of the author's commits as they are. It lands only while the head's review and check would let the whole pull land.",
+            options: commits.map((c, i) => ({
+              value: c.oid,
+              label: `${c.oid.slice(0, 7)} ${c.subject}${i === commits.length - 1 ? " (head: the last slice)" : ""}`,
+            })),
+          })}
+          ${btn("Land slice", { icon: "merge" })}
+        </form>`,
+      )}`,
+    {
+      head: html`${icon("merge")}
+        <h2>Slices</h2>`,
+    },
+  );
 }
 
 // POST /:owner/:name/pulls/:number/land-past — the owner's break-glass (#7790).
