@@ -9,7 +9,7 @@
  */
 
 import { addTrust, removeTrust, revertBySource, setFoldInStopped } from "../../actions/trusted_sources.ts";
-import { endsSoon, foldInStopped, listTrusted, type TrustError } from "../../core/trusted_sources.ts";
+import { endsSoon, foldInStopped, leftWords, listTrusted, type TrustError } from "../../core/trusted_sources.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -40,7 +40,7 @@ export function trustedScreen(f: Session, ctx: Ctx): Screen {
       meta:
         s.until <= now.toISOString()
           ? "lapsed, waits for review"
-          : `until ${s.until.slice(0, 10)}${endsSoon(s, now) ? " (ends soon)" : ""}`,
+          : `until ${s.until.slice(0, 10)} (${leftWords(s.until, now)})${endsSoon(s, now) ? ", ends soon" : ""}`,
     }));
   };
 

@@ -6,7 +6,13 @@
  */
 
 import { isTokenScheme, tokenSecret } from "./token_header.ts";
-import { followUpstreamCheck, followUpstreamUpdate } from "../web/pages/upstream-follow.ts";
+import {
+  followSourceRemove,
+  followSourcesAdd,
+  followSourcesCheck,
+  followUpstreamCheck,
+  followUpstreamUpdate,
+} from "../web/pages/upstream-follow.ts";
 import { secureFor } from "./cookie_secure.ts";
 import { refusedByDatabase, shownRefusal } from "./refusal.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
@@ -1368,6 +1374,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/settings/holds", fileHoldUpdate);
   router.add("POST", "/:owner/:name/settings/upstream", followUpstreamUpdate);
   router.add("POST", "/:owner/:name/settings/upstream/check", followUpstreamCheck);
+  router.add("POST", "/:owner/:name/settings/sources", followSourcesAdd);
+  router.add("POST", "/:owner/:name/settings/sources/check", followSourcesCheck);
+  router.add("POST", "/:owner/:name/settings/sources/:id/remove", followSourceRemove);
   router.add("GET", "/:owner/:name/settings/labels", labelsPage);
   router.add("POST", "/:owner/:name/settings/labels", labelCreate);
   router.add("POST", "/:owner/:name/settings/labels/:id", labelUpdate);

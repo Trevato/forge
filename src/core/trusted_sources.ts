@@ -8,6 +8,7 @@
  */
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
+import { closesFromBody } from "./pulls.ts";
 
 export interface TrustedSource {
   readonly id: string;
@@ -70,9 +71,11 @@ export function trustSource(
   if (host === undefined) return "bad_host";
   const account = cleanAccount(input.account);
   if (account === undefined) return "bad_account";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.until)) return "bad_date";
-  const end = new Date(`${input.until}T23:59:59.999Z`);
-  if (Number.isNaN(end.getTime())) return "bad_date";
+  const day = input.until.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return "bad_date";
+  const end = new Date(`${day}T23:59:59.999Z`);
+  // A day that does not exist (02-31) rolls into the next month: refuse it rather than guess.
+  if (Number.isNaN(end.getTime()) || end.toISOString().slice(0, 10) !== day) return "bad_date";
   if (end.getTime() <= now.getTime()) return "in_the_past";
   const until = end.toISOString();
   db.query(
@@ -124,6 +127,15 @@ export function markWarned(db: Database, sourceId: string, now: Date = new Date(
   db.query("UPDATE trusted_source SET warned_at = ?2 WHERE id = ?1").run(sourceId, now.toISOString());
 }
 
+/** How long a trust has left, in words: "29 days left", "less than a day left", or "lapsed". */
+export function leftWords(until: string, now: Date = new Date()): string {
+  const ms = Date.parse(until) - now.getTime();
+  if (Number.isNaN(ms) || ms <= 0) return "lapsed";
+  const days = Math.floor(ms / DAY_MS);
+  if (days < 1) return "less than a day left";
+  return `${days} day${days === 1 ? "" : "s"} left`;
+}
+
 /** Whether the entry ends within the warning window (or already has). */
 export const endsSoon = (s: TrustedSource, now: Date = new Date()): boolean =>
   Date.parse(s.until) - now.getTime() <= WARN_DAYS * DAY_MS;
@@ -156,13 +168,68 @@ export interface PullSource {
 /** Where a pull came from; the first word stands, a later call never rewrites it. */
 export function recordPullSource(
   db: Database,
-  input: { pullId: string; host: string; account: string; via: readonly string[] },
+  input: { pullId: string; host: string; account: string; via: readonly string[]; big?: boolean },
   now: Date = new Date(),
 ): void {
   db.query(
-    `INSERT OR IGNORE INTO pull_source (pull_id, host, account, via, received_at)
-     VALUES (?1, ?2, ?3, ?4, ?5)`,
-  ).run(input.pullId, input.host.toLowerCase(), input.account.toLowerCase(), input.via.join(","), now.toISOString());
+    `INSERT OR IGNORE INTO pull_source (pull_id, host, account, via, received_at, big)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+  ).run(
+    input.pullId,
+    input.host.toLowerCase(),
+    input.account.toLowerCase(),
+    input.via.join(","),
+    now.toISOString(),
+    input.big === true ? 1 : 0,
+  );
+  if (input.big === true) db.query("UPDATE pull_source SET big = 1 WHERE pull_id = ?1").run(input.pullId);
+}
+
+/** A fold this many commits long is not landed on a check alone: the crew reviews it first (#9003). */
+export const BIG_FOLD_COMMITS = 50;
+
+/** Whether the crew reviews this pull before it lands, trusted or not: a big fold, or the crew's resolution of a conflict. */
+export function needsCrewReview(db: Database, pullId: string): boolean {
+  const row = db
+    .query<{ big: number }, [string]>("SELECT big FROM pull_source WHERE pull_id = ?1")
+    .get(pullId);
+  return row !== null && row.big === 1;
+}
+
+/**
+ * The crew's resolution of a source's conflict carries that source: a pull
+ * written by an agent whose description closes the conflict issue the source
+ * raised. Only an agent's pull is adopted, so a guest writing `Closes #N`
+ * gains nothing. Stamped once, reviewed by the crew before it lands. A write,
+ * so it is called where a pull is opened or its description edited, never
+ * from the predicates that read.
+ */
+export function adoptResolution(db: Database, pullId: string): PullSource | undefined {
+  const pull = db
+    .query<{ repo_id: string; body: string; is_agent: number }, [string]>(
+      `SELECT i.repo_id, i.body, u.is_agent FROM issue i JOIN user u ON u.id = i.author_id
+        WHERE i.id = ?1 AND i.kind = 'pull'`,
+    )
+    .get(pullId);
+  if (pull === null || pull.is_agent !== 1) return undefined;
+  for (const number of closesFromBody(pull.body)) {
+    const c = db
+      .query<{ host: string; account: string; via: string }, [string, number]>(
+        `SELECT c.host, c.account, c.via FROM source_conflict c JOIN issue i ON i.id = c.issue_id
+          WHERE i.repo_id = ?1 AND i.number = ?2`,
+      )
+      .get(pull.repo_id, number);
+    if (c === null) continue;
+    recordPullSource(db, {
+      pullId,
+      host: c.host,
+      account: c.account,
+      via: c.via === "" ? [] : c.via.split(","),
+      big: true,
+    });
+    return pullSourceOf(db, pullId);
+  }
+  return undefined;
 }
 
 export function pullSourceOf(db: Database, pullId: string): PullSource | undefined {

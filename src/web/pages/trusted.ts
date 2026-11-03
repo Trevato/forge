@@ -7,6 +7,7 @@ import { addTrust, removeTrust, revertBySource, setFoldInStopped } from "../../a
 import {
   endsSoon,
   foldInStopped,
+  leftWords,
   listTrusted,
   type TrustError,
 } from "../../core/trusted_sources.ts";
@@ -53,7 +54,7 @@ export function trustedPage(ctx: Ctx): Response {
         <input type="hidden" name="stop" value="${stopped ? "0" : "1"}" />
         ${stopped
           ? html`${badge("Folding in is stopped", { variant: "outline" })}
-              <span class="muted small">by ${stopped.by}, <time datetime="${stopped.at}">${stopped.at.slice(0, 10)}</time></span>
+              <span class="muted small">by ${stopped.by}, ${time(stopped.at, { date: true })}</span>
               ${btn("Resume folding in", { size: "sm" })}`
           : btn("Stop all folding in", { size: "sm", variant: "outline" })}
       </form></div>`,
@@ -68,9 +69,9 @@ export function trustedPage(ctx: Ctx): Response {
               return row({
                 lead: icon("user"),
                 title: html`${s.account} <span class="muted small mono">${s.host}</span>`,
-                meta: html`${lapsed ? "Lapsed, waits for review" : "Until"} ${time(s.until)}${
-                  !lapsed && endsSoon(s, now) ? " (ends soon)" : ""
-                } · set by ${s.setBy}`,
+                meta: html`${lapsed ? "Lapsed, waits for review, since" : "Until"}
+                  ${time(s.until, { date: true })}
+                  (${leftWords(s.until, now)})${!lapsed && endsSoon(s, now) ? ", ends soon" : ""} · set by ${s.setBy}`,
                 trail: html`<form class="row-fields" method="post" action="/settings/trusted/${s.id}/remove">
                     ${btn("Remove", { size: "sm", variant: "outline", label: `Remove ${s.account} on ${s.host}` })}
                   </form>

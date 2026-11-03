@@ -50,14 +50,16 @@ export function timeAgo(iso: string): string {
 /**
  * A timestamp a machine and a screen reader can both read: relative text for
  * the eye, the exact instant in `datetime` and `title` for everyone else.
+ * `date` words it as the calendar day (`2026-12-02`), for an instant ahead
+ * of now, which "ago" cannot name.
  */
-export function time(iso: string): Html {
+export function time(iso: string, opts: { date?: boolean } = {}): Html {
   const parsed = Date.parse(iso);
   if (Number.isNaN(parsed)) return html``;
   const at = new Date(parsed);
   const exact = `${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
   return html`<time datetime="${at.toISOString()}" title="${exact}"
-    >${timeAgo(iso)}</time
+    >${opts.date === true ? at.toISOString().slice(0, 10) : timeAgo(iso)}</time
   >`;
 }
 

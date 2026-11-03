@@ -145,6 +145,8 @@ const WORDS: Record<string, string> = {
   "repo.detached": "detached a fork from its parent",
   "repo.settings_updated": "changed repository settings",
   "repo.upstream_follow": "changed which upstream the repository follows",
+  "repo.source_added": "followed another source",
+  "repo.source_removed": "stopped following a source",
   "repo.following": "turned following an upstream on or off",
   "repo.crew_outsiders": "changed who may trigger the crew",
   "repo.mirrored": "mirrored a repository",

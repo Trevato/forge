@@ -194,6 +194,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     // address is often a private repository's.
     kind === "repo.upstream_follow" ||
     kind === "repo.upstream_checked" ||
+    kind === "repo.source_added" ||
+    kind === "repo.source_removed" ||
     kind === "repo.crew_outsiders" ||
     // A valve turn names a repository and the owner's budget: for those who administer it (`actions/valves.ts`).
     kind === "valve.turned" ||

@@ -83,7 +83,7 @@ import { canWrite } from "../core/repos.ts";
 import { refreshPullHead as refreshHead } from "../core/following.ts";
 import { getOriginRepo } from "../core/origins.ts";
 import { watchPullsSoon } from "../origins/hook.ts";
-import { ownHost, pullSourceOf, sourceTrailers } from "../core/trusted_sources.ts";
+import { adoptResolution, ownHost, pullSourceOf, sourceTrailers } from "../core/trusted_sources.ts";
 import { carryBranchThrough } from "../origins/push-through.ts";
 import { ensureFork, forkHead, pushToFork } from "../origins/fork-route.ts";
 import { denied } from "../origins/operator.ts";
@@ -300,6 +300,7 @@ export async function openPull(
     },
   );
   if (!created.ok) return created;
+  adoptResolution(app.db, created.value.id);
   // A pull the crew opens is the crew's to see through: it starts assigned
   // to the agent, so "who is on it" is legible without a second step (an
   // agent cannot assign, so this is the one place it happens).

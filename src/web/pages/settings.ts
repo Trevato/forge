@@ -108,7 +108,7 @@ import { cutWaveFor } from "../../actions/cut_wave.ts";
 import { proposalTokensSection } from "./proposal-tokens.ts";
 import { secretsSection } from "./secrets.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
-import { followUpstreamCard } from "./upstream-follow.ts";
+import { followSourcesCard, followUpstreamCard } from "./upstream-follow.ts";
 
 type Section =
   | "general"
@@ -370,6 +370,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   );
   const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
   const upstream = followUpstreamCard(ctx, repo);
+  const sources = followSourcesCard(ctx, repo);
   const wave = card(
     html`<form method="post" action="${base}/settings/wave">
       <p class="muted">
@@ -426,7 +427,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     "Settings",
     html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
       ? html`<div class="mt">${trail}</div>`
-      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
+      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}${sources ? html`<div class="mt">${sources}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
       : null}${secrets
       ? html`<div class="mt">${secrets}</div>`

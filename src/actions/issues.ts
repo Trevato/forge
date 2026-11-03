@@ -22,6 +22,7 @@ import { mayView, setSealed } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
+import { adoptResolution } from "../core/trusted_sources.ts";
 import { crewRole, isCrew } from "../core/agents.ts";
 import { moveBlockersToChildren } from "../core/dependencies.ts";
 import {
@@ -250,6 +251,7 @@ export function editIssue(
   if (changed.length === 0) return ok(issue);
   const updated = updateIssueText(app.db, issue.id, input);
   if (!updated.ok) return updated;
+  if (issue.kind === "pull" && changed.includes("body")) adoptResolution(app.db, issue.id);
   app.bus.append({
     kind: `${issue.kind}.edited`,
     repoId: repo.id,

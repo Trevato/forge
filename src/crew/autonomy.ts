@@ -134,7 +134,7 @@ import {
   landsOnItsOwn,
   markReaders,
 } from "./direct.ts";
-import { foldsIn } from "../core/trusted_sources.ts";
+import { foldsIn, needsCrewReview } from "../core/trusted_sources.ts";
 import { foldWall } from "./fold_walls.ts";
 import { warnExpiring } from "./fold_in.ts";
 import { crewOffInPreview } from "./preview.ts";
@@ -1960,7 +1960,7 @@ export function bringUpToDate(
  * crew, and is `lapsed` when the reviewer was asked twice and never
  * answered: it lands without it, and says so (`crew/review.ts`).
  */
-async function reviewed(
+export async function reviewed(
   app: App,
   repo: Repo,
   pull: Pull,
@@ -1971,7 +1971,9 @@ async function reviewed(
   if (seen.approvals > 0) return "pass";
   // A trusted source's pull needs no person's review (#8937); its check, the
   // boot proof and the walls above still stood before this point.
-  if (foldsIn(app.db, pull.id, now)) return "pass";
+  // A big first fold, and the crew's resolution of a conflict, are reviewed
+  // by the crew first (#9003): they take the path below.
+  if (foldsIn(app.db, pull.id, now) && !needsCrewReview(app.db, pull.id)) return "pass";
   // An agent's pull ships only on an approving review — the crew's reviewer
   // or a person's. With no reviewer, or a review that lapsed, it waits for
   // a person (`waitsForPerson` puts it where a person looks); never by lapse.

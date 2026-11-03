@@ -46,7 +46,7 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { refreshPullHead } from "../core/following.ts";
-import { UPSTREAM_TITLE, upstreamFollowing } from "../actions/upstream_follow.ts";
+import { UPSTREAM_TITLE, sourceFollowing, upstreamFollowing } from "../actions/upstream_follow.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
   canWrite,
@@ -849,7 +849,7 @@ export function convergeFollowing(
   user: User,
 ): TaskInput["following"] {
   if (issue.title.startsWith(UPSTREAM_TITLE)) {
-    const upstream = upstreamFollowing(app, repo.id);
+    const upstream = sourceFollowing(app, issue.id) ?? upstreamFollowing(app, repo.id);
     if (upstream !== undefined) return upstream;
   }
   // Only a parent the agent may read is put in its brief.
