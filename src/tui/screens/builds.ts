@@ -20,6 +20,7 @@ import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
+import { shotsScreen } from "./shots.ts";
 import { ListState, ago, confirmScreen, metaOf, promptScreen } from "./common.ts";
 
 export const NOT_FOUND_LINE = "No such repository";
@@ -113,6 +114,7 @@ export function buildsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     get keys() {
       return [
         binding(["j", "k"], "move"),
+        binding(["s"], "screenshots"),
         ...(mayPin(f, repo) ? [binding(["p"], "pin"), binding(["n"], "note"), binding(["d"], "delete")] : []),
         binding(["esc", "q"], "back"),
       ];
@@ -150,6 +152,7 @@ export function buildsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       if (e.key === "j" || e.key === "down") state.move(1, pins?.length ?? 0);
       else if (e.key === "k" || e.key === "up") state.move(-1, pins?.length ?? 0);
       else if (e.key === "esc" || e.key === "q") ctx.pop();
+      else if (e.key === "s" && !hidden && picked !== undefined) ctx.push(shotsScreen(f, ctx, repo, picked));
       else if (e.key === "p" && write) void ctx.track(pin());
       else if (e.key === "n" && write && picked !== undefined) addNote(picked);
       else if (e.key === "d" && write && picked !== undefined) ask(picked);
@@ -168,7 +171,7 @@ export function buildsCommands(f: Session, ctx: Ctx, repo: Repo | undefined): Co
     {
       id: "builds",
       title: `${repo.ownerName}/${repo.name} — Builds`,
-      hint: "its pinned builds; a writer pins, notes and deletes",
+      hint: "its pinned builds; `s` shows a pin's screenshots; a writer pins, notes and deletes",
       run: () => ctx.push(buildsScreen(f, ctx, repo)),
     },
   ];

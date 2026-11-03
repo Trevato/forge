@@ -185,6 +185,7 @@ import {
 } from "../web/pages/branches.ts";
 import { iterationsPage, noteSubmit } from "../web/pages/iterations.ts";
 import { buildsPage, deletePinSubmit, newBuildPage, pinBuildSubmit, previewBuildSubmit } from "../web/pages/builds.ts";
+import { shotImage } from "../web/pages/build_shots.ts";
 import { wavePage, wavesAtom, wavesPage } from "../web/pages/waves.ts";
 import {
   contributeSubmit,
@@ -1260,6 +1261,8 @@ export function buildRouter(): Router<Handler> {
   // Build pins (`git/builds.ts`): the list, the form, and the writes behind them.
   router.add("GET", "/:owner/:name/builds", buildsPage);
   router.add("GET", "/:owner/:name/builds/new", newBuildPage);
+  // A pin's screenshot, read: a tree kept by refs/shots/<label> (`git/shots.ts`).
+  router.add("GET", "/:owner/:name/builds/:label/shots/:file", shotImage);
   router.add("GET", "/:owner/:name/iterations", iterationsPage);
   router.add("POST", "/:owner/:name/builds", pinBuildSubmit);
   router.add("POST", "/:owner/:name/builds/preview", previewBuildSubmit);

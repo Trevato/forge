@@ -14,6 +14,7 @@ export { route as deleteApiV1ReposOwnerNameAppDomainsHost } from "./deleteApiV1R
 export { route as deleteApiV1ReposOwnerNameAppEnvVar } from "./deleteApiV1ReposOwnerNameAppEnvVar.ts";
 export { route as deleteApiV1ReposOwnerNameBranchesBranch } from "./deleteApiV1ReposOwnerNameBranchesBranch.ts";
 export { route as deleteApiV1ReposOwnerNameBuildsLabel } from "./deleteApiV1ReposOwnerNameBuildsLabel.ts";
+export { route as deleteApiV1ReposOwnerNameBuildsLabelShotsFile } from "./deleteApiV1ReposOwnerNameBuildsLabelShotsFile.ts";
 export { route as deleteApiV1ReposOwnerNameCrewUsername } from "./deleteApiV1ReposOwnerNameCrewUsername.ts";
 export { route as deleteApiV1ReposOwnerNameEgressGrants } from "./deleteApiV1ReposOwnerNameEgressGrants.ts";
 export { route as deleteApiV1ReposOwnerNameHooksId } from "./deleteApiV1ReposOwnerNameHooksId.ts";
@@ -99,6 +100,8 @@ export { route as getApiV1ReposOwnerNameAppNotes } from "./getApiV1ReposOwnerNam
 export { route as getApiV1ReposOwnerNameAppProductionOpen } from "./getApiV1ReposOwnerNameAppProductionOpen.ts";
 export { route as getApiV1ReposOwnerNameBranches } from "./getApiV1ReposOwnerNameBranches.ts";
 export { route as getApiV1ReposOwnerNameBuilds } from "./getApiV1ReposOwnerNameBuilds.ts";
+export { route as getApiV1ReposOwnerNameBuildsLabelShots } from "./getApiV1ReposOwnerNameBuildsLabelShots.ts";
+export { route as getApiV1ReposOwnerNameBuildsLabelShotsLooks } from "./getApiV1ReposOwnerNameBuildsLabelShotsLooks.ts";
 export { route as getApiV1ReposOwnerNameCommits } from "./getApiV1ReposOwnerNameCommits.ts";
 export { route as getApiV1ReposOwnerNameCommitsOid } from "./getApiV1ReposOwnerNameCommitsOid.ts";
 export { route as getApiV1ReposOwnerNameCommitsOidCheck } from "./getApiV1ReposOwnerNameCommitsOidCheck.ts";
@@ -254,6 +257,9 @@ export { route as postApiV1ReposOwnerNameAppNotesIdHide } from "./postApiV1Repos
 export { route as postApiV1ReposOwnerNameAppNotesIdUnban } from "./postApiV1ReposOwnerNameAppNotesIdUnban.ts";
 export { route as postApiV1ReposOwnerNameBranches } from "./postApiV1ReposOwnerNameBranches.ts";
 export { route as postApiV1ReposOwnerNameBuilds } from "./postApiV1ReposOwnerNameBuilds.ts";
+export { route as postApiV1ReposOwnerNameBuildsLabelShots } from "./postApiV1ReposOwnerNameBuildsLabelShots.ts";
+export { route as postApiV1ReposOwnerNameBuildsLabelShotsFile } from "./postApiV1ReposOwnerNameBuildsLabelShotsFile.ts";
+export { route as postApiV1ReposOwnerNameBuildsLabelShotsLooks } from "./postApiV1ReposOwnerNameBuildsLabelShotsLooks.ts";
 export { route as postApiV1ReposOwnerNameBuildsPreview } from "./postApiV1ReposOwnerNameBuildsPreview.ts";
 export { route as postApiV1ReposOwnerNameChecksRecheck } from "./postApiV1ReposOwnerNameChecksRecheck.ts";
 export { route as postApiV1ReposOwnerNameContents } from "./postApiV1ReposOwnerNameContents.ts";

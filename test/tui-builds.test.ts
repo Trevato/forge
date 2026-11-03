@@ -3,7 +3,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pinBuild } from "../src/actions/builds.ts";
+import { deletePin, pinBuild } from "../src/actions/builds.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -120,4 +120,27 @@ test("the command is offered to a reader and not for a repository the viewer can
   expect(buildsCommands(stranger, ctx, open).map((c) => c.id)).toEqual(["builds"]);
   expect(buildsCommands(stranger, ctx, secret)).toEqual([]);
   expect(buildsCommands(stranger, ctx, undefined)).toEqual([]);
+});
+
+test("s on a pin lists its screenshots; a writer moves, captions and removes, a reader only reads", async () => {
+  const { uploadShot } = await import("../src/actions/build_shots.ts");
+  const { readShots } = await import("../src/git/shots.ts");
+  const PNG = (n: number) => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, n, n]);
+  // Pins pinned in one second have no fixed order: leave only ours.
+  for (const p of await pins(open)) await deletePin(app, alice, open, p.label);
+  const pinned = await pinBuild(app, alice, open, { label: "shotpin", oid });
+  if (!pinned.ok) throw new Error(pinned.error);
+  expect((await uploadShot(app, alice, open, "shotpin", PNG(1), "first")).ok).toBe(true);
+  expect((await uploadShot(app, alice, open, "shotpin", PNG(2), "second")).ok).toBe(true);
+  const dir = repoDir(app.reposRoot, "alice", "game");
+  const names = async () => (await readShots(dir, "shotpin")).items.map((s) => s.caption);
+    const read = await drive(open, undefined, ["s"]);
+  expect(read).toContain("01.png");
+  expect(read).toContain("second");
+  await drive(open, undefined, ["s", "d", "x"]);
+  expect(await names()).toEqual(["first", "second"]);
+  await drive(open, alice, ["s", "d"]);
+  expect(await names()).toEqual(["second", "first"]);
+  await drive(open, alice, ["s", "x", ["right", "enter"]]);
+  expect(await names()).toEqual(["first"]);
 });

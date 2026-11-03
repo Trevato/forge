@@ -398,6 +398,15 @@ export async function notePinBuild(
   return ok({ pin: withNotes(pin, notes), note, commit: written.value });
 }
 
+/** Whether `bytes` start like a PNG, JPEG or WebP picture. */
+export function coverType(bytes: Uint8Array): "image/png" | "image/jpeg" | "image/webp" | undefined {
+  const at = (i: number, ...want: number[]) => want.every((b, k) => bytes[i + k] === b);
+  if (at(0, 0x89, 0x50, 0x4e, 0x47)) return "image/png";
+  if (at(0, 0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return "image/webp";
+  return undefined;
+}
+
 export type DeletePinError = "not_found" | "moved" | "git_failed";
 
 /**
@@ -416,6 +425,9 @@ export async function deletePin(dir: string, label: string): Promise<Result<{ re
   if (tag === undefined) return err("not_found");
   const commit = await runGitCapture(["rev-parse", "--verify", "--quiet", `${tag}^{commit}`], { cwd: dir });
   const lines = [`delete ${ref} ${tag}`];
+  // The pin's curated screenshots (`git/shots.ts`) go with it, so a label pinned again starts bare.
+  const shots = await read(`refs/shots/${label}`);
+  if (shots !== undefined) lines.push(`delete refs/shots/${label} ${shots}`);
   const done = await runGitCapture(["update-ref", "--stdin"], { cwd: dir, stdin: `start\n${lines.join("\n")}\nprepare\ncommit\n` });
   if (done.code !== 0) return err(/cannot lock|is at|expected/i.test(done.stderr) ? "moved" : "git_failed");
   return ok({ oid: commit.stdout.trim(), tag });

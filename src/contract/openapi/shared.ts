@@ -64,3 +64,6 @@ export const BROWSE_CODE_REFUSALS = {
   ...BROWSE_REFUSALS,
   not_found: "404: no such origin of yours, or the origin has no such repository, ref or path",
 };
+
+/** The refusals every write to a pin's screenshots answers (`actions/build_shots.ts`). */
+export const SHOT_REFUSALS = { forbidden: "403: not a person who writes the repository (an agent is refused)", not_found: "404: no such repository or pin, or the caller cannot read it", mirrored: "409: the repository mirrors an origin", moved: "409: the screenshots changed since `at` was read", git_failed: "422: git refused the change" };

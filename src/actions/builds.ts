@@ -39,7 +39,7 @@ export interface PinBuildInput {
 export type PinBuildActionError = AccessError | PinBuildError | "mirrored";
 
 /** A person who writes the repository, never an agent, and not on a mirror: who may pin, note or delete. */
-function writerOf(app: App, actor: User | undefined, repo: Repo): Result<User, AccessError | "mirrored"> {
+export function writerOf(app: App, actor: User | undefined, repo: Repo): Result<User, AccessError | "mirrored"> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
   if (writer.value.kind === "agent") return err("forbidden");

@@ -354,6 +354,7 @@ import { forgeOriginRoutes } from "./api/forge_origin.ts";
 import { userRoutes } from "./api/user.ts";
 import { appRoutes } from "./api/app.ts";
 import { buildRoutes } from "./api/builds.ts";
+import { buildShotRoutes } from "./api/build_shots.ts";
 import { iterationRoutes } from "./api/iterations.ts";
 import { appNoteRoutes } from "./api/app_notes.ts";
 import { reportRoutes } from "./api/reports.ts";
@@ -3635,6 +3636,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   appRoutes(router);
   buildRoutes(router);
+  buildShotRoutes(router);
   iterationRoutes(router);
 
   egressGrantRoutes(router);
