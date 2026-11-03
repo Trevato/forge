@@ -15,7 +15,8 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Result } from "../../kernel/result.ts";
 import { appJson, appLimitResponse, loadRepo } from "../api.ts";
-import type { Handler } from "../context.ts";
+import type { Ctx, Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { apiError, body, json, notFound, requireScope, respondAccess, str, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
 
@@ -44,6 +45,19 @@ function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
     default:
       return notFound();
   }
+}
+
+/**
+ * An access-checked read tagged by its own bytes (#9178): `private, no-cache`
+ * and varied on the credential, so a repeat holding the tag is a bodiless 304
+ * until the data moves. Called only after the access check passed.
+ */
+function tagged(ctx: Ctx, data: unknown): Response {
+  const text = JSON.stringify(data);
+  const etag = weakEtag(text);
+  const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+  if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+  return new Response(text, { headers: { "content-type": "application/json", ...headers } });
 }
 
 export function appRoutes(router: Router<Handler>): void {
@@ -119,7 +133,7 @@ export function appRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const read = timePhase(ctx.request, "members", () => readAppMembers(ctx.app, ctx.auth.user, repo));
-    return timePhase(ctx.request, "render", () => membersAnswer(read));
+    return timePhase(ctx.request, "render", () => (read.ok ? tagged(ctx, read.value) : membersAnswer(read)));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/app/members", async (ctx) => {
@@ -150,7 +164,7 @@ export function appRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const listed = timePhase(ctx.request, "domains", () => listAppDomains(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
+    return timePhase(ctx.request, "render", () => tagged(ctx, { items: listed.value, next_cursor: null }));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app/domains", async (ctx) => {
