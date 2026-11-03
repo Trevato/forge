@@ -68,6 +68,21 @@ describe("the hunter", () => {
     expect(keys.filter((k) => k === "links.status:/gone")).toHaveLength(1);
   });
 
+  test("each finding carries its detector's kind (#8969)", async () => {
+    const { fetcher } = site({
+      ...healthy,
+      "/": { body: '<a href="/gone">Gone</a><a href="/mine">Your repositories</a>' },
+      "/mine": { status: 302, location: "/" },
+      "/settings": { status: 200 },
+      "/api/v1/apps": { status: 500, type: "application/json", body: "{}" },
+    });
+    const kinds = Object.fromEntries((await huntTarget(BASE, fetcher)).findings.map((f) => [f.key, f.kind]));
+    expect(kinds["door.signin-redirect:/settings"]).toBe("security");
+    expect(kinds["links.status:/gone"]).toBe("broken-route");
+    expect(kinds["contract.no-500:/api/v1/apps"]).toBe("broken-route");
+    expect(kinds["links.lands-home:/mine"]).toBe("cosmetic");
+  });
+
   test("it refuses a path off the target", async () => {
     const { fetcher } = site({});
     await expect(probe(BASE, fetcher).get("https://evil.test/x")).rejects.toThrow();

@@ -21,7 +21,7 @@ import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { recordCap } from "../src/crew/guard.ts";
 import { sharedCause } from "../src/checks/shared_red.ts";
-import { bugClockAlarm, HIGH_BUG_MS } from "../src/flow/bugs.ts";
+import { bugClockAlarm, HIGH_BUG_MS, openBugs } from "../src/flow/bugs.ts";
 import {
   budgetBreaches,
   degradedCauses,
@@ -1058,5 +1058,25 @@ describe("a finding is filed sorted (#8856)", () => {
     ];
     expect(hunt(kapp, "alice/forge", NOW, defect).filed).toBe(1);
     expect(names(openTitled("log says x")!.id)).toEqual(["bug"]);
+  });
+
+  test("a cosmetic finding lands as polish, on no bug clock (#8969)", () => {
+    const cosmetic = () => [
+      { key: "look:y", title: "The link y lands on / and is not Home", evidence: ["y"], pillar: "Craft", lookFor: "No y.", kind: "cosmetic" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, cosmetic).filed).toBe(1);
+    const issue = openTitled("link y lands")!;
+    expect(names(issue.id)).toEqual(["polish"]);
+    expect(openBugs(kapp.db).some((b) => b.number === issue.number)).toBe(false);
+  });
+
+  test("a broken route lands as a high bug (#8969)", () => {
+    const broken = () => [
+      { key: "route:z", title: "The route /z answers 500", evidence: ["GET /z → 500"], pillar: "Reliability", lookFor: "/z answers.", kind: "broken-route" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, broken).filed).toBe(1);
+    const issue = openTitled("route /z")!;
+    expect(names(issue.id)).toEqual(["bug", "high"]);
+    expect(openBugs(kapp.db).find((b) => b.number === issue.number)?.high).toBe(true);
   });
 });
