@@ -822,11 +822,11 @@ const VISIBLE = REPO_VISIBLE;
 const newestFirst = (options: ListReposOptions): string =>
   `${options.appsFirst === true ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, " : ""}repo.id DESC`;
 
-export function listReposVisibleTo(
-  db: Database,
+/** The WHERE and parameters a visible-to listing reads by; the page and its tag share them. */
+function visibleClause(
   viewer: User | undefined,
-  options: ListReposOptions = {},
-): Repo[] {
+  options: ListReposOptions,
+): { where: string; params: (string | number)[] } {
   const params: (string | number)[] = [viewer?.id ?? ""];
   let where = viewer ? VISIBLE : PUBLIC_VISIBLE;
   if (options.query !== undefined && options.query.trim() !== "") {
@@ -842,6 +842,15 @@ export function listReposVisibleTo(
   if (options.withoutArchived === true) where += " AND repo.archived_at IS NULL";
   if (options.archivedOnly === true) where += " AND repo.archived_at IS NOT NULL";
   params.push(pageLimit(options.limit));
+  return { where, params };
+}
+
+export function listReposVisibleTo(
+  db: Database,
+  viewer: User | undefined,
+  options: ListReposOptions = {},
+): Repo[] {
+  const { where, params } = visibleClause(viewer, options);
   const rows = db
     .query<RepoRow, (string | number)[]>(
       `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
@@ -849,6 +858,53 @@ export function listReposVisibleTo(
     .all(...params)
     .map(toRepo);
   return withCounts(db, rows);
+}
+
+/** The columns `toRepo` shows; `issue_seq` is not one, since a sealed report moves it. */
+const SHOWN = [
+  "repo.id", "repo.owner_id", "user.username", "repo.name", "repo.visibility", "repo.description",
+  "repo.default_branch", "repo.protect_default", "repo.require_review", "repo.require_checks",
+  "repo.autonomy", "repo.autonomy_direction", "repo.autonomy_ceiling_usd", "repo.autonomy_slots",
+  "repo.planner_slots", "repo.reviewer_slots", "repo.polish_share", "repo.autonomy_by",
+  "repo.crew_outsiders", "repo.decisions_by", "repo.plans_need_nod", "repo.direction_issue_id",
+  "repo.fork_parent_id", "repo.sealed_for", "repo.archived_at", "repo.origin_id",
+  "repo.origin_full_name", "repo.origin_html_url", "repo.last_fetch_at", "repo.fetch_error",
+  "repo.origin_detached_at",
+].join(", ");
+
+/**
+ * A marker that moves whenever the page `listReposVisibleTo` would answer
+ * could differ, without building the page: one query that digests the shown
+ * columns of the page's rows inside SQLite, the newest push of each, and the
+ * open counts. Sealed reports are in neither the counts nor any event kind
+ * read, so filing one moves no viewer's marker (`countsForRepos`). A viewer
+ * sees only rows they may read, so two viewers who see different pages get
+ * different markers.
+ */
+export function visibleReposMarker(
+  db: Database,
+  viewer: User | undefined,
+  options: ListReposOptions = {},
+): string {
+  const { where, params } = visibleClause(viewer, options);
+  const page = `SELECT repo.id AS id, json_array(${SHOWN}) AS shown FROM repo
+    JOIN user ON user.id = repo.owner_id
+    WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`;
+  const row = db
+    .query<{ shown: string | null; pushes: string | null; counts: string | null }, (string | number)[]>(
+      `WITH page AS (${page})
+       SELECT
+         (SELECT group_concat(shown, char(10)) FROM page) AS shown,
+         (SELECT group_concat(repo_id || ':' || last, ',') FROM
+            (SELECT repo_id, MAX(id) AS last FROM event
+             WHERE kind = 'push' AND repo_id IN (SELECT id FROM page) GROUP BY repo_id ORDER BY repo_id)) AS pushes,
+         (SELECT group_concat(repo_id || ':' || kind || ':' || n, ',') FROM
+            (SELECT repo_id, kind, COUNT(*) AS n FROM issue
+             WHERE state = 'open' AND sealed = 0 AND repo_id IN (SELECT id FROM page)
+             GROUP BY repo_id, kind ORDER BY repo_id, kind)) AS counts`,
+    )
+    .get(...params);
+  return Bun.hash(`${row?.shown ?? ""}|${row?.pushes ?? ""}|${row?.counts ?? ""}`).toString(36);
 }
 
 /**

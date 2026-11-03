@@ -160,6 +160,7 @@ import {
   getRepo,
   listReposByOwner,
   listReposVisibleTo,
+  visibleReposMarker,
   type Repo,
   type RepoCounts,
   canWrite,
@@ -1486,8 +1487,18 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = repoQuery(ctx);
     if (query instanceof Response) return query;
+    // A poller holding the tag gets 304 after the marker alone: the rows are
+    // not built, counted or serialised (#9115).
+    const marker = timePhase(ctx.request, "tag", () => visibleReposMarker(ctx.app.db, ctx.auth.user, query));
+    const viewer = ctx.auth.user === undefined ? "anon" : `u${Bun.hash(ctx.auth.user.id).toString(36)}`;
+    const headers = {
+      etag: `W/"repos-${Bun.hash(`${viewer}|${query.limit}|${query.cursor ?? ""}|${marker}`).toString(36)}"`,
+      "cache-control": "private, no-cache",
+      vary: "authorization, cookie",
+    };
+    if (holds(ctx.request, headers.etag)) return new Response(null, { status: 304, headers });
     const items = timePhase(ctx.request, "repos", () => listReposVisibleTo(ctx.app.db, ctx.auth.user, query));
-    return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id)));
+    return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id), 200, headers));
   });
 
   router.add("POST", "/api/v1/repos", async (ctx) => {
