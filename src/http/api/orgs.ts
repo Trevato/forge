@@ -93,7 +93,7 @@ export function orgRoutes(router: Router<Handler>): void {
       listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
     );
     return timePhase(ctx.request, "render", () =>
-      json({ id: org.id, ...publicProfile(org), teams }),
+      tagged(ctx.request, { id: org.id, ...publicProfile(org), teams }),
     );
   });
 
