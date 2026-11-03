@@ -9,33 +9,19 @@
  * derived from the forge's key and the repository, so nothing is stored.
  */
 
-import { createHmac } from "node:crypto";
 import type { App } from "../app.ts";
 import { verifySignature } from "../core/webhooks.ts";
 import { originForRepo } from "../core/origins.ts";
 import type { Repo } from "../core/repos.ts";
-import { loadKey } from "../kernel/secret.ts";
 import { bustOrigin } from "../view/cache.ts";
 import { providerForOrigin } from "./credential.ts";
+import { HOOK_SIGNATURE_HEADER, hookSecret, hookUrl, signatureOf } from "./hook-secret.ts";
 import { refreshOriginPull } from "./pull-check.ts";
+
+export { HOOK_SIGNATURE_HEADER, hookSecret, hookUrl, signatureOf };
 
 /** The most a delivery may say; it names a pull and little else. */
 export const HOOK_BODY_MAX = 256 * 1024;
-export const HOOK_SIGNATURE_HEADER = "x-forge-signature-256";
-
-/** The secret the origin signs this mirror's deliveries with. */
-export function hookSecret(app: App, repo: Repo): string {
-  return createHmac("sha256", loadKey(app.config.dataDir))
-    .update(`origin-hook:${repo.id}`)
-    .digest("hex");
-}
-
-/** Where the origin delivers: https only, because the origin refuses the rest. */
-export function hookUrl(app: App, repo: Repo): string | undefined {
-  const base = app.config.url;
-  if (base === undefined || !/^https:\/\//i.test(base)) return undefined;
-  return `${base.replace(/\/+$/, "")}/api/v1/repos/${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}/origin-hook`;
-}
 
 /** The pull number a delivery names: ours, Gitea's or GitHub's shape. */
 export function numberIn(body: unknown): number | undefined {

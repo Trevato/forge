@@ -11,8 +11,7 @@ import type { Pull } from "../../core/pulls.ts";
 import type { Repo } from "../../core/repos.ts";
 import { approveGuestPull } from "../../actions/pulls.ts";
 import {
-  guestApproval,
-  isGuestPull,
+  guestWaits,
   mayApproveGuest,
 } from "../../origins/guest.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
@@ -29,8 +28,7 @@ export const GUEST_APPROVED = "Approved as a guest: its preview starts again wit
 /** The guest notice; empty for a pull from this forge, or one already approved. */
 export function guestCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
   if (pull.state !== "open" || pull.mergedAt !== null) return html``;
-  if (!isGuestPull(ctx.app.db, pull)) return html``;
-  if (guestApproval(ctx.app.db, pull.id) !== undefined) return html``;
+  if (!guestWaits(ctx.app.db, pull)) return html``;
   const writer = mayApproveGuest(ctx.app.db, repo, ctx.auth.user);
   return card(
     html`<p>${GUEST_WAITS}</p>

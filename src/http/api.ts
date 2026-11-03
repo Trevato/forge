@@ -55,7 +55,8 @@ import { isProbe } from "../kernel/probe.ts";
 import { PRIVATE_ADDRESS_REFUSED } from "../kernel/address_words.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
-import { HOOK_BODY_MAX, HOOK_SIGNATURE_HEADER, receiveOriginHook } from "../origins/hook.ts";
+import { HOOK_BODY_MAX, receiveOriginHook, signatureOf } from "../origins/hook.ts";
+import { receiveMirrorHook } from "../origins/mirror-pulls.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
@@ -3296,7 +3297,11 @@ export function apiRoutes(router: Router<Handler>): void {
     const bytes = await readBounded(ctx.request, HOOK_BODY_MAX);
     if (!repo || bytes === "too_large") return notFound();
     const raw = new TextDecoder().decode(bytes);
-    const kept = await receiveOriginHook(ctx.app, repo, raw, ctx.request.headers.get(HOOK_SIGNATURE_HEADER));
+    const signature = signatureOf(ctx.request.headers);
+    // The origin this repository mirrors, or the mirror it pushes to (#9011).
+    const kept =
+      (await receiveOriginHook(ctx.app, repo, raw, signature)) ||
+      (await receiveMirrorHook(ctx.app, repo, raw, signature));
     return kept ? json({ ok: true }) : notFound();
   });
 

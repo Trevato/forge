@@ -181,6 +181,12 @@ export interface CreatePullInput {
   revertsIssueId?: string;
   /** The variant group the pull joins; absent for an ordinary pull. */
   variantGroup?: string;
+  /**
+   * Who opened it on another forge, and where (#9011): written with the
+   * issue row, so the pull is a guest (`origins/guest.ts`) from its first
+   * moment and nothing can start it with secrets before it is marked.
+   */
+  origin?: { author: string; htmlUrl: string };
 }
 
 /**
@@ -292,6 +298,12 @@ export async function createPull(
     sealed,
   });
   if (!issue.ok) return err(issue.error);
+  if (input.origin !== undefined)
+    db.query("UPDATE issue SET origin_author = ?1, origin_html_url = ?2 WHERE id = ?3").run(
+      input.origin.author,
+      input.origin.htmlUrl,
+      issue.value.id,
+    );
 
   const headRepoId = input.headRepoId ?? input.repoId;
   db.query(

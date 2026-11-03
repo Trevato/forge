@@ -50,6 +50,7 @@ import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
+import { startMirrorPulls } from "./origins/mirror-pulls.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startNightly } from "./nightly/service.ts";
 import { startSnapshots } from "./snapshot/service.ts";
@@ -443,6 +444,8 @@ const checks =
       });
 // Migrated repositories kept as a read-only mirror push to their source.
 const mirrorOut = startMirrorOut(app);
+// …and take the pulls opened on that mirror as pulls here (#9011).
+const mirrorPulls = startMirrorPulls(app);
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
 const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
@@ -859,6 +862,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     // longer ends it: a person's stop cuts checks off (queued again) at once.
     checks?.stop({ drain: signal === "SIGTERM" }),
     mirrorOut(),
+    mirrorPulls(),
     looks?.stop(),
     probes?.stop(),
     nightly?.stop(),

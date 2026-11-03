@@ -792,6 +792,31 @@ rights on GitHub: without them the migration still succeeds and says the
 repository was not archived, so you can do it there yourself. Only repositories
 read through a connected origin have an original to change; a pasted URL does not.
 
+**Pulls opened on the mirror come here** (#9011, `src/origins/mirror-pulls.ts`).
+Someone who finds the mirror and opens a pull there is not lost: each open
+pull on the mirror is fetched (`refs/pull/<n>/head`, vetted and pinned like the
+mirror push) into `mirror-pull/<n>` here and opened as a pull on the default
+branch (or the mirror pull's base, when it exists here), under the account
+that connected the origin. It carries its author's name (`origin_author`) and
+a link back (`origin_html_url`), so it is a guest pull: no secrets, no crew,
+until a person approves it — unless that author is a trusted source on the
+mirror's host (`pull_source`; `guestWaits` asks `foldsIn`, so lapsed trust
+waits again). The author and link are written with the pull's first row, so
+nothing that hears `pull.opened` ever sees it as an ordinary pull. The fetch
+is capped at 200 MiB of new objects (`src/git/capped-fetch.ts`: it lands in a
+scratch repository borrowing trunk's objects, and only a fetch under the cap
+is moved in). One comment on the mirror pull says where it went. A head that
+moves on the mirror moves the pull here while it is open, and clears any
+guest approval: the head a person approved is not the one that would run. The mirror is never pushed to except the trunk refs the
+mirror push already sends; the comment and a webhook are the only writes. It
+runs by event — on boot the mirror is asked once for a webhook on its pull
+events (`watch`, Forgejo's `X-Forgejo-Signature` is accepted on
+`/api/v1/repos/:owner/:name/origin-hook`, signed with the repository's derived
+secret) — and by a sweep every five minutes for anything missed. Both key on
+the mirror pull's URL and run one at a time per repository, so they never
+make two copies of one pull. `test/mirror-pulls.test.ts`, against the fake
+Forgejo.
+
 **Migrate from the terminal.** Press `M` on the dashboard (or pick "Migrate a
 repository" in the palette, `ctrl+k`). The list is your connected origins'
 repositories, private ones marked; `/` filters it and `u` pastes a URL instead.

@@ -182,7 +182,7 @@ export class ForgeProvider extends ForgejoProvider {
     return succeed(states);
   }
 
-  async watch(fullName: string, hook: { url: string; secret: string }): Promise<ProviderResult<void>> {
+  override async watch(fullName: string, hook: { url: string; secret: string }): Promise<ProviderResult<void>> {
     const base = this.repoPath(fullName);
     if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
     const listed = await this.api.call({ path: `${base}/hooks` });

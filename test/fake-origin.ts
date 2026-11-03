@@ -199,6 +199,8 @@ export interface FakeState {
   conditionalHits: number;
   /** Refuse the next write with this message. */
   refuseWrite: string;
+  /** Forgejo webhooks as created, keyed `owner/name`. */
+  hooks: Map<string, Record<string, unknown>[]>;
   /**
    * How many `getRepo` calls a freshly forked repository 404s for before it
    * appears. GitHub creates a fork asynchronously and answers 202 with a
@@ -272,6 +274,7 @@ export function newFakeState(
     etagsEnabled: false,
     conditionalHits: 0,
     refuseWrite: "",
+    hooks: new Map(),
     forkDelayReads: 0,
     pendingForks: new Map(),
     refuseFork: "",
@@ -493,6 +496,18 @@ function route(
   if (pending > 0) {
     state.pendingForks.set(fullName, pending - 1);
     return jsonResponse({ message: "Not Found" }, 404);
+  }
+
+  // Forgejo's webhooks: listed, and made with a `config` holding url and secret.
+  if (tail === "/hooks" && state.kind !== "github") {
+    const hooks = state.hooks.get(fullName) ?? [];
+    if (method === "GET") return jsonResponse(hooks);
+    if (method === "POST") {
+      if (state.refuseWrite !== "") return refuse(state);
+      const made = { id: state.nextId++, ...(parse(bodyText) as Record<string, unknown>) };
+      state.hooks.set(fullName, [...hooks, made]);
+      return jsonResponse(made, 201);
+    }
   }
 
   if (tail === "" && method === "PATCH") {

@@ -729,6 +729,32 @@ export class ForgejoProvider implements Provider {
     return succeed(toComment(result.value.data));
   }
 
+  /**
+   * A webhook on the repository for its pull events (#9011), signed with
+   * `secret`; Forgejo and Gitea sign as `X-Forgejo-Signature` /
+   * `X-Gitea-Signature`, bare hex. One already pointing at `url` is kept.
+   */
+  async watch(fullName: string, hook: { url: string; secret: string }): Promise<ProviderResult<void>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const path = `/repos/${seg(named.owner)}/${seg(named.name)}/hooks`;
+    const listed = await this.api.call({ path });
+    if (!listed.ok) return listed;
+    if (asArray(listed.value.data).some((row) => asString(field(field(row, "config"), "url")) === hook.url))
+      return succeed(undefined);
+    const made = await this.api.call({
+      path,
+      method: "POST",
+      body: {
+        type: "gitea",
+        active: true,
+        events: ["pull_request"],
+        config: { url: hook.url, content_type: "json", secret: hook.secret },
+      },
+    });
+    return made.ok ? succeed(undefined) : made;
+  }
+
   async setState(
     fullName: string,
     number: number,
