@@ -243,6 +243,22 @@ it once; passing again, it closes the issue. Same `FORGE_TOKEN` as the hunt.
 The Forgejo workflows these replace, and `sync-env`, are covered in
 `docs/features/nightly.md`.
 
+**Can the Forgejo jobs be switched off? Not yet.** They go (#9020) once one
+night of each side has been set side by side and agrees:
+`bun scripts/flake-compare.ts --forge hunt.log --forge outside.log --forgejo
+slice-1.log … --forgejo outside.log` reads what each side's run printed (the
+forge's `/resilience/nightly/<job>`, with the job's Resilience line pasted in
+so its `quarantine pull on flake-hunt/<date>` counts; each Forgejo step log)
+and prints what each filed — `Red:` issues opened, updated or closed, `Flaky:`
+issues, broken and quarantined files, the quarantine pull — then every
+difference, naming the file; it exits 1 when there is one
+(`test/flake-compare.test.ts`). One side silent where the other filed is the
+dedupe, not a difference. A flaky file only one side found can be the seed;
+a file red outside the gate on one side and green on the other is the cell
+differing from the `isolated` runner, and blocks the switch until explained.
+No such night has been compared yet: the logs are admin-only on both sides,
+so an admin runs it and posts the output on #9045.
+
 Bun's own `--randomize --seed=N` drives every hunt and admission run. Not
 used: `--rerun-each` (one seed for every rerun, so ten reruns explore one
 order) and `--parallel` (it changes the load the gate is judged under).
