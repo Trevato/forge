@@ -152,7 +152,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   font-variant-numeric: tabular-nums; letter-spacing: 0.14em;
   text-align: center; user-select: all; word-break: break-all;
 }
-[data-apps], [data-bet-card], [data-milestone] { overflow-wrap: anywhere; }
+[data-apps], [data-bet-card], [data-milestone], [data-now] { overflow-wrap: anywhere; }
 [data-bet-card] h2, [data-bet-card] ul, [data-bet-card] p { margin-block: 8px; }
 [data-bet-card] ul { padding-inline-start: 16px; }
 [data-bet-card] { max-height: 80vh; overflow-x: hidden; overflow-y: auto; }

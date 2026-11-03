@@ -11,7 +11,7 @@ import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
-import { empty, listCard, row, timeAgo } from "../ui.ts";
+import { card, empty, row, timeAgo } from "../ui.ts";
 
 /** Where a word of the Now line goes. */
 export const nowHref = (stage: NowStage): string => `/now/${stage}`;
@@ -28,23 +28,26 @@ export function nowPage(ctx: Ctx): Response {
   const body =
     total === 0
       ? empty({ icon: "activity", title: `Nothing in ${NOW_WORDS[stage].toLowerCase()} right now`, note: NOW_HOLDS[stage] })
-      : listCard(
-          rows.map((r) =>
-            row({
-              href: r.href,
-              nav: true,
-              title: html`<span class="truncate">${r.title}</span>`,
-              meta: html`${r.repo} · ${r.note}`,
-              trail: html`<span class="muted small">${timeAgo(r.at)}</span>`,
-            }),
-          ),
+      : card(
+          html`<ul class="list setting-list">
+            ${rows.map((r) =>
+              row({
+                href: r.href,
+                nav: true,
+                title: html`${r.title}`,
+                meta: html`${r.repo} · ${r.note}`,
+                trail: html`<span class="muted small">${timeAgo(r.at)}</span>`,
+              }),
+            )}
+          </ul>`,
+          { pad: false },
         );
   notePhase(ctx.request, "render", performance.now() - reading);
   return page({
     ctx,
     title: NOW_WORDS[stage],
-    body: html`<div class="page-head"><h1>${NOW_WORDS[stage]}</h1></div>
+    body: html`<div data-now><div class="page-head"><h1>${NOW_WORDS[stage]}</h1></div>
       <p class="muted small" id="now-count"><strong>${String(total)}</strong> · ${NOW_HOLDS[stage]}${total > rows.length ? ` Showing the newest ${NOW_LISTED}.` : ""}</p>
-      ${body}`,
+      ${body}</div>`,
   });
 }
