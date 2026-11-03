@@ -20,6 +20,7 @@ import type { Database } from "bun:sqlite";
 import { getIssue, type Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import { mayView } from "../core/sealed.ts";
+import { holds, weakEtag } from "../http/etag.ts";
 import { holdOpen } from "../http/caller.ts";
 import { appHostSuffix } from "./host.ts";
 import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
@@ -1148,8 +1149,12 @@ export async function proxyApp(
     !target.nested &&
     status.toolbar !== false &&
     (request.headers.get("accept") ?? "").includes("text/html")
-  )
+  ) {
     headers.set("accept-encoding", "identity");
+    // The proxy compares after fetching: a tag it did not make would pair an
+    // old toolbar with a new page.
+    headers.delete("if-none-match");
+  }
 
   if (isWebSocketHandshake(request)) {
     return proxyWebSocket(
@@ -1279,8 +1284,31 @@ export async function proxyApp(
       out.set("content-encoding", encoding);
     }
     out.set("content-length", String(sent.length));
+    const upstreamTag = out.get("etag");
     out.delete("etag");
     out.delete("content-md5");
+    // The same page for every viewer keeps a validator: the app's tag joined
+    // with the bytes of what was sent, so a new toolbar is a new tag.
+    const tag =
+      upstreamTag !== null &&
+      response.status === 200 &&
+      request.method === "GET" &&
+      proof === undefined &&
+      vouched?.who === undefined &&
+      out.getSetCookie().length === 0 &&
+      cspNonce(out.get("content-security-policy")) === undefined &&
+      !/\b(no-store|private)\b/i.test(out.get("cache-control") ?? "")
+        ? weakEtag(`${upstreamTag}|${Bun.hash(page).toString(36)}`)
+        : undefined;
+    if (tag !== undefined) {
+      out.set("etag", tag);
+      if (holds(request, tag)) {
+        out.delete("content-length");
+        out.delete("content-encoding");
+        relayPhase(request, "rewrite", performance.now() - rewriting);
+        return withPhases(request, new Response(null, { status: 304, headers: out }));
+      }
+    }
     relayPhase(request, "rewrite", performance.now() - rewriting);
     return withPhases(
       request,
