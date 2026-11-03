@@ -24,6 +24,9 @@ import { openIssue, setIssueState } from "../actions/issues.ts";
 import { pinBuild } from "../actions/builds.ts";
 import { openPull } from "../actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../actions/repos.ts";
+import { reviewGate } from "../actions/gate_review.ts";
+import { linkIssue } from "../actions/dependencies.ts";
+import { THEMES_AT_REST } from "../web/pages/gate.ts";
 import { iterationsOf } from "../core/iterations.ts";
 import { turnValveFor } from "../actions/valves.ts";
 import { insertBet } from "../core/bets.ts";
@@ -40,6 +43,8 @@ import { PREVIEW_CONFIG_FILES } from "./preview-config.ts";
 import {
   PREVIEW_ADMIN,
   PREVIEW_FORKS,
+  PREVIEW_HELD_PAGE,
+  PREVIEW_HELD_THEMES,
   PREVIEW_ITERATIONS_PAGE,
   PREVIEW_PULL,
   PREVIEW_PULL_PAGE,
@@ -49,6 +54,8 @@ import {
 export {
   PREVIEW_ADMIN,
   PREVIEW_FORKS,
+  PREVIEW_HELD_PAGE,
+  PREVIEW_HELD_THEMES,
   PREVIEW_ITERATIONS_PAGE,
   PREVIEW_OWNER_LOOKS,
   PREVIEW_PULL,
@@ -213,6 +220,8 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   if (!bets.ok) return bets;
   const family = await seedForkFamily(app, admin, repo.value, start.value.commitOid);
   if (!family.ok) return family;
+  const gated = seedLaterGate(app, admin, repo.value);
+  if (!gated.ok) return gated;
   const valve = turnValveFor(app, admin, `${PREVIEW_ADMIN}/${PREVIEW_REPO}`, 60);
   if (!valve.ok) return err(`the valve: ${valve.error}`);
 
@@ -399,5 +408,30 @@ async function seedForkFamily(app: App, admin: User, repo: Repo, first: string):
     const under = of === undefined ? `${admin.username}/${PREVIEW_REPO}` : `${of}/${PREVIEW_REPO}`;
     if (card?.forkOf !== under) return err(`${PREVIEW_ITERATIONS_PAGE} draws ${owner}/${PREVIEW_REPO} under ${String(card?.forkOf)}, not ${under}`);
   }
+  return ok();
+}
+
+/**
+ * A Later gate holding issues across more themes than the held page draws at
+ * rest, so its fold line shows. Made last, so the numbers the other pages
+ * name stay where they are. Refused when the page would be a 404 or would
+ * not have a theme more than it draws at rest.
+ */
+function seedLaterGate(app: App, admin: User, repo: Repo): Result<void, string> {
+  const gate = openIssue(app, admin, repo, {
+    title: "Later gate: nothing behind this starts until the owner opens it",
+    body: "Held for later.",
+  });
+  if (!gate.ok) return err(`the Later gate: ${String(gate.error)}`);
+  for (const { titles } of PREVIEW_HELD_THEMES)
+    for (const title of titles) {
+      const made = openIssue(app, admin, repo, { title, body: "Held behind the gate." });
+      if (!made.ok) return err(`a held issue: ${String(made.error)}`);
+      const linked = linkIssue(app, admin, repo, made.value, gate.value);
+      if (!linked.ok) return err(`holding "${title}": ${JSON.stringify(linked.error)}`);
+    }
+  const themes = reviewGate(app, repo)?.themes.length ?? 0;
+  if (themes <= THEMES_AT_REST)
+    return err(`${PREVIEW_HELD_PAGE} shows ${String(themes)} themes, not more than the ${String(THEMES_AT_REST)} drawn at rest`);
   return ok();
 }

@@ -1,10 +1,10 @@
 /**
  * The looks every preview of the forge takes as its owner (#8974): home
  * with its pins, /flow, the seeded repository's head, its pull's page and
- * its Iterations page (#9182), each at desk and phone width. The looks
- * service adds them to whatever forge.json lists for a preview of the
- * forge's own repository (`FORGE_REPO`), so no edit of forge.json can
- * drop one.
+ * its Iterations page (#9182) and the Later gate's proposal (#9212), each
+ * at desk and phone width. The looks service adds them to whatever
+ * forge.json lists for a preview of the forge's own repository
+ * (`FORGE_REPO`), so no edit of forge.json can drop one.
  *
  * Plain data and no imports beyond a type: the seed (`preview-seed.ts`)
  * makes what these pages show, and the looks service reads the list.
@@ -41,6 +41,25 @@ export const PREVIEW_FORKS: readonly { readonly owner: string; readonly of?: str
   { owner: "preview-dee", of: "preview-ada" },
 ];
 
+/** The Later gate's proposal on the sample (#9212): what the gate holds, grouped by theme. */
+export const PREVIEW_HELD_PAGE = `${PREVIEW_REPO_HOME}/held`;
+/**
+ * The seeded held issues: each theme is a word three titles share (the least
+ * the triage groups on), and there are more themes than the page draws at
+ * rest, so its fold line shows. Titles share no other word, so no issue
+ * falls under "Other" or reads as another's duplicate.
+ */
+export const PREVIEW_HELD_THEMES: readonly { readonly theme: string; readonly titles: readonly string[] }[] = [
+  { theme: "billing", titles: ["Billing shows a receipt", "Billing offers refunds", "Billing remembers cards"] },
+  { theme: "search", titles: ["Search finds typos", "Search ranks fresh work", "Search saves queries"] },
+  { theme: "mobile", titles: ["Mobile opens offline", "Mobile pulls to refresh", "Mobile shares sheets"] },
+  { theme: "export", titles: ["Export writes archives", "Export schedules nightly", "Export signs bundles"] },
+  { theme: "onboarding", titles: ["Onboarding greets newcomers", "Onboarding offers tours", "Onboarding tracks progress"] },
+  { theme: "themes", titles: ["Themes follow daylight", "Themes allow contrast", "Themes preview swatches"] },
+  { theme: "webhooks", titles: ["Webhooks retry deliveries", "Webhooks sign payloads", "Webhooks replay events"] },
+  { theme: "digest", titles: ["Digest groups mentions", "Digest honours quiet hours", "Digest links threads"] },
+];
+
 export interface OwnerLook {
   readonly page: string;
   readonly kind: LookKind;
@@ -53,6 +72,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_REPO_HOME,
   PREVIEW_PULL_PAGE,
   PREVIEW_ITERATIONS_PAGE,
+  PREVIEW_HELD_PAGE,
 ].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));
 
 /**

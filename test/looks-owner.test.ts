@@ -45,7 +45,7 @@ import {
   seedPreview,
 } from "../src/spawn/preview-seed.ts";
 import { PREVIEW_CONFIG_FILES } from "../src/spawn/preview-config.ts";
-import { ownerLooksFor, PREVIEW_FORKS, PREVIEW_ITERATIONS_PAGE } from "../src/spawn/preview-looks.ts";
+import { ownerLooksFor, PREVIEW_FORKS, PREVIEW_HELD_THEMES, PREVIEW_ITERATIONS_PAGE } from "../src/spawn/preview-looks.ts";
 import { iterationsOf } from "../src/core/iterations.ts";
 import { localSource } from "../src/view/local.ts";
 import { isFormConfig, parseConfig } from "../src/web/render/config-format.ts";
@@ -124,7 +124,7 @@ describe("the preview seed", () => {
     const issues = app.db
       .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = 'issue'")
       .get(repo.id);
-    expect(issues?.n).toBe(11);
+    expect(issues?.n).toBe(11 + 1 + PREVIEW_HELD_THEMES.flatMap((t) => t.titles).length);
     expect(listPulls(app.db, repo.id).length).toBe(1);
     expect(listRuns(app.db, repo.id, { kind: "agent" }).every((r) => r.state === "ok")).toBe(true);
     const pipes = readPipes(app.db, admin.id);
