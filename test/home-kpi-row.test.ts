@@ -43,8 +43,8 @@ describe("home kpi row", () => {
     expect(out).not.toContain("0.2916");
     expect(out).toContain('title="3m 05s"');
     expect(out).not.toContain(" ms");
-    expect(out).toContain('aria-label="Live version: abcdef0123456, Live since 2026-10-19T11:00:00.000Z"');
-    expect(out).toContain('aria-label="Shipped per hour: 0.29, 7 changes in 24 h"');
+    expect(out).toContain('aria-label="Live version: abcdef0123456, Live since 2026-10-19T11:00:00.000Z. The version this forge process is running');
+    expect(out).toContain('aria-label="Shipped per hour: 0.29, 7 changes in 24 h. Changes shipped');
   });
 
   test("empty figures say so", () => {
@@ -94,8 +94,8 @@ describe("home kpi row", () => {
     const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: NO_REACH, medianCheckMs: null, builders: { running: 2, slots: 4, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     expect(out).toContain('href="/settings/crew"');
     expect(out).toContain('class="stat-value num" title="2 of 4">2 of 4<');
-    expect(out).toContain('title="Crew builders running now, of 4 slots"');
-    expect(out).toContain('aria-label="Builders running: 2 of 4, Crew builders running now, of 4 slots"');
+    expect(out).toContain('title="Agent runs running now, of the slots set on projects whose autonomy is on. 4 slots set."');
+    expect(out).toContain('aria-label="Builders running: 2 of 4, Agent runs running now, of the slots set on projects whose autonomy is on. 4 slots set."');
   });
 
   test("with no slots set the builders tile shows a dash and says so", () => {
@@ -165,7 +165,7 @@ describe("the spend tile", () => {
   test("shows today's spend of the ceiling, the cents in the title, linking to the crew page", () => {
     const out = row({ todayUsd: 12.34, ceilingUsd: 40 });
     expect(out).toContain('class="stat-value num" title="$12.34 of $40.00">$12 of $40<');
-    expect(out).toContain('aria-label="Crew spend today: $12.34 of $40.00, Crew spend today (UTC), of the forge ceiling"');
+    expect(out).toContain('aria-label="Crew spend today: $12.34 of $40.00, Crew spend today (UTC) at token list price, of the forge ceiling"');
     expect(out).toContain(">of the forge ceiling<");
   });
 
@@ -256,7 +256,7 @@ describe("the reach tiles", () => {
   test("say what they count in words, each linking to the reach board", () => {
     const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 };
     const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    for (const v of ["5 today", "31 in 7 days", "3 of 12", "signed in today", "1.3 s", "reacts in 180 ms"]) expect(out).toContain(`>${v}<`);
+    for (const v of ["5 today", "31 in 7 days", "3 of 12", "seen today", "1.3 s", "reacts in 180 ms"]) expect(out).toContain(`>${v}<`);
     expect((out.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(3);
     expect(out).not.toContain("INP");
     expect(out).not.toContain("p75");
@@ -265,16 +265,16 @@ describe("the reach tiles", () => {
   test("the terminal draws the 30 days as one block per day", () => {
     const days = Array.from({ length: 30 }, (_, i) => (i === 29 ? 8 : 0));
     const reach = { usersToday: 0, usersTotal: 1, visitorsToday: 8, visitors7d: 8, visitorDays: days, loadP75: null, inpP75: null };
-    const line = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).find((l) => l.startsWith("Visitors"))!;
+    const line = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).find((l) => l.startsWith("Reporting browsers"))!;
     expect(line).toContain("▁".repeat(29) + "█");
   });
 
   test("the terminal says the same", () => {
     const lines = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 }, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null);
-    expect(lines.find((l) => l.startsWith("Visitors"))).toContain("Visitors 5 today, 31 in 7 days");
-    expect(lines).toContain("Accounts 3 of 12 signed in today");
-    expect(lines.find((l) => l.startsWith("Visitors"))).toContain("▁".repeat(30));
-    expect(lines).toContain("Page speed loads in 1.3 s, reacts in 180 ms");
+    expect(lines.find((l) => l.startsWith("Reporting browsers"))).toContain("Reporting browsers 5 today, 31 in 7 days");
+    expect(lines).toContain("Accounts 3 of 12 seen today");
+    expect(lines.find((l) => l.startsWith("Reporting browsers"))).toContain("▁".repeat(30));
+    expect(lines).toContain("Reported page speed loads in 1.3 s, reacts in 180 ms");
   });
 });
 

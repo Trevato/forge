@@ -73,7 +73,7 @@ import {
   verifyPasswordThrottled,
 } from "../core/users.ts";
 import { activeEdgeToken, edgeIdentity } from "./edge.ts";
-import { crawlRefused, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, takeCrawl, wasCrawler, wasDeepStranger } from "./crawl.ts";
+import { crawlRefused, familyOf, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, takeCrawl, wasCrawler, wasDeepStranger } from "./crawl.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
@@ -457,6 +457,7 @@ import {
   type RouteTiming,
 } from "../core/route_timing.ts";
 import { loopWatch, perfRecord } from "../perf/live.ts";
+import { repoOf } from "../perf/traffic.ts";
 import { parseServerTiming } from "../perf/record.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
@@ -2164,7 +2165,12 @@ export async function serve(app: App): Promise<Servers> {
       const end = performance.now();
       perfRecord.add(
         tag.pattern,
-        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), phases: parseServerTiming(header) },
+        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), refused: response.status === 429, phases: parseServerTiming(header) },
+        {
+          address: clientAddress(request),
+          family: familyOf(request.headers.get("user-agent") ?? ""),
+          repo: response.status < 400 ? repoOf(tag.pattern, new URL(request.url).pathname) : null,
+        },
       );
       loopWatch.finished(tag.pattern, started, end);
     } catch {

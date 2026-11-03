@@ -72,6 +72,23 @@ export function agentOf(userAgent: string): string {
   return token.toLowerCase();
 }
 
+/**
+ * A User-Agent as a family for the traffic board, from a short fixed set for
+ * browsers (the header is the client's word) and the product token otherwise.
+ */
+export function familyOf(userAgent: string): string {
+  const ua = userAgent.slice(0, 300);
+  if (ua === "") return "none";
+  if (!CRAWLER.test(ua) && /^Mozilla\//.test(ua)) {
+    if (/\bEdg(?:e|A|iOS)?\//.test(ua)) return "edge";
+    if (/\b(?:Chrome|Chromium|CriOS)\//.test(ua)) return "chrome";
+    if (/\b(?:Firefox|FxiOS)\//.test(ua)) return "firefox";
+    if (/\bSafari\//.test(ua)) return "safari";
+    return "other browser";
+  }
+  return agentOf(ua);
+}
+
 /** Whether this request says it is a crawler and is one the budget counts. */
 export function isCrawler(request: Request): boolean {
   if (request.method !== "GET" && request.method !== "HEAD") return false;

@@ -9,7 +9,8 @@
  */
 
 import { recordLook } from "../../flow/valve_store.ts";
-import { immutableWhenAddressed } from "../../http/addressed.ts";
+import { PINNED_PUBLIC, immutableWhenAddressed, mayShare } from "../../http/addressed.ts";
+import { EDGE_VARY } from "../../http/edge_cache.ts";
 import { cachedTree, keepTree, resolveCommit } from "./tree_cache.ts";
 import { behindLine, followingLine, originAheadLine } from "./upstream-follow.ts";
 import { CONFLICT_WORDS, UNREAD_WORDS } from "../../origins/ahead.ts";
@@ -1179,12 +1180,15 @@ export function rawResponse(
 ): Response {
   if (blob.kind === "too_large") return new Response("", { status: 404 });
   // A full commit id names bytes that can never change; a branch name does
-  // not, so it revalidates every time, against the blob's own oid. Only a
-  // public repository's bytes may sit in a shared cache.
+  // not, so it revalidates every time, against the blob's own oid. Only an
+  // anonymous request's copy of a public repository's bytes may sit in a
+  // shared cache (`mayShare`).
   const etag = cache.oid ? `"${cache.oid}"` : undefined;
   const control =
     cache.immutable && etag
-      ? `${cache.public ? "public" : "private"}, max-age=31536000, immutable`
+      ? cache.public
+        ? PINNED_PUBLIC
+        : "private, max-age=31536000, immutable"
       : "private, max-age=0";
   const headers: Record<string, string> = {
     "content-type":
@@ -1194,6 +1198,7 @@ export function rawResponse(
     "x-content-type-options": "nosniff",
     "content-security-policy": "default-src 'none'; sandbox",
     "cache-control": control,
+    ...(cache.immutable && etag && cache.public ? { vary: EDGE_VARY } : {}),
   };
   if (etag) {
     headers.etag = etag;
@@ -1492,6 +1497,7 @@ export async function treePage(ctx: Ctx): Promise<Response> {
     if (hit !== undefined) {
       git.done();
       return immutableWhenAddressed(
+        ctx.request,
         true,
         repo,
         ref,
@@ -1540,7 +1546,7 @@ export async function treePage(ctx: Ctx): Promise<Response> {
     content,
   });
   notePhase(ctx.request, "render", performance.now() - began);
-  return immutableWhenAddressed(anonymous, repo, ref, response);
+  return immutableWhenAddressed(ctx.request, anonymous, repo, ref, response);
 }
 
 // GET /:owner/:name/blob/:ref/*path
@@ -1601,7 +1607,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
   });
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
-  return immutableWhenAddressed(ctx.auth.user === undefined, repo, ref, response);
+  return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, ref, response);
 }
 
 /**
@@ -1656,7 +1662,7 @@ export async function rawBlob(ctx: Ctx): Promise<Response> {
   return rawResponse(blob, {
     oid: blob.oid,
     immutable: FULL_OID.test(ref),
-    public: repo.visibility === "public",
+    public: mayShare(ctx.request, ctx.auth.user === undefined, repo, ref),
     request: ctx.request,
   });
 }

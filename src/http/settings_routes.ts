@@ -18,6 +18,7 @@ import { flagsPage, flagsSet } from "../web/pages/flags.ts";
 import { trustedAdd, trustedPage, trustedRemove, trustedRevert, trustedStop } from "../web/pages/trusted.ts";
 import { usagePage } from "../web/pages/usage.ts";
 import { spendPage } from "../web/pages/spend-tab.ts";
+import { trafficPage } from "../web/pages/traffic.ts";
 import {
   accountAct,
   retireAct,
@@ -177,6 +178,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/flags", flagsSet);
   router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
   router.add("GET", "/settings/spend", spendPage);
+  router.add("GET", "/settings/traffic", trafficPage);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("GET", "/settings/backups/live", backupsLive);
   router.add("POST", "/settings/backups/now", backupsNow);

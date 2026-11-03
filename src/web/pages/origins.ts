@@ -102,6 +102,7 @@ export type AccountSection =
   | "people"
   | "subscriptions"
   | "backups"
+  | "traffic"
   | "secrets"
   | "capacity"
   | "telemetry"
@@ -190,6 +191,12 @@ export function accountSections(
             href: "/settings/spend",
             icon: "activity" as const,
             current: USAGE.has(current),
+          },
+          {
+            label: "Traffic",
+            href: "/settings/traffic",
+            icon: "users" as const,
+            current: current === "traffic",
           },
           {
             label: "Backups",

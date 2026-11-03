@@ -289,7 +289,7 @@ describe("web ui", () => {
     const res = await fetch(url);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe(
-      "public, max-age=31536000, immutable",
+      "public, max-age=31536000, s-maxage=86400, immutable",
     );
     expect(res.headers.get("etag")).toBe(`"${blobOid}"`);
     expect(res.headers.get("content-security-policy")).toBe(

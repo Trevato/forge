@@ -91,7 +91,7 @@ export function readBuilders(db: Database, idle: IdleReason | null = null): Kpis
  * carries, read once, and the first per (repo, commit) kept here. A per-row
  * `NOT EXISTS` over every pull cost seconds on a production-size forge.
  */
-function firstLandings(db: Database, since: string, to: string): string[] {
+export function firstLandings(db: Database, since: string, to: string): string[] {
   const rows = db
     .query<{ repo: string; oid: string; at: string; issue: string; landing: number }, [string, string]>(
       `SELECT i.repo_id AS repo, q.merged_oid AS oid, q.merged_at AS at, q.issue_id AS issue,
@@ -117,6 +117,12 @@ function firstLandings(db: Database, since: string, to: string): string[] {
     if (row.at === seen.at && row.issue === seen.issue) out.push(row.at);
   }
   return out;
+}
+
+/** The bucket's verdict where one is watched; a job's own report only where nothing watches. */
+export function readBackup(db: Database, dataDir: string | undefined, end: number): { backup: BackupVerdict | null; backupAt: string | null } {
+  const backup = dataDir !== undefined && isWatched(dataDir) ? backupVerdict(dataDir, lastDrill(db), end) : null;
+  return { backup, backupAt: backup !== null ? backup.newestAt : dataDir === undefined ? null : lastOffBox(dataDir) };
 }
 
 export function readKpis(
@@ -170,11 +176,8 @@ export function readKpis(
 
   const reach = time("kpis.reach", () => readReach(db, now));
 
-  const backup = time("kpis.backup", () =>
-    forge.dataDir !== undefined && isWatched(forge.dataDir) ? backupVerdict(forge.dataDir, lastDrill(db), end) : null,
-  );
   // Read from the bucket when it is watched; a job's own report only where nothing watches.
-  const backupAt = backup !== null ? backup.newestAt : forge.dataDir === undefined ? null : lastOffBox(forge.dataDir);
+  const { backup, backupAt } = time("kpis.backup", () => readBackup(db, forge.dataDir, end));
 
   const bugs = time("kpis.bugs", () => countBugs(db, now));
 

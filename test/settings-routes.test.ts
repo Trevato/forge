@@ -68,6 +68,7 @@ GET /settings/flags
 POST /settings/flags
 GET /settings/usage
 GET /settings/spend
+GET /settings/traffic
 GET /settings/backups
 GET /settings/backups/live
 POST /settings/backups/now

@@ -7,6 +7,7 @@
 
 
 import { crawlReport } from "../../perf/crawlers.ts";
+import { kpiProbe } from "../../web/studio/kpi_probe.ts";
 import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
@@ -134,6 +135,15 @@ export function adminRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
     return json(crawlReport(ctx.app));
+  });
+
+  // Every home number: what the tile shows, what it counts, and its raw inputs
+  // read again without the home cache, so anyone can compare.
+  router.add("GET", "/api/v1/admin/kpis/probe", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    return json(kpiProbe(ctx.app));
   });
 
   // The forge's capacity (`core/capacity.ts`): read and changed live by an

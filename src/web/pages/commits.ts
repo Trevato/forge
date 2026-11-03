@@ -365,7 +365,7 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
     styleCss: COMMITS_CSS,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
-  return immutableWhenAddressed(ctx.auth.user === undefined, repo, rev, response);
+  return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, rev, response);
 }
 
 // ---- the live-browse pages ----

@@ -425,12 +425,15 @@ warm:
 
 ## Raw files at a full commit id (#3381)
 
-`GET /:owner/:name/raw/:ref/*path` is the one place the forge tells shared
-caches (browsers, a CDN, a proxy) to keep bytes for a year.
+`GET /:owner/:name/raw/:ref/*path` and `/media/:ref/*path` tell browsers to keep
+bytes at a full commit for a year and a shared cache (a CDN, a proxy) for a day:
+a repository can turn private, and there is no purge. Tree, blob and commit pages
+use the same rule (`http/addressed.ts`).
 
 | `ref` is                  | repository | `Cache-Control`                          |
 | ------------------------- | ---------- | ---------------------------------------- |
-| 40 hex digits (a commit)  | public     | `public, max-age=31536000, immutable`    |
+| 40 hex digits (a commit), no cookie or identity | public | `public, max-age=31536000, s-maxage=86400, immutable` |
+| 40 hex digits (a commit), any cookie or identity | public | `private, max-age=31536000, immutable` |
 | 40 hex digits (a commit)  | not public | `private, max-age=31536000, immutable`   |
 | a branch, tag or anything else | any   | `private, max-age=0` (revalidates)       |
 
