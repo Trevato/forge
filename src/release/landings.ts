@@ -28,6 +28,8 @@ export interface Landing {
   readonly live: boolean;
   /** The bet whose scopes this pull built (#8713), set by the page that shows it. */
   readonly bet?: string;
+  /** `account@host` when a trusted source's work folded in (#8937), set by the page that shows it. */
+  readonly from?: string;
 }
 
 export interface Landings {

@@ -100,6 +100,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/capacity` — `pages/capacity.ts` · how many runs and checks go at once · `/admin/limits`, `/settings/usage` · none seen.
 - `/settings/usage` — `pages/usage.ts` · route patterns by use, unused first · `/settings/telemetry`, `/board/returns` · none seen. Not about cost, despite the name.
 - `/settings/telemetry` — `pages/telemetry.ts` · which agents may read telemetry · `/settings/crew` (agent grants) · none seen.
+- `/settings/trusted` — `pages/trusted.ts` · who may fold in without review, until when, and the kill switch · `/review`, `/settings/crew` · none seen.
 - `/settings/spend` — `pages/spend-tab.ts` · what the crew's runs spent, by credential, app, agent, issue and run kind · `/settings/subscriptions`, `/board/returns` · none seen. First tab of Usage (#2692).
 - `/settings/resilience` — `pages/domains.ts` · failure domains and their last drill · `/resilience` · none seen.
 - `/settings/backups` — `pages/backups.ts` (621 lines) · backups and restore · `/settings/resilience`, `/releases` · none seen.

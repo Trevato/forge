@@ -44,6 +44,7 @@ import { isSafeOid, isSafeRef } from "../git/guard.ts";
 import { aheadCount, mergeBase, mergeable, resolveOid, writeRef } from "../git/merge.ts";
 import { REMOTE_PROTOCOLS } from "../git/remote-env.ts";
 import { repoDir } from "../git/repos.ts";
+import { ownHost, recordPullSource, sourceOfUrl, takeable, viaOf } from "../core/trusted_sources.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "../origins/credential.ts";
 import { redact, secretsIn } from "../origins/credentials.ts";
@@ -301,6 +302,12 @@ async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckErr
     return ok({ tip: staged, behind, outcome: "none" });
   }
 
+  // Work that already landed here and came back round a ring of forges is not taken again (#8937).
+  const seenVia = viaOf((await runGitCapture(["log", "-1", "--format=%B", staged], { cwd: dir })).stdout);
+  if (!takeable(seenVia, ownHost(app.config))) {
+    noteCheck(app.db, repo.id, { at, tip: staged, behind: 0, error: "" });
+    return ok({ tip: staged, behind: 0, outcome: "none" });
+  }
   const merged = await mergeable(dir, main, staged);
   if (!merged.ok) {
     if (merged.error.kind !== "conflict") return failed("git");
@@ -323,6 +330,12 @@ async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckErr
   const known = pullForBranch(app.db, repo.id, name);
   const pending = follow.pendingId === null ? undefined : getIssueById(app.db, follow.pendingId);
   const open = pending !== undefined && pending.kind === "pull" && pending.state === "open";
+  // Where the work came from, so a landing can say, and a trusted source's folds in by itself.
+  // Only a pull this follow opened is stamped (a person's or a guest's under the same branch name never is).
+  const from = sourceOfUrl(follow.url);
+  const came = (pullId: string): void => {
+    if (from !== undefined) recordPullSource(app.db, { pullId, ...from, via: seenVia });
+  };
   let number: number;
   if (known !== undefined) {
     // This tip was proposed already, whatever came of it: nothing new.
@@ -330,12 +343,14 @@ async function checkOnce(app: App, repo: Repo): Promise<Result<Checked, CheckErr
   } else if (open) {
     // The upstream moved on: the open pull follows it instead of a second opening.
     retargetPull(app.db, pending.id, name, staged);
+    came(pending.id);
     await writeRef(dir, `refs/pull/${pending.number}/head`, staged);
     updateIssueText(app.db, pending.id, text);
     number = pending.number;
   } else {
     const opened = await openPull(app, by, repo, { ...text, baseBranch: repo.defaultBranch, headBranch: name });
     if (!opened.ok) return failed("git", `The proposal could not be opened: ${opened.error}`);
+    came(opened.value.id);
     noteCheck(app.db, repo.id, { at, tip: staged, behind, error: "", pendingId: opened.value.id, opened: true });
     return ok({ tip: staged, behind, outcome: "proposed", pull: opened.value.number });
   }

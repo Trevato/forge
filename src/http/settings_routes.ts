@@ -15,6 +15,7 @@ import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
+import { trustedAdd, trustedPage, trustedRemove, trustedRevert, trustedStop } from "../web/pages/trusted.ts";
 import { usagePage } from "../web/pages/usage.ts";
 import { spendPage } from "../web/pages/spend-tab.ts";
 import {
@@ -112,6 +113,11 @@ import { originFlowPage, originFlowPoll } from "../web/pages/origin-flow.ts";
 import { originMirrorSubmit, originReposPage } from "../web/pages/origin-repos.ts";
 
 export function settingsRoutes(router: Router<Handler>, knownPatterns: () => readonly string[]): void {
+  router.add("GET", "/settings/trusted", trustedPage);
+  router.add("POST", "/settings/trusted", trustedAdd);
+  router.add("POST", "/settings/trusted/stop", trustedStop);
+  router.add("POST", "/settings/trusted/revert", trustedRevert);
+  router.add("POST", "/settings/trusted/:id/remove", trustedRemove);
   router.add("GET", "/settings/telemetry", telemetryPage);
   router.add("POST", "/settings/telemetry", telemetrySet);
   router.add("GET", "/settings", accountPage);

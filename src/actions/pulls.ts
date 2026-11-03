@@ -81,6 +81,7 @@ import {
 import { canWrite } from "../core/repos.ts";
 import { refreshPullHead as refreshHead } from "../core/following.ts";
 import { carryBranchThrough } from "../origins/push-through.ts";
+import { ownHost, pullSourceOf, sourceTrailers } from "../core/trusted_sources.ts";
 
 export interface OpenPullInput {
   title: string;
@@ -402,10 +403,14 @@ export async function mergePull(
   const asked = toldBy(app.db, pull);
   const requester =
     asked === null ? undefined : getUserByName(app.db, asked);
-  const trailers = landingTrailers(
-    requester ? commitIdentity(app.config, requester) : null,
-    lander,
-  );
+  const from = pullSourceOf(app.db, pull.id);
+  const trailers = [
+    landingTrailers(
+      requester ? commitIdentity(app.config, requester) : null,
+      lander,
+    ),
+    ...(from === undefined ? [] : [sourceTrailers(from, ownHost(app.config))]),
+  ].join("\n");
   const baseDir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const at = await pullDir(app.db, app.reposRoot, repo, pull);
   const carriedBefore =
@@ -465,6 +470,7 @@ export async function mergePull(
       number: pull.number,
       strategy,
       mergeOid: merged.value.mergeOid,
+      ...(from === undefined ? {} : { source: `${from.account}@${from.host}` }),
     },
   });
   // A vision pull, landed by an admin, rewrites the direction's fenced block.

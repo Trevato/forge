@@ -72,6 +72,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["decider", "Decider", "what it closed, deferred and asked you about today"],
     ["notify", "Phone notifications", "where the crew reaches your phone; s sets, x turns off"],
     ["confirms", "Confirms", "what the forge's agent asked to do; y does it once"],
+    ["trusted", "Trusted sources", "who folds in without review; a trusts, x removes, s stops all, v reverts"],
     ["conversations", "Conversations", "your talks with the forge's agent; n starts one, r renames, x archives"],
     ["ssh-keys", "SSH keys", "list, add and remove the keys that sign in as you"],
     ["passkeys", "Passkeys", "the passkeys that sign in as you"],

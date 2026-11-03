@@ -93,6 +93,7 @@ export type AccountSection =
   | "spend"
   | "crew"
   | "accounts"
+  | "trusted"
   | "people"
   | "subscriptions"
   | "backups"
@@ -136,6 +137,12 @@ export function accountSections(
             href: "/settings/crew",
             icon: "bot" as const,
             current: current === "crew",
+          },
+          {
+            label: "Trusted sources",
+            href: "/settings/trusted",
+            icon: "lock" as const,
+            current: current === "trusted",
           },
           {
             label: "Subscriptions",

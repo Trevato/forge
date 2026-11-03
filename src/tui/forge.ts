@@ -54,6 +54,7 @@ import { talkChatsScreen } from "./screens/talk_chats.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { passkeysScreen } from "./screens/passkeys.ts";
 import { confirmsScreen } from "./screens/confirms.ts";
+import { mayTrust, trustedScreen } from "./screens/trusted.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { signInsScreen } from "./screens/signins.ts";
 import { originAppsScreen } from "./screens/originapps.ts";
@@ -316,6 +317,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Confirms",
         hint: "what the forge's agent asked to do; y does it once",
         run: () => ctx.push(confirmsScreen(session, ctx)),
+      });
+    // Who folds in without a person's review, and the kill switch (#8937): a forge admin's.
+    if (session.signedIn && mayTrust(session))
+      commands.push({
+        id: "trusted",
+        title: "Trusted sources",
+        hint: "who folds in without review; a trusts, x removes, s stops all, v reverts",
+        run: () => ctx.push(trustedScreen(session, ctx)),
       });
     // The forge's agent keeps many conversations, as /talk lists them (#8814).
     if (session.signedIn && session.user?.kind !== "agent")

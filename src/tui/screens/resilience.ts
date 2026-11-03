@@ -255,11 +255,12 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
     const out: string[] = [];
     if (asking !== undefined) out.push(QUESTION[asking], "");
     else if (said !== "") out.push(...wrap(said, INNER), "");
+    // A refusal or a result of a change stays up here too, above where a prompt opens over the middle.
+    if (note !== "") out.push(...wrap(note, INNER), "");
     out.push(...wrap(backupsLine(f.app).says, INNER), ...verdictLines(f), "");
     for (const line of nightlyLines(f.app.config.dataDir)) out.push(...wrap(line, INNER));
     out.push("");
     out.push(...wrap(destinationLine(f), INNER), ...wrap(mirrorLine(f), INNER));
-    if (note !== "") out.push(...wrap(note, INNER));
     if (mayChange()) out.push("d sets where snapshots go, x forgets it.", "m sets the mirror, f forgets it.", "t tests where snapshots go.");
     out.push("", "Snapshots, newest first:");
     if (snapshots === undefined) out.push("  reading…");

@@ -169,6 +169,9 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("clog.") ||
     // What the throughput keeper did to lift a brake is the owner's too (`flow/keeper.ts`).
     kind.startsWith("keeper.") ||
+    // Who is trusted to fold in, and the switch that stops it, are the owner's (`actions/trusted_sources.ts`).
+    kind.startsWith("trust.") ||
+    kind.startsWith("foldin.") ||
     // Events the retired FLOW ONLY switch wrote stay the admins' to hear.
     kind === "flow_only.cleared" ||
     // A report from outside waits for a person who decides; its arrival is

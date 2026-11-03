@@ -9,6 +9,7 @@
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { betNamesOfPulls } from "../../core/bets.ts";
+import { sourcesOfPulls } from "../../core/trusted_sources.ts";
 import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
@@ -30,7 +31,7 @@ function landingRow(l: Landing, own: string | undefined, showRepo: boolean): Htm
   return row({
     href: `/${l.repo}/pulls/${l.number}`,
     title: l.title,
-    meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}${l.bet === undefined ? null : html` · ${badge(l.bet, { variant: "outline" })}`}`,
+    meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}${l.bet === undefined ? null : html` · ${badge(l.bet, { variant: "outline" })}`}${l.from === undefined ? null : html` · folded in from ${l.from}`}`,
     trail: time(l.at),
   });
 }
@@ -184,8 +185,15 @@ export async function changelogJson(ctx: Ctx): Promise<Response> {
  */
 function withBets(ctx: Ctx, read: Landings, repo: Repo | undefined): { read: Landings; bets: string[]; bet: string } {
   if (repo === undefined) return { read, bets: [], bet: "" };
-  const names = betNamesOfPulls(ctx.app.db, repo.id, [...read.live, ...read.onItsWay].filter((l) => l.repo === read.own).map((l) => l.number));
-  const mark = (l: Landing): Landing => (l.repo === read.own && names.has(l.number) ? { ...l, bet: names.get(l.number)! } : l);
+  const numbers = [...read.live, ...read.onItsWay].filter((l) => l.repo === read.own).map((l) => l.number);
+  const names = betNamesOfPulls(ctx.app.db, repo.id, numbers);
+  const froms = sourcesOfPulls(ctx.app.db, repo.id, numbers);
+  const mark = (l: Landing): Landing => {
+    if (l.repo !== read.own) return l;
+    const bet = names.get(l.number);
+    const from = froms.get(l.number);
+    return { ...l, ...(bet === undefined ? {} : { bet }), ...(from === undefined ? {} : { from }) };
+  };
   const live = read.live.map(mark);
   const onItsWay = read.onItsWay.map(mark);
   const bets = [...new Set([...live, ...onItsWay].flatMap((l) => (l.bet === undefined ? [] : [l.bet])))].sort();

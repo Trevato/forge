@@ -132,6 +132,9 @@ import {
   landsOnItsOwn,
   markReaders,
 } from "./direct.ts";
+import { foldsIn } from "../core/trusted_sources.ts";
+import { foldWall } from "./fold_walls.ts";
+import { warnExpiring } from "./fold_in.ts";
 import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
 import { recheckRedApproved } from "./red_approved.ts";
@@ -1150,7 +1153,7 @@ function answeredWithoutChange(
  * was turned on, or one the event missed — land on the tick, so nothing
  * green waits on chance.
  */
-export async function sweepGreen(app: App, repo: Repo): Promise<number> {
+export async function sweepGreen(app: App, repo: Repo, now: Date = new Date()): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
   // Admitted one by one, queued together, oldest first: the green pulls of
   // one sweep are one candidate and one gate (#2036).
@@ -1158,7 +1161,7 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   // Why each approved pull waits, for the tick line (#3055).
   const waits: Wait[] = [];
   for (const pull of listOpenPulls(app.db, repo.id)) {
-    const admitted = await admit(app, repo, pull);
+    const admitted = await admit(app, repo, pull, now);
     if (admitted.ok) entries.push(admitted.value);
     const seen = reviewSummary(app.db, pull.id, pull.headOid);
     if (seen.approvals > 0 && seen.changesRequested === 0)
@@ -1280,6 +1283,12 @@ export async function autonomyTick(
     sweepStranded(app, now);
   } catch (error) {
     log.error("stranded sweep failed", { error: String(error) });
+  }
+  // Three days before a trusted source lapses, a note (#8937).
+  try {
+    warnExpiring(app, now);
+  } catch (error) {
+    log.error("trust note failed", { error: String(error) });
   }
   for (const repo of listAutonomousRepos(app.db)) {
     // An archived repository is put away: the crew starts nothing in it.
@@ -1919,10 +1928,14 @@ async function reviewed(
   app: App,
   repo: Repo,
   pull: Pull,
+  now: Date = new Date(),
 ): Promise<"pass" | "hold" | "lapsed"> {
   const seen = reviewSummary(app.db, pull.id, pull.headOid);
   if (seen.changesRequested > 0) return "hold";
   if (seen.approvals > 0) return "pass";
+  // A trusted source's pull needs no person's review (#8937); its check, the
+  // boot proof and the walls above still stood before this point.
+  if (foldsIn(app.db, pull.id, now)) return "pass";
   // An agent's pull ships only on an approving review — the crew's reviewer
   // or a person's. With no reviewer, or a review that lapsed, it waits for
   // a person (`waitsForPerson` puts it where a person looks); never by lapse.
@@ -1965,6 +1978,7 @@ async function admit(
   app: App,
   repo: Repo,
   pull: Pull,
+  now: Date = new Date(),
 ): Promise<Result<Queued, Wait>> {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return err("off");
   if (pull.state !== "open" || pull.mergedAt !== null) return err("closed");
@@ -1980,7 +1994,7 @@ async function admit(
   // Only work the crew wrote, or a writer's, lands on green by itself: a
   // reader's pull — from a fork, say — waits for a person, outsiders
   // switch or not, and is never sent to the crew's reviewer (#619).
-  if (!landsOnItsOwn(app.db, repo, pull)) return err("outsider");
+  if (!landsOnItsOwn(app.db, repo, pull, now)) return err("outsider");
   const by = getUserById(app.db, repo.autonomyBy);
   if (!by) return err("off");
   // The newest run of each kind is what the head says: a red that a re-run
@@ -2070,6 +2084,27 @@ async function admit(
     }
     return err("wall");
   }
+  // A trusted source's pull that touches secrets, credentials, permissions,
+  // the contract or release machinery waits for a person like a guest's.
+  const folded = await foldWall(app, repo, pull, baseTip, now);
+  if (folded.length > 0) {
+    const earlier = latestDecision(app.db, pull.id, "land");
+    const told =
+      earlier?.answer === "wall" &&
+      (earlier.state as { head?: unknown } | null)?.head === pull.headOid;
+    if (!told)
+      recordDecision(app.db, {
+        kind: "land",
+        repoId: repo.id,
+        issueId: pull.id,
+        state: { head: pull.headOid, cells: folded, plain: folded, unsound: false },
+        answer: "wall",
+        p: 1,
+        by: "wall",
+        ms: 0,
+      });
+    return err("wall");
+  }
   // One gate for every pull, whoever wrote it: when the crew has a
   // reviewer, a green head is queued for review and waits for an approval
   // on that very head (a person's counts the same). A push is a new head,
@@ -2077,7 +2112,7 @@ async function admit(
   // long it takes — with no reviewer, or after one lapsed, a person's
   // (#597). Only a person's own pull lands without a reviewer, or after a
   // review lapsed.
-  const review = await reviewed(app, repo, pull);
+  const review = await reviewed(app, repo, pull, now);
   if (review === "hold") return err("review");
   // The full tier, once, on the queue's candidate (#1198, #2036). Red is
   // told to the pull once per head and base, and the pull is out of the
@@ -2214,7 +2249,11 @@ export async function landingStrategy(
   repo: Repo,
   pull: Pull,
   baseOid: string,
+  now: Date = new Date(),
 ): Promise<"merge" | "squash"> {
+  // A trusted source's work lands as a true merge: its commits stay
+  // ancestors of main and each author keeps their name (#8937).
+  if (foldsIn(app.db, pull.id, now)) return "merge";
   return (await carriesUpstream(
     app,
     repo,
