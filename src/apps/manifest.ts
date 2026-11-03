@@ -15,6 +15,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { parseService, type ServiceSpec } from "./service.ts";
 import type { DeclaredLimits } from "./contain.ts";
 import { isPublicAddress } from "./egress.ts";
+import { isLaunch, LAUNCHES, type Launch } from "../git/builds.ts";
 
 export interface AppManifest {
   /** The command that serves on `$PORT`. Run through `sh -c`, `exec`-ed. */
@@ -46,6 +47,10 @@ export interface AppManifest {
    * or empty is none, exactly as before this field existed.
    */
   readonly looksAsOwner?: readonly string[] | undefined;
+  /** `app.pages`: paths the app serves as one self-contained page, offered to play and download. */
+  readonly pages?: readonly string[] | undefined;
+  /** `app.launch`: how this repository's demos open unless a pin says otherwise. */
+  readonly launch?: Launch | undefined;
   /**
    * Set when `app.kind` is `"service"`: declared TCP ports, always on,
    * a placement preference and synced volumes. `null` for an ordinary
@@ -151,6 +156,11 @@ export function parseManifest(
   if (!looks.ok) return looks;
   const looksAsOwner = looksAsOwnerField(app, looks.value);
   if (!looksAsOwner.ok) return looksAsOwner;
+  const pages = pagesField(app);
+  if (!pages.ok) return pages;
+  const launch = app["launch"];
+  if (launch !== undefined && !isLaunch(launch))
+    return invalid(`forge.json: app.launch must be one of ${LAUNCHES.map((l) => `"${l}"`).join(", ")}`);
   const egress = egressField(parsed.value);
   if (!egress.ok) return egress;
   const limits = limitsField(app, "app");
@@ -184,6 +194,8 @@ export function parseManifest(
     tty: tty.value || null,
     looks: looks.value,
     looksAsOwner: looksAsOwner.value,
+    pages: pages.value,
+    ...(launch === undefined ? {} : { launch }),
     service,
     egress: egress.value,
     limits: limits.value,
@@ -302,6 +314,23 @@ function looksAsOwnerField(
       `forge.json: app.looksAsOwner names ${stray}, which app.looks does not`,
     );
   return ok(paths.value);
+}
+
+/** How many pages a manifest may offer to play. */
+export const PAGES_MAX = 20;
+
+function pagesField(app: Json): Result<readonly string[], ManifestError> {
+  const value = app["pages"];
+  if (value === undefined) return ok([]);
+  if (!Array.isArray(value) || value.length > PAGES_MAX)
+    return invalid(`forge.json: app.pages must be an array of at most ${PAGES_MAX} paths`);
+  const paths: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !/^\/[A-Za-z0-9._-]*(\/[A-Za-z0-9._-]+)*$/.test(item) || item.length > 120 || item.includes(".."))
+      return invalid('forge.json: app.pages entries are paths like "/" or "/spicy": letters, digits, dot, dash, underscore');
+    if (!paths.includes(item)) paths.push(item);
+  }
+  return ok(paths);
 }
 
 /** A list of page paths, as `app.looks` and `app.looksAsOwner` take them. */
