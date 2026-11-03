@@ -18,7 +18,9 @@ import { promote } from "./helpers/members.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { familyRepos } from "../src/core/lineage.ts";
 import { lanesOf, type IterationBuild, type IterationFork } from "../src/core/iterations.ts";
-import { ITERATIONS_CSS, ITERATIONS_JS } from "../src/web/pages/iterations.ts";
+import { ITERATIONS_CSS, ITERATIONS_JS, ZOOM_JS, ZOOM_MIN } from "../src/web/pages/iterations.ts";
+import { components as STYLE_CSS } from "../src/web/style/components.ts";
+import { base as BASE_CSS } from "../src/web/style/base.ts";
 
 const build = (repo: string, label: string, parent: string | null = null, edge: IterationBuild["edge"] = parent === null ? null : "git"): IterationBuild => ({
   key: `${repo}:${label}`,
@@ -161,6 +163,93 @@ describe("iterations page", () => {
     expect(columns).toContain('id="it-zfit"');
     expect(columns).not.toContain('id="it-align"');
     expect(columns).not.toContain('"lanes"');
+  });
+
+  /** The page's rules as plain data: the media query each sits in ("" at the top), its selectors and its declarations. */
+  const rulesOf = (css: string) => {
+    const out: { media: string; sel: string[]; decl: string }[] = [];
+    const body = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    let media = "", depth = 0, i = 0;
+    while (i < body.length) {
+      const open = body.indexOf("{", i), close = body.indexOf("}", i);
+      if (close === -1) break;
+      if (open !== -1 && open < close) {
+        const head = body.slice(i, open).trim();
+        if (head.startsWith("@media")) { media = head; depth = 1; i = open + 1; continue; }
+        const end = body.indexOf("}", open);
+        out.push({ media: depth ? media : "", sel: head.split(",").map((x) => x.trim()), decl: body.slice(open + 1, end) });
+        i = end + 1;
+      } else { depth = 0; media = ""; i = close + 1; }
+    }
+    return out;
+  };
+  const PHONE = "@media (max-width:760px)";
+
+  test("a 390 px screen: the tree scrolls inside .it-stage, nothing around it is held wider, and a card is held to the canvas", async () => {
+    const page = await (await get("/alice/game/iterations")).text();
+    const at = (s: string) => page.indexOf(s);
+    expect(at('class="it-page"')).toBeGreaterThan(-1);
+    expect(at('class="it-page"')).toBeLessThan(at('class="it-stage" id="it-stage"'));
+    expect(at('class="it-stage" id="it-stage"')).toBeLessThan(at('class="it-zoom" id="it-zoom"'));
+    expect(at('class="it-zoom" id="it-zoom"')).toBeLessThan(at('id="it-grid"'));
+    expect(BASE_CSS).toContain("body { overflow-x: clip; }");
+    const rules = rulesOf(ITERATIONS_CSS);
+    const of = (sel: string) => rules.filter((r) => r.sel.includes(sel));
+    expect(of(".it-stage").some((r) => r.media === "" && /(^|;)overflow:auto(;|$)/.test(r.decl))).toBe(true);
+    for (const box of [".it-page", ".it-stage", ".it-zoom"]) for (const r of of(box)) expect(r.decl).not.toMatch(/(^|;)(min-)?width:/);
+    // The card, 50ch of mono (about 400 px), is the one box wider than the screen: on a phone it is the canvas less the
+    // shell's and the stage's padding and the stage's border.
+    const card = rules.findIndex((r) => r.media === PHONE && r.sel.includes("#it-grid") && r.decl.includes("--it-card:min(calc(50ch + 26px),calc(100vw - 66px))"));
+    expect(card).toBeGreaterThan(rules.findIndex((r) => r.media === "" && r.sel.includes("#it-grid") && r.decl.includes("--it-card:")));
+    expect(of(".it-pane").find((r) => r.media === PHONE)!.decl).toBe("grid-template-columns:minmax(0,1fr)");
+  });
+
+  test("a phone: the toolbar wraps in its own media block, and its 44 px rule outranks .btn[data-size=sm]", async () => {
+    const page = await (await get("/alice/game/iterations?layout=tree")).text();
+    expect(page).toContain('class="it-zc"');
+    for (const id of ["it-fold-all", "it-open-all", "it-zout", "it-zval", "it-zin", "it-zfit", "it-align", "it-reset"]) expect(page).toContain(`id="${id}"`);
+    const rules = rulesOf(ITERATIONS_CSS);
+    const pane = rules.find((r) => r.sel.includes(".it-pane") && r.media === PHONE)!;
+    const block = rules.filter((r) => r.media === PHONE && r !== pane);
+    expect(ITERATIONS_CSS).toContain("@media (max-width:760px){.it-pane{grid-template-columns:minmax(0,1fr)}}\n");
+    expect(block.find((r) => r.sel.includes(".it-zc"))!.decl).toContain("flex-wrap:wrap");
+    expect(block.find((r) => r.sel.includes(".it-key .it-sp"))!.decl).toContain("width:100%");
+    const big = block.find((r) => /min-height:44px/.test(r.decl) && r.sel.some((x) => x.includes(".it-zc .btn")))!;
+    expect(big.sel.length).toBe(2);
+    const weight = (sel: string) => {
+      const attrs = (sel.match(/\[[^\]]*\]/g) ?? []).length;
+      const rest = sel.replace(/\[[^\]]*\]/g, "");
+      return attrs + (rest.match(/[.:]/g) ?? []).length + (rest.match(/#/g) ?? []).length * 100;
+    };
+    const btn = Math.max(...[...STYLE_CSS.matchAll(/(\.btn\[data-size="sm"\])\s*\{[^}]*min-height/g)].map((m) => weight(m[1]!)));
+    expect(btn).toBeGreaterThan(0);
+    for (const sel of big.sel) expect(weight(sel)).toBeGreaterThan(btn);
+  });
+
+  test("Fit makes a very wide tree fit whole, below the buttons' zoom floor", () => {
+    const make = new Function("document", "localStorage", "getComputedStyle", "window", ZOOM_JS + "; return zoom;");
+    const handlers: Record<string, () => void> = {};
+    const doc = { getElementById: (id: string) => ({ textContent: "", addEventListener: (_: string, f: () => void) => { handlers[id] = f; } }) };
+    const store = { getItem: () => null, setItem() {}, removeItem() {} };
+    const cs = () => ({ paddingLeft: "16", paddingRight: "16", paddingTop: "16", paddingBottom: "16", maxHeight: "480", borderLeftWidth: "1", borderRightWidth: "1", borderTopWidth: "1", borderBottomWidth: "1" });
+    const stage = { clientWidth: 358, clientHeight: 400, scrollLeft: 0, scrollTop: 0, addEventListener() {} };
+    const grid = { offsetWidth: 20000, offsetHeight: 300, style: {} as Record<string, string> };
+    const box = { style: {} as Record<string, string> };
+    const z = make(doc, store, cs, { innerHeight: 800 })(stage, box, grid, () => {});
+    handlers["it-zfit"]!();
+    expect(z.z()).toBeLessThan(ZOOM_MIN);
+    expect(20000 * z.z()).toBeLessThanOrEqual(358 - 32);
+    handlers["it-zin"]!();
+    expect(z.z()).toBeGreaterThanOrEqual(ZOOM_MIN);
+  });
+
+  test("a Fit below ZOOM_MIN saved in this browser reopens at ZOOM_MIN, not at 1%", () => {
+    const make = new Function("document", "localStorage", "getComputedStyle", "window", ZOOM_JS + "; return zoom;");
+    const doc = { getElementById: () => ({ textContent: "", addEventListener() {} }) };
+    const store = { getItem: () => "0.01", setItem() {}, removeItem() {} };
+    const stage = { clientWidth: 1200, clientHeight: 600, scrollLeft: 0, scrollTop: 0, addEventListener() {} };
+    const z = make(doc, store, () => ({}), { innerHeight: 800 })(stage, { style: {} }, { offsetWidth: 800, offsetHeight: 300, style: {} }, () => {});
+    expect(z.z()).toBe(ZOOM_MIN);
   });
 
   test("the markup the script relies on is there for a folded run", async () => {

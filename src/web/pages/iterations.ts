@@ -140,6 +140,16 @@ body.it-nosel{user-select:none;-webkit-user-select:none}
 .it-page[data-notes="0"] button.it-b .it-n,.it-page[data-notes="0"] .it-notes{display:none}
 .it-pane{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px;margin-top:16px;align-items:start}
 @media (max-width:760px){.it-pane{grid-template-columns:minmax(0,1fr)}}
+/* A phone. The page never scrolls sideways (base.ts clips the body); what is wider than the screen scrolls inside .it-stage.
+   The one box wider than a 390 px screen is a card (50ch of mono is about 400 px): hold it to the canvas, 100vw less the
+   shell's padding (2 x 16), the stage's padding (2 x 16) and its border (2). The toolbar wraps and its buttons are 44 px. */
+@media (max-width:760px){
+#it-grid{--it-card:min(calc(50ch + 26px),calc(100vw - 66px))}
+.it-key .it-sp{margin-left:0;width:100%}
+.it-zc{flex-wrap:wrap;gap:6px;margin-right:0}
+.it-page .it-zc .btn[data-size="sm"],.it-page .it-sp > .btn[data-size="sm"]{min-height:44px;min-width:44px}
+.it-seg a{display:inline-flex;align-items:center;min-height:44px}
+}
 `;
 
 /**
@@ -180,11 +190,15 @@ export const EDGES_JS = `
  * in this browser. `zoom(stage, box, grid, redraw)` returns { z, fit } where
  * z() is the scale and fit() resizes the scrolled box to the scaled graph.
  */
+export const ZOOM_MIN = 0.1;
+/** Fit alone may go below ZOOM_MIN, so a very wide tree still fits whole; a saved zoom reopens at ZOOM_MIN or more. */
+export const ZOOM_FLOOR = 0.01;
+
 export const ZOOM_JS = `
   function zoom(stage, box, grid, redraw) {
-    var STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 2], KEY = 'forge:iterations-zoom';
+    var MIN = ${ZOOM_MIN}, FLOOR = ${ZOOM_FLOOR}, STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 2], KEY = 'forge:iterations-zoom';
     var Z = 1;
-    try { Z = Math.min(2, Math.max(0.2, Number(localStorage.getItem(KEY)) || 1)); } catch (e) { Z = 1; }
+    try { Z = Math.min(2, Math.max(MIN, Number(localStorage.getItem(KEY)) || 1)); } catch (e) { Z = 1; }
     var val = document.getElementById('it-zval');
     function fit() {
       grid.style.transform = Z === 1 ? '' : 'scale(' + Z + ')';
@@ -192,8 +206,8 @@ export const ZOOM_JS = `
       if (val) val.textContent = Math.round(Z * 100) + '%';
     }
     // Change the scale, keeping the point (px, py) of the stage where it is: its centre unless given.
-    function set(z, px, py) {
-      z = Math.min(2, Math.max(0.2, Math.round(z * 100) / 100));
+    function set(z, px, py, free) {
+      z = Math.min(2, Math.max(free ? FLOOR : MIN, Math.round(z * 100) / 100));
       if (z === Z) return;
       if (px === undefined) { px = stage.clientWidth / 2; py = stage.clientHeight / 2; }
       var gx = (stage.scrollLeft + px) / Z, gy = (stage.scrollTop + py) / Z;
@@ -216,7 +230,7 @@ export const ZOOM_JS = `
       // The height the stage may grow to, not the height it has: a stage that shrank to a small graph would shrink it again on every Fit.
       var tall = parseFloat(cs.maxHeight); if (!(tall > 0)) tall = window.innerHeight * 0.6;
       var bw = parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth), bh = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
-      set(Math.floor(Math.min(1, (stage.clientWidth - padX - 2) / w, (tall - bh - padY - 2) / h) * 100) / 100);
+      set(Math.floor(Math.min(1, (stage.clientWidth - padX - 2) / w, (tall - bh - padY - 2) / h) * 100) / 100, undefined, undefined, true);
       stage.scrollLeft = 0; stage.scrollTop = 0;
     });
     stage.addEventListener('wheel', function (e) {
