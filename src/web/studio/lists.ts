@@ -561,6 +561,15 @@ function stepAfter(step: PathStep | null | undefined): { after?: Html } {
 }
 
 /**
+ * A pull's title and branch are the writer's words, so inside `[data-pulls]`
+ * a row wraps them (a long word breaks anywhere) in place of the list's
+ * one-line ellipsis, and the page never scrolls sideways at 390 px. No new class.
+ */
+export const PULLS_CSS = `[data-pulls] { overflow-wrap: anywhere; }
+[data-pulls] .row-title, [data-pulls] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-pulls] .row { align-items: flex-start; }`;
+
+/**
  * GET /:owner/:name/pulls: every pull request, for every
  * repository and every viewer — one row per pull in its studio word, who
  * made it, its labels, when it last moved, and the change itself as the
@@ -636,7 +645,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   const listBase = ctx.url.pathname;
 
   const body = html`${repoHeader(ctx, repo, "pulls")}
-    <div class="mt">
+    <div class="mt" data-pulls>
       ${wordFilterBar(
         (word) => facetHref(listBase, f, { word }),
         f.word,
@@ -659,7 +668,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
+    styleCss: `${PULLS_CSS}\n${labelCss([...repoLabels, ...[...labels.values()].flat()])}`,
     scriptJs: liveClientJs,
   });
   lap("render");
