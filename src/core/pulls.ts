@@ -13,6 +13,8 @@ import type { Database } from "bun:sqlite";
 import { diffRange, type Diff, type DiffLaps } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { refTip } from "../git/read.ts";
+import { combine, combinedTip } from "../git/combined.ts";
+import { fromKeptFork } from "./landing_kind.ts";
 import { readTips } from "../git/tips.ts";
 import {
   aheadCount,
@@ -310,7 +312,11 @@ export async function createPull(
   // and (for cross-repo) the only place the base repo holds the fork's tip.
   await writeRef(at, `refs/pull/${issue.value.number}/head`, headOid);
 
-  return ok(join(db, issue.value)!);
+  const pull = join(db, issue.value)!;
+  // A kept fork's pull is combined with main on our side (#9012).
+  if (at === dir && fromKeptFork(db, pull))
+    await combine(dir, { number: pull.number, baseOid, headOid });
+  return ok(pull);
 }
 
 export function getPull(
@@ -834,10 +840,14 @@ export async function pullStatus(
   const baseOid = liveBase ?? pull.baseOid;
   const headOid = liveHead ?? pull.headOid;
   const reviews = gate === undefined ? null : reviewGate(gate, pull, headOid);
+  // A fork's pull combined on our side merges as its combined branch (#9012).
+  const lands = pull.crossRepo
+    ? ((await combinedTip(dir, pull.number, headOid)) ?? headOid)
+    : headOid;
   const { ahead, mergeable: clean, conflicts } = await mergeReading(
     dir,
     baseOid,
-    headOid,
+    lands,
   );
   return { baseOid, headOid, ahead, mergeable: clean, conflicts, reviews };
 }
@@ -1151,10 +1161,16 @@ export async function mergePull(
     )
       return err("checks_required");
   }
+  // A kept fork lands its combined branch, brought up to the base first:
+  // the author's head is its ancestor, so it lands too (#9012).
+  const combined =
+    input.sealedFrom === undefined && fromKeptFork(db, pull)
+      ? await combine(dir, { number: pull.number, baseOid: status.baseOid, headOid: status.headOid })
+      : undefined;
   const landed = await merge(dir, {
     baseBranch: pull.baseBranch,
     baseOid: status.baseOid,
-    headOid: status.headOid,
+    headOid: combined?.oid ?? status.headOid,
     strategy: input.strategy,
     message: input.message,
     author: input.author,

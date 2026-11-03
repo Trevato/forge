@@ -56,6 +56,7 @@ import {
 import { Gate } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { headUnder, previewCommit } from "../git/combined.ts";
 import { createLog } from "../kernel/log.ts";
 import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
@@ -808,10 +809,8 @@ export class AppsRuntime {
 
   private async pullHead(repo: Repo, pull: Pull): Promise<string | undefined> {
     const dir = await pullDir(this.app.db, this.app.reposRoot, repo, pull);
-    const ref = pull.crossRepo
-      ? `refs/pull/${pull.number}/head`
-      : `refs/heads/${pull.headBranch}`;
-    return (await resolveOid(dir, ref)) ?? (pull.headOid || undefined);
+    // A fork's pull combined on our side previews the combined build (#9012).
+    return previewCommit(dir, pull);
   }
 
   // ---- events ----
@@ -1674,7 +1673,12 @@ export class AppsRuntime {
     const number = envPull(env);
     const pull =
       number === undefined ? undefined : getPull(this.app.db, repo.id, number);
-    if (pull !== undefined && pullMayRun(this.app.db, repo, pull, commitOid))
+    // A combined preview runs under the head it carries, read from git (#9012).
+    const head =
+      pull === undefined
+        ? commitOid
+        : headUnder(repoDir(this.app.reposRoot, repo.ownerName, repo.name), pull, commitOid);
+    if (pull !== undefined && pullMayRun(this.app.db, repo, pull, head))
       return true;
     log.info("preview waits for a writer's approval", {
       app: record.slug,

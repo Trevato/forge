@@ -30,6 +30,7 @@ import { parseCheck } from "../../apps/manifest.ts";
 import { RED_ALONE_WAIT, redAloneAt, redMark, type RedMark } from "../../checks/queue.ts";
 import { tierLine, type TierState } from "../../checks/tiers.ts";
 import { fromKeptFork } from "../../core/landing_kind.ts";
+import { combinedCard } from "./pull-combined.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import { marksByName } from "../../core/marks.ts";
@@ -1023,6 +1024,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${holdCard(ctx, repo, pull, { act: false })}
     ${teamsCard(teamVerdicts(ctx.app.db, { ...pull, headOid: status.headOid }))}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}
+    ${await combinedCard(dir, pull, status.headOid, status.baseOid)}
     <div class="split">
       <div>
         ${guestCard(ctx, repo, pull, `${thread}/approve-guest`)}

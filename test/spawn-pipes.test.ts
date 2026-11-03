@@ -24,6 +24,7 @@ const PIPING: Record<string, { sites: string[]; reason: string }> = {
   "src/crew/sandbox.ts": { sites: ["stderr"], reason: "stderr awaited with the exit; stdout ignored" },
   "src/crew/workdir.ts": { sites: ["stderr"], reason: "stderr read to its end alongside the exit; stdout ignored" },
   "src/git/env.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "stdout and stderr both read to the end, finally clears the timer" },
+  "src/git/combined.ts": { sites: ["stdout"], reason: "spawnSync buffers rev-parse stdout; stderr ignored" },
   "src/git/local.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "stdout and stderr both read to the end" },
   "src/git/read.ts": { sites: ["stdout", "stdout", "stdout"], reason: "cat-file stdout is read by the long-lived reader, by blobStream until its window ends or the reader hangs up, and by blobHead until its bytes are in (then killed); stderr ignored" },
   "src/git/smart-http.ts": { sites: ["stdout"], reason: "stdout is a pull-pipe FIFO (the response body, read on demand); stderr ignored" },

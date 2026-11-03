@@ -49,6 +49,7 @@ import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
 import { pullLooks, type PullLook } from "../../looks/readable.ts";
 import { pullLooksScreen } from "./pulllooks.ts";
+import { combinedView, combinedWords, type CombinedView } from "../../core/combined_view.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { findingsWords, pullPreviewFindings } from "../../core/preview_findings.ts";
 import {
@@ -266,6 +267,8 @@ export function pullScreen(
   let preview: EnvStatus | undefined;
   /** The pictures taken of the preview, as the API would list them to this reader. */
   let looks: PullLook[] = [];
+  /** A fork's pull combined with main on our side: what its preview builds (#9012). */
+  let combined: CombinedView | undefined;
   /** The deploy of the *current* head — what the merge box calls the checks. */
   let check: CheckSummary = NO_CHECK;
   /** The pull's base branch, to name what the check was merged with. */
@@ -327,6 +330,14 @@ export function pullScreen(
             const dir = await pullDir(f.app.db, f.app.reposRoot, repo, row);
             const base = await resolveOid(dir, `refs/heads/${row.baseBranch}`);
             return base === undefined ? undefined : wallOf(dir, base, facts.headOid);
+          })()
+        : undefined;
+    combined =
+      repo !== undefined && row !== undefined && facts !== null
+        ? await (async () => {
+            const dir = await pullDir(f.app.db, f.app.reposRoot, repo, row);
+            const base = await resolveOid(dir, `refs/heads/${row.baseBranch}`);
+            return base === undefined ? undefined : combinedView(dir, row, facts.headOid, base);
           })()
         : undefined;
     // The app half: the preview environment (in memory, from the runtime),
@@ -1175,6 +1186,7 @@ export function pullScreen(
           width = body!.w;
           lines = [
             ...threadLines(entries(), Math.max(20, body!.w - 1), c),
+            ...combinedLines(combined, number, Math.max(20, body!.w - 1), c),
             ...looksLines(looks, lookOrigin(f.app.config), Math.max(20, body!.w - 1), c),
           ];
         }
@@ -1894,6 +1906,40 @@ const lookOrigin = (config: {
  * The Looks section under the conversation: one line each, absolute URL so a
  * terminal can open it. Nothing at all when the pull has none.
  */
+/** The combined branch, said as the page's card says it (`web/pages/pull-combined.ts`). */
+function combinedLines(
+  view: CombinedView | undefined,
+  number: number,
+  width: number,
+  c: Tokens,
+): Span[][] {
+  if (view === undefined) return [];
+  const words = combinedWords(view, number);
+  const clean = (t: string): string => t.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ");
+  const wrap = (text: string, indent: string): string[] => {
+    const room = Math.max(10, width - indent.length);
+    const out: string[] = [];
+    let line = "";
+    for (const word of clean(text).split(" ")) {
+      if (line !== "" && line.length + 1 + word.length > room) {
+        out.push(indent + line);
+        line = word;
+      } else line = line === "" ? word : `${line} ${word}`;
+    }
+    if (line !== "") out.push(indent + line);
+    return out;
+  };
+  const say = (text: string, indent: string, fg: Color): Span[][] =>
+    wrap(text, indent).map((t): Span[] => [{ text: t, style: style(fg, c.bg) }]);
+  return [
+    [],
+    [{ text: ` Combined with main${view.stale ? " · stale" : ""}`, style: style(c.fg, c.bg, BOLD) }],
+    ...say(words.lead, "  ", c.fg),
+    ...words.files.flatMap((l) => say(`- ${l}`, "  ", c.fg)),
+    ...words.notes.flatMap((l) => say(l, "  ", c.mutedFg)),
+  ];
+}
+
 function looksLines(
   items: readonly PullLook[],
   origin: string,

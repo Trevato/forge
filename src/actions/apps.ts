@@ -59,6 +59,7 @@ import { canAdmin, canEnterApp, canWrite, getRepo, type Repo } from "../core/rep
 import type { Run } from "../core/runs.ts";
 import { type User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
+import { previewCommit } from "../git/combined.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -767,11 +768,9 @@ async function commitFor(
     return resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
   const pull = getPull(app.db, repo.id, Number(env.slice(5)));
   if (!pull || pull.state !== "open") return undefined;
-  const ref = pull.crossRepo
-    ? `refs/pull/${pull.number}/head`
-    : `refs/heads/${pull.headBranch}`;
   const at = await pullDir(app.db, app.reposRoot, repo, pull);
-  return (await resolveOid(at, ref)) ?? (pull.headOid || undefined);
+  // A fork's pull combined on our side previews the combined build (#9012).
+  return previewCommit(at, pull);
 }
 
 export { previewEnv };
