@@ -1787,7 +1787,12 @@ export function apiRoutes(router: Router<Handler>): void {
       const from = at + 1;
       const items = all.slice(from, from + limit);
       const more = from + limit < all.length;
-      return json({ items, next_cursor: more ? items[items.length - 1]!.name : null });
+      // The tag is of the exact bytes sent: a pushed, moved or deleted tag changes them, and so does the page.
+      const text = JSON.stringify({ items, next_cursor: more ? items[items.length - 1]!.name : null });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
     });
   });
 
