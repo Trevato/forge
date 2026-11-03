@@ -9,6 +9,7 @@ import { moderateNote, ownerNote, ownerNotes, unbanSender } from "../../actions/
 import { getAppByRepo } from "../../core/apps.ts";
 import { loadRepo } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { apiError, forbidden, json, notFound, requireScope } from "../respond.ts";
 import type { Router } from "../router.ts";
 
@@ -28,7 +29,13 @@ export function appNoteRoutes(router: Router<Handler>): void {
     const t = target(ctx);
     if (t instanceof Response) return t;
     const seen = ownerNotes(ctx.app, t.record, t.repo, ctx.auth.user);
-    return seen === undefined ? forbidden() : json(seen);
+    if (seen === undefined) return forbidden();
+    // Only after the access check: a refusal never carries or honours a tag.
+    const text = JSON.stringify(seen);
+    const etag = weakEtag(`${ctx.auth.user?.id ?? ""}\n${text}`);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return json(seen, 200, headers);
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app/notes/:id/hide", moderation("hide"));
