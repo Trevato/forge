@@ -48,6 +48,7 @@ import { bustOrigin } from "../view/cache.ts";
 import { aheadOf, forgetAhead, HELD_WORDS } from "./ahead.ts";
 import { providerForOrigin } from "./credential.ts";
 import { fetchMirror } from "./git-mirror.ts";
+import { watchPullsSoon } from "./hook.ts";
 import {
   importComments,
   importIssue,
@@ -513,6 +514,9 @@ async function syncMirrorUnguarded(
   bustOrigin(origin.id, mirror.fullName);
 
   if (options.initial) {
+    // Once per mirror: ask the origin for its events, so its issues, comments
+    // and pulls arrive at once. The sweep catches up whatever it misses.
+    void watchPullsSoon(app, repo);
     // One event for a first import, not one per row: a repo with 900 issues
     // would otherwise deliver 900 webhooks the moment it is connected.
     app.bus.append({

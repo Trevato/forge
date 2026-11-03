@@ -4,9 +4,10 @@
  * Out: after a pull is proposed there, a forge origin is asked once to send
  * this mirror's door its events (`watchPulls`). In: the delivery is believed
  * for nothing but "look again" — it is signed with a secret only this forge
- * and the origin hold, and it only names a pull; the pull is then read from
- * the origin as the sync worker would (`pull-check.ts`). The secret is
- * derived from the forge's key and the repository, so nothing is stored.
+ * and the origin hold, and it only names an issue or a pull, which is then
+ * read from the origin as the sync worker would (`item-check.ts`,
+ * `pull-check.ts`). The secret is derived from the forge's key and the
+ * repository, so nothing is stored.
  */
 
 import type { App } from "../app.ts";
@@ -16,6 +17,7 @@ import type { Repo } from "../core/repos.ts";
 import { bustOrigin } from "../view/cache.ts";
 import { providerForOrigin } from "./credential.ts";
 import { HOOK_SIGNATURE_HEADER, hookSecret, hookUrl, signatureOf } from "./hook-secret.ts";
+import { refreshOriginItem } from "./item-check.ts";
 import { refreshOriginPull } from "./pull-check.ts";
 
 export { HOOK_SIGNATURE_HEADER, hookSecret, hookUrl, signatureOf };
@@ -61,7 +63,11 @@ export async function receiveOriginHook(
   const number = numberIn(body);
   // A delivery naming no pull costs nothing; the sync sweep catches up.
   if (number === undefined) return true;
-  await refreshOriginPull(ctx, provider.value, link.fullName, number);
+  // The item and its thread first (issue or pull), then a pull's check.
+  const item = await refreshOriginItem(ctx, provider.value, link.fullName, number);
+  // An origin that cannot be read is a refusal, so it sends the event again.
+  if (item === false) return false;
+  if (item === "pull") await refreshOriginPull(ctx, provider.value, link.fullName, number);
   bustOrigin(link.origin.id, link.fullName);
   return true;
 }

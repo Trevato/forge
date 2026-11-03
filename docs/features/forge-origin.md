@@ -15,9 +15,18 @@ Type the friend's address at `/settings/origins` and press Continue. If the addr
 - **Registration is per callback address:** if this forge's public URL changes, forget the app and connect again.
 - Test: `test/forge-origin-oauth.test.ts` runs two forges through the whole flow.
 
-Not yet: webhooks and a catch-up for missed events, review and check state coming back live, guest rules for a crew on the receiving side, following upstream with one action.
+Not yet: review and check state coming back live, guest rules for a crew on the receiving side, following upstream with one action.
 
 Not yet, in order: migrate an app whole with its run and build, follow upstream between forges with a pull back, and the one-page paste-a-link path. Test: `test/forge-origin.test.ts` runs two forges against each other.
+
+## Issues and comments both ways (#8967)
+
+On a brought repository an issue or comment opened here is written to the origin as the connected account (`src/origins/write-through.ts`), then reflected here under the origin's own number and id.
+
+- **Webhook:** the origin's issues, comments and pulls arrive by a signed delivery to `/api/v1/repos/:owner/:name/origin-hook` (`src/origins/hook.ts`). It is believed for nothing but "look again": the named issue and its thread are read from the origin (`item-check.ts`; a pull goes to `pull-check.ts` and is never imported as an issue). If the origin cannot be read the delivery is refused (404) so it is sent again.
+- **Catch-up:** the sync sweep fetches whatever moved since its last clean run, so after the origin was down nothing is lost. Comments are keyed on the origin's id, so a webhook, a sweep and the echo of our own write are one row.
+- **Registration:** the hook is asked for once, when a mirror is first imported (and after a pull is proposed upstream), and only a forge origin can be asked. A GitHub or Gitea origin relies on the sweep alone. Asking is idempotent (the origin's hooks are listed first, none is added twice).
+- Test: `test/origin-issues.test.ts` runs two forges through write, webhook and catch-up.
 
 ## Both doors, and what was exercised
 
