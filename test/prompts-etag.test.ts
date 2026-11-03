@@ -3,11 +3,13 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRepo } from "../src/actions/repos.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { createRepo as createCoreRepo } from "../src/core/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { addPromptSource, listPromptSources, removePromptSource } from "../src/core/prompts.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser } from "../src/core/users.ts";
+import type { Repo } from "../src/core/repos.ts";
+import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -16,6 +18,8 @@ quietLogs();
 let dataDir = "";
 let app: App, servers: Servers;
 let repoId = "";
+let adaUser: User, bobUser: User, adaRepo: Repo;
+const cells = process.env["FORGE_CELLS"];
 const tok: Record<string, string> = {};
 const get = (token: string | null, path = "ada/box/prompts", headers: Record<string, string> = {}) =>
   fetch(`${servers.url}/api/v1/repos/${path}`, { headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers } });
@@ -32,6 +36,7 @@ const add = (at: string) => {
 };
 
 beforeAll(async () => {
+  process.env["FORGE_CELLS"] = "off";
   dataDir = await mkdtemp(join(tmpdir(), "forge-prompts-etag-"));
   app = createApp({ dataDir, port: 0 });
   servers = await serve(app);
@@ -47,6 +52,9 @@ beforeAll(async () => {
   const r = await createRepo(app, ada, { name: "box", visibility: "public" });
   if (!r.ok) throw new Error("repo");
   repoId = r.value.id;
+  adaUser = ada;
+  bobUser = bob;
+  adaRepo = r.value;
   tok["admin"] = createToken(app.db, ada.id, "a", "admin").token;
   tok["ro"] = createToken(app.db, ada.id, "r", "ro").token;
   tok["bob"] = createToken(app.db, bob.id, "b", "admin").token;
@@ -55,6 +63,8 @@ beforeAll(async () => {
 afterAll(async () => {
   servers?.stop();
   app?.close();
+  if (cells === undefined) delete process.env["FORGE_CELLS"];
+  else process.env["FORGE_CELLS"] = cells;
   await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -104,4 +114,50 @@ test("a token short of admin, a non-admin and a missing repository answer as bef
     expect(res.status).toBe(status);
     expect(res.headers.get("etag")).toBeNull();
   }
+});
+
+const push = async (path: string, content: string) => {
+  const done = await commitToBranch(app, adaUser, adaRepo, { message: "change", files: [{ path, content }] });
+  if (!done.ok) throw new Error(JSON.stringify(done.error));
+};
+
+test("pushes to the default branch leave the tag alone: the list is built from sources, not from files", async () => {
+  const source = add("11:00");
+  const before = await tagOf();
+  await push("prompts/today.md", "one");
+  await push("prompts/today.md", "two");
+  expect(await tagOf()).toBe(before);
+  await push("README.md", "hello");
+  expect(await tagOf()).toBe(before);
+  const repeat = await get(tok["admin"]!, "ada/box/prompts", { "if-none-match": before });
+  expect(repeat.status).toBe(304);
+  // The tag is live, not constant: a source added after the pushes moves it.
+  const extra = add("11:30");
+  expect(await tagOf()).not.toBe(before);
+  removePromptSource(app.db, extra.id);
+  removePromptSource(app.db, source.id);
+});
+
+test("two admins shown different bodies never share a tag", async () => {
+  const made = await createCoreRepo(app.db, app.reposRoot, { ownerId: bobUser.id, name: "box", visibility: "public", description: "" });
+  if (!made.ok) throw new Error(JSON.stringify(made.error));
+  const bobTag = async () => {
+    const r = await get(tok["bob"]!, "bob/box/prompts");
+    expect(r.status).toBe(200);
+    await r.text();
+    return r.headers.get("etag")!;
+  };
+  add("12:00");
+  const adaTag = await tagOf();
+  const emptyBob = await bobTag();
+  expect(emptyBob).not.toBe(adaTag);
+  const theirs = addPromptSource(app.db, dataDir, { repoId: made.value.id, kind: "instagram", token: "tok-456", atUtc: "13:00" });
+  if (!theirs.ok) throw new Error(theirs.error);
+  const withSource = await bobTag();
+  expect(withSource).not.toBe(adaTag);
+  expect(withSource).not.toBe(emptyBob);
+  // A tag held by one viewer does not validate the other's body.
+  const cross = await get(tok["bob"]!, "bob/box/prompts", { "if-none-match": adaTag });
+  expect(cross.status).toBe(200);
+  await cross.text();
 });
