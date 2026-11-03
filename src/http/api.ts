@@ -222,7 +222,8 @@ import {
   removeFromCrew,
 } from "../actions/crew.ts";
 import { assignIssue, editIssue, TAKEN_UP } from "../actions/issues.ts";
-import { steerRepoRun } from "../actions/runs.ts";
+import { requireReader } from "../actions/access.ts";
+import { mayReadRuns, runsViewKey, steerRepoRun } from "../actions/runs.ts";
 import { openPlan, parsePlan, proposePlan } from "../actions/plan.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { mapHeldFor } from "../crew/held.ts";
@@ -265,6 +266,7 @@ import {
   latestRunsForIssues,
   listActiveRuns,
   RUN_STATES,
+  type ListRunsOptions,
   type Run,
 } from "../core/runs.ts";
 import { checkStale } from "../checks/stale.ts";
@@ -3744,22 +3746,41 @@ export function apiRoutes(router: Router<Handler>): void {
     if (wanted !== null && state === undefined)
       return apiError("invalid_state", 422, `state is one of ${RUN_STATES.join(", ")}`);
     const limit = Math.min(Math.max(Number(q.get("limit")) || 50, 1), 200);
+    const options: ListRunsOptions = {
+      ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
+      ...(env !== null && isEnvName(env) ? { env } : {}),
+      ...(state === undefined ? {} : { state }),
+      ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
+      limit,
+    };
+    // The tag: repository, viewer, what shapes the page, and a marker over
+    // the page's rows (every field a row shows), so a repeat is a 304 before
+    // the list is built.
+    // Someone who may not read the repository gets the 404 of the list path,
+    // never a tag or a 304; someone who may not read its runs gets the list
+    // as it is (empty), untagged.
+    if (!requireReader(ctx.app, ctx.auth.user, repo).ok) return notFound();
+    const viewer = ctx.auth.user === undefined ? "anonymous" : ctx.auth.user.id;
+    let headers: Record<string, string> = {};
+    if (mayReadRuns(ctx.app, ctx.auth.user, repo)) {
+      const etag = timePhase(ctx.request, "tag", () =>
+        weakEtag(
+          [repo.id, viewer, JSON.stringify(options), runsViewKey(ctx.app, ctx.auth.user, repo, options)].join("\n"),
+        ),
+      );
+      headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    }
     // Already as this reader may see them (`runForReader`): a stranger's
     // runs carry no cost, turns, agent session or node. Each row also names
     // its agent and its pull or issue (`nameRuns`), so a client never parses
     // the branch.
     const runs = timePhase(ctx.request, "runs", () => {
-      const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
-        ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
-        ...(env !== null && isEnvName(env) ? { env } : {}),
-        ...(state === undefined ? {} : { state }),
-        ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
-        limit,
-      });
+      const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, options);
       return listed.ok ? nameRuns(ctx.app, listed.value) : undefined;
     });
     if (runs === undefined) return notFound();
-    return timePhase(ctx.request, "render", () => json(paged(runs, limit, (r) => r.id)));
+    return timePhase(ctx.request, "render", () => json(paged(runs, limit, (r) => r.id), 200, headers));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {

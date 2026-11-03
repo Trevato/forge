@@ -24,6 +24,7 @@ import {
   cancelRun as markCancelled,
   getRun,
   listRuns as queryRuns,
+  runsMarker,
   type ListRunsOptions,
   type Run,
   setRunErrorLine,
@@ -168,6 +169,16 @@ export function listRepoRuns(
       .filter((r) => mayViewId(app.db, repo, r.issueId, actor))
       .map(runForReader(app, actor, repo)),
   );
+}
+
+/**
+ * What the runs list shows this reader, before the list is built: whether
+ * they see cost and turns. Call it only for someone who may read runs. The
+ * owner and a stranger never share it.
+ */
+export function runsViewKey(app: App, actor: User | undefined, repo: Repo, options: ListRunsOptions): string {
+  const facts = canSeeOwnerFacts(app.db, repo, actor);
+  return `${facts ? "f" : "-"}\n${runsMarker(app.db, repo.id, options)}`;
 }
 
 /** A run as the runs API lists it: the agent's name, and the pull or issue it is about. */

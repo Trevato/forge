@@ -697,11 +697,7 @@ export interface ListRunsOptions {
   cursor?: string | undefined;
 }
 
-export function listRuns(
-  db: Database,
-  repoId: string,
-  options: ListRunsOptions = {},
-): Run[] {
+function runsWhere(repoId: string, options: ListRunsOptions): { where: string; params: (string | number)[]; limit: number } {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const params: (string | number)[] = [repoId];
   let where = "repo_id = ?1";
@@ -725,14 +721,46 @@ export function listRuns(
     params.push(options.cursor);
     where += ` AND id < ?${params.length}`;
   }
+  return { where, params, limit };
+}
+
+export function listRuns(
+  db: Database,
+  repoId: string,
+  options: ListRunsOptions = {},
+): Run[] {
+  const { where, params, limit } = runsWhere(repoId, options);
   params.push(limit);
-  const rows = db
+  return db
     .query<RunRow, (string | number)[]>(
       `SELECT * FROM run WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRun);
-  return rows;
+}
+
+/**
+ * A cheap marker over the page `listRuns` would give: each row's id and every
+ * field a client sees move (state, timestamps, turns, cost, summary, error,
+ * attempt), plus the title of the pull or issue it is about. The same page
+ * gives the same marker; a run that starts, moves, finishes or spends more
+ * changes it. One indexed read, no rows built.
+ */
+export function runsMarker(db: Database, repoId: string, options: ListRunsOptions = {}): string {
+  const { where, params, limit } = runsWhere(repoId, options);
+  params.push(limit);
+  const rows = db
+    .query<{ m: string }, (string | number)[]>(
+      `SELECT r.id || '|' || COALESCE(r.state, '') || '|' || COALESCE(r.started_at, '') || '|' || COALESCE(r.finished_at, '')
+          || '|' || COALESCE(r.serving_at, '') || '|' || COALESCE(r.turns, '') || '|' || COALESCE(r.cost_usd, '') || '|' || COALESCE(r.attempt, '')
+          || '|' || COALESCE(r.not_before, '') || '|' || COALESCE(r.summary, '') || '|' || COALESCE(r.error_line, '') || '|' || COALESCE(r.error_at, '')
+          || '|' || COALESCE(r.check_detail, '') || '|' || COALESCE(i.title, '') AS m
+         FROM (SELECT * FROM run WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}) r
+         LEFT JOIN issue i ON i.id = r.issue_id
+        ORDER BY r.id DESC`,
+    )
+    .all(...params);
+  return `${rows.length}\n${rows.map((r) => r.m).join("\n")}`;
 }
 
 /** Queued runs of one kind, oldest first — what a worker takes from. */
