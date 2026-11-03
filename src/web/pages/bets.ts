@@ -72,7 +72,8 @@ function oneButton(repo: Repo, b: Bet, verb: string, label: string, variant: "da
 }
 
 /** Journeys shown at rest; the rest sit behind a disclosure so the card stays one screen tall. */
-const SHOWN_JOURNEYS = 3;
+/** Exported for test/bets-card-fit.test.ts, which holds the page to it. */
+export const SHOWN_JOURNEYS = 3;
 
 /**
  * A proposed bet as one card for the owner: name, journeys, its issues as a
@@ -95,13 +96,14 @@ function proposedCard(ctx: Ctx, repo: Repo, b: Bet, backed: readonly Bet[]): Htm
       ${journeys.length <= SHOWN_JOURNEYS ? null : html`<details><summary>${journeys.length - SHOWN_JOURNEYS} more ${journeys.length - SHOWN_JOURNEYS === 1 ? "journey" : "journeys"}</summary>
         <ul>${journeys.slice(SHOWN_JOURNEYS).map((j) => html`<li>${j}</li>`)}</ul></details>`}
       ${issues}
+      <div class="bar mt" data-bet-actions>
       <form method="post" action="${post(repo, b, "back")}">
         <input type="hidden" name="share" value="${String(b.appetite)}">
         ${btn(`Back it at ${b.appetite}%`, { variant: "primary", disabled: why !== null })}
-        ${why === null ? null : html`<p class="muted" role="note">${why[0]!.toUpperCase() + why.slice(1)}.</p>`}
       </form>
-      <details class="mt"><summary>Change the share</summary>${backForm(repo, b, "Back it")}</details>
-      <div class="mt">${oneButton(repo, b, "cut", "Cut it", "danger")}</div></div>`,
+      <details><summary>Change the share</summary>${backForm(repo, b, "Back it")}</details>
+      ${oneButton(repo, b, "cut", "Cut it", "danger")}</div>
+      ${why === null ? null : html`<p class="muted" role="note">${why[0]!.toUpperCase() + why.slice(1)}.</p>`}</div>`,
   );
 }
 
