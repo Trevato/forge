@@ -37,7 +37,14 @@ export function upstreamRoutes(router: Router<Handler>): void {
       return getFollow(ctx.app.db, repo.id) ?? null;
     });
     if (read === undefined) return notFound();
-    return timePhase(ctx.request, "render", () => json({ following: read === null ? null : followJson(read) }));
+    // The tag is of the exact bytes sent, and only after the access check above: a refusal carries none.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({ following: read === null ? null : followJson(read) });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/upstream", async (ctx) => {
