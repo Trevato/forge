@@ -53,7 +53,14 @@ function whole(raw: string | null, fallback: number, max: number): number {
 export function forgeOriginRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/version", (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    return timePhase(ctx.request, "render", () => json({ version: FORGE_API_VERSION, software: "forge" }));
+    return timePhase(ctx.request, "render", () => {
+      // The same body for everyone, so the tag is derived from it alone.
+      const text = JSON.stringify({ version: FORGE_API_VERSION, software: "forge" });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "no-cache" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   // The signed-in account's own repositories, `page` and `limit` as Gitea
