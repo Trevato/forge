@@ -103,7 +103,8 @@ export function warmFlow(app: App, deps: FlowDeps = defaults, now: () => number 
   ).then(() => undefined);
 }
 
-export function flowCached(app: App, reader: Reader, now = Date.now(), deps: FlowDeps = defaults): unknown {
+/** A copy with the time it was computed (ms since epoch) — what a poller's validators come from. */
+export function flowCopy(app: App, reader: Reader, now = Date.now(), deps: FlowDeps = defaults): { body: unknown; at: number } {
   const byKey = entries(app);
   const key = keyOf(reader);
   const hit = byKey.get(key);
@@ -113,10 +114,24 @@ export function flowCached(app: App, reader: Reader, now = Date.now(), deps: Flo
     let r = g.next();
     while (!r.done) r = g.next();
     byKey.set(key, { at: now, body: r.value, refreshing: false });
-    return r.value;
+    return { body: r.value, at: now };
   }
   if (now - hit.at >= FLOW_TTL_MS && !hit.refreshing) refresh(app, reader, hit, deps, () => now);
-  return hit.body;
+  return { body: hit.body, at: hit.at };
+}
+
+export function flowCached(app: App, reader: Reader, now = Date.now(), deps: FlowDeps = defaults): unknown {
+  return flowCopy(app, reader, now, deps).body;
+}
+
+/** The validator for a copy: the kind of reader and when it was computed; the body is never hashed. */
+export function flowEtag(reader: Reader, at: number): string {
+  return `"flow-${keyOf(reader)}-${at}"`;
+}
+
+/** Whole seconds until a copy computed at `at` is FLOW_TTL_MS old, never below 0. */
+export function flowMaxAge(at: number, now = Date.now()): number {
+  return Math.max(0, Math.ceil((at + FLOW_TTL_MS - now) / 1000));
 }
 
 /** Drops every copy for `app`, so the next read computes afresh; for a test that changed what flow reads. */

@@ -60,7 +60,7 @@ import { receiveMirrorHook } from "../origins/mirror-pulls.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
-import { flowCached } from "../system/flow_cache.ts";
+import { flowCopy, flowEtag, flowMaxAge } from "../system/flow_cache.ts";
 import { countRead } from "../system/telemetry_reads.ts";
 import { historyFor, sourcesOut, systemFor, welcome } from "../system/telemetry.ts";
 import { markReaders } from "../crew/direct.ts";
@@ -1188,7 +1188,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.
   // Anyone else is refused; every agent read is logged.
   const telemetryRead =
-    (what: string, out: (ctx: Ctx, reader: Reader) => unknown) =>
+    (what: string, out: (ctx: Ctx, reader: Reader) => unknown | (() => Response)) =>
     (ctx: Ctx): Response => {
       notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       if (!ctx.auth.user) return unauthorized();
@@ -1199,10 +1199,25 @@ export function apiRoutes(router: Router<Handler>): void {
       noteRead(ctx.app, ctx.auth.user, reader, what);
       countRead(what, ctx.auth.user.username);
       const body = timePhase(ctx.request, "read", () => out(ctx, reader));
+      // A read may hand back a responder (headers, a 304); it runs in the render phase.
+      if (typeof body === "function") return timePhase(ctx.request, "render", body as () => Response);
       return timePhase(ctx.request, "render", () => json(body));
     };
   router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));
-  router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, r) => flowCached(c.app, r)));
+  // The flow read tells a poller how fresh it is: the etag is the reader kind and
+  // the copy's computed-at time, so a repeat inside the TTL is a 304 (#9068).
+  router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, reader) => {
+    const copy = flowCopy(c.app, reader);
+    const etag = flowEtag(reader, copy.at);
+    const headers = {
+      "cache-control": `private, max-age=${flowMaxAge(copy.at)}`,
+      vary: "authorization, cookie",
+      etag,
+    };
+    const sent = (c.request.headers.get("if-none-match") ?? "").split(",").map((t) => t.trim().replace(/^W\//, ""));
+    return () =>
+      sent.includes(etag) || sent.includes("*") ? new Response(null, { status: 304, headers }) : json(copy.body, 200, headers);
+  }));
   router.add("GET", "/api/v1/telemetry/home", telemetryRead("home", (c) => homeTruth(c.app, c.auth.user!)));
   router.add("GET", "/api/v1/telemetry/sources", telemetryRead("sources", () => ({ sources: sourcesOut() })));
   router.add("GET", "/api/v1/telemetry/history", telemetryRead("history", (c) => ({ points: historyFor(c.app) })));

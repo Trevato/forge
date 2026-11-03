@@ -39,6 +39,20 @@ numbers, private repositories included for the owner, are the terminal's Flow
 dialog ("Steps, 30 days") and the `steps` array of the MCP `flow` tool and
 `/api/v1/telemetry/flow` (public repositories alone for an agent).
 
+## Polling `/api/v1/telemetry/flow`
+
+The answer is a copy computed in the background and at most `FLOW_TTL_MS`
+(5 s) old, so polling faster than every 5 s only re-reads the same copy. Poll
+no faster than every 5 s, and send `if-none-match` with the last `etag`: a
+repeat on the same copy is `304` with no body. The response carries
+`cache-control: private, max-age=<seconds until the copy is 5 s old>` (wait that
+long), `vary: authorization, cookie` (the server appends `Accept-Encoding` on the wire), and an `etag` made from the reader kind
+and the copy's computed-at time (the body is never hashed). A `304` is still
+counted and still comes after the auth and scope checks. To find a reader that
+is too fast, look at `forge_telemetry_reads_total{route="flow",reader=...}` on
+/metrics: its rate (`rate(...[5m])`) above 0.2 per second is faster than 5 s.
+The MCP `flow` tool is unchanged.
+
 ## Rebases
 
 Approved work lands before new work is built, in the check lane too (#6140).
