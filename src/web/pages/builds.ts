@@ -90,6 +90,7 @@ export async function buildsPage(ctx: Ctx): Promise<Response> {
         {
           head: html`${icon("pin")}
             <h2>Builds</h2>
+            ${when(pins.length > 0, () => btn("Iterations", { href: `${base}/iterations`, size: "sm", variant: "ghost" }))}
             ${when(writer, () => btn("Pin a build", { href: `${base}/builds/new`, size: "sm", variant: "primary" }))}`,
         },
       )}
