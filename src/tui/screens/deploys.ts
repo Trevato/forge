@@ -17,6 +17,10 @@
  * each: `#N title · check <word> · <preview address or none>`. A guest sees
  * none.
  *
+ * A writer who is a person — never an agent — gets `b`: type a commit's
+ * full id and `previewBuild` serves it at `<slug>--b<sha7>`, as the API's
+ * `POST …/builds/preview` does (`docs/features/build-preview.md`).
+ *
  * A writer redeploys production with `D` and stops it with `S`, each after a
  * one-line confirm, through `redeployEnv` and `stopEnv` — the page's and MCP
  * `app_deploy`'s actions — and is told the answer in the page's words
@@ -64,6 +68,7 @@ import {
   type AppPreview,
   type AppPullLine,
 } from "../../actions/apps.ts";
+import { previewBuild, previewBuildRefusalText } from "../../actions/build_preview.ts";
 import { STOP_APP } from "../../web/danger_words.ts";
 import { envPhrase } from "../../apps/env_phrase.ts";
 import {
@@ -250,6 +255,31 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const openPreview = (p: AppPreview): void => ctx.push(pullScreen(f, ctx, local(f, repo), p.number));
   // The MCP tool's gate, read once: only a writer is offered the knock.
   const mayProbe = canWrite(f.db, repo, f.user);
+  // Offered to a person who writes; `previewBuild` gates again, agents included.
+  const mayBuild = mayProbe && f.user !== undefined && f.user.kind !== "agent";
+
+  /** `b`: ask for a commit's id, then serve it as a build preview and say where. */
+  const previewACommit = (): void => {
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: "Preview a build",
+        label: "Commit id",
+        placeholder: "40 hex characters",
+        hint: "Served at its own address for a while, with a copy of production's data.",
+        onSubmit: (typed) => {
+          const sha = typed.trim().toLowerCase();
+          if (!/^[0-9a-f]{40}$/.test(sha)) return "Give the full 40-character commit id.";
+          runAsync(ctx, async () => {
+            const asked = await previewBuild(f.app, f.user, repo, sha);
+            if (!asked.ok) ctx.toast(previewBuildRefusalText(asked.error), "danger");
+            else ctx.toast(`Previewing ${sha.slice(0, 7)} at ${asked.value.url}`, "success");
+            read();
+          });
+          return undefined;
+        },
+      }),
+    );
+  };
 
   /** Redeploy or stop `env` and say the answer in the page's words; one path for production and previews. */
   const act = async (verb: "Redeploy" | "Stop", env: EnvName): Promise<{ text: string; refused: boolean }> => {
@@ -347,6 +377,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         ...(domains !== undefined ? [binding(["n"], "the app's own domains")] : []),
         ...(prompts ? [binding(["i"], "prompt source (Instagram)")] : []),
         ...(stoppable ? [binding(["X"], STOP_APP.toLowerCase())] : []),
+        ...(mayBuild ? [binding(["b"], "preview a commit")] : []),
       ];
     },
     load: async () => read(),
@@ -492,6 +523,10 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }
       if (e.key === "p" && mayProbe) {
         ctx.push(probeScreen(f, ctx, repo));
+        return true;
+      }
+      if (e.key === "b" && mayBuild) {
+        previewACommit();
         return true;
       }
       if (e.key === "m" && members) {

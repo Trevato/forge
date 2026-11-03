@@ -117,7 +117,10 @@ export async function tell(
   for (let k = 1; k <= variants; k++) {
     const note = many ? `Variant ${k} of ${variants}.` : "";
     const origin = from === null ? "" : `Told from [${from}](${from})`;
-    const rest = text === firstLine ? "" : text;
+    // The body is what follows the title; a title cut short keeps the
+    // whole text in the body, so nothing said is lost.
+    const rest =
+      title === firstLine ? text.slice(text.indexOf(firstLine) + firstLine.length).trim() : text;
     const opened = openIssue(app, actor, repo, {
       title,
       body: [rest, note, origin].filter((s) => s !== "").join("\n\n"),

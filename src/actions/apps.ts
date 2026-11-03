@@ -24,6 +24,7 @@ import { grantUrl, originFor, sideForViewer, sideReader } from "../apps/proxy.ts
 import { plainLine } from "../apps/side.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
 import {
+  envBuild,
   isEnvName,
   previewEnv,
   type EnvName,
@@ -720,7 +721,7 @@ export async function redeployEnv(
   if (!isEnvName(env)) return err("no_such_env");
   const runtime = appsRuntime(app);
   if (runtime === undefined) return err("no_runtime");
-  const commit = await commitFor(app, repo, env);
+  const commit = await commitFor(app, repo, record, env);
   if (commit === undefined) return err("nothing_to_deploy");
   return ok(
     runtime.requestDeploy(
@@ -761,11 +762,16 @@ export async function stopEnv(
 async function commitFor(
   app: App,
   repo: Repo,
+  record: AppRecord,
   env: EnvName,
 ): Promise<string | undefined> {
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   if (env === "production")
     return resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+  // A build preview names its commit only by its short sha: the commit it
+  // serves is the one the runtime holds for it, while it is held.
+  if (envBuild(env) !== undefined)
+    return appsRuntime(app)?.envStatus(record, env)?.commitOid || undefined;
   const pull = getPull(app.db, repo.id, Number(env.slice(5)));
   if (!pull || pull.state !== "open") return undefined;
   const at = await pullDir(app.db, app.reposRoot, repo, pull);

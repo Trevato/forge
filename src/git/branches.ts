@@ -357,3 +357,61 @@ export async function startOid(
   }
   return await resolveOid(dir, from);
 }
+
+export type LeasedRefError =
+  | "invalid_ref"
+  | "invalid_oid"
+  | "ref_moved"
+  | "git_failed";
+
+/**
+ * Point a full ref (`refs/…`) at `newOid` — or delete it when `newOid` is
+ * `undefined` — only if it still holds `oldOid` (`undefined`: it must not
+ * exist yet). The same lease `createBranch`/`deleteBranch` take, for a ref
+ * outside `refs/heads/`. No hooks run; the caller announces the change.
+ */
+export async function moveRefLeased(
+  dir: string,
+  ref: string,
+  newOid: string | undefined,
+  oldOid: string | undefined,
+): Promise<Result<void, LeasedRefError>> {
+  if (!isSafeRef(ref) || !ref.startsWith("refs/")) return err("invalid_ref");
+  if (
+    (newOid !== undefined && !isSafeOid(newOid)) ||
+    (oldOid !== undefined && !isSafeOid(oldOid))
+  )
+    return err("invalid_oid");
+  if (newOid === undefined && oldOid === undefined) return ok();
+  const args =
+    newOid === undefined
+      ? ["update-ref", "-d", ref, oldOid!]
+      : ["update-ref", ref, newOid, oldOid ?? ""];
+  const moved = await runGitCapture(args, { cwd: dir });
+  if (moved.code !== 0) {
+    return err(
+      /cannot lock|is at .* but expected|already exists|unable to resolve/i.test(
+        moved.stderr,
+      )
+        ? "ref_moved"
+        : "git_failed",
+    );
+  }
+  return ok();
+}
+
+/**
+ * The object a full ref names, read exactly: `show-ref --verify` takes no
+ * DWIM, so `refs/demo` never resolves to a branch someone called that.
+ */
+export async function exactRefOid(
+  dir: string,
+  ref: string,
+): Promise<string | undefined> {
+  if (!isSafeRef(ref) || !ref.startsWith("refs/")) return undefined;
+  const read = await runGitCapture(["show-ref", "--verify", "--hash", ref], {
+    cwd: dir,
+  });
+  const oid = read.stdout.trim();
+  return read.code === 0 && isSafeOid(oid) ? oid : undefined;
+}

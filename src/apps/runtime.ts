@@ -81,6 +81,9 @@ import { DRAIN_BUDGET_MS, drainPort } from "./handoff.ts";
 import type { DomainResolver } from "./domains.ts";
 import {
   appsRoot,
+  buildEnv,
+  envBuild,
+  envHostLabel,
   ensureEnvData,
   envDataDir,
   envDir,
@@ -353,7 +356,12 @@ interface Environment {
   lastErrorCommitOid?: string | undefined;
   /** Crash restarts in the current window, for backing off. */
   restarts: number[];
+  /** A build preview's place in the order build previews were started, oldest lowest. */
+  buildOrder?: number | undefined;
 }
+
+/** How many build previews (`build-<sha7>`) one app runs at once; a newer one takes the oldest's place. */
+export const BUILD_PREVIEWS_MAX = 3;
 
 /** The deploy reasons that mean a person touched the change. */
 const TOUCH_REASONS: readonly string[] = [
@@ -396,13 +404,13 @@ export function envsFor(
   return runtime.status(record);
 }
 
-/** Production first, then previews by pull number — a number, so `pull-10` follows `pull-9`. */
-const byEnv = (a: EnvStatus, b: EnvStatus): number =>
-  a.env === "production"
-    ? -1
-    : b.env === "production"
-      ? 1
-      : (envPull(a.env) ?? 0) - (envPull(b.env) ?? 0);
+/**
+ * Production first, then build previews, then previews by
+ * pull number — a number, not a string, so `pull-10` follows `pull-9`.
+ */
+const envRank = (env: EnvName): number =>
+  env === "production" ? -1 : (envPull(env) ?? 0);
+const byEnv = (a: EnvStatus, b: EnvStatus): number => envRank(a.env) - envRank(b.env);
 
 export class AppsRuntime {
   private readonly envs = new Map<string, Environment>();
@@ -415,6 +423,8 @@ export class AppsRuntime {
   private unsubscribe: (() => void) | undefined;
   private sweeper: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
+  /** Counts build previews as they start, so the oldest is the lowest. */
+  private buildCount = 0;
 
   constructor(
     readonly app: App,
@@ -437,8 +447,7 @@ export class AppsRuntime {
   // ---- addressing ----
 
   hostFor(slug: string, env: EnvName): string {
-    const label = env === "production" ? slug : `${slug}--${env.slice(5)}`;
-    return `${label}${appHostSuffix(this.options.domain)}`;
+    return `${envHostLabel(slug, env)}${appHostSuffix(this.options.domain)}`;
   }
 
   /**
@@ -446,9 +455,7 @@ export class AppsRuntime {
    * login, the forge is the host — or undefined when SSH is off.
    */
   sshFor(record: AppRecord, env: EnvName): string | undefined {
-    const login =
-      env === "production" ? record.slug : `${record.slug}--${env.slice(5)}`;
-    return sshCommand(this.app, login);
+    return sshCommand(this.app, envHostLabel(record.slug, env));
   }
 
   /**
@@ -509,8 +516,8 @@ export class AppsRuntime {
     for (const state of this.envs.values()) {
       if (state.app.id === record.id) out.push(this.describe(state));
     }
-    // Production first, then previews by pull number — a number, not a
-    // string, so `pull-10` follows `pull-9`.
+    // Production first, then build previews, then previews
+    // by pull number (`envRank`).
     return out.sort(byEnv);
   }
 
@@ -743,8 +750,8 @@ export class AppsRuntime {
 
   /**
    * Make the environments match the repository: production at the default
-   * branch, a preview per open pull, and nothing for pulls that closed
-   * while the forge was away.
+   * branch, a preview per open pull, and nothing for pulls that closed while the
+   * forge was away.
    */
   async reconcileApp(
     record: AppRecord,
@@ -757,6 +764,11 @@ export class AppsRuntime {
     if (tip !== undefined && only !== "preview")
       this.requestDeploy(record, repo, "production", tip, reason);
     const open = new Set<EnvName>(["production"]);
+    // A build preview lives only in memory: one this forge is running stays,
+    // and one an earlier life left on disk goes (`previewBuild`).
+    for (const state of this.envs.values())
+      if (state.app.id === record.id && envBuild(state.env) !== undefined)
+        open.add(state.env);
     for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
       state: "open",
       limit: 200,
@@ -1025,7 +1037,7 @@ export class AppsRuntime {
       return state.deploying.run;
     }
     const issue =
-      env === "production" ? undefined : this.pullIssueId(repo, env);
+      envPull(env) === undefined ? undefined : this.pullIssueId(repo, env);
     const run = createRun(this.app.db, {
       repoId: repo.id,
       kind: "deploy",
@@ -1051,6 +1063,38 @@ export class AppsRuntime {
       await this.execute(state, repo, run);
     });
     return run;
+  }
+
+  /**
+   * Serve one commit now, at `build-<sha7>`. Asked again for a build already
+   * here, it redeploys nothing and hands back the same environment. A new
+   * one beyond `BUILD_PREVIEWS_MAX` takes the place of the oldest, which is
+   * torn down with its data. Nothing of it outlives this process: a forge
+   * coming back removes what a build preview left on disk.
+   */
+  async previewBuild(
+    record: AppRecord,
+    repo: Repo,
+    commitOid: string,
+    actorId?: string,
+  ): Promise<{ env: EnvName; run: Run | undefined }> {
+    const env = buildEnv(commitOid);
+    const k = key(record.id, env);
+    if (!this.envs.has(k)) {
+      // Claimed before anything waits, so two asks at once count each other.
+      this.envFor(record, env).buildOrder = ++this.buildCount;
+      const builds = [...this.envs.values()]
+        .filter((s) => s.app.id === record.id && s.buildOrder !== undefined)
+        .sort((a, b) => b.buildOrder! - a.buildOrder!);
+      for (const old of builds.slice(BUILD_PREVIEWS_MAX)) {
+        log.info("build preview replaced", { app: record.slug, env: old.env, by: env });
+        await this.teardown(record, old.env);
+      }
+    }
+    // Torn down by a newer ask while the old ones went: nothing to deploy.
+    if (!this.envs.has(k)) return { env, run: undefined };
+    const run = this.requestDeploy(record, repo, env, commitOid, "build", actorId);
+    return { env, run };
   }
 
   private pullIssueId(repo: Repo, env: EnvName): string | undefined {
@@ -1669,7 +1713,10 @@ export class AppsRuntime {
     env: EnvName,
     commitOid: string,
   ): boolean {
-    if (env === "production") return true;
+    // Production is the default branch and a build preview a commit a writer asked to see
+    // (`actions/build_preview.ts`): each is a writer's choice already.
+    if (env === "production" || envBuild(env) !== undefined)
+      return true;
     const number = envPull(env);
     const pull =
       number === undefined ? undefined : getPull(this.app.db, repo.id, number);

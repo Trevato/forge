@@ -1016,7 +1016,11 @@ someone tries.
 Apps are served from the forge's port by `Host`. With `FORGE_APP_DOMAIN`
 (default: the forge's own host), production is `<slug>.<domain>` and the
 preview of pull 12 is `<slug>--12.<domain>`. `--` cannot occur inside a slug,
-so the two never collide. Where only single-label hosts are routable (a
+so the two never collide. A build preview, one commit a writer asked to see
+now (`POST /api/v1/repos/:owner/:name/builds/preview` with `{ "sha": … }`), is
+`<slug>--b<sha7>.<domain>` (`build-<sha7>`): held in memory, at most three per
+app, the oldest giving way, gone with the process; a slug may not be `b` and
+seven hex digits. Where only single-label hosts are routable (a
 wildcard certificate covers one label), give the attachment itself:
 `FORGE_APP_DOMAIN=--forge.example` serves `notes--forge.example` and
 `notes--12--forge.example`; a value that starts with a separator is used

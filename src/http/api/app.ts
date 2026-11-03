@@ -9,6 +9,7 @@
 import { readAppMembers, setAppMembersThrough, type AppMembersError } from "../../actions/app_members.ts";
 import { appView, appVisitors, deleteAppEnvVar, disableApp, enableApp, listAppEnv, openEnvUrl, redeployEnv, setAppEnvVar, stopEnv, updateAppSettings, type AppSettingsInput } from "../../actions/apps.ts";
 import { addAppDomain, checkAppDomain, listAppDomains, removeAppDomain } from "../../actions/domains.ts";
+import { previewBuild, previewBuildRefusalText } from "../../actions/build_preview.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -291,6 +292,24 @@ export function appRoutes(router: Router<Handler>): void {
       return json({}, 200);
     },
   );
+
+  // Preview now: serve one commit `{ sha }` at its own short-lived
+  // environment (`actions/build_preview.ts`). Nothing is stored; the answer
+  // names the environment and where it is served.
+  router.add("POST", "/api/v1/repos/:owner/:name/builds/preview", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const sha = typeof input["sha"] === "string" ? input["sha"] : "";
+    const preview = await previewBuild(ctx.app, ctx.auth.user, repo, sha);
+    if (!preview.ok)
+      return preview.error === "rate_limited"
+        ? json({ error: previewBuildRefusalText(preview.error) }, 429)
+        : respondAccess(preview.error, 422);
+    return json({ env: preview.value.env, url: preview.value.url }, 201);
+  });
 
   // The URL to open an environment at. For a private app it carries a
   // grant, so the answer is for the caller alone and is not cached.

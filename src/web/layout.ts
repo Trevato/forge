@@ -144,6 +144,12 @@ export interface PageOptions {
    * nothing else on this page is relaxed.
    */
   turnstile?: boolean;
+  /**
+   * One more origin this page may frame, as `scheme://host[:port]`: the
+   * display origin a captured page plays on. It loosens `frame-src` for this
+   * page alone; anything that is not a bare origin is ignored.
+   */
+  frameSrc?: string | undefined;
   /** Extra palette rows for this page's context (a repo's own tabs). */
   palette?: PaletteItem[];
   /**
@@ -821,7 +827,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The hashed stylesheet and scripts are 'self'; the two inline <style>s
     // are named by hash. connect-src 'self' lets the live event stream
     // (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${frameSources(options)}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are
@@ -856,6 +862,18 @@ export function page(options: PageOptions, status = 200): Response {
 }
 
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
+
+/** A bare origin: scheme, host and optional port, nothing that could add a directive. */
+const BARE_ORIGIN = /^https?:\/\/[a-z0-9.-]+(?::\d{1,5})?$/i;
+
+/** The `frame-src` directive (with its trailing space), or nothing when the page frames nothing. */
+export function frameSources(options: Pick<PageOptions, "turnstile" | "frameSrc">): string {
+  const origins = [
+    ...(options.turnstile ? [TURNSTILE_ORIGIN] : []),
+    ...(options.frameSrc !== undefined && BARE_ORIGIN.test(options.frameSrc) ? [options.frameSrc] : []),
+  ];
+  return origins.length === 0 ? "" : `frame-src ${origins.join(" ")}; `;
+}
 
 export interface RedirectOptions {
   /** A Set-Cookie value to send alongside (session, theme). */

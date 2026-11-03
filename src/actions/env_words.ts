@@ -4,12 +4,14 @@
  * terminal's deploys screen, from here.
  */
 
-import { envPull, type EnvName } from "../apps/data.ts";
+import { envBuild, envPull, type EnvName } from "../apps/data.ts";
 import type { Run } from "../core/runs.ts";
 import { VERIFY_FIRST } from "./verify_words.ts";
 
-/** `production` or `preview of #12`, as a phrase that fits in a sentence. */
+/** `production`, `preview of #12` or `build 1a2b3c4`, as a phrase that fits in a sentence. */
 export function envLabel(env: EnvName): string {
+  const build = envBuild(env);
+  if (build !== undefined) return `build ${build}`;
   const number = envPull(env);
   return number === undefined ? "production" : `preview of #${number}`;
 }

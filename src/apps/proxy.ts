@@ -1,6 +1,7 @@
 /**
  * Apps on the forge's own port, by `Host`. `<slug>.<domain>` is production,
- * `<slug>--<n>.<domain>` the preview of pull `n`; the request is fetched
+ * `<slug>--<n>.<domain>` the preview of pull `n`, `<slug>--b<sha7>.<domain>`
+ * a build preview; the request is fetched
  * from the deployment's loopback port and streamed back. A websocket
  * handshake is the same request until the app accepts it — then the forge
  * holds one socket to the browser and one to the app and carries frames
@@ -38,7 +39,13 @@ import { verifyToken } from "../core/tokens.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
-import { previewEnv, type EnvName } from "./data.ts";
+import {
+  buildEnvFromLabel,
+  envBuild,
+  envWords,
+  previewEnv,
+  type EnvName,
+} from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
 import { sideOf, type Side } from "./side.ts";
@@ -97,11 +104,17 @@ export function parseAppHost(
   if (label === "" || label.includes(".")) return undefined;
   const parts = label.split("--");
   if (parts.some((part) => part === "")) return undefined;
-  // The app of ours is the tail of the label: `slug`, or `slug--N` for the
-  // preview of pull N. Whatever comes before it belongs to the app's own
-  // world — a forge hosted here has apps of its own, at `<theirs>--<ours>`
-  // — and travels through untouched in `Host`, for that app to route.
+  // The app of ours is the tail of the label: `slug`, `slug--N` for the
+  // preview of pull N, or `slug--b<sha7>` for a build preview (`b` and seven
+  // hex digits is no slug: `isSlug`). Whatever comes before it belongs to the
+  // app's own world — a forge hosted here has apps of its own, at
+  // `<theirs>--<ours>` — and travels through untouched in `Host`, for that
+  // app to route.
   const last = parts.at(-1)!;
+  const build = parts.length >= 2 ? buildEnvFromLabel(last) : undefined;
+  if (build !== undefined) {
+    return { slug: parts.at(-2)!, env: build, nested: parts.length > 2 };
+  }
   if (parts.length >= 2 && /^\d+$/.test(last)) {
     if (!/^[1-9]\d*$/.test(last)) return undefined;
     return {
@@ -1628,9 +1641,9 @@ export function unavailable(
 ): Response {
   const name = target.app.slug;
   const where =
-    target.env === "production"
-      ? "production"
-      : `the preview of pull #${target.env.slice(5)}`;
+    target.env.startsWith("pull-")
+      ? `the preview of pull #${target.env.slice(5)}`
+      : envWords(target.env);
   const state = status?.state ?? "stopped";
   const deploying = state === "deploying";
   // A preview is gone when its pull is closed, merged or no longer exists:
@@ -1649,7 +1662,12 @@ export function unavailable(
   // environment keeps its 502.
   const absent = preview && !gone && status === undefined;
   const words = servingWords(status, preview ? (gone ? "closed" : "open") : null);
-  const message = reason ?? words.says;
+  const build = envBuild(target.env) !== undefined;
+  const message =
+    reason ??
+    (build && gone
+      ? "This build preview is gone: it was taken down, and its data with it. Ask for it again from the app's builds."
+      : words.says);
   const links = discoveryLinks(runtime, target);
   const report = links.length > 0;
   const runLink =

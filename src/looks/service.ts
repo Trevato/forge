@@ -30,7 +30,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { App } from "../app.ts";
-import { isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
+import { envBuild, envPull, isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
 import { signGrant, type GrantWho } from "../apps/proxy.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
@@ -654,7 +654,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       }
       retakeStrangerThumbs(record);
       for (const env of readdirSync(join(root, appId))) {
-        if (!isEnvName(env) || env === "production") continue;
+        if (!isEnvName(env)) continue;
+        // A build preview is gone once the runtime no longer holds it.
+        if (envBuild(env) !== undefined) {
+          if (appsRuntime(app)?.envStatus(record, env) === undefined)
+            forget(appId, env);
+          continue;
+        }
+        if (envPull(env) === undefined) continue;
         const pull = getPull(app.db, record.repoId, Number(env.slice(5)));
         if (
           pull === undefined ||
