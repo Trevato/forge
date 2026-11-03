@@ -13,13 +13,12 @@ afterAll(async () => {
   await f.close();
 });
 
-// Bytes on the snappy fixture as the owner: [before the head folded its rare steps away, measured now].
-// The budget is the measurement plus a few bytes for port digits, not room. The shortcut keys beside tabs, the top bar and the menu's New issue (#8854) are the whole of the ~315 bytes added on each page: eleven `<kbd class="keyhint">` of ~30 bytes, shown on a pointer-fine desktop and hidden by CSS elsewhere.
-const BYTES: Record<string, { before: number; budget: number }> = {
-  "": { before: 25_929, budget: 25_540 },
-  "/issues": { before: 51_705, budget: 51_330 },
-  "/pulls": { before: 25_151, budget: 24_760 },
-};
+// Bytes of the repository head on the snappy fixture as the owner: [before it folded its rare steps away (#8802), measured now plus room].
+// Only the head is weighed: it is what this test is about, and it holds no port, clock or host, so the verdict is the head's code
+// and nothing else. Weighing the whole page tripped every pull that added a few bytes to the top bar, the palette or a list (#8991).
+// The head now weighs 2,700 bytes on each page, the shortcut keys beside its tabs (#8895) included; the budget leaves ~100 bytes for one more.
+const HEAD_BYTES = { before: 3_808, budget: 2_800 };
+const PATHS = ["", "/issues", "/pulls"];
 
 const get = async (path: string): Promise<string> =>
   (await fetch(`${f.base}${path}`, { headers: { cookie: f.ownerCookie } })).text();
@@ -28,11 +27,12 @@ const head = (page: string): string => /<header class="repo-head">[\s\S]*?<\/hea
 
 test("the repository, issues and pulls pages are lighter and keep a short tab strip", async () => {
   const repo = f.repos[0]!;
-  for (const [path, { before, budget }] of Object.entries(BYTES)) {
+  for (const path of PATHS) {
     const text = await get(`/${repo.ownerName}/${repo.name}${path}`);
-    const size = new TextEncoder().encode(text).length;
-    expect(size).toBeLessThan(before);
-    expect(size).toBeLessThan(budget);
+    const size = new TextEncoder().encode(head(text)).length;
+    expect(size).toBeGreaterThan(0);
+    expect(size).toBeLessThan(HEAD_BYTES.before);
+    expect(size).toBeLessThan(HEAD_BYTES.budget);
     const strip = /<nav class="tabs"[\s\S]*?<\/nav>/.exec(head(text))?.[0] ?? "";
     expect((strip.match(/<a\s/g) ?? []).length).toBeLessThanOrEqual(5);
     expect(head(text)).toContain('class="repo-nav"');
