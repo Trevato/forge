@@ -151,3 +151,23 @@ test("a closed pull has no preview address", async () => {
   const by = await listed({ cookie }, "closed");
   expect(by["done"]!["preview"]).toBeNull();
 }, SLOW);
+
+test("the list carries an ETag: a repeat is 304 until a pull's verdict changes", async () => {
+  const url = `${servers.url}/api/v1/repos/alice/notes/pulls?state=open`;
+  const first = await fetch(url, { headers: { cookie } });
+  expect(first.status).toBe(200);
+  const tag = first.headers.get("etag")!;
+  expect(tag).toMatch(/^W\//);
+  expect(first.headers.get("cache-control")).toBe("private, no-cache");
+  expect(first.headers.get("vary")).toStartWith("authorization, cookie");
+  await first.text();
+  const again = await fetch(url, { headers: { cookie, "if-none-match": tag } });
+  expect(again.status).toBe(304);
+  expect(again.headers.get("etag")).toBe(tag);
+  expect(await again.text()).toBe("");
+  run(pulls["going"]!.id, "n1", "ok");
+  const changed = await fetch(url, { headers: { cookie, "if-none-match": tag } });
+  expect(changed.status).toBe(200);
+  expect(changed.headers.get("etag")).not.toBe(tag);
+  await changed.text();
+}, SLOW);

@@ -274,6 +274,7 @@ import { recentGates } from "../checks/gate_result.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree, refTip } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+import { holds, weakEtag } from "./etag.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves } from "../story/waves.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
@@ -2358,9 +2359,15 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(states[i] ?? {}),
       }));
     });
-    return timePhase(ctx.request, "render", () =>
-      json(paged(items, query.limit, (p) => p.number)),
-    );
+    // The tag is of the exact bytes sent, so a new verdict, head or state is never hidden behind a 304;
+    // the page, state, limit, cursor and fields are in the body or the query that chose it.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify(paged(items, query.limit, (p) => p.number));
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   // A writer hands a child its own narrow credential for this repository
