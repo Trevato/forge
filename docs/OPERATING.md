@@ -29,7 +29,7 @@ MCP `capacity` tool) makes the forge ignore `X-Plat-User` even when the secret
 matches; people then sign in with a password or a passkey. An admin with
 neither is refused, so no one locks themselves out. Accounts the edge made
 cannot sign in while it is off until they add a passkey (a password-less
-account cannot set a password: `/settings/password` asks for the current one).
+account cannot set a password: `/settings/password` asks for the current one). Before switching it off, see [edge-only accounts](features/edge-only-accounts.md).
 Account settings show "open-platform.sh: linked as <login>" or "not linked": Link
 records the login the request carries against the signed-in account, Unlink removes
 it (same-origin POSTs). An edge sign-in finds the account by its link first, then by

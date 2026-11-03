@@ -120,6 +120,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["invites", "Invite links", "make a single-use link, see which are open, revoke one"],
     ["bulk", "Bulk actions", "your last bulk actions; u undoes one inside its day"],
     ["subscriptions", "Crew subscriptions", "each account's budget and rest; wake one, set its budget, add or remove one"],
+    ["edge-only-accounts", "Edge-only accounts", "who would be locked out if the platform edge sign-in went off"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
     ["archived", "Archived repositories", "put away, not gone: open one or wake it"],
     ["cloud", "Cloud accounts", "provider tokens, what they are used for, today's calls"],
