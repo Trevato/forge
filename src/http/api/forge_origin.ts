@@ -11,8 +11,9 @@
  * only ever seen by the token that may see it.
  */
 
-import { listReposByOwner, type Repo } from "../../core/repos.ts";
+import { listReposByOwner, visibleReposMarker, type Repo } from "../../core/repos.ts";
 import type { Ctx, Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { json, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -66,6 +67,9 @@ export function forgeOriginRoutes(router: Router<Handler>): void {
     const page = whole(ctx.url.searchParams.get("page"), 1, OWNED_MAX);
     const owned: Repo[] = [];
     let cursor: string | undefined;
+    // Pushes and open-issue counts are not in the body, so the tag also digests
+    // what moves them, batch by batch, for the viewer's own listing.
+    const markers: string[] = [];
     timePhase(ctx.request, "repos", () => {
       while (owned.length < OWNED_MAX) {
         const batch = listReposByOwner(ctx.app.db, me.username, me, {
@@ -73,6 +77,13 @@ export function forgeOriginRoutes(router: Router<Handler>): void {
           ...(cursor === undefined ? {} : { cursor }),
         });
         owned.push(...batch);
+        markers.push(
+          visibleReposMarker(ctx.app.db, me, {
+            owner: me.username,
+            limit: PAGE_MAX,
+            ...(cursor === undefined ? {} : { cursor }),
+          }),
+        );
         if (batch.length < PAGE_MAX) break;
         cursor = batch[batch.length - 1]!.id;
       }
@@ -88,6 +99,17 @@ export function forgeOriginRoutes(router: Router<Handler>): void {
       next.searchParams.set("limit", String(limit));
       headers.link = `<${next.toString()}>; rel="next"`;
     }
-    return timePhase(ctx.request, "render", () => json(rows, 200, headers));
+    return timePhase(ctx.request, "render", () => {
+      const body = JSON.stringify(rows);
+      const etag = weakEtag(`${me.id}|${page}|${limit}|${markers.join(",")}|${body}`);
+      const tagged = {
+        ...headers,
+        etag,
+        "cache-control": "private, no-cache",
+        vary: "authorization, cookie",
+      };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers: tagged });
+      return json(rows, 200, tagged);
+    });
   });
 }
