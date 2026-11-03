@@ -1,8 +1,9 @@
 /** MCP `forks`: ahead and behind per fork, and a private fork a second caller cannot see is absent. */
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as drift from "../../src/actions/forks.ts";
 import { createApp, type App } from "../../src/app.ts";
 import { commitToBranch } from "../../src/actions/repos.ts";
 import { createRepo, forkRepo as cloneRepo } from "../../src/core/repos.ts";
@@ -93,5 +94,42 @@ test("the private fork's owner sees it, with its parent named", async () => {
   const got = (await mcp(tok["dee"]!, { repo: "ada/svc" })).value;
   expect(got.forks.map((f: any) => f.repo).sort()).toEqual(["bob/svc", "cy/svc", "dee/svc"]);
   const own = (await mcp(tok["dee"]!, { repo: "dee/svc" })).value;
-  expect(own).toEqual({ parent: "ada/svc", forks: [] });
+  expect(own).toEqual({ parent: "ada/svc", forks: [], next_cursor: null });
+});
+
+test("pages by limit and cursor in the forks page's order, reading drift for the page only", async () => {
+  const many = ok(await createUser(app.db, { origin: "seed", trusted: true, username: "many", email: "many@forge.local", password: "a-good-passphrase" }));
+  const root = ok(await createRepo(app.db, app.reposRoot, { ownerId: many.id, name: "hub", visibility: "public" }));
+  ok(await commitToBranch(app, many, root, { message: "seed", files: [{ path: "a.txt", content: "a\n" }] }));
+  for (let i = 0; i < 5; i++) {
+    const u = ok(await createUser(app.db, { origin: "seed", trusted: true, username: `f${i}`, email: `f${i}@forge.local`, password: "a-good-passphrase" }));
+    ok(await cloneRepo(app.db, app.reposRoot, root, u.id, "hub"));
+  }
+  const t = createToken(app.db, many.id, "rw", "rw").token;
+  const http = await fetch(`${servers.url}/api/v1/repos/many/hub/forks?limit=200`, { headers: { authorization: `Bearer ${t}` } });
+  const order: string[] = ((await http.json()) as any).items.map((f: any) => `${f.ownerName}/${f.name}`);
+  expect(order.length).toBe(5);
+
+  const spy = spyOn(drift, "driftOfForks");
+  try {
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      spy.mockClear();
+      const got: any = (await mcp(t, { repo: "many/hub", limit: 2, ...(cursor === null ? {} : { cursor }) })).value;
+      expect(got.forks.length).toBeLessThanOrEqual(2);
+      const read = spy.mock.calls.reduce((n, c) => n + (c[2] as unknown[]).length, 0);
+      expect(read).toBe(got.forks.length);
+      seen.push(...got.forks.map((f: any) => f.repo));
+      cursor = got.next_cursor;
+      pages++;
+    } while (cursor !== null);
+    expect(pages).toBe(3);
+    expect(seen).toEqual(order);
+  } finally {
+    spy.mockRestore();
+  }
+  expect((await mcp(t, { repo: "many/hub", cursor: "nope" })).error).toContain("cursor");
+  expect((await mcp(t, { repo: "many/hub", limit: 0 })).error).toContain("limit");
 });
