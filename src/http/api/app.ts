@@ -72,7 +72,7 @@ export function appRoutes(router: Router<Handler>): void {
     });
     if (!read) return notFound();
     return timePhase(ctx.request, "render", () =>
-      json({
+      tagged(ctx, {
         ...appJson(ctx, read.view.app, repo, appsRuntime(ctx.app)),
         ...(read.vitals === undefined ? {} : { vitals: read.vitals }),
       }),
@@ -226,7 +226,7 @@ export function appRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const listed = timePhase(ctx.request, "env", () => listAppEnv(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return notFound();
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
+    return timePhase(ctx.request, "render", () => tagged(ctx, { items: listed.value, next_cursor: null }));
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/app/env/:var", async (ctx) => {
