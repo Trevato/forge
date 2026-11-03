@@ -545,6 +545,22 @@ export function clearCursor(db: Database, originId: string, key: string): void {
   );
 }
 
+/**
+ * A repository's own cursors on every origin (`repo:<id>:…`): what its sync
+ * and its upstream readings left. Cleared when the repository goes, and on
+ * every origin but `keep` when it is linked afresh, so a reading never
+ * outlives the link it was taken over. (Disconnecting an origin drops its
+ * cursors with it, by the schema.)
+ */
+export function forgetRepoCursors(db: Database, repoId: string, keep = ""): void {
+  const prefix = `repo:${repoId}:`;
+  db.query("DELETE FROM origin_cursor WHERE substr(key, 1, ?2) = ?1 AND origin_id != ?3").run(
+    prefix,
+    prefix.length,
+    keep,
+  );
+}
+
 // ---- the mirror link on a repo ----
 
 export interface MirrorLink {
@@ -606,6 +622,7 @@ export function linkRepoToOrigin(
     htmlUrl: string;
   },
 ): void {
+  forgetRepoCursors(db, repoId, input.originId);
   db.query(
     `UPDATE repo SET origin_id = ?1, origin_full_name = ?2,
        origin_remote_id = ?3, origin_html_url = ?4,

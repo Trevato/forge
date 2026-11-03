@@ -11,7 +11,8 @@
 import { recordLook } from "../../flow/valve_store.ts";
 import { immutableWhenAddressed } from "../../http/addressed.ts";
 import { cachedTree, keepTree, resolveCommit } from "./tree_cache.ts";
-import { behindLine, followingLine } from "./upstream-follow.ts";
+import { behindLine, followingLine, originAheadLine } from "./upstream-follow.ts";
+import { CONFLICT_WORDS, UNREAD_WORDS } from "../../origins/ahead.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
 import { offerUpstream } from "./offer-upstream.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
@@ -38,7 +39,7 @@ import {
 } from "./following.ts";
 import { nothingNew } from "../../actions/follow.ts";
 import { frozenBlock } from "./frozen.ts";
-import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
+import { pinRepo, syncRepoNow, takeFromOrigin, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
   forkParentFor,
@@ -344,20 +345,42 @@ export async function repoSyncSubmit(ctx: Ctx): Promise<Response> {
     });
   }
   const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
-  if (!synced.ok)
-    return flashTo(ctx, repoBase(repo), {
-      tone: "danger",
-      message:
-        synced.error !== "not_found"
-          ? "You need write access to sync this mirror."
-          : repo.detached !== null
-            ? "This mirror is frozen: its origin was disconnected. Reconnect it first."
-            : "This repository does not mirror an origin.",
-    });
+  if (!synced.ok) return flashTo(ctx, repoBase(repo), { tone: "danger", message: mirrorRefusal(repo, synced.error) });
   return flashTo(ctx, repoBase(repo), {
     ...(synced.value.error === ""
       ? { message: "Synced from the origin." }
       : { tone: "danger" as const, message: synced.value.error }),
+  });
+}
+
+/** Why a mirror's sync or take was refused, in the words both say. */
+function mirrorRefusal(repo: Repo, error: "unauthorized" | "forbidden" | "not_found"): string {
+  return error !== "not_found"
+    ? "You need write access to sync this mirror."
+    : repo.detached !== null
+      ? "This mirror is frozen: its origin was disconnected. Reconnect it first."
+      : "This repository does not mirror an origin.";
+}
+
+// POST /:owner/:name/sync/take — "Take them" under "N new commits upstream":
+// the mirror's sync, asked first, so a default branch holding commits the
+// origin lacks is reported as a conflict and nothing moves.
+export async function repoTakeSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const taken = await takeFromOrigin(ctx.app, ctx.auth.user, repo);
+  if (!taken.ok) return flashTo(ctx, repoBase(repo), { tone: "danger", message: mirrorRefusal(repo, taken.error) });
+  const t = taken.value;
+  if (t.kind === "conflict")
+    return flashTo(ctx, repoBase(repo), { tone: "danger", message: CONFLICT_WORDS(repo.defaultBranch, t.count) });
+  if (t.kind === "unread") return flashTo(ctx, repoBase(repo), { tone: "danger", message: UNREAD_WORDS });
+  return flashTo(ctx, repoBase(repo), {
+    ...(t.report.error === ""
+      ? { message: `Took ${t.count} new commit${t.count === 1 ? "" : "s"} from the origin.` }
+      : { tone: "danger" as const, message: t.report.error }),
   });
 }
 
@@ -1318,7 +1341,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${archivedLine(ctx, repo)}${noApp}
+  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${originAheadLine(ctx, repo)}${archivedLine(ctx, repo)}${noApp}
   ${offerUpstream(repo, parent, offer)}
   ${latest === null
     ? ""

@@ -18,6 +18,8 @@ import {
   upstreamLabel,
   upstreamShort,
 } from "../../actions/upstream_follow.ts";
+import { aheadFor, aheadWords } from "../../origins/ahead.ts";
+import { requireWriter } from "../../actions/access.ts";
 import {
   addFollowSources,
   checkSourcesNow,
@@ -80,6 +82,30 @@ export function behindLine(ctx: Ctx, repo: Repo): Html | null {
       ${btn("Update", { size: "sm", icon: "sync" })}
     </form>
     <a href="${base}/settings#upstream">details</a>
+  </div>`;
+}
+
+/**
+ * Under the head of a mirror: how many commits its origin has that it has
+ * not taken, with the one action that takes them. Read from the stored
+ * reading, never the network; null when level or unread, or when the viewer
+ * cannot read the repository. Only writers see the action: the route behind
+ * it asks the same.
+ */
+export function originAheadLine(ctx: Ctx, repo: Repo): Html | null {
+  if (repo.origin === null) return null;
+  const ahead = aheadFor(ctx.app, repo, ctx.auth.user);
+  if (ahead === undefined) return null;
+  const base = repoBase(repo);
+  return html`<div class="small muted" data-origin-ahead>
+    ${icon("sync")}
+    ${aheadWords(ahead)} · read ${timeAgo(ahead.at)}
+    ${when(
+      requireWriter(ctx.app, ctx.auth.user, repo).ok,
+      () => html`<form method="post" action="${base}/sync/take" class="inline">
+        ${btn("Take them", { size: "sm", icon: "sync" })}
+      </form>`,
+    )}
   </div>`;
 }
 

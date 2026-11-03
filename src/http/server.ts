@@ -174,6 +174,7 @@ import {
   repoFiles,
   repoHome,
   repoSyncSubmit,
+  repoTakeSubmit,
   treePage,
 } from "../web/pages/repo.ts";
 import { mediaBlob } from "../web/pages/media.ts";
@@ -1296,6 +1297,7 @@ export function buildRouter(): Router<Handler> {
   // A mirror pulls on demand; a pin says "keep this on my machine". Both are
   // ordinary repo-scoped writes, not account-level ones.
   router.add("POST", "/:owner/:name/sync", repoSyncSubmit);
+  router.add("POST", "/:owner/:name/sync/take", repoTakeSubmit);
   router.add("POST", "/:owner/:name/pin", pinSubmit);
 
   // Settings (owner-gated inside the handlers).

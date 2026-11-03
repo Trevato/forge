@@ -33,6 +33,7 @@ import { entry as orgTeams } from "./orgteams.ts";
 import { entry as newIssue } from "./newissue.ts";
 import { entry as now } from "./nowlist.ts";
 import { entry as repos } from "./repolist.ts";
+import { entry as originAhead } from "./originahead.ts";
 import { entry as owner } from "./owner.ts";
 import { entry as people } from "./people.ts";
 import { entry as pinned } from "./pinned.ts";
@@ -101,6 +102,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   front,
   owner,
   forges,
+  originAhead,
   profile,
   now,
   repos,

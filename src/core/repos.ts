@@ -23,6 +23,7 @@ import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { appsNaming, isAppMember } from "./app_members.ts";
 import { forgetListings } from "./listings.ts";
+import { forgetRepoCursors } from "./origins.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
 import {
   OWNER_STANDING,
@@ -959,6 +960,7 @@ export async function deleteRepo(
   const removed = await deleteRepoDir(dir);
   if (!removed.ok && present) return err("delete_failed");
   db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
+  forgetRepoCursors(db, repo.id);
   forgetListings(db);
   if (!removed.ok) return err("delete_failed");
   return ok();

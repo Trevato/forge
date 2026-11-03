@@ -55,6 +55,7 @@ import { canAdmin, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import { bustOrigin } from "../view/cache.ts";
+import { readAhead } from "../origins/ahead.ts";
 import { discover } from "../origins/discover.ts";
 import {
   lastGuardTry,
@@ -1022,6 +1023,8 @@ export async function syncOriginNow(
 /**
  * Sync one mirror now. Any writer of the local repo may ask for this — it
  * only pulls, so it borrows nobody's identity and grants nobody anything.
+ * It is the one path that overwrites a default branch holding commits the
+ * origin lacks: the person asked for the origin's branches as they are.
  */
 export async function syncRepoNow(
   app: App,
@@ -1032,7 +1035,38 @@ export async function syncRepoNow(
   if (!writer.ok) return writer;
   const link = originForRepo(app.db, repo.id);
   if (!link) return err("not_found");
-  return ok(await syncOrigin(app, link.origin, { onlyRepoId: repo.id }));
+  return ok(await syncOrigin(app, link.origin, { onlyRepoId: repo.id, overwrite: true }));
+}
+
+/** Taking the origin's new commits: what the sync did, or why it did not. */
+export type Taking =
+  | { readonly kind: "taken"; readonly count: number; readonly report: SyncReport }
+  | { readonly kind: "conflict"; readonly count: number }
+  | { readonly kind: "unread" };
+
+/**
+ * The one action behind "N new commits upstream": a mirror takes what its
+ * origin has, unless its default branch holds commits the origin lacks — a
+ * sync would overwrite them, so that is a conflict and nothing moves. When
+ * the origin cannot be read, nothing moves either: it is not known whether
+ * the sync would overwrite. The sweep holds such a mirror too; only Sync now
+ * (`syncRepoNow`) overwrites, because a person asked for exactly that.
+ */
+export async function takeFromOrigin(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Promise<Result<Taking, "unauthorized" | "forbidden" | "not_found">> {
+  const writer = requireWriter(app, actor, repo);
+  if (!writer.ok) return writer;
+  const link = originForRepo(app.db, repo.id);
+  if (link === undefined) return err("not_found");
+  const seen = await readAhead(app, repo);
+  if (seen === undefined) return ok({ kind: "unread" });
+  if (seen.diverged) return ok({ kind: "conflict", count: seen.count });
+  const report = await syncOrigin(app, link.origin, { onlyRepoId: repo.id });
+  await readAhead(app, repo);
+  return ok({ kind: "taken", count: seen.count, report });
 }
 
 // ---- reconnecting a frozen mirror ----
