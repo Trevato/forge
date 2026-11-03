@@ -1,6 +1,6 @@
 # Iterations
 
-A fork family's build pins (`/:owner/:name/iterations`) as a downward tree of runs, reached from the Builds page. `iterationsPage` in `src/web/pages/iterations.ts` draws it; `iterations_family.ts` holds the data (`iterationsOf`, `lanesOf`) and `iterations_script.ts` the rules (`ITERATIONS_CSS`) and the script. Without the script the runs stand side by side; with it each run hangs under the build it grew from.
+A fork family's build pins (`/:owner/:name/iterations`) as a downward tree of runs, reached from the Builds page. `iterationsPage` in `src/web/pages/iterations.ts` draws it; `src/core/iterations.ts` holds the data (`iterationsOf`, `lanesOf`) and `iterations_script.ts` the rules (`ITERATIONS_CSS`) and the script. Without the script the runs stand side by side; with it each run hangs under the build it grew from.
 
 - `.it-page` — the page below the repo header; carries `data-here` and `data-lanes` (the runs, as JSON) for the script.
 - `.it-key` — the one-line key: solid line for fork of, thin for a branch (`.it-thin`), dashed (`.it-dash`) for built on a pin of; `.it-sp` the Collapse/Expand forks and zoom buttons (`.it-zc`), shown only once the script adds `.it-on` to `.it-page`.

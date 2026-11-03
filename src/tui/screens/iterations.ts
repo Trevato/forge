@@ -8,7 +8,7 @@
  */
 
 import { canRead, type Repo } from "../../core/repos.ts";
-import { iterationsOf, lanesOf, type IterationLane } from "../../web/pages/iterations_family.ts";
+import { iterationsOf, lanesOf, type IterationLane } from "../../core/iterations.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Command } from "../app/palette.ts";

@@ -12,7 +12,7 @@ import { promote } from "./helpers/members.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { iterationLines, iterationsCommands, iterationsScreen, NO_ITERATIONS_LINE, NOT_FOUND_LINE } from "../src/tui/screens/iterations.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
-import { lanesOf } from "../src/web/pages/iterations_family.ts";
+import { lanesOf } from "../src/core/iterations.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
 

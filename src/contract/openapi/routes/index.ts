@@ -98,6 +98,7 @@ export { route as getApiV1ReposOwnerNameAppNotes } from "./getApiV1ReposOwnerNam
 export { route as getApiV1ReposOwnerNameAppProductionOpen } from "./getApiV1ReposOwnerNameAppProductionOpen.ts";
 export { route as getApiV1ReposOwnerNameBranches } from "./getApiV1ReposOwnerNameBranches.ts";
 export { route as getApiV1ReposOwnerNameBuilds } from "./getApiV1ReposOwnerNameBuilds.ts";
+export { route as getApiV1ReposOwnerNameIterations } from "./getApiV1ReposOwnerNameIterations.ts";
 export { route as getApiV1ReposOwnerNameCommits } from "./getApiV1ReposOwnerNameCommits.ts";
 export { route as getApiV1ReposOwnerNameCommitsOid } from "./getApiV1ReposOwnerNameCommitsOid.ts";
 export { route as getApiV1ReposOwnerNameCommitsOidCheck } from "./getApiV1ReposOwnerNameCommitsOidCheck.ts";

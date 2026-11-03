@@ -15,3 +15,7 @@ Open `/:owner/:name/iterations`, or the **Iterations** button on a repository's 
 ## In the terminal
 
 Open a repository, then the palette (`ctrl+k`) and **Iterations**. The family's runs are an indented list, a run under the build it grew from, its builds beneath; `j`/`k` move, `esc` goes back. It shows exactly what the page shows for the same viewer.
+
+## Over the API
+
+`GET /api/v1/repos/:owner/:name/iterations` answers `{ forks, lanes }` for the viewer: the same forks (each with its pins: label, sha as `oid`, date as `at`, first line of `note`, `parent`), and the same runs the page draws, at most 40 repositories, sharing the 5-second pins cache. A private repository you may not read is a 404; a private fork you may not read is absent; a family with no pin answers 200 with empty lists.

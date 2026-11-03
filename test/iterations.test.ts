@@ -16,7 +16,7 @@ import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { promote } from "./helpers/members.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { FAMILY_LIMIT, familyRepos, iterationsOf, lanesOf, type IterationBuild, type IterationFork } from "../src/web/pages/iterations_family.ts";
+import { FAMILY_LIMIT, familyRepos, iterationsOf, lanesOf, type IterationBuild, type IterationFork } from "../src/core/iterations.ts";
 import { ITERATIONS_CSS, ITERATIONS_JS } from "../src/web/pages/iterations_script.ts";
 
 const build = (repo: string, label: string, parent: string | null = null, edge: IterationBuild["edge"] = parent === null ? null : "git"): IterationBuild => ({
@@ -229,5 +229,30 @@ describe("iterations page", () => {
   test("Builds links to Iterations when it holds a pin", async () => {
     expect(await (await get("/alice/game/builds")).text()).toContain('href="/alice/game/iterations"');
     expect(await (await get("/alice/empty/builds")).text()).not.toContain("/iterations");
+  });
+
+  test("the API lists the same pins as the page for a reader, a stranger and a guest", async () => {
+    for (const who of ["carol", "bob", ""]) {
+      const cookie = who === "" ? "" : await signIn(who);
+      const page = await (await get("/alice/game/iterations", cookie)).text();
+      const shown = [...page.matchAll(/data-key="([^"]+)"/g)].map((m) => m[1]!);
+      const res = await get("/api/v1/repos/alice/game/iterations", cookie);
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { forks: IterationFork[]; lanes: { builds: IterationBuild[] }[] };
+      const keys = data.forks.flatMap((f) => f.builds.map((b) => b.key));
+      expect([...new Set(shown)].sort()).toEqual([...keys].sort());
+      expect(data.lanes.flatMap((l) => l.builds.map((b) => b.key)).sort()).toEqual([...keys].sort());
+      expect(keys.some((k) => k.includes("hush-pin"))).toBe(who === "carol");
+      expect(data.forks.flatMap((f) => f.builds).every((b) => b.label !== "" && /^[0-9a-f]{40}$/.test(b.oid) && b.at !== "")).toBe(true);
+    }
+  });
+
+  test("the API: a private repository is a 404 to a stranger, an empty family answers empty lists", async () => {
+    expect((await get("/api/v1/repos/alice/secret/iterations")).status).toBe(404);
+    expect((await get("/api/v1/repos/alice/secret/iterations", await signIn("bob"))).status).toBe(404);
+    expect((await get("/api/v1/repos/alice/secret/iterations", await signIn("alice"))).status).toBe(200);
+    const res = await get("/api/v1/repos/alice/empty/iterations");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ forks: [], lanes: [] });
   });
 });

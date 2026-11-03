@@ -3,7 +3,7 @@
  * cards in a downward tree, a card per run, with fork and concept lines,
  * zoom, and folds. Reached from Builds; it is not found where the family
  * (what the viewer may read of it) holds no pin. Read-only: pinning stays on
- * Builds. The data is `iterations_family.ts`, the browser half
+ * Builds. The data is `core/iterations.ts`, the browser half
  * `iterations_script.ts`.
  */
 
@@ -12,7 +12,7 @@ import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { iterationsOf, lanesOf, type IterationBuild, type IterationLane } from "./iterations_family.ts";
+import { iterationsOf, lanesOf, type IterationBuild, type IterationLane } from "../../core/iterations.ts";
 import { btn } from "../ui.ts";
 import { ITERATIONS_CSS, ITERATIONS_JS } from "./iterations_script.ts";
 

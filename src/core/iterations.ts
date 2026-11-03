@@ -8,11 +8,11 @@
  * carries its parent's pins; the family draws each once, in the parent.
  */
 
-import { canRead, getRepoById, visibleForks, type Repo } from "../../core/repos.ts";
-import { listBuildPins, type BuildPin } from "../../git/builds.ts";
-import { repoDir } from "../../git/repos.ts";
-import type { App } from "../../app.ts";
-import type { User } from "../../core/users.ts";
+import { canRead, getRepoById, visibleForks, type Repo } from "./repos.ts";
+import { listBuildPins, type BuildPin } from "../git/builds.ts";
+import { repoDir } from "../git/repos.ts";
+import type { App } from "../app.ts";
+import type { User } from "./users.ts";
 
 /** How many repositories a family draws. */
 export const FAMILY_LIMIT = 40;
