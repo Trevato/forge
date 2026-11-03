@@ -83,6 +83,8 @@ export interface Failure {
   why: string;
   /** The check failed only because the answer was slower than allowed. */
   slow?: boolean;
+  /** The check failed only because a 200 answered with no body: a lost answer, retried like a slow one (#9358). */
+  empty?: boolean;
 }
 
 /** The first stylesheet href in a page, or null. */
@@ -194,7 +196,10 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
         return gone(`/healthz reported X-Forge-Version ${res.headers.get("x-forge-version") ?? "none"}, wanted ${heavy.version}`, res.status);
       if (path === "/boards" && anonymousBoard && !token && isSignInRedirect(url, res)) return { failure: null, slow: false };
       if (res.status !== 200) return gone(`${path} expected 200`, res.status);
-      if (!body.trim()) return { ...gone(`${path} answered with an empty body${emptyEvidence(res)}`, res.status), empty: true };
+      if (!body.trim()) {
+        const lost = gone(`${path} answered with an empty body${emptyEvidence(res)}`, res.status);
+        return { failure: { ...lost.failure, empty: true }, slow: false, empty: true };
+      }
       return { failure: null, slow: false };
     } catch (error) {
       return { ...gone(`${path} did not answer within ${slowMs * 2} ms (${error})`), hung: true };

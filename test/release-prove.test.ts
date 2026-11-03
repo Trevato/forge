@@ -263,3 +263,19 @@ describe("a slow-only proof is asked again sooner (#9238)", () => {
     }
   });
 });
+
+describe("an empty-body proof is asked again sooner (#9358)", () => {
+  test("a version whose /explore answers empty twice is due again after a minute, not five", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-prove-"));
+    try {
+      const { fake } = site("5.0.0", { "/explore": () => new Response("", { status: 200 }) });
+      const p = await proveRelease({ dataDir: dir, version: "5.0.0", url: "https://forge.test", fetch: fake, sleep: async () => {}, heavy: { watchMs: 30, pollMs: 5 } });
+      expect(p?.ok).toBe(false);
+      expect(p?.failure).toContain("empty body");
+      expect(p?.slow).toBe(true);
+      expect(proofDue(p, "5.0.0", Date.parse(p!.at) + 61_000)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
