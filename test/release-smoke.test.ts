@@ -152,3 +152,31 @@ test("a /healthz that gets no answer twice in a row in the watch fails (#7724)",
   const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && (hit === 4 || hit === 5) ? 1_000 : 0)), "t", { heavy });
   expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("did not answer"))).toBe(true);
 });
+
+test("a heavy page that answers an empty body once is asked again and passes (#9334)", async () => {
+  let n = 0;
+  const flaky = (p: string) => (p === "/explore" && ++n === 1 ? new Response("", { status: 200 }) : undefined);
+  expect(await smoke(forge(0, [], flaky), "t", { heavy })).toEqual([]);
+});
+
+test("a heavy page that answers an empty body twice in a row fails (#9334)", async () => {
+  let n = 0;
+  const flaky = (p: string) => (p === "/explore" && ++n <= 2 ? new Response("", { status: 200 }) : undefined);
+  const failures = await smoke(forge(0, [], flaky), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("empty body"))).toBe(true);
+});
+
+test("a polled heavy page that answers an empty body once in the watch is asked again and passes (#9334)", async () => {
+  // call 1 is the first load; call 2 is the watch's poll of /explore
+  let n = 0;
+  const flaky = (p: string) => (p === "/explore" && ++n === 2 ? new Response("", { status: 200 }) : undefined);
+  expect(await smoke(forge(0, [], flaky), "t", { heavy })).toEqual([]);
+  expect(n).toBeGreaterThanOrEqual(3);
+});
+
+test("a polled heavy page that answers an empty body twice in a row in the watch fails naming it (#9334)", async () => {
+  let n = 0;
+  const flaky = (p: string) => (p === "/explore" && (n += 1) >= 2 && n <= 3 ? new Response("", { status: 200 }) : undefined);
+  const failures = await smoke(forge(0, [], flaky), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("empty body"))).toBe(true);
+});

@@ -11,6 +11,8 @@
  * must answer 200 within `SLOW_MS`, then polls `/healthz` once a second for
  * `WATCH_MS`, rotating through those pages, and fails naming the page that
  * was slow or failed (#6898: `/readyz` never touches the database, 0.7.277 hung).
+ * An empty 200 body is asked again once, like a slow answer: one lost body in
+ * a release's proof says little, two in a row fail it (#9334).
  * An answer slow on the probe's clock whose `Server-Timing` says the forge
  * itself spent `SLOW_MS` or less is the road to the public edge, not the
  * release, and passes (#9022); a hang still fails.
@@ -157,7 +159,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   const headers: Record<string, string> = { "user-agent": AGENTS["desktop"]! };
   const pages = HEAVY_PAGES.map((p) => (p === REPO_HOME && heavy.repo ? heavy.repo : p));
   // An answer between `slowMs` and twice it is slow; none by then is a hang.
-  const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean; hung?: boolean }> => {
+  const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean; hung?: boolean; empty?: boolean }> => {
     const url = new URL(path, root).href;
     const started = performance.now();
     const failureFor = (why: string, status: number | string = "error"): Failure => ({ url, agent: "desktop", status, contentType: "", why });
@@ -178,7 +180,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
         return gone(`/healthz reported X-Forge-Version ${res.headers.get("x-forge-version") ?? "none"}, wanted ${heavy.version}`, res.status);
       if (path === "/boards" && anonymousBoard && !token && isSignInRedirect(url, res)) return { failure: null, slow: false };
       if (res.status !== 200) return gone(`${path} expected 200`, res.status);
-      if (!body.trim()) return gone(`${path} answered with an empty body`, res.status);
+      if (!body.trim()) return { ...gone(`${path} answered with an empty body`, res.status), empty: true };
       return { failure: null, slow: false };
     } catch (error) {
       return { ...gone(`${path} did not answer within ${slowMs * 2} ms (${error})`), hung: true };
@@ -191,7 +193,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   // so one slow answer there no longer fails the proof (#8917).
   const timed = async (path: string): Promise<Failure | null> => {
     const first = await once(path);
-    if (!first.slow) return first.failure;
+    if (!first.slow && !first.empty) return first.failure;
     console.warn(`smoke: ${first.failure?.why}; asking again`);
     return (await once(path)).failure;
   };
@@ -206,7 +208,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   // answer among dozens says little. The first slow answer is printed.
   const again = async (path: string) => {
     const first = await once(path);
-    if (!first.hung && !first.slow) return first;
+    if (!first.hung && !first.slow && !first.empty) return first;
     console.warn(`smoke: ${first.failure?.why}; asking again`);
     return once(path);
   };
