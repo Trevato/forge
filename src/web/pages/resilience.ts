@@ -8,7 +8,7 @@
  * any forge given no bucket — that they are off here and why, said plainly.
  */
 
-import { readResilience } from "../../checks/resilience.ts";
+import { readResilience, type Row } from "../../checks/resilience.ts";
 import type { Standing } from "../../core/threats.ts";
 import type { Ctx } from "../../http/context.ts";
 import { JOBS } from "../../nightly/jobs.ts";
@@ -61,6 +61,35 @@ export function nightlyOutputPage(ctx: Ctx): Response {
   return page({ ctx, title: `${job.name} · Resilience`, body });
 }
 
+/**
+ * A protection is a sentence from THREATS.md and its test a path, so inside
+ * `[data-resilience]` (an attribute, not a class) a row's title and meta wrap
+ * and a long word breaks anywhere, in place of the list's one-line ellipsis:
+ * the page never scrolls sideways at 390 px (#9328). No fixed width.
+ */
+export const RESILIENCE_CSS = `[data-resilience] { overflow-wrap: anywhere; }
+[data-resilience] .row-title, [data-resilience] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-resilience] .row { align-items: flex-start; }`;
+
+/** One row per protection, its standing a word in the trail. */
+export function protectionsHtml(rows: readonly Row[]): Html {
+  return card(
+    html`<ul class="list">
+      ${rows.map(
+        ({ p, s }) =>
+          html`<li class="row" data-standing="${s}">
+            <span class="row-main">
+              <span class="row-title">${p.text}</span>
+              <span class="row-meta">${p.adversary}${p.test === undefined ? "" : " · "}${p.test === undefined ? "" : html`<code>${p.test}</code>`}</span>
+            </span>
+            <span class="row-trail">${badge(s, { tone: TONE[s] })}</span>
+          </li>`,
+      )}
+    </ul>`,
+    { pad: false },
+  );
+}
+
 // GET /resilience: a forge admin's, since live red lines name what to attack.
 export function resiliencePage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -69,7 +98,8 @@ export function resiliencePage(ctx: Ctx): Response {
   const rows = timePhase(ctx.request, "threats", () => readResilience(ctx.app.config.dataDir));
   const rendering = performance.now();
   const count = (s: Standing): number => rows.filter((r) => r.s === s).length;
-  const body = html`<div class="page-head">
+  const body = html`<div data-resilience>
+    <div class="page-head">
       <h1>Resilience</h1>
       <p class="muted">
         Each protection in THREATS.md, judged by
@@ -82,22 +112,9 @@ export function resiliencePage(ctx: Ctx): Response {
       ${String(count("green"))} green · ${String(count("red"))} red ·
       ${String(count("untested"))} untested · ${String(count("no test yet"))} with no test yet
     </p>
-    ${card(
-      html`<ul class="list">
-        ${rows.map(
-          ({ p, s }) =>
-            html`<li class="row" data-standing="${s}">
-              <span class="row-main">
-                <span class="row-title">${p.text}</span>
-                <span class="row-meta">${p.adversary}${p.test === undefined ? "" : " · "}${p.test === undefined ? "" : html`<code>${p.test}</code>`}</span>
-              </span>
-              <span class="row-trail">${badge(s, { tone: TONE[s] })}</span>
-            </li>`,
-        )}
-      </ul>`,
-      { pad: false },
-    )}`;
-  const response = page({ ctx, title: "Resilience", body });
+    ${protectionsHtml(rows)}
+  </div>`;
+  const response = page({ ctx, title: "Resilience", body, styleCss: RESILIENCE_CSS });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }

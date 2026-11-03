@@ -60,8 +60,12 @@ export const PREVIEW_ISSUES_PAGE = `${PREVIEW_REPO_HOME}/issues`;
 /** The pulls list, whose long titles must wrap at a 390 px phone (#9346). */
 export const PREVIEW_PULLS_PAGE = `${PREVIEW_REPO_HOME}/pulls`;
 
+/** The owner's resilience page, whose protections and test paths must wrap at a 390 px phone (#9328). */
+export const PREVIEW_RESILIENCE_PAGE = "/resilience";
+
 /** The changelog, whose long landing titles must wrap at a 390 px phone (#9349). */
 export const PREVIEW_CHANGELOG_PAGE = "/changelog";
+
 /** The next-up page, whose long titles and action buttons must fit a 390 px phone (#9324). */
 export const PREVIEW_NEXT_PAGE = `${PREVIEW_REPO_HOME}/next`;
 
@@ -108,6 +112,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_NEXT_PAGE,
   PREVIEW_COMMITS_PAGE,
   PREVIEW_ISSUES_PAGE,
+  PREVIEW_RESILIENCE_PAGE,
   PREVIEW_SEARCH_PAGE,
 ].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));
 
