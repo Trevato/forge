@@ -9,6 +9,7 @@
  */
 
 import { pullRoster } from "../studio/pull_roster.ts";
+import { originCheckLead, originCheckOf } from "../../origins/pull-check.ts";
 import { askCheck } from "../../checks/again.ts";
 import { addCommentThrough } from "../../actions/issues.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
@@ -411,7 +412,18 @@ function pullChecksLine(
   );
   const found = !isApp ? null : pullPreviewFindings(ctx.app.db, repo.id, previewEnv(pull.number));
   const red = redAloneLine(redMark(repo.id, pull.id, status.headOid));
-  return html`${line}${red}${found === null ? "" : specFindings(found)}`;
+  return html`${originCheckLine(ctx, repo, pull)}${line}${red}${found === null ? "" : specFindings(found)}`;
+}
+
+/**
+ * How the origin's own check stands on a mirrored pull, as it last said and
+ * when. Empty for a pull the origin has never reported on.
+ */
+function originCheckLine(ctx: Ctx, repo: Repo, pull: Pull): Html | "" {
+  if (repo.origin === null) return "";
+  const kept = originCheckOf(ctx.app.db, pull.id);
+  if (kept === undefined) return "";
+  return html`<p class="muted">${originCheckLead(repo.origin.fullName, kept, pull.headOid)}, as of ${time(kept.checkedAt)}</p>`;
 }
 
 /** One §5 row in a toned card; `.setting-list` wraps the sentence and drops the action under it on a phone. */

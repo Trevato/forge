@@ -54,6 +54,7 @@ import {
   importReviews,
   importReviewStates,
 } from "./import.ts";
+import { refreshOpenPulls } from "./pull-check.ts";
 import type { Provider, ProviderFailure, RemoteIssue } from "./types.ts";
 
 const log = createLog("origins");
@@ -486,6 +487,11 @@ async function syncMirrorUnguarded(
     if (clean && out.error === "")
       setCursor(app.db, origin.id, key, runStarted);
   }
+
+  // A check finishing or a review landing does not move a pull's updated
+  // time on every origin, so the open pulls are read again each sweep: the
+  // catch-up for a webhook that never came.
+  await refreshOpenPulls(ctx, provider, mirror.fullName);
 
   // Whatever the browse cache holds for this remote was true before this
   // sweep and is a guess after it. Dropping it costs one request; keeping it

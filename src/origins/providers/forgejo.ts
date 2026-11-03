@@ -32,6 +32,7 @@ import type {
   ProviderResult,
   RemoteBlob,
   RemoteBranch,
+  RemoteCheck,
   RemoteComment,
   RemoteCommit,
   RemoteIdentity,
@@ -500,6 +501,29 @@ export class ForgejoProvider implements Provider {
       return succeed(toPullFromIssue(issueRaw));
     }
     return succeed(toPull(result.value.data));
+  }
+
+  /** The head's combined commit status: success, failure or error, pending. */
+  async getPullCheck(fullName: string, number: number): Promise<ProviderResult<RemoteCheck>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const base = `/repos/${seg(named.owner)}/${seg(named.name)}`;
+    const pull = await this.api.call({ path: `${base}/pulls/${number}` });
+    if (!pull.ok) return pull;
+    const headOid = asString(dig(pull.value.data, "head", "sha"));
+    if (!/^[0-9a-f]{40,64}$/.test(headOid)) return succeed({ word: "none", headOid: "" });
+    const status = await this.api.call({ path: `${base}/commits/${headOid}/status` });
+    if (!status.ok) return status;
+    const state = asString(field(status.value.data, "state"));
+    const word =
+      state === "success"
+        ? "green"
+        : state === "failure" || state === "error"
+          ? "red"
+          : state === "pending" && asNumber(field(status.value.data, "total_count")) > 0
+            ? "running"
+            : "none";
+    return succeed({ word, headOid });
   }
 
   async listComments(

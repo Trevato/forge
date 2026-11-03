@@ -55,6 +55,7 @@ import { isProbe } from "../kernel/probe.ts";
 import { PRIVATE_ADDRESS_REFUSED } from "../kernel/address_words.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
+import { HOOK_BODY_MAX, HOOK_SIGNATURE_HEADER, receiveOriginHook } from "../origins/hook.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
@@ -2469,6 +2470,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const hold = getHold(ctx.app.db, found.pull.id);
       return json({
         ...withLabels(ctx, found.pull),
+        check: checkWord(checkSummary(ctx.app.db, found.pull.id, status.headOid).run ?? undefined, status.headOid),
         checkStale: checkStaleNow,
         variantSiblings: variantSiblings(ctx.app.db, [found.pull])[0] ?? [],
         ...(live ? { mergeable: status.mergeable, conflicts: status.conflicts } : {}),
@@ -3242,6 +3244,18 @@ export function apiRoutes(router: Router<Handler>): void {
     const raw = new TextDecoder().decode(bytes);
     const kept = await receiveBeat(ctx.app, raw, ctx.request.headers.get(SIGNATURE_HEADER));
     return kept ? json({ ok: true }) : apiError("not_found", 404, "no such door");
+  });
+
+  // A mirror's origin saying a pull moved (`origins/hook.ts`). Signed; every
+  // refusal is the same 404.
+  router.add("POST", "/api/v1/repos/:owner/:name/origin-hook", async (ctx) => {
+    // Not `loadRepo`: the origin is no reader here, the signature is the proof.
+    const repo = getRepo(ctx.app.db, ctx.params.owner ?? "", ctx.params.name ?? "");
+    const bytes = await readBounded(ctx.request, HOOK_BODY_MAX);
+    if (!repo || bytes === "too_large") return notFound();
+    const raw = new TextDecoder().decode(bytes);
+    const kept = await receiveOriginHook(ctx.app, repo, raw, ctx.request.headers.get(HOOK_SIGNATURE_HEADER));
+    return kept ? json({ ok: true }) : notFound();
   });
 
   // The family (#425): the parent for anyone, the children for an admin.

@@ -61,6 +61,7 @@ import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
 import { guestWaits, mayApproveGuest } from "../../origins/guest.ts";
 import { runningProgress, stepsLine } from "../../checks/progress.ts";
+import { originCheckLead, originCheckOf } from "../../origins/pull-check.ts";
 import { askCheck } from "../../checks/again.ts";
 import { checkStale, checksHold } from "../../checks/stale.ts";
 import { checkWords } from "../../checks/summary.ts";
@@ -270,6 +271,8 @@ export function pullScreen(
   /** The pull's base branch, to name what the check was merged with. */
   let checkBase = "";
   let checkProgress = "";
+  /** The origin's own check on a mirrored pull, worded; "" when it never said. */
+  let originCheckText = "";
   /** The run page's three step rows as a line; empty when the log is hidden. */
   let checkSteps = "";
   /** `findingsWords` of the preview's website-spec findings; empty when none were recorded. */
@@ -343,6 +346,12 @@ export function pullScreen(
         ? NO_CHECK
         : checkSummary(f.db, row.id, row.headOid || (facts?.headOid ?? ""));
     checkBase = row?.baseBranch ?? facts?.baseBranch ?? "";
+    const originSaid =
+      row === undefined || repo?.origin == null ? undefined : originCheckOf(f.db, row.id);
+    originCheckText =
+      originSaid === undefined || repo?.origin == null || row === undefined
+        ? ""
+        : `${originCheckLead(repo.origin.fullName, originSaid, row.headOid)}, as of ${originSaid.checkedAt.slice(0, 16).replace("T", " ")} UTC`;
     next =
       row === undefined
         ? null
@@ -1057,6 +1066,7 @@ export function pullScreen(
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
         (checksLine === "" ? 0 : 1) +
+        (originCheckText === "" ? 0 : 1) +
         teams.length;
       const [strip, head, previewRow, boxRow, tabRow, body, comp] = split(
         area,
@@ -1112,6 +1122,7 @@ export function pullScreen(
         checkOld,
         check,
         checksLine,
+        originLine: originCheckText,
         standing: standing(),
         required: requireReview,
         teams,
@@ -1742,6 +1753,8 @@ function drawMergeBox(
     check: CheckSummary;
     /** The checks row, already worded; "" draws none. */
     checksLine: string;
+    /** The origin's check on a mirrored pull, already worded; "" draws none. */
+    originLine: string;
     standing: Standing;
     required: boolean;
     teams: readonly TeamVerdict[];
@@ -1844,6 +1857,10 @@ function drawMergeBox(
       ),
       inner.x + inner.w,
     );
+    y++;
+  }
+  if (o.originLine !== "" && y < inner.y + inner.h) {
+    s.text(inner.x, y, truncate(o.originLine, inner.w), style(c.mutedFg, c.card), inner.x + inner.w);
     y++;
   }
   // The teams the issue names, one row each: who still owes a review.

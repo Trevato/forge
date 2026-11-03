@@ -269,6 +269,7 @@ export { route as postApiV1ReposOwnerNameIssuesNumberPrivate } from "./postApiV1
 export { route as postApiV1ReposOwnerNameLabels } from "./postApiV1ReposOwnerNameLabels.ts";
 export { route as postApiV1ReposOwnerNameMakeItYours } from "./postApiV1ReposOwnerNameMakeItYours.ts";
 export { route as postApiV1ReposOwnerNameMilestonesNumberLimb } from "./postApiV1ReposOwnerNameMilestonesNumberLimb.ts";
+export { route as postApiV1ReposOwnerNameOriginHook } from "./postApiV1ReposOwnerNameOriginHook.ts";
 export { route as postApiV1ReposOwnerNameOriginReconnect } from "./postApiV1ReposOwnerNameOriginReconnect.ts";
 export { route as postApiV1ReposOwnerNamePlan } from "./postApiV1ReposOwnerNamePlan.ts";
 export { route as postApiV1ReposOwnerNamePrompts } from "./postApiV1ReposOwnerNamePrompts.ts";

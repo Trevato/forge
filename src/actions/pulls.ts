@@ -81,6 +81,7 @@ import {
 } from "./access.ts";
 import { canWrite } from "../core/repos.ts";
 import { refreshPullHead as refreshHead } from "../core/following.ts";
+import { watchPullsSoon } from "../origins/hook.ts";
 import { carryBranchThrough } from "../origins/push-through.ts";
 import { ownHost, pullSourceOf, sourceTrailers } from "../core/trusted_sources.ts";
 
@@ -181,6 +182,10 @@ export async function openPull(
       actorId: user.value.id,
       payload: { number: created.value.number, via: "origin" },
     });
+    // Ask the origin to say when this pull's check or reviews move; the sync
+    // poll covers an origin that cannot or will not. Not waited for: the
+    // person has their pull already.
+    void watchPullsSoon(app, baseRepo);
     const stored = getIssueById(app.db, imported.issueId);
     const pull = stored
       ? getPullByNumber(app, baseRepo, created.value.number)

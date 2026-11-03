@@ -167,6 +167,12 @@ export interface RemoteReviewState {
   readonly htmlUrl: string;
 }
 
+/** How a pull's check stands on its origin, for the head named. */
+export interface RemoteCheck {
+  readonly word: "green" | "red" | "running" | "none";
+  readonly headOid: string;
+}
+
 export interface RemoteReview {
   readonly remoteId: string;
   readonly author: string;
@@ -373,6 +379,24 @@ export interface Provider {
     fullName: string,
     number: number,
   ): Promise<ProviderResult<readonly RemoteReviewState[]>>;
+
+  /**
+   * Where the origin's check of a pull stands. Left out by an origin whose
+   * checks this adapter cannot read; the pull page then shows none.
+   */
+  getPullCheck?(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<RemoteCheck>>;
+
+  /**
+   * Ask the origin to deliver this repository's events to `url`, signed with
+   * `secret`, unless it already does. Left out by an origin that cannot.
+   */
+  watch?(
+    fullName: string,
+    hook: { url: string; secret: string },
+  ): Promise<ProviderResult<void>>;
 
   createIssue(
     fullName: string,

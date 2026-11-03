@@ -12,6 +12,7 @@
 import type {
   ListIssuesQuery,
   Page,
+  RemoteCheck,
   RemoteComment,
   ProviderResult,
   RemoteIdentity,
@@ -19,11 +20,12 @@ import type {
   RemoteMilestone,
   RemoteIssue,
   RemoteRepo,
+  RemoteReviewState,
 } from "../types.ts";
 import { ForgejoProvider, nextPage, toRepo } from "./forgejo.ts";
 import { NO_ACCOUNT } from "../words.ts";
 import { forgeCursor, toForgeComment, toForgeWork } from "./forge-work.ts";
-import { asArray, asString, dig, fail, field, seg, splitFullName, succeed } from "./http.ts";
+import { asArray, asId, asString, asTime, dig, fail, field, seg, splitFullName, succeed } from "./http.ts";
 
 const MAX_COMMENT_PAGES = 1000;
 const NONE = { ok: true, value: [] } as const;
@@ -132,6 +134,61 @@ export class ForgeProvider extends ForgejoProvider {
       result = await this.api.call({ path: `${base}/pulls/${number}`, query: { diff: 0 } });
     if (!result.ok) return result;
     return succeed(toForgeWork(result.value.data, this.webUrl, fullName));
+  }
+
+  /** The pull's own `check` word, as the forge says it of the head it names. */
+  override async getPullCheck(fullName: string, number: number): Promise<ProviderResult<RemoteCheck>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({ path: `${base}/pulls/${number}`, query: { diff: 0 } });
+    if (!result.ok) return result;
+    const word = asString(field(result.value.data, "check"));
+    return succeed({
+      word: word === "green" || word === "red" || word === "running" ? word : "none",
+      headOid: asString(field(result.value.data, "headOid")),
+    });
+  }
+
+  /** The verdicts, from the forge's own `review-states` (a forge has no Gitea review objects). */
+  override async listReviewStates(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<readonly RemoteReviewState[]>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({ path: `${base}/pulls/${number}/review-states` });
+    if (!result.ok) return result;
+    const states: RemoteReviewState[] = [];
+    for (const raw of asArray(result.value.data)) {
+      const state = asString(field(raw, "state"));
+      if (state !== "approved" && state !== "changes_requested" && state !== "commented") continue;
+      const created = asTime(field(raw, "createdAt")) ?? new Date().toISOString();
+      states.push({
+        remoteId: asId(field(raw, "id")),
+        author: asString(field(raw, "originAuthor")) || asString(field(raw, "authorName")),
+        state,
+        body: asString(field(raw, "body")),
+        commitOid: asString(field(raw, "commitOid")),
+        createdAt: created,
+        htmlUrl: `${this.webUrl}/${fullName}/pulls/${number}`,
+      });
+    }
+    return succeed(states);
+  }
+
+  async watch(fullName: string, hook: { url: string; secret: string }): Promise<ProviderResult<void>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const listed = await this.api.call({ path: `${base}/hooks` });
+    if (!listed.ok) return listed;
+    const rows = asArray(field(listed.value.data, "items") ?? listed.value.data);
+    if (rows.some((row) => asString(field(row, "url")) === hook.url)) return succeed(undefined);
+    const made = await this.api.call({
+      path: `${base}/hooks`,
+      method: "POST",
+      body: { url: hook.url, secret: hook.secret, kinds: "*" },
+    });
+    return made.ok ? succeed(undefined) : made;
   }
 
   override async listComments(
