@@ -40,7 +40,8 @@ export const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefi
   ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
 
 /**
- * Who can reach the forge, polled often and changed rarely (#9224): the tag
+ * Who can reach the forge, and its capacity, limits and quotas (#9248):
+ * polled often and changed rarely (#9224). The tag
  * is of the exact bytes sent, so a person, invite or page change moves it and
  * two viewers shown different bodies never share one. Called only past the
  * access and query checks, which carry no tag.
@@ -142,7 +143,7 @@ export function adminRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
     const listed = timePhase(ctx.request, "capacity", () => listCapacity(ctx.app, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => (listed.ok ? json({ items: listed.value.settings, changes: listed.value.changes, next_cursor: null }) : notFound()));
+    return timePhase(ctx.request, "render", () => (listed.ok ? taggedJson(ctx, { items: listed.value.settings, changes: listed.value.changes, next_cursor: null }) : notFound()));
   });
 
   router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
@@ -168,7 +169,7 @@ export function adminRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
     const listed = timePhase(ctx.request, "limits", () => listLimits(ctx.app, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => (listed.ok ? json({ items: listed.value.limits, changes: listed.value.changes, next_cursor: null }) : notFound()));
+    return timePhase(ctx.request, "render", () => (listed.ok ? taggedJson(ctx, { items: listed.value.limits, changes: listed.value.changes, next_cursor: null }) : notFound()));
   });
 
   router.add("PUT", "/api/v1/admin/limits/:key", async (ctx) => {
@@ -199,7 +200,7 @@ export function adminRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
     const read = readQuotas(ctx.app, ctx.auth.user);
-    return read.ok ? json({ quotas: read.value.quotas, changes: read.value.changes }) : notFound();
+    return read.ok ? taggedJson(ctx, { quotas: read.value.quotas, changes: read.value.changes }) : notFound();
   });
 
   router.add("PUT", "/api/v1/admin/quotas/:key", async (ctx) => {
