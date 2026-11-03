@@ -340,6 +340,25 @@ export interface Followed {
 }
 
 /**
+ * Run `attempt` until it reports no failure (`undefined`) or `deadline`
+ * passes, pausing `pauseMs` between tries: a click on an element the page
+ * has not drawn yet throws, and under load that is only "not yet". Throws
+ * the last failure when time runs out.
+ */
+export async function retryStep(
+  attempt: () => Promise<string | undefined>,
+  deadline: number,
+  pauseMs = 50,
+): Promise<void> {
+  for (;;) {
+    const failure = await attempt();
+    if (failure === undefined) return;
+    if (Date.now() >= deadline) throw new Error(`step never ran: ${failure}`);
+    await Bun.sleep(pauseMs);
+  }
+}
+
+/**
  * Load `url` with a session cookie, then run each of `steps` (an
  * expression evaluated in the page — a click) after the page before it has
  * loaded, and follow the browser until a requested URL satisfies `until` or
@@ -432,8 +451,16 @@ export async function clickAndFollow(
     for (const step of input.steps) {
       if (reached()) break;
       loaded = cdp.once("Page.loadEventFired");
-      // As a person's click: a user gesture, so a link that opens a tab does.
-      await cdp.send("Runtime.evaluate", { expression: step, userGesture: true });
+      await retryStep(
+        async () => {
+          // As a person's click: a user gesture, so a link that opens a tab does.
+          const r = await cdp.send("Runtime.evaluate", { expression: step, userGesture: true });
+          return r.exceptionDetails === undefined
+            ? undefined
+            : String(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
+        },
+        deadline,
+      );
       await Promise.race([loaded, Bun.sleep(Math.max(0, deadline - Date.now()))]);
     }
     while (!reached() && Date.now() < deadline) await Bun.sleep(100);

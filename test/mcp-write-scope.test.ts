@@ -1,7 +1,8 @@
 /**
  * Every MCP tool that writes, called with a read-only token, is refused
  * before it writes; every tool that needs an admin token is refused to an
- * `rw` one. The event log and every table's row count stay as they were.
+ * `rw` one. The event log, every table's row count and every counter row
+ * outside `/mcp` stay as they were (see test/helpers/write-snapshot.ts).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -13,6 +14,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { toolRegistry, toolNames } from "../src/http/mcp.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { ownCount, snapshot } from "./helpers/write-snapshot.ts";
 
 /** Tools this test cannot call as a write, by name, and why. */
 const SKIPPED: Record<string, string> = {};
@@ -102,21 +104,6 @@ describe("a token that may only read cannot write through any tool", () => {
     return args;
   };
 
-  const snapshot = () => {
-    const tables = app.db
-      .query<{ name: string }, []>(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-      )
-      .all()
-      .map((r) => r.name);
-    return Object.fromEntries(
-      tables.map((n) => [
-        n,
-        app.db.query<{ c: number }, []>(`SELECT count(*) AS c FROM "${n}"`).get()!.c,
-      ]),
-    );
-  };
-
   test("the list of skipped tools names only tools that exist", () => {
     const names = new Set(toolNames());
     for (const name of Object.keys(SKIPPED)) expect(names.has(name)).toBe(true);
@@ -125,7 +112,8 @@ describe("a token that may only read cannot write through any tool", () => {
   test("each write is refused for a read-only token, and nothing changes", async () => {
     const writes = toolRegistry().filter((t) => t.writes && !(t.name in SKIPPED));
     expect(writes.length).toBeGreaterThan(50);
-    const before = snapshot();
+    const before = snapshot(app.db);
+    const counted = ownCount(app.db);
     const events = app.db.query("SELECT * FROM event ORDER BY rowid").all();
     const unrefused: string[] = [];
     for (const t of writes) {
@@ -139,7 +127,8 @@ describe("a token that may only read cannot write through any tool", () => {
       if (!refused) unrefused.push(t.name);
     }
     expect(unrefused).toEqual([]);
-    expect(snapshot()).toEqual(before);
+    expect(snapshot(app.db)).toEqual(before);
+    expect(ownCount(app.db)).toBeGreaterThanOrEqual(counted);
     expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
   }, 60_000);
 
@@ -148,7 +137,8 @@ describe("a token that may only read cannot write through any tool", () => {
     expect(admin.length).toBeGreaterThan(0);
     // A new admin-scope tool must be given valid arguments here.
     expect(admin.map((t) => t.name).sort()).toEqual(Object.keys(ADMIN_ARGS).sort());
-    const before = snapshot();
+    const before = snapshot(app.db);
+    const counted = ownCount(app.db);
     const events = app.db.query("SELECT * FROM event ORDER BY rowid").all();
     const answered: string[] = [];
     for (const t of admin) {
@@ -156,7 +146,8 @@ describe("a token that may only read cannot write through any tool", () => {
       if (!notListed(body)) answered.push(t.name);
     }
     expect(answered).toEqual([]);
-    expect(snapshot()).toEqual(before);
+    expect(snapshot(app.db)).toEqual(before);
+    expect(ownCount(app.db)).toBeGreaterThanOrEqual(counted);
     expect(app.db.query("SELECT * FROM event ORDER BY rowid").all()).toEqual(events);
   }, 60_000);
 });
