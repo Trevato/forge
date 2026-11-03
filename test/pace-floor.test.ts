@@ -11,9 +11,9 @@ import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/r
 import { paceFloor, setCapacity } from "../src/core/capacity.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, getRun, listActive } from "../src/core/runs.ts";
-import { noteLimit, setHeadroom } from "../src/core/standing.ts";
+import { noteMeasure } from "../src/core/measure.ts";
+import { setHeadroom } from "../src/core/standing.ts";
 import { addSubscription } from "../src/core/subscriptions.ts";
-import { recordUsage } from "../src/core/usage.ts";
 import { forgetWeek } from "../src/crew/week_read.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { startStandInCrew, stopStandInCrew, type StandInCrew } from "./helpers/crew-standin.ts";
@@ -48,13 +48,8 @@ async function pacedRepo(name: string, spentUsd: number): Promise<Repo> {
   setHeadroom(app.db, sub.value.id, 0);
   app.db.query("INSERT INTO subscription_grant (scope_id, agent_id, subscription_id) VALUES (?1, '', ?2)").run(made.value.id, sub.value.id);
   const now = Date.now();
-  const spend = (usd: number, at: number) => {
-    const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
-    recordUsage(app.db, { runId: run.id, repoId: made.value.id, issueId: null, agentId: null, subscriptionId: sub.value.id, tokensIn: 1, tokensOut: 1, costUsd: usd, wallMs: 1000, outcome: "ok", at: new Date(at).toISOString() });
-  };
-  spend(100, now - 4 * DAY);
-  noteLimit(app.db, sub.value.id, { window: "week", resetsAt: new Date(now - 3.5 * DAY).toISOString(), observedAt: new Date(now - 3.5 * DAY - 3_600_000).toISOString(), said: "weekly limit" });
-  spend(spentUsd, now - DAY);
+  // The provider's meter: `spentUsd` percent of the week used, with half the week's time gone.
+  noteMeasure(app.db, sub.value.id, { window: "week", usedPct: spentUsd, resetsAt: new Date(now + 3.5 * DAY).toISOString(), observedAt: new Date(now).toISOString() });
   app.db.query("INSERT INTO week_reading (scope, at, free_pct) VALUES (?1, ?2, ?3)").run(sub.value.id, new Date(now - 3_600_000).toISOString(), 100 - spentUsd + 6);
   const on = await updateRepoSettings(app, alice, made.value, { autonomy: "autonomous", autonomyDirection: "Ship.", autonomyCeilingUsd: 1000, autonomySlots: 4, autonomyBy: alice.id });
   expect(on.ok).toBe(true);

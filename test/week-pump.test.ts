@@ -7,10 +7,10 @@ import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/r
 import { getRepoById } from "../src/core/repos.ts";
 import { setCapacity } from "../src/core/capacity.ts";
 import { claimRun, createRun, getRun, listRuns } from "../src/core/runs.ts";
-import { noteLimit, setHeadroom } from "../src/core/standing.ts";
+import { noteMeasure } from "../src/core/measure.ts";
+import { setHeadroom } from "../src/core/standing.ts";
 import { addSubscription } from "../src/core/subscriptions.ts";
 import { forgetWeek } from "../src/crew/week_read.ts";
-import { recordUsage } from "../src/core/usage.ts";
 import { startStandInCrew, stopStandInCrew, type StandInCrew } from "./helpers/crew-standin.ts";
 
 const DAY = 86_400_000;
@@ -41,15 +41,10 @@ test("past the week's reserve an assigned run stays queued, with the reason in i
   if (!sub.ok) throw new Error(sub.error);
   setHeadroom(app.db, sub.value.id, 0);
   app.db.query("INSERT INTO subscription_grant (scope_id, agent_id, subscription_id) VALUES (?1, '', ?2)").run(made.value.id, sub.value.id);
-  // Last week the provider refused at $100; this week $95 is spent.
+  // The provider says the week is half over and 95% used.
   const now = Date.now();
-  const spend = (usd: number, at: number) => {
-    const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
-    recordUsage(app.db, { runId: run.id, repoId: made.value.id, issueId: null, agentId: null, subscriptionId: sub.value.id, tokensIn: 1, tokensOut: 1, costUsd: usd, wallMs: 1000, outcome: "ok", at: new Date(at).toISOString() });
-  };
-  spend(100, now - 4 * DAY);
-  noteLimit(app.db, sub.value.id, { window: "week", resetsAt: new Date(now - 3.5 * DAY).toISOString(), observedAt: new Date(now - 3.5 * DAY - 3_600_000).toISOString(), said: "weekly limit" });
-  spend(95, now - DAY);
+  const measure = (used: number) => noteMeasure(app.db, sub.value.id, { window: "week", usedPct: used, resetsAt: new Date(now + 3.5 * DAY).toISOString(), observedAt: new Date(now).toISOString() });
+  measure(95);
   const on = await updateRepoSettings(app, alice, made.value, { autonomy: "autonomous", autonomyDirection: "Ship.", autonomyCeilingUsd: 1000, autonomySlots: 4, autonomyBy: alice.id });
   expect(on.ok).toBe(true);
   const repo = getRepoById(app.db, made.value.id)!;
@@ -60,8 +55,8 @@ test("past the week's reserve an assigned run stays queued, with the reason in i
   const logOf = () => (mine() === undefined ? "" : readRunLog(app.config.dataDir, mine()!.id).lines.join("\n"));
   await until(() => logOf().includes("queued, not started: Ahead of pace"), "the hold to be logged");
   expect(mine()?.state).toBe("queued");
-  // With the spend gone the week is on pace and the same run starts.
-  app.db.query("DELETE FROM usage WHERE at >= ?1").run(new Date(now - 2 * DAY).toISOString());
+  // With the meter back at 50% the week is on pace and the same run starts.
+  measure(50);
   forgetWeek();
   await until(() => mine()?.state !== "queued", "the run to start");
   expect(mine()?.state).not.toBe("queued");
@@ -80,13 +75,7 @@ test("builds fill the pace slots, yet a review or assigned run still starts; a t
   app.db.query("INSERT INTO subscription_grant (scope_id, agent_id, subscription_id) VALUES (?1, '', ?2)").run(made.value.id, sub.value.id);
   setCapacity(app.db, "crew.concurrency", "10", alice.id);
   const now = Date.now();
-  const spend = (usd: number, at: number) => {
-    const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
-    recordUsage(app.db, { runId: run.id, repoId: made.value.id, issueId: null, agentId: null, subscriptionId: sub.value.id, tokensIn: 1, tokensOut: 1, costUsd: usd, wallMs: 1000, outcome: "ok", at: new Date(at).toISOString() });
-  };
-  spend(100, now - 4 * DAY);
-  noteLimit(app.db, sub.value.id, { window: "week", resetsAt: new Date(now - 3.5 * DAY).toISOString(), observedAt: new Date(now - 3.5 * DAY - 3_600_000).toISOString(), said: "weekly limit" });
-  spend(70, now - DAY);
+  noteMeasure(app.db, sub.value.id, { window: "week", usedPct: 70, resetsAt: new Date(now + 3.5 * DAY).toISOString(), observedAt: new Date(now).toISOString() });
   // 30% free now, 36% an hour ago: 6 points an hour, far over what is allowed, so the pace is the floor of 2 slots.
   app.db.query("INSERT INTO week_reading (scope, at, free_pct) VALUES (?1, ?2, 36)").run(sub.value.id, new Date(now - 3_600_000).toISOString());
   const on = await updateRepoSettings(app, alice, made.value, { autonomy: "autonomous", autonomyDirection: "Ship.", autonomyCeilingUsd: 1000, autonomySlots: 4, autonomyBy: alice.id });

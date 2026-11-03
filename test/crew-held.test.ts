@@ -6,6 +6,7 @@
  * terminal's Flow dialog show the same counts, private repositories to the
  * owner only. Each test makes its own repository and crew.
  */
+import { quietWeek } from "./helpers/week-quiet.ts";
 import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -98,6 +99,7 @@ describe("the tick says why each ready issue cannot start", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-held-"));
     app = createApp({ dataDir, port: 0 });
+    quietWeek(app.db);
     const a = await createUser(app.db, {
       origin: "seed",
       trusted: true,

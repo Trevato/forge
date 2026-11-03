@@ -11,6 +11,7 @@
  * what the forge has.
  */
 
+import { noteMeasure } from "../core/measure.ts";
 import { capacityEnv } from "../core/capacity.ts";
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1399,6 +1400,7 @@ async function work(
           onSteer: (send) => {
             listenForSteer(run.id, send);
           },
+          onMeasure: (m) => noteMeasure(app.db, meter.subscriptionId ?? PLATFORM, m),
           onUsage: (so) =>
             meterLive(
               app,

@@ -1,4 +1,5 @@
 /** #8129: the crawler share and refusals in the terminal, a forge admin's who is a person; a member is offered nothing. */
+import { quietWeek } from "./helpers/week-quiet.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,6 +24,7 @@ const identity = (user: User) => ({ sshUsername: user.username, remoteAddress: "
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-tui-crawlers-"));
   app = createApp({ dataDir: dir, port: 0 });
+  quietWeek(app.db);
   const mk = async (username: string, isAdmin: boolean) => {
     const r = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@forge.local`, password: "a-good-passphrase", isAdmin });
     if (!r.ok) throw new Error(r.error);

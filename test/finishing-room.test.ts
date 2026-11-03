@@ -4,6 +4,7 @@
  * queues no more bring-up-to-date runs — each a push, each a check — than
  * the lane has slots for, however many builder slots are free.
  */
+import { quietWeek } from "./helpers/week-quiet.ts";
 import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -45,6 +46,7 @@ async function tick(): Promise<void> {
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-finishing-room-"));
   app = createApp({ dataDir, port: 0 });
+  quietWeek(app.db);
   const a = await createUser(app.db, {
     origin: "seed",
     trusted: true,

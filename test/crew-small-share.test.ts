@@ -3,6 +3,7 @@
  * or small additions — hold at most `slots.smallShare` of the slots, and an
  * issue under an open epic starts before a small one.
  */
+import { quietWeek } from "./helpers/week-quiet.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -99,6 +100,7 @@ async function drive(issues: readonly Issue[]): Promise<Issue[]> {
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-small-share-"));
   app = createApp({ dataDir, port: 0 });
+  quietWeek(app.db);
   const a = await createUser(app.db, {
     origin: "seed", trusted: true, username: "alice", email: "alice@forge.local",
     password: "a-good-passphrase", adminIfFirst: true,

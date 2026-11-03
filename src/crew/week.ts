@@ -98,7 +98,7 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
       runsOutAt: null,
       slots,
       release: false,
-      sentence: `The week's pace is unknown: no subscription has named its weekly limit yet, so the crew holds at ${slots} of ${ceiling} slots.`,
+      sentence: `The week's pace is unknown: the provider has not yet reported a measure of the week, so the crew holds at ${slots} of ${ceiling} slots.`,
     };
   }
   const left = meter.resetsAt.getTime() - now.getTime();
@@ -126,7 +126,8 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   slots = Math.min(ceiling, Math.max(0, slots));
 
   const release = status === "behind" && input.idleSlots > 0 && input.startable === 0 && input.gated > 0;
-  const weekLeft = `${Math.round(meter.freePct)}% of the week left, reset ${utc(meter.resetsAt)}`;
+  const gone = Math.round((1 - left / WINDOW_MS.week) * 100);
+  const weekLeft = `${Math.round(meter.freePct)}% of the week left with ${gone}% of its time gone, reset ${utc(meter.resetsAt)}`;
   const burnWords = burn === null ? "unread (too few readings)" : `${pct(burn)} an hour`;
   const sentence =
     burn === null && !burning

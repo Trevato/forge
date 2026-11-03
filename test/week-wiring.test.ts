@@ -12,7 +12,8 @@ import { addDependency } from "../src/core/dependencies.ts";
 import { getIssue, getIssueById, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
-import { noteLimit, setHeadroom } from "../src/core/standing.ts";
+import { noteMeasure } from "../src/core/measure.ts";
+import { setHeadroom } from "../src/core/standing.ts";
 import { addSubscription } from "../src/core/subscriptions.ts";
 import { recordUsage } from "../src/core/usage.ts";
 import { type User } from "../src/core/users.ts";
@@ -61,19 +62,14 @@ function seedReading(scope: string, freePct: number): void {
   app.db.query("INSERT INTO week_reading (scope, at, free_pct) VALUES (?1, ?2, ?3)").run(scope, new Date(NOW.getTime() - 3_600_000).toISOString(), freePct);
 }
 
-/** The week is half over; last week the provider refused at $100, so the cap is known. */
+/** The provider says the week is `used`% used, half over (reset 3.5 days ahead); the meter read `recent` points higher an hour ago. */
+function measure(account: string, used: number, at: Date = NOW): void {
+  noteMeasure(app.db, account, { window: "week", usedPct: used, resetsAt: new Date(NOW.getTime() + 3.5 * DAY).toISOString(), observedAt: at.toISOString() });
+}
+
 function week(usedSoFar: number, recent = 0): void {
-  app.db.query("DELETE FROM usage").run();
-  spend(100, new Date(NOW.getTime() - 4 * DAY));
-  noteLimit(app.db, sub, {
-    window: "week",
-    resetsAt: new Date(NOW.getTime() - 3.5 * DAY).toISOString(),
-    observedAt: new Date(NOW.getTime() - 3.5 * DAY - 3_600_000).toISOString(),
-    said: "weekly limit",
-  });
-  if (usedSoFar - recent > 0) spend(usedSoFar - recent, new Date(NOW.getTime() - DAY));
+  measure(sub, usedSoFar);
   // The meter read `recent` points higher an hour ago: that is the burn, an hour. Zero is a flat meter.
-  if (recent > 0) spend(recent, new Date(NOW.getTime() - 3_600_000));
   seedReading(sub, 100 - usedSoFar + recent);
   forgetWeek();
 }
@@ -180,30 +176,21 @@ test("a fast afternoon slows the crew at once, on a week whose total is on pace"
   expect(repoPace(app, repo, NOW).reason).toContain("running out about");
 });
 
-test("with no known weekly cap the pace is unknown and the crew holds at a modest level", () => {
-  app.db.query("DELETE FROM subscription_limit").run();
-  app.db.query("DELETE FROM usage").run();
+test("with no measurement of the week the pace is unknown and the crew holds at a modest level", () => {
+  app.db.query("DELETE FROM subscription_measure").run();
   forgetWeek();
   expect(weekWords(app, NOW)).toContain("pace is unknown");
   expect(String(weekLine(app, NOW))).toContain("pace is unknown");
   expect(repoPace(app, repo, NOW).slots).toBe(2);
 });
 
-test("a crew on the forge's own token is metered: today's numbers, read through the ledger, slow it", () => {
+test("a crew on the forge's own token is metered: today's numbers, read from the provider's measure, slow it", () => {
   // The cause of #8873: no grant meant no account, no week, no pacing.
   app.db.query("DELETE FROM subscription_grant").run();
   app.db.query("DELETE FROM usage").run();
   try {
-    const at = (days: number) => new Date(NOW.getTime() + days * DAY);
-    const onPlatform = (usd: number, when: Date) => {
-      const run = createRun(app.db, { repoId: repo.id, kind: "agent" });
-      recordUsage(app.db, { runId: run.id, repoId: repo.id, issueId: null, agentId: null, subscriptionId: "platform", tokensIn: 1, tokensOut: 1, costUsd: usd, wallMs: 1000, outcome: "ok", at: when.toISOString() });
-    };
-    // Last week's limit hit at $100; the reset is 5.3 days off; $54 is spent, $8.1 of it in the last 3 hours: 46% free, 2.7 points an hour.
-    onPlatform(100, at(-2));
-    noteLimit(app.db, "platform", { window: "week", resetsAt: at(-1.7).toISOString(), observedAt: at(-1.7 - 1 / 24).toISOString(), said: "weekly limit" });
-    onPlatform(45.9, at(-1));
-    onPlatform(8.1, new Date(NOW.getTime() - 3_600_000));
+    // The provider measured 54% used; an hour ago the meter read 2.7 points higher.
+    measure("platform", 54);
     seedReading("platform", 46 + 2.7);
     forgetWeek();
     const pace = repoPace(app, repo, NOW);
@@ -233,13 +220,14 @@ test("readWeek stores a reading of the meter, so the burn is not seeded by hand 
   const rows = app.db.query("SELECT scope, free_pct FROM week_reading").all() as { scope: string; free_pct: number }[];
   expect(rows).toEqual([{ scope: sub, free_pct: 70 }]);
   // Read an hour on, 4 points lower: the burn is that fall, from the two stored readings.
-  spend(4, new Date(NOW.getTime() + 3_600_000));
+  measure(sub, 34, new Date(NOW.getTime() + 3_600_000));
   forgetWeek();
   expect(weekWords(app, new Date(NOW.getTime() + 3_600_000))).toContain("burning 4% an hour");
 });
 
 test("home reads the repository the crew works, not the first by name", async () => {
   week(20);
+  spend(1, new Date(NOW.getTime() - DAY));
   const quiet = await createRepo(app, alice, { name: "aaa-quiet", visibility: "private" });
   if (!quiet.ok) throw new Error(String(quiet.error));
   expect(addToCrew(app, alice, quiet.value, "builderbot").ok).toBe(true);
@@ -251,4 +239,24 @@ test("home reads the repository the crew works, not the first by name", async ()
   expect(words).toContain("Nothing has landed this week");
   expect(words).not.toContain("(0 runs");
   expect(words).toMatch(/\(\d+ runs/);
+});
+
+test("a week that fell 8 points in 3 hours slows the picks; a flat meter does not (#8960)", () => {
+  const threeHoursAgo = new Date(NOW.getTime() - 3 * 3_600_000).toISOString();
+  const readAt = (freePct: number) => {
+    app.db.query("DELETE FROM week_reading").run();
+    app.db.query("INSERT INTO week_reading (scope, at, free_pct) VALUES (?1, ?2, ?3)").run(sub, threeHoursAgo, freePct);
+    forgetWeek();
+  };
+  // 3 hours ago the provider read 8 points more free than it does now: 8/3 points an hour, over an hour allowed 0.7.
+  measure(sub, 60);
+  readAt(48);
+  const falling = repoPace(app, repo, NOW);
+  expect(falling.slots < 4).toBe(true);
+  expect(falling.reason).toContain("2.7% an hour");
+  // The same measure, unmoved over the same 3 hours: 0% an hour, no slowing.
+  readAt(40);
+  const flat = repoPace(app, repo, NOW);
+  expect(flat.slots).toBe(4);
+  expect(weekWords(app, NOW)).toContain("burning 0% an hour");
 });

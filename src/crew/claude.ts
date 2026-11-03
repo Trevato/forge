@@ -12,6 +12,7 @@
  * settings files of the operator's, a spend budget, and a deadline.
  */
 
+import { measureOf, type Measure } from "../core/measure.ts";
 import { BACKGROUND_CPU_WEIGHT, backgroundArgv, crewCpus } from "../apps/background.ts";
 import { cgroupHost, openCellCgroup, tryEnterArgv } from "../apps/cgroup.ts";
 import { join } from "node:path";
@@ -51,6 +52,8 @@ export interface ClaudeInput {
    * for this invocation, never deltas.
    */
   readonly onUsage?: ((spent: Spent) => void) | undefined;
+  /** The provider's measurement of a window, each time the session reports one (#8960). */
+  readonly onMeasure?: ((measure: Measure) => void) | undefined;
   /**
    * Talks to the forge through MCP alone (#7651): no file or shell tools, no
    * clone, the one server named in `config` (`--mcp-config` JSON) allowed.
@@ -361,6 +364,11 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     if (typeof e["session_id"] === "string" && sessionId === "") {
       sessionId = e["session_id"];
       input.onSession?.(sessionId);
+    }
+    if (type === "rate_limit_event") {
+      const measure = measureOf(e, new Date());
+      if (measure !== undefined) input.onMeasure?.(measure);
+      return;
     }
     if (type === "system") {
       if (e["subtype"] === "init")

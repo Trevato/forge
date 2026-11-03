@@ -465,6 +465,25 @@ An open vision pull's page shows, to an admin of the repository, "Direction afte
 
 The same read is a second door: the MCP `vision` tool takes an optional `number`, and for an admin returns `preview` (`{ today, after }`, or `{ why }` the direction would stay) for that open vision pull, plus `directionParts` (the direction cut into `vision` and `owner` parts). The terminal (TUI) has no such view; it is not touched by this change.
 
+## The weekly pace reads the provider's measure (#8960)
+
+The pacer decides from the percent of the week the provider reports as used
+(`subscription_measure`, noted from the session's `rate_limit_event`) against
+the share of the week's time gone. No dollar cap is inferred. Its burn per
+hour is the fall of that percent between successive readings, so a meter that
+has not moved reads 0% an hour. With no measure (never reported, or its week
+has reset) the sentence says the pace is unknown and the crew holds at a
+modest level; it is never off. `crew.concurrency` is not lowered in the
+repository (the chart and `capacity.ts` defaults are the ceiling); pacing is
+what slows the crew now.
+
+An admin sees the measure in `usage` (the MCP tool and the usage page): each
+subscription's `headroom` lists the window's percent free and its reset, taken
+from the provider's measure while its window is open, else inferred from the
+ledger. The terminal reads the same `readForgeUsage`: the Usage screen prints
+each subscription's `week 38%, 5h 80%` line, and the forge usage block
+`week 38% free`; home and the dashboard print the pace sentence.
+
 ## What the pace limits (#8962)
 
 The week's pace (`src/crew/week.ts`) limits only the crew's own picks: the

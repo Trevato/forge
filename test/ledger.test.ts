@@ -3,6 +3,7 @@
  * ship or show, try again or stop — each with a rule underneath and a fake
  * decider on top, and each written down with what came of it.
  */
+import { quietWeek } from "./helpers/week-quiet.ts";
 import { seatAs } from "./helpers/seat.ts";
 import { beforeAll, afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -78,6 +79,7 @@ describe("the decision ledger", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-ledger-"));
     app = createApp({ dataDir, port: 0, decider });
+    quietWeek(app.db);
     servers = await serve(app);
     const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
