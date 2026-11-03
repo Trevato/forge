@@ -33,10 +33,12 @@ const addPull = (title: string, head: string) => {
     .run(made.value.id, `h-${head}`, head);
   return made.value;
 };
+// Ids rise with each call: the list reads the greatest id per pull as the latest run.
+let runSeq = 0;
 const run = (issueId: string, oid: string, state: string) =>
   app.db
     .query("INSERT INTO run (id, repo_id, kind, issue_id, commit_oid, state) VALUES (?, ?, 'check', ?, ?, ?)")
-    .run(`zzzz-${crypto.randomUUID()}`, repoId, issueId, oid, state);
+    .run(`zzzz-${String(++runSeq).padStart(6, "0")}`, repoId, issueId, oid, state);
 let userId = "";
 
 beforeAll(async () => {

@@ -241,7 +241,7 @@ export function issueRoutes(router: Router<Handler>): void {
     });
     const labelled = timePhase(ctx.request, "labels", () => withLabels(ctx, issue));
     return timePhase(ctx.request, "render", () =>
-      json({
+      tagged(ctx.request, JSON.stringify({
         ...labelled,
         ...(issue.kind === "pull"
           ? {
@@ -253,7 +253,7 @@ export function issueRoutes(router: Router<Handler>): void {
         commentsTotal: total,
         commentsNext: shown.length > 0 && shown.length < total ? shown[0]!.id : null,
         ...(asked === null ? {} : { commentCount: total }),
-      }),
+      })),
     );
   });
 
