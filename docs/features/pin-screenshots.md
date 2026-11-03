@@ -12,6 +12,7 @@ A build pin can keep curated screenshots: PNG, JPEG or WebP pictures, in order, 
   - Every write may carry `at`, the `tree` it was read from (the `at` query parameter on DELETE); a list changed since answers 409 `moved`. Two writers racing without `at` still cannot both win: the loser gets `moved`.
   - `GET /:owner/:name/builds/:label/shots/:file` serves the picture (immutable when `?v=` matches).
 - **Terminal.** **Builds** → `s` on a pin lists its screenshots; a writer has `p` pick from the forge's pictures of that commit, `c` caption, `u`/`d` move, `x` remove. Upload is the API's: a terminal has no file of yours to send.
+- **Forks.** A fork starts with its parent's pins, covers and screenshots as they are at the fork (`refs/builds`, `refs/covers`, `refs/shots`). Pins and screenshots added upstream later are not synced. A fork whose pin refs cannot be copied is not made, and leaves nothing behind.
 - **Live.** Every change emits `build.shots` (`added`, `picked`, `moved`, `captioned`, `removed`), read by the repository's readers.
 
-Left out: a gallery page, the demo/arcade side of Jay Moran's port, copying `refs/shots` into forks, activity wording for `build.shots`.
+Left out: a gallery page, the demo/arcade side of Jay Moran's port, activity wording for `build.shots`.

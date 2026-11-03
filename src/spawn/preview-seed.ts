@@ -401,7 +401,7 @@ async function seedForkFamily(app: App, admin: User, repo: Repo, first: string):
       files: [{ path: `${owner}.md`, content: `# ${owner}\n\nA change of its own.\n` }],
     });
     if (!commit.ok) return err(`the commit of ${owner}: ${JSON.stringify(commit.error)}`);
-    const pin = await pinBuild(app, person.value, fork.value, { label: "try-1", oid: commit.value.commitOid, note: `${owner}, first try` });
+    const pin = await pinBuild(app, person.value, fork.value, { label: `${owner}-try-1`, oid: commit.value.commitOid, note: `${owner}, first try` });
     if (!pin.ok) return err(`the pin of ${owner}: ${JSON.stringify(pin.error)}`);
   }
   const home = getRepo(app.db, admin.username, PREVIEW_REPO);

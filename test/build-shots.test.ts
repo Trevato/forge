@@ -7,7 +7,7 @@
  * nothing.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,13 +15,14 @@ import { createApp, type App } from "../src/app.ts";
 import { deletePin, pinBuild } from "../src/actions/builds.ts";
 import { pickShots, uploadShot } from "../src/actions/build_shots.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp, getAppByRepo } from "../src/core/apps.ts";
 import { recordLook, type Look } from "../src/core/looks.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
-import { repoDir } from "../src/git/repos.ts";
+import { storeCover } from "../src/git/builds.ts";
+import { forkBareRepo, repoDir } from "../src/git/repos.ts";
 import { readShots, SHOT_MAX } from "../src/git/shots.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { eventVerb } from "../src/design/activity.ts";
@@ -358,6 +359,37 @@ describe("pin screenshots", () => {
     expect((await shots()).items).toEqual([]);
     expect((await pinBuild(app, alice, repo, { label: "v1", oid })).ok).toBe(true);
     expect((await shots()).items).toEqual([]);
+  });
+  test("a fork copies a pin's refs/builds, refs/covers and refs/shots", async () => {
+    expect((await storeCover(dir(), "v1", PNG(4))).ok).toBe(true);
+    const up = await uploadShot(app, alice, repo, "v1", PNG(5), "kept");
+    expect(up.ok).toBe(true);
+    const forked = await forkRepo(app, alice, repo, "karts-fork");
+    if (!forked.ok) throw new Error(String(forked.error));
+    const forkDir = repoDir(app.reposRoot, "alice", "karts-fork");
+    const refs = (d: string, p: string) =>
+      new TextDecoder()
+        .decode(Bun.spawnSync(["git", "for-each-ref", "--format=%(refname) %(objectname)", p], { cwd: d, env: gitClientEnv() }).stdout)
+        .trim();
+    for (const p of ["refs/builds/", "refs/covers/", "refs/shots/"]) {
+      expect(refs(dir(), p)).not.toBe("");
+      expect(refs(forkDir, p)).toBe(refs(dir(), p));
+    }
+    expect((await readShots(forkDir, "v1")).items.length).toBeGreaterThan(0);
+  });
+
+  test("a fork whose pin refs cannot be copied is removed, so a second try finds a free place", async () => {
+    const bad = join(dataDir, "bad-parent.git");
+    Bun.spawnSync(["git", "clone", "--bare", dir(), bad], { env: gitClientEnv() });
+    // A pin ref naming an object the parent does not hold: the fetch fails.
+    mkdirSync(join(bad, "refs", "shots"), { recursive: true });
+    writeFileSync(join(bad, "refs", "shots", "ghost"), "1234567890123456789012345678901234567890\n");
+    const target = join(dataDir, "bad-fork.git");
+    expect((await forkBareRepo(bad, target)).ok).toBe(false);
+    expect(await Bun.file(join(target, "HEAD")).exists()).toBe(false);
+    expect(existsSync(target)).toBe(false);
+    rmSync(join(bad, "refs", "shots", "ghost"));
+    expect((await forkBareRepo(bad, target)).ok).toBe(true);
   });
 });
 
