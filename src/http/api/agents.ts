@@ -17,6 +17,7 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import type { User } from "../../core/users.ts";
 import { agentJson } from "../api.ts";
 import type { Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { body, json, requireAccount, respondAccess, str } from "../respond.ts";
 import type { Router } from "../router.ts";
 
@@ -26,7 +27,7 @@ export function agentRoutes(router: Router<Handler>): void {
     const agents = timePhase(ctx.request, "agents", () => listAllAgents(ctx.app, ctx.auth.user));
     if (!agents.ok) return respondAccess(agents.error, 401);
     return timePhase(ctx.request, "render", () =>
-      json({
+      tagged(ctx.request, ctx.auth.user, {
         items: agents.value.map((a) => agentFor(a, ctx.auth.user)),
         next_cursor: null,
       }));
@@ -60,7 +61,7 @@ export function agentRoutes(router: Router<Handler>): void {
     if (!agent.ok) return respondAccess(agent.error, 404);
     const view = agent.value;
     return timePhase(ctx.request, "render", () =>
-      json(agentFor(view, ctx.auth.user)),
+      tagged(ctx.request, ctx.auth.user, agentFor(view, ctx.auth.user)),
     );
   });
 
@@ -111,4 +112,17 @@ export function agentFor(agent: Agent, viewer: User | undefined) {
     displayName: agent.user.displayName,
     createdAt: agent.createdAt,
   };
+}
+
+/**
+ * A read answer with a weak ETag from its bytes and the viewer, so a repeat
+ * holding it costs a 304 and one viewer's tag never matches another's. Any
+ * change to an agent changes what it shows, so the tag moves with it.
+ */
+function tagged(request: Request, viewer: User | undefined, data: unknown): Response {
+  const text = JSON.stringify(data);
+  const etag = weakEtag(`${viewer?.id ?? ""}\n${text}`);
+  const headers = { etag, "cache-control": "private", vary: "authorization, cookie" };
+  if (holds(request, etag)) return new Response(null, { status: 304, headers });
+  return json(data, 200, headers);
 }
