@@ -27,6 +27,7 @@ import { sshCloneUrl } from "../../ssh/command.ts";
 import { type RepoSource, type SourceError, sourceFor } from "../../view/source.ts";
 import { connectMessage, contributeFailure, contributionJson, editFilesFrom, jobJson, keyedPage, keyedWindow, loadRepo, oauthCallbackUri, originFacts, originJson, remoteRepoJson } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { clientAddress } from "../peer.ts";
 import { apiError, body, json, notFound, publicProfile, publicUser, requireAccount, requireScope, respondAccess, str, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
@@ -757,7 +758,16 @@ export function userRoutes(router: Router<Handler>): void {
       }
       return out;
     });
-    return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
+    // Tagged by its own bytes: a retitle, a close or an assignment changes
+    // them, and the viewer's own list is all they cover. Only reached with
+    // a session or a token of `ro` or more.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({ items, next_cursor: null });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   // The first three steps on a spawned forge, as MCP `next_steps`: empty
