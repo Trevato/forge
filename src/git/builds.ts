@@ -66,19 +66,6 @@ export interface Demo {
   readonly cover?: string | undefined;
 }
 
-/**
- * How a demo opens: its pin's `Launch:`, else the repository's
- * `app.launch`, else `file` when the app names pages to play and `env`
- * when it names none.
- */
-export function launchOf(
-  demo: Pick<Demo, "launch"> | undefined,
-  appLaunch: Launch | undefined,
-  pages: readonly string[],
-): Launch {
-  return demo?.launch ?? appLaunch ?? (pages.length > 0 ? "file" : "env");
-}
-
 export const COVERS_PREFIX = "refs/covers/";
 
 /** A demo fact: one plain line, at most `max` characters. */
