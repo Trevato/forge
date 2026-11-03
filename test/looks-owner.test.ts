@@ -135,6 +135,7 @@ describe("the preview seed", () => {
     expect(bets).toEqual([
       ["Show the week", "backed", 20],
       ["Price the list", "proposed", 20],
+      ["Make every long and winding bet name wrap instead of pushing the page sideways", "proposed", 20],
     ]);
 
     // The sample account that prices the week has no grant, so no run or

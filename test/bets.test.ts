@@ -579,3 +579,32 @@ describe("a proposed bet is one card backed with one tap", () => {
     expect(shown).toContain("5 bets already run");
   });
 });
+
+describe("a proposed bet card stays one screen tall (#8970)", () => {
+  const card = async (journeys: string) => {
+    app.db.query("DELETE FROM bet WHERE repo_id = ?1").run(repo.id);
+    const cookie = await signIn("alice");
+    const b = fresh2("Many");
+    app.db.query("UPDATE bet SET journeys = ?1 WHERE id = ?2").run(journeys, b.id);
+    return await (await fetch(`${servers.url}/alice/notes/bets`, { headers: { cookie } })).text();
+  };
+  test("three journeys at rest; the rest sit inside a details that names them", async () => {
+    const out = await card("j1\nj2\nj3\nj4\nj5");
+    expect(out).toContain("data-bet-card");
+    const [rest, folded] = out.split(/<details>\s*<summary>2 more journeys<\/summary>/);
+    expect(folded).toBeDefined();
+    for (const j of ["j1", "j2", "j3"]) expect(rest).toContain(`<li>${j}</li>`);
+    for (const j of ["j4", "j5"]) {
+      expect(rest).not.toContain(`<li>${j}</li>`);
+      expect(folded!.split("</details>")[0]).toContain(`<li>${j}</li>`);
+    }
+  });
+  test("three or fewer journeys have no disclosure", async () => {
+    const out = await card("j1\nj2\nj3");
+    expect(out).toContain("<li>j3</li>");
+    expect(out).not.toMatch(/more journeys?</);
+  });
+  test("one folded journey reads in the singular", async () => {
+    expect(await card("j1\nj2\nj3\nj4")).toContain("1 more journey</summary>");
+  });
+});

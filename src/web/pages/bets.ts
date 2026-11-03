@@ -71,6 +71,9 @@ function oneButton(repo: Repo, b: Bet, verb: string, label: string, variant: "da
   return html`<form method="post" action="${post(repo, b, verb)}">${btn(label, { variant })}</form>`;
 }
 
+/** Journeys shown at rest; the rest sit behind a disclosure so the card stays one screen tall. */
+const SHOWN_JOURNEYS = 3;
+
 /**
  * A proposed bet as one card for the owner: name, journeys, its issues as a
  * count that opens the list, and one button that backs it at the proposed
@@ -87,8 +90,10 @@ function proposedCard(ctx: Ctx, repo: Repo, b: Bet, backed: readonly Bet[]): Htm
         <ul>${scopes.map((s) => html`<li><a href="${repoBase(repo)}/issues/${s.number}">#${s.number} ${s.title}</a></li>`)}</ul>
       </details>`;
   return card(
-    html`<h2><a href="${betHref(repo, b.id)}">${b.name}</a></h2>
-      ${journeys.length === 0 ? null : html`<ul>${journeys.map((j) => html`<li>${j}</li>`)}</ul>`}
+    html`<div data-bet-card><h2><a href="${betHref(repo, b.id)}">${b.name}</a></h2>
+      ${journeys.length === 0 ? null : html`<ul>${journeys.slice(0, SHOWN_JOURNEYS).map((j) => html`<li>${j}</li>`)}</ul>`}
+      ${journeys.length <= SHOWN_JOURNEYS ? null : html`<details><summary>${journeys.length - SHOWN_JOURNEYS} more ${journeys.length - SHOWN_JOURNEYS === 1 ? "journey" : "journeys"}</summary>
+        <ul>${journeys.slice(SHOWN_JOURNEYS).map((j) => html`<li>${j}</li>`)}</ul></details>`}
       ${issues}
       <form method="post" action="${post(repo, b, "back")}">
         <input type="hidden" name="share" value="${String(b.appetite)}">
@@ -96,7 +101,7 @@ function proposedCard(ctx: Ctx, repo: Repo, b: Bet, backed: readonly Bet[]): Htm
         ${why === null ? null : html`<p class="muted" role="note">${why[0]!.toUpperCase() + why.slice(1)}.</p>`}
       </form>
       <details class="mt"><summary>Change the share</summary>${backForm(repo, b, "Back it")}</details>
-      <div class="mt">${oneButton(repo, b, "cut", "Cut it", "danger")}</div>`,
+      <div class="mt">${oneButton(repo, b, "cut", "Cut it", "danger")}</div></div>`,
   );
 }
 

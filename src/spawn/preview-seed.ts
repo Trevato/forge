@@ -346,13 +346,13 @@ async function seedWave(app: App, admin: User, repo: Repo, pullTitle: string): P
 
 /** One bet backed at 20% of the week and one proposed, over the open issues. */
 function seedBets(app: App, admin: User, repo: Repo, open: readonly Issue[]): Result<void, string> {
-  const bet = (name: string, from: number) =>
+  const bet = (name: string, from: number, journeys = "Someone can see it") =>
     insertBet(
       app.db,
       {
         repoId: repo.id,
         name,
-        journeys: "Someone can see it",
+        journeys,
         appetite: 20,
         leadId: null,
         issueIds: open.slice(from, from + 2).map((i) => i.id),
@@ -361,6 +361,12 @@ function seedBets(app: App, admin: User, repo: Repo, open: readonly Issue[]): Re
     );
   const backed = bet("Show the week", 2);
   bet("Price the list", 4);
+  // The worst case for the phone: a long name, an unbroken word, more journeys than fit at rest (#8970).
+  bet(
+    "Make every long and winding bet name wrap instead of pushing the page sideways",
+    0,
+    ["Someone opens https://example.com/a/very/long/unbroken/address/that/has/no/spaces/at/all/anywhere", "Second journey", "Third journey", "Fourth journey", "Fifth journey"].join("\n"),
+  );
   const result = backBet(app, admin, repo, backed.id, 20);
   return result.ok ? ok() : err(`backing a bet: ${result.error.message}`);
 }
