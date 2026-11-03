@@ -1,10 +1,11 @@
 /**
  * The looks every preview of the forge takes as its owner (#8974): home
  * with its pins, /flow, the seeded repository's head, its pull's page and
- * its Iterations page (#9182) and the Later gate's proposal (#9212), each
- * at desk and phone width. The looks service adds them to whatever
- * forge.json lists for a preview of the forge's own repository
- * (`FORGE_REPO`), so no edit of forge.json can drop one.
+ * its Iterations page (#9182), the Later gate's proposal (#9212), its
+ * milestones (#9326) and its waves (#9325), each at desk and phone width.
+ * The looks service adds them to whatever forge.json lists for a preview
+ * of the forge's own repository (`FORGE_REPO`), so no edit of forge.json can
+ * drop one.
  *
  * Plain data and no imports beyond a type: the seed (`preview-seed.ts`)
  * makes what these pages show, and the looks service reads the list.
@@ -43,6 +44,9 @@ export const PREVIEW_FORKS: readonly { readonly owner: string; readonly of?: str
 
 /** The owner's bets page, whose seeded proposed bets hold the long-name worst case (#9275). */
 export const PREVIEW_BETS_PAGE = `${PREVIEW_REPO_HOME}/bets`;
+
+/** The owner's milestones page, seeded with one milestone; its phone look shows the fit (#9326). */
+export const PREVIEW_MILESTONES_PAGE = `${PREVIEW_REPO_HOME}/milestones`;
 
 /** The waves page, whose long headlines must wrap at a 390 px phone (#9325). */
 export const PREVIEW_WAVES_PAGE = `${PREVIEW_REPO_HOME}/waves`;
@@ -86,6 +90,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_ITERATIONS_PAGE,
   PREVIEW_HELD_PAGE,
   PREVIEW_BETS_PAGE,
+  PREVIEW_MILESTONES_PAGE,
   PREVIEW_WAVES_PAGE,
   PREVIEW_PULLS_PAGE,
   PREVIEW_ISSUES_PAGE,
