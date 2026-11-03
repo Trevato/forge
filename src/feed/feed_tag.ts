@@ -31,6 +31,8 @@ export function feedTag(
     readonly cursor: string | null;
     readonly limit: number | null;
     readonly now?: number;
+    /** The viewer's last visit to `/`, which the first page's digest is cut from. */
+    readonly visit?: number | undefined;
   },
 ): string | undefined {
   const stamp = writeStamp(db);
@@ -44,6 +46,8 @@ export function feedTag(
     input.limit ?? "",
     stamp,
     Math.floor(now / TAG_BUCKET_MS),
+    // Only the first page carries a digest, and the digest reads the last visit.
+    input.cursor === null ? (input.visit ?? "") : "",
   ];
   return `W/"${Bun.hash(JSON.stringify(parts)).toString(36)}"`;
 }

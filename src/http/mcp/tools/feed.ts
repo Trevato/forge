@@ -1,7 +1,6 @@
 import { FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX, parseCursor, readFeed } from "../../../feed/feed.ts";
 import { CURSOR_NOT_ISSUED } from "../../../actions/feed_words.ts";
-import { lastVisit } from "../../../core/home_visit.ts";
-import { sinceDigest } from "../../../web/studio/since.ts";
+import { feedDigest } from "../../../web/studio/since.ts";
 import { good, bad, type Tool, CHIP_ARGS, chipArgs, str } from "../shared.ts";
 
 export const tool: Tool = {
@@ -34,6 +33,6 @@ export const tool: Tool = {
       ...(chips === undefined ? {} : { chips }),
       ...(cursor === undefined ? {} : { cursor }),
     });
-    return good({ ...page, ...(cursor === undefined ? { digest: sinceDigest(ctx.app.db, user, lastVisit(ctx.app.db, user.id), Date.now()) ?? null } : {}) });
+    return good({ ...page, ...(cursor === undefined ? { digest: feedDigest(ctx.app.db, user, Date.now()) } : {}) });
   },
 };
