@@ -61,6 +61,11 @@ a failure names the bytes over and the longest descriptions.
   `instructions` say once that a tool with `dryRun` plans unless it is `false`.
 - The ceiling is the owner's: never raise it in a feature pull.
 
+`flow` with `{ kind: "bugs" }` is such a door (#8973): `{ open, overdue, bugs }`,
+each bug `{ repo, number, priority, dueAt }`, soonest due first, at most 100,
+from `src/flow/bugs.ts`. An admin sees every repository; anyone else only
+public ones, as the terminal's bugs screen does.
+
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.
 
