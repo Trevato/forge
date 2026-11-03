@@ -106,6 +106,8 @@ import { watchMilestone } from "../actions/watches.ts";
 import { THOUGHT_MAX, keepThought } from "../actions/thought.ts";
 import { search, searchRefusal, searchWithin, type SearchPhase } from "../actions/search.ts";
 import { runRepos } from "./run_gate.ts";
+import { writeStamp } from "../core/write_clock.ts";
+import { listChildren } from "../actions/spawn.ts";
 import {
   commitToBranch,
   createRepo,
@@ -317,6 +319,7 @@ import {
 } from "./respond.ts";
 import {
   explorePage,
+  cursorFits,
   type ExploreRow,
   exploreLine,
   exploreNote,
@@ -3210,13 +3213,34 @@ export function apiRoutes(router: Router<Handler>): void {
         : (row: ExploreRow) =>
             row.repo !== undefined &&
             mine.some((r) => r.ownerName.toLowerCase() === row.repo!.owner.toLowerCase() && r.name.toLowerCase() === row.repo!.name.toLowerCase());
+    // The tag names the line, the cursor, the viewer and the forge's write clock
+    // (which moves on any like, fork, push or visibility change), and no clock
+    // for the ranking, so the tag is deterministic. Freshness ranks
+    // drift only by age, so a repeat may keep an order a little behind until
+    // the next write moves the clock. A repeat is answered before the explore
+    // phase runs, and only for a cursor that parses (`*` must not hide a 400).
+    const stamp = writeStamp(ctx.app.db);
+    let headers: Record<string, string> = {};
+    const cursor = ctx.url.searchParams.get("cursor");
+    if (cursor !== null && !cursorFits(cursor, query))
+      return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
+    if (stamp !== undefined) {
+      const viewer = ctx.auth.user === undefined ? "anonymous" : `${ctx.auth.user.id}${ctx.auth.user.isAdmin ? ":admin" : ""}`;
+      const confined = mine === undefined ? "" : mine.map((r) => r.id).join(",");
+      const children = ctx.auth.user?.isAdmin === true ? JSON.stringify((await listChildren(ctx.app)).map((c) => [c.name, c.done])) : "";
+      const etag = weakEtag(
+        [exploreLine(query), cursor ?? "", viewer, confined, stamp, children].join("\n"),
+      );
+      headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    }
     const page = await timePhaseAsync(ctx.request, "explore", () =>
-      explorePage(ctx.app, ctx.auth.user, query, ctx.url.searchParams.get("cursor"), visible),
+      explorePage(ctx.app, ctx.auth.user, query, cursor, visible),
     );
     if (page === null)
       return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
     const items = page.items;
-    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), items, next_cursor: page.nextCursor }));
+    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), items, next_cursor: page.nextCursor }, 200, headers));
   });
 
   // Make it yours (#606): a fork with its app, planned unless dryRun is

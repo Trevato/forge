@@ -291,6 +291,9 @@ function writeCursor(row: ExploreRow, query: ExploreQuery): string {
   return Buffer.from(JSON.stringify(place)).toString("base64url");
 }
 
+/** Whether `cursor` is one for this query, answered without reading any rows. */
+export const cursorFits = (cursor: string, query: ExploreQuery): boolean => readCursor(cursor, query) !== null;
+
 /** The place a cursor names, undefined never; null when it is not one for this query. */
 function readCursor(cursor: string, query: ExploreQuery): Place | null {
   if (cursor.length > CURSOR_MAX || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null;
