@@ -11,6 +11,7 @@
  */
 
 import { isIP } from "node:net";
+import { isLaunch, LAUNCHES, type Launch } from "../git/builds.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { parseService, type ServiceSpec } from "./service.ts";
 import type { DeclaredLimits } from "./contain.ts";
@@ -39,6 +40,17 @@ export interface AppManifest {
    * before this field existed.
    */
   readonly looks: readonly string[];
+  /**
+   * `app.pages`: the pages a person plays or downloads, each a path the app
+   * serves as one self-contained page (`"/"`, `"/spicy"`). Empty or unset
+   * when the manifest names none.
+   */
+  readonly pages?: readonly string[] | undefined;
+  /**
+   * `app.launch`: how this repository's demos open unless a pin says
+   * otherwise (`launchOf`). Unset follows `launchOf`.
+   */
+  readonly launch?: Launch | undefined;
   /**
    * `app.looksAsOwner`: the pages of `looks` whose phone and desktop
    * pictures are taken signed in as the owner, even of a public app —
@@ -149,6 +161,11 @@ export function parseManifest(
     );
   const looks = looksField(app);
   if (!looks.ok) return looks;
+  const pages = pagesField(app);
+  if (!pages.ok) return pages;
+  const launch = app["launch"];
+  if (launch !== undefined && !isLaunch(launch))
+    return invalid(`forge.json: app.launch must be one of ${LAUNCHES.map((l) => `"${l}"`).join(", ")}`);
   const looksAsOwner = looksAsOwnerField(app, looks.value);
   if (!looksAsOwner.ok) return looksAsOwner;
   const egress = egressField(parsed.value);
@@ -184,6 +201,8 @@ export function parseManifest(
     tty: tty.value || null,
     looks: looks.value,
     looksAsOwner: looksAsOwner.value,
+    pages: pages.value,
+    ...(launch === undefined ? {} : { launch }),
     service,
     egress: egress.value,
     limits: limits.value,
@@ -266,6 +285,23 @@ function limitsField(
     out[rule.key] = raw;
   }
   return ok(out);
+}
+
+/** How many pages a manifest may offer to play. */
+export const PAGES_MAX = 20;
+
+function pagesField(app: Json): Result<readonly string[], ManifestError> {
+  const value = app["pages"];
+  if (value === undefined) return ok([]);
+  if (!Array.isArray(value) || value.length > PAGES_MAX)
+    return invalid(`forge.json: app.pages must be an array of at most ${PAGES_MAX} paths`);
+  const paths: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !/^\/[A-Za-z0-9._-]*(\/[A-Za-z0-9._-]+)*$/.test(item) || item.length > 120 || item.includes(".."))
+      return invalid('forge.json: app.pages entries are paths like "/" or "/spicy": letters, digits, dot, dash, underscore');
+    if (!paths.includes(item)) paths.push(item);
+  }
+  return ok(paths);
 }
 
 /**

@@ -135,6 +135,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "build.pinned",
   "build.deleted",
   "build.noted",
+  "build.demo",
   // A pin's screenshots are read by its repository's readers (`actions/build_shots.ts`).
   "build.shots",
   "invite.used",
