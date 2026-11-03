@@ -1188,11 +1188,20 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
     if (query instanceof Response) return query;
+    const owned = { ...query, owner: user.username };
+    const marker = timePhase(ctx.request, "tag", () => visibleReposMarker(ctx.app.db, ctx.auth.user, owned));
+    const viewer = ctx.auth.user === undefined ? "anon" : `u${Bun.hash(ctx.auth.user.id).toString(36)}`;
+    const headers = {
+      etag: `W/"user-repos-${Bun.hash(`${user.id}|${viewer}|${query.limit}|${query.cursor ?? ""}|${marker}`).toString(36)}"`,
+      "cache-control": "private, no-cache",
+      vary: "authorization, cookie",
+    };
+    if (holds(ctx.request, headers.etag)) return new Response(null, { status: 304, headers });
     const items = timePhase(ctx.request, "repos", () =>
       listReposByOwner(ctx.app.db, user.username, ctx.auth.user, query),
     );
     return timePhase(ctx.request, "render", () =>
-      json(paged(items, query.limit, (r) => r.id)),
+      json(paged(items, query.limit, (r) => r.id), 200, headers),
     );
   });
 

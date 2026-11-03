@@ -809,6 +809,8 @@ export interface ListReposOptions {
   withoutArchived?: boolean;
   /** Only archived repositories. @default false */
   archivedOnly?: boolean;
+  /** Only this owner's repositories (a username, any case). */
+  owner?: string;
 }
 
 // Visibility in SQL: public, owned, or owned by an org the viewer is on a
@@ -829,6 +831,10 @@ function visibleClause(
 ): { where: string; params: (string | number)[] } {
   const params: (string | number)[] = [viewer?.id ?? ""];
   let where = viewer ? VISIBLE : PUBLIC_VISIBLE;
+  if (options.owner !== undefined) {
+    params.push(options.owner);
+    where += ` AND user.username = ?${params.length} COLLATE NOCASE`;
+  }
   if (options.query !== undefined && options.query.trim() !== "") {
     params.push(`%${likeEscape(options.query.trim())}%`);
     const p = params.length;
@@ -949,29 +955,7 @@ export function listReposByOwner(
   viewer: User | undefined,
   options: ListReposOptions = {},
 ): Repo[] {
-  const params: (string | number)[] = [viewer?.id ?? "", ownerName];
-  let where = `user.username = ?2 COLLATE NOCASE AND ${
-    viewer ? VISIBLE : PUBLIC_VISIBLE
-  }`;
-  if (options.query !== undefined && options.query.trim() !== "") {
-    params.push(`%${likeEscape(options.query.trim())}%`);
-    const p = params.length;
-    where += ` AND (repo.name LIKE ?${p} ESCAPE '\\' COLLATE NOCASE
-      OR user.username LIKE ?${p} ESCAPE '\\' COLLATE NOCASE)`;
-  }
-  if (options.cursor !== undefined) {
-    params.push(options.cursor);
-    where += ` AND repo.id < ?${params.length}`;
-  }
-  if (options.withoutArchived === true) where += " AND repo.archived_at IS NULL";
-  params.push(pageLimit(options.limit));
-  const rows = db
-    .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
-    )
-    .all(...params)
-    .map(toRepo);
-  return withCounts(db, rows);
+  return listReposVisibleTo(db, viewer, { ...options, owner: ownerName });
 }
 
 /**
