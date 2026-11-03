@@ -19,3 +19,7 @@ Open a repository, then the palette (`ctrl+k`) and **Iterations**. The family's 
 ## Over the API
 
 `GET /api/v1/repos/:owner/:name/iterations` answers `{ forks, lanes }` for the viewer: the same forks (each with its pins: label, sha as `oid`, date as `at`, first line of `note`, `parent`), and the same runs the page draws, at most 40 repositories, sharing the 5-second pins cache. A private repository you may not read is a 404; a private fork you may not read is absent; a family with no pin answers 200 with empty lists.
+
+## Over MCP
+
+The `iterations` tool takes `{ owner, name }` and answers the same `{ forks, lanes }` as the route, through the same module and for the same caller: `not_found` for a private repository the caller may not read, empty lists for a family with no pin. It is read-only.
