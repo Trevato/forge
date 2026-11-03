@@ -20,6 +20,17 @@ import { html, type Html } from "../html.ts";
 import { flashOrJson, page } from "../layout.ts";
 import { badge, btn, card, kbd, row } from "../ui.ts";
 
+/**
+ * The owner's issue titles are their own words, so inside `[data-next]` a long
+ * word breaks anywhere, and a row's actions drop under its text (the row asks
+ * for 14rem, not 0) in place of squeezing the title to a sliver at 390 px.
+ * No new class.
+ */
+export const NEXT_CSS = `[data-next] { overflow-wrap: anywhere; }
+[data-next] .list > li.has-after > .row { flex: 1 1 14rem; }
+[data-next] .row-after { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; padding: 0 14px 8px; }
+[data-next] .cut-line { overflow-wrap: anywhere; }`;
+
 export const KEYS_JS = `
 (() => {
   const list = document.getElementById("next-list");
@@ -187,6 +198,7 @@ export function nextPage(ctx: Ctx): Response {
     return out;
   };
   const body = html`${repoHeader(ctx, repo, "issues")}
+    <div data-next>
     <div class="page-head mt">
       <h1>Next up</h1>
       <p class="muted">
@@ -230,13 +242,15 @@ export function nextPage(ctx: Ctx): Response {
             { pad: false },
           )}
         </section>`
-      : null}`;
+      : null}
+    </div>`;
   const response = page({
     ctx,
     title: `Next up · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
+    styleCss: NEXT_CSS,
     ...(writer ? { scriptJs: KEYS_JS } : {}),
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
