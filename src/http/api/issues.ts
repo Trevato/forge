@@ -5,6 +5,7 @@
  * (#7450); the rules live in `actions/issues.ts` and its neighbours.
  */
 
+import { holds, weakEtag } from "../etag.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
 import { confirmIssue, dependencyWords, linkIssue, unlinkIssue } from "../../actions/dependencies.ts";
 import {
@@ -150,9 +151,15 @@ export function issueRoutes(router: Router<Handler>): void {
     const items = timePhase(ctx.request, "labels", () => withLabelsMany(ctx, listed));
     return timePhase(ctx.request, "render", () => {
       const page = paged(items, query.limit, (i) => i.number);
-      return json(
+      const text = JSON.stringify(
         fields === "brief" ? { ...page, items: page.items.map(briefIssue) } : page,
       );
+      // Scoped by who asks (sealed issues), so private to the reader; the tag
+      // is of the exact bytes sent, so each page, state and fields value has its own.
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
     });
   });
 
