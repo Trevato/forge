@@ -1,5 +1,6 @@
 [
   "src/apps/cloud.ts",
+  "src/arcade/cover.ts",
   "src/boards/machine.ts",
   "src/crew/governor_log.ts",
   "src/crew/tries.ts",
