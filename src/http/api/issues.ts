@@ -99,6 +99,18 @@ export async function labelsHandler(ctx: Ctx): Promise<Response> {
   return json(set.value);
 }
 
+/**
+ * A reader-scoped JSON answer tagged by its exact bytes: a repeat holding the
+ * tag gets 304. Callers check access first, so a 304 confirms nothing to
+ * someone who may not read it.
+ */
+function tagged(request: Request, text: string): Response {
+  const etag = weakEtag(text);
+  const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+  if (holds(request, etag)) return new Response(null, { status: 304, headers });
+  return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+}
+
 export function issueRoutes(router: Router<Handler>): void {
   router.add(
     "PUT",
@@ -156,10 +168,7 @@ export function issueRoutes(router: Router<Handler>): void {
       );
       // Scoped by who asks (sealed issues), so private to the reader; the tag
       // is of the exact bytes sent, so each page, state and fields value has its own.
-      const etag = weakEtag(text);
-      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
-      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
-      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+      return tagged(ctx.request, text);
     });
   });
 
@@ -275,10 +284,13 @@ export function issueRoutes(router: Router<Handler>): void {
       );
       const page = older.slice(older.length - Math.min(limit, older.length));
       return timePhase(ctx.request, "render", () =>
-        json({
-          comments: readerMarked(ctx, found.repo.id, page),
-          next: older.length > limit ? page[0]!.id : null,
-        }),
+        tagged(
+          ctx.request,
+          JSON.stringify({
+            comments: readerMarked(ctx, found.repo.id, page),
+            next: older.length > limit ? page[0]!.id : null,
+          }),
+        ),
       );
     }
     const { rows, page } = timePhase(ctx.request, "comments", () => {
@@ -289,10 +301,13 @@ export function issueRoutes(router: Router<Handler>): void {
       return { rows: read, page: read.slice(0, limit) };
     });
     return timePhase(ctx.request, "render", () =>
-      json({
-        comments: readerMarked(ctx, found.repo.id, page),
-        next: rows.length > limit ? page[page.length - 1]!.id : null,
-      }),
+      tagged(
+        ctx.request,
+        JSON.stringify({
+          comments: readerMarked(ctx, found.repo.id, page),
+          next: rows.length > limit ? page[page.length - 1]!.id : null,
+        }),
+      ),
     );
   });
 
