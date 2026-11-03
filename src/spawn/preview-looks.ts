@@ -48,6 +48,9 @@ export const PREVIEW_BETS_PAGE = `${PREVIEW_REPO_HOME}/bets`;
 /** The owner's milestones page, seeded with one milestone; its phone look shows the fit (#9326). */
 export const PREVIEW_MILESTONES_PAGE = `${PREVIEW_REPO_HOME}/milestones`;
 
+/** The search page with a query the seed answers, whose phone look shows the fit (#9351). */
+export const PREVIEW_SEARCH_PAGE = "/search?q=sample";
+
 /** The waves page, whose long headlines must wrap at a 390 px phone (#9325). */
 export const PREVIEW_WAVES_PAGE = `${PREVIEW_REPO_HOME}/waves`;
 
@@ -105,6 +108,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_NEXT_PAGE,
   PREVIEW_COMMITS_PAGE,
   PREVIEW_ISSUES_PAGE,
+  PREVIEW_SEARCH_PAGE,
 ].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));
 
 /**
