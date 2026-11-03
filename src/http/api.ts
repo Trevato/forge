@@ -1795,7 +1795,15 @@ export function apiRoutes(router: Router<Handler>): void {
     const log = await timePhaseAsync(ctx.request, "git", () =>
       commitLog(dirOf(ctx, repo), ref, { limit }),
     );
-    return timePhase(ctx.request, "render", () => json(log.ok ? log.value : []));
+    // The tag is of the exact bytes sent plus the ref and limit asked, so a moved tip
+    // misses, a push to another branch does not, and two queries never share a tag.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify(log.ok ? log.value : []);
+      const etag = weakEtag(`${ref}\n${limit}\n${text}`);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid", async (ctx) => {
