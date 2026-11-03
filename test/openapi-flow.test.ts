@@ -53,3 +53,11 @@ test("the document describes OAuth: authorization code, refresh, and OpenID disc
   const read = Object.values(doc.paths).map((p: any) => p.get).find((op: any) => op?.security);
   expect(read.security).toEqual([{ token: [] }, { oauth2: ["ro"] }]);
 });
+
+test("the served document says the telemetry flow read can be revalidated with a 304", async () => {
+  const doc = (await (await fetch(`${servers.url}/contract/openapi.json`)).json()) as any;
+  const op = doc.paths["/api/v1/telemetry/flow"].get;
+  expect(op.responses["304"]).toBeDefined();
+  expect(op.summary).toContain("cacheable by ETag");
+  expect(op.summary).toContain("If-None-Match");
+});
