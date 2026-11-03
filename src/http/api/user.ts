@@ -184,7 +184,15 @@ export function userRoutes(router: Router<Handler>): void {
     const window = keyedWindow(ctx);
     if (window instanceof Response) return window;
     const keys = timePhase(ctx.request, "keys", () => listKeys(ctx.app.db, user.id));
-    return timePhase(ctx.request, "render", () => json(keyedPage(keys.map(publicKey), (k) => k.id, window)));
+    return timePhase(ctx.request, "render", () => {
+      // The body shows every key and its last use, so a tag over the body (and
+      // the viewer it was rendered for) moves whenever any of them does (#9243).
+      const page = keyedPage(keys.map(publicKey), (k) => k.id, window);
+      const etag = weakEtag(`${user.id}|${JSON.stringify(page)}`);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return json(page, 200, headers);
+    });
   });
   router.add("POST", "/api/v1/user/keys", async (ctx) => {
     const denied = requireScope(ctx, "rw");
