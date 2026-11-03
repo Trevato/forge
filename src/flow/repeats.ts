@@ -68,17 +68,33 @@ export function wordsOf(text: string): string[] {
 export const isLeadIn = (line: string): boolean =>
   line.replace(/^[\s*_]+|[\s*_]+$/g, "").endsWith(":");
 
+const COUNT = /^(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:things?|points?|issues?|fix(?:es)?|notes?)\b/i;
+
+/**
+ * Rule "a count is not a finding" (#9322), beside #8838's: a line that only
+ * counts or orders what follows opens a review and asks for nothing: "Two
+ * things to fix, first one first.", "Three points, one round." It starts with a
+ * number word or digit and things/points/issues/fixes/notes, names no code (no
+ * backtick, no path) and is under 80 characters. "Two tests share a port; give
+ * each its own" is kept: it says what to change.
+ */
+export const isCount = (line: string): boolean => {
+  const bare = line.replace(/^[\s*_]+|[\s*_]+$/g, "");
+  return bare.length < 80 && !bare.includes("`") && !/[\w-]\/[\w-]|\.(?:ts|js|md|json|css)\b/.test(bare) && COUNT.test(bare);
+};
+
 /**
  * The findings in one review body: its list items or lines, each a request.
  * A line that ends in a colon introduces the list that follows ("Smaller
  * points, fix in the same round:"), asks for nothing, and is dropped: as a
- * finding it repeated across every review that used it (#8838).
+ * finding it repeated across every review that used it (#8838). So is a line
+ * that only counts what follows ("Two things to fix, first one first.", #9322).
  */
 export function linesOf(body: string): string[] {
   return body
     .split("\n")
     .map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s+/, "").trim())
-    .filter((l) => l.length >= 12 && !isLeadIn(l))
+    .filter((l) => l.length >= 12 && !isLeadIn(l) && !isCount(l))
     .slice(0, MAX_LINES)
     .map((l) => l.slice(0, MAX_LINE));
 }

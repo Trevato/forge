@@ -10,7 +10,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { promote } from "./helpers/members.ts";
 import { sweepRepeats } from "../src/crew/repeat_checks.ts";
-import { group, linesOf, readRepeats, REPEATS, wordsOf } from "../src/flow/repeats.ts";
+import { dueGroups, group, linesOf, readRepeats, REPEATS, wordsOf } from "../src/flow/repeats.ts";
 import { flowFor } from "../src/system/telemetry.ts";
 import { repeatLines } from "../src/tui/screens/flow.ts";
 
@@ -191,5 +191,30 @@ describe("a lead-in line is not a finding (#8838)", () => {
       expect(linesOf(bare)).toEqual([]);
     // a real ask that merely contains a colon stays
     expect(linesOf("**High:** `flowOnly` is missing from the agent refusal.")).toEqual(["**High:** `flowOnly` is missing from the agent refusal."]);
+  });
+});
+
+describe("a count is not a finding (#9322)", () => {
+  const openers = ["Two things to fix, first one first.", "Two things to fix in one round.", "Two things to fix, one round.", "Two things to fix, in one round."];
+
+  test("linesOf drops a line that only counts what follows, and keeps a request that starts with a count", () => {
+    for (const line of [...openers, "Three points, one round.", "**Two things to fix, first one first.**", "2 issues, both small."])
+      expect(linesOf(line)).toEqual([]);
+    expect(linesOf("Two things to fix, first one first.\n- Escape the user name in the page.")).toEqual(["Escape the user name in the page."]);
+    for (const kept of ["Two tests share a port; give each its own", "Two things in `src/flow/repeats.ts` need a test.", "Two fixes in src/flow/repeats.ts must land together."])
+      expect(linesOf(kept)).toEqual([kept]);
+  });
+
+  test("a week of reviews opening with those lines makes no due group", async () => {
+    const r = await createRepo(app, builder, { name: "counts", visibility: "public" });
+    if (!r.ok) throw new Error(String(r.error));
+    for (const [i, body] of openers.entries()) {
+      const pull = createIssue(app.db, { repoId: r.value.id, authorId: builder.id, title: "work", kind: "pull" });
+      if (!pull.ok) throw new Error(pull.error);
+      app.db
+        .query(`INSERT INTO review (id, issue_id, author_id, state, body, created_at) VALUES (?1, ?2, ?3, 'changes_requested', ?4, ?5)`)
+        .run(crypto.randomUUID(), pull.value.id, reviewer.id, body, new Date(now.getTime() - (i + 1) * 3_600_000).toISOString());
+    }
+    expect(await dueGroups(app.db, r.value.id, now)).toEqual([]);
   });
 });
