@@ -18,6 +18,7 @@
 import { compressBytes, MIN_BYTES, negotiate } from "../http/compress.ts";
 import type { Database } from "bun:sqlite";
 import { getIssue, type Issue } from "../core/issues.ts";
+import { getPull } from "../core/pulls.ts";
 import { mayView } from "../core/sealed.ts";
 import { holdOpen } from "../http/caller.ts";
 import { appHostSuffix } from "./host.ts";
@@ -466,7 +467,19 @@ export function pillWhere(
   where.pull = Number(number);
   const pull = getIssue(db, target.app.repoId, where.pull);
   if (pull === undefined) return where;
-  if (reads && mayView(db, repo, pull, user)) where.title = pull.title;
+  if (!reads || !mayView(db, repo, pull, user)) return where;
+  where.title = pull.title;
+  // How current the preview is: the row's head against the commit it runs. A
+  // signed-in reader only, so a page an anonymous viewer may share never carries it.
+  if (user === undefined) return where;
+  const row = getPull(db, target.app.repoId, where.pull);
+  if (row === undefined) return where;
+  where.state = row.mergedAt !== null ? "merged" : row.state === "closed" ? "closed" : "open";
+  // Only an open pull has a newer push to be behind.
+  if (where.state !== "open") return where;
+  const status = runtime.envStatus?.(target.app, target.env);
+  if (status?.state === "deploying") where.deploying = true;
+  where.behind = status?.state !== "deploying" && status?.commitOid !== undefined && status.commitOid !== row.headOid;
   return where;
 }
 
