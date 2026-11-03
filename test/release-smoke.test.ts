@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { HEAVY_PAGES, smoke } from "../src/release/smoke.ts";
+import { HEAVY_PAGES, forgeMs, smoke } from "../src/release/smoke.ts";
 
 let server: ReturnType<typeof Bun.serve> | undefined;
 afterEach(() => server?.stop(true));
@@ -105,6 +105,31 @@ test("a polled heavy page that is slow once in the watch is asked again and pass
 test("a polled heavy page that is slow twice in a row in the watch fails", async () => {
   const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/explore" && (hit === 2 || hit === 3) ? 300 : 0)), "t", { heavy });
   expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
+});
+
+test("a page slow on the wall clock whose Server-Timing says the forge was quick passes (#9022)", async () => {
+  // Every /explore answer arrives late, but the forge says it spent 5 ms: the delay is the road, not the release.
+  const quick = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "db;dur=1.0, app;dur=5.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], quick, (p) => (p === "/explore" ? 300 : 0)), "t", { heavy });
+  expect(failures).toEqual([]);
+});
+
+test("a page whose Server-Timing says the forge itself was slow still fails", async () => {
+  const slowOwn = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=290.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], slowOwn, (p) => (p === "/explore" ? 300 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
+});
+
+test("a hang is a failure whatever Server-Timing would have said", async () => {
+  const quick = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=5.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], quick, (p, hit) => (p === "/explore" && hit === 1 ? 2_000 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("did not answer"))).toBe(true);
+});
+
+test("forgeMs reads the app entry of Server-Timing, and nothing when there is none", () => {
+  expect(forgeMs(new Response("", { headers: { "server-timing": "db;dur=2.5, app;dur=7.6, render;dur=2.4" } }))).toBe(7.6);
+  expect(forgeMs(new Response("", { headers: { "server-timing": "render;dur=2.4" } }))).toBeUndefined();
+  expect(forgeMs(new Response(""))).toBeUndefined();
 });
 
 test("a hung first load is not asked again", async () => {

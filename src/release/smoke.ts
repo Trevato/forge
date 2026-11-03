@@ -11,11 +11,16 @@
  * must answer 200 within `SLOW_MS`, then polls `/healthz` once a second for
  * `WATCH_MS`, rotating through those pages, and fails naming the page that
  * was slow or failed (#6898: `/readyz` never touches the database, 0.7.277 hung).
+ * An answer slow on the probe's clock whose `Server-Timing` says the forge
+ * itself spent `SLOW_MS` or less is the road to the public edge, not the
+ * release, and passes (#9022); a hang still fails.
  *
  * The running forge proves each new version with it (`release/prove.ts`), so
  * it lives here: the image ships src/ and nothing else (#2652).
  * `bun scripts/smoke.ts <url>` is the same checks from a shell.
  */
+
+import { parseServerTiming } from "../perf/record.ts";
 
 export const AGENTS: Record<string, string> = {
   phone:
@@ -32,6 +37,15 @@ export const SLOW_MS = 1_000;
 export const REPO_HOME = "/trevato/forge";
 /** The heaviest pages; `/boards` is fetched with the token. */
 export const HEAVY_PAGES: readonly string[] = ["/boards", "/", "/explore", "/search?q=a", REPO_HOME];
+
+/**
+ * How long the forge says it spent on `res`: the `app` entry of its
+ * `Server-Timing` (`http/server.ts`), or undefined when there is none.
+ */
+export function forgeMs(res: Response): number | undefined {
+  const app = parseServerTiming(res.headers.get("server-timing") ?? "").find((p) => p.name === "app");
+  return app && Number.isFinite(app.ms) ? app.ms : undefined;
+}
 
 export interface Heavy {
   watchMs?: number;
@@ -151,7 +165,12 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
       const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(slowMs * 2), headers: { ...headers, ...(path === "/healthz" ? heavy.probe : {}), ...auth } });
       const body = await res.text();
       const took = Math.round(performance.now() - started);
-      if (took > slowMs) return { failure: failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true };
+      if (took > slowMs) {
+        // The forge's own time says whether the release was slow or the way to it was (#9022).
+        const own = forgeMs(res);
+        if (own === undefined || own > slowMs) return { failure: failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true };
+        console.warn(`smoke: ${path} took ${took} ms, the forge ${Math.round(own)} ms of it; the rest was the network`);
+      }
       if (path === REPO_HOME && !heavy.repo && res.status === 404) return { failure: null, slow: false };
       if (path === "/healthz" && heavy.version && res.headers.get("x-forge-version") !== heavy.version)
         return gone(`/healthz reported X-Forge-Version ${res.headers.get("x-forge-version") ?? "none"}, wanted ${heavy.version}`, res.status);
