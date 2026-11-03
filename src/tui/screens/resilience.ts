@@ -81,6 +81,7 @@ export function verdictLines(f: Session): string[] {
   const mark = v.state === "red" ? "RED" : v.state === "unknown" ? "unknown" : "ok";
   return [
     ...wrap(`Backups ${mark}: ${v.line}`, INNER),
+    ...wrap(`  ${v.checkLine}`, INNER),
     ...v.lanes.flatMap((l) => wrap(`  ${l.state === "red" ? "!" : " "} ${l.says}`, INNER)),
     ...[...v.reasons, ...v.unknowns].flatMap((r) => wrap(`  - ${r}`, INNER)),
   ];

@@ -479,7 +479,7 @@ export function vitals(input: VitalsInput): Vitals {
   // The bucket itself, read by this process: late, unreadable, a failed drill, or a check that stopped is one card.
   if (isWatched(input.dataDir)) {
     const backup = backupVerdict(input.dataDir, lastDrill(input.db), now);
-    if (backup.state === "red") need("backup", backup.reasons.join(" "), backup.checkedAt ?? undefined, "/settings/backups");
+    if (backup.state === "red") need("backup", [...backup.reasons, ...(backup.reasons.some((r) => r.includes("last ran")) ? [] : [backup.checkLine])].join(" "), backup.checkedAt ?? undefined, "/settings/backups");
   }
 
   // A snapshot that did not land off the box, or a mirror a day behind, is a card until it does.

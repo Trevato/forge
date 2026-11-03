@@ -145,7 +145,7 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
       k.backup?.state === "unknown" && k.backupAt === null ? "—" : backupAge(k.backupAt, now),
       backupFull(k.backupAt),
       k.backup ? k.backup.note : k.backupAt === null ? "no backup off the machine yet" : overdue ? "overdue, more than 24 h" : "off the machine",
-      k.backup ? (k.backup.reasons[0] ?? k.backup.unknowns[0] ?? k.backup.line) : overdue ? "Overdue: the last off-box backup is more than 24 h old" : "Age of the last off-box backup",
+      k.backup ? `${k.backup.reasons[0] ?? k.backup.unknowns[0] ?? k.backup.line} ${k.backup.checkLine}` : overdue ? "Overdue: the last off-box backup is more than 24 h old" : "Age of the last off-box backup",
       null,
       overdue ? "attn" : null,
     )}

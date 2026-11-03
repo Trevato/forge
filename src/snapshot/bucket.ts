@@ -13,6 +13,8 @@
  * without touching the network. Plain data in, plain data out.
  */
 
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { DrillResult } from "./drill.ts";
 import { isOffBox } from "./off_box.ts";
 import { listSnapshots } from "./snapshot.ts";
@@ -63,6 +65,44 @@ export interface BackupVerdict {
   readonly newestAt: string | null;
   /** When the bucket was last read; null when it has not been. */
   readonly checkedAt: string | null;
+  /** Runs of the check on record (`backup-checks.jsonl`). */
+  readonly runs: number;
+  /** When the check last ran and how many runs are on record, as a person reads it; the proof the check is alive. */
+  readonly checkLine: string;
+}
+
+/** Where each run of the check is written down, under the data directory: one JSON line per run. */
+export const CHECK_LOG = "backup-checks.jsonl";
+/** The log keeps this many runs; it is cut back to them once it holds twice as many. */
+export const CHECK_LOG_KEEP = 200;
+
+/** Runs in each log, counted in memory so a run never reads the file to know its size. */
+const runCounts = new Map<string, number>();
+
+function countRuns(dataDir: string): number {
+  try {
+    return readFileSync(join(dataDir, CHECK_LOG), "utf8").split("\n").filter(Boolean).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Writes one run down; a disk that refuses must not stop the check, so it never throws. */
+export function recordRun(dataDir: string, at: string, lanes: readonly LaneRead[]): void {
+  try {
+    mkdirSync(dataDir, { recursive: true });
+    const file = join(dataDir, CHECK_LOG);
+    const had = runCounts.get(dataDir) ?? countRuns(dataDir);
+    appendFileSync(file, `${JSON.stringify({ at, lanes: lanes.map((l) => ({ lane: l.lane, ok: l.error === undefined, newestAt: l.newestAt })) })}\n`);
+    let n = had + 1;
+    if (n > CHECK_LOG_KEEP * 2) {
+      writeFileSync(file, `${readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-CHECK_LOG_KEEP).join("\n")}\n`);
+      n = CHECK_LOG_KEEP;
+    }
+    runCounts.set(dataDir, n);
+  } catch {
+    /* the verdict does not depend on the log */
+  }
 }
 
 const reads = new Map<string, { lanes: LaneRead[]; checkedAt: string; since: string }>();
@@ -154,7 +194,7 @@ export function judge(
   drill: DrillResult | undefined,
   now: number,
   booted: number = now,
-): BackupVerdict {
+): Omit<BackupVerdict, "runs" | "checkLine"> {
   const reasons: string[] = [];
   /** A few words for each reason, for a tile's note. */
   const causes: string[] = [];
@@ -167,7 +207,7 @@ export function judge(
     reasons.push(
       checkedAt === null
         ? "The backup check has never run, so nothing says a backup exists."
-        : `The backup check has not run for ${ageWords(sinceCheck)}; it is the alarm, and it is down.`,
+        : `The backup check has not run for ${ageWords(sinceCheck)} (last ran ${checkedAt}); it is the alarm, and it is down.`,
     );
   } else if (checkedAt === null) unknowns.push("The bucket has not been read yet, so nothing is known about the backups.");
   for (const r of state?.lanes ?? []) {
@@ -246,7 +286,13 @@ export function judge(
 /** The verdict now, from what the watch last read. */
 export function backupVerdict(dataDir: string, drill: DrillResult | undefined, now = Date.now()): BackupVerdict {
   const booted = Date.parse(watching.get(dataDir) ?? "") || now;
-  return judge(reads.get(dataDir), drill, now, booted);
+  const v = judge(reads.get(dataDir), drill, now, booted);
+  const runs = runCounts.get(dataDir) ?? 0;
+  const checkLine =
+    v.checkedAt === null
+      ? "The backup check has not run yet."
+      : `The backup check last ran ${v.checkedAt} (${ageWords(now - Date.parse(v.checkedAt))} ago); ${runs} runs on record.`;
+  return { ...v, runs, checkLine };
 }
 
 /**
@@ -264,6 +310,7 @@ export function watchBucket(
   declared: (now: number) => Promise<readonly LaneRead[]> = async () => [],
 ): { stop: () => void; pass: () => Promise<void> } {
   watching.set(dataDir, new Date().toISOString());
+  runCounts.set(dataDir, countRuns(dataDir));
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const pass = async (): Promise<void> => {
@@ -273,7 +320,9 @@ export function watchBucket(
       Promise.all(stores.map((l) => readLane(l.lane, l.store, now, targets))),
       declared(now).catch(() => []),
     ]);
-    keepReads(dataDir, [...own, ...more]);
+    const all = [...own, ...more];
+    keepReads(dataDir, all);
+    recordRun(dataDir, new Date().toISOString(), all);
   };
   const next = (ms: number): void => {
     if (stopped) return;

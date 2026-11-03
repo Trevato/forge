@@ -7,19 +7,23 @@
 
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { vitals } from "../src/kernel/vitals.ts";
-import { backupVerdict, CHECK_STALE_MS, judge, keepReads, LATE_MS, readLane, watchBucket, type LaneRead } from "../src/snapshot/bucket.ts";
+import { backupVerdict, CHECK_LOG, CHECK_LOG_KEEP, CHECK_STALE_MS, recordRun, judge, keepReads, LATE_MS, readLane, watchBucket, type LaneRead } from "../src/snapshot/bucket.ts";
 import type { DrillResult } from "../src/snapshot/drill.ts";
 import { lastNightly, snapshotDue } from "../src/snapshot/due.ts";
 import { snapshotsOf, startSnapshots } from "../src/snapshot/service.ts";
 import { listSnapshots } from "../src/snapshot/snapshot.ts";
 import { dirStore } from "../src/snapshot/store.ts";
 import { verdictLines } from "../src/tui/screens/resilience.ts";
+import { readHealth } from "../src/actions/health.ts";
+import type { User } from "../src/core/users.ts";
+import { NO_REACH } from "../src/flow/reach.ts";
+import { kpiRowFor } from "../src/web/studio/kpi_row.ts";
 import { vacuumInto } from "../src/snapshot/vacuum.ts";
 
 let dataDir: string;
@@ -243,3 +247,60 @@ test("copying the database does not hold the serving thread (#7559)", async () =
   copy.close();
   db.close();
 }, 60_000);
+
+const runLines = (dir: string): string[] => readFileSync(join(dir, CHECK_LOG), "utf8").split("\n").filter(Boolean);
+
+test("the check records each run; stopped past its interval, the verdict, tile, card, terminal and health are red saying when it last ran", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "forge-check-runs-"));
+  const own = createApp({ dataDir: dir, port: 0 });
+  const w = watchBucket(dir, () => [{ lane: "primary", store: dirStore(dir) }], 3_600_000, 3_600_000);
+  const realNow = Date.now;
+  try {
+    await w.pass();
+    await w.pass();
+    expect(runLines(dir)).toHaveLength(2);
+    expect(JSON.parse(runLines(dir)[1]!).lanes[0].lane).toBe("primary");
+    const ranAt = backupVerdict(dir, undefined).checkedAt!;
+    expect(backupVerdict(dir, undefined).runs).toBe(2);
+    // The check is stopped: nothing reads the bucket while the clock moves on.
+    const later = Date.parse(ranAt) + CHECK_STALE_MS + 60_000;
+    const v = backupVerdict(dir, drill(), later);
+    expect(v.state).toBe("red");
+    expect(v.reasons.join(" ")).toContain(`last ran ${ranAt}`);
+    expect(v.checkLine).toContain("2 runs on record");
+    const tile = kpiRowFor({ landedHours: Array(24).fill(0), landed: 0, live: null, builders: { running: 0, slots: 1, idle: null }, spend: { todayUsd: 0, ceilingUsd: null }, medianCheckMs: null, backupAt: null, backup: v, reach: NO_REACH }, null, new Date(later)).toString();
+    expect(tile).toContain("attn");
+    expect(tile).toContain("check stopped");
+    expect(tile).toContain(`last ran ${ranAt}`);
+    Date.now = () => later;
+    const card = vitals({ db: own.db, signals: own.signals, dataDir: dir, now: later }).degraded.find((d) => d.cause === "backup");
+    expect(card?.sentence).toContain(`last ran ${ranAt}`);
+    const health = readHealth(own, { isAdmin: true } as User) as { ok: boolean; degraded: { cause: string; sentence: string }[] };
+    expect(health.ok).toBe(false);
+    expect(health.degraded.find((d) => d.cause === "backup")?.sentence).toContain(`last ran ${ranAt}`);
+    expect(verdictLines({ app: own } as never).join("\n")).toContain("runs on record");
+  } finally {
+    Date.now = realNow;
+    w.stop();
+    own.db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the run record is cut back to its keep once it holds twice as many, and a disk that refuses never throws", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "forge-check-trim-"));
+  try {
+    for (let i = 0; i < CHECK_LOG_KEEP * 2; i++) recordRun(dir, `2026-11-02T00:00:${String(i % 60).padStart(2, "0")}Z`, [lane(null)]);
+    expect(runLines(dir)).toHaveLength(CHECK_LOG_KEEP * 2);
+    recordRun(dir, "2026-11-02T01:00:00Z", [lane(null)]);
+    const kept = runLines(dir);
+    expect(kept).toHaveLength(CHECK_LOG_KEEP);
+    expect(JSON.parse(kept.at(-1)!).at).toBe("2026-11-02T01:00:00Z");
+    // A data directory that is a file cannot be written to.
+    const file = join(dir, "not-a-dir");
+    writeFileSync(file, "x");
+    expect(() => recordRun(file, "2026-11-02T02:00:00Z", [])).not.toThrow();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
