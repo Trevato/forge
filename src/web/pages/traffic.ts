@@ -117,6 +117,7 @@ export function trafficPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const rendering = performance.now();
   const now = Date.now();
   const t = perfRecord.ledger.totals(now);
   const tops = perfRecord.ledger.tops(now);
@@ -160,6 +161,7 @@ export function trafficPage(ctx: Ctx): Response {
             ${KPI_COUNTS.traffic} Addresses are an estimate within about 3%:
             only each one's /16 or /32 is kept, in this process's memory.
           </p>`;
+  notePhase(ctx.request, "render", performance.now() - rendering);
   return page({
     ctx,
     title: "Traffic",
