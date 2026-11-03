@@ -13,7 +13,7 @@ export interface TalkTurns {
 export function readTalkTurns(db: Database): TalkTurns {
   const row = db
     .query<{ ok: number | null; failed: number | null; stopped: number | null }, []>(
-      `SELECT SUM(state = 'ok') AS ok, SUM(state = 'failed' AND stopped = 0) AS failed, SUM(stopped = 1) AS stopped
+      `SELECT SUM(state = 'ok') AS ok, SUM(state = 'failed') AS failed, SUM(state = 'stopped') AS stopped
          FROM conversation_run`,
     )
     .get();

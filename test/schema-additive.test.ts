@@ -160,6 +160,7 @@ const RETIRED: Record<string, { readonly drops: readonly string[]; readonly sinc
  */
 const REBUILT: Record<string, string> = {
   "20261103120000-conversations-many": "conversation loses UNIQUE(user_id) (#8814); same columns, plus title and archived_at",
+  "20261104100000-conversation-run-stopped-state": "conversation_run widens its state CHECK to admit stopped (#8972); same columns, same rows, the stopped column kept",
 };
 
 const src = join(import.meta.dir, "../src");

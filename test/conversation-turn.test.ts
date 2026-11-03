@@ -512,7 +512,7 @@ sleep 300
     expect(waitingFor(app.db, u.value.id)).toEqual([]);
     expect(answerHeld(app.db, held!, u.value.id).ok).toBe(false);
     // Stored as stopped, and not a failure (#8860).
-    expect(app.db.query("SELECT state FROM conversation_run WHERE user_id = ?1 ORDER BY started_at DESC LIMIT 1").get(u.value.id)).toEqual({ state: "failed" });
+    expect(app.db.query("SELECT state FROM conversation_run WHERE user_id = ?1 ORDER BY started_at DESC LIMIT 1").get(u.value.id)).toEqual({ state: "stopped" });
     expect(app.db.query("SELECT stopped FROM conversation_run WHERE user_id = ?1 ORDER BY started_at DESC LIMIT 1").get(u.value.id)).toEqual({ stopped: 1 });
     const turnsNow = readTalkTurns(app.db);
     expect(turnsNow.stopped).toBeGreaterThanOrEqual(1);
@@ -545,7 +545,7 @@ describe("talk turn counts (#8860)", () => {
   test("stopped turns are counted apart and leave the failure rate alone", () => {
     const base = readTalkTurns(app.db);
     const c = openConversation(app.db, alice.id);
-    for (const [state, stopped] of [["ok", 0], ["failed", 0], ["failed", 1], ["failed", 1]] as const)
+    for (const [state, stopped] of [["ok", 0], ["failed", 0], ["stopped", 1], ["stopped", 1]] as const)
       app.db.query("INSERT INTO conversation_run (id, conversation_id, user_id, state, stopped, prompt, started_at) VALUES (?1,?2,?3,?4,?5,'x','2026-11-03')").run(crypto.randomUUID(), c.id, alice.id, state, stopped);
     const now = readTalkTurns(app.db);
     expect([now.ok - base.ok, now.failed - base.failed, now.stopped - base.stopped]).toEqual([1, 1, 2]);

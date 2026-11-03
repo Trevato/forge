@@ -186,6 +186,31 @@ describe("the migration keeps attachments", () => {
   });
 });
 
+describe("the stopped-state migration", () => {
+  test("a run stopped before it becomes stopped, a plain failed one stays failed, rows and indexes kept", () => {
+    const at = migrationFiles.findIndex((m) => m.name === "20261104100000-conversation-run-stopped-state");
+    expect(at).toBeGreaterThan(0);
+    const path = join(dir, "runs.db");
+    const db = openDb(path, migrationFiles.slice(0, at).map((m) => m.sql));
+    db.query("INSERT INTO user (id, username, email, password_hash) VALUES ('u1','u1','u1@x','x')").run();
+    db.query("INSERT INTO conversation (id, user_id, claude_session_id, created_at, updated_at) VALUES ('c1','u1','s','t','t')").run();
+    const run = db.query("INSERT INTO conversation_run (id, conversation_id, user_id, state, prompt, started_at, stopped) VALUES (?1,'c1','u1',?2,'p','t',?3)");
+    run.run("r1", "failed", 1);
+    run.run("r2", "failed", 0);
+    run.run("r3", "ok", 0);
+    db.close();
+    const after = openDb(path, migrations);
+    expect(after.query("SELECT id, state, stopped FROM conversation_run ORDER BY id").all()).toEqual([
+      { id: "r1", state: "stopped", stopped: 1 },
+      { id: "r2", state: "failed", stopped: 0 },
+      { id: "r3", state: "ok", stopped: 0 },
+    ]);
+    const indexes = after.query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'conversation_run' AND name LIKE 'conversation_run_%' ORDER BY name").all();
+    expect(indexes).toEqual([{ name: "conversation_run_running" }, { name: "conversation_run_spend" }]);
+    after.close();
+  });
+});
+
 describe("the mutation checks", () => {
   test("a cross-origin POST to New, Rename and Archive is refused and changes nothing", async () => {
     const c = newConversation(app.db, alice.id);

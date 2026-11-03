@@ -568,7 +568,7 @@ function begin(
         cancelHeld(app.db, via);
         put("agent", STOPPED_LINE);
         app.db
-          .query("UPDATE conversation_run SET state = 'failed', stopped = 1, tokens_in = ?2, tokens_out = ?3, cost_usd = ?4, finished_at = ?5, context_tokens = ?6, context_window = ?7 WHERE id = ?1")
+          .query("UPDATE conversation_run SET state = 'stopped', stopped = 1, tokens_in = ?2, tokens_out = ?3, cost_usd = ?4, finished_at = ?5, context_tokens = ?6, context_window = ?7 WHERE id = ?1")
           .run(runId, outcome?.tokensIn ?? 0, outcome?.tokensOut ?? 0, cost, new Date().toISOString(), outcome?.contextTokens ?? 0, outcome?.contextWindow ?? 0);
         app.db.query("UPDATE subscription SET spent_usd = spent_usd + ?2 WHERE id = ?1").run(subscriptionId, cost);
         return;
