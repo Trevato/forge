@@ -23,7 +23,7 @@ import { apiError, body, json, notFound, requireScope, respondAccess } from "../
 import type { Router } from "../router.ts";
 
 /**
- * The standing, tagged by its own bytes: a push to the fork or to the parent's
+ * A body tagged by its own bytes (the standing, or the proposals to the parent): a push to the fork or to the parent's
  * default branch, or a severed chain, changes them, and a viewer who cannot see
  * the parent is rendered a different body, so never shares a tag with one who can.
  */
@@ -211,7 +211,7 @@ export function followingRoutes(router: Router<Handler>): void {
     const items = await timePhaseAsync(ctx.request, "read", () =>
       forgeProposals(ctx.app, repo, Date.now(), ctx.auth.user !== undefined),
     );
-    return timePhase(ctx.request, "render", () => json({ items }));
+    return timePhase(ctx.request, "render", () => tagged(ctx.request, { items }));
   });
 
   router.add(
