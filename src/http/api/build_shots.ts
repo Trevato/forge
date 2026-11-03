@@ -91,10 +91,16 @@ export function buildShotRoutes(router: Router<Handler>): void {
     const record = getAppByRepo(ctx.app.db, repo.id);
     const base = `/${repo.ownerName}/${repo.name}`;
     const looks = record === undefined ? [] : pickableLooks(ctx.app, repo, pin).filter((l) => mayFetchLook(ctx, repo, record, l));
-    return json({
+    // The tag is of the bytes sent, after the viewer's filter: a new look changes it,
+    // and a viewer who may fetch fewer has another. Private: the filter is per viewer.
+    const text = JSON.stringify({
       items: looks.map((l) => ({ id: l.id, page: l.page, kind: l.kind, theme: l.theme, env: l.env, url: lookUrl(base, l) })),
       next_cursor: null,
     });
+    const etag = weakEtag(text);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
 
   // Pick: `{ looks: [id, …], at }`, copied in, in that order.

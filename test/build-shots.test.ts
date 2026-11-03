@@ -16,7 +16,7 @@ import { deletePin, pinBuild } from "../src/actions/builds.ts";
 import { pickShots, uploadShot } from "../src/actions/build_shots.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { createApp as insertApp } from "../src/core/apps.ts";
+import { createApp as insertApp, getAppByRepo } from "../src/core/apps.ts";
 import { recordLook, type Look } from "../src/core/looks.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -232,6 +232,43 @@ describe("pin screenshots", () => {
     expect(new Uint8Array(await (await get("/alice/karts/builds/v1/shots/03.png")).arrayBuffer())).toEqual(PNG(1));
     const none = await api("POST", "/alice/karts/builds/v1/shots/looks", aliceToken, JSON.stringify({ looks: [elsewhere.id] }), "application/json");
     expect(((await none.json()) as { error: string }).error).toBe("nothing_picked");
+  });
+
+  test("the looks on offer carry an ETag; a repeat is 304 until a new look of the pin's commit is taken", async () => {
+    const first = await api("GET", "/alice/karts/builds/v1/shots/looks", aliceToken);
+    const tag = first.headers.get("etag")!;
+    expect(tag).toMatch(/^W\//);
+    expect(first.headers.get("cache-control")).toBe("private, no-cache");
+    expect(first.headers.get("vary")).toContain("authorization, cookie");
+    const again = await fetch(`${base}/api/v1/repos/alice/karts/builds/v1/shots/looks`, {
+      headers: { authorization: `Bearer ${aliceToken}`, "if-none-match": tag },
+    });
+    expect(again.status).toBe(304);
+    expect(again.headers.get("etag")).toBe(tag);
+    expect(await again.text()).toBe("");
+    const record = getAppByRepo(app.db, repo.id)!;
+    const path = join("looks", record.id, "production", `${oid}-about.png`);
+    mkdirSync(join(dataDir, "looks", record.id, "production"), { recursive: true });
+    writeFileSync(join(dataDir, path), PNG(9));
+    recordLook(app.db, { appId: record.id, env: "production", commitOid: oid, kind: "desktop", page: "/about", path });
+    const after = await fetch(`${base}/api/v1/repos/alice/karts/builds/v1/shots/looks`, {
+      headers: { authorization: `Bearer ${aliceToken}`, "if-none-match": tag },
+    });
+    expect(after.status).toBe(200);
+    expect(after.headers.get("etag")).not.toBe(tag);
+  });
+
+  test("a viewer who may fetch fewer looks has another tag, and is not given a 304 on a writer's", async () => {
+    // The looks here were taken as the owner: alice (a writer) may fetch them, bob (a reader) may not.
+    const url = `${base}/api/v1/repos/alice/karts/builds/v1/shots/looks`;
+    const aliceRead = await fetch(url, { headers: { authorization: `Bearer ${aliceToken}` } });
+    const bobRead = await fetch(url, { headers: { authorization: `Bearer ${bobToken}` } });
+    expect(((await aliceRead.json()) as { items: unknown[] }).items.length).toBeGreaterThan(0);
+    expect(((await bobRead.json()) as { items: unknown[] }).items).toEqual([]);
+    const aliceTag = aliceRead.headers.get("etag")!;
+    expect(bobRead.headers.get("etag")).not.toBe(aliceTag);
+    const crossed = await fetch(url, { headers: { authorization: `Bearer ${bobToken}`, "if-none-match": aliceTag } });
+    expect(crossed.status).toBe(200);
   });
 
   test("a reader and a signed-out visitor change nothing", async () => {
