@@ -239,6 +239,7 @@ import { forReader } from "../crew/handover.ts";
 import { globalMapJson } from "../web/pages/global-map.ts";
 import { mapJson, marksFor, withoutDone } from "../web/pages/map.ts";
 import { cachedMap } from "../web/map_snapshot.ts";
+import { scopeKey } from "../web/map_cache.ts";
 import {
   milestoneData,
   milestonesJson,
@@ -2262,7 +2263,16 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!built)
       for (const name of ["graph", "marks", "pillars", "asktolive", "held", "render"])
         notePhase(request, name, 0, hit);
-    return json(ctx.url.searchParams.get("done") === "1" ? value : withoutDone(value));
+    // Tagged by the facts served (never an age that ticks) and the reader's sealed
+    // scope, so two scopes never share a tag; access was checked by loadRepo.
+    const text = JSON.stringify(ctx.url.searchParams.get("done") === "1" ? value : withoutDone(value));
+    const etag = weakEtag(`${scopeKey(scope)}\n${text}`);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(request, etag)) {
+      notePhase(request, "not-modified", 0, true);
+      return new Response(null, { status: 304, headers });
+    }
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).
