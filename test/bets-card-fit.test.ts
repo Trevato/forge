@@ -11,8 +11,9 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedPreview } from "../src/spawn/preview-seed.ts";
-import { PREVIEW_ADMIN, PREVIEW_REPO } from "../src/spawn/preview-looks.ts";
+import { PREVIEW_ADMIN, PREVIEW_BETS_PAGE, PREVIEW_REPO, ownerLooksFor } from "../src/spawn/preview-looks.ts";
 import { utilities as base } from "../src/web/style/base.ts";
+import { components } from "../src/web/style/components.ts";
 import { content } from "../src/web/style/content.ts";
 import { SHOWN_JOURNEYS } from "../src/web/pages/bets.ts";
 
@@ -21,6 +22,7 @@ let dir: string;
 let app: App;
 let servers: Servers;
 let cards: string[];
+let page: string;
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-bets-fit-"));
@@ -31,6 +33,7 @@ beforeAll(async () => {
   const said = `u1|trevato|admin|${Date.now() + 60_000}`;
   const headers = { "x-forge-identity": said, "x-forge-signature": createHmac("sha256", KEY).update(said).digest("base64url") };
   const html = await (await fetch(`${servers.url}/${PREVIEW_ADMIN}/${PREVIEW_REPO}/bets`, { headers })).text();
+  page = html;
   cards = html.split("<div data-bet-card").slice(1).map((c) => c.slice(0, c.indexOf("Cut it") + 40));
 }, 30_000);
 afterAll(async () => {
@@ -86,4 +89,26 @@ describe("the owner's bets page, a proposed bet card at rest", () => {
   test("long words wrap", () => {
     expect(content).toMatch(/\[data-bet-card\][^{]*\{[^}]*overflow-wrap:\s*anywhere/);
   });
+
+  test("the long proposed bet is on the page, and no rule or element it ships fixes a width over 390 px (#9275)", () => {
+    expect(page).toContain("Make every long and winding bet name wrap");
+    expect(page).toContain("https://example.com/a/very/long/unbroken/address");
+    for (const m of page.matchAll(/\swidth=["']?(\d+)/gi)) expect(Number(m[1])).toBeLessThanOrEqual(390);
+    // Every stylesheet the layout ships: a width or min-width is a fixed size
+    // (max-width is a cap and shrinks; a "(min-width:" media query is a breakpoint, not a size). px, rem/em at 16 px, ch at 8 px.
+    const over: string[] = [];
+    for (const css of [base, components, content, ...(page.match(/<style[^>]*>[\s\S]*?<\/style>/g) ?? [])]) {
+      for (const m of css.matchAll(/(?<![-\w(])(?:min-)?width\s*:\s*(-?[\d.]+)(px|rem|em|ch)\b/g)) {
+        const px = Number(m[1]) * (m[2] === "px" ? 1 : m[2] === "ch" ? 8 : 16);
+        if (px > 390) over.push(m[0]);
+      }
+    }
+    expect(over).toEqual([]);
+  });
+});
+
+test("a forge preview takes the owner's bets page at desk and phone (#9275)", () => {
+  const looks = ownerLooksFor("trevato/forge", { ownerName: "trevato", name: "forge" }, "preview");
+  expect(PREVIEW_BETS_PAGE).toBe("/preview-admin/sample/bets");
+  for (const kind of ["desktop", "phone"] as const) expect(looks).toContainEqual({ page: PREVIEW_BETS_PAGE, kind });
 });
