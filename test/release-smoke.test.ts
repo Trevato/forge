@@ -93,7 +93,12 @@ test("a /healthz that is slow once in the watch is asked again and passes (#8917
 test("a /healthz that is slow twice in a row in the watch fails", async () => {
   // hit 1 is the pre-watch check of /healthz by smoke; the watch's polls follow
   const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && (hit === 4 || hit === 5) ? 300 : 0)), "t", { heavy });
-  expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("took"))).toBe(true);
+  expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("took") && f.slow === true)).toBe(true);
+});
+
+test("a failure that is not slowness is not marked slow (#9238)", async () => {
+  const failures = await smoke(forge(0, [], () => undefined, () => 0), "t", { heavy });
+  expect(failures.every((f) => f.slow !== true)).toBe(true);
 });
 
 test("a polled heavy page that is slow once in the watch is asked again and passes", async () => {

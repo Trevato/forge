@@ -41,11 +41,20 @@ export interface Proof {
   readonly since?: string;
   /** How many proofs of this version have failed in a row; 1 when unset. */
   readonly failures?: number;
+  /** The first failing check was only a slow answer (`Failure.slow`); retried sooner. */
+  readonly slow?: boolean;
 }
 
-/** The wait after a version's `failures`th failed proof in a row: `RETRY_MS` doubled per failure, capped at `MAX_RETRY_MS`. */
-export function retryAfter(failures: number): number {
-  return Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** Math.max(0, Math.min(failures, 20) - 1));
+/**
+ * The wait after a version's `failures`th failed proof in a row: `RETRY_MS`
+ * doubled per failure, capped at `MAX_RETRY_MS`. A proof that failed only
+ * because an answer was slow (`slow`) is a moment's load, not a broken
+ * release, so it waits `min(that, TICK_MS * failures)`: 1, 2, 3, 4 minutes,
+ * then the doubling takes over (#9238).
+ */
+export function retryAfter(failures: number, slow = false): number {
+  const backoff = Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** Math.max(0, Math.min(failures, 20) - 1));
+  return slow ? Math.min(backoff, TICK_MS * Math.max(1, failures)) : backoff;
 }
 
 const proofFile = (dataDir: string): string => join(dataDir, "release", "proof.json");
@@ -73,7 +82,7 @@ function keep(dataDir: string, proof: Proof): Proof {
 export function proofNeed(dataDir: string): { sentence: string; since: string } | undefined {
   const p = lastProof(dataDir);
   if (p === undefined || p.ok) return undefined;
-  const next = Date.parse(p.at) + retryAfter(p.failures ?? 1);
+  const next = Date.parse(p.at) + retryAfter(p.failures ?? 1, p.slow === true);
   // When it is tried again, so a person reading the card knows it is not stuck.
   const again = Number.isFinite(next) ? ` It is proven again at ${new Date(next).toISOString().slice(11, 16)} UTC.` : "";
   return { sentence: `Release ${p.version} is unproven: ${p.failure ?? "a smoke check failed"}.${again}`, since: p.since ?? p.at };
@@ -107,7 +116,7 @@ export function proofDue(last: Proof | undefined, version: string, now: number):
   if (last?.version !== version) return true;
   if (last.ok) return false;
   const at = Date.parse(last.at);
-  return !Number.isFinite(at) || now - at >= retryAfter(last.failures ?? 1);
+  return !Number.isFinite(at) || now - at >= retryAfter(last.failures ?? 1, last.slow === true);
 }
 
 /**
@@ -121,7 +130,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
   const sleep = o.sleep ?? Bun.sleep;
   const doFetch = o.fetch ?? fetch;
   const failedBefore = last?.version === o.version && !last.ok ? last : undefined;
-  const finish = (failure?: string): Proof => {
+  const finish = (failure?: string, slow = false): Proof => {
     const at = new Date(now()).toISOString();
     return keep(o.dataDir, {
       version: o.version,
@@ -129,7 +138,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       ok: failure === undefined,
       ...(failure === undefined
         ? {}
-        : { failure, since: failedBefore ? (failedBefore.since ?? failedBefore.at) : at, failures: (failedBefore?.failures ?? (failedBefore ? 1 : 0)) + 1 }),
+        : { failure, since: failedBefore ? (failedBefore.since ?? failedBefore.at) : at, failures: (failedBefore?.failures ?? (failedBefore ? 1 : 0)) + 1, ...(slow ? { slow } : {}) }),
     });
   };
   try {
@@ -151,7 +160,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       anonymousBoard: true,
       heavy: { version: o.version, probe: ownProbeHeaders(o.dataDir), ...o.heavy }, ...(o.appHost ? { appHost: o.appHost } : {}),
     });
-    return finish(failures[0] === undefined ? undefined : checkLine(failures[0]));
+    return finish(failures[0] === undefined ? undefined : checkLine(failures[0]), failures[0]?.slow === true);
   } catch (error) {
     return finish(`the smoke checks could not run: ${String(error)}`);
   }

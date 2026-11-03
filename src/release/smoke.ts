@@ -65,6 +65,8 @@ export interface Failure {
   status: number | string;
   contentType: string;
   why: string;
+  /** The check failed only because the answer was slower than allowed. */
+  slow?: boolean;
 }
 
 /** The first stylesheet href in a page, or null. */
@@ -168,7 +170,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
       if (took > slowMs) {
         // The forge's own time says whether the release was slow or the way to it was (#9022).
         const own = forgeMs(res);
-        if (own === undefined || own > slowMs) return { failure: failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true };
+        if (own === undefined || own > slowMs) return { failure: { ...failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true }, slow: true };
         console.warn(`smoke: ${path} took ${took} ms, the forge ${Math.round(own)} ms of it; the rest was the network`);
       }
       if (path === REPO_HOME && !heavy.repo && res.status === 404) return { failure: null, slow: false };

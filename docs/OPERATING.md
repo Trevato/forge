@@ -104,6 +104,9 @@ answer `/healthz` as that version, then runs the smoke checks (`src/release/smok
 keeps the verdict in `$FORGE_APP_DATA/release/proof.json`. A failure is a
 `Release X is unproven: …` card on an admin's board and on the terminal's first
 screen (the same cards), and is paged once; a later passing version clears it.
+A failed proof is tried again after 5 minutes, doubling to an hour; one that
+failed only because an answer was slow (`slow: true` in the proof) is tried
+again after a minute per failure in a row (1, 2, 3, 4 minutes), then the doubling.
 
 **The outsider suite** (#663) is the proof a person reads before flipping signup
 to open. It adds the proof only: it removes no gate and reopens nothing.
