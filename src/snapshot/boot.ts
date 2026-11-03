@@ -17,12 +17,18 @@ export interface Booted {
 
 const TREE = join(import.meta.dir, "../..");
 
+/**
+ * `whileUp`, when given, is called with the restored forge's base URL once
+ * it reads healthy and before it is killed; what it throws is the reason
+ * the boot is not ok (the restore drill script reads `/` and counts there).
+ */
 export async function bootRestored(
   dataDir: string,
   budgetMs: number,
   tree: string = TREE,
+  whileUp?: (base: string) => Promise<void>,
 ): Promise<Booted> {
-  return onFreshPort((port) => bootOnPort(dataDir, budgetMs, port, tree));
+  return onFreshPort((port) => bootOnPort(dataDir, budgetMs, port, tree, whileUp));
 }
 
 async function bootOnPort(
@@ -30,6 +36,7 @@ async function bootOnPort(
   budgetMs: number,
   port: number,
   tree: string,
+  whileUp: ((base: string) => Promise<void>) | undefined,
 ): Promise<{ result: Booted; portLost: boolean }> {
   const child = Bun.spawn([process.execPath, join(tree, "src/main.ts")], {
     cwd: tree,
@@ -66,7 +73,16 @@ async function bootOnPort(
           signal: AbortSignal.timeout(2_000),
         });
         const body = (await res.json().catch(() => null)) as { ok?: unknown } | null;
-        if (res.ok && body?.ok === true) return { result: { ok: true, reason: "" }, portLost: false };
+        if (res.ok && body?.ok === true) {
+          if (whileUp !== undefined) {
+            try {
+              await whileUp(`http://127.0.0.1:${port}`);
+            } catch (error) {
+              return no(error instanceof Error ? error.message : String(error));
+            }
+          }
+          return { result: { ok: true, reason: "" }, portLost: false };
+        }
         last = `health answered ${res.status}${body?.ok === false ? " not ok" : ""}`;
       } catch {
         last = "no answer yet";
