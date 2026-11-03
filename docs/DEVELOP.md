@@ -224,8 +224,12 @@ stop (a release) aborts the running step at once. The forge needs `FORGE_TOKEN` 
 hunt's author) and cells; a preview runs none, and a forge without either says
 so in its log and runs none. A job whose slot passed while the forge was down
 runs on waking; one restarted mid-run is not run twice (`nightly/<job>.json`
-in `FORGE_APP_DATA`). What each last did is on Resilience and in the
-terminal's Resilience dialog (`docs/features/nightly.md`).
+in `FORGE_APP_DATA`). What each last did, and what it filed (`filed #12`,
+`closed #4`, `quarantined test/x.test.ts`), is on Resilience and in the
+terminal's Resilience dialog; the run's whole output is
+`/resilience/nightly/<job>` (`nightly/<job>.log`), the run every issue it
+files names, as the Forgejo jobs named their Actions run
+(`docs/features/nightly.md`).
 
 **No unseen red outside the gate.** Nightly at 03:47 UTC, the forge itself
 runs `bun scripts/flake-hunt.ts outside --file-issues`: every file in

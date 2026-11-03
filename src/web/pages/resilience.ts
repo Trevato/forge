@@ -11,6 +11,8 @@
 import { readResilience } from "../../checks/resilience.ts";
 import type { Standing } from "../../core/threats.ts";
 import type { Ctx } from "../../http/context.ts";
+import { JOBS } from "../../nightly/jobs.ts";
+import { readOutput, runPath } from "../../nightly/output.ts";
 import { nightlyLines } from "../../nightly/says.ts";
 import { backupsLine } from "../../snapshot/backups_line.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -31,11 +33,32 @@ export function backupsLineHtml(ctx: Ctx): Html {
   return html`<p id="backups-line">${line.says} <a href="/settings/backups">Backups</a> lists them.</p>`;
 }
 
-/** What the nightly jobs last did (`nightly/says.ts`): that a night ran, and what it filed. */
+/** What the nightly jobs last did (`nightly/says.ts`): that a night ran, what it filed, and its output. */
 export function nightlyHtml(ctx: Ctx): Html {
+  const lines = nightlyLines(ctx.app.config.dataDir);
   return html`<ul id="nightly" class="muted">
-    ${nightlyLines(ctx.app.config.dataDir).map((line) => html`<li>${line}</li>`)}
+    ${JOBS.map((job, i) => html`<li>${lines[i] ?? ""} <a href="${runPath(job.name)}">Output</a></li>`)}
   </ul>`;
+}
+
+// GET /resilience/nightly/:job: the newest output of one nightly job, the
+// run its `Flaky:` and `Red:` issues link to. An admin's, as /resilience is.
+export function nightlyOutputPage(ctx: Ctx): Response {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  const at = JOBS.findIndex((j) => j.name === ctx.params.job);
+  const job = JOBS[at];
+  if (job === undefined) return notFoundPage(ctx);
+  const line = nightlyLines(ctx.app.config.dataDir)[at] ?? "";
+  const output = readOutput(ctx.app.config.dataDir, job.name);
+  const body = html`<div class="page-head">
+      <h1>${job.name}</h1>
+      <p class="muted">${line} <a href="/resilience">Resilience</a></p>
+    </div>
+    ${output === undefined
+      ? html`<p id="nightly-output" class="muted">No output here yet: it has not run on this forge.</p>`
+      : html`<pre id="nightly-output" class="card mono" tabindex="0" aria-label="Output">${output}</pre>`}`;
+  return page({ ctx, title: `${job.name} · Resilience`, body });
 }
 
 // GET /resilience: a forge admin's, since live red lines name what to attack.

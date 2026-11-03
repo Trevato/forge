@@ -95,7 +95,7 @@ describe("the nightly service", () => {
   const instant = {
     run: async (job: { name: string }) => {
       calls.push(job.name);
-      return { dir: "x", oid: "y", failed: [] as string[] };
+      return { dir: "x", oid: "y", failed: [] as string[], filed: [] as string[] };
     },
     propose: async () => undefined,
   };
@@ -160,9 +160,9 @@ describe("the nightly service", () => {
     const slow = {
       run: (_job: unknown, signal: AbortSignal) => {
         seen = signal;
-        return new Promise<{ dir: string; oid: string; failed: string[] }>((resolve) => {
-          signal.addEventListener("abort", () => resolve({ dir: "x", oid: "y", failed: ["hunt slice 3/20"] }));
-          release = () => resolve({ dir: "x", oid: "y", failed: [] });
+        return new Promise<{ dir: string; oid: string; failed: string[]; filed: string[] }>((resolve) => {
+          signal.addEventListener("abort", () => resolve({ dir: "x", oid: "y", failed: ["hunt slice 3/20"], filed: [] }));
+          release = () => resolve({ dir: "x", oid: "y", failed: [], filed: [] });
         });
       },
       propose: async () => undefined,
@@ -195,7 +195,7 @@ describe("the nightly service", () => {
   test("the hunt proposes after its steps, unless the quarantine itself failed; the outside run never does", async () => {
     let proposed = 0;
     const doing = (failed: string[]) => ({
-      run: async () => ({ dir: "x", oid: "y", failed }),
+      run: async () => ({ dir: "x", oid: "y", failed, filed: [] }),
       propose: async () => {
         proposed++;
         return "flake-hunt/2026-11-02";

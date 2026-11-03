@@ -18,6 +18,10 @@
  * key, secret key — both keys typed masked; a blank keeps what was sealed).
  * `t` tries the destination in effect, as `testDestination` says it.
  * A key is never drawn, kept past the save, or put in a note.
+ *
+ * `o`, a forge admin's as /resilience/nightly/<job> is, opens the tail of
+ * each nightly job's newest output (`nightly/output.ts`): the run its
+ * `Flaky:` and `Red:` issues link to.
  */
 
 import { drillNow, mirrorNow, recentSnapshots, snapshotNow } from "../../actions/backups_now.ts";
@@ -31,6 +35,8 @@ import {
   type DestinationInput,
 } from "../../actions/destination.ts";
 import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
+import { JOBS } from "../../nightly/jobs.ts";
+import { outputTail } from "../../nightly/output.ts";
 import { nightlyLines } from "../../nightly/says.ts";
 import { backupsLine } from "../../snapshot/backups_line.ts";
 import { backupVerdict } from "../../snapshot/bucket.ts";
@@ -54,6 +60,25 @@ export function resilienceLines(dataDir: string): string[] {
   const rows = readResilience(dataDir);
   return rows.flatMap(({ p, s }) => wrap(`${pad(s, 11)} ${p.text}`, INNER));
 }
+
+/** How many of a nightly job's last lines the output dialog shows. */
+export const OUTPUT_TAIL = 12;
+
+/** Each nightly job's line and the tail of its newest output, as /resilience/nightly/<job> shows it whole. */
+export function nightlyOutputLines(dataDir: string): string[] {
+  const said = nightlyLines(dataDir);
+  return JOBS.flatMap((job, i) => {
+    const tail = outputTail(dataDir, job.name, OUTPUT_TAIL);
+    return [
+      ...(i === 0 ? [] : [""]),
+      ...wrap(said[i] ?? job.name, OUTPUT_INNER),
+      ...(tail === undefined ? ["  no output here yet: it has not run on this forge"] : tail.map((l) => `  ${l}`)),
+    ];
+  });
+}
+
+const OUTPUT_WIDTH = 100;
+const OUTPUT_INNER = OUTPUT_WIDTH - 6;
 
 /** The source of the destination in effect, in the Backups page's words. */
 const SOURCE: Record<string, string> = {
@@ -283,6 +308,7 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
               binding(["l"], "bring the mirror level now"),
               binding(["r"], "run a restore drill"),
             ]),
+        ...(mayAct() ? [binding(["o"], "nightly output")] : []),
         ...(mayChange()
           ? [
               binding(["d"], "set destination"),
@@ -318,7 +344,17 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
       if (ask !== undefined && !busy && mayAct()) {
         asking = ask;
         said = "";
-      } else if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
+      } else if (e.key === "o" && mayAct())
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: "Nightly output",
+            body: nightlyOutputLines(f.app.config.dataDir),
+            actions: [{ label: "Close" }],
+            onChoose: () => undefined,
+            width: OUTPUT_WIDTH,
+          }),
+        );
+      else if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
       else if (!mayChange()) return true;
       else if (e.key === "d") ctx.push(step(destination, 0, BLANK));
       else if (e.key === "x") ctx.push(forgetDest());

@@ -56,8 +56,10 @@ function doing(app: App, options: { readonly forgeUrl: string; readonly token: s
   };
 }
 
-const says = (ran: Ran, branch: string | undefined): string =>
+/** One sentence: whether the steps finished, what they filed, and the pull. */
+export const says = (ran: Ran, branch: string | undefined): string =>
   (ran.failed.length === 0 ? "every step finished" : `failed: ${ran.failed.join(", ")}`) +
+  (ran.filed.length === 0 ? "; filed nothing" : `; ${ran.filed.join(", ")}`) +
   (branch === undefined ? "." : `; quarantine pull on ${branch}.`);
 
 export function startNightly(
