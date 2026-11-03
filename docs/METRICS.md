@@ -23,6 +23,10 @@ not an admin, 200 for an admin's `ro` token. It is never cached
 | `forge_ask_to_live_seconds` | histogram | none (plus `le`) | Seconds from an issue opening to the first successful release of a pull that closes it. Buckets: 1 m, 5 m, 15 m, 1 h, 4 h, 12 h, 1 d, 3 d, 7 d. |
 | `forge_main_red_seconds_total` | counter | `repo` | Seconds the default branch's check spent failing: from a failed check to the next green one, or to now while still red. |
 | `forge_telemetry_reads_total` | counter | `route`, `reader` | Reads of `/api/v1/telemetry` routes since the process started, by route and reader; the rate is the slope. |
+| `forge_loop_stall_milliseconds_total` | counter | `route` | Milliseconds the main thread stalled past 250 ms since the process started, charged in full to every route pattern running across the stall (`none` when no request was). |
+| `forge_loop_stalls_total` | counter | `route` | Those stalls, counted the same way. |
+| `forge_loop_stall_hour_milliseconds` | gauge | `route` | Stall milliseconds in the last hour: the top 10 routes, most first, plus `/api/v1/telemetry/flow` always (0 when it stalled nothing). |
+| `forge_loop_stall_hour_count` | gauge | `route` | Stalls in the last hour, for the routes the gauge above lists. |
 | `forge_app_up` | gauge | `app`, `env` | 1 when the app environment is serving, 0 when it is asleep, stopped, deploying or failed. |
 | `forge_cell_cpu_seconds` (samples `forge_cell_cpu_seconds_total`) | counter | `app`, `env` | CPU seconds (user plus system) used by the processes of a running app cell. |
 | `forge_cell_memory_bytes` | gauge | `app`, `env` | Resident memory of the processes of a running app cell. |
@@ -44,6 +48,15 @@ The delivery series are read from the `pull`, `release` and `run` tables on
 every scrape, so the scrape cost grows with those tables. The check histogram
 reads only the checks finished since the last scrape, through the
 `run_kind_finished` index; the queue and crew series are small grouped reads.
+
+The stall families (#9016) are the `event loop blocked` log lines
+(`src/perf/loop.ts`) as figures, so a fix's before and after reads from the
+forge itself. A stall overlapping two requests counts against both, as the
+log line names both, so summing over routes can exceed the wall time. To
+compare the telemetry flow read with #8978 (69.6 s of stalls in 6 minutes,
+about 700 s an hour at that rate), read
+`forge_loop_stall_hour_milliseconds{route="/api/v1/telemetry/flow"}`; for any
+window, `increase(forge_loop_stall_milliseconds_total{route="/api/v1/telemetry/flow"}[6m])`.
 
 A public repository's `repo` label is `owner/name`; a private one appears
 under its id only, never its name.

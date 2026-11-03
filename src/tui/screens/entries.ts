@@ -28,6 +28,7 @@ import { entry as forges } from "./forges.ts";
 import { entry as homePins } from "./home_pins.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as limits } from "./limits.ts";
+import { entry as loopStalls } from "./loopstalls.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
 import { entry as orgGrants } from "./orggrants.ts";
 import { entry as orgTeams } from "./orgteams.ts";
@@ -72,6 +73,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   bugs,
   homePins,
   system,
+  loopStalls,
   telemetry,
   resilience,
   valves,

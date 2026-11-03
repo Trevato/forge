@@ -18,6 +18,8 @@ import type { EnvState } from "../apps/runtime.ts";
 import { EDGES_MS, readTotals } from "../core/route_timing.ts";
 import { closesFromBody } from "../core/pulls.ts";
 import { telemetryReadsFamily } from "../system/telemetry_reads.ts";
+import { loopWatch } from "../perf/live.ts";
+import { stallFamilies } from "./stalls.ts";
 import { openMetrics, type Family, type HistogramSample, type Sample } from "./openmetrics.ts";
 
 export const DURATION_FAMILY = "forge_http_request_duration_seconds";
@@ -345,5 +347,6 @@ export function forgeMetrics(
     askToLiveFamily(db),
     mainRedFamily(db, now),
     telemetryReadsFamily(),
+    ...stallFamilies(loopWatch.tally(performance.now())),
   ]).replace(/# EOF\n$/, "");
 }

@@ -88,6 +88,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["flow", "Flow", "the pipeline's bottleneck and throughput"],
     ["system", "System", "the machine now: CPU, memory, disks, processes"],
     ["valves", "Valves", "the week's budget as a valve per repository; turn one and the crew obeys"],
+    ["stalls", "Main-thread stalls", "the last hour's stall ms by route"],
     ["telemetry", "Telemetry", "which agents may read flow and system; enter flips the grant"],
     ["capacity", "Capacity", "concurrency and guards, live; e changes a settable one"],
     ["resilience", "Resilience", "where snapshots go and the mirror; each protection green, red or untested"],
