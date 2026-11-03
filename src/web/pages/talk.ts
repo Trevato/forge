@@ -40,6 +40,7 @@ import { WORDS_MAX } from "../../core/fence.ts";
 import { thinkingOf, worksOf, type Work } from "../../core/talk_work.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { ASKING } from "../../crew/conversation_confirm.ts";
+import { pastTime } from "../../core/fence.ts";
 import { turnRunning, type RedoHow } from "../../crew/conversation.ts";
 import type { Ctx } from "../../http/context.ts";
 import { json } from "../../http/respond.ts";
@@ -94,6 +95,20 @@ function confirmButtons(id: string, tool: string): Html {
   </div>`;
 }
 
+/** What Ask again says for the person: no sentence of the agent's, so it asks and never itself names the write. */
+export const ASK_AGAIN = "That ran out before I answered. Ask me again.";
+
+/** A confirm past its time, said in the thread, with the one way on. */
+const ranOut = (conversationId: string): Html => html`<p class="muted small">Nothing was done: this ran out after ten minutes without an answer.</p>
+  <form method="post" action="${HERE}/${conversationId}">
+    <input type="hidden" name="text" value="${ASK_AGAIN}" />
+    ${btn("Ask again", { icon: "sync", label: "Ask again" })}
+  </form>`;
+
+/** Of these turns, the confirms that ran out of time. */
+const ranOutOf = (ctx: Ctx, userId: string, turns: readonly Turn[]): Set<string> =>
+  pastTime(ctx.app.db, userId, turns.filter((t) => t.role === "confirm").map((t) => String(parse(t.text)?.["confirm"] ?? "")));
+
 /** Who said it and when, with the copy button: the line under a message. */
 const meta = (who: string, at: string): Html =>
   html`<p class="talk-meta small muted">${who} · ${time(at)}</p>`;
@@ -143,7 +158,7 @@ const contextLine = (c: Context | undefined): Html =>
 const costLine = (usd: number): Html => html`<p class="talk-cost small muted">${dollars(usd)} this turn</p>`;
 
 /** One turn as the page and the stream both draw it; `waiting` is the confirms still open. */
-export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number, act?: Html, work?: Work, files: readonly ConversationFile[] = []): Html {
+export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number, act?: Html, work?: Work, files: readonly ConversationFile[] = [], expired: ReadonlySet<string> = new Set()): Html {
   const id = `t-${turn.id}`;
   const set = turn.replaced ? " talk-replaced" : "";
   const acts = act === undefined ? null : html`<div class="talk-acts">${act}</div>`;
@@ -173,7 +188,13 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number
     const tool = String(data?.["tool"] ?? "");
     return html`<li class="talk-turn talk-confirm${set}" id="${id}">
       <p>${String(data?.["does"] ?? turn.text)}</p>
-      ${waiting.has(confirm) && !turn.replaced ? confirmButtons(confirm, tool) : html`<p class="muted small">Answered or past its ten minutes.</p>`}
+      ${turn.replaced
+        ? html`<p class="muted small">Replaced.</p>`
+        : waiting.has(confirm)
+          ? confirmButtons(confirm, tool)
+          : expired.has(confirm)
+            ? ranOut(turn.conversationId)
+            : html`<p class="muted small">Answered.</p>`}
     </li>`;
   }
   if (thought !== undefined)
@@ -236,6 +257,7 @@ function talkPage(ctx: Ctx, conversation: Conversation, before: string | undefin
   });
   const turns = listed.ok ? listed.value : [];
   const waiting = new Set(waitingConfirms(ctx, user).map((w) => w.id));
+  const expired = ranOutOf(ctx, user.id, turns);
   const sent = filesOfTurns(ctx.app.db, user.id, turns.filter((t) => t.role === "person").map((t) => t.id));
   const running = clock.running(ctx.app, user.id, conversation.id);
   const costs = turnCosts(ctx.app.db, conversation.id);
@@ -259,7 +281,7 @@ function talkPage(ctx: Ctx, conversation: Conversation, before: string | undefin
           ${turns.length === 0
             ? html`<li class="muted talk-turn">Ask the forge anything, or tell it what to change. It acts as you, with your permissions, and asks before anything hard to undo.
                 <span class="talk-suggest">${SUGGESTIONS.map((q) => html`<a class="btn" href="${here}?q=${encodeURIComponent(q)}" data-suggest="${q}">${q}</a>`)}</span></li>`
-            : turns.map((t) => turnHtml(t, waiting, costs.get(t.id), acts.get(t.id), works.get(t.id), sent.get(t.id)))}
+            : turns.map((t) => turnHtml(t, waiting, costs.get(t.id), acts.get(t.id), works.get(t.id), sent.get(t.id), expired))}
           ${before === undefined && running ? queuedTalk(ctx.app, user, conversation.id).map(queuedHtml) : null}
         </ol>
         <div id="end"></div>
@@ -447,10 +469,11 @@ export function talkStream(ctx: Ctx): Response {
       const fresh = turnsAfter(app.db, user.id, conversation.id, cursor);
       if (fresh.length > 0) {
         const waiting = new Set(waitingConfirms(ctx, user).map((w) => w.id));
+        const expired = ranOutOf(ctx, user.id, fresh);
         const works = worksOf(app.db, user.id, conversation.id, fresh);
         const sent = filesOfTurns(app.db, user.id, fresh.filter((t) => t.role === "person").map((t) => t.id));
         for (const turn of fresh) {
-          emit("turn", { id: turn.id, role: turn.role, html: turnHtml(turn, waiting, undefined, undefined, works.get(turn.id), sent.get(turn.id)).text }, turn.id);
+          emit("turn", { id: turn.id, role: turn.role, html: turnHtml(turn, waiting, undefined, undefined, works.get(turn.id), sent.get(turn.id), expired).text }, turn.id);
           cursor = turn.id;
         }
       }

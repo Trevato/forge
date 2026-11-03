@@ -55,6 +55,11 @@ export function dropWrite(db: Database, recordId: string): void {
 }
 
 /** A fresh turn: the last turn's writes are history. */
+/** How many writes this conversation's turn has recorded; a fresh turn starts at none. */
+export function writesThisTurn(db: Database, via: string): number {
+  return db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM conversation_write WHERE via = ?1").get(via)?.n ?? 0;
+}
+
 export function forgetWrites(db: Database, via: string): void {
   db.query("DELETE FROM conversation_write WHERE via = ?1").run(via);
 }

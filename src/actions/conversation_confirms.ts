@@ -13,7 +13,7 @@
  */
 
 import { actingVia } from "../core/acting_via.ts";
-import { appendTurn, MAX_TURN_CHARS, openConversation } from "../core/conversations.ts";
+import { appendTurn, conversationOfVia, MAX_TURN_CHARS } from "../core/conversations.ts";
 import { answerHeld, HELD_TTL_MS, waitingFor, type YesRefusal } from "../core/fence.ts";
 import type { User } from "../core/users.ts";
 import { argumentsShown, confirmSentence, keptOf, undoOf } from "../crew/conversation_confirm.ts";
@@ -88,7 +88,7 @@ export async function sayYes(ctx: Ctx, user: User, confirmId: string): Promise<Y
     ...(ran.ok ? { result: kept(keptOf(held.tool, ran.value)) } : { error: ran.error, message: ran.message }),
     ...(undo === undefined ? {} : { undo }),
   };
-  const conversation = openConversation(ctx.app.db, user.id);
+  const conversation = conversationOfVia(ctx.app.db, user.id, held.via);
   appendTurn(ctx.app.db, user.id, conversation.id, { role: "tool", text: JSON.stringify(turn) });
   return { ok: true, done: ran.ok, turn, ...(ran.ok ? { result: ran.value } : {}) };
 }
@@ -103,7 +103,7 @@ export function sayNo(ctx: Pick<Ctx, "app">, user: User, confirmId: string): { o
   const answered = answerHeld(ctx.app.db, confirmId, user.id);
   if (!answered.ok) return answered;
   const turn = { confirm: answered.value.id, tool: answered.value.tool, done: false, cancelled: true };
-  const conversation = openConversation(ctx.app.db, user.id);
+  const conversation = conversationOfVia(ctx.app.db, user.id, answered.value.via);
   appendTurn(ctx.app.db, user.id, conversation.id, { role: "tool", text: JSON.stringify(turn) });
   return { ok: true, turn };
 }

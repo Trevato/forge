@@ -10,7 +10,7 @@
  * `http/mcp/shared.ts` (`askedFirst`), the store is `core/fence.ts`.
  */
 
-import { HELD_TTL_MS } from "../core/fence.ts";
+import { HELD_TTL_MS, type Work } from "../core/fence.ts";
 
 type Args = Record<string, unknown>;
 
@@ -121,6 +121,56 @@ export const ASKING: Readonly<Record<string, Asking>> = {
     undo: (a) => `\`telemetry_grant\` with \`on: ${a["on"] === false}\` turns it back`,
   },
 };
+
+/**
+ * The other list (#9401): ordinary work, undone in a click, that the fence
+ * lets go in a repository the person may write once their newest words ask
+ * for it or answer the proposal that named it. Nothing on `ASKING` is here
+ * (test/conversation-holds.test.ts): that list always asks. A write on
+ * neither must be named whole (`core/fence.ts`, `named`) or is held.
+ */
+export const UNDOABLE: Readonly<Record<string, Work & { readonly only?: (args: Args) => boolean }>> = {
+  // A sentence that becomes an issue.
+  tell: {
+    ask: [
+      /(?<![a-z0-9])(open|file|create|make|raise|log|start|write|add|put)\s+(\S+\s+){0,4}?(issue|ticket)(?![a-z0-9])/g,
+      /(?<![a-z0-9])(tell|ask|have)\s+(the\s+)?crew(?![a-z0-9])/g,
+    ],
+    composed: new Set(["text", "from", "context"]),
+  },
+  // A comment on an issue or a pull.
+  say: {
+    ask: [
+      /(?<![a-z0-9])(comment|reply|respond)\s+(on|to|in|under|back)(?![a-z0-9])/g,
+      /(?<![a-z0-9])(leave|post|add|write|drop)\s+(\S+\s+){0,3}?(comment|note|reply)(?![a-z0-9])/g,
+      /(?<![a-z0-9])say\s/g,
+    ],
+    composed: new Set(["text"]),
+    only: (a) => a["repo"] !== undefined && a["number"] !== undefined,
+  },
+  branches: {
+    ask: [/(?<![a-z0-9])(create|make|open|start|cut|add)\s+(\S+\s+){0,3}?branch(?![a-z0-9])/g],
+    composed: new Set(["name", "from", "action", "kind"]),
+    only: (a) => a["action"] === "create",
+  },
+  labels: {
+    ask: [
+      /(?<![a-z0-9])(label|tag)\s+(#?\d|it|that|this|them|the|issue|pull)/g,
+      /(?<![a-z0-9])(add|set|put|apply)\s+(\S+\s+){0,3}?labels?(?![a-z0-9])/g,
+    ],
+    composed: new Set(["action"]),
+  },
+  assign: {
+    ask: [/(?<![a-z0-9])(re)?assign(?![a-z0-9])/g, /(?<![a-z0-9])(give|hand)\s+(\S+\s+){0,3}?to(?![a-z0-9])/g],
+    composed: new Set(["kind"]),
+  },
+};
+
+/** The work this call of `tool` is, when it is on the undoable list. */
+export function undoableWork(tool: string, args: Args): Work | undefined {
+  const work = UNDOABLE[tool];
+  return work === undefined || work.only?.(args) === false ? undefined : work;
+}
 
 /** Whether this call of `tool` asks first, scope aside. */
 export function asksFirst(tool: string, args: Args): boolean {

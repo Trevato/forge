@@ -1,6 +1,6 @@
 import { mayView } from "../../core/sealed.ts";
 import { getIssue, LIST_LIMIT_MAX } from "../../core/issues.ts";
-import { canRead, getRepo, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, getRepo, type Repo } from "../../core/repos.ts";
 import { scopeAllows } from "../../core/tokens.ts";
 import { getUserByName, type User } from "../../core/users.ts";
 import { applyFleetIds, previewFleetIds } from "../../actions/fleet.ts";
@@ -8,9 +8,10 @@ import { KIND_CHIPS, parseChipArgs } from "../../core/feed_chips.ts";
 import type { Ctx } from "../context.ts";
 import type { BoardError } from "../../actions/boards.ts";
 import { BOARD_NOT_SAVED } from "../../actions/board_words.ts";
-import { fence, fenceTag, fenceUp, hold, named, readFenced } from "../../core/fence.ts";
-import { appendTurn, openConversation } from "../../core/conversations.ts";
-import { asksFirst, confirmSentence, tooBigToApprove } from "../../crew/conversation_confirm.ts";
+import { askedFor, fence, fenceTag, fenceUp, hold, named, readFenced } from "../../core/fence.ts";
+import { appendTurn, conversationOfVia, proposalBefore } from "../../core/conversations.ts";
+import { writesThisTurn } from "../../core/conversation_writes.ts";
+import { asksFirst, confirmSentence, tooBigToApprove, undoableWork } from "../../crew/conversation_confirm.ts";
 
 export type Args = Record<string, unknown>;
 export type Answer =
@@ -85,12 +86,41 @@ export const plansOnly = (tool: Tool, args: Args): boolean =>
 
 /** What a held write tells the forge's agent, beside the confirm's id. */
 export const NEEDS_CONFIRM =
-  "this write follows text read as data and the person's newest words do not name it, so nothing was done: it is held as a confirm; say in one sentence what it would do and let the person decide";
+  "this write follows text read as data and the person's newest words do not ask for it, so nothing was done. With an id in `needs_confirm`, Confirm and Cancel buttons are already in the thread: say in one sentence what it would do and point at them. With null nothing was kept: say so, and do not call it held";
+
+/** Most undoable writes one ask lets go after fenced text; past it each is held, so a steered agent cannot run on a yes. */
+export const ASKED_WRITES_MAX = 8;
+
+/** The confirm a held call draws in the person's thread, with its buttons; its sentence. */
+function drawConfirm(ctx: Ctx, user: User, via: string, confirm: string, tool: string, args: Args): string {
+  const does = confirmSentence(tool, args);
+  const conversation = conversationOfVia(ctx.app.db, user.id, via);
+  appendTurn(ctx.app.db, user.id, conversation.id, {
+    role: "confirm",
+    text: JSON.stringify({ confirm, tool, does }),
+  });
+  return does;
+}
+
+/**
+ * Undoable work in a repository the person may write, that their newest
+ * words ask for or answer yes to (#9401): nothing to hold.
+ */
+function askedWork(ctx: Ctx, user: User, via: string, tool: Tool, args: Args, words: string): boolean {
+  const work = undoableWork(tool.name, args);
+  if (work === undefined) return false;
+  const [owner, name, ...rest] = str(args["repo"]).split("/");
+  const repo = owner && name && rest.length === 0 ? getRepo(ctx.app.db, owner, name) : undefined;
+  if (repo === undefined || !canWrite(ctx.app.db, repo, user)) return false;
+  if (writesThisTurn(ctx.app.db, via) >= ASKED_WRITES_MAX) return false;
+  return askedFor(words, proposalBefore(ctx.app.db, user.id, via, words), work, args);
+}
 
 /**
  * The fence's hold (#7649): for the forge's own agent (a via token), a write
- * after a read of fenced text that the person's newest words do not name
- * is kept as a confirm and not done. Undefined: go ahead.
+ * after a read of fenced text that the person's newest words neither name
+ * nor ask for is kept as a confirm, drawn in their thread with its buttons,
+ * and not done. Undefined: go ahead.
  */
 export function heldWrite(ctx: Ctx, user: User, tool: Tool, args: Args): Record<string, unknown> | undefined {
   const via = ctx.auth.through;
@@ -98,15 +128,16 @@ export function heldWrite(ctx: Ctx, user: User, tool: Tool, args: Args): Record<
   // An admin-only tool stays unknown to a person who is not one.
   if (tool.adminOnly === true && !user.isAdmin) return undefined;
   const words = fenceUp(ctx.app.db, via);
-  if (words === undefined || named(words, tool.name, args)) return undefined;
+  if (words === undefined || named(words, tool.name, args) || askedWork(ctx, user, via, tool, args, words)) return undefined;
   if (tooBigToApprove(args)) return tooBig(tool.name);
   // Past the cap nothing more is kept, and the agent is told the same.
   const confirm = hold(ctx.app.db, via, user.id, tool.name, args);
+  const does = confirm === null ? {} : { does: drawConfirm(ctx, user, via, confirm, tool.name, args) };
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify({ needs_confirm: confirm, tool: tool.name, says: NEEDS_CONFIRM }),
+        text: JSON.stringify({ needs_confirm: confirm, tool: tool.name, ...does, says: NEEDS_CONFIRM }),
       },
     ],
     isError: true,
@@ -140,7 +171,7 @@ const tooBig = (tool: string): Record<string, unknown> => ({
 
 /** What an asked-first call tells the forge's agent, beside the confirm's id and its sentence. */
 export const ASKS_FIRST =
-  "this action asks the person first, so nothing was done: say the sentence in `does` to them; their yes, within 10 minutes, under Settings → Confirms (/settings/confirms) or the terminal's Confirms, does it once";
+  "this action asks the person first, so nothing was done: Confirm and Cancel buttons are already in the thread; say the sentence in `does` to them and point at the buttons; their yes, within 10 minutes, does it once";
 
 /**
  * Asked first (#7650): for the forge's own agent, a call of a tool on the
@@ -158,14 +189,7 @@ export function askedFirst(ctx: Ctx, user: User, tool: Tool, args: Args): Record
   if (!short && (!tool.writes || plansOnly(tool, args) || !asksFirst(tool.name, args))) return undefined;
   if (tooBigToApprove(args)) return tooBig(tool.name);
   const confirm = hold(ctx.app.db, via, user.id, tool.name, args);
-  const does = confirmSentence(tool.name, args);
-  if (confirm !== null) {
-    const conversation = openConversation(ctx.app.db, user.id);
-    appendTurn(ctx.app.db, user.id, conversation.id, {
-      role: "confirm",
-      text: JSON.stringify({ confirm, tool: tool.name, does }),
-    });
-  }
+  const does = confirm === null ? "" : drawConfirm(ctx, user, via, confirm, tool.name, args);
   return {
     content: [
       {

@@ -326,6 +326,7 @@ if (root) {
     try {
       const res = await fetch(f.action, { method: "POST", headers: { accept: "application/json" }, body });
       const out = await res.json().catch(() => ({}));
+      if (res.status === 410) { location.reload(); return; }
       say(res.ok ? "" : out.message || "Nothing was done.");
       f.replaceWith(Object.assign(document.createElement("p"), { className: "muted small", textContent: res.ok ? (answer === "yes" ? "Confirmed." : "Cancelled.") : "Not done." }));
       follow();

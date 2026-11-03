@@ -249,6 +249,29 @@ export function lastExchange(db: Database, userId: string, conversationId: strin
   return { person: turnOf(row), after: after.map(turnOf) };
 }
 
+/** The person's conversation a via names, or their open one when it names none of theirs. */
+export function conversationOfVia(db: Database, userId: string, via: string): Conversation {
+  return getConversation(db, userId, via.slice("conversation:".length)) ?? openConversation(db, userId);
+}
+
+/**
+ * What the agent last said to the person before the words `words`, when they
+ * are the person's newest turn in the conversation the via names and that
+ * message came straight before them. A reply written during the turn those
+ * words started is after them, so the agent cannot make its own proposal.
+ */
+export function proposalBefore(db: Database, userId: string, via: string, words: string): string | undefined {
+  const conversationId = via.slice("conversation:".length);
+  if (!owned(db, userId, conversationId)) return undefined;
+  const [newest, before] = db
+    .query<{ role: TurnRole; text: string; failed: number }, [string]>(
+      "SELECT role, text, failed FROM conversation_turn WHERE conversation_id = ?1 AND replaced_at IS NULL AND role IN ('person', 'agent') AND rowid <= (SELECT MAX(rowid) FROM conversation_turn WHERE conversation_id = ?1 AND role = 'person' AND replaced_at IS NULL) ORDER BY rowid DESC LIMIT 2",
+    )
+    .all(conversationId);
+  if (newest === undefined || newest.text.trim() !== words.trim()) return undefined;
+  return before?.role === "agent" && before.failed === 0 ? before.text : undefined;
+}
+
 /**
  * A page of turns, newest last: the latest `limit` turns, or the `limit`
  * before the turn id `before`, oldest first. Order is insertion order
