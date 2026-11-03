@@ -4,7 +4,8 @@ import { getPull, pullDir, pullMergeState } from "../../../core/pulls.ts";
 import { canWrite } from "../../../core/repos.ts";
 import { mayView } from "../../../core/sealed.ts";
 import { whyIssue, whyPull, liveHead, whyRepo, type Why } from "../../../flow/why.ts";
-import { flowFor } from "../../../system/telemetry.ts";
+import { countRead } from "../../../system/telemetry_reads.ts";
+import { flowCached } from "../../../system/flow_cache.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 const number = (v: unknown): number | undefined =>
@@ -39,7 +40,8 @@ export const tool: Tool = {
       if (!reader)
         return bad("forbidden", "only an admin of this forge, or an agent granted telemetry:read, reads its pipeline");
       noteRead(ctx.app, user, reader, "flow");
-      return good(flowFor(ctx.app, reader));
+      countRead("flow", user.username);
+      return good(flowCached(ctx.app, reader));
     }
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;

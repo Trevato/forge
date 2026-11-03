@@ -58,7 +58,9 @@ import { familyView } from "../spawn/family.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
-import { flowFor, historyFor, sourcesOut, systemFor, welcome } from "../system/telemetry.ts";
+import { flowCached } from "../system/flow_cache.ts";
+import { countRead } from "../system/telemetry_reads.ts";
+import { historyFor, sourcesOut, systemFor, welcome } from "../system/telemetry.ts";
 import { markReaders } from "../crew/direct.ts";
 import {
   addCommentThrough,
@@ -1179,11 +1181,12 @@ export function apiRoutes(router: Router<Handler>): void {
       const reader = telemetryReader(ctx.app, ctx.auth.user);
       if (!reader) return forbidden();
       noteRead(ctx.app, ctx.auth.user, reader, what);
+      countRead(what, ctx.auth.user.username);
       const body = timePhase(ctx.request, "read", () => out(ctx, reader));
       return timePhase(ctx.request, "render", () => json(body));
     };
   router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));
-  router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, r) => flowFor(c.app, r)));
+  router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, r) => flowCached(c.app, r)));
   router.add("GET", "/api/v1/telemetry/home", telemetryRead("home", (c) => homeTruth(c.app, c.auth.user!)));
   router.add("GET", "/api/v1/telemetry/sources", telemetryRead("sources", () => ({ sources: sourcesOut() })));
   router.add("GET", "/api/v1/telemetry/history", telemetryRead("history", (c) => ({ points: historyFor(c.app) })));

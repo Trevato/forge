@@ -32,36 +32,76 @@ export function systemFor(app: App, reader: Reader): SystemView {
   return reader.kind === "agent" ? agentView(app, view) : view;
 }
 
-export function flowFor(app: App, reader: Reader, now = new Date()) {
+/**
+ * The pipeline answer as a generator that yields between its heavy reads, so a
+ * caller may run each slice on its own turn of the loop (#8978); `flowFor`
+ * drives it to the end at once.
+ */
+// Dollars only for the owner and an agent holding telemetry:read (#6424): see vitals below.
+export function* flowSlices(app: App, reader: Reader, now = new Date()): Generator<void, ReturnType<typeof flowBody>, void> {
   const stages = readPipeline(app.db, now);
+  yield;
   const flow = readThroughput(app.db, stages.map((s) => s.key), now);
+  yield;
   const dup = systemFor(app, reader).duplicates;
+  yield;
   const conflicted = conflictedPulls(app.db, reader.kind === "agent");
   const lane = rebaseLane(app.db, conflicted);
+  yield;
   const requested = requestedWaits(app.db, reader.kind === "agent");
   const busy = reviewersBusy(app.db, reader.kind === "agent");
-  // Dollars only for the owner and an agent holding telemetry:read (#6424).
+  yield;
   const vitals = vitalsFor(readVitals(app.db, now, reader.kind === "agent"), reader.kind === "owner" || reader.spend === true);
+  yield;
   const talk = readTalkResumes(app.db, running().version);
   const talkTurns = readTalkTurns(app.db);
   const parked = readParked(app.db, now, reader.kind === "agent");
+  yield;
+  const steps = readStepStats(app.db, now, reader.kind === "agent");
+  yield;
+  const verified = readVerified(app, reader.kind === "owner");
+  yield;
+  const redBatches = readVerdicts(app.db, now, reader.kind === "agent");
+  yield;
+  const reviewRepeats = readRepeats(app.db, "", now, reader.kind === "agent");
+  yield;
+  return flowBody({ app, reader, now, stages, flow, dup, conflicted, lane, requested, busy, vitals, talk, talkTurns, parked, steps, verified, redBatches, reviewRepeats });
+}
+
+export function flowFor(app: App, reader: Reader, now = new Date()) {
+  const g = flowSlices(app, reader, now);
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+  }
+}
+
+function flowBody(x: {
+  app: App; reader: Reader; now: Date; stages: ReturnType<typeof readPipeline>; flow: ReturnType<typeof readThroughput>;
+  dup: ReturnType<typeof systemFor>["duplicates"]; conflicted: ReturnType<typeof conflictedPulls>; lane: ReturnType<typeof rebaseLane>;
+  requested: ReturnType<typeof requestedWaits>; busy: ReturnType<typeof reviewersBusy>; vitals: ReturnType<typeof vitalsFor>;
+  talk: ReturnType<typeof readTalkResumes>; talkTurns: ReturnType<typeof readTalkTurns>; parked: ReturnType<typeof readParked>;
+  steps: ReturnType<typeof readStepStats>; verified: ReturnType<typeof readVerified>; redBatches: ReturnType<typeof readVerdicts>;
+  reviewRepeats: ReturnType<typeof readRepeats>;
+}) {
+  const { app, reader, now, stages, flow, dup, conflicted, lane, requested, busy, vitals, talk, talkTurns, parked } = x;
   return {
     says: verdict(stages, now.getTime()),
     // Each step of the path: median time and red rate over 30 days (#7784); private repositories for the owner only.
-    steps: readStepStats(app.db, now, reader.kind === "agent").map((m) => ({ ...m, says: statWords(m) })),
+    steps: x.steps.map((m) => ({ ...m, says: statWords(m) })),
     // The cause binding landings now and the keeper's last act (#7645).
     keeper: readKeeper(app.db, reader.kind === "owner"),
     // How long each main has gone unverified after landing (#7786); private repositories for the owner only.
-    verified: readVerified(app, reader.kind === "owner").map((row) => ({ ...row, says: verifiedSays(row, now.getTime()) })),
+    verified: x.verified.map((row) => ({ ...row, says: verifiedSays(row, now.getTime()) })),
     // Issues the crew parked in the last 24 h and 7 d, the newest three named (#6471).
     parked: { says: parkedSays(parked), ...parked },
     // Open pulls, opened and landed in 1 h and 6 h, and conflicted, against #5924's targets (#5935).
     // A fallback after a release is a line here, not a banner (#8795).
     vitals: { says: [vitalsLine(vitals), talkResumesWords(talk), talkTurnsWords(talkTurns)].filter((w) => w !== "").join(" · "), talk, talkTurns, misses: vitalsMisses(vitals), ...vitals },
     // What the last red batches were: the pull named and returned with its failing tests, or a load red (#7639).
-    redBatches: readVerdicts(app.db, now, reader.kind === "agent"),
+    redBatches: x.redBatches,
     // Findings reviewers repeated, proposed as checks and retired, beside review comments per pull (#8716).
-    reviewRepeats: readRepeats(app.db, "", now, reader.kind === "agent"),
+    reviewRepeats: x.reviewRepeats,
     // The four alarms (#5930) that are firing now; empty when none is.
     alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent" }),
     // Review runs in flight per reviewer, cut to public repositories for an agent (#4733).

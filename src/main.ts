@@ -15,6 +15,7 @@ import { drainOnHandover, handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
+import { warmFlow } from "./system/flow_cache.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { loadTrustedHosts } from "./origins/trusted-hosts.ts";
 import { flushFlagUses, loadFlags } from "./core/flags.ts";
@@ -517,6 +518,8 @@ if (crew !== undefined) {
 // Hosted children come back with their apps, awake before the first visit.
 // The listener is up; the children open behind it, not in front of /healthz.
 void bootHostedChildren(app);
+// The pipeline answer is filled in slices behind the listener, so no read computes it (#8978).
+void warmFlow(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
