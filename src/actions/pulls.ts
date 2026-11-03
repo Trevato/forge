@@ -64,7 +64,7 @@ import { approveGuest } from "../origins/guest.ts";
 import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
-import { coAuthorLines, messagesBetween } from "../git/coauthors.ts";
+import { squashCredits } from "../git/coauthors.ts";
 import { resolveOid, type MergeStrategy } from "../git/merge.ts";
 import { landingKind } from "../core/landing_kind.ts";
 import { thankAuthor } from "../origins/thanks.ts";
@@ -485,12 +485,10 @@ export async function mergePull(
   // `Co-authored-by` stay credited on the commit that lands.
   const kept =
     strategy === "squash"
-      ? coAuthorLines(
-          await messagesBetween(
-            at,
-            (await resolveOid(baseDir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid,
-            (getPull(app.db, repo.id, pull.number) ?? pull).headOid,
-          ),
+      ? await squashCredits(
+          at,
+          (await resolveOid(baseDir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid,
+          (getPull(app.db, repo.id, pull.number) ?? pull).headOid,
           [lander.email, ...(requester ? [commitIdentity(app.config, requester).email] : [])],
         )
       : [];

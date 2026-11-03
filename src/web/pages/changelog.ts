@@ -32,7 +32,7 @@ function landingRow(l: Landing, own: string | undefined, showRepo: boolean): Htm
   return row({
     href: `/${l.repo}/pulls/${l.number}`,
     title: l.title,
-    meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}${l.bet === undefined ? null : html` · ${badge(l.bet, { variant: "outline" })}`}${l.from === undefined ? null : html` · folded in from ${l.from}`}`,
+    meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}${l.bet === undefined ? null : html` · ${badge(l.bet, { variant: "outline" })}`}${l.from === undefined ? null : html` · folded in from ${l.from}`}${l.with === undefined ? null : html` · with ${l.with.join(", ")}`}`,
     trail: time(l.at),
   });
 }
