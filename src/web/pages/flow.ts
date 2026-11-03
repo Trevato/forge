@@ -50,9 +50,9 @@ function valveRow(v: ValveRow) {
   const turned = v.turned;
   return row({
     lead: icon("activity"),
-    title: html`<a href="/${v.slug}">${v.slug}</a>
-      <span class="muted small">${money(v.usd)} this week · ${plural(v.runs, "run")} · ${plural(v.shipped, "pull")} shipped${v.notes > 0 ? html` · ${plural(v.notes, "note")}` : ""}</span>`,
-    meta: html`<form class="valve-form" method="post" action="/flow/valve">
+    title: html`<span class="valve-name"><a href="/${v.slug}">${v.slug}</a>
+      <span class="muted small">${money(v.usd)} this week · ${plural(v.runs, "run")} · ${plural(v.shipped, "pull")} shipped${v.notes > 0 ? html` · ${plural(v.notes, "note")}` : ""}</span></span>`,
+    meta: html`<span class="valve-body"><form class="valve-form" method="post" action="/flow/valve">
         <input type="hidden" name="repo" value="${v.slug}" />
         <input class="valve-range" type="range" name="level" min="0" max="100" step="5" value="${String(v.level)}" aria-label="Valve for ${v.slug}: 0 shut, 100 open" />
         <output class="muted small">${levelWords(v.level)}</output>
@@ -70,7 +70,7 @@ function valveRow(v: ValveRow) {
           <span class="small">You looked here ${plural(v.looks, "time")} this week: ${String(v.suggestion)}% would match. It moves nothing until you tap.</span>
           ${btn(`Take ${String(v.suggestion)}%`, { size: "sm", label: `Set the valve for ${v.slug} to ${String(v.suggestion)}%` })}
         </form>`,
-      )}`,
+      )}</span>`,
   });
 }
 

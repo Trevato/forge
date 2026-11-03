@@ -869,6 +869,9 @@ textarea.editor:focus-visible { outline: none; }
 .pipe-label { font-size: 12.5px; fill: var(--fg); }
 .pipe-repo { font-size: 12.5px; fill: var(--muted-fg); }
 .valve-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0; }
+/* A valve row's name and body are sentences, not one clipped line (#9323): they wrap inside the row. */
+.valve-name, .valve-body { white-space: normal; overflow-wrap: anywhere; }
+.valve-name, .valve-body { display: block; }
 .valve-range { flex: 1 1 12rem; min-width: 8rem; }
 /* The week on Next up (#8704): the cut line and a row's cost range. */
 .next-week { opacity: 0.55; }
