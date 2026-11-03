@@ -176,6 +176,11 @@ export interface ForgeConfig {
    */
   appSsh?: string;
   /**
+   * The rolling intent doc a person's build note is copied into, once,
+   * under "## Iterator notes" (`core/intent_notes.ts`). Unset copies none.
+   */
+  notesIntent?: string;
+  /**
    * The repository holding this forge's own code, as `owner/name`
    * (`FORGE_REPO`, e.g. `trevato-apps/forge`). A spawned child forks it,
    * so every child starts from the forge's code and can follow its

@@ -251,6 +251,8 @@ const app = createApp({
   // The repository holding this forge's own code: a landing there is
   // checked out under releases/ and preflighted (#1662).
   ...releaseEnv(process.env),
+  // FORGE_NOTES_INTENT: the intent doc people's build notes are copied into.
+  ...((process.env.FORGE_NOTES_INTENT ?? "").trim() !== "" ? { notesIntent: (process.env.FORGE_NOTES_INTENT ?? "").trim() } : {}),
   // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
   // across every repository. Unset is no forge-wide ceiling.
   ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"

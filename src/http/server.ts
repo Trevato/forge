@@ -183,6 +183,7 @@ import {
   branchDelete,
   branchesPage,
 } from "../web/pages/branches.ts";
+import { buildsPage, deletePinSubmit, newBuildPage, pinBuildSubmit, previewBuildSubmit } from "../web/pages/builds.ts";
 import { wavePage, wavesAtom, wavesPage } from "../web/pages/waves.ts";
 import {
   contributeSubmit,
@@ -1255,6 +1256,12 @@ export function buildRouter(): Router<Handler> {
   // The repository's activity, for a feed reader.
   router.add("GET", "/:owner/:name/activity.atom", activityAtom);
   router.add("GET", "/:owner/:name/branches", branchesPage);
+  // Build pins (`git/builds.ts`): the list, the form, and the writes behind them.
+  router.add("GET", "/:owner/:name/builds", buildsPage);
+  router.add("GET", "/:owner/:name/builds/new", newBuildPage);
+  router.add("POST", "/:owner/:name/builds", pinBuildSubmit);
+  router.add("POST", "/:owner/:name/builds/preview", previewBuildSubmit);
+  router.add("POST", "/:owner/:name/builds/:label/delete", deletePinSubmit);
   router.add("GET", "/:owner/:name/waves.atom", wavesAtom);
   router.add("GET", "/:owner/:name/waves", wavesPage);
   router.add("GET", "/:owner/:name/waves/:version", wavePage);

@@ -210,6 +210,15 @@ function branchRow(
       </span>
       <span class="row-trail">
         ${divergence(row)}
+        ${when(canWrite, () =>
+          btn("Pin", {
+            href: `${base}/builds/new?sha=${row.oid}&source=${encodeURIComponent(`branch ${row.name}`)}`,
+            size: "sm",
+            variant: "outline",
+            icon: "pin",
+            label: `Pin a build of ${row.name}`,
+          }),
+        )}
         ${when(!row.isDefault && canWrite, () =>
           btn("New pull", {
             href: `${base}/pulls/new?head=${encoded}`,
@@ -311,6 +320,7 @@ export async function renderBranches(
               head: html`<h2>
                   ${rows.length} branch${rows.length === 1 ? "" : "es"}
                 </h2>
+                ${when(scope.kind === "local", () => html`<span class="spacer"></span>${btn("Builds", { href: `${scope.base}/builds`, size: "sm", variant: "ghost", icon: "pin" })}`)}
                 ${when(
                   !compared && scope.kind === "local",
                   () =>

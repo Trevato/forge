@@ -13,6 +13,7 @@ export { route as deleteApiV1ReposOwnerNameApp } from "./deleteApiV1ReposOwnerNa
 export { route as deleteApiV1ReposOwnerNameAppDomainsHost } from "./deleteApiV1ReposOwnerNameAppDomainsHost.ts";
 export { route as deleteApiV1ReposOwnerNameAppEnvVar } from "./deleteApiV1ReposOwnerNameAppEnvVar.ts";
 export { route as deleteApiV1ReposOwnerNameBranchesBranch } from "./deleteApiV1ReposOwnerNameBranchesBranch.ts";
+export { route as deleteApiV1ReposOwnerNameBuildsLabel } from "./deleteApiV1ReposOwnerNameBuildsLabel.ts";
 export { route as deleteApiV1ReposOwnerNameCrewUsername } from "./deleteApiV1ReposOwnerNameCrewUsername.ts";
 export { route as deleteApiV1ReposOwnerNameEgressGrants } from "./deleteApiV1ReposOwnerNameEgressGrants.ts";
 export { route as deleteApiV1ReposOwnerNameHooksId } from "./deleteApiV1ReposOwnerNameHooksId.ts";
@@ -96,6 +97,7 @@ export { route as getApiV1ReposOwnerNameAppMembers } from "./getApiV1ReposOwnerN
 export { route as getApiV1ReposOwnerNameAppNotes } from "./getApiV1ReposOwnerNameAppNotes.ts";
 export { route as getApiV1ReposOwnerNameAppProductionOpen } from "./getApiV1ReposOwnerNameAppProductionOpen.ts";
 export { route as getApiV1ReposOwnerNameBranches } from "./getApiV1ReposOwnerNameBranches.ts";
+export { route as getApiV1ReposOwnerNameBuilds } from "./getApiV1ReposOwnerNameBuilds.ts";
 export { route as getApiV1ReposOwnerNameCommits } from "./getApiV1ReposOwnerNameCommits.ts";
 export { route as getApiV1ReposOwnerNameCommitsOid } from "./getApiV1ReposOwnerNameCommitsOid.ts";
 export { route as getApiV1ReposOwnerNameCommitsOidCheck } from "./getApiV1ReposOwnerNameCommitsOidCheck.ts";
@@ -191,6 +193,7 @@ export { route as patchApiV1ConversationsId } from "./patchApiV1ConversationsId.
 export { route as patchApiV1ForgeFollowing } from "./patchApiV1ForgeFollowing.ts";
 export { route as patchApiV1ReposOwnerName } from "./patchApiV1ReposOwnerName.ts";
 export { route as patchApiV1ReposOwnerNameApp } from "./patchApiV1ReposOwnerNameApp.ts";
+export { route as patchApiV1ReposOwnerNameBuildsLabel } from "./patchApiV1ReposOwnerNameBuildsLabel.ts";
 export { route as patchApiV1ReposOwnerNameIssuesNumber } from "./patchApiV1ReposOwnerNameIssuesNumber.ts";
 export { route as patchApiV1ReposOwnerNameLabelsId } from "./patchApiV1ReposOwnerNameLabelsId.ts";
 export { route as patchApiV1ReposOwnerNamePullsNumber } from "./patchApiV1ReposOwnerNamePullsNumber.ts";
@@ -248,6 +251,7 @@ export { route as postApiV1ReposOwnerNameAppNotesIdBan } from "./postApiV1ReposO
 export { route as postApiV1ReposOwnerNameAppNotesIdHide } from "./postApiV1ReposOwnerNameAppNotesIdHide.ts";
 export { route as postApiV1ReposOwnerNameAppNotesIdUnban } from "./postApiV1ReposOwnerNameAppNotesIdUnban.ts";
 export { route as postApiV1ReposOwnerNameBranches } from "./postApiV1ReposOwnerNameBranches.ts";
+export { route as postApiV1ReposOwnerNameBuilds } from "./postApiV1ReposOwnerNameBuilds.ts";
 export { route as postApiV1ReposOwnerNameBuildsPreview } from "./postApiV1ReposOwnerNameBuildsPreview.ts";
 export { route as postApiV1ReposOwnerNameChecksRecheck } from "./postApiV1ReposOwnerNameChecksRecheck.ts";
 export { route as postApiV1ReposOwnerNameContents } from "./postApiV1ReposOwnerNameContents.ts";

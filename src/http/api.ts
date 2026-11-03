@@ -343,6 +343,7 @@ import { FORGE_NOT_CARRIED } from "../origins/words.ts";
 import { forgeOriginRoutes } from "./api/forge_origin.ts";
 import { userRoutes } from "./api/user.ts";
 import { appRoutes } from "./api/app.ts";
+import { buildRoutes } from "./api/builds.ts";
 import { appNoteRoutes } from "./api/app_notes.ts";
 import { reportRoutes } from "./api/reports.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
@@ -3512,6 +3513,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   appRoutes(router);
+  buildRoutes(router);
 
   egressGrantRoutes(router);
 
