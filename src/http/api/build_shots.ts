@@ -16,6 +16,7 @@ import { readShots, type Shots } from "../../git/shots.ts";
 import { mayFetchLook } from "../../web/pages/looks.ts";
 import { loadRepo } from "../api.ts";
 import type { Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { readBounded } from "../limits.ts";
 import { apiError, body, json, notFound, requireScope, respondAccess } from "../respond.ts";
 import type { Router } from "../router.ts";
@@ -48,7 +49,13 @@ export function buildShotRoutes(router: Router<Handler>): void {
     const label = ctx.params.label ?? "";
     const dir = dirOf(repo, ctx.app.reposRoot);
     if ((await readBuildPin(dir, label)) === undefined) return notFound();
-    return json(items(repo, label, await readShots(dir, label)));
+    // The tag is of the exact bytes sent, so an upload, delete, pick, caption or reorder moves it;
+    // private because a private repository's pictures are for its readers only.
+    const text = JSON.stringify(items(repo, label, await readShots(dir, label)));
+    const etag = weakEtag(text);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
 
   // Upload one: multipart, the picture as `shot`, an optional `caption` and the `tree` it was read from as `at`.

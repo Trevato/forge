@@ -244,6 +244,32 @@ describe("pin screenshots", () => {
     expect((await shots()).tree).toBe(before);
   });
 
+  test("the gallery carries an ETag: a repeat is 304 until a shot is added, moved or removed", async () => {
+    const first = await api("GET", "/alice/karts/builds/v1/shots", aliceToken);
+    const tag = first.headers.get("etag")!;
+    expect(tag).toStartWith('W/"');
+    expect(first.headers.get("cache-control")).toBe("private, no-cache");
+    const repeat = await fetch(`${base}/api/v1/repos/alice/karts/builds/v1/shots`, { headers: { authorization: `Bearer ${aliceToken}`, "if-none-match": tag } });
+    expect(repeat.status).toBe(304);
+    expect(repeat.headers.get("etag")).toBe(tag);
+    expect(repeat.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await repeat.text()).toBe("");
+    const tagged = async () => (await api("GET", "/alice/karts/builds/v1/shots", aliceToken)).headers.get("etag")!;
+    const room = (await shots()).items.length < 12;
+    expect(room).toBe(true);
+    expect((await api("POST", "/alice/karts/builds/v1/shots", aliceToken, upload(PNG(77), "tag"))).status).toBe(201);
+    const added = await tagged();
+    expect(added).not.toBe(tag);
+    const stale = await fetch(`${base}/api/v1/repos/alice/karts/builds/v1/shots`, { headers: { authorization: `Bearer ${aliceToken}`, "if-none-match": tag } });
+    expect(stale.status).toBe(200);
+    const last = (await shots()).items.at(-1)!.file;
+    expect((await api("POST", `/alice/karts/builds/v1/shots/${last}`, aliceToken, JSON.stringify({ move: "up" }), "application/json")).status).toBe(200);
+    const moved = await tagged();
+    expect(moved).not.toBe(added);
+    expect((await api("DELETE", `/alice/karts/builds/v1/shots/${last}`, aliceToken)).status).toBe(204);
+    expect(await tagged()).not.toBe(moved);
+  });
+
   test("a stranger to a private repository gets 404 for its pictures and its writes", async () => {
     expect((await get("/alice/secret/builds/v1/shots/01.png", "alice")).status).toBe(200);
     expect((await get("/alice/secret/builds/v1/shots/01.png", "bob")).status).toBe(404);
