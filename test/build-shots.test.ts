@@ -24,6 +24,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { readShots, SHOT_MAX } from "../src/git/shots.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { eventVerb } from "../src/design/activity.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 const PNG = (n: number) => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, n, n]);
@@ -294,5 +295,22 @@ describe("pin screenshots", () => {
     expect((await shots()).items).toEqual([]);
     expect((await pinBuild(app, alice, repo, { label: "v1", oid })).ok).toBe(true);
     expect((await shots()).items).toEqual([]);
+  });
+});
+
+describe("activity wording for build events", () => {
+  const say = (kind: string, payload: Record<string, unknown>) =>
+    eventVerb({ id: "e", kind, repoId: null, actorId: null, payload, createdAt: "" });
+
+  test("every shots change and every build kind has a line", () => {
+    expect(say("build.shots", { label: "v1", change: "added" })).toBe("added a screenshot to the pin v1");
+    expect(say("build.shots", { label: "v1", change: "picked" })).toBe("picked screenshots from the deploy for the pin v1");
+    expect(say("build.shots", { label: "v1", change: "moved" })).toBe("reordered the screenshots of the pin v1");
+    expect(say("build.shots", { label: "v1", change: "captioned" })).toBe("captioned a screenshot of the pin v1");
+    expect(say("build.shots", { label: "v1", change: "removed" })).toBe("removed a screenshot from the pin v1");
+    expect(say("build.shots", {})).toBe("changed the screenshots of a pin");
+    expect(say("build.pinned", {})).toBe("pinned a build");
+    expect(say("build.deleted", {})).toBe("removed a build pin");
+    expect(say("build.noted", {})).toBe("noted a pinned build");
   });
 });

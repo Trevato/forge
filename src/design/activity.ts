@@ -73,6 +73,17 @@ export function eventVerb(event: ForgeEvent): string {
     if (kind === "app.domain.verified") return `verified the domain ${which}`;
     return `removed the domain ${which}`;
   }
+  if (kind === "build.shots") {
+    const label = payload["label"];
+    const pin = typeof label === "string" && label !== "" ? `the pin ${label}` : "a pin";
+    const change = payload["change"];
+    if (change === "added") return `added a screenshot to ${pin}`;
+    if (change === "picked") return `picked screenshots from the deploy for ${pin}`;
+    if (change === "moved") return `reordered the screenshots of ${pin}`;
+    if (change === "captioned") return `captioned a screenshot of ${pin}`;
+    if (change === "removed") return `removed a screenshot from ${pin}`;
+    return `changed the screenshots of ${pin}`;
+  }
   if (kind === "prompt.told") {
     const issue = payload["issue"];
     return typeof issue === "number"
@@ -167,6 +178,9 @@ const WORDS: Record<string, string> = {
   "origin.disconnected": "disconnected an origin",
   "origin.needs_reauth": "needs to reconnect an origin",
   "origin.mirror_reattached": "reconnected a frozen mirror to its origin",
+  "build.pinned": "pinned a build",
+  "build.deleted": "removed a build pin",
+  "build.noted": "noted a pinned build",
   "run.queued": "queued a run",
   "run.started": "started a run",
   "app.created": "made it an app",
