@@ -28,6 +28,14 @@ A push to main alone does not recombine: the card marks itself stale, naming the
 
 Test: `test/combined-fork.test.ts` (open, page, terminal, a push recombining, stale, landing) and `test/combined-git.test.ts` (a writer's commit surviving, modify/delete left open, the head a preview runs under).
 
+## A merge must bring the work
+
+A pull whose head merges a followed source's tip but carries under 80% of that source's diff (`MIN_SHARE`, `src/git/source_share.ts`) never lands by itself, trusted source or not. `git merge -s ours` marks every commit of the source as merged while keeping our tree, and git never offers them again. The share is read from the trees, measured to the commit of the source the head merged (an `-s ours` merge of an older tip is held after the source moves on), and only for a head with a merge commit (an ordinary pull pays no git work): lines of the source's diff (fork point to tip) the head still lacks. The sweep (`src/crew/source_held.ts`, called from `admit`) records a wall on the ledger saying how many commits, files and lines it dropped, before "nothing new" could close the pull as carried; a person lands it from the studio's card. The reviewer's brief carries the same numbers and is told to compare the pull against the source's diff, and the conflict issue and the converge brief say it plainly: bring the work in; marking it merged without its content is not a resolution.
+
+Limit: dropped lines are the head's difference from the source's tip in the files the source changed, so a merge that takes the work and then rewrites those same files heavily (under 80% of the source's lines left as they were) is held for a person too. A person lands it from the card; nothing is lost but time. Paths are read with `-z` and `core.quotepath=false`, so names with spaces or unicode are matched exactly.
+
+Test: `test/source-merge-held.test.ts` (two forges, an `-s ours` merge held, a merge that takes the work landing).
+
 ## Not yet
 
 Landing a very large fork in reviewed slices that still end as a merge of the author's head; routing a pull opened on the Forgejo mirror to trunk; a crew run sent to refine `combined/N` beyond main's side; recombining when main alone moves; running the check on the combined commit; and running his code under the guest rule until a person approves (#8903 is not in this repository). Resolving conflicts on our side is today's resolve page (`docs/PULLS.md`).

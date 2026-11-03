@@ -46,6 +46,7 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { refreshPullHead } from "../core/following.ts";
+import { reviewSourceNote } from "./source_held.ts";
 import { UPSTREAM_TITLE, sourceFollowing, upstreamFollowing } from "../actions/upstream_follow.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
@@ -1171,6 +1172,7 @@ async function work(
       ...(reason === "review" && pull
         ? {
             ...(await reviewInputs(app, repo, pull, record, bare)),
+            sourceNote: await reviewSourceNote(app, repo, pull, bare),
             boxes: boxesOf(app, repo, pull),
             retry: app.db
               .query<{ n: number }, [string, string, string]>(

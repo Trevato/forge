@@ -40,6 +40,7 @@ import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { CLOSED_NOTE, leftNote, reopenedByPerson, unticked } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { carriesUpstream } from "../actions/upstream_follow.ts";
+import { sourceHeld } from "./source_held.ts";
 import {
   listCrewRoles,
   type Agent,
@@ -2066,6 +2067,28 @@ async function admit(
         if (!approvedOnHead(app.db, pull)) bringUpToDate(app, repo, pull, clean.error.files);
       }
       return err("conflict");
+    }
+    // A merge of a followed source's head that leaves most of its diff
+    // behind marks the work taken without taking it (#9034): decided by a
+    // person, trusted or not, and before "nothing new" closes it as carried.
+    const dropped = await sourceHeld(app, repo, pull, baseTip);
+    if (dropped.length > 0) {
+      const earlier = latestDecision(app.db, pull.id, "land");
+      const told =
+        earlier?.answer === "wall" &&
+        (earlier.state as { head?: unknown } | null)?.head === pull.headOid;
+      if (!told)
+        recordDecision(app.db, {
+          kind: "land",
+          repoId: repo.id,
+          issueId: pull.id,
+          state: { head: pull.headOid, cells: dropped, plain: dropped, unsound: false },
+          answer: "wall",
+          p: 1,
+          by: "wall",
+          ms: 0,
+        });
+      return err("wall");
     }
     // Nothing the base does not already hold: no gate and no review, for
     // there is nothing to land. The merge closes the pull as merged into
