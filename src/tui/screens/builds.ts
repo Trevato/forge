@@ -8,6 +8,7 @@
  * which check again.
  */
 
+import { setCart } from "../../actions/build_cart.ts";
 import { deletePin, notePin, pinBuild } from "../../actions/builds.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { listBuildPins, type BuildPin } from "../../git/builds.ts";
@@ -38,6 +39,8 @@ const WORDS: Record<string, string> = {
   moved: "That pin changed meanwhile; try again.",
   mirrored: "A mirror's builds are its origin's.",
   notes_lost: "The notes ref lost a note; nothing was written.",
+  invalid_demo: "A cart is a name (60), a version (40) and a plain page path.",
+  git_failed: "Git refused the change.",
 };
 const say = (error: string): string => WORDS[error] ?? "Only a person who writes this repository can do that.";
 
@@ -94,6 +97,24 @@ export function buildsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       }),
     );
   };
+  const nameCart = (picked: BuildPin): void => {
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: `Cart for ${picked.label}`,
+        label: "name, version, then the page it opens",
+        value: picked.demo === undefined ? `${repo.name} ${picked.label} /` : `${picked.demo.name} ${picked.demo.version} ${picked.demo.page}`,
+        onSubmit: (entry) => {
+          const [name = "", version = "", page = "/"] = entry.trim().split(/\s+/);
+          if (name === "" || version === "") return "Give a name and a version.";
+          return ctx.track(
+            setCart(f.app, f.user, repo, picked.label, { name, version, page, showcase: picked.demo?.showcase ?? false }).then((r) =>
+              done(r.ok ? (r.value.capture.state === "done" ? `Cart ${name} is captured.` : `Capturing ${name} from a preview of ${picked.label}.`) : say(r.error)),
+            ),
+          );
+        },
+      }),
+    );
+  };
   const ask = (picked: BuildPin): void => {
     ctx.push(
       confirmScreen(ctx, screen, {
@@ -115,7 +136,7 @@ export function buildsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       return [
         binding(["j", "k"], "move"),
         binding(["s"], "screenshots"),
-        ...(mayPin(f, repo) ? [binding(["p"], "pin"), binding(["n"], "note"), binding(["d"], "delete")] : []),
+        ...(mayPin(f, repo) ? [binding(["p"], "pin"), binding(["n"], "note"), binding(["c"], "cart"), binding(["d"], "delete")] : []),
         binding(["esc", "q"], "back"),
       ];
     },
@@ -142,7 +163,7 @@ export function buildsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         const picked = from + i === state.index;
         s.text(area.x, area.y + i, picked ? ">" : " ", style(c.accent, c.bg), right);
         const first = p.note.split("\n")[0] ?? "";
-        line(i, `${p.label}  ${metaOf(p.oid.slice(0, 7), p.pinnedBy, ago(p.pinnedAt), first === p.label ? "" : first)}`, picked ? c.fg : c.muted);
+        line(i, `${p.label}  ${metaOf(p.oid.slice(0, 7), p.pinnedBy, ago(p.pinnedAt), first === p.label ? "" : first)}${p.demo === undefined ? "" : `  ▶ ${p.demo.name} ${p.demo.version}`}`, picked ? c.fg : c.muted);
       }
     },
     key(e) {
@@ -155,6 +176,7 @@ export function buildsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       else if (e.key === "s" && !hidden && picked !== undefined) ctx.push(shotsScreen(f, ctx, repo, picked));
       else if (e.key === "p" && write) void ctx.track(pin());
       else if (e.key === "n" && write && picked !== undefined) addNote(picked);
+      else if (e.key === "c" && write && picked !== undefined) nameCart(picked);
       else if (e.key === "d" && write && picked !== undefined) ask(picked);
       else return false;
       ctx.invalidate();
@@ -171,7 +193,7 @@ export function buildsCommands(f: Session, ctx: Ctx, repo: Repo | undefined): Co
     {
       id: "builds",
       title: `${repo.ownerName}/${repo.name} — Builds`,
-      hint: "its pinned builds; `s` shows a pin's screenshots; a writer pins, notes and deletes",
+      hint: "its pinned builds; `s` shows a pin's screenshots; a writer pins, notes, names a cart (`c`) and deletes",
       run: () => ctx.push(buildsScreen(f, ctx, repo)),
     },
   ];

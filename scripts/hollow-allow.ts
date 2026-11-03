@@ -19,4 +19,6 @@ export type Allowed = {
 };
 
 export const ALLOWED: readonly Allowed[] = [
+  { orphan: "src/actions/forge_view.ts#viewBuilds", reason: "a counter only test/api-forge-view.test.ts reads, to prove a repeat reuses the view", issue: 9193 },
+  { orphan: "src/actions/foundry_door.ts#forgetFoundryDoor", reason: "a reset only test/api-forge-view.test.ts calls, after it installs or removes the app", issue: 9193 },
 ];

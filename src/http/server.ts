@@ -186,6 +186,7 @@ import {
 import { iterationsPage, noteSubmit } from "../web/pages/iterations.ts";
 import { buildsPage, deletePinSubmit, newBuildPage, pinBuildSubmit, previewBuildSubmit } from "../web/pages/builds.ts";
 import { shotImage } from "../web/pages/build_shots.ts";
+import { cartArt, cartPage } from "../web/pages/build_cart.ts";
 import { wavePage, wavesAtom, wavesPage } from "../web/pages/waves.ts";
 import {
   contributeSubmit,
@@ -1263,6 +1264,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/builds/new", newBuildPage);
   // A pin's screenshot, read: a tree kept by refs/shots/<label> (`git/shots.ts`).
   router.add("GET", "/:owner/:name/builds/:label/shots/:file", shotImage);
+  // A pin's cart: its captured page, played sandboxed, and its picture (`arcade/carts.ts`).
+  router.add("GET", "/:owner/:name/builds/:label/cart", cartPage);
+  router.add("GET", "/:owner/:name/builds/:label/cart.png", cartArt);
   router.add("GET", "/:owner/:name/iterations", iterationsPage);
   router.add("POST", "/:owner/:name/builds", pinBuildSubmit);
   router.add("POST", "/:owner/:name/builds/preview", previewBuildSubmit);

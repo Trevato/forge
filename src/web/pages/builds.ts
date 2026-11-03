@@ -108,6 +108,12 @@ export function buildsCard(
                 >${n.pin.source} · ${n.pin.pinnedBy} · ${time(n.pin.pinnedAt)}</span
               >
               ${when(
+                n.from === undefined && n.pin.demo?.launch === "file",
+                () => html`<a class="build-cart small" href="${base}/builds/${encodeURIComponent(n.pin.label)}/cart" title="Play the captured page of ${n.pin.demo?.name ?? ""}"
+                  >▶ ${n.pin.demo?.name ?? ""} ${n.pin.demo?.version ?? ""}</a
+                >`,
+              )}
+              ${when(
                 canPreview && n.from === undefined,
                 () => html`<form method="post" action="${base}/builds/preview" class="build-preview">
                   <input type="hidden" name="sha" value="${n.pin.oid}" />

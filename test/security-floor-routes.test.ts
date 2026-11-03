@@ -50,11 +50,14 @@ const HOOK = "needs a webhook, which the seed does not register";
 
 /** GET patterns the seed cannot fill → why. Requested with a placeholder all the same. */
 const SHOT = "needs a pin with a picture kept by refs/shots; the seed pins nothing";
+const CART = "the seed pins no build with a cart (test/build-cart.test.ts covers its headers)";
 const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
   "/talk/:id": TALK,
   "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",
   "/:owner/:name/bets/:id": BET,
+  "/:owner/:name/builds/:label/cart": CART,
+  "/:owner/:name/builds/:label/cart.png": CART,
   "/:owner/:name/builds/:label/shots/:file": SHOT,
   "/:owner/:name/looks/:env/:commit/:kind.png": LOOK,
   "/:owner/:name/milestones/:number/limb/:op": LIMB,
@@ -68,6 +71,7 @@ const UNSEEDED: Record<string, string> = {
   "/api/v1/orgs/:org": ORG,
   "/api/v1/orgs/:org/teams": ORG,
   "/api/v1/orgs/:org/teams/:team/members": ORG,
+  "/api/v1/repos/:owner/:name/builds/:label/cart": CART,
   "/api/v1/repos/:owner/:name/builds/:label/shots": SHOT,
   "/api/v1/repos/:owner/:name/builds/:label/shots/looks": SHOT,
   "/api/v1/repos/:owner/:name/gates/:id/log": GATE,

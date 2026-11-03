@@ -33,10 +33,58 @@ export interface BuildPin {
   readonly pinnedBy: string;
   /** ISO time it was pinned. */
   readonly pinnedAt: string;
+  /** The demo this pin is, when it names one. */
+  readonly demo?: Demo | undefined;
   /** Its notes, ranked, when it has any (`withNotes`); `note` is then the first one's text. */
   readonly notes?: readonly BuildNote[] | undefined;
   /** The tag message's note, when `note` holds the first of its notes instead. */
   readonly tagNote?: string | undefined;
+}
+
+/**
+ * How a demo opens: `file` plays or downloads its captured HTML page, `env`
+ * opens a running build preview of its commit, `shots` shows screenshots.
+ */
+export const LAUNCHES = ["file", "env", "shots"] as const;
+export type Launch = (typeof LAUNCHES)[number];
+
+export const isLaunch = (value: unknown): value is Launch =>
+  typeof value === "string" && (LAUNCHES as readonly string[]).includes(value);
+
+/** A pin's demo: what a display shows and opens. */
+export interface Demo {
+  /** The demo it belongs to: pins sharing a name are one demo's builds. */
+  readonly name: string;
+  readonly version: string;
+  /** How it opens; unset follows the repository's `app.launch` (`launchOf`). */
+  readonly launch?: Launch | undefined;
+  /** The page it opens, `/` or `/spicy`. */
+  readonly page: string;
+  /** On display pages: chosen by a person, never by default. */
+  readonly showcase: boolean;
+  /** An uploaded cover: a blob kept by `refs/covers/<label>`. */
+  readonly cover?: string | undefined;
+}
+
+export const COVERS_PREFIX = "refs/covers/";
+
+/** A demo fact: one plain line, at most `max` characters. */
+const isFact = (s: string, max: number): boolean =>
+  s.length > 0 && s.length <= max && !/[\x00-\x1f\x7f<>]/.test(s) && s.trim() === s;
+
+/** A page a demo may name: a path of plain segments. */
+export const isDemoPage = (page: string): boolean =>
+  page.length <= 200 && /^\/(?:[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)?$/.test(page) && !page.includes("..");
+
+/** Whether a demo's facts are all well formed. */
+export function isDemo(demo: Demo): boolean {
+  return (
+    isFact(demo.name, 60) &&
+    isFact(demo.version, 40) &&
+    (demo.launch === undefined || isLaunch(demo.launch)) &&
+    isDemoPage(demo.page) &&
+    (demo.cover === undefined || isSafeOid(demo.cover))
+  );
 }
 
 /** A label is short and plain: letters, digits, `.`, `_` and `-`. */
@@ -62,6 +110,7 @@ export function isPinParent(parent: string): boolean {
 
 export type PinBuildError =
   | "invalid_label"
+  | "invalid_demo"
   | "invalid_parent"
   | "not_a_commit"
   | "exists"
@@ -76,6 +125,7 @@ export interface PinInput {
   readonly tagger: { readonly name: string; readonly email: string };
   /** Seconds since the epoch; tests pass one to order pins. */
   readonly at?: number;
+  readonly demo?: Demo | undefined;
 }
 
 /** One line, no control bytes: what a trailer or tagger field may hold. */
@@ -95,9 +145,11 @@ export async function pinBuild(
   if (kind.code !== 0 || kind.stdout.trim() !== "commit")
     return err("not_a_commit");
 
+  if (input.demo !== undefined && !isDemo(input.demo)) return err("invalid_demo");
+
   const at = input.at ?? Math.floor(Date.now() / 1000);
   const note = input.note.replace(/\r/g, "").trim();
-  const message = pinMessage(note === "" ? input.label : note, input.parent, oneLine(input.source) || "commit");
+  const message = pinMessage(note === "" ? input.label : note, input.parent, oneLine(input.source) || "commit", input.demo);
   const tag =
     `object ${input.oid}\ntype commit\ntag ${input.label}\n` +
     `tagger ${oneLine(input.tagger.name) || "forge"} <${oneLine(input.tagger.email)}> ${at} +0000\n\n` +
@@ -118,31 +170,158 @@ export async function pinBuild(
     source: oneLine(input.source) || "commit",
     pinnedBy: oneLine(input.tagger.name) || "forge",
     pinnedAt: new Date(at * 1000).toISOString(),
+    demo: input.demo,
   });
 }
 
-/** A pin's message: its note, then its trailers. */
-function pinMessage(note: string, parent: string | undefined, source: string): string {
-  const trailers = [...(parent === undefined ? [] : [`Parent: ${parent}`]), `Source: ${source}`];
+/** A pin's message: its note, then its trailers. Always the new trailers. */
+function pinMessage(note: string, parent: string | undefined, source: string, demo: Demo | undefined): string {
+  const trailers = [
+    ...(parent === undefined ? [] : [`Parent: ${parent}`]),
+    `Source: ${source}`,
+    ...(demo === undefined
+      ? []
+      : [
+          `Demo: ${demo.name}`,
+          `Version: ${demo.version}`,
+          ...(demo.launch === undefined ? [] : [`Launch: ${demo.launch}`]),
+          `Page: ${demo.page}`,
+          ...(demo.showcase ? ["Showcase: on"] : []),
+          ...(demo.cover === undefined ? [] : [`Cover: ${demo.cover}`]),
+        ]),
+  ];
   return `${note}\n\n${trailers.join("\n")}\n`;
 }
 
-const TRAILER = /^(Parent|Source): (.*)$/;
+/** Every trailer a pin may carry. */
+const TRAILER = /^(Parent|Source|Demo|Cart|Version|Launch|Producer|Page|Showcase|Shelf|Cover): (.*)$/;
+
+/** What a pin's message carries, as `parsePinMessage` reads it. */
+export interface PinMessage {
+  readonly note: string;
+  readonly parent: string | undefined;
+  readonly source: string;
+  readonly demo: Demo | undefined;
+  /** Whether it carries any old trailer: `Cart:`, `Shelf:` or `Producer:`. */
+  readonly legacy: boolean;
+  /** The old `Producer:`, when it carries one. */
+  readonly producer: string | undefined;
+}
 
 /** The trailers block at the end of a pin's message, and the note above it. */
-function parsePinMessage(text: string): { note: string; parent: string | undefined; source: string } {
+export function parsePinMessage(text: string): PinMessage {
   const lines = text.replace(/\n+$/, "").split("\n");
   let parent: string | undefined;
   let source = "commit";
+  const facts = new Map<string, string>();
   let end = lines.length;
   while (end > 0) {
-    const m = TRAILER.exec(lines[end - 1]!);
+    const line = lines[end - 1]!;
+    const m = TRAILER.exec(line);
     if (m === null) break;
     if (m[1] === "Parent" && isPinParent(m[2]!)) parent = m[2]!;
     else if (m[1] === "Source") source = m[2]!;
+    else if (!facts.has(m[1]!)) facts.set(m[1]!, m[2]!);
     end--;
   }
-  return { note: lines.slice(0, end).join("\n").trim(), parent, source };
+  // A new trailer wins over its old name when a tag carries both. An old
+  // `Cart:` was always a captured page: with no `Launch:`, it is `file`.
+  const name = facts.get("Demo") ?? facts.get("Cart");
+  const cover = facts.get("Cover");
+  const launch = facts.get("Launch") ?? (facts.has("Demo") || !facts.has("Cart") ? undefined : "file");
+  const demo: Demo | undefined =
+    name === undefined
+      ? undefined
+      : {
+          name,
+          version: facts.get("Version") ?? "",
+          ...(launch === undefined ? {} : { launch: launch as Launch }),
+          page: facts.get("Page") ?? "/",
+          showcase: (facts.get("Showcase") ?? facts.get("Shelf")) === "on",
+          ...(cover === undefined ? {} : { cover }),
+        };
+  return {
+    note: lines.slice(0, end).join("\n").trim(),
+    parent,
+    source,
+    demo: demo !== undefined && isDemo(demo) ? demo : undefined,
+    legacy: facts.has("Cart") || facts.has("Shelf") || facts.has("Producer"),
+    producer: facts.get("Producer"),
+  };
+}
+
+export type SetDemoError = "invalid_demo" | "not_found" | "moved" | "git_failed";
+
+/** A pin's tag as `rewritePin` reads it: the tag object, its commit, its tagger line and its message. */
+interface PinTag {
+  readonly tag: string;
+  readonly object: string;
+  readonly tagger: { readonly name: string; readonly email: string; readonly at: string; readonly zone: string };
+  readonly message: PinMessage;
+}
+
+/**
+ * Write a new tag object for the pin `label`'s commit, keeping its tagger,
+ * date and message, with the demo `change` makes of what it holds. The ref
+ * moves only from the tag read here, so two edits never cross. Notes are
+ * never written here: they live on `refs/forge/notes`.
+ */
+async function rewritePin(
+  dir: string,
+  label: string,
+  change: (old: PinTag) => Demo | undefined,
+): Promise<Result<BuildPin, "not_found" | "moved" | "git_failed">> {
+  if (!isPinLabel(label)) return err("not_found");
+  const ref = `${BUILDS_PREFIX}${label}`;
+  const old = await runGitCapture(["rev-parse", "--verify", "--quiet", ref], { cwd: dir });
+  const oldTag = old.stdout.trim();
+  if (old.code !== 0 || !isSafeOid(oldTag)) return err("not_found");
+  const body = await runGit(["cat-file", "tag", oldTag], { cwd: dir });
+  if (!body.ok) return err("not_found");
+  const split = body.value.indexOf("\n\n");
+  const head = split === -1 ? body.value : body.value.slice(0, split);
+  const tagger = /^tagger (.*) <([^>]*)> (\d+) ([+-]\d{4})$/m.exec(head);
+  const object = /^object ([0-9a-f]+)$/m.exec(head)?.[1];
+  if (tagger === null || object === undefined) return err("not_found");
+  const message = parsePinMessage(split === -1 ? "" : body.value.slice(split + 2));
+  const demo = change({ tag: oldTag, object, tagger: { name: tagger[1]!, email: tagger[2]!, at: tagger[3]!, zone: tagger[4]! }, message });
+  const tag =
+    `object ${object}\ntype commit\ntag ${label}\n` +
+    `tagger ${tagger[1]} <${tagger[2]}> ${tagger[3]} ${tagger[4]}\n\n` +
+    pinMessage(message.note === "" ? label : message.note, message.parent, message.source, demo);
+  const made = await runGit(["mktag"], { cwd: dir, stdin: tag });
+  if (!made.ok) return err("git_failed");
+  const moved = await runGitCapture(["update-ref", ref, made.value.trim(), oldTag], { cwd: dir });
+  if (moved.code !== 0) return err("moved");
+  return ok({
+    label,
+    oid: object,
+    note: message.note,
+    parent: message.parent,
+    source: message.source,
+    pinnedBy: tagger[1]!,
+    pinnedAt: new Date(Number(tagger[3]) * 1000).toISOString(),
+    demo,
+  });
+}
+
+/**
+ * Give the pin `label` these demo facts, or none: a new tag object for the
+ * same commit, with the same tagger, date, note, parent and source, and
+ * only the new trailers.
+ */
+export async function setPinDemo(
+  dir: string,
+  label: string,
+  demo: Demo | undefined,
+): Promise<Result<BuildPin, SetDemoError>> {
+  if (demo !== undefined && !isDemo(demo)) {
+    if (!isPinLabel(label)) return err("not_found");
+    return err("invalid_demo");
+  }
+  const done = await rewritePin(dir, label, () => demo);
+  if (!done.ok) return done;
+  return ok(withNotes(done.value, (await readBuildNotes(dir, [label])).get(label)));
 }
 
 /** The most bytes of one note's text. */
@@ -410,8 +589,9 @@ export function coverType(bytes: Uint8Array): "image/png" | "image/jpeg" | "imag
 export type DeletePinError = "not_found" | "moved" | "git_failed";
 
 /**
- * Delete the pin `label`: `refs/builds/<label>`, only from the tag read
- * here, so a pin changed meanwhile is not deleted. The commit stays.
+ * Delete the pin `label`: `refs/builds/<label>`, with its cover and its
+ * screenshots, in one ref transaction. The pin's ref goes only from the tag
+ * read here, so a pin changed meanwhile is not deleted. The commit stays.
  */
 export async function deletePin(dir: string, label: string): Promise<Result<{ readonly oid: string; readonly tag: string }, DeletePinError>> {
   if (!isPinLabel(label)) return err("not_found");
@@ -425,9 +605,11 @@ export async function deletePin(dir: string, label: string): Promise<Result<{ re
   if (tag === undefined) return err("not_found");
   const commit = await runGitCapture(["rev-parse", "--verify", "--quiet", `${tag}^{commit}`], { cwd: dir });
   const lines = [`delete ${ref} ${tag}`];
-  // The pin's curated screenshots (`git/shots.ts`) go with it, so a label pinned again starts bare.
-  const shots = await read(`refs/shots/${label}`);
-  if (shots !== undefined) lines.push(`delete refs/shots/${label} ${shots}`);
+  // The pin's cover and curated screenshots (`git/shots.ts`) go with it, so a label pinned again starts bare.
+  for (const other of [`${COVERS_PREFIX}${label}`, `refs/shots/${label}`]) {
+    const at = await read(other);
+    if (at !== undefined) lines.push(`delete ${other} ${at}`);
+  }
   const done = await runGitCapture(["update-ref", "--stdin"], { cwd: dir, stdin: `start\n${lines.join("\n")}\nprepare\ncommit\n` });
   if (done.code !== 0) return err(/cannot lock|is at|expected/i.test(done.stderr) ? "moved" : "git_failed");
   return ok({ oid: commit.stdout.trim(), tag });
@@ -437,6 +619,19 @@ export async function deletePin(dir: string, label: string): Promise<Result<{ re
 async function readTagPin(dir: string, label: string): Promise<BuildPin | undefined> {
   if (!isPinLabel(label)) return undefined;
   return (await listTagPins(dir, label))[0];
+}
+
+/** The largest cover a person may upload. */
+export const COVER_MAX = 2 * 1024 * 1024;
+
+/** Store a cover picture as a blob kept by `refs/covers/<label>`; its id. */
+export async function storeCover(dir: string, label: string, bytes: Uint8Array): Promise<Result<string, "invalid_cover" | "git_failed">> {
+  if (!isPinLabel(label) || bytes.length > COVER_MAX || coverType(bytes) === undefined) return err("invalid_cover");
+  const blob = await runGit(["hash-object", "-w", "--stdin"], { cwd: dir, stdin: bytes });
+  if (!blob.ok) return err("git_failed");
+  const oid = blob.value.trim();
+  const kept = await runGitCapture(["update-ref", `${COVERS_PREFIX}${label}`, oid], { cwd: dir });
+  return kept.code === 0 ? ok(oid) : err("git_failed");
 }
 
 /**
@@ -478,6 +673,7 @@ async function listTagPins(dir: string, label?: string): Promise<BuildPin[]> {
       source: message.source,
       pinnedBy: fields[i + 3]!,
       pinnedAt: new Date(fields[i + 4]!).toISOString(),
+      demo: message.demo,
     });
   }
   return pins;
