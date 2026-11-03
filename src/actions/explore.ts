@@ -101,7 +101,7 @@ export function isExploreLine(line: string): boolean {
   return EXPLORE_KEYS.test(line);
 }
 
-/** The query and the `kind:`/`sort:` words it did not know, as typed. */
+/** The query and the `kind:`, `sort:`, `updated:`, `archived:` and `owner:` words it did not take, as typed. */
 export interface ExploreRead {
   readonly query: ExploreQuery;
   readonly unknown: readonly string[];
@@ -122,19 +122,23 @@ export function readExploreLine(line: string): ExploreRead {
     const [key, value = ""] = word.split(/:(.*)/s);
     const k = (key ?? "").toLowerCase();
     if (k === "kind" && value !== "") {
-      const known = KINDS[value.toLowerCase()];
+      const known = Object.hasOwn(KINDS, value.toLowerCase()) ? KINDS[value.toLowerCase()] : undefined;
       if (known === undefined) unknown.push(word);
       else kind = known;
     } else if (k === "sort" && value !== "") {
       if ((SORTS as readonly string[]).includes(value.toLowerCase()))
         sort = value.toLowerCase() as ExploreSort;
       else unknown.push(word);
-    } else if (k === "archived" && ["yes", "no"].includes(value.toLowerCase()))
-      archived = value.toLowerCase() === "yes";
-    else if (k === "updated" && value.toLowerCase() in WINDOWS)
-      updated = value.toLowerCase() as ExploreWindow;
-    else if (k === "owner" && isSafeName(value)) owner = value;
-    else if (k === "q" && value !== "") words.push(value);
+    } else if (k === "archived" && value !== "") {
+      if (["yes", "no"].includes(value.toLowerCase())) archived = value.toLowerCase() === "yes";
+      else unknown.push(word);
+    } else if (k === "updated" && value !== "") {
+      if (Object.hasOwn(WINDOWS, value.toLowerCase())) updated = value.toLowerCase() as ExploreWindow;
+      else unknown.push(word);
+    } else if (k === "owner" && value !== "") {
+      if (isSafeName(value)) owner = value;
+      else unknown.push(word);
+    } else if (k === "q" && value !== "") words.push(value);
     else words.push(word);
   }
   return {
@@ -160,8 +164,12 @@ const KIND_WORDS: readonly ExploreKind[] = [...new Set(Object.values(KINDS))];
 export function exploreNote(unknown: readonly string[]): string {
   return unknown
     .map((word) => {
-      const sort = word.toLowerCase().startsWith("sort:");
+      const key = word.slice(0, word.indexOf(":")).toLowerCase();
       const shown = word.length > 40 ? `${word.slice(0, 39)}…` : word;
+      if (key === "owner") return `${shown} is not a name`;
+      if (key === "updated") return `${shown} is not a window — use ${Object.keys(WINDOWS).join(", ")}`;
+      if (key === "archived") return `${shown} is not an answer — use yes, no`;
+      const sort = key === "sort";
       return `${shown} is not a ${sort ? "sort" : "kind"} — use ${(sort ? SORTS : KIND_WORDS).join(", ")}`;
     })
     .join("; ");

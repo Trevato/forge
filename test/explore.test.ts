@@ -54,7 +54,8 @@ describe("the one line", () => {
     );
     expect(parseExploreQuery("updated:7d").updated).toBe("7d");
     expect(parseExploreQuery("updated:2y").updated).toBe("all");
-    expect(parseExploreQuery("updated:2y").text).toBe("updated:2y");
+    expect(parseExploreQuery("updated:2y").text).toBe("");
+    expect(parseExploreQuery("updated:").text).toBe("updated:");
     expect(exploreLine(parseExploreQuery("updated:30d kind:app garden"))).toBe(
       "kind:app updated:30d garden",
     );
@@ -263,7 +264,8 @@ describe("explore", () => {
     expect(names((await api("kind:app owner:alice")).items).sort()).toEqual(["alice/gated", "alice/loved", "alice/quiet"]);
     expect(names((await api("kind:app owner:bob")).items)).toEqual(["bob/busy"]);
     expect(names((await api("owner:bob")).items).sort()).toEqual(["bob", "bob/busy"]);
-    expect((await api("kind:app owner:..")).items).toEqual([]);
+    const bad = await api("kind:app owner:..");
+    expect((bad as { note?: string }).note).toBe("owner:.. is not a name");
     const page = await (await fetch(`${base}/explore?q=kind:person`)).text();
     expect(page).toContain(`href="/explore?q=${encodeURIComponent("kind:app owner:bob")}">1 app</a>`);
   });
