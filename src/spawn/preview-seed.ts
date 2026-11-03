@@ -21,12 +21,15 @@ import { pinPanel } from "../actions/board-pins.ts";
 import { writeBoard } from "../actions/boards.ts";
 import { backBet } from "../actions/bets.ts";
 import { openIssue, setIssueState } from "../actions/issues.ts";
+import { pinBuild } from "../actions/builds.ts";
 import { openPull } from "../actions/pulls.ts";
-import { commitToBranch, createRepo } from "../actions/repos.ts";
+import { commitToBranch, createRepo, forkRepo } from "../actions/repos.ts";
+import { iterationsOf } from "../core/iterations.ts";
 import { turnValveFor } from "../actions/valves.ts";
 import { insertBet } from "../core/bets.ts";
 import { addDependency } from "../core/dependencies.ts";
 import { claimRun, createRun, finishRun } from "../core/runs.ts";
+import { setMember } from "../core/roles.ts";
 import { noteLimit } from "../core/standing.ts";
 import { addSubscription } from "../core/subscriptions.ts";
 import { recordUsage } from "../core/usage.ts";
@@ -34,10 +37,19 @@ import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { createUser, getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { PREVIEW_CONFIG_FILES } from "./preview-config.ts";
-import { PREVIEW_ADMIN, PREVIEW_PULL, PREVIEW_PULL_PAGE, PREVIEW_REPO } from "./preview-looks.ts";
+import {
+  PREVIEW_ADMIN,
+  PREVIEW_FORKS,
+  PREVIEW_ITERATIONS_PAGE,
+  PREVIEW_PULL,
+  PREVIEW_PULL_PAGE,
+  PREVIEW_REPO,
+} from "./preview-looks.ts";
 
 export {
   PREVIEW_ADMIN,
+  PREVIEW_FORKS,
+  PREVIEW_ITERATIONS_PAGE,
   PREVIEW_OWNER_LOOKS,
   PREVIEW_PULL,
   PREVIEW_PULL_PAGE,
@@ -199,6 +211,8 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   if (!waved.ok) return waved;
   const bets = seedBets(app, admin, repo.value, open);
   if (!bets.ok) return bets;
+  const family = await seedForkFamily(app, admin, repo.value, start.value.commitOid);
+  if (!family.ok) return family;
   const valve = turnValveFor(app, admin, `${PREVIEW_ADMIN}/${PREVIEW_REPO}`, 60);
   if (!valve.ok) return err(`the valve: ${valve.error}`);
 
@@ -340,4 +354,50 @@ function seedBets(app: App, admin: User, repo: Repo, open: readonly Issue[]): Re
   bet("Price the list", 4);
   const result = backBet(app, admin, repo, backed.id, 20);
   return result.ok ? ok() : err(`backing a bet: ${result.error.message}`);
+}
+
+/**
+ * The fork family the Iterations page draws: the sample pinned at its first
+ * commit, three forks of it and a fork of the first, each with a commit of
+ * its own (so ahead/behind is not zero) and a pin on it. Refused when the
+ * page would still be a 404 or would draw fewer cards than forks.
+ */
+async function seedForkFamily(app: App, admin: User, repo: Repo, first: string): Promise<Result<void, string>> {
+  const pinned = await pinBuild(app, admin, repo, { label: "v1", oid: first, note: "The sample, as started" });
+  if (!pinned.ok) return err(`the sample's pin: ${JSON.stringify(pinned.error)}`);
+  const made = new Map<string, Repo>();
+  for (const { owner, of } of PREVIEW_FORKS) {
+    const parent = of === undefined ? repo : made.get(of);
+    if (parent === undefined) return err(`the fork of ${owner} comes before ${String(of)}'s`);
+    const person = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      allowReserved: true,
+      username: owner,
+      email: `${owner}@preview.invalid`,
+    });
+    if (!person.ok) return err(`the fork's owner ${owner}: ${person.error}`);
+    setMember(app.db, person.value.id, true, admin.id, new Date());
+    const fork = await forkRepo(app, person.value, parent, PREVIEW_REPO, { visibility: "public" });
+    if (!fork.ok) return err(`the fork of ${owner}: ${String(fork.error)}`);
+    made.set(owner, fork.value);
+    const commit = await commitToBranch(app, person.value, fork.value, {
+      message: `${owner} goes its own way`,
+      files: [{ path: `${owner}.md`, content: `# ${owner}\n\nA change of its own.\n` }],
+    });
+    if (!commit.ok) return err(`the commit of ${owner}: ${JSON.stringify(commit.error)}`);
+    const pin = await pinBuild(app, person.value, fork.value, { label: "try-1", oid: commit.value.commitOid, note: `${owner}, first try` });
+    if (!pin.ok) return err(`the pin of ${owner}: ${JSON.stringify(pin.error)}`);
+  }
+  const home = getRepo(app.db, admin.username, PREVIEW_REPO);
+  const drawn = home === undefined ? undefined : await iterationsOf({ app, auth: { user: admin } }, home);
+  if (drawn === undefined) return err(`${PREVIEW_ITERATIONS_PAGE} would be a 404`);
+  if (drawn.forks.length < PREVIEW_FORKS.length + 1) return err(`${PREVIEW_ITERATIONS_PAGE} draws ${String(drawn.forks.length)} forks`);
+  // Each fork hangs under the one it was made from, so the tree cannot flatten.
+  for (const { owner, of } of PREVIEW_FORKS) {
+    const card = drawn.forks.find((f) => f.repo === `${owner}/${PREVIEW_REPO}`);
+    const under = of === undefined ? `${admin.username}/${PREVIEW_REPO}` : `${of}/${PREVIEW_REPO}`;
+    if (card?.forkOf !== under) return err(`${PREVIEW_ITERATIONS_PAGE} draws ${owner}/${PREVIEW_REPO} under ${String(card?.forkOf)}, not ${under}`);
+  }
+  return ok();
 }

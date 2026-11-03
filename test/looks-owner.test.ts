@@ -45,7 +45,8 @@ import {
   seedPreview,
 } from "../src/spawn/preview-seed.ts";
 import { PREVIEW_CONFIG_FILES } from "../src/spawn/preview-config.ts";
-import { ownerLooksFor } from "../src/spawn/preview-looks.ts";
+import { ownerLooksFor, PREVIEW_FORKS, PREVIEW_ITERATIONS_PAGE } from "../src/spawn/preview-looks.ts";
+import { iterationsOf } from "../src/core/iterations.ts";
 import { localSource } from "../src/view/local.ts";
 import { isFormConfig, parseConfig } from "../src/web/render/config-format.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -484,7 +485,7 @@ describe("looks of a public app", () => {
     if (!opened.ok) throw new Error(String(opened.error));
     const env = previewEnv(opened.value.number);
     const commit = branch.value.commitOid;
-    const pages = ["/", "/flow", PREVIEW_REPO_HOME, PREVIEW_PULL_PAGE];
+    const pages = ["/", "/flow", PREVIEW_REPO_HOME, PREVIEW_PULL_PAGE, PREVIEW_ITERATIONS_PAGE];
     const deadline = Date.now() + 90_000;
     const light = () =>
       looksForEnv(app.db, record.id, env).filter((l) => l.commitOid === commit && l.theme === "light");
@@ -523,4 +524,32 @@ describe("looks of a public app", () => {
     expect(ownerLooksFor(undefined, forge, previewEnv(1))).toEqual([]);
     expect(ownerLooksFor("alice/forge", forge, previewEnv(1)).length).toBeGreaterThan(0);
   });
+});
+
+describe("the Iterations page of the seeded fork family (#9182)", () => {
+  test("the owner's looks include it at desk and phone", () => {
+    const forge = { ownerName: "alice", name: "forge" };
+    const looks = ownerLooksFor("alice/forge", forge, previewEnv(1)).filter((l) => l.page === PREVIEW_ITERATIONS_PAGE);
+    expect(PREVIEW_ITERATIONS_PAGE).toBe("/preview-admin/sample/iterations");
+    expect(looks.map((l) => l.kind).sort()).toEqual(["desktop", "phone"]);
+  });
+
+  test("the seeded repository has the forks the page draws, each with a build of its own", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-iterations-seed-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    try {
+      const seeded = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+      if (!seeded.ok) throw new Error(seeded.error);
+      const admin = getUserByName(app.db, PREVIEW_ADMIN)!;
+      const repo = getRepo(app.db, PREVIEW_ADMIN, PREVIEW_REPO)!;
+      const drawn = await iterationsOf({ app, auth: { user: admin } }, repo);
+      expect(drawn?.forks.length).toBeGreaterThanOrEqual(4);
+      expect(drawn!.forks.filter((f) => f.forkOf !== null).length).toBe(PREVIEW_FORKS.length);
+      expect(drawn!.forks.some((f) => f.forkOf === `preview-ada/${PREVIEW_REPO}`)).toBe(true);
+      expect(drawn!.forks.filter((f) => f.forkOf !== null).every((f) => f.builds.length > 0)).toBe(true);
+    } finally {
+      app.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
