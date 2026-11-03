@@ -274,6 +274,7 @@ describe("the forge over MCP", () => {
       "events",
       "reports",
       "branches",
+      "builds",
       "commits",
       "waves",
       "probe",

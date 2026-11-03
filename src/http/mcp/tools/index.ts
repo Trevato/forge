@@ -34,6 +34,7 @@ export { tool as board_pins } from "./board_pins.ts";
 export { tool as board_write } from "./board_write.ts";
 export { tool as boards } from "./boards.ts";
 export { tool as branches } from "./branches.ts";
+export { tool as builds } from "./builds.ts";
 export { tool as capacity } from "./capacity.ts";
 export { tool as claim_link } from "./claim_link.ts";
 export { tool as close } from "./close.ts";
