@@ -21,7 +21,7 @@ import { json } from "../../http/respond.ts";
 import { shippedAnswer } from "../../release/answer.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { badge, card, empty, listCard, row, seg, sha, time } from "../ui.ts";
+import { badge, card, empty, row, seg, sha, time } from "../ui.ts";
 
 /** Where the live client looks: a merge lands, or production serves a commit. */
 const LIVE = "pull.merged,app.serving";
@@ -42,7 +42,7 @@ function byDay(list: readonly Landing[], own: string | undefined, showRepo: bool
   const days = new Map<string, Landing[]>();
   for (const l of list) days.set(dayOf(l.at, zone), [...(days.get(dayOf(l.at, zone)) ?? []), l]);
   return [...days].map(([day, items]) =>
-    card(html`<ul class="list">${items.map((l) => landingRow(l, own, showRepo))}</ul>`, {
+    card(html`<ul class="list setting-list">${items.map((l) => landingRow(l, own, showRepo))}</ul>`, {
       head: html`<h2><time datetime="${day}">${dayHeading(day, today)}</time>${zone === "UTC" ? html`<span data-zone>${badge("UTC", { variant: "outline" })}</span>` : null}</h2>${badge(String(items.length))}`,
       attrs: html`data-day="${day}"`,
       pad: false,
@@ -136,7 +136,7 @@ export function shippedRegion(
   const way =
     onItsWay.length === 0
       ? null
-      : html`<h2 class="mt">On its way</h2>${listCard(onItsWay.map((l) => landingRow(l, read.own, choice === "all")))}`;
+      : html`<h2 class="mt">On its way</h2>${card(html`<ul class="list setting-list">${onItsWay.map((l) => landingRow(l, read.own, choice === "all"))}</ul>`, { pad: false })}`;
   const gone =
     live.length === 0
       ? empty({ title: "Nothing has shipped yet", note: "Each pull appears here once the running commit contains it." })

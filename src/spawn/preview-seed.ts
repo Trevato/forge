@@ -22,7 +22,7 @@ import { writeBoard } from "../actions/boards.ts";
 import { backBet } from "../actions/bets.ts";
 import { openIssue, setIssueState } from "../actions/issues.ts";
 import { pinBuild } from "../actions/builds.ts";
-import { openPull } from "../actions/pulls.ts";
+import { mergePull, openPull } from "../actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../actions/repos.ts";
 import { reviewGate } from "../actions/gate_review.ts";
 import { linkIssue } from "../actions/dependencies.ts";
@@ -67,6 +67,12 @@ export {
 /** The seeded wave's version and headline, which the owner's /waves look shows. */
 export const PREVIEW_WAVE = "0.1.0";
 export const PREVIEW_WAVE_HEADLINE = "The sample says hello";
+/**
+ * The title of the seeded pull that lands, so /changelog has a day of rows
+ * to look at: long, with one unbroken word, the case a 390 px phone must
+ * wrap rather than scroll (#9349).
+ */
+export const PREVIEW_LANDING_TITLE = `The changelog wraps a long landing title on a phone ${"L".repeat(120)} and the words after it`;
 /** The board whose panels are pinned to home. */
 const PREVIEW_BOARD = "preview";
 const SEEDED = "preview_seeded";
@@ -218,6 +224,9 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   if (!waved.ok) return waved;
   const bets = seedBets(app, admin, repo.value, open);
   if (!bets.ok) return bets;
+  // Before the forks, so the merge moves no fork; after the numbered issues, so they keep their numbers.
+  const landed = await seedLanding(app, admin, repo.value);
+  if (!landed.ok) return landed;
   const family = await seedForkFamily(app, admin, repo.value, start.value.commitOid);
   if (!family.ok) return family;
   const gated = seedLaterGate(app, admin, repo.value);
@@ -236,6 +245,27 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
     const pinned = await pinPanel(app, admin, PREVIEW_BOARD, p.title);
     if (!pinned.ok) return err(`a pin: ${pinned.error}`);
   }
+  return ok();
+}
+
+/** One pull merged into the sample's default branch: a landing for /changelog (#9349). */
+async function seedLanding(app: App, admin: User, repo: Repo): Promise<Result<void, string>> {
+  const branch = await commitToBranch(app, admin, repo, {
+    branch: "landed",
+    base: repo.defaultBranch,
+    message: "Land a note",
+    files: [{ path: "LANDED.md", content: "Landed.\n" }],
+  });
+  if (!branch.ok) return err(`the landing's branch: ${JSON.stringify(branch.error)}`);
+  const pull = await openPull(app, admin, repo, {
+    title: PREVIEW_LANDING_TITLE,
+    body: "Merged by the preview seed.",
+    baseBranch: repo.defaultBranch,
+    headBranch: "landed",
+  });
+  if (!pull.ok) return err(`the landing: ${String(pull.error)}`);
+  const merged = await mergePull(app, admin, repo, pull.value, "merge", undefined, { pastGate: true });
+  if (!merged.ok) return err(`the landing's merge: ${String(merged.error)}`);
   return ok();
 }
 
