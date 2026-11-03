@@ -173,7 +173,12 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
     const all = turns.ok ? turns.value : [];
     const works = worksOf(ctx.app.db, user.id, conversation.id, all);
     const shown = all.map((t) => (t.role === "agent" ? { ...t, work: works.get(t.id) ?? null } : t));
-    return json({ running: turnRunning(ctx.app, user.id, conversation.id), conversation: conversation.id, queued: queuedOf(ctx.app, user.id, conversation.id).map((q) => ({ id: q.id, text: q.text })), turns: shown });
+    // The tag is of the exact bytes sent (so `before` and `limit` give their own), made after the person's own access was settled above.
+    const text = JSON.stringify({ running: turnRunning(ctx.app, user.id, conversation.id), conversation: conversation.id, queued: queuedOf(ctx.app, user.id, conversation.id).map((q) => ({ id: q.id, text: q.text })), turns: shown });
+    const etag = weakEtag(text);
+    const headers = { etag, "cache-control": "private", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
 
   router.add("GET", "/api/v1/conversations", (ctx) => {

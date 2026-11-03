@@ -221,3 +221,63 @@ describe("queue and steer through the doors", () => {
     await clear();
   });
 });
+
+describe("the turns carry an ETag (#9278)", () => {
+  const read = (extra: Record<string, string> = {}, query = "") =>
+    fetch(`${servers.url}/api/v1/conversation/turns${query}`, { headers: { authorization: `Bearer ${rw}`, ...extra } });
+
+  test("a repeat is a bodiless 304; a queued or cancelled message and a run starting or ending change the tag", async () => {
+    const first = await read();
+    expect(first.status).toBe(200);
+    await first.text();
+    const idle = first.headers.get("etag")!;
+    expect(idle).toMatch(/^W\//);
+    expect(first.headers.get("cache-control")).toBe("private");
+    const again = await read({ "if-none-match": idle });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+    expect(again.headers.get("etag")).toBe(idle);
+    expect(again.headers.get("cache-control")).toBe("private");
+    expect(again.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(again.headers.get("referrer-policy")).toBeTruthy();
+    expect(again.headers.get("content-security-policy")).toBeTruthy();
+
+    await start();
+    const running = await read({ "if-none-match": idle });
+    expect(running.status).toBe(200);
+    await running.text();
+    const runTag = running.headers.get("etag")!;
+    expect(runTag).not.toBe(idle);
+    expect((await read({ "if-none-match": runTag })).status).toBe(304);
+
+    const queued = (await (await send({ text: "later", during: "queue" })).json()) as { queued: string };
+    const waiting = await read({ "if-none-match": runTag });
+    expect(waiting.status).toBe(200);
+    await waiting.text();
+    const waitTag = waiting.headers.get("etag")!;
+    expect(waitTag).not.toBe(runTag);
+
+    const del = await fetch(`${servers.url}/api/v1/conversation/queue/${queued.queued}`, { method: "DELETE", headers: headers(rw) });
+    expect(del.status).toBe(200);
+    const cancelled = await read({ "if-none-match": waitTag });
+    expect(cancelled.status).toBe(200);
+    await cancelled.text();
+    expect(cancelled.headers.get("etag")).toBe(runTag);
+
+    await clear();
+    const ended = await read({ "if-none-match": runTag });
+    expect(ended.status).toBe(200);
+    await ended.text();
+    expect(ended.headers.get("etag")).not.toBe(runTag);
+  });
+
+  test("`limit` and `before` give different tags, and a tag from another person's read never matches", async () => {
+    const a = await read({}, "");
+    await a.text();
+    const b = await read({}, "?limit=1");
+    await b.text();
+    expect(b.headers.get("etag")).not.toBe(a.headers.get("etag"));
+    const other = await fetch(`${servers.url}/api/v1/conversation/turns`, { headers: { authorization: `Bearer ${bob}`, "if-none-match": a.headers.get("etag")! } });
+    expect(other.status).toBe(200);
+  });
+});
