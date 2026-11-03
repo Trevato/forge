@@ -62,7 +62,7 @@ import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
 import { flowCopy, flowEtag, flowMaxAge } from "../system/flow_cache.ts";
 import { countRead } from "../system/telemetry_reads.ts";
-import { historyFor, sourcesOut, systemFor, welcome } from "../system/telemetry.ts";
+import { historyFor, sourcesOut, systemWithReaders, welcome } from "../system/telemetry.ts";
 import { markReaders } from "../crew/direct.ts";
 import {
   addCommentThrough,
@@ -1197,13 +1197,14 @@ export function apiRoutes(router: Router<Handler>): void {
       const reader = telemetryReader(ctx.app, ctx.auth.user);
       if (!reader) return forbidden();
       noteRead(ctx.app, ctx.auth.user, reader, what);
-      countRead(what, ctx.auth.user.username);
+      // Counted after the body, so a body that lists the readers does not count this read.
       const body = timePhase(ctx.request, "read", () => out(ctx, reader));
+      countRead(what, ctx.auth.user.username);
       // A read may hand back a responder (headers, a 304); it runs in the render phase.
       if (typeof body === "function") return timePhase(ctx.request, "render", body as () => Response);
       return timePhase(ctx.request, "render", () => json(body));
     };
-  router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));
+  router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemWithReaders(c.app, r)));
   // The flow read tells a poller how fresh it is: the etag is the reader kind and
   // the copy's computed-at time, so a repeat inside the TTL is a 304 (#9068).
   router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, reader) => {

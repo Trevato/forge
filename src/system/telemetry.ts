@@ -26,10 +26,20 @@ import { readVerified, verifiedSays } from "../flow/verified.ts";
 import type { Reader } from "../actions/telemetry.ts";
 import { agentView, live } from "./live.ts";
 import type { SystemView } from "./view.ts";
+import { readerPaces, type ReaderPace } from "./telemetry_reads.ts";
 
 export function systemFor(app: App, reader: Reader): SystemView {
   const view = live().read();
   return reader.kind === "agent" ? agentView(app, view) : view;
+}
+
+/**
+ * The system answer for the API and the MCP tool: the view plus `readers`, the
+ * rows /system draws (#9088). Names are accounts, so only a telemetry reader gets
+ * here. Call it before `countRead` so the read does not count into its own answer.
+ */
+export function systemWithReaders(app: App, reader: Reader): SystemView & { readers: ReaderPace[] } {
+  return { ...systemFor(app, reader), readers: readerPaces() };
 }
 
 /**
