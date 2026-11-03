@@ -814,7 +814,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin: 20px 0 14px;
 }
-.page-head h1 { min-width: 0; }
+.page-head h1 { min-width: 0; overflow-wrap: anywhere; }
 .page-head > .page-head-sub { flex-basis: 100%; margin-top: -4px; }
 
 /* ---- breadcrumbs ---- */
@@ -847,7 +847,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   content: ""; position: absolute; left: 13px; top: 8px; bottom: 8px;
   width: 2px; background: var(--border);
 }
-.tl-item { position: relative; padding-left: 36px; }
+.tl-item { position: relative; padding-left: 36px; min-width: 0; }
 .tl-item .tl-dot {
   position: absolute; left: 4px; top: 6px;
   display: inline-flex; align-items: center; justify-content: center;

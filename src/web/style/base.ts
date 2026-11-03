@@ -57,6 +57,7 @@ body {
 a { color: inherit; text-decoration: none; transition: color 120ms var(--ease); }
 a:hover { color: var(--accent); }
 code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
+.mono { overflow-wrap: anywhere; }
 
 h1 { font-size: 20px; font-weight: 620; letter-spacing: -0.02em; line-height: 1.25; text-wrap: balance; }
 h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; text-wrap: balance; }

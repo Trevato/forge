@@ -217,6 +217,7 @@ form.inline { display: inline; margin-left: auto; }
    than the phone rather than letting its own ellipsis do the work. A zero
    min-width is what makes truncation inside a grid actually truncate. */
 .split > * { min-width: 0; }
+.split { grid-template-columns: minmax(0, 1fr); }
 
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
@@ -330,7 +331,7 @@ form.inline { display: inline; margin-left: auto; }
 .imgview-pane.is-actual .imgview-img { max-width: none; cursor: zoom-out; }
 
 /* ---- prose (markdown) ---- */
-.prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }
+.prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
 .prose > * { max-width: var(--measure); }
 .prose h1, .prose h2, .prose h3, .prose h4 { margin: 24px 0 8px; }
 .prose h1 { font-size: 20px; }
