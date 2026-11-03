@@ -9,21 +9,68 @@
 
 import { bringLanded, bringLook, setBroughtEnv, startBring, type BringError } from "../../actions/bring.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
-import { mirrorJobFor } from "../../actions/origins.ts";
+import { connectOrigin, connectRefusal, mirrorJobFor } from "../../actions/origins.ts";
+import { connectWords } from "../../actions/origin_words.ts";
+import { connectSite, parseBringLink, PLAIN_HTTP_WORDS } from "../../origins/bring.ts";
 import { notFoundPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import type { Flash } from "../flash.ts";
-import { html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { mirrorJs } from "../client.ts";
 import { btn, card, field, icon } from "../ui.ts";
 import type { Ctx } from "../../http/context.ts";
-import { accountOnly } from "./origins.ts";
+import { accountOnly, hostLabel } from "./origins.ts";
 import { stageList } from "./browse.ts";
 
 const NOT_COPIED = ["data", "variables", "secrets"];
 
-function form(ctx: Ctx, value: string, problem?: Flash, status = 200): Response {
+/** The card's address: `http:` only when the link says so (the card then refuses a token unless this is a development forge). */
+const cardSite = (host: string, link: string): string => `${/^http:\/\//i.test(link.trim()) ? "http:" : "https:"}//${host}`;
+
+/**
+ * The link names a forge no account here is connected to: connect it in
+ * place. The link is kept in the form, the token is asked for where the
+ * friend's forge makes one, and the one click works too when it can.
+ */
+function connectCard(host: string, link: string, error?: string): Html {
+  const site = cardSite(host, link);
+  return card(
+    html`<p>
+        This app is on <strong>${hostLabel(site)}</strong>, and you have not
+        connected your account there yet. Do it here: your link is kept.
+      </p>
+      <form method="post" action="/bring/connect" class="stack" id="bring-connect">
+        <input type="hidden" name="link" value="${link}" />
+        <p class="small">
+          Make a token on their forge:
+          ${btn(`${hostLabel(site)}/settings/tokens`, { href: `${site}/settings/tokens`, external: true, variant: "link" })}
+        </p>
+        ${field({
+          label: `Your token on ${hostLabel(site)}`,
+          name: "token",
+          type: "password",
+          required: true,
+          mono: true,
+          autocomplete: "off",
+          spellcheck: false,
+          hint: "Read is enough to bring an app; private repositories come with it. It is never shown again.",
+          ...(error === undefined ? {} : { error }),
+        })}
+        <div class="form-actions">${btn("Connect and bring it", { variant: "primary", icon: "download" })}</div>
+      </form>
+      <form method="post" action="/settings/origins/oauth" class="form-actions">
+        <input type="hidden" name="host" value="${site}" />
+        <input type="hidden" name="then" value="bring" />
+        <input type="hidden" name="link" value="${link}" />
+        ${btn("Sign in there instead", { icon: "external" })}
+        <span class="muted small">One click, no token to copy.</span>
+      </form>`,
+    { id: "bring-connect-card", head: html`${icon("globe")}<h2>Connect ${hostLabel(site)} first</h2>` },
+  );
+}
+
+function form(ctx: Ctx, value: string, problem?: Flash, status = 200, connect?: Html): Response {
   return page(
     {
       ctx,
@@ -50,10 +97,11 @@ function form(ctx: Ctx, value: string, problem?: Flash, status = 200): Response 
                   placeholder: "https://codeberg.org/ana/notes",
                   spellcheck: false,
                 })}
-                <div class="bar">${btn("Bring it here", { variant: "primary", icon: "download" })}</div>
+                <div class="bar">${btn("Bring it here", { ...(connect === undefined ? { variant: "primary" as const } : {}), icon: "download" })}</div>
               </form>`,
             { head: html`${icon("download")}<h2>Bring it here</h2>` },
           )}
+          ${connect ?? null}
         </div>`,
     },
     status,
@@ -69,15 +117,7 @@ const danger = (message: string, link?: Flash["link"]): Flash => ({
 function refusal(ctx: Ctx, link: string, e: BringError): Response {
   switch (e.kind) {
     case "connect":
-      return form(
-        ctx,
-        link,
-        danger(`Sign in to ${e.host} first, then paste the link again.`, {
-          href: "/settings/origins",
-          label: "connect your account there",
-        }),
-        400,
-      );
+      return form(ctx, link, undefined, 200, connectCard(e.host, link));
     case "invalid":
       return form(ctx, link, danger(e.message), 400);
     case "unverified":
@@ -108,6 +148,33 @@ export async function bringSubmit(ctx: Ctx): Promise<Response> {
   const link = typeof raw === "string" ? raw : "";
   const started = startBring(ctx.app, ctx.auth.user, link);
   if (!started.ok) return refusal(ctx, link.slice(0, 300), started.error);
+  return redirect(`/bring/${started.value.originId}/${started.value.job.id}`);
+}
+
+/** POST /bring/connect: a token for the forge the link names, then straight on with the bring. */
+export async function bringConnect(ctx: Ctx): Promise<Response> {
+  const denied = accountOnly(ctx);
+  if (denied) return denied;
+  const data = await readForm(ctx, "admin");
+  if (data instanceof Response) return data;
+  const raw = data.get("link");
+  const link = (typeof raw === "string" ? raw : "").slice(0, 300);
+  const token = data.get("token");
+  const parsed = parseBringLink(link);
+  if (!parsed.ok) return form(ctx, link, danger("That is not a link to a repository (https://host/owner/name)."), 400);
+  const site = connectSite(link, parsed.value.host);
+  if (!site.ok)
+    return form(ctx, link, undefined, 400, connectCard(parsed.value.host, link, PLAIN_HTTP_WORDS));
+  const connected = await connectOrigin(ctx.app, ctx.auth.user, {
+    host: site.value,
+    token: typeof token === "string" ? token : "",
+  });
+  if (!connected.ok) {
+    const refused = connectRefusal(connected.error);
+    return form(ctx, link, undefined, 422, connectCard(parsed.value.host, link, refused.message ?? connectWords(refused.code)));
+  }
+  const started = startBring(ctx.app, ctx.auth.user, link);
+  if (!started.ok) return refusal(ctx, link, started.error);
   return redirect(`/bring/${started.value.originId}/${started.value.job.id}`);
 }
 

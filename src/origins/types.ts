@@ -575,6 +575,6 @@ export interface Discovered {
   readonly apiUrl: string;
   readonly webUrl: string;
   /** How we knew: the evidence to show the user. */
-  readonly via: "known" | "nodeinfo" | "version-endpoint";
+  readonly via: "known" | "nodeinfo" | "version-endpoint" | "health";
   readonly software: string;
 }

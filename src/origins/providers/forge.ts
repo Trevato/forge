@@ -28,6 +28,7 @@ import { forgeCursor, toForgeComment, toForgeWork } from "./forge-work.ts";
 import { asArray, asId, asString, asTime, dig, fail, field, seg, splitFullName, succeed } from "./http.ts";
 
 const MAX_COMMENT_PAGES = 1000;
+const OLDER_PAGES = 10;
 const NONE = { ok: true, value: [] } as const;
 
 export class ForgeProvider extends ForgejoProvider {
@@ -51,6 +52,8 @@ export class ForgeProvider extends ForgejoProvider {
     const page = Math.max(1, Number(cursor) || 1);
     const limit = await this.pageSize();
     const result = await this.api.call({ path: "/user/repos", query: { limit, page } });
+    // A forge from before `/user/repos` (0.5.x) has no such route.
+    if (!result.ok && result.error.error === "not_found") return this.listReposOlder(cursor, limit);
     if (!result.ok) return result;
     const rows = asArray(result.value.data);
     return succeed({
@@ -59,19 +62,43 @@ export class ForgeProvider extends ForgejoProvider {
     });
   }
 
-  /** One repository, from a forge's own JSON (`ownerName`, `visibility`). */
-  override async getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
-    const named = splitFullName(fullName);
-    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
-    const result = await this.api.call({
-      path: `/repos/${seg(named.owner)}/${seg(named.name)}`,
-    });
-    if (!result.ok) return result;
-    const raw = result.value.data;
-    const owner = asString(field(raw, "ownerName")) || named.owner;
-    const name = asString(field(raw, "name")) || named.name;
+  /**
+   * An old forge's list: `GET /repos` pages by cursor and shows everything the
+   * token may see, so the account's own repositories are picked out of it. A
+   * cursor here is the forge's `next_cursor`, not a page number. At most
+   * `OLDER_PAGES` pages are read for one call, so a huge forge costs a bounded
+   * walk; the rest is one "next" away.
+   */
+  private async listReposOlder(
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<ProviderResult<Page<RemoteRepo>>> {
+    const me = await this.whoami();
+    if (!me.ok) return me;
+    const own: RemoteRepo[] = [];
+    let after = cursor !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(cursor) ? cursor : undefined;
+    for (let walked = 0; walked < OLDER_PAGES; walked++) {
+      const result = await this.api.call({
+        path: "/repos",
+        query: { limit: 100, ...(after === undefined ? {} : { cursor: after }) },
+      });
+      if (!result.ok) return result;
+      for (const raw of asArray(field(result.value.data, "items")))
+        if (asString(field(raw, "ownerName")).toLowerCase() === me.value.login.toLowerCase())
+          own.push(this.repoFrom(raw, undefined));
+      const next = field(result.value.data, "next_cursor");
+      after = typeof next === "string" || typeof next === "number" ? String(next) : undefined;
+      if (after === undefined || own.length >= limit) break;
+    }
+    return succeed({ items: own, next: after ?? null });
+  }
+
+  /** A repository from a forge's own JSON (`ownerName`, `visibility`). */
+  private repoFrom(raw: unknown, named: { owner: string; name: string } | undefined): RemoteRepo {
+    const owner = asString(field(raw, "ownerName")) || named?.owner || "";
+    const name = asString(field(raw, "name")) || named?.name || "";
     const web = `${this.webUrl}/${owner}/${name}`;
-    return succeed(
+    return (
       toRepo({
         id: field(raw, "id"),
         full_name: `${owner}/${name}`,
@@ -87,8 +114,19 @@ export class ForgeProvider extends ForgejoProvider {
         // "cannot push": the direct way is tried, and its refusal falls
         // back to the account's own fork.
         permissions: { push: true, admin: false },
-      }),
+      })
     );
+  }
+
+  /** One repository, from a forge's own JSON. */
+  override async getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}`,
+    });
+    if (!result.ok) return result;
+    return succeed(this.repoFrom(result.value.data, named));
   }
 
   override listLabels(): Promise<ProviderResult<readonly RemoteLabel[]>> {

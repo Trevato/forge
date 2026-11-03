@@ -227,6 +227,10 @@ export async function discover(
   const version = await viaVersionEndpoint(web, probe);
   if (version) return ok(version);
 
+  // A forge from before `/api/v1/version` still answers health and here.
+  const older = await viaOlderForge(web, probe);
+  if (older) return ok(older);
+
   return err(probe.refused ? "private_host" : "unreachable");
 }
 
@@ -255,6 +259,43 @@ async function viaVersionEndpoint(
     webUrl: web,
     via: "version-endpoint",
     software: forge ? `forge ${version}` : version,
+  };
+}
+
+/**
+ * A forge too old to answer `/api/v1/version` (0.5.x). It is known by two
+ * answers no other software gives together: `/api/v1/health` with a boolean
+ * `ok`, a dotted `version` and a `commit`; and `/api/v1/here` with the
+ * manifest's `here` and `actions`. Its repositories are then listed through
+ * `GET /api/v1/repos` (`ForgeProvider.listRepos`).
+ */
+async function viaOlderForge(
+  web: string,
+  probe: Probe,
+): Promise<Discovered | undefined> {
+  const health = await getJson(`${web}/api/v1/health`, web, probe);
+  if (!health.ok) return undefined;
+  const version = asString(field(health.value, "version"));
+  if (
+    typeof field(health.value, "ok") !== "boolean" ||
+    !/^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,40}$/.test(version) ||
+    asString(field(health.value, "commit")) === ""
+  )
+    return undefined;
+  const here = await getJson(`${web}/api/v1/here`, web, probe);
+  if (!here.ok) return undefined;
+  if (
+    typeof field(here.value, "here") !== "object" ||
+    field(here.value, "here") === null ||
+    !Array.isArray(field(here.value, "actions"))
+  )
+    return undefined;
+  return {
+    kind: "gitea",
+    apiUrl: `${web}/api/v1`,
+    webUrl: web,
+    via: "health",
+    software: `forge ${version}`,
   };
 }
 

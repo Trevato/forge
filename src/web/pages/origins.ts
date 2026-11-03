@@ -485,7 +485,7 @@ function githubSection(configured: boolean, callback: string): Html {
     </p>
     <form method="post" action="/settings/origins/oauth">
       <input type="hidden" name="kind" value="github" />
-      ${btn("Connect GitHub", { variant: "primary", icon: "github" })}
+      ${btn("Connect GitHub", { icon: "github" })}
     </form>`;
 }
 
@@ -522,7 +522,7 @@ function forgejoSection(
               id <span class="mono">${registered.clientId}</span>).
             </p>
             <div class="bar">
-              ${btn("Authorize", { variant: "primary", icon: "external" })}
+              ${btn("Authorize", { icon: "external" })}
               ${btn("Forget this app", {
                 size: "sm",
                 variant: "ghost",
@@ -590,7 +590,7 @@ function forgejoSection(
               hint: "Optional. A public client is fine; a secret only buys revoke-on-disconnect.",
             })}
             <div class="form-actions">
-              ${btn("Register application", { variant: "primary" })}
+              ${btn("Register application")}
             </div>
           </form>
         </div>`
@@ -667,8 +667,60 @@ function tokenSection(values: ConnectValues): Html {
         hint: "It is never displayed after this.",
       })}
       ${tokenNeeds(values.tokenHost)}
-      <div class="form-actions">${btn("Connect", { variant: "primary" })}</div>
+      <div class="form-actions">${btn("Connect")}</div>
     </form>`;
+}
+
+/**
+ * The path a friend's forge needs, first on the page: its address and a token
+ * made on it, or the one click. The line says where that token is made.
+ */
+function forgeSection(ctx: Ctx, values: ConnectValues): Html {
+  const site =
+    values.tokenHost === ""
+      ? null
+      : URL.parse(values.tokenHost.includes("://") ? values.tokenHost : `https://${values.tokenHost}`);
+  const tokens =
+    site === null || (site.protocol !== "https:" && site.protocol !== "http:")
+      ? html`<span class="mono">/settings/tokens</span> on their forge`
+      : btn(`${site.host}/settings/tokens`, { href: `${site.origin}/settings/tokens`, external: true, variant: "link" });
+  return html`<p class="muted small">
+      You have an account on a friend's forge and want their apps here. Type
+      their address and a token from them; the token is checked before it is
+      stored, encrypted at rest, and never shown again. Their forge may run an
+      older release than this one: that is fine.
+    </p>
+    <form method="post" action="/settings/origins/token">
+      ${uiField({
+        label: "Their forge's address",
+        name: "host",
+        id: "f-forge-host",
+        value: values.tokenHost,
+        required: true,
+        placeholder: "forge.example.com",
+        autocomplete: "off",
+        ...(values.tokenError ? { error: values.tokenError } : {}),
+      })}
+      ${uiField({
+        label: "Token",
+        name: "token",
+        id: "f-forge-token",
+        type: "password",
+        required: true,
+        mono: true,
+        autocomplete: "off",
+        hint: "Read is enough to bring an app; private repositories come with it.",
+      })}
+      <p class="muted small">Make the token there: ${tokens} (Settings → Access tokens).</p>
+      <div class="form-actions">${btn("Connect that forge", { variant: "primary", icon: "globe" })}</div>
+    </form>
+    ${callbackUri(ctx) === ""
+      ? null
+      : html`<form method="post" action="/settings/origins/oauth" class="bar mt">
+          <input type="hidden" name="host" value="${values.tokenHost}" />
+          ${btn("Or sign in there", { variant: "outline", icon: "external" })}
+          <span class="muted small">One click with the address above; no token to copy.</span>
+        </form>`}`;
 }
 
 /** The admin's list of hosts an origin may reach inside the network. */
@@ -733,9 +785,7 @@ function tokenNeeds(host: string): Html {
     ${link === undefined
       ? null
       : html`<p>
-          <a href="${link}" target="_blank" rel="noopener noreferrer"
-            >Make this token at ${site!.host}</a
-          >, with these already chosen. On Gitea or an older Forgejo, open
+          ${btn(`Make this token at ${site!.host}`, { href: link, external: true, variant: "link" })}, with these already chosen. On Gitea or an older Forgejo, open
           Settings → Applications there instead.
         </p>`}
   </div>`;
@@ -772,7 +822,7 @@ function originsView(
       ? empty({
           icon: "globe",
           title: "No origins connected",
-          note: "Connect GitHub, a Forgejo instance or a Gitea instance and its repositories become mirrorable here.",
+          note: "Connect another forge, GitHub, a Forgejo instance or a Gitea instance and its repositories become mirrorable here.",
         })
       : html`<div class="stack">
           ${origins.map((o) =>
@@ -793,11 +843,17 @@ function originsView(
     ${card(
       html`<ul class="list">
         ${connectPath(
+          "connect-forge",
+          "globe",
+          html`Another forge ${badge("a friend's", { tone: "success" })}`,
+          true,
+          forgeSection(ctx, values),
+        )}
+        ${connectPath(
           "connect-token",
           "key",
-          html`Personal access token
-            ${badge("recommended", { tone: "success" })}`,
-          true,
+          "A token for GitHub, Forgejo or Gitea",
+          false,
           tokenSection(values),
         )}
         ${connectPath(
@@ -999,12 +1055,33 @@ const connectMessage = connectWords;
 
 // POST /settings/origins/oauth
 /**
- * Where a connect or a disconnect started, when it was not here: only
- * `/migrate`, named by a fixed word — never a path a form can choose.
+ * Where a connect or a disconnect started, when it was not here: `/migrate`
+ * or `/bring`, named by a fixed word — never a path a form can choose.
  */
-export type Then = "/migrate" | undefined;
+export type Then = "/migrate" | "/bring" | undefined;
 export const thenOf = (value: string | null): Then =>
-  value === "migrate" ? "/migrate" : undefined;
+  value === "migrate" ? "/migrate" : value === "bring" ? "/bring" : undefined;
+
+/** The link a `/bring` started with, kept across a connect: a short http(s) URL or nothing. */
+export function linkOf(value: string | null): string | undefined {
+  if (value === null || value.length > 300 || /[\u0000-\u001f\u007f]/.test(value)) return undefined;
+  const url = URL.parse(value);
+  return url !== null && (url.protocol === "https:" || url.protocol === "http:") ? value : undefined;
+}
+
+/** The query that carries `then` (and the link, for `/bring`) through a connect flow. */
+export function thenQuery(then: Then, link?: string): string {
+  if (then === undefined) return "";
+  if (then === "/migrate") return "then=migrate";
+  return `then=bring${link === undefined ? "" : `&link=${encodeURIComponent(link)}`}`;
+}
+
+/** Where a finished connect returns: the page it began on, with the link kept. */
+export function thenTarget(then: Then, link?: string): string {
+  if (then === "/bring")
+    return `/bring?${link === undefined ? "" : `link=${encodeURIComponent(link)}&`}connected=1`;
+  return `${then ?? "/settings/origins"}?connected=1`;
+}
 
 export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   const denied = accountOnly(ctx);
@@ -1014,6 +1091,7 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   const kind = field(form, "kind");
   const host = field(form, "host").trim();
   const then = thenOf(field(form, "then"));
+  const link = linkOf(field(form, "link"));
 
   const back = callbackUri(ctx);
   if (back === "" && kind !== "github") {
@@ -1047,7 +1125,7 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
     return shell(ctx, originsView(ctx, values), 422);
   }
   // The flow's page knows where to go from the flow itself, not the link.
-  const qs = then === undefined ? "" : "?then=migrate";
+  const qs = then === undefined ? "" : `?${thenQuery(then, link)}`;
   return redirect(`/settings/origins/flows/${started.value.flowId}${qs}`);
 }
 

@@ -68,4 +68,45 @@ describe("the bring screen", () => {
     }
     expect(bringWords({ kind: "connect", host: "codeberg.org" })).toContain("codeberg.org");
   });
+
+  test("a link to a forge not yet connected asks for its token, masked, instead of a dead end", async () => {
+    const terminal = headlessTerminal(120, 30);
+    const { app: tui, session } = createForgeApp(app, identity(alice), { terminal, exitHooks: false });
+    tui.start();
+    tui.ctx.push(bringScreen(session, tui.ctx, blank("Bring an app")));
+    try {
+      await settleApp(tui);
+      terminal.feed("https://friend.example/ana/notes\r");
+      await settleApp(tui);
+      const text = tui.screen.toText();
+      expect(text).toContain("Token for friend.example");
+      expect(text).toContain("https://friend.example/settings/tokens");
+      terminal.feed("s3cret-token\r");
+      await settleApp(tui);
+      expect(tui.screen.toText()).not.toContain("s3cret-token");
+    } finally {
+      tui.stop();
+    }
+  });
+
+  test("plain http is refused in words, not asked a token for, off a development forge", async () => {
+    const before = process.env.FORGE_DEV;
+    process.env.FORGE_DEV = "0";
+    const terminal = headlessTerminal(120, 30);
+    const { app: tui, session } = createForgeApp(app, identity(alice), { terminal, exitHooks: false });
+    tui.start();
+    tui.ctx.push(bringScreen(session, tui.ctx, blank("Bring an app")));
+    try {
+      await settleApp(tui);
+      terminal.feed("http://friend.example/ana/notes\r");
+      await settleApp(tui);
+      const text = tui.screen.toText();
+      expect(text).toContain("plain http");
+      expect(text).not.toContain("Token for friend.example");
+    } finally {
+      tui.stop();
+      if (before === undefined) delete process.env.FORGE_DEV;
+      else process.env.FORGE_DEV = before;
+    }
+  });
 });

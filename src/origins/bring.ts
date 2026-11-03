@@ -69,3 +69,24 @@ export function needsOf(example: string): string[] {
   }
   return names;
 }
+
+/** Words for a token that would travel in clear. */
+export const PLAIN_HTTP_WORDS =
+  "That link is plain http, and a token sent there travels in clear. Use the https link.";
+
+/**
+ * The address to connect for a link: `https:` unless the link itself says
+ * `http:`, and then only on a development instance (`FORGE_DEV=1`), because a
+ * token is sent to it.
+ */
+export function connectSite(
+  link: string,
+  host: string,
+  env: Record<string, string | undefined> = process.env,
+): { ok: true; value: string } | { ok: false; error: "plain_http" } {
+  if (/^http:\/\//i.test(link.trim())) {
+    if (env.FORGE_DEV !== "1") return { ok: false, error: "plain_http" };
+    return { ok: true, value: `http://${host}` };
+  }
+  return { ok: true, value: `https://${host}` };
+}

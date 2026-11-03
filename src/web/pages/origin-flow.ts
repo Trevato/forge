@@ -23,12 +23,12 @@ import {
   hostLabel,
   notFoundNote,
   shell,
+  linkOf,
   thenOf,
+  thenQuery,
+  thenTarget,
   type Then,
 } from "./origins.ts";
-
-const thenQuery = (then: Then): string =>
-  then === undefined ? "" : "then=migrate";
 
 /**
  * GET /settings/origins/flows/:id — a connect in progress.
@@ -44,9 +44,9 @@ export function originFlowPage(ctx: Ctx): Response {
   const flow = getFlowFor(ctx.app.db, ctx.auth.user!.id, ctx.params.id ?? "");
   if (!flow) return shell(ctx, notFoundNote(), 404);
   const then = thenOf(ctx.url.searchParams.get("then"));
+  const link = linkOf(ctx.url.searchParams.get("link"));
 
-  if (flow.status === "done")
-    return redirect(`${then ?? "/settings/origins"}?connected=1`);
+  if (flow.status === "done") return redirect(thenTarget(then, link));
   if (flow.status === "failed")
     return redirect(
       `/settings/origins?error=${encodeURIComponent(flow.detail.slice(0, 300))}`,
@@ -54,9 +54,9 @@ export function originFlowPage(ctx: Ctx): Response {
 
   // A pending flow past its time leads nowhere: not to a consent screen
   // for a state that will be refused, nor to a code that no longer works.
-  if (flowExpired(flow)) return expiredFlow(ctx, flow, then);
+  if (flowExpired(flow)) return expiredFlow(ctx, flow, then, link);
 
-  const pollAction = `/settings/origins/flows/${flow.id}/poll${then === undefined ? "" : `?${thenQuery(then)}`}`;
+  const pollAction = `/settings/origins/flows/${flow.id}/poll${then === undefined ? "" : `?${thenQuery(then, link)}`}`;
   const authorize = flow.flow === "code" ? authorizeFor(ctx, flow) : undefined;
   const base = forgeBaseUrl(ctx.url, ctx.app.config.host);
   const shortLink =
@@ -248,6 +248,7 @@ function expiredFlow(
   ctx: Ctx,
   flow: { kind: string; webUrl: string },
   then: Then,
+  link: string | undefined,
 ): Response {
   return page({
     ctx,
@@ -265,7 +266,10 @@ function expiredFlow(
                 : null}
               ${then === undefined
                 ? null
-                : html`<input type="hidden" name="then" value="migrate" />`}
+                : html`<input type="hidden" name="then" value="${then === "/bring" ? "bring" : "migrate"}" />`}
+              ${link === undefined
+                ? null
+                : html`<input type="hidden" name="link" value="${link}" />`}
               ${btn(`Connect ${hostLabel(flow.webUrl)}`, {
                 variant: "primary",
                 icon: "external",
@@ -311,14 +315,14 @@ export async function originFlowPoll(ctx: Ctx): Promise<Response> {
   }
   const { status, detail } = polled.value;
   const then = thenOf(ctx.url.searchParams.get("then"));
+  const link = linkOf(ctx.url.searchParams.get("link"));
   if (wantsJson) return Response.json({ status, detail });
-  if (status === "done")
-    return redirect(`${then ?? "/settings/origins"}?connected=1`);
+  if (status === "done") return redirect(thenTarget(then, link));
   if (status === "failed")
     return redirect(
       `/settings/origins?error=${encodeURIComponent(detail.slice(0, 300))}`,
     );
   return redirect(
-    `/settings/origins/flows/${ctx.params.id ?? ""}${then === undefined ? "" : `?${thenQuery(then)}`}`,
+    `/settings/origins/flows/${ctx.params.id ?? ""}${then === undefined ? "" : `?${thenQuery(then, link)}`}`,
   );
 }

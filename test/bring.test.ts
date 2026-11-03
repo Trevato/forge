@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
 import { listAppEnvNames } from "../src/core/app_env.ts";
-import { createOrigin } from "../src/core/origins.ts";
+import { listOrigins } from "../src/core/origins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { settled } from "../src/origins/jobs.ts";
-import { needsOf, originOnHost, parseBringLink } from "../src/origins/bring.ts";
+import { connectSite, needsOf, originOnHost, parseBringLink } from "../src/origins/bring.ts";
 import { syncsSettled } from "../src/origins/sync.ts";
 import { SYSTEM_NAMES } from "../src/core/reserved.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
@@ -48,6 +48,13 @@ describe("the link and the needs", () => {
     expect(originOnHost([o("https://a.org", false), o("https://b.org", false)], "b.org")).toBeDefined();
     expect(originOnHost([o("https://b.org", true)], "b.org")).toBeUndefined();
     expect(originOnHost([], "b.org")).toBeUndefined();
+  });
+
+  test("the address to connect: https, or http only on a development forge", () => {
+    expect(connectSite("https://x.org/a/b", "x.org", {})).toEqual({ ok: true, value: "https://x.org" });
+    expect(connectSite("x.org/a/b", "x.org", {})).toEqual({ ok: true, value: "https://x.org" });
+    expect(connectSite("http://x.org/a/b", "x.org", {})).toEqual({ ok: false, error: "plain_http" });
+    expect(connectSite("http://x.org/a/b", "x.org", { FORGE_DEV: "1" })).toEqual({ ok: true, value: "http://x.org" });
   });
 
   test("needs are names only, from NAME= lines", () => {
@@ -149,27 +156,47 @@ describe("bringing an app whole", () => {
     const bad = await post("/bring", { link: "nonsense" });
     expect(bad.status).toBe(400);
     const none = await post("/bring", { link: `${fake.url}/octo/widgets` });
-    expect(none.status).toBe(400);
-    expect(await none.text()).toContain("/settings/origins");
+    // Not a dead end (#9388): the page offers to connect in place and keeps the link.
+    expect(none.status).toBe(200);
+    const card = await none.text();
+    expect(card).toContain('action="/bring/connect"');
+    expect(card).toContain(`value="${fake.url}/octo/widgets"`);
+    expect(card).toContain(`${fake.url}/settings/tokens`);
+    expect(card).toContain("Sign in there instead");
+    // The sign-in carries the link through and back.
+    expect(card).toContain('name="then" value="bring"');
+    // A token the forge refuses keeps the card and the link, and echoes nothing.
+    const wrong = await post("/bring/connect", { link: `${fake.url}/octo/widgets`, token: "not-the-token-1" });
+    expect(wrong.status).toBe(422);
+    const wrongText = await wrong.text();
+    expect(wrongText).toContain('action="/bring/connect"');
+    expect(wrongText).not.toContain("not-the-token-1");
     expect(getRepo(app.db, "alice", "widgets")).toBeUndefined();
   });
 
-  test("a link comes across, private, linked back, asking only by name", async () => {
-    const made = createOrigin(app.db, app.config.dataDir, {
-      userId: alice().id,
-      kind: "forgejo",
-      apiUrl: fake.apiUrl,
-      webUrl: fake.url,
-      login: LOGIN,
-      token: TOKEN,
-    });
-    if (!made.ok) throw new Error(made.error);
+  test("a token is never sent over plain http unless this is a development forge", async () => {
+    const before = process.env.FORGE_DEV;
+    process.env.FORGE_DEV = "0";
+    try {
+      const refused = await post("/bring/connect", { link: `${fake.url}/octo/widgets`, token: TOKEN });
+      expect(refused.status).toBe(400);
+      expect(await refused.text()).toContain("travels in clear");
+      expect(listOrigins(app.db, alice().id)).toHaveLength(0);
+    } finally {
+      if (before === undefined) delete process.env.FORGE_DEV;
+      else process.env.FORGE_DEV = before;
+    }
+  });
 
-    const started = await post("/bring", { link: `${fake.url}/octo/widgets.git` });
+  test("a link comes across, private, linked back, asking only by name", async () => {
+    // Connecting in place with the token goes straight on to bringing the link.
+    const started = await post("/bring/connect", { link: `${fake.url}/octo/widgets.git`, token: TOKEN });
     expect(started.status).toBe(303);
     const where = started.headers.get("location")!;
     const jobId = where.split("/").pop()!;
-    expect(where).toBe(`/bring/${made.value.id}/${jobId}`);
+    const connected = listOrigins(app.db, alice().id);
+    expect(connected).toHaveLength(1);
+    expect(where).toBe(`/bring/${connected[0]!.id}/${jobId}`);
     expect((await settled(jobId))?.stage).toBe("done");
 
     // A GET only looks: the copy is here, nothing is registered or running.
