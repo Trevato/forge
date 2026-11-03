@@ -268,6 +268,20 @@ describe("the Later gate in plain sight", () => {
     expect(rows[1]!.title).toStartWith("[x]");
   });
 
+  test("the held page at rest is bounded: counts and Apply on one bar, collapsed groups, extra themes folded, help folded", async () => {
+    const animals = ["Quokka", "Wombat", "Dingo", "Emu", "Galah", "Numbat", "Thylacine", "Bilby"];
+    const tails = ["alpha", "bravo", "charlie"];
+    for (const w of animals) for (const t of tails) held(`${w} ${t}${w.toLowerCase()}`);
+    const page = await get("/alice/engine/held");
+    expect(page.indexOf("to close")).toBeLessThan(page.indexOf("Apply the ticked"));
+    expect(page.indexOf("Apply the ticked")).toBeLessThan(page.indexOf("Quokka alpha"));
+    expect(page).toMatch(/<summary[^>]*>\s*How to read this[\s\S]*?Nothing changes until you approve/);
+    expect(page).toMatch(/<summary[^>]*>\s*\d+ more themes/);
+    const details = page.match(/<details[^>]*>/g)!;
+    expect(details.length).toBeGreaterThan(6);
+    for (const d of details) expect(d).not.toMatch(/\bopen\b/);
+  });
+
   test("one approval closes what is ticked, it stays findable, and one tap revives it", async () => {
     const a = open("Idea nobody chose");
     const b = open("Idea to keep behind the gate");

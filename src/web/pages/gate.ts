@@ -99,6 +99,10 @@ function reviewRow(base: string, mayLift: boolean, item: Triaged): Html {
   </li>`;
 }
 
+/** Themes drawn at rest; the rest fold into one "N more themes" line, so the
+ * proposal's height is bounded: heading, bar, this many lines, three folds. */
+export const THEMES_AT_REST = 6;
+
 /** A group is one line: its name and its counts by verdict, opening to its issues. */
 function themeLine(base: string, mayLift: boolean, t: Theme): Html {
   return disclosure(
@@ -131,26 +135,36 @@ export function heldPage(ctx: Ctx): Response {
   const body = html`${repoHeader(ctx, repo, "issues", { compact: true })}
     <div class="page-head mt">
       <h1>Held by the Later gate</h1>
-      <p class="muted">
+      <p class="muted small">
         ${review.held} open ${review.held === 1 ? "issue waits" : "issues wait"}
         behind <a href="${base}/issues/${gate.number}">the gate</a>, set by
         ${gate.authorName} ${time(gate.createdAt)}. The crew picks none of
         them until it is lifted.
       </p>
     </div>
-    <p class="muted small">${counts.close} to close · ${counts.keep} to keep · ${counts.merge} to merge</p>
-    <p class="muted small">
-      Close is the default; a keep joins a bet or a pillar's work; a merge
-      folds a duplicate in. Nothing changes until you approve.
-    </p>
-    ${mayApply && review.changes.length > 0
-      ? html`<form id="apply" method="post" action="${base}/held/apply" class="bar">
-          <input type="hidden" name="digest" value="${review.digest}" />
-          ${btn("Apply the ticked", { type: "submit", variant: "primary" })}
-        </form>`
-      : null}
-    <div class="stack mt">
-      ${review.themes.map((t) => themeLine(base, mayLift, t))}
+    <div class="bar">
+      <span class="muted small">${counts.close} to close · ${counts.keep} to keep · ${counts.merge} to merge</span>
+      ${mayApply && review.changes.length > 0
+        ? html`<form id="apply" method="post" action="${base}/held/apply" class="inline">
+            <input type="hidden" name="digest" value="${review.digest}" />
+            ${btn("Apply the ticked", { type: "submit", variant: "primary", size: "sm" })}
+          </form>`
+        : null}
+    </div>
+    <div class="stack stack-tight">
+      ${review.themes.slice(0, THEMES_AT_REST).map((t) => themeLine(base, mayLift, t))}
+      ${review.themes.length > THEMES_AT_REST
+        ? disclosure(
+            html`${review.themes.length - THEMES_AT_REST} more ${review.themes.length - THEMES_AT_REST === 1 ? "theme" : "themes"}`,
+            html`<div class="stack stack-tight">${review.themes.slice(THEMES_AT_REST).map((t) => themeLine(base, mayLift, t))}</div>`,
+            { small: true },
+          )
+        : null}
+      ${disclosure(
+        "How to read this",
+        html`<p class="muted small">Close is the default; a keep joins a bet or a pillar's work; a merge folds a duplicate in. Nothing changes until you approve.</p>`,
+        { small: true },
+      )}
       ${closed.length === 0
         ? null
         : disclosure(
