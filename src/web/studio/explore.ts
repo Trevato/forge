@@ -10,6 +10,7 @@ import {
   explore,
   exploreLine,
   exploreNote,
+  exploreSuggestion,
   readExploreLine,
   type ExploreQuery,
   type ExploreRow,
@@ -126,8 +127,10 @@ function emptyState(ctx: Ctx, query: ExploreQuery): Html {
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const { query, unknown } = readExploreLine(ctx.url.searchParams.get("q") ?? "");
+  const line = ctx.url.searchParams.get("q") ?? "";
+  const { query, unknown } = readExploreLine(line);
   const note = exploreNote(unknown);
+  const suggestion = exploreSuggestion(line);
   const ranking = performance.now();
   const rows = await explore(ctx.app, ctx.auth.user, query);
   notePhase(ctx.request, "rank", performance.now() - ranking);
@@ -171,7 +174,11 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
-    ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}</p>`}
+    ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}${
+          suggestion === undefined
+            ? html``
+            : html` Did you mean <a href="/explore?q=${encodeURIComponent(suggestion.line)}">${suggestion.fix}</a>?`
+        }</p>`}
     <div class="bar mb">
       ${seg(
         kinds.map((k) => ({

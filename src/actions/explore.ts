@@ -175,6 +175,65 @@ export function exploreNote(unknown: readonly string[]): string {
     .join("; ");
 }
 
+/** Edit distance between two short words. */
+function distance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++)
+      next[j] = Math.min(row[j]! + 1, next[j - 1]! + 1, row[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length]!;
+}
+
+/** The words each key takes. */
+function takenBy(key: string): readonly string[] {
+  if (key === "kind") return Object.keys(KINDS);
+  if (key === "sort") return SORTS;
+  if (key === "updated") return Object.keys(WINDOWS);
+  if (key === "archived") return ["yes", "no"];
+  return [];
+}
+
+export interface ExploreSuggestion {
+  /** The unknown word as typed. */
+  readonly word: string;
+  /** The known word it was nearest, `sort:forks`. */
+  readonly fix: string;
+  /** The whole line with that one word mended. */
+  readonly line: string;
+}
+
+/**
+ * One mended line for the first unknown word within edit distance 2 of a
+ * known value of its key; undefined when none is that close. A pure
+ * function of the line: nothing is looked up.
+ */
+export function exploreSuggestion(line: string): ExploreSuggestion | undefined {
+  const { unknown } = readExploreLine(line);
+  for (const word of unknown) {
+    const at = word.indexOf(":");
+    const key = word.slice(0, at).toLowerCase();
+    const value = word.slice(at + 1).toLowerCase();
+    let best: string | undefined;
+    // Within 2, and nearer than the word is long: 1–2 characters of junk match anything.
+    let near = Math.min(3, value.length);
+    for (const known of takenBy(key)) {
+      const d = distance(value, known);
+      if (d < near) {
+        near = d;
+        best = known;
+      }
+    }
+    if (best === undefined) continue;
+    const fix = `${key}:${best}`;
+    const words = line.trim().split(/\s+/);
+    return { word, fix, line: words.map((w) => (w === word ? fix : w)).join(" ") };
+  }
+  return undefined;
+}
+
 /** The line a query reads as, for links and the query box. */
 export function exploreLine(query: ExploreQuery): string {
   return [

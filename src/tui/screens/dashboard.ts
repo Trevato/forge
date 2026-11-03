@@ -14,7 +14,7 @@
  * whole of this screen's design.
  */
 
-import { exploreLine, isExploreLine, exploreNote, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
+import { exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
@@ -1130,10 +1130,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // with less than its default protection — the web footer's line.
       const read = exploring() ? readExploreLine(filter.query) : undefined;
       const note = read === undefined ? "" : exploreNote(read.unknown);
+      const mend = exploring() ? exploreSuggestion(filter.query) : undefined;
       const readAs =
         read === undefined
           ? undefined
-          : `Read as: ${exploreLine(read.query) || "everything"}${note === "" ? "" : ` · ${note}`}`;
+          : `Read as: ${exploreLine(read.query) || "everything"}${mend === undefined ? "" : ` · Did you mean ${mend.line}?`}${note === "" ? "" : ` · ${note}`}`;
       const reduced = readAs ?? (f.user?.isAdmin === true ? protectionNotice() : undefined);
       const [box, warn, list] = split(
         main,

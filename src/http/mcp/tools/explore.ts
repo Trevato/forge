@@ -1,4 +1,4 @@
-import { explorePage, exploreLine, exploreNote, readExploreLine } from "../../../actions/explore.ts";
+import { explorePage, exploreLine, exploreNote, exploreSuggestion, readExploreLine } from "../../../actions/explore.ts";
 import { bad, good, type Tool, str } from "../shared.ts";
 
 export const tool: Tool = {
@@ -29,12 +29,14 @@ export const tool: Tool = {
     const q = str(args["q"]);
     const line = q !== "" ? q : str(args["query"]);
     const { query, unknown } = readExploreLine(line);
+    const suggest = exploreSuggestion(line);
     const cursor = str(args["cursor"]);
     const page = await explorePage(ctx.app, user, query, cursor === "" ? null : cursor);
     if (page === null) return bad("invalid_cursor", "cursor is not the next_cursor of a page before");
     return good({
       query: exploreLine(query),
       ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }),
+      ...(suggest === undefined ? {} : { suggest: suggest.line }),
       items: page.items,
       next_cursor: page.nextCursor,
     });

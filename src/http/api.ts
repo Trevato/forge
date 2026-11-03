@@ -327,6 +327,7 @@ import {
   type ExploreRow,
   exploreLine,
   exploreNote,
+  exploreSuggestion,
   readExploreLine,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
@@ -3272,7 +3273,9 @@ export function apiRoutes(router: Router<Handler>): void {
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const { query, unknown } = readExploreLine(ctx.url.searchParams.get("q") ?? "");
+    const line = ctx.url.searchParams.get("q") ?? "";
+    const { query, unknown } = readExploreLine(line);
+    const suggest = exploreSuggestion(line);
     const mine = runRepos(ctx.app, ctx.auth);
     // A run token is shown only the rows of its own repositories; the cut
     // and the cursor are made from those rows alone.
@@ -3309,7 +3312,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (page === null)
       return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
     const items = page.items;
-    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), items, next_cursor: page.nextCursor }, 200, headers));
+    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), ...(suggest === undefined ? {} : { suggest: suggest.line }), items, next_cursor: page.nextCursor }, 200, headers));
   });
 
   // Make it yours (#606): a fork with its app, planned unless dryRun is
