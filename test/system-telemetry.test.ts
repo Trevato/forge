@@ -228,6 +228,8 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     expect((await tool(tokens["grok"]!, "flow")).error).toBe(true);
     const bobCookie = await login("bob");
     expect((await fetch(`${servers.url}/system`, { headers: { cookie: bobCookie } })).status).toBe(404);
+    const bobPage = await fetch(`${servers.url}/system`, { headers: { cookie: bobCookie } });
+    expect(await bobPage.text()).not.toContain("Telemetry readers");
   });
 
   test("a granted agent reads /system and /flow, with private repositories cut out", async () => {
@@ -298,6 +300,7 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     const page = await fetch(`${servers.url}/system`, { headers: { cookie: await login("alice") } });
     expect(page.status).toBe(200);
     const html = await page.text();
+    expect(html).toContain("Telemetry readers");
     expect(html).toContain('id="duplicates" data-count="1"');
     expect(html).toContain("test/shared.test.ts");
     // Each check cell's memory beside its cap, and who holds the cap (#2410).

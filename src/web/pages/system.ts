@@ -21,6 +21,7 @@ import { bytes, spark, span } from "../../system/format.ts";
 import { eventStream } from "../../http/sse.ts";
 import type { SystemView } from "../../system/view.ts";
 import { live } from "../../system/live.ts";
+import { readerPaces, type ReaderPace } from "../../system/telemetry_reads.ts";
 import { stallHour } from "../../metrics/stalls.ts";
 import type { RouteStall } from "../../perf/loop.ts";
 import { loopWatch } from "../../perf/live.ts";
@@ -106,6 +107,20 @@ export function stallSection(rows: readonly RouteStall[]): Html {
         <tbody>${rows.map((r) => html`<tr data-route="${r.route}"><td class="mono">${r.route}</td><td class="num mono">${String(Math.round(r.ms))}</td><td class="num mono">${String(r.count)}</td></tr>`)}</tbody>
       </table></div>`,
     { head: html`<h2>Main-thread stalls, last hour</h2>` },
+  );
+}
+
+/** Who read the telemetry routes in the last 10 minutes and how fast (#9069); `readerPaces`' rows. */
+export function readersSection(rows: readonly ReaderPace[]): Html {
+  const secs = (ms: number | null): string => (ms === null ? "—" : `${(ms / 1000).toFixed(1)} s`);
+  return card(
+    rows.length === 0
+      ? html`<p class="muted">No telemetry reads in the last 10 minutes.</p>`
+      : html`<div class="table-scroll"><table class="table" aria-label="Telemetry readers, last 10 minutes">
+          <thead><tr><th scope="col">Route</th><th scope="col">Reader</th><th scope="col" class="num">Reads, 10 min</th><th scope="col" class="num">Mean interval</th><th scope="col"></th></tr></thead>
+          <tbody>${rows.map((r) => html`<tr data-route="${r.route}" data-reader="${r.reader}"><td class="mono">${r.route}</td><td class="mono">${r.reader}</td><td class="num mono">${String(r.reads)}</td><td class="num mono">${secs(r.meanIntervalMs)}</td><td>${r.tooFast ? badge("faster than the flow copy changes", { tone: "danger" }) : null}</td></tr>`)}</tbody>
+        </table></div>`,
+    { head: html`<h2>Telemetry readers</h2>` },
   );
 }
 
@@ -210,6 +225,7 @@ export function systemPage(ctx: Ctx): Response {
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></span></p></div>
     <div id="sys-procs">${at("sys-procs")}</div>
     <div id="sys-stalls">${stallSection(stalls)}</div>
+    <div id="sys-readers">${readersSection(readerPaces())}</div>
     ${memory}`;
   const response = page({ ctx, title: "System", body, wide: true, scriptJs: systemLiveJs });
   notePhase(ctx.request, "render", performance.now() - rendering);
