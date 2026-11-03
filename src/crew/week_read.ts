@@ -9,7 +9,7 @@ import { measureFor } from "../core/measure.ts";
 import { getHeadroom, WINDOW_MS } from "../core/standing.ts";
 import { grantedAccounts, PLATFORM } from "../core/subscriptions.ts";
 import { burnFrom, noteReading, readingsSince } from "./week_burn.ts";
-import { capacityCount, paceFloor } from "../core/capacity.ts";
+import { belowCeiling, capacityCount, paceFloor } from "../core/capacity.ts";
 import { efficiencyWords, WEEK, weekDecision, type Efficiency, type WeekDecision, type WeekMeter } from "./week.ts";
 
 /** The week as the provider's meter reads it: a meter, or null while no account's limit is known. */
@@ -140,6 +140,12 @@ export function crewWeekFor(app: App, repo: Repo, now: Date): WeekDecision | nul
   return weekDecision({ ...week, now, ceiling: crewCeiling(app, repo), floorSlots: paceFloor(app.db), idleSlots: 0, startable: 0, gated: 0 });
 }
 
+/** A sentence saying the crew's cap is lowered, so pacing is not mistaken for it; empty at the ceiling. */
+function heldWords(app: App): string {
+  const held = belowCeiling(app.db, "crew.concurrency");
+  return held === null ? "" : ` Crew concurrency is set to ${held.value}, below its ceiling of ${held.ceiling}: that cap holds the crew back, not the pace. Settings → Usage → Capacity puts it back.`;
+}
+
 /**
  * The pace sentence and the efficiency beside it for the autonomous
  * repository the crew works most this week (the most agent runs; the first by
@@ -154,7 +160,7 @@ export function weekWords(app: App, now: Date = new Date()): string | null {
     const week = crewWeekFor(app, repo, now);
     if (week === null) continue;
     const efficiency = weekEfficiency(app, repo, now);
-    if (best === null || efficiency.runs > best.runs) best = { words: `${week.sentence} The week allows the whole crew ${week.slots} of ${crewCeiling(app, repo)} slots across every repository. ${efficiencyWords(efficiency)}`, runs: efficiency.runs };
+    if (best === null || efficiency.runs > best.runs) best = { words: `${week.sentence} The week allows the whole crew ${week.slots} of ${crewCeiling(app, repo)} slots across every repository. ${efficiencyWords(efficiency)}${heldWords(app)}`, runs: efficiency.runs };
   }
   return best?.words ?? null;
 }

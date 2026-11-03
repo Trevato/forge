@@ -322,6 +322,20 @@ export function bootDefault(db: Database, key: CapacityKey): string {
 }
 
 /**
+ * The ceiling `key` is held under: its default in force, when an admin's
+ * stored count is below it; null for a choice, an unset key or a value at
+ * or above the ceiling. A crew concurrency lowered at runtime holds the
+ * crew back, and this is how a page can say so.
+ */
+export function belowCeiling(db: Database, key: CapacityKey): { value: number; ceiling: number } | null {
+  if (CAPACITY[key].kind.type !== "count") return null;
+  const stored = storedCapacity(db, key);
+  const ceiling = Number(bootDefault(db, key));
+  if (stored === undefined || !Number.isFinite(ceiling) || ceiling <= 0) return null;
+  return Number(stored) < ceiling ? { value: Number(stored), ceiling } : null;
+}
+
+/**
  * A count setting as a number: an admin's value, else `fallback` — the
  * value the calling service booted with, which is the default in force.
  */

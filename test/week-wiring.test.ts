@@ -1,5 +1,5 @@
 /** The week's pace wired in (#8695): the tick releases gated work when behind, the pace cuts slots when ahead, and home and the terminal print the sentence. */
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,12 +18,15 @@ import { addSubscription } from "../src/core/subscriptions.ts";
 import { recordUsage } from "../src/core/usage.ts";
 import { type User } from "../src/core/users.ts";
 import { driveRepo, repoPace } from "../src/crew/autonomy.ts";
+import { changeCapacity } from "../src/actions/capacity.ts";
+import { capacityDefault } from "../src/core/capacity.ts";
 import { forgetWeek, weekWords } from "../src/crew/week_read.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { weekLine } from "../src/web/studio/week_line.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { serve } from "../src/http/server.ts";
 import { settleApp } from "./helpers/tui.ts";
 
 quietLogs();
@@ -114,6 +117,10 @@ afterAll(async () => {
 });
 
 beforeEach(() => forgetWeek());
+// A failed expectation must not leave the lowered crew concurrency for later tests.
+afterEach(() => {
+  changeCapacity(app, alice, "crew.concurrency", null);
+});
 
 test("behind pace, with an idle slot and nothing startable, the tick releases the gated issue and says why", async () => {
   week(20);
@@ -164,6 +171,37 @@ test("home and the terminal print the same sentence, the terminal for an admin",
   const text = tui.screen.toText();
   tui.stop();
   expect(text).toContain("Behind pace");
+});
+
+test("the pace sentence says when crew concurrency is below its ceiling, and not at it", () => {
+  week(20);
+  const ceiling = Number(capacityDefault("crew.concurrency"));
+  expect(changeCapacity(app, alice, "crew.concurrency", String(ceiling)).ok).toBe(true);
+  expect(weekWords(app, NOW)!).not.toContain("below its ceiling");
+  expect(changeCapacity(app, alice, "crew.concurrency", "1").ok).toBe(true);
+  forgetWeek();
+  expect(weekWords(app, NOW)!).toContain(`Crew concurrency is set to 1, below its ceiling of ${ceiling}`);
+});
+
+test("Usage → Spend carries the same sentence, so pacing is not mistaken for the cap", async () => {
+  week(20);
+  const servers = await serve(app);
+  try {
+    const signin = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { origin: servers.url },
+      body: new URLSearchParams({ username: "alice", password: "a-long-passphrase" }),
+    });
+    const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const spend = () => fetch(`${servers.url}/settings/spend`, { headers: { cookie } }).then((r) => r.text());
+    expect(await spend()).not.toContain("below its ceiling");
+    expect(changeCapacity(app, alice, "crew.concurrency", "1").ok).toBe(true);
+    forgetWeek();
+    expect((await spend()).replace(/\s+/g, " ")).toContain("below its ceiling of");
+  } finally {
+    servers.stop();
+  }
 });
 
 test("a fast afternoon slows the crew at once, on a week whose total is on pace", () => {

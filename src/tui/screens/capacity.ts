@@ -8,7 +8,7 @@
 import type { SelfSwap } from "../../release/swap.ts";
 import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
-import { CAPACITY, validCapacity, type CapacityKey } from "../../core/capacity.ts";
+import { CAPACITY, belowCeiling, validCapacity, type CapacityKey } from "../../core/capacity.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
@@ -56,10 +56,14 @@ export function capacityScreen(f: Session, ctx: Ctx): Screen {
   const lines = (): ListRow[] => {
     const listed = listCapacity(f.app, f.user);
     if (!listed.ok) return [];
-    const guards = listed.value.settings.map((r) => ({
-      title: `${r.label} (${r.key})`,
-      meta: `${shown(r.value)} · ${r.source} · takes ${boundsOf(r.key)}${r.source === "setting" ? ` · default ${shown(r.default)}` : ""}`,
-    }));
+    const guards = listed.value.settings.map((r) => {
+      const low = belowCeiling(f.app.db, r.key);
+      return {
+        title: `${r.label} (${r.key})`,
+        meta: `${shown(r.value)} · ${r.source} · takes ${boundsOf(r.key)}${r.source === "setting" ? ` · default ${shown(r.default)}` : ""}${low === null ? "" : ` · below ceiling ${low.ceiling}`}`,
+        ...(low === null ? {} : { tone: "attn" as const }),
+      };
+    });
     // After the guards, so the cursor (bounded by the settings) never lands on it.
     return [...guards, selfSwapRow(listed.value.selfSwap)];
   };
