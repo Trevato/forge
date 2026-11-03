@@ -939,22 +939,31 @@ export function pageParams(
 }
 
 /**
- * One page of `rows` (already in order) after the row whose id is the cursor,
- * as a response. A cursor no row answers to (deleted between two requests, or
- * invented) is a 422 `invalid_cursor`, as for branches: an empty last page
- * would tell the client it had seen everything.
+ * One page of `rows` (already in order) after the row whose id is the cursor:
+ * `{ items, next_cursor }`. A cursor no row answers to (deleted between two
+ * requests, or invented) is a 422 `invalid_cursor`, as for branches: an empty
+ * last page would tell the client it had seen everything.
  */
-export function pageOf<T extends { id: string }>(
+export function slicePage<T extends { id: string }>(
   rows: T[],
   page: { limit: number; cursor: string | null },
-): Response {
+): { items: T[]; next_cursor: string | null } | Response {
   const at = page.cursor === null ? -1 : rows.findIndex((r) => r.id === page.cursor);
   if (page.cursor !== null && at === -1)
     return apiError("invalid_cursor", 422, "that cursor names a row that is gone: start over");
   const start = at + 1;
   const items = rows.slice(start, start + page.limit);
   const more = start + page.limit < rows.length;
-  return json({ items, next_cursor: more ? items[items.length - 1]!.id : null });
+  return { items, next_cursor: more ? items[items.length - 1]!.id : null };
+}
+
+/** `slicePage` as a response. */
+export function pageOf<T extends { id: string }>(
+  rows: T[],
+  page: { limit: number; cursor: string | null },
+): Response {
+  const sliced = slicePage(rows, page);
+  return sliced instanceof Response ? sliced : json(sliced);
 }
 
 /** The page of `rows` (sorted by name) after the cursor: `{ items, next_cursor }`. */

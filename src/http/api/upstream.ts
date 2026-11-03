@@ -14,11 +14,12 @@ import {
   setFollowUpstream,
 } from "../../actions/upstream_follow.ts";
 import { ENABLED_WORDS } from "../../core/arg_words.ts";
-import { canAdmin, visibleForks } from "../../core/repos.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { driftOfForks, MAX_RANKED_FORKS, type RankedFork } from "../../actions/forks.ts";
+import { canAdmin, forkParentFor, visibleForks } from "../../core/repos.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { getFollow } from "../../core/upstream_follow.ts";
-import { loadRepo, pageOf, pageParams } from "../api.ts";
+import { loadRepo, pageParams, slicePage } from "../api.ts";
 import type { Handler } from "../context.ts";
 import { apiError, body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
 import type { Router } from "../router.ts";
@@ -71,14 +72,36 @@ export function upstreamRoutes(router: Router<Handler>): void {
     return json(checked.value);
   });
 
-  router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const page = pageParams(ctx);
     if (page instanceof Response) return page;
     const rows = timePhase(ctx.request, "forks", () => visibleForks(ctx.app.db, repo.id, ctx.auth.user));
-    return timePhase(ctx.request, "render", () => pageOf(rows, page));
+    const sliced = slicePage(rows, page);
+    if (sliced instanceof Response) return sliced;
+    const { items, next_cursor } = sliced;
+    // Drift is read for this page only, in runs of what one call ranks.
+    const drifts = await timePhaseAsync(ctx.request, "drift", async () => {
+      const ranked: RankedFork[] = [];
+      for (let i = 0; i < items.length; i += MAX_RANKED_FORKS)
+        ranked.push(...(await driftOfForks(ctx.app, repo, items.slice(i, i + MAX_RANKED_FORKS))));
+      return ranked;
+    });
+    const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
+    return timePhase(ctx.request, "render", () =>
+      json({
+        parent: parent === undefined ? null : `${parent.ownerName}/${parent.name}`,
+        items: drifts.map(({ fork, drift, pushedAt }) => ({
+          ...fork,
+          ahead: drift.ahead,
+          behind: drift.behind,
+          updatedAt: pushedAt,
+        })),
+        next_cursor,
+      }),
+    );
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
