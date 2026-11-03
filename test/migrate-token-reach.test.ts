@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { connectOrigin, listRemoteRepos } from "../src/actions/origins.ts";
+import { connectOrigin, connectRefusal, listRemoteRepos } from "../src/actions/origins.ts";
 import { listOrigins } from "../src/core/origins.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -122,7 +122,7 @@ test("a classic token without `repo` says public only and links the new-token pa
       kind: "github",
       token: "public-only-token",
     });
-    if (!connected.ok) throw new Error(connected.error);
+    if (!connected.ok) throw new Error(connectRefusal(connected.error).code);
     const originId = connected.value.id;
 
     const page = await get("/migrate");
@@ -293,7 +293,7 @@ test("the terminal's migrate screen says public only, names the new-token page, 
       kind: "github",
       token: "carol-public",
     });
-    if (!connected.ok) throw new Error(connected.error);
+    if (!connected.ok) throw new Error(connectRefusal(connected.error).code);
     tui.start();
     await settleApp(tui);
     terminal.feed("M");

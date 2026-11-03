@@ -54,6 +54,25 @@ function allowedHosts(env: Record<string, string | undefined>): Set<string> {
   );
 }
 
+/**
+ * Whether the operator named this URL's host in `FORGE_ORIGIN_ALLOW`: its
+ * `host:port` for that port, or its bare hostname for every port. Discovery
+ * reads it, and so does the mirror's git (`origins/git-mirror.ts`), so a
+ * host an origin may be connected from is a host it may be mirrored from.
+ */
+export function operatorAllowed(
+  href: string,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const url = URL.parse(href);
+  if (url === null) return false;
+  const allowed = allowedHosts(env);
+  return (
+    allowed.has(url.host.toLowerCase()) ||
+    allowed.has(url.hostname.toLowerCase())
+  );
+}
+
 /** A development instance (`FORGE_DEV=1`, also set for the test suite). */
 function isDev(env: Record<string, string | undefined>): boolean {
   return env.FORGE_DEV === "1";
@@ -147,11 +166,7 @@ export function allowedOrigin(
   if (url.hostname === "") return undefined;
   if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
 
-  const allowed = allowedHosts(env);
-  const named =
-    allowed.has(url.host.toLowerCase()) ||
-    allowed.has(url.hostname.toLowerCase());
-  if (named) return url.origin;
+  if (operatorAllowed(url.href, env)) return url.origin;
   if (isDev(env) && isLoopback(url.hostname)) return url.origin;
   if (url.protocol !== "https:") return undefined;
   if (isPrivateLiteral(url.hostname)) return undefined;
@@ -294,12 +309,9 @@ function exempt(
   href: string,
   env: Record<string, string | undefined>,
 ): boolean {
-  const url = new URL(href);
-  const allowed = allowedHosts(env);
   return (
-    allowed.has(url.host.toLowerCase()) ||
-    allowed.has(url.hostname.toLowerCase()) ||
-    (isDev(env) && isLoopback(url.hostname))
+    operatorAllowed(href, env) ||
+    (isDev(env) && isLoopback(new URL(href).hostname))
   );
 }
 

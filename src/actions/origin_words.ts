@@ -30,3 +30,12 @@ export function connectWords(error: string): string {
   };
   return words[error] ?? "That connection could not be made.";
 }
+
+/** What "Check again" found, in one sentence, on the page and in the terminal. */
+export const CHECK_TOO_SOON = "It was checked a moment ago. Try again in a minute.";
+export const CHECK_WORDS = {
+  passed: "Verified. Writes through this connection are on again.",
+  unguarded: "This connection has nothing to verify.",
+  unchecked: "It still could not be verified, so writes stay paused. Try again in a few minutes.",
+  refused: "This connection was refused. Reconnect it with an account the operator allows.",
+} as const;

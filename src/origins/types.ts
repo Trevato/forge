@@ -241,6 +241,13 @@ export interface RemoteIdentity {
   readonly login: string;
   readonly displayName: string;
   readonly htmlUrl: string;
+  /**
+   * The account administers the whole instance: Forgejo's and Gitea's
+   * `is_admin`, GitHub's `site_admin`. A credential of such an account can
+   * write every repository there is, which is what the operator guard
+   * (`origins/operator.ts`) refuses on the hosts it covers.
+   */
+  readonly siteAdmin: boolean;
 }
 
 export type ProviderError =
@@ -256,6 +263,26 @@ export interface ProviderFailure {
   readonly message: string;
   /** For `rate_limited`: when to try again. */
   readonly retryAt?: string;
+  /**
+   * For `forbidden`: the token scopes the origin said it lacks, in the
+   * origin's own words (`read:user`), when it said (Forgejo, Gitea).
+   */
+  readonly missingScopes?: readonly string[];
+}
+
+/**
+ * Every repository a credential can see, read for a check that must not miss
+ * one. `complete` is false when the pages ran out before the list did.
+ */
+export interface RepoWalk {
+  /** What was read, complete or not: a protected repository among them counts. */
+  readonly repos: readonly RemoteRepo[];
+  readonly complete: boolean;
+  /**
+   * Why it is not complete: the pages ran out (`too_many`), the list moved
+   * or its count did not add up (`moved`), or a page failed (`failed`).
+   */
+  readonly why?: "too_many" | "moved" | "failed";
 }
 
 /** A page of a list, with the cursor for the next page (null at the end). */
@@ -296,6 +323,18 @@ export interface Provider {
    */
   tokenReach?(): Promise<ProviderResult<TokenReach>>;
   listRepos(cursor?: string): Promise<ProviderResult<Page<RemoteRepo>>>;
+  /**
+   * Every repository the credential can see, for the operator guard
+   * (`origins/operator.ts`): in an order a repository cannot move in while
+   * the walk runs (by id, or by creation), with no fallback to another
+   * endpoint, at most `maxPages` pages and `pauseMs` between them. A page
+   * that fails, or a count that does not add up, ends it incomplete, with
+   * what was read so far; only a walk that cannot start fails.
+   */
+  walkRepos(options: {
+    maxPages: number;
+    pauseMs?: number;
+  }): Promise<ProviderResult<RepoWalk>>;
   getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>>;
 
   // ---- reads for browsing a repository we have not mirrored ----
@@ -437,11 +476,20 @@ export interface Provider {
     },
   ): Promise<ProviderResult<RemoteReviewState>>;
   /**
+   * The forks of a repository, as many as fit a bounded walk: what finds an
+   * account's fork when it goes by a name this forge did not give it.
+   */
+  listForks(fullName: string): Promise<ProviderResult<readonly RemoteRepo[]>>;
+  /**
    * Fork a repo into the credential's account. GitHub creates the fork
    * *asynchronously* and answers 202 with a repo that does not exist yet, so
    * a caller must poll `getRepo` until it does (`actions/contribute.ts`).
    */
-  forkRepo(fullName: string): Promise<ProviderResult<RemoteRepo>>;
+  forkRepo(
+    fullName: string,
+    /** The fork's name, when not the upstream's own (a name already taken). */
+    name?: string,
+  ): Promise<ProviderResult<RemoteRepo>>;
   /**
    * Archive a repo (`PATCH /repos/{o}/{r}` with `archived: true`): read-only
    * on the origin from then on. Needs admin there; without it the answer is
@@ -499,6 +547,12 @@ export interface ProviderCredential {
    * credential is gone or unrefreshable, and the origin needs reconnecting.
    */
   token(): Promise<ProviderResult<string>>;
+  /**
+   * Whether the credential may change anything on the origin now: asked
+   * before every request that is not a read. A refusal is `forbidden`, with
+   * the reason. Absent, it always may (a credential checked by nobody).
+   */
+  writable?(): ProviderResult<true>;
 }
 
 /** A credential that is just a stored secret — the PAT path, and tests. */

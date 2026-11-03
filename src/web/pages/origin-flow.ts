@@ -9,7 +9,7 @@
  */
 
 import { pollOAuthConnect } from "../../actions/origins.ts";
-import { getFlowFor } from "../../origins/oauth.ts";
+import { flowExpired, flowTarget, getFlowFor } from "../../origins/oauth.ts";
 import type { Ctx } from "../../http/context.ts";
 import { forgeBaseUrl } from "../../http/api.ts";
 import { qrEncode, qrSvg } from "../../design/qr.ts";
@@ -49,14 +49,15 @@ export function originFlowPage(ctx: Ctx): Response {
     return redirect(`${then ?? "/settings/origins"}?connected=1`);
   if (flow.status === "failed")
     return redirect(
-      `/settings/origins?error=${encodeURIComponent(flow.detail.slice(0, 120))}`,
+      `/settings/origins?error=${encodeURIComponent(flow.detail.slice(0, 300))}`,
     );
 
+  // A pending flow past its time leads nowhere: not to a consent screen
+  // for a state that will be refused, nor to a code that no longer works.
+  if (flowExpired(flow)) return expiredFlow(ctx, flow, then);
+
   const pollAction = `/settings/origins/flows/${flow.id}/poll${then === undefined ? "" : `?${thenQuery(then)}`}`;
-  const authorize =
-    flow.flow === "code"
-      ? authorizeLink(ctx.url.searchParams.get("to") ?? "", flow.webUrl)
-      : undefined;
+  const authorize = flow.flow === "code" ? authorizeFor(ctx, flow) : undefined;
   const base = forgeBaseUrl(ctx.url, ctx.app.config.host);
   const shortLink =
     base === "" || flow.shortCode === "" ? "" : `${base}/go/${flow.shortCode}`;
@@ -211,22 +212,72 @@ function qrScale(modules: number): number {
 }
 
 /**
- * The authorize URL for a code flow, checked before it becomes a link.
- *
- * It arrives on the query string because the flow row stores a *device*
- * flow's verification URI and nothing for a code flow. A crafted link could
- * therefore reach this page, so the URL is accepted only when it points at
- * the same instance the flow already names and carries a PKCE challenge —
- * the worst a forged one can do is send you to another page on the forge you
- * asked to connect.
+ * The authorize URL a code flow goes on to: the one sealed on the flow when
+ * it began (`flowTarget`), never one from the query string — a link a
+ * stranger crafted would otherwise choose the client and the callback. It is
+ * checked again before it becomes a link: the instance's own
+ * `/login/oauth/authorize`, with the flow's client id and callback and a
+ * PKCE challenge. An older link that still carries `to` continues only when
+ * `to` is exactly that URL.
  */
-function authorizeLink(raw: string, webUrl: string): string | undefined {
-  const url = URL.parse(raw);
-  const instance = URL.parse(webUrl);
+function authorizeFor(
+  ctx: Ctx,
+  flow: { id: string; webUrl: string; clientId: string; redirectUri: string },
+): string | undefined {
+  const stored = flowTarget(ctx.app.db, ctx.app.config.dataDir, flow.id);
+  if (stored === undefined) return undefined;
+  const asked = ctx.url.searchParams.get("to");
+  if (asked !== null && asked !== stored) return undefined;
+  const url = URL.parse(stored);
+  const instance = URL.parse(flow.webUrl);
   if (!url || !instance) return undefined;
   if (url.origin !== instance.origin) return undefined;
+  const at = `${instance.pathname.replace(/\/+$/, "")}/login/oauth/authorize`;
+  if (url.pathname !== at) return undefined;
+  if (url.searchParams.get("client_id") !== flow.clientId) return undefined;
+  if (url.searchParams.get("redirect_uri") !== flow.redirectUri) return undefined;
   if (url.searchParams.get("code_challenge") === null) return undefined;
   return url.toString();
+}
+
+/**
+ * A connect that ran out of time before it was finished: said so, with the
+ * way to start again.
+ */
+function expiredFlow(
+  ctx: Ctx,
+  flow: { kind: string; webUrl: string },
+  then: Then,
+): Response {
+  return page({
+    ctx,
+    title: "Connecting an origin",
+    body: html`<div class="page-head"><h1>Connecting an origin</h1></div>
+      <div class="narrow-wide">
+        ${card(
+          html`<p class="mb">
+              This connect link expired. Nothing was connected. Start again:
+            </p>
+            <form method="post" action="/settings/origins/oauth">
+              <input type="hidden" name="host" value="${flow.webUrl}" />
+              ${flow.kind === "github"
+                ? html`<input type="hidden" name="kind" value="github" />`
+                : null}
+              ${then === undefined
+                ? null
+                : html`<input type="hidden" name="then" value="migrate" />`}
+              ${btn(`Connect ${hostLabel(flow.webUrl)}`, {
+                variant: "primary",
+                icon: "external",
+              })}
+            </form>`,
+          {
+            head: html`${icon("alert")}
+              <h2>This connect link expired</h2>`,
+          },
+        )}
+      </div>`,
+  });
 }
 
 /**
@@ -265,7 +316,7 @@ export async function originFlowPoll(ctx: Ctx): Promise<Response> {
     return redirect(`${then ?? "/settings/origins"}?connected=1`);
   if (status === "failed")
     return redirect(
-      `/settings/origins?error=${encodeURIComponent(detail.slice(0, 120))}`,
+      `/settings/origins?error=${encodeURIComponent(detail.slice(0, 300))}`,
     );
   return redirect(
     `/settings/origins/flows/${ctx.params.id ?? ""}${then === undefined ? "" : `?${thenQuery(then)}`}`,

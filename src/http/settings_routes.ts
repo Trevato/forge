@@ -102,6 +102,7 @@ import {
   originAppCreate,
   originAppDelete,
   originConnectToken,
+  originCheckSubmit,
   originDisconnect,
   originOAuthStart,
   originSyncSubmit,
@@ -240,7 +241,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
       ? "error=state"
       : done.value.status === "done"
         ? "connected=1"
-        : `error=${encodeURIComponent(done.value.detail.slice(0, 120))}`;
+        : `error=${encodeURIComponent(done.value.detail.slice(0, 300))}`;
     return new Response(null, {
       status: 303,
       headers: { location: `/settings/origins?${query}` },
@@ -263,6 +264,8 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   // shape for the same reason `flows` and `apps` are.
   router.add("GET", "/settings/origins/:id/mirror/:job", mirrorJobPage);
   router.add("POST", "/settings/origins/:id/sync", originSyncSubmit);
+  // "Check again": the operator guard on a connection whose writes are paused.
+  router.add("POST", "/settings/origins/:id/check", originCheckSubmit);
   router.add("POST", "/settings/origins/:id/delete", originDisconnect);
   router.add("POST", "/settings/origins/:id/token", originReplaceToken);
   router.add("GET", "/settings/keys", keysPage);

@@ -349,6 +349,10 @@ export const CREATE_ERRORS: Record<string, string> = {
     "The origin could not be reached, so nothing was created.",
   origin_refused:
     "The origin refused that branch, so nothing was created here.",
+  origin_protected:
+    "The operator protects this repository at its origin, so no branch is pushed to it from here. Propose the change from your fork.",
+  origin_paused:
+    "This connection is not verified yet, so writes through it are paused. Nothing was created. Check it again under Settings → Origins.",
   forbidden: "You need write access to create a branch.",
   unauthorized: "You need write access to create a branch.",
   not_found: "You need write access to create a branch.",

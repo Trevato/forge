@@ -527,6 +527,27 @@ export function targetForShortCode(
   return opened.ok ? opened.value : undefined;
 }
 
+/**
+ * Where a pending flow sends the person — the authorize URL a code flow was
+ * started with, or a device flow's verification page — as it was sealed on
+ * the row when the flow began. Expiry is the caller's to judge (a page says
+ * "expired"; a short link just stops answering).
+ */
+export function flowTarget(
+  db: Database,
+  dataDir: string,
+  flowId: string,
+): string | undefined {
+  const row = db
+    .query<RawFlow, [string]>(
+      "SELECT * FROM oauth_flow WHERE id = ?1 AND status = 'pending'",
+    )
+    .get(flowId);
+  if (!row || row.target_enc === "") return undefined;
+  const opened = open(dataDir, row.target_enc, row.id);
+  return opened.ok ? opened.value : undefined;
+}
+
 export function getFlow(db: Database, flowId: string): FlowRow | undefined {
   const row = db
     .query<RawFlow, [string]>("SELECT * FROM oauth_flow WHERE id = ?1")

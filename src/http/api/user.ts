@@ -8,7 +8,7 @@
 import { contribute, forkOrigin } from "../../actions/contribute.ts";
 import { CAPPED_WORDS } from "../../actions/mail.ts";
 import { ORIGIN_UNREACHABLE } from "../../actions/origin_app_words.ts";
-import { connectOrigin, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
+import { connectOrigin, connectRefusal, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
 import { addSshKey, changePassword, deleteSshKey, updateProfile } from "../../actions/users.ts";
 import { VERIFY_WORDS } from "../../actions/verify_words.ts";
 import { resendVerification } from "../../actions/verify.ts";
@@ -260,12 +260,16 @@ export function userRoutes(router: Router<Handler>): void {
         : {}),
       token: str(input.token),
     });
-    if (!connected.ok)
+    if (!connected.ok) {
+      // A refusal that names its own reason (a missing scope) keeps it;
+      // every other code has its sentence here.
+      const refused = connectRefusal(connected.error);
       return apiError(
-        connected.error,
-        connected.error === "rate_limited" ? 429 : 422,
-        connectMessage(connected.error),
+        refused.code,
+        refused.code === "rate_limited" ? 429 : 422,
+        refused.message ?? connectMessage(refused.code),
       );
+    }
     // The frozen mirrors connecting this account brought back, and the ones
     // it could not, each with its reason.
     return json(

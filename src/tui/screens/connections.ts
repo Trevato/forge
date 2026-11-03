@@ -4,9 +4,10 @@
  * it after a confirm — through `actions/origins.ts`, in `origin_words.ts`'s words.
  */
 
-import { connectOrigin, disconnectOrigin, listUserOrigins, syncOriginNow } from "../../actions/origins.ts";
-import { DISCONNECT_DETAIL, NO_SUCH_ORIGIN, connectWords, disconnectedWords, syncedWords } from "../../actions/origin_words.ts";
+import { connectOrigin, checkOriginAgain, connectRefusal, disconnectOrigin, listUserOrigins, syncOriginNow } from "../../actions/origins.ts";
+import { CHECK_TOO_SOON, CHECK_WORDS, DISCONNECT_DETAIL, NO_SUCH_ORIGIN, connectWords, disconnectedWords, syncedWords } from "../../actions/origin_words.ts";
 import { mirrorsByOrigin } from "../../core/origins.ts";
+import { writesPaused } from "../../origins/credential.ts";
 import { FORGE_NOT_CARRIED, FORGE_SIGN_IN_ON_PAGE } from "../../origins/words.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -27,16 +28,19 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
 
   const screen: Screen = {
     title: "Connected origins",
-    keys: [binding(["j", "k"], "move cursor"), binding(["c"], "connect"), binding(["s"], "sync now"), binding(["d"], "disconnect"), binding(["esc"], "back")],
+    keys: [binding(["j", "k"], "move cursor"), binding(["c"], "connect"), binding(["s"], "sync now"), binding(["v"], "verify again"), binding(["d"], "disconnect"), binding(["esc"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
       const [head, list] = split(area, "v", [len(1), fill(1)]);
       const all = origins();
       const picked = all[state.index];
+      const pausedNote = picked !== undefined && writesPaused(f.app, picked.id) !== undefined;
       const text =
         picked?.software === "forge"
           ? `Another forge. ${FORGE_NOT_CARRIED}`
-          : all.length === 0
+          : pausedNote
+            ? "Couldn't verify this connection; writes paused. Reading and syncing go on. Press v to check again."
+            : all.length === 0
             ? `No origin connected. Press c to connect one. ${FORGE_SIGN_IN_ON_PAGE}`
             : `The hosts your mirrors come from. ${FORGE_SIGN_IN_ON_PAGE}`;
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
@@ -50,9 +54,9 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
           const k = n.get(o.id)?.count ?? 0;
           return {
             title: `${host(o.webUrl)} · ${o.login}`,
-            ...(o.lastError !== "" ? { tone: "danger" as const } : {}),
+            ...(o.lastError !== "" || writesPaused(f.app, o.id) !== undefined ? { tone: "danger" as const } : {}),
             secondary: `${o.software === "forge" ? "another forge · " : ""}${k} repositor${k === 1 ? "y" : "ies"} · ${day(o.lastSyncAt)}`,
-            meta: o.lastError !== "" ? o.lastError : o.authKind === "oauth" ? "OAuth" : "token",
+            meta: o.lastError !== "" ? o.lastError : writesPaused(f.app, o.id) !== undefined ? "writes paused" : o.authKind === "oauth" ? "OAuth" : "token",
           };
         }),
       );
@@ -79,7 +83,7 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
                     if (token.trim() === "") return "Paste the token.";
                     ctx.toast(`Connecting ${hostText}…`);
                     return connectOrigin(f.app, user, { host: hostText, token }).then((r) => {
-                      ctx.toast(r.ok ? `Connected ${r.value.login} at ${host(r.value.webUrl)}.` : connectWords(r.error), r.ok ? "success" : "danger");
+                      ctx.toast(r.ok ? `Connected ${r.value.login} at ${host(r.value.webUrl)}.` : connectRefusal(r.error).message ?? connectWords(connectRefusal(r.error).code), r.ok ? "success" : "danger");
                       ctx.invalidate();
                     });
                   },
@@ -103,6 +107,17 @@ export function connectionsScreen(f: Session, ctx: Ctx): Screen {
             ctx.invalidate();
           })
           .catch(() => ctx.toast("The sync failed.", "danger"));
+        return true;
+      }
+      if (e.key === "v") {
+        ctx.toast(`Checking ${host(o.webUrl)}…`);
+        void checkOriginAgain(f.app, user, o.id)
+          .then((r) => {
+            if (!r.ok) ctx.toast(r.error === "too_soon" ? CHECK_TOO_SOON : NO_SUCH_ORIGIN, "danger");
+            else ctx.toast(CHECK_WORDS[r.value], r.value === "passed" || r.value === "unguarded" ? "success" : "danger");
+            ctx.invalidate();
+          })
+          .catch(() => ctx.toast("The check failed.", "danger"));
         return true;
       }
       if (e.key === "d") {

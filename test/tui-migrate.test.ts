@@ -130,7 +130,7 @@ beforeAll(async () => {
   fake = serveFakeForge(state);
   forgetProviders(dir);
   const connected = await connectOrigin(app, alice, { host: fake.url, token: secret });
-  if (!connected.ok) throw new Error(connected.error);
+  if (!connected.ok) throw new Error(JSON.stringify(connected.error));
 
   const agent = await createAgent(app, alice, { username: "porter", model: "", brief: "Moves things in." });
   if (!agent.ok) throw new Error(String(agent.error));
@@ -289,7 +289,7 @@ describe("migrate from the terminal", () => {
     try {
       for (const [host, token] of [[fake.url, secretToken], [down.url, "tok-ghost"]] as const) {
         const connected = await connectOrigin(app, erin.value, { host, token });
-        if (!connected.ok) throw new Error(connected.error);
+        if (!connected.ok) throw new Error(JSON.stringify(connected.error));
       }
       down.state.rateLimitFor = 1000;
       await withTui(erin.value, async ({ tui, terminal }) => {

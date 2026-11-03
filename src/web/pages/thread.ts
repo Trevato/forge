@@ -92,6 +92,10 @@ export function originError(error: string): string | undefined {
     origin_owner_only:
       "Only the person who connected this origin can write through it. Your comment would otherwise appear upstream under their name.",
     origin_refused: "The origin refused that. Nothing was changed here either.",
+    origin_protected:
+      "The operator protects this repository at its origin, so nothing is pushed to it from here. Propose the change from your fork.",
+    origin_paused:
+      "This connection is not verified yet, so writes through it are paused. Nothing was changed. Check it again under Settings → Origins.",
     origin_unreachable: "The origin could not be reached. Nothing was changed.",
   };
   return words[error];

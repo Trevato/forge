@@ -644,6 +644,18 @@ export function originAware(error: string, status = 422): Response {
       409,
       "the origin refused this change; nothing was changed here either",
     );
+  if (error === "origin_protected")
+    return apiError(
+      "origin_protected",
+      409,
+      "the operator protects this repository at its origin: nothing is pushed to it from here; propose the change from your fork",
+    );
+  if (error === "origin_paused")
+    return apiError(
+      "origin_paused",
+      409,
+      "this connection is not verified against the operator's rules yet, so writes through it are paused; nothing was changed",
+    );
   return respondAccess(error, status);
 }
 

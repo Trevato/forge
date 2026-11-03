@@ -744,7 +744,7 @@ describe("migrate", () => {
         kind: "github",
         token: upstreamSecret,
       });
-      if (!connected.ok) throw new Error(connected.error);
+      if (!connected.ok) throw new Error(JSON.stringify(connected.error));
       const agent = await createAgent(app, alice, {
         username: "mover",
         model: "",
@@ -893,7 +893,7 @@ describe("migrate", () => {
         kind: "github",
         token: upstreamSecret,
       });
-      if (!connected.ok) throw new Error(connected.error);
+      if (!connected.ok) throw new Error(JSON.stringify(connected.error));
       const job = await migrate(alice, {
         source: { originId: connected.value.id, fullName: "octo/forked-pulls" },
       });
@@ -1004,7 +1004,7 @@ describe("migrate", () => {
     try {
       forgetProviders(dataDir);
       const connected = await connectOrigin(app, alice, { host: github.url, kind: "github", token: upstreamSecret });
-      if (!connected.ok) throw new Error(connected.error);
+      if (!connected.ok) throw new Error(JSON.stringify(connected.error));
       const value = `${connected.value.id}/octo/arm`;
 
       // The row links to its branches; the list shows each last commit,

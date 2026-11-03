@@ -219,10 +219,14 @@ export function storeRefreshed(
   originId: string,
   next: { token: string; refresh?: string; expiresAt?: string | null },
 ): void {
+  // A refresh never clears `needs_reauth`: one that races a refusal (the
+  // operator guard's sweep, a dead grant) must not undo it. Only connecting
+  // again — `renewOrigin`, after the guard passed — brings an origin back.
   db.query(
     `UPDATE origin SET token_enc = ?1,
        refresh_token_enc = CASE WHEN ?2 = '' THEN refresh_token_enc ELSE ?2 END,
-       expires_at = ?3, needs_reauth = 0, last_error = ''
+       expires_at = ?3,
+       last_error = CASE WHEN needs_reauth = 1 THEN last_error ELSE '' END
      WHERE id = ?4`,
   ).run(
     seal(dataDir, next.token, originId),

@@ -32,6 +32,7 @@ import {
   type Origin,
 } from "../core/origins.ts";
 import { canWrite, countsForRepos, type Repo } from "../core/repos.ts";
+import { denied } from "../origins/operator.ts";
 import type { Ctx } from "../http/context.ts";
 import type {
   RepoFacts,
@@ -193,7 +194,10 @@ function mirrorFacts(
   const link = originForRepo(ctx.app.db, repo.id);
   if (link === undefined) return { upstream, propose: undefined };
   const cached = getOriginRepo(ctx.app.db, link.origin.id, link.fullName);
-  if (cached?.canPush !== false) return { upstream, propose: undefined };
+  // A repository the operator protects takes no pushes from here, whatever
+  // the account could do: it, too, is proposed to through a fork.
+  if (cached?.canPush !== false && !denied(link.origin, link.fullName))
+    return { upstream, propose: undefined };
   return {
     upstream,
     propose: {

@@ -686,6 +686,28 @@ describe("failingFiles", () => {
     expect(failingFiles(report)).toEqual(["test/b.test.ts", "test/c.test.ts"]);
   });
 
+  test("an Actions job's report: the group marker is not part of the path", () => {
+    // bun under GITHUB_ACTIONS=true (Forgejo's runner sets it too), as a
+    // runner logged it: read as a path, `::group::test/b.test.ts` was run
+    // again alone, could not be found, and nothing was ever cleared.
+    const report = [
+      "bun test v1.3.14 (0d9b296a)",
+      "",
+      "::group::test/a.test.ts:",
+      "(pass) fine",
+      "",
+      "::endgroup::",
+      "",
+      "::group::test/b.test.ts:",
+      "error: expect(received).toBeUndefined()",
+      "::error file=test/b.test.ts,line=6,col=68,title=error: expect(received).toBeUndefined()::Received: true",
+      "(fail) victim [0.09ms]",
+      "",
+      "::endgroup::",
+    ].join("\n");
+    expect(failingFiles(report)).toEqual(["test/b.test.ts"]);
+  });
+
   test("a report that names no failing test names no file", () => {
     expect(failingFiles("test/a.test.ts:\nerror: cannot load\n")).toEqual([]);
     expect(failingFiles("(fail) before any header")).toEqual([]);

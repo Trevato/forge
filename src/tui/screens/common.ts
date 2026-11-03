@@ -982,6 +982,8 @@ const MESSAGES: Record<string, string> = {
   mirrored: "this repo mirrors an origin — do it there",
   origin_owner_only: "only whoever connected this origin can write through it",
   origin_refused: "the origin refused that; nothing changed here",
+  origin_paused: "this connection is not verified yet; writes are paused",
+  origin_protected: "the operator protects this repository at its origin: nothing is pushed to it from here; propose the change from your fork",
   origin_unreachable: "the origin could not be reached; nothing changed",
   already_connected: ORIGIN_ALREADY_CONNECTED,
   already_mirrored: "that repository is already mirrored here",

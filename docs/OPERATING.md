@@ -13,7 +13,8 @@ routers learn it is going, so a roll refuses nobody (`docs/ops/ROLL.md`).
 Connecting origins
 adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_GITHUB_CLIENT_ID` / `FORGE_GITHUB_CLIENT_SECRET`, and
-`FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Behind a
+`FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN, for discovery
+and for that origin's git). Behind a
 platform edge that signs people in for every app it serves, `FORGE_EDGE_TOKEN`
 is the edge's secret: a request carrying it and `X-Plat-User` is that person,
 signed in by the platform if an account of that name exists. An unknown login

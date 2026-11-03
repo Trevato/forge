@@ -43,6 +43,7 @@ import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
+import { proposesViaFork } from "../../origins/fork-route.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
@@ -284,11 +285,18 @@ export function followingCard(
       proposal === undefined
         ? html`<form method="post" action="${base}/following">
             <input type="hidden" name="do" value="propose" />
-            ${btn("Propose upstream", {
-              size: "sm",
-              type: "submit",
-              icon: "merge",
-            })}
+            ${proposesViaFork(ctx.app, parent)
+              ? btn("Propose via your fork", {
+                  size: "sm",
+                  type: "submit",
+                  icon: "fork",
+                  title: `Your account can only read ${parent.ownerName}/${parent.name}'s origin, or its operator protects it: the change goes to your own fork there, and the pull opens from it`,
+                })
+              : btn("Propose upstream", {
+                  size: "sm",
+                  type: "submit",
+                  icon: "merge",
+                })}
           </form>`
         : btn("See the upstream proposal", {
             size: "sm",

@@ -81,9 +81,34 @@ import {
 } from "./access.ts";
 import { canWrite } from "../core/repos.ts";
 import { refreshPullHead as refreshHead } from "../core/following.ts";
+import { getOriginRepo } from "../core/origins.ts";
 import { watchPullsSoon } from "../origins/hook.ts";
-import { carryBranchThrough } from "../origins/push-through.ts";
 import { ownHost, pullSourceOf, sourceTrailers } from "../core/trusted_sources.ts";
+import { carryBranchThrough } from "../origins/push-through.ts";
+import { ensureFork, forkHead, pushToFork } from "../origins/fork-route.ts";
+import { denied } from "../origins/operator.ts";
+import type { WriteThrough } from "../origins/write-through.ts";
+
+/**
+ * How a fork of a mirror proposes to the mirror's origin: `direct`, its
+ * branch pushed into the origin repository, when the account may push
+ * there; `fork`, through the account's own fork at the origin, when it may
+ * only read — and always for a repository the operator protects
+ * (`FORGE_ORIGIN_DENY_PUSH`), which this forge never pushes to. The rights
+ * are the origin's own answer, asked now; when it cannot be asked, the
+ * cached one, and failing that the direct way, whose refusal falls back to
+ * the fork.
+ */
+async function proposalRoute(
+  app: App,
+  through: WriteThrough,
+): Promise<"direct" | "fork"> {
+  if (denied(through.origin, through.fullName)) return "fork";
+  const live = await through.provider.getRepo(through.fullName);
+  if (live.ok) return live.value.permissions.push ? "direct" : "fork";
+  const cached = getOriginRepo(app.db, through.origin.id, through.fullName);
+  return cached?.canPush === false ? "fork" : "direct";
+}
 
 export interface OpenPullInput {
   title: string;
@@ -135,10 +160,13 @@ export async function openPull(
     if (title === "") return err("empty_title");
     // A native fork of this mirror proposing upstream: its branch is
     // carried to the origin first, under the connecting account's
-    // credential like any push through, and the origin opens the pull
-    // from the branch it now holds.
+    // credential, and the origin opens the pull from it. Directly into the
+    // origin repository when the account can push there; otherwise — and
+    // always for a repository the operator protects — into the account's
+    // own fork at the origin, the pull's head then `<owner>:<branch>`.
     const head = input.headRepo;
     let carriedAs = input.headBranch;
+    let pullHead = input.headBranch;
     if (head !== undefined && head.id !== baseRepo.id) {
       if (
         !canRead(app.db, head, user.value) ||
@@ -152,15 +180,50 @@ export async function openPull(
       // name.
       if (input.headBranch === input.baseBranch)
         carriedAs = `${head.ownerName}/${input.headBranch}`;
-      const carried = await carryBranchThrough(
-        app,
-        baseRepo,
-        head,
-        input.headBranch,
-        user.value.id,
-        carriedAs,
-      );
-      if (!carried.ok) return err(refusal(carried.error.message));
+      pullHead = carriedAs;
+      const route = await proposalRoute(app, through.value);
+      let viaFork = route === "fork";
+      if (route === "direct") {
+        const carried = await carryBranchThrough(
+          app,
+          baseRepo,
+          head,
+          input.headBranch,
+          user.value.id,
+          carriedAs,
+        );
+        // The origin said no to the push itself: the account cannot write
+        // there after all. Reading is enough to propose, from a fork.
+        if (!carried.ok && carried.error.byOrigin !== true)
+          return err(refusal(carried.error.message));
+        viaFork = !carried.ok;
+      }
+      if (viaFork) {
+        const forked = await ensureFork(
+          app,
+          through.value.origin,
+          through.value.provider,
+          through.value.fullName,
+        );
+        if (!forked.ok)
+          return err(
+            forked.error === "origin_unreachable" ||
+              forked.error === "fork_timeout"
+              ? "origin_unreachable"
+              : "origin_refused",
+          );
+        const pushed = await pushToFork(
+          app,
+          through.value.origin,
+          through.value.provider,
+          forked.value.remote,
+          repoDir(app.reposRoot, head.ownerName, head.name),
+          input.headBranch,
+          carriedAs,
+        );
+        if (!pushed.ok) return err("origin_refused");
+        pullHead = forkHead(forked.value.remote, carriedAs);
+      }
     }
     const created = await through.value.provider.createPull(
       through.value.fullName,
@@ -168,7 +231,7 @@ export async function openPull(
         title,
         body: input.body ?? "",
         base: input.baseBranch,
-        head: carriedAs,
+        head: pullHead,
       },
     );
     if (!created.ok) return err(refusal(created.error.error));

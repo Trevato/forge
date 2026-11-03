@@ -41,6 +41,8 @@ export class ForgeProvider extends ForgejoProvider {
       login,
       displayName: asString(field(result.value.data, "displayName")) || login,
       htmlUrl: `${this.webUrl}/${login}`,
+      // `isAdmin` on a forge's own `/user`: the guard refuses such an account.
+      siteAdmin: field(result.value.data, "isAdmin") === true,
     });
   }
 
@@ -81,6 +83,10 @@ export class ForgeProvider extends ForgejoProvider {
         default_branch: field(raw, "defaultBranch"),
         clone_url: `${web}.git`,
         html_url: web,
+        // A forge's repository JSON carries no rights. Unknown is not
+        // "cannot push": the direct way is tried, and its refusal falls
+        // back to the account's own fork.
+        permissions: { push: true, admin: false },
       }),
     );
   }

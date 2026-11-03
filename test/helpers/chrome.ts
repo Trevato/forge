@@ -46,11 +46,13 @@ class Cdp {
   private nextId = 1;
   private readonly pending = new Map<number, (msg: CdpMessage) => void>();
   private readonly waiters = new Map<string, () => void>();
+  private readonly listeners = new Map<string, ((params: any) => void)[]>();
 
   constructor(private readonly ws: WebSocket) {
     ws.addEventListener("message", (event) => {
       const msg = JSON.parse(event.data as string) as CdpMessage & {
         method?: string;
+        params?: unknown;
       };
       if (msg.id !== undefined) {
         this.pending.get(msg.id)?.(msg);
@@ -58,8 +60,15 @@ class Cdp {
       } else if (msg.method !== undefined) {
         this.waiters.get(msg.method)?.();
         this.waiters.delete(msg.method);
+        for (const listen of this.listeners.get(msg.method) ?? [])
+          listen(msg.params);
       }
     });
+  }
+
+  /** Every time `method` fires as an event, with its params. */
+  on(method: string, listen: (params: any) => void): void {
+    this.listeners.set(method, [...(this.listeners.get(method) ?? []), listen]);
   }
 
   send(method: string, params: object = {}): Promise<any> {
@@ -313,6 +322,131 @@ export function chromiumRuns(binary: string): boolean {
   } catch {
     return false;
   } finally {
+    rmSync(profile, { recursive: true, force: true });
+  }
+}
+
+/** What a browser did after a click: where it went, and what it refused. */
+export interface Followed {
+  /** Every URL the page asked for, in order (navigations and redirects). */
+  readonly requested: string[];
+  /** The page's URL when following stopped. */
+  readonly finalUrl: string;
+  /**
+   * Console errors, log entries and `securitypolicyviolation` events: a
+   * Content-Security-Policy refusal lands here, however the browser says it.
+   */
+  readonly errors: string[];
+}
+
+/**
+ * Load `url` with a session cookie, then run each of `steps` (an
+ * expression evaluated in the page — a click) after the page before it has
+ * loaded, and follow the browser until a requested URL satisfies `until` or
+ * `timeoutMs` passes. What a real browser enforces and an HTTP client does
+ * not — a page's CSP on the redirect that follows its form — is exactly
+ * what this sees.
+ */
+export async function clickAndFollow(
+  binary: string,
+  input: {
+    url: string;
+    cookie: { name: string; value: string };
+    steps: readonly string[];
+    until: (url: string) => boolean;
+    /** Done for another reason the page cannot see (a server got the request). */
+    done?: () => boolean;
+    timeoutMs?: number;
+  },
+): Promise<Followed> {
+  const profile = mkdtempSync(join(tmpdir(), "forge-click-"));
+  const proc = Bun.spawn(
+    [
+      binary,
+      "--headless=new",
+      "--no-sandbox",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--disable-background-networking",
+      "--disable-crash-reporter",
+      "--no-first-run",
+      `--user-data-dir=${profile}`,
+      "--remote-debugging-port=0",
+    ],
+    { env: childEnv({}), stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+  );
+  let ws: WebSocket | undefined;
+  const requested: string[] = [];
+  const errors: string[] = [];
+  try {
+    const browserWsUrl = await Promise.race([
+      readDebuggerUrl(proc.stderr),
+      Bun.sleep(10_000).then((): string => {
+        throw new Error("chromium never printed its devtools address");
+      }),
+    ]);
+    const target = await findPageTarget(browserWsUrl);
+    ws = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws!.addEventListener("open", () => resolve());
+      ws!.addEventListener("error", () =>
+        reject(new Error("chromium's devtools socket refused the connection")),
+      );
+    });
+    const cdp = new Cdp(ws);
+    cdp.on("Network.requestWillBeSent", (p) => requested.push(String(p.request?.url ?? "")));
+    cdp.on("Log.entryAdded", (p) => {
+      if (p.entry?.level === "error" || p.entry?.source === "security")
+        errors.push(String(p.entry?.text ?? ""));
+    });
+    cdp.on("Runtime.consoleAPICalled", (p) => {
+      if (p.type === "error")
+        errors.push((p.args ?? []).map((a: any) => String(a.value ?? a.description ?? "")).join(" "));
+    });
+    cdp.on("Audits.issueAdded", (p) => {
+      const csp = p.issue?.details?.contentSecurityPolicyIssueDetails;
+      if (csp !== undefined)
+        errors.push(`CSP issue: ${csp.violatedDirective} ${csp.blockedURL ?? ""}`);
+    });
+    await cdp.send("Page.enable");
+    await cdp.send("Network.enable");
+    await cdp.send("Log.enable");
+    await cdp.send("Runtime.enable");
+    await cdp.send("Audits.enable");
+    // Every document reports its own CSP refusals, before anything else runs.
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `document.addEventListener("securitypolicyviolation", (e) =>
+        console.error("CSP violation: " + e.violatedDirective + " " + e.blockedURI));`,
+    });
+    await cdp.send("Network.setCookie", {
+      name: input.cookie.name,
+      value: input.cookie.value,
+      url: input.url,
+    });
+    const deadline = Date.now() + (input.timeoutMs ?? 15_000);
+    const reached = () =>
+      requested.some(input.until) || (input.done?.() ?? false);
+    let loaded = cdp.once("Page.loadEventFired");
+    await cdp.send("Page.navigate", { url: input.url });
+    await Promise.race([loaded, Bun.sleep(Math.max(0, deadline - Date.now()))]);
+    for (const step of input.steps) {
+      if (reached()) break;
+      loaded = cdp.once("Page.loadEventFired");
+      // As a person's click: a user gesture, so a link that opens a tab does.
+      await cdp.send("Runtime.evaluate", { expression: step, userGesture: true });
+      await Promise.race([loaded, Bun.sleep(Math.max(0, deadline - Date.now()))]);
+    }
+    while (!reached() && Date.now() < deadline) await Bun.sleep(100);
+    // Late reports of what the last navigation refused.
+    await Bun.sleep(300);
+    const where = await cdp
+      .send("Runtime.evaluate", { expression: "location.href", returnByValue: true })
+      .catch(() => ({ result: { value: "" } }));
+    return { requested, finalUrl: String(where.result?.value ?? ""), errors };
+  } finally {
+    ws?.close();
+    proc.kill("SIGKILL");
+    await proc.exited.catch(() => {});
     rmSync(profile, { recursive: true, force: true });
   }
 }

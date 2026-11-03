@@ -19,7 +19,9 @@
 
 import { FORGE_NOT_CARRIED } from "../../origins/words.ts";
 import {
+  checkOriginAgain,
   connectOrigin,
+  connectRefusal,
   deleteOriginApp,
   disconnectOrigin,
   listOriginApps,
@@ -35,6 +37,8 @@ import {
   connectWords,
   disconnectedWords,
   syncedWords,
+  CHECK_TOO_SOON,
+  CHECK_WORDS,
 } from "../../actions/origin_words.ts";
 import {
   editableHosts,
@@ -46,6 +50,7 @@ import {
 } from "../../origins/trusted-hosts.ts";
 import { reattachMessage } from "./frozen.ts";
 import { replaceTokenMessage } from "../../origins/token-reach.ts";
+import { writesPaused } from "../../origins/credential.ts";
 import {
   listDetachedMirrors,
   mirrorsByOrigin,
@@ -328,7 +333,25 @@ function reauthNote(origin: Origin, mirrors: number): Html {
   </p>`;
 }
 
-function originCard(origin: Origin, mirrors: number): Html {
+/**
+ * An origin whose account the operator guard could not verify reads and
+ * syncs but writes nothing (`writesPaused`): said where the origin is, with
+ * the way out, a check now.
+ */
+function pausedNote(origin: Origin): Html {
+  return html`<div class="toast mt" data-tone="attn" role="status">
+    ${icon("alert")}
+    <div class="toast-body">
+      Couldn't verify this connection; writes paused. Reading and syncing go
+      on.
+    </div>
+    <form method="post" action="/settings/origins/${origin.id}/check">
+      ${btn("Check again", { size: "sm", variant: "outline", icon: "sync" })}
+    </form>
+  </div>`;
+}
+
+function originCard(origin: Origin, mirrors: number, paused = false): Html {
   const base = `/settings/origins/${origin.id}`;
   return card(
     html`<ul class="list setting-list">
@@ -364,6 +387,7 @@ function originCard(origin: Origin, mirrors: number): Html {
         origin.software === "forge",
         () => html`<p class="small mt">Another forge. ${FORGE_NOT_CARRIED}</p>`,
       )}
+      ${when(paused, () => pausedNote(origin))}
       <div class="bar mt">
         <form method="post" action="${base}/sync">
           ${btn("Sync now", { size: "sm", icon: "sync" })}
@@ -640,8 +664,9 @@ function tokenSection(values: ConnectValues): Html {
         required: true,
         mono: true,
         autocomplete: "off",
-        hint: "Needs repository and issue access. It is never displayed after this.",
+        hint: "It is never displayed after this.",
       })}
+      ${tokenNeeds(values.tokenHost)}
       <div class="form-actions">${btn("Connect", { variant: "primary" })}</div>
     </form>`;
 }
@@ -681,6 +706,41 @@ function trustedHostsCard(text: string, error?: string): Html {
   );
 }
 
+/**
+ * What a Forgejo or Gitea token needs, in the words of the page that makes
+ * one, and — once the instance is known — a link to that page with the
+ * name and the scopes already chosen. Forgejo 15 fills its form from the
+ * query (`/user/settings/applications/tokens/new`); an older one or Gitea
+ * opens the plain form, and the list says what to pick.
+ */
+function tokenNeeds(host: string): Html {
+  const site =
+    host === ""
+      ? null
+      : URL.parse(host.includes("://") ? host : `https://${host}`);
+  const link =
+    site === null || site.hostname === "github.com" || site.hostname === "github"
+      ? undefined
+      : `${site.origin}/user/settings/applications/tokens/new?name=forge&resource=all&scope=read:user&scope=write:repository&scope=write:issue`;
+  return html`<div class="small muted">
+    <p>For Forgejo or Gitea, the token needs:</p>
+    <ul>
+      <li>User: Read</li>
+      <li>Repository: Read and write</li>
+      <li>Issue: Read and write</li>
+      <li>Everything else: No access</li>
+    </ul>
+    ${link === undefined
+      ? null
+      : html`<p>
+          <a href="${link}" target="_blank" rel="noopener noreferrer"
+            >Make this token at ${site!.host}</a
+          >, with these already chosen. On Gitea or an older Forgejo, open
+          Settings → Applications there instead.
+        </p>`}
+  </div>`;
+}
+
 // ---- the page ----
 
 function originsView(
@@ -715,7 +775,13 @@ function originsView(
           note: "Connect GitHub, a Forgejo instance or a Gitea instance and its repositories become mirrorable here.",
         })
       : html`<div class="stack">
-          ${origins.map((o) => originCard(o, mirrors.get(o.id)?.count ?? 0))}
+          ${origins.map((o) =>
+            originCard(
+              o,
+              mirrors.get(o.id)?.count ?? 0,
+              writesPaused(ctx.app, o.id) !== undefined,
+            ),
+          )}
         </div>`}
     ${frozenCard(frozen)}
     ${mayEditTrustedHosts(user)
@@ -871,7 +937,7 @@ export function originsPage(ctx: Ctx): Response {
           <div class="toast-body">
             ${error === "state"
               ? "That authorization could not be matched to a connect you started here. Start again."
-              : error.slice(0, 200)}
+              : error.slice(0, 300)}
           </div>
         </div>`
       : null;
@@ -901,7 +967,8 @@ export async function originConnectToken(ctx: Ctx): Promise<Response> {
     // secret is a smaller cost than a secret sitting in a value attribute.
     const values = blankValues();
     values.tokenHost = host;
-    values.tokenError = connectMessage(connected.error);
+    const refused = connectRefusal(connected.error);
+    values.tokenError = refused.message ?? connectMessage(refused.code);
     return shell(ctx, originsView(ctx, values), 422);
   }
   const { reattached } = connected.value;
@@ -979,11 +1046,8 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
         : connectMessage(started.error.error);
     return shell(ctx, originsView(ctx, values), 422);
   }
-  const query = new URLSearchParams(
-    started.value.flow === "code" ? { to: started.value.url } : {},
-  );
-  if (then !== undefined) query.set("then", "migrate");
-  const qs = query.size === 0 ? "" : `?${query}`;
+  // The flow's page knows where to go from the flow itself, not the link.
+  const qs = then === undefined ? "" : "?then=migrate";
   return redirect(`/settings/origins/flows/${started.value.flowId}${qs}`);
 }
 
@@ -1071,6 +1135,29 @@ export function notFoundNote(): Html {
   });
 }
 // ---- one origin ----
+
+// POST /settings/origins/:id/check — "Check again": the operator guard, now.
+export async function originCheckSubmit(ctx: Ctx): Promise<Response> {
+  const denied = accountOnly(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const to = "/settings/origins";
+  const checked = await checkOriginAgain(ctx.app, ctx.auth.user, ctx.params.id ?? "");
+  if (!checked.ok)
+    return flashTo(ctx, to, {
+      tone: checked.error === "too_soon" ? "attn" : "danger",
+      message:
+        checked.error === "too_soon" ? CHECK_TOO_SOON : "No such connection.",
+    });
+  return flashTo(ctx, to, {
+    tone:
+      checked.value === "passed" || checked.value === "unguarded"
+        ? "success"
+        : "danger",
+    message: CHECK_WORDS[checked.value],
+  });
+}
 
 // POST /settings/origins/:id/sync
 export async function originSyncSubmit(ctx: Ctx): Promise<Response> {

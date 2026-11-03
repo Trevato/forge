@@ -950,6 +950,8 @@ export function forkFailure(error: string): string {
     return "The origin could not be reached. Nothing was created.";
   if (error === "origin_refused")
     return "The origin refused to fork that repository.";
+  if (error === "origin_paused")
+    return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Origins.";
   if (error === "mirror_failed")
     return "The fork was made, but a local copy of it could not be.";
   if (error === "unauthorized") return "Sign in first.";

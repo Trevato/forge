@@ -37,6 +37,7 @@ import { drainStreams } from "./http/sse.ts";
 import { serve } from "./http/server.ts";
 import { checkDue } from "./actions/upstream_follow.ts";
 import { runSync } from "./origins/sync.ts";
+import { runGuardSweep } from "./origins/credential.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { listApps } from "./core/apps.ts";
@@ -572,8 +573,14 @@ function positive(value: string | undefined, fallback: number): number {
 // pushed to: an origin is due every ten minutes by default, and the tick only
 // asks who is due — so this costs one indexed read a minute when nothing is
 // connected. Like runDelivery, runSync never throws into the timer.
-const syncTimer = setInterval(() => runSync(app), 60_000);
+// The operator guard's sweep of stored origins rides the same tick: one
+// origin a tick, the never-checked first (so on boot), every other daily.
+const syncTimer = setInterval(() => {
+  runSync(app);
+  void runGuardSweep(app);
+}, 60_000);
 runSync(app); // one pass on boot: a forge that was down has fetching to do
+void runGuardSweep(app);
 
 // Which green pulls no longer merge as they stand, so the asks can leave
 // them out (`crew/stale_asks.ts`): git answers, off the request path, and an
