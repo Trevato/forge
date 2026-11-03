@@ -34,6 +34,7 @@ import {
   str,
 } from "../respond.ts";
 import type { Router } from "../router.ts";
+import { holds, weakEtag } from "../etag.ts";
 
 /** An org by name plus the team a route names (by name, case-insensitive). */
 function loadTeam(ctx: Ctx): { org: User; team: Team } | { error: Response } {
@@ -51,6 +52,19 @@ function teamVisible(ctx: Ctx, org: User, team: Team): boolean {
   return listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user).some(
     (t) => t.id === team.id,
   );
+}
+
+/**
+ * A reader-scoped JSON answer tagged by its exact bytes: a repeat holding the
+ * tag gets 304. Callers check access first, so a 304 confirms nothing to
+ * someone who may not read it.
+ */
+function tagged(request: Request, data: unknown): Response {
+  const text = JSON.stringify(data);
+  const etag = weakEtag(text);
+  const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+  if (holds(request, etag)) return new Response(null, { status: 304, headers });
+  return new Response(text, { headers: { "content-type": "application/json", ...headers } });
 }
 
 const permissionOf = (raw: unknown): Permission => {
@@ -93,7 +107,7 @@ export function orgRoutes(router: Router<Handler>): void {
       listTeamsVisibleTo(ctx.app.db, org.id, ctx.auth.user),
     );
     return timePhase(ctx.request, "render", () =>
-      json(keyedPage(teams, (t) => t.name, window)),
+      tagged(ctx.request, keyedPage(teams, (t) => t.name, window)),
     );
   });
 
@@ -135,7 +149,7 @@ export function orgRoutes(router: Router<Handler>): void {
       listTeamMembers(ctx.app.db, found.team.id).map(publicProfile),
     );
     return timePhase(ctx.request, "render", () =>
-      json(keyedPage(members, (u) => u.username, window)),
+      tagged(ctx.request, keyedPage(members, (u) => u.username, window)),
     );
   });
 
