@@ -162,7 +162,38 @@ record and exits non-zero unless all ten are green.
 A brand-new test file does not need that record: it joins the gate on its
 own green check, not ten runs. That is accepted on purpose — a flaky new
 test can turn the gate red once before anyone sees it — and the nightly
-flake hunt below is the backstop that files it and quarantines it.
+flake hunt below is the backstop that files it and quarantines it. One
+shape is refused on sight, new file or not, because ten runs on a fast box
+miss it: a wait that runs out of time and carries on — a loop that polls a
+condition at most N times or until a deadline, and whose next statement
+neither checks the outcome nor returns it (`fallThroughWaits` in
+`scripts/flake.ts`). `admit` refuses such a file before any run, naming the
+line, and `test/flake.test.ts` refuses it in every test file except the 47
+that held one when the rule began (`FALL_THROUGH_OWED`, owned by #9025; the
+rule goes red on a listed file that no longer breaches, so the list only
+shrinks). The fix is one line after the loop: fail saying what never came.
+
+### How tui-backups and conversation-queue got in (#9017)
+
+Neither passed an admission run; neither was ever given one. Both were new
+files, so each joined the gate on its pull's own green check: no seed (the
+gate runs every file's tests in written order, without `--randomize`), the
+check cell's own load, one run.
+
+- `test/tui-backups.test.ts` joined with #7278 (6e48d8c0). Its tests read
+  the destination an earlier test sealed, and its key check read the frames
+  every earlier test drew, so it was green only in written order. Run
+  through `admit` as it landed, it is red in 9 of 10 runs (seeds 2899264984
+  … 2895068531, the one green seed 3988233074); as #8995 left it, 0 of 10,
+  and refused first for its prompt wait. #9017 made each test make its own
+  destination and check every frame as it is drawn: 10 of 10 green.
+- `test/conversation-queue.test.ts` joined with #8893 (65654ceb). Its
+  `until` polled 200 × 20 ms and then went on as if the condition had
+  come, so on a slow box the test stopped a turn before the forge had read
+  its partial answer. Under `admit` as it landed it was red once in 10
+  (seed 795951491), so one admission run could have passed it; it is now
+  refused before any run, at its line 48. As #8995 left it, it passes:
+  10 of 10 green.
 
 **No flaky tests.** Nightly at 02:17 UTC the forge itself (`src/nightly/`,
 a cell on a checkout of main) runs every gate file five times on a loaded box, each run a fresh seed that orders both

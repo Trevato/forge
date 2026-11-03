@@ -313,6 +313,108 @@ export function rawBudgets(name: string, source: string): string[] {
   return found;
 }
 
+/** A loop that polls a condition a bounded number of times, or until a deadline. */
+const POLL_HEAD =
+  /^\s*(?:for\s*\(\s*let\s+\w+\s*=\s*0\s*;\s*\w+\s*<\s*[\w_.]+\s*&&|while\s*\(.*\bDate\.now\(\)\s*<.*&&|while\s*\(.*&&.*\bDate\.now\(\)\s*<)/;
+const WAITS = /\bawait\b/;
+/** What may follow a poll: the poll's own verdict, said. */
+const SAYS_SO = /^(?:if\s*\(|throw\b|expect\(|assert|return\b)/;
+
+/**
+ * Every poll in `source` that runs out of time and carries on (#9017): a
+ * loop that waits while a condition is false, at most N times or until a
+ * deadline, and whose next statement neither checks nor returns the
+ * outcome. When the box is slow it runs out silently, and the test goes on
+ * to act on a state that never came — red far from the cause, or not at
+ * all in the runs that admitted it.
+ */
+export function fallThroughWaits(name: string, source: string): string[] {
+  const lines = source.split("\n");
+  const found: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const head = lines[i]!;
+    if (!POLL_HEAD.test(head)) continue;
+    // The loop's last line: the head itself, or where its braces close.
+    let end = i;
+    let body = head;
+    if (head.trimEnd().endsWith("{")) {
+      let depth = 0;
+      for (let j = i; j < lines.length; j++) {
+        for (const ch of lines[j]!) depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
+        body += `\n${lines[j]}`;
+        end = j;
+        if (depth <= 0) break;
+      }
+    } else {
+      // One statement as the body, on the lines after the head.
+      while (!lines[end]!.trimEnd().endsWith(";") && end + 1 < lines.length)
+        body += `\n${lines[++end]}`;
+    }
+    if (!WAITS.test(body)) continue;
+    let next = end + 1;
+    while (next < lines.length && lines[next]!.trim() === "") next++;
+    if (SAYS_SO.test(lines[next]?.trim() ?? "")) continue;
+    found.push(`${name}:${i + 1}: ${head.trim()}`);
+  }
+  return found;
+}
+
+/**
+ * The test files that held a fall-through wait when the gate began refusing
+ * one (#9017); #9025 owns making each fail saying what never came. A file
+ * leaves in the pull that fixes it, and the rule goes red on a listed file
+ * that no longer breaches, so this only shrinks. A new file is never added.
+ */
+export const FALL_THROUGH_OWED: ReadonlySet<string> = new Set([
+  "test/act-now.test.ts",
+  "test/apps-ssh.test.ts",
+  "test/backups-live.test.ts",
+  "test/cell-relays-reaped.test.ts",
+  "test/check-flake.test.ts",
+  "test/check-memory-warning.test.ts",
+  "test/check-pull-flake.test.ts",
+  "test/checks.test.ts",
+  "test/client-abort.test.ts",
+  "test/conflicts-tui.test.ts",
+  "test/conversation-queue-api.test.ts",
+  "test/conversation-talk.test.ts",
+  "test/crew-early.test.ts",
+  "test/crew-merge-conflict.test.ts",
+  "test/crew-parks-planner.test.ts",
+  "test/drill-board-line.test.ts",
+  "test/event-order.test.ts",
+  "test/explore-rank.test.ts",
+  "test/following-card.test.ts",
+  "test/forges-side-by-side.test.ts",
+  "test/live.test.ts",
+  "test/looks-owner.test.ts",
+  "test/merge-queue-clash.test.ts",
+  "test/merge-queue-parallel.test.ts",
+  "test/migrate-token-reach.test.ts",
+  "test/pull-red-alone-path.test.ts",
+  "test/quotas-storage.test.ts",
+  "test/roll-write-pause.test.ts",
+  "test/snapshot-restore-streamed.test.ts",
+  "test/spawn-cell-socket.test.ts",
+  "test/spawn-child-runs-apps.test.ts",
+  "test/studio-door.test.ts",
+  "test/system-stream.test.ts",
+  "test/tui-delete-repo.test.ts",
+  "test/tui-forks-take.test.ts",
+  "test/tui-grants.test.ts",
+  "test/tui-hooks.test.ts",
+  "test/tui-newapp.test.ts",
+  "test/tui-onyou.test.ts",
+  "test/tui-origins-forge.test.ts",
+  "test/tui-origins-guard.test.ts",
+  "test/tui-origins.test.ts",
+  "test/tui-resilience-drill.test.ts",
+  "test/tui-resilience-now.test.ts",
+  "test/tui-teams.test.ts",
+  "test/tui-working-yours.test.ts",
+  "test/web-apps.test.ts",
+]);
+
 /** The record an admitting pull carries. */
 export function admissionRecord(
   file: string,
