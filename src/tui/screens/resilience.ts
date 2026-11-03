@@ -31,6 +31,7 @@ import {
   type DestinationInput,
 } from "../../actions/destination.ts";
 import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
+import { nightlyLines } from "../../nightly/says.ts";
 import { backupsLine } from "../../snapshot/backups_line.ts";
 import { backupVerdict } from "../../snapshot/bucket.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
@@ -255,6 +256,8 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
     if (asking !== undefined) out.push(QUESTION[asking], "");
     else if (said !== "") out.push(...wrap(said, INNER), "");
     out.push(...wrap(backupsLine(f.app).says, INNER), ...verdictLines(f), "");
+    for (const line of nightlyLines(f.app.config.dataDir)) out.push(...wrap(line, INNER));
+    out.push("");
     out.push(...wrap(destinationLine(f), INNER), ...wrap(mirrorLine(f), INNER));
     if (note !== "") out.push(...wrap(note, INNER));
     if (mayChange()) out.push("d sets where snapshots go, x forgets it.", "m sets the mirror, f forgets it.", "t tests where snapshots go.");

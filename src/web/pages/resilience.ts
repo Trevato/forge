@@ -11,6 +11,7 @@
 import { readResilience } from "../../checks/resilience.ts";
 import type { Standing } from "../../core/threats.ts";
 import type { Ctx } from "../../http/context.ts";
+import { nightlyLines } from "../../nightly/says.ts";
 import { backupsLine } from "../../snapshot/backups_line.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -30,6 +31,13 @@ export function backupsLineHtml(ctx: Ctx): Html {
   return html`<p id="backups-line">${line.says} <a href="/settings/backups">Backups</a> lists them.</p>`;
 }
 
+/** What the nightly jobs last did (`nightly/says.ts`): that a night ran, and what it filed. */
+export function nightlyHtml(ctx: Ctx): Html {
+  return html`<ul id="nightly" class="muted">
+    ${nightlyLines(ctx.app.config.dataDir).map((line) => html`<li>${line}</li>`)}
+  </ul>`;
+}
+
 // GET /resilience: a forge admin's, since live red lines name what to attack.
 export function resiliencePage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -46,6 +54,7 @@ export function resiliencePage(ctx: Ctx): Response {
       </p>
     </div>
     ${backupsLineHtml(ctx)}
+    ${nightlyHtml(ctx)}
     <p id="tally">
       ${String(count("green"))} green · ${String(count("red"))} red ·
       ${String(count("untested"))} untested · ${String(count("no test yet"))} with no test yet

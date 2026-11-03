@@ -164,8 +164,8 @@ own green check, not ten runs. That is accepted on purpose — a flaky new
 test can turn the gate red once before anyone sees it — and the nightly
 flake hunt below is the backstop that files it and quarantines it.
 
-**No flaky tests.** Nightly, `.forgejo/workflows/flake-hunt.yml` runs every
-gate file five times on a loaded box, each run a fresh seed that orders both
+**No flaky tests.** Nightly at 02:17 UTC the forge itself (`src/nightly/`,
+a cell on a checkout of main) runs every gate file five times on a loaded box, each run a fresh seed that orders both
 the files and (through `--randomize`) the tests inside them, nothing stopped
 early. A file red in some runs and green in others is flaky: the hunt files
 a `Flaky: test/x.test.ts` issue carrying the failure text, the seed and the
@@ -182,18 +182,31 @@ a retry: `test/flake.test.ts` fails on `--retry`, `--rerun-each`, a bunfig
 `retry` or a `{ retry: N }` anywhere the gate runs, and on any test that
 bounds a measured time under 200 ms (a loopback fetch on a loaded runner
 takes tens of ms): assert relative to a baseline from the same run, or bound
-only the failure the test names. The workflow needs a
-`FORGE_TOKEN` secret and a `FORGE_URL` variable on the mirror.
+only the failure the test names. The hunt takes the gate in
+20 slices, one after another, each cut at 30 minutes, and ends by proposing the
+quarantine as a pull on `flake-hunt/<date>`. Worst case, all 20 slices hit
+their cut: 20 x 30 minutes, plus the install and the quarantine (10 each), so
+about 10 h 20 min, ending near 12:40 UTC. Jobs run one at a time, so the
+outside run (03:47) queues behind a long hunt and starts late; it still keeps
+its own slot, which is what the record and the owed-on-waking rule read. A
+stop (a release) aborts the running step at once. The forge needs `FORGE_TOKEN` (the
+hunt's author) and cells; a preview runs none, and a forge without either says
+so in its log and runs none. A job whose slot passed while the forge was down
+runs on waking; one restarted mid-run is not run twice (`nightly/<job>.json`
+in `FORGE_APP_DATA`). What each last did is on Resilience and in the
+terminal's Resilience dialog (`docs/features/nightly.md`).
 
-**No unseen red outside the gate.** Nightly, `.forgejo/workflows/outside-gate.yml`
+**No unseen red outside the gate.** Nightly at 03:47 UTC, the forge itself
 runs `bun scripts/flake-hunt.ts outside --file-issues`: every file in
 `EXCLUDED` (the complement of the gate, from the same list, so a file moved
 into the gate is no longer run there), once, one at a time, with the gate's
 60 s timeout. A file that newly fails opens one `Red: test/x.test.ts` issue
 naming its first failing test; still red on another test, it updates that
 issue; still red on the same test, it says nothing, so the owner's asks show
-it once; passing again, it closes the issue. Same `FORGE_TOKEN` and
-`FORGE_URL` as the hunt.
+it once; passing again, it closes the issue. Same `FORGE_TOKEN` as the hunt.
+
+The Forgejo workflows these replace, and `sync-env`, are covered in
+`docs/features/nightly.md`.
 
 Bun's own `--randomize --seed=N` drives every hunt and admission run. Not
 used: `--rerun-each` (one seed for every rerun, so ten reruns explore one

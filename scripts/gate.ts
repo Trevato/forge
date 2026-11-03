@@ -14,9 +14,9 @@
  * check is green and whose description carries ten green runs in random
  * order under load (`bun scripts/flake-hunt.ts admit <file>`). A flaky file
  * leaves it only through `bun scripts/flake-hunt.ts quarantine`, under the
- * issue the nightly hunt filed (`.forgejo/workflows/flake-hunt.yml`).
+ * issue the nightly hunt filed (`src/nightly/`).
  *
- * The excluded files are not unseen: `.forgejo/workflows/outside-gate.yml`
+ * The excluded files are not unseen: the forge's nightly job (`src/nightly/`)
  * runs `outsideFiles` nightly and files a `Red:` issue for each that fails (#812).
  */
 

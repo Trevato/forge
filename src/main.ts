@@ -48,6 +48,7 @@ import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
 import { startProbes } from "./contract/probes.ts";
+import { startNightly } from "./nightly/service.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
 import { resolveMirror } from "./snapshot/mirror.ts";
@@ -445,6 +446,10 @@ const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
 // Is it so: the forge knocks on every door of an app with a contract after
 // each production deploy and once a night, and compares with the table.
 const probes = apps === undefined ? undefined : startProbes(app, apps);
+// The nightly jobs that were Forgejo workflows: the flake hunt and the run
+// of what the gate excludes, filing the same `Flaky:` and `Red:` issues and
+// the quarantine pull (docs/DEVELOP.md).
+const nightly = appsOn ? startNightly(app, { forgeUrl, token: process.env["FORGE_TOKEN"] }) : undefined;
 // The snapshot: everything that cannot be rebuilt, nightly, to what an
 // operator sealed on the Backups page, else the platform's (`S3_*`) or a
 // directory (`FORGE_SNAPSHOT_DIR`). A forge given none says so on that page.
@@ -842,6 +847,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     mirrorOut(),
     looks?.stop(),
     probes?.stop(),
+    nightly?.stop(),
     snapshots.stop(),
     sampler.stop(),
     memorySampler.stop(),
