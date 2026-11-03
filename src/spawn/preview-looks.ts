@@ -44,6 +44,9 @@ export const PREVIEW_FORKS: readonly { readonly owner: string; readonly of?: str
 /** The owner's bets page, whose seeded proposed bets hold the long-name worst case (#9275). */
 export const PREVIEW_BETS_PAGE = `${PREVIEW_REPO_HOME}/bets`;
 
+/** The waves page, whose long headlines must wrap at a 390 px phone (#9325). */
+export const PREVIEW_WAVES_PAGE = `${PREVIEW_REPO_HOME}/waves`;
+
 /** The Later gate's proposal on the sample (#9212): what the gate holds, grouped by theme. */
 export const PREVIEW_HELD_PAGE = `${PREVIEW_REPO_HOME}/held`;
 /**
@@ -77,6 +80,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_ITERATIONS_PAGE,
   PREVIEW_HELD_PAGE,
   PREVIEW_BETS_PAGE,
+  PREVIEW_WAVES_PAGE,
 ].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));
 
 /**
