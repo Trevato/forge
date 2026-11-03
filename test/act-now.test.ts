@@ -241,6 +241,7 @@ describe("a form that answers at once, and what the server says when it refuses"
       if (next === undefined || next.done) continue;
       text += new TextDecoder().decode(next.value);
     }
+    if (!text.includes(`id: ${ids[2]}`)) throw new Error(`never came: still waiting while !text.includes(\`id: \${ids[2]}\`)`);
     await reader2.cancel();
     expect(text).not.toContain(`id: ${ids[0]}`);
     expect(text).toContain(`id: ${ids[1]}`);

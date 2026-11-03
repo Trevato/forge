@@ -38,6 +38,7 @@ const send = (body: object, t = rw, extra: Record<string, string> = {}) =>
   fetch(`${servers.url}/api/v1/conversation/messages`, { method: "POST", headers: headers(t, extra), body: JSON.stringify(body) });
 const until = async (ok: () => boolean) => {
   for (let i = 0; i < 100 && !ok(); i++) await Bun.sleep(10);
+  if (!ok()) throw new Error(`never came: still waiting while !ok()`);
 };
 /** Starts a turn that holds until stopped, without counting against the minute's messages. */
 const start = async () => {

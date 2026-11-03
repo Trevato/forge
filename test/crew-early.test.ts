@@ -73,6 +73,7 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
     // The agent has pushed and is still working: the pull is already there.
     const deadline = Date.now() + 20_000;
     while (mine().length === 0 && Date.now() < deadline) await Bun.sleep(100);
+    if (mine().length === 0) throw new Error(`never came: still waiting while mine().length === 0`);
     const early = mine()[0]!;
     expect(early).toBeDefined();
     expect(early.title).toBe("Plant crocuses");
@@ -130,6 +131,7 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
       );
     const deadline = Date.now() + 20_000;
     while (mine().length === 0 && Date.now() < deadline) await Bun.sleep(100);
+    if (mine().length === 0) throw new Error(`never came: still waiting while mine().length === 0`);
     const early = mine()[0]!;
     expect(
       editIssue(app, alice, repo, early, { body: "My own words.\n\nCloses #1" }).ok,
@@ -211,6 +213,7 @@ describe("the crew, with a stand-in Claude Code: the early pull", () => {
       );
     const deadline = Date.now() + 20_000;
     while (mine().length === 0 && Date.now() < deadline) await Bun.sleep(100);
+    if (mine().length === 0) throw new Error(`never came: still waiting while mine().length === 0`);
     const early = mine()[0]!;
     expect(addComment(app, alice, repo, early, "I like where this goes.").ok).toBe(true);
     writeFileSync(join(dataDir, "release"), "");

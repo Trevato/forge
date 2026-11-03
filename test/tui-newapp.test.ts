@@ -65,6 +65,7 @@ afterAll(async () => {
 async function until(done: () => boolean): Promise<void> {
   const deadline = Date.now() + 5000;
   while (!done() && Date.now() < deadline) await Bun.sleep(20);
+  if (!done()) throw new Error(`never came: still waiting while !done()`);
 }
 
 async function withScreen(

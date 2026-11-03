@@ -223,6 +223,7 @@ describe("terminal On you: mutes and many in one move", () => {
     const h = await boot();
     // Find the row, whatever the order.
     for (let i = 0; i < 8 && !/> .*Bob's chore|▸.*Bob's chore/.test(h.text()); i++) await h.press("j");
+    if (!/> .*Bob's chore|▸.*Bob's chore/.test(h.text())) throw new Error(`never came: still waiting while !/> .*Bob's chore|▸.*Bob's chore/.test(h.text())`);
     await h.press("S", "right", "enter");
     expect(state(r.value, 1)).toBe("open");
     expect(h.text()).toContain("1 refused (bob/bobs#1: not a change)");

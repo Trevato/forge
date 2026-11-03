@@ -70,6 +70,7 @@ async function prompt(h: ReturnType<typeof open>): Promise<void> {
   await h.feed(":", ..."Delete this");
   for (let i = 0; i < 100 && !h.text().includes("cannot be undone"); i++)
     await new Promise<void>((r) => setTimeout(r, 10)), await h.feed();
+  if (!h.text().includes("cannot be undone")) throw new Error(`never came: still waiting while !h.text().includes("cannot be undone")`);
   await h.feed("enter");
 }
 

@@ -80,6 +80,7 @@ describe("/system over server-sent events", () => {
       if (done) break;
       text += decoder.decode(value);
     }
+    if (!text.includes("98765")) throw new Error(`never came: still waiting while !text.includes("98765")`);
     await reader.cancel();
     expect(text).toContain("event: sample");
     expect(text).toContain("98765 processes");

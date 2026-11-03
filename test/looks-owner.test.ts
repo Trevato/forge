@@ -436,6 +436,7 @@ describe("looks of a public app", () => {
     const light = () =>
       looksForEnv(app.db, record.id, env).filter((l) => l.commitOid === commit && l.theme === "light");
     while (light().length < 6 && Date.now() < deadline) await Bun.sleep(100);
+    if (light().length < 6) throw new Error(`never came: still waiting while light().length < 6`);
     await looks.idle();
     const rows = light();
     const taken = (page: string, kind: string) =>
@@ -488,6 +489,7 @@ describe("looks of a public app", () => {
     const light = () =>
       looksForEnv(app.db, record.id, env).filter((l) => l.commitOid === commit && l.theme === "light");
     while (light().length < pages.length * 3 && Date.now() < deadline) await Bun.sleep(100);
+    if (light().length < pages.length * 3) throw new Error(`never came: still waiting while light().length < pages.length * 3`);
     await looks.idle();
     const rows = light();
     for (const page of pages) {

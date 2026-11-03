@@ -75,6 +75,7 @@ describe("a paused origin in the terminal", () => {
       await key("v");
       for (let i = 0; i < 40 && getOriginFor(forge.db, userId, originId) !== undefined && lastGuardTry(forge, originId) === undefined; i++)
         await Bun.sleep(100);
+      if (getOriginFor(forge.db, userId, originId) !== undefined && lastGuardTry(forge, originId) === undefined) throw new Error(`never came: still waiting while getOriginFor(forge.db, userId, originId) !== undefined && lastGuardTry(forge, originId) === undefined`);
       await key("k");
       expect(app.screen.toText()).toContain(CHECK_WORDS.unchecked.slice(0, 30));
     } finally {

@@ -361,59 +361,10 @@ export function fallThroughWaits(name: string, source: string): string[] {
 
 /**
  * The test files that held a fall-through wait when the gate began refusing
- * one (#9017); #9025 owns making each fail saying what never came. A file
- * leaves in the pull that fixes it, and the rule goes red on a listed file
- * that no longer breaches, so this only shrinks. A new file is never added.
+ * one (#9017); #9025 owns making each fail saying what never came. Every file has
+ * left (#9025); a new file is never added.
  */
-export const FALL_THROUGH_OWED: ReadonlySet<string> = new Set([
-  "test/act-now.test.ts",
-  "test/apps-ssh.test.ts",
-  "test/backups-live.test.ts",
-  "test/cell-relays-reaped.test.ts",
-  "test/check-flake.test.ts",
-  "test/check-memory-warning.test.ts",
-  "test/check-pull-flake.test.ts",
-  "test/checks.test.ts",
-  "test/client-abort.test.ts",
-  "test/conflicts-tui.test.ts",
-  "test/conversation-queue-api.test.ts",
-  "test/conversation-talk.test.ts",
-  "test/crew-early.test.ts",
-  "test/crew-merge-conflict.test.ts",
-  "test/crew-parks-planner.test.ts",
-  "test/drill-board-line.test.ts",
-  "test/event-order.test.ts",
-  "test/explore-rank.test.ts",
-  "test/following-card.test.ts",
-  "test/forges-side-by-side.test.ts",
-  "test/live.test.ts",
-  "test/looks-owner.test.ts",
-  "test/merge-queue-clash.test.ts",
-  "test/merge-queue-parallel.test.ts",
-  "test/migrate-token-reach.test.ts",
-  "test/pull-red-alone-path.test.ts",
-  "test/quotas-storage.test.ts",
-  "test/roll-write-pause.test.ts",
-  "test/snapshot-restore-streamed.test.ts",
-  "test/spawn-cell-socket.test.ts",
-  "test/spawn-child-runs-apps.test.ts",
-  "test/studio-door.test.ts",
-  "test/system-stream.test.ts",
-  "test/tui-delete-repo.test.ts",
-  "test/tui-forks-take.test.ts",
-  "test/tui-grants.test.ts",
-  "test/tui-hooks.test.ts",
-  "test/tui-newapp.test.ts",
-  "test/tui-onyou.test.ts",
-  "test/tui-origins-forge.test.ts",
-  "test/tui-origins-guard.test.ts",
-  "test/tui-origins.test.ts",
-  "test/tui-resilience-drill.test.ts",
-  "test/tui-resilience-now.test.ts",
-  "test/tui-teams.test.ts",
-  "test/tui-working-yours.test.ts",
-  "test/web-apps.test.ts",
-]);
+export const FALL_THROUGH_OWED: ReadonlySet<string> = new Set([]);
 
 /** The record an admitting pull carries. */
 export function admissionRecord(

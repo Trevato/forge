@@ -73,6 +73,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
     await driveRepo(e.app, e.fresh());
     const deadline = Date.now() + 45_000;
     while (e.fresh().directionIssueId == null && Date.now() < deadline) await Bun.sleep(50);
+    if (e.fresh().directionIssueId == null) throw new Error(`never came: still waiting while e.fresh().directionIssueId == null`);
     const direction = e.fresh().directionIssueId!;
     const settled = () =>
       listRuns(e.app.db, e.repo.id, { kind: "agent" }).find(
@@ -173,12 +174,14 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
     await driveRepo(e.app, e.fresh());
     const deadline = Date.now() + 45_000;
     while (e.fresh().directionIssueId == null && Date.now() < deadline) await Bun.sleep(50);
+    if (e.fresh().directionIssueId == null) throw new Error(`never came: still waiting while e.fresh().directionIssueId == null`);
     const direction = e.fresh().directionIssueId!;
     const settled = () =>
       listRuns(e.app.db, e.repo.id, { kind: "agent" }).find(
         (r) => r.issueId === direction && ["ok", "failed", "cancelled"].includes(r.state),
       );
     while (settled() === undefined && Date.now() < deadline) await Bun.sleep(100);
+    if (settled() === undefined) throw new Error(`never came: still waiting while settled() === undefined`);
     while (!existsSync(promptFile) && Date.now() < deadline) await Bun.sleep(50);
     expect(existsSync(promptFile)).toBe(true);
     const told = readFileSync(promptFile, "utf8");

@@ -489,6 +489,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Heard.","t
     const settleBob = async () => {
       // The stand-in records the message it was started with; wait for a new one, then for the end.
       for (let i = 0; i < 80 && readFileSync(join(dir, "first.json"), "utf8") === seen; i++) await Bun.sleep(25);
+      if (readFileSync(join(dir, "first.json"), "utf8") === seen) throw new Error(`never came: still waiting while readFileSync(join(dir, "first.json"), "utf8") === seen`);
       seen = readFileSync(join(dir, "first.json"), "utf8");
       for (let i = 0; i < 200; i++) {
         const r = (await (await fetch(`${servers.url}/api/v1/conversation/turns`, { headers: headers(bob) })).json()) as { running: boolean };

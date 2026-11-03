@@ -978,6 +978,7 @@ describe("apps, runs and the crew on the web", () => {
     const open = () =>
       app.db.query("SELECT 1 FROM run WHERE state IN ('queued','running') LIMIT 1").get();
     for (let i = 0; i < 200 && open() !== null; i++) await Bun.sleep(25);
+    if (open() !== null) throw new Error(`never came: still waiting while open() !== null`);
     app.db.query("UPDATE run SET serving_at = NULL WHERE env LIKE 'pull-%'").run();
   };
 

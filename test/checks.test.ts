@@ -868,6 +868,7 @@ describe("checks", () => {
       const until = async (done: () => boolean): Promise<void> => {
         const deadline = Date.now() + 10_000;
         while (!done() && Date.now() < deadline) await Bun.sleep(25);
+        if (!done()) throw new Error(`never came: still waiting while !done()`);
       };
       await until(() => mine().length > 0);
       expect(mine().some((r) => r.state === "queued")).toBe(true);

@@ -20,6 +20,8 @@ async function readEvents(
   res: Response,
   count: number,
   timeoutMs = 5_000,
+  /** False when the wait is the point: nothing should come. */
+  mustArrive = true,
 ): Promise<{ id: string; data: Record<string, unknown> }[]> {
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
@@ -46,6 +48,7 @@ async function readEvents(
         out.push({ id, data: JSON.parse(data) as Record<string, unknown> });
     }
   }
+  if (mustArrive && out.length < count) throw new Error(`never came: still waiting while out.length < count`);
   await reader.cancel().catch(() => {});
   return out;
 }
@@ -97,7 +100,7 @@ describe("the viewer's stream", () => {
     // A stranger's stream: nothing private on it, however long they wait.
     const stranger = await fetch(`${servers.url}/events?since=0`);
     expect(stranger.headers.get("content-type")).toContain("text/event-stream");
-    const nothing = await readEvents(stranger, 1, 800);
+    const nothing = await readEvents(stranger, 1, 800, false);
     expect(nothing.length).toBe(0);
 
     // The reader's stream, from the beginning: the opened issue is replayed.

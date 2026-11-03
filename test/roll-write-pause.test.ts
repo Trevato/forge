@@ -94,6 +94,7 @@ test("the new forge starts its queue work within 30 s of SIGTERM to the old, wit
     const signalled = Date.now();
     old.kill("SIGTERM");
     for (let i = 0; i < 300 && !out.includes("the other forge let go of this database"); i++) await Bun.sleep(100);
+    if (!out.includes("the other forge let go of this database")) throw new Error(`never came: still waiting while !out.includes("the other forge let go of this database")`);
     const pause = Date.now() - signalled;
     if (pause >= 30_000) console.log(out);
     expect(out).toContain("the other forge let go of this database");

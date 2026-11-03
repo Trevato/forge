@@ -34,6 +34,7 @@ describe("what a forge uses against its size", () => {
     try {
       const wait = Date.now() + 3000;
       while (!cellCounters().some((c) => c.label === "forge:fun") && Date.now() < wait) await Bun.sleep(50);
+      if (!cellCounters().some((c) => c.label === "forge:fun")) throw new Error(`never came: still waiting while !cellCounters().some((c) => c.label === "forge:fun")`);
       const dir = mkdtempSync(join(tmpdir(), "forge-sbs-d-"));
       const first = forgeUse(child({ placement: "cell", name: "fun", size: "small" }), dir);
       // The request never walks the disk: the first reading says so, a later one has the figure.

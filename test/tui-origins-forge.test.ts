@@ -84,6 +84,7 @@ test("c connects another forge by address and token, and the list says what did 
     expect(app.screen.toText()).not.toContain(friendToken);
     await key("enter");
     for (let i = 0; i < 50 && listOrigins(mine.db, getUserByName(mine.db, "alice")!.id).length === 0; i++) await Bun.sleep(100);
+    if (listOrigins(mine.db, getUserByName(mine.db, "alice")!.id).length === 0) throw new Error(`never came: still waiting while listOrigins(mine.db, getUserByName(mine.db, "alice")!.id).length === 0`);
     await settleApp(app);
 
     const [origin] = listOrigins(mine.db, getUserByName(mine.db, "alice")!.id);

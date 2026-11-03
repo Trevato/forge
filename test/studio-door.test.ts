@@ -1378,6 +1378,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
         if (data !== undefined) event = JSON.parse(data);
       }
     }
+    if (!event) throw new Error(`never came: still waiting while !event`);
     await reader.cancel().catch(() => {});
     expect(event).toBeDefined();
     expect(event?.["kind"]).toBe("app.serving");

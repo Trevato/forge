@@ -316,6 +316,7 @@ test("the terminal's migrate screen says public only, names the new-token page, 
       await settleApp(tui);
       await Bun.sleep(25);
     }
+    if (!tui.screen.toText().includes("carol-gh/closed")) throw new Error(`never came: still waiting while !tui.screen.toText().includes("carol-gh/closed")`);
     const after = tui.screen.toText();
     expect(after).toContain("carol-gh/closed");
     expect(after).not.toContain(PUBLIC_ONLY);
