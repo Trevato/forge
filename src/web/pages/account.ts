@@ -70,6 +70,7 @@ import {
   terminalCommand,
   time,
   field as uiField,
+  icon,
 } from "../ui.ts";
 import { everydayLine } from "./everyday.ts";
 import { passkeyJs } from "../passkey-client.ts";
@@ -118,11 +119,24 @@ const currentProfile = (user: User): ProfileForm => ({
   commitEmail: user.commitEmail,
 });
 
+/**
+ * A refused submit, in the shared danger toast (as a failed mirror is): under
+ * the form's actions, where the toast's own top margin sits, so nothing above
+ * it moves when it appears.
+ */
+const refusal = (message: string | undefined): Html =>
+  when(
+    message,
+    (m) => html`<div class="toast" data-tone="danger" role="alert">
+      ${icon("alert")}
+      <div class="toast-body">${m}</div>
+    </div>`,
+  );
+
 function notifyView(ctx: Ctx, error?: string): Html {
   const host = notifyHost(notifyUrlOf(ctx.app.db, ctx.auth.user!.id));
   return card(
     html`<form method="post" action="/settings/notify">
-      ${when(error, (m) => html`<p class="error-note">${m}</p>`)}
       ${uiField({
         label: "Notify URL",
         name: "url",
@@ -137,6 +151,7 @@ function notifyView(ctx: Ctx, error?: string): Html {
       <div class="form-actions">
         ${btn("Save notify URL", { variant: "primary" })}
       </div>
+      ${refusal(error)}
     </form>`,
     { head: html`<h3>Phone notifications</h3>` },
   );
@@ -287,7 +302,6 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
   const user = ctx.auth.user!;
   return html`${unverifiedNotice(ctx)}${roleView(ctx)}${card(
     html`<form method="post" action="/settings">
-      ${when(values.errors?.form, (m) => html`<p class="error-note">${m}</p>`)}
       <div class="field">
         <label for="f-username">Username</label>
         <input
@@ -340,6 +354,7 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
       <div class="form-actions">
         ${btn("Save profile", { variant: "primary" })}
       </div>
+      ${refusal(values.errors?.form)}
     </form>`,
     { head: html`<h3>Public profile</h3>` },
   )}`;
@@ -842,10 +857,6 @@ function keysView(
         )}
     ${card(
       html`<form method="post" action="/settings/keys">
-        ${when(
-          values.error,
-          (message) => html`<p class="error-note">${message}</p>`,
-        )}
         ${uiField({
           label: "Name",
           name: "name",
@@ -865,6 +876,7 @@ function keysView(
         <div class="form-actions">
           ${btn("Add key", { variant: "primary" })}
         </div>
+        ${refusal(values.error)}
       </form>`,
       { head: html`<h3>New SSH key</h3>` },
     )}`;
