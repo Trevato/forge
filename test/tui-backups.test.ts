@@ -103,9 +103,11 @@ describe("the snapshot destination in the terminal", () => {
     expect(await h.press("d")).toContain("a refusal is said whole behind");
     await h.type("ftp://user:pw@example.com");
     const t = await h.press("enter");
-    expect(t).toContain("The endpoint must be an http(s) URL without credentials in it.");
+    // The prompt has room for the start of it; the modal covers the middle of the line behind.
+    expect(t).toContain("The endpoint must be an http(s) URL");
     expect(t).toContain("1/5");
-    await h.press("esc");
+    // Closed, the screen behind says it whole.
+    expect(await h.press("esc")).toContain("The endpoint must be an http(s) URL without credentials in it.");
     expect(sealedSet(forge.db)).toEqual([]);
     h.stop();
   });

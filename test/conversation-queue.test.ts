@@ -44,9 +44,13 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"partial '$
   return path;
 }
 const logged = (name: string): string[] => (existsSync(join(dir, `${name}.log`)) ? readFileSync(join(dir, `${name}.log`), "utf8").trim().split("\n") : []);
-const until = async (ok: () => boolean): Promise<void> => {
-  for (let i = 0; i < 200 && !ok(); i++) await Bun.sleep(20);
+/** Waits on the thing itself, and fails saying so when it never comes, instead of carrying on into a wrong answer. */
+const until = async (ok: () => boolean, what = "the condition"): Promise<void> => {
+  for (let i = 0; i < 500 && !ok(); i++) await Bun.sleep(20);
+  if (!ok()) throw new Error(`timed out waiting for ${what}`);
 };
+/** The stand-in logs a message before the forge has read its partial answer; stopping in that gap would lose the partial. */
+const saidPartial = (base: number, n: number): boolean => turns(alice).slice(base).includes(`agent:partial ${n}`);
 
 
 beforeAll(async () => {
@@ -98,7 +102,7 @@ describe("a message sent during a turn", () => {
     const o = options(bin);
     const first = say(app, o, alice.id, "long job", [], "queue");
     expect(first.ok && first.value.how).toBe("started");
-    await until(() => logged("steer-now").length === 1);
+    await until(() => logged("steer-now").length === 1 && saidPartial(base, 1), "the first partial answer");
     const queued = say(app, o, alice.id, "later", [], "queue");
     expect(queued.ok && queued.value.how).toBe("queued");
     const steered = say(app, o, alice.id, "do this instead", [], "interrupt");
@@ -118,11 +122,12 @@ describe("a message sent during a turn", () => {
   test("Stop forgets what waited behind the turn", async () => {
     const bin = chain("stop-queue");
     const o = options(bin);
+    const base = turns(alice).length;
     say(app, o, alice.id, "running", [], "queue");
-    await until(() => logged("stop-queue").length === 1);
+    await until(() => logged("stop-queue").length === 1 && saidPartial(base, 1), "the first partial answer");
     say(app, o, alice.id, "waiting", [], "queue");
     expect(stopTurn(app, alice.id)).toBe(true);
-    await until(() => !turnRunning(app, alice.id));
+    await until(() => !turnRunning(app, alice.id), "the stopped turn to end");
     expect(queuedOf(app, alice.id)).toEqual([]);
     expect(logged("stop-queue")).toEqual(["running"]);
   });
