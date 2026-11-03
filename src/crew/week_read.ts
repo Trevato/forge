@@ -6,6 +6,7 @@
 import type { App } from "../app.ts";
 import { listAutonomousRepos, type Repo } from "../core/repos.ts";
 import { standings, WINDOW_MS } from "../core/standing.ts";
+import { capacityCount } from "../core/capacity.ts";
 import { grantedAccounts, PLATFORM } from "../core/subscriptions.ts";
 import { burnFrom, noteReading, readingsSince } from "./week_burn.ts";
 import { paceFloor } from "../core/capacity.ts";
@@ -14,6 +15,8 @@ import { efficiencyWords, WEEK, weekDecision, type Efficiency, type WeekDecision
 /** The week as the provider's meter reads it: a meter, or null while no account's limit is known. */
 interface Week {
   readonly meter: WeekMeter | null;
+  /** The accounts the meter reads, as one key: repositories drawing on the same accounts share one week. */
+  readonly scope: string;
 }
 
 /** How long a repository's week is remembered: `repoPace` is asked many times a tick. */
@@ -57,7 +60,7 @@ function readWeek(app: App, repo: Repo, now: Date): Week | null {
   }
   if (resetsAt === null || !(capUsd > 0)) {
     // Granted accounts with no known limit are an unknown week; the forge's own token with none is not metered at all.
-    return granted.length > 0 ? { meter: null } : null;
+    return granted.length > 0 ? { meter: null, scope: [...granted].sort().join(",") } : null;
   }
   // The burn is read off the readings of the meter, not off dollars: the
   // week's free share is stored as it is read and the burn is how fast it fell.
@@ -67,6 +70,7 @@ function readWeek(app: App, repo: Repo, now: Date): Week | null {
   noteReading(app.db, scope, now.getTime(), freePct, WINDOW_MS.week);
   const readings = readingsSince(app.db, scope, opened);
   return {
+    scope,
     meter: {
       freePct,
       keptPct: (keptUsd / capUsd) * 100,
@@ -118,6 +122,26 @@ export function weekFor(
   return week === null ? null : weekDecision({ ...week, now, ceiling: repo.autonomySlots, floorSlots: paceFloor(app.db), ...seen });
 }
 
+/** The key of the accounts a repository draws its week from; null while no account is metered. */
+export function weekScope(app: App, repo: Repo, now: Date): string | null {
+  return weekOf(app, repo, now)?.scope ?? null;
+}
+
+/** The slots the whole crew may run at once: what `crew.concurrency` says, else the repository's own. */
+export function crewCeiling(app: App, repo: Repo): number {
+  return capacityCount(app.db, "crew.concurrency", repo.autonomySlots);
+}
+
+/**
+ * The week's decision for the whole crew drawing on this repository's
+ * accounts: one budget in slots across every repository, its ceiling the
+ * crew's (`crew.concurrency`), its floor the crew's too (#8989).
+ */
+export function crewWeekFor(app: App, repo: Repo, now: Date): WeekDecision | null {
+  const week = weekOf(app, repo, now);
+  return week === null ? null : weekDecision({ ...week, now, ceiling: crewCeiling(app, repo), floorSlots: paceFloor(app.db), idleSlots: 0, startable: 0, gated: 0 });
+}
+
 /**
  * The pace sentence and the efficiency beside it for the autonomous
  * repository the crew works most this week (the most agent runs; the first by
@@ -129,10 +153,10 @@ export function weekWords(app: App, now: Date = new Date()): string | null {
   let best: { words: string; runs: number } | null = null;
   for (const repo of listAutonomousRepos(app.db)) {
     if (repo.autonomy !== "autonomous" || repo.archivedAt !== null) continue;
-    const week = weekFor(app, repo, now);
+    const week = crewWeekFor(app, repo, now);
     if (week === null) continue;
     const efficiency = weekEfficiency(app, repo, now);
-    if (best === null || efficiency.runs > best.runs) best = { words: `${week.sentence} ${efficiencyWords(efficiency)}`, runs: efficiency.runs };
+    if (best === null || efficiency.runs > best.runs) best = { words: `${week.sentence} The week allows the whole crew ${week.slots} of ${crewCeiling(app, repo)} slots across every repository. ${efficiencyWords(efficiency)}`, runs: efficiency.runs };
   }
   return best?.words ?? null;
 }

@@ -13,6 +13,7 @@
  */
 
 import { tickBets } from "../actions/bets.ts";
+import { betsInUse } from "../core/bets.ts";
 import { onlyListDocs, resolveListConflicts } from "../actions/list-conflicts.ts";
 import { closedToday, closeStale } from "./stale_pulls.ts";
 import type { Database } from "bun:sqlite";
@@ -106,7 +107,8 @@ import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { heldByGateAlone, releaseFromGate } from "./release_later.ts";
-import { weekFor } from "./week_read.ts";
+import { staggeredUntil } from "./ceiling_stagger.ts";
+import { crewWeekFor, weekFor, weekScope } from "./week_read.ts";
 import { announceGovernor, governorFor } from "./governed.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { REPEAT_NOTE } from "./repeat_note.ts";
@@ -364,8 +366,11 @@ function meanRunUsd(db: App["db"], repoId: string): number {
   );
 }
 
+/** The issues each repository picked in this tick, by repository id: their runs may not show yet. */
+export type TickPicks = ReadonlyMap<string, ReadonlySet<string>>;
+
 /** The crew's pace here: the operator's slots, held to what the windows have left and to the governor's. */
-export function repoPace(app: App, repo: Repo, now = new Date()): Pace {
+export function repoPace(app: App, repo: Repo, now = new Date(), crew = true, picked: TickPicks = new Map()): Pace {
   const accounts = grantedAccounts(app.db, repo.id, repo.ownerId).flatMap(
     (a) => {
       const s = standing(app.db, a.id, now);
@@ -375,10 +380,28 @@ export function repoPace(app: App, repo: Repo, now = new Date()): Pace {
   const paced = pace(accounts, repo.autonomySlots, meanRunUsd(app.db, repo.id), now);
   const governed = governorFor(app, repo, now).slots;
   const limited = governed < paced.slots ? { ...paced, slots: governed } : paced;
-  // The week's own pace and the reserve for people (#8695).
-  const week = weekFor(app, repo, now, { idleSlots: 0, startable: 0, gated: 0 });
-  return week !== null && week.slots < limited.slots
-    ? { ...limited, slots: week.slots, reason: `${week.slots} of ${repo.autonomySlots} slots: ${week.sentence}` }
+  // Finishing and rework run ahead of new picks: only a new pick waits on the crew's week and the midnight spread.
+  if (!crew) return limited;
+  const until = staggeredUntil(app.db, repo, now);
+  if (until !== null)
+    return { ...limited, slots: 0, reason: `0 of ${repo.autonomySlots} slots until ${until.toISOString().slice(11, 16)} UTC: the daily ceilings reset together and each repository restarts at its own time` };
+  // The week is one budget for the whole crew on these accounts, and the repository's own slots are limits inside it (#8989).
+  const week = crewWeekFor(app, repo, now);
+  if (week === null) return limited;
+  const scope = weekScope(app, repo, now);
+  let others = 0;
+  for (const other of listAutonomousRepos(app.db)) {
+    if (other.id === repo.id || other.autonomy !== "autonomous" || other.archivedAt !== null) continue;
+    if (weekScope(app, other, now) !== scope) continue;
+    const active = activeRuns(app, other.id);
+    others += slottedRuns(active, listCrewRoles(app.db, other.id)).length;
+    // Picked earlier in this tick and not yet running: a slot of the crew's week already spent.
+    const running = new Set(active.map((r) => r.issueId));
+    others += [...(picked.get(other.id) ?? [])].filter((id) => !running.has(id)).length;
+  }
+  const here = Math.max(0, week.slots - others);
+  return here < limited.slots
+    ? { ...limited, slots: here, reason: `${here} of ${repo.autonomySlots} slots: the whole crew has ${week.slots} for the week, ${others} running elsewhere. ${week.sentence}` }
     : limited;
 }
 
@@ -405,7 +428,7 @@ function releaseForPace(app: App, repo: Repo, by: User, slotted: number, startab
 function freeSlots(app: App, repo: Repo, now: Date): number {
   if (autonomyStatus(app, repo, now).paused !== null) return 0;
   const slotted = slottedRuns(activeRuns(app, repo.id), listCrewRoles(app.db, repo.id));
-  return Math.max(0, repoPace(app, repo, now).slots - slotted.length);
+  return Math.max(0, repoPace(app, repo, now, false).slots - slotted.length);
 }
 
 /** The pickable issues in slot order: the order Next up shows, small work held to its share (#7571). */
@@ -453,6 +476,7 @@ export async function driveRepo(
   app: App,
   repo: Repo,
   now = new Date(),
+  picked: Map<string, Set<string>> = new Map(),
 ): Promise<Drove> {
   // One start per free builder slot (#8729). Each pass re-reads the ceiling,
   // the paced slots and the held filters, so a start the dispatcher refused
@@ -460,10 +484,11 @@ export async function driveRepo(
   // An issue picked this tick may not have its run yet: it is kept out of the
   // next pass and counted against the slots until the run shows.
   const taken = new Set<string>();
-  const did = await driveOnce(app, repo, now, taken);
+  picked.set(repo.id, taken);
+  const did = await driveOnce(app, repo, now, taken, picked);
   if (did !== "picked") return did;
   for (let n = 1; n < Math.max(1, repo.autonomySlots); n++) {
-    const next = await driveOnce(app, getRepoById(app.db, repo.id) ?? repo, now, taken);
+    const next = await driveOnce(app, getRepoById(app.db, repo.id) ?? repo, now, taken, picked);
     if (next !== "picked") break;
   }
   return did;
@@ -474,6 +499,7 @@ async function driveOnce(
   repo: Repo,
   now: Date,
   taken: Set<string>,
+  picked: TickPicks,
 ): Promise<Drove> {
   if (repo.autonomy === "off") return "off";
   tickBets(app, repo, now);
@@ -490,7 +516,7 @@ async function driveOnce(
   const pending = [...taken].filter((id) => !running.has(id)).length;
   // Slots follow the subscriptions' remaining windows, never past the
   // operator's; at a wall nothing new starts until the reset.
-  const paced = repoPace(app, repo, now);
+  const paced = repoPace(app, repo, now, true, picked);
   if (paced.slots === 0 && slotted.length === 0) return "waiting";
   // The files the open pulls touch, read before the sort: a build that
   // names a hot one waits for its pile to drain (#5934).
@@ -1271,6 +1297,15 @@ export function ensureDirectionIssue(
   return opened.value;
 }
 
+/**
+ * Repositories with a backed bet go first, so a short week budget (#8989) is
+ * spent on what the owner backed before the rest; the order is otherwise kept.
+ */
+export function byBackedBets(db: App["db"], repos: Repo[]): Repo[] {
+  const backed = (r: Repo): number => (betsInUse(db, r.id) ? 0 : 1);
+  return [...repos].sort((a, b) => backed(a) - backed(b));
+}
+
 /** Every repository that runs on its own, one turn each. */
 export async function autonomyTick(
   app: App,
@@ -1290,7 +1325,8 @@ export async function autonomyTick(
   } catch (error) {
     log.error("trust note failed", { error: String(error) });
   }
-  for (const repo of listAutonomousRepos(app.db)) {
+  const picked = new Map<string, Set<string>>();
+  for (const repo of byBackedBets(app.db, listAutonomousRepos(app.db))) {
     // An archived repository is put away: the crew starts nothing in it.
     if (repo.archivedAt !== null) continue;
     try {
@@ -1341,7 +1377,7 @@ export async function autonomyTick(
       const requested = await moveRequested(app, current, freeSlots(app, current, now), now);
       await breathe();
       const unstuck = unstickNow(app, current, now);
-      const did = await driveRepo(app, current, now);
+      const did = await driveRepo(app, current, now, picked);
       await breathe();
       // Rules only, no run: an issue noted already done on the base closes.
       const triaged = await liveTriage(app, current, now).catch((error) => {
