@@ -167,6 +167,37 @@ describe("pin screenshots", () => {
     expect((await get("/alice/karts/builds/v1/shots/..%2Fa.txt")).status).toBe(404);
   });
 
+  test("the gallery page shows the pictures, escapes captions, hides a private pin, and is linked from Builds", async () => {
+    const page = await get("/alice/karts/builds/v1/shots", "bob");
+    expect(page.status).toBe(200);
+    const text = await page.text();
+    expect(text).toContain("/alice/karts/builds/v1/shots/01.png?v=");
+    expect(text).toContain('data-live="build.shots');
+    expect((await get("/alice/karts/builds/nope/shots")).status).toBe(404);
+    expect((await get("/alice/secret/builds/v1/shots", "bob")).status).toBe(404);
+    expect((await get("/alice/secret/builds/v1/shots")).status).toBe(404);
+    expect((await get("/alice/secret/builds/v1/shots", "alice")).status).toBe(200);
+    expect(await (await get("/alice/karts/builds", "bob")).text()).toContain("/alice/karts/builds/v1/shots");
+  });
+
+  test("the gallery escapes a caption in figcaption and alt, shows it, says when a pin has none, and only the pin's own repo links it", async () => {
+    const pinned = await pinBuild(app, alice, repo, { label: "markup", oid });
+    if (!pinned.ok) throw new Error(pinned.error);
+    // Empty pin: the words, no picture.
+    const empty = await (await get("/alice/karts/builds/markup/shots", "bob")).text();
+    expect(empty).toContain("No screenshots on markup yet.");
+    expect(empty).not.toContain("<figure");
+    const hostile = '<img src=x onerror=1>&"';
+    const up = await uploadShot(app, alice, repo, "markup", PNG(7), hostile);
+    if (!up.ok) throw new Error(up.error);
+    const text = await (await get("/alice/karts/builds/markup/shots", "bob")).text();
+    const escaped = "&lt;img src=x onerror=1&gt;&amp;&quot;";
+    expect(text).toContain(`<figcaption class="small">${escaped}</figcaption>`);
+    expect(text).toContain(`alt="${escaped}"`);
+    expect(text).not.toContain("<img src=x");
+    expect(text).not.toContain("No screenshots on markup");
+  });
+
   test("a picture is one by its first bytes, within 2 MB and 12 a pin", async () => {
     const before = (await shots()).tree;
     // A page named .png is refused; so is a picture past the limit.
@@ -376,6 +407,13 @@ describe("pin screenshots", () => {
       expect(refs(forkDir, p)).toBe(refs(dir(), p));
     }
     expect((await readShots(forkDir, "v1")).items.length).toBeGreaterThan(0);
+    // A derived row (the parent's pin on the fork's builds page) gets no link; the fork's own pins do.
+    const own = await pinBuild(app, alice, forked.value, { label: "mine", oid: (await commitToBranch(app, alice, forked.value, { message: "f", files: [{ path: "f.txt", content: "f\n" }] }) as { value: { commitOid: string } }).value.commitOid });
+    if (!own.ok) throw new Error(own.error);
+    const builds = await (await get("/alice/karts-fork/builds", "alice")).text();
+    expect(builds).toContain("alice/karts:");
+    expect(builds).toContain("/alice/karts-fork/builds/mine/shots");
+    expect(builds).not.toContain("/builds/v1/shots");
   });
 
   test("a fork whose pin refs cannot be copied is removed, so a second try finds a free place", async () => {

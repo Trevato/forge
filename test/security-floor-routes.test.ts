@@ -58,6 +58,7 @@ const UNSEEDED: Record<string, string> = {
   "/:owner/:name/bets/:id": BET,
   "/:owner/:name/builds/:label/cart": CART,
   "/:owner/:name/builds/:label/cart.png": CART,
+  "/:owner/:name/builds/:label/shots": SHOT,
   "/:owner/:name/builds/:label/shots/:file": SHOT,
   "/:owner/:name/looks/:env/:commit/:kind.png": LOOK,
   "/:owner/:name/milestones/:number/limb/:op": LIMB,

@@ -114,6 +114,10 @@ export function buildsCard(
                 >`,
               )}
               ${when(
+                n.from === undefined,
+                () => html`<a class="build-shots small" href="${base}/builds/${encodeURIComponent(n.pin.label)}/shots">Screenshots</a>`,
+              )}
+              ${when(
                 canPreview && n.from === undefined,
                 () => html`<form method="post" action="${base}/builds/preview" class="build-preview">
                   <input type="hidden" name="sha" value="${n.pin.oid}" />
@@ -159,6 +163,7 @@ ${[1, 2, 3, 4, 5, 6, 7, 8].map((d) => `.build-row[data-depth="${d}"]{padding-lef
 .build-note{min-width:0;flex:1}
 .build-meta{flex:none;margin-left:auto}
 .build-preview{flex:none;margin:0}
+.build-shots{flex:none}
 .builds-none{padding:10px 14px;margin:0}
 @media (max-width:640px){.build-meta{display:none}}
 `;

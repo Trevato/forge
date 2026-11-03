@@ -15,4 +15,6 @@ A build pin can keep curated screenshots: PNG, JPEG or WebP pictures, in order, 
 - **Forks.** A fork starts with its parent's pins, covers and screenshots as they are at the fork (`refs/builds`, `refs/covers`, `refs/shots`). Pins and screenshots added upstream later are not synced. A fork whose pin refs cannot be copied is not made, and leaves nothing behind.
 - **Live.** Every change emits `build.shots` (`added`, `picked`, `moved`, `captioned`, `removed`), read by the repository's readers.
 
-Left out: a gallery page, the demo/arcade side of Jay Moran's port, activity wording for `build.shots`.
+- **Gallery.** `GET /:owner/:name/builds/:label/shots` shows the pictures with their captions, linked from each pin on the Builds page, and re-reads itself on `build.shots`.
+
+Left out: the demo/arcade side of Jay Moran's port, activity wording for `build.shots`.
