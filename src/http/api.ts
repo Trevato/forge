@@ -1700,13 +1700,22 @@ export function apiRoutes(router: Router<Handler>): void {
       // The cursor is the name of the last branch of the page before.
       const start = cursor === null ? 0 : all.findIndex((r) => r.name === cursor) + 1;
       if (start === 0 && cursor !== null) return undefined;
+      // Ahead/behind rests on the default's tip, so the tag covers every ref.
+      const etag = weakEtag(
+        [limit, cursor ?? "", repo.defaultBranch, repo.protectDefault, ...all.map((r) => `${r.name}\0${r.oid}`)].join("\n"),
+      );
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return { notModified: new Response(null, { status: 304, headers }) };
       const slice = all.slice(start, start + limit);
-      const compared = await compareBranches(dir, repo.defaultBranch, slice, all.length);
-      return { branches: compared.branches, more: start + limit < all.length };
+      return { slice, total: all.length, more: start + limit < all.length, headers };
     });
     if (page === undefined)
       return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
-    const items = page.branches.map((b) => ({
+    if ("notModified" in page) return page.notModified;
+    const compared = await timePhaseAsync(ctx.request, "compare", () =>
+      compareBranches(dir, repo.defaultBranch, page.slice, page.total),
+    );
+    const items = compared.branches.map((b) => ({
       name: b.name,
       oid: b.oid,
       isDefault: b.isDefault,
@@ -1716,7 +1725,7 @@ export function apiRoutes(router: Router<Handler>): void {
     }));
     const more = page.more;
     return timePhase(ctx.request, "render", () =>
-      json({ items, next_cursor: more ? items[items.length - 1]!.name : null }),
+      json({ items, next_cursor: more ? items[items.length - 1]!.name : null }, 200, page.headers),
     );
   });
 
