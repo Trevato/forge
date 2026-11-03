@@ -249,3 +249,5 @@ sealed variable and an app's SQLite is snapshotted, restored into an empty
 directory with the passphrase and booted there as the same forge; restored
 without it, the repositories come back and the sealed variable is reported by
 name. It also checks that the raw key is in no file of the store.
+
+The dump, a line per lane and the platform-free drill: [backup-truth.md](features/backup-truth.md), _Leaving the platform_.

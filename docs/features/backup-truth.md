@@ -76,3 +76,61 @@ is older than the newest whole snapshot or past the window.
 
 Not done: the snapshot still runs in the serving process (the database copy is
 in a worker). Tests: `test/snapshot-resume.test.ts`.
+
+## Leaving the platform (#8949)
+
+Nothing here turns anything off. Each step below waits for the owner present;
+the forge and the backup tile stay up and green throughout.
+
+### The Forgejo dump (`forgejo-dump`, suspended, 36 GB)
+
+**Recommendation, for the owner to confirm in the issue:** keep **one last
+copy**, and let the migrate flow make it redundant for what it covers.
+
+1. Every Forgejo repository the forge should keep comes in through Migrate or
+   Bring (`docs/ORIGINS.md`); once in, the forge's snapshot carries its bundle.
+2. The dump is also the only copy of what Migrate does not read (issues, pull
+   history, users, LFS, packages, Actions secrets on Forgejo). So it is not
+   deleted on the strength of step 1.
+3. One copy goes to **B2** (a prefix of its own, outside the nightly's
+   retention). The B2 dump prefix is not a lane, so it is not in
+   `FORGE_BACKUP_LANES` and the tile does not read it. A second copy goes
+   to the **owner's disk**; its SHA-256 is written in this issue.
+4. Only after the owner has opened the copy (restored a repository from it) is
+   the CronJob and its volume retired.
+
+Owner's answer: _pending_. Until it is written, the dump stays where it is.
+
+### A line per lane
+
+The lane list lives in the forge's configuration, never in the repository, so
+the names are filled in from the Resilience dialog (`verdict.lanes` in the MCP
+`backups` tool), one row each. Every row says what it backs up and one of:
+**read after spin-down** (who, how) or **retired** (on what date, by whom).
+
+| Lane | Backs up | After spin-down |
+| --- | --- | --- |
+| `primary` | the forge's snapshot, platform bucket | the app's bucket; read by the in-process check |
+| `mirror` | the same snapshot, B2 | B2; read by the in-process check and `scripts/backup-probe.ts` |
+| each `backup/<name>` | _fill in from the dialog_ | _read after spin-down, or retired_ |
+
+A lane with no reader after spin-down is retired, and removed from
+`FORGE_BACKUP_LANES` in the same step, so the tile does not go red for a lane
+nobody keeps.
+
+### Restore drill with the platform unreachable
+
+On the box (`scripts/box-install.sh`, `docs/EXTRACT.md`), with the platform's
+network blocked (egress allowed to B2 only, e.g. a firewall rule on the box):
+
+1. Point `S3_*` at the **B2 mirror** credentials, not the platform bucket.
+2. With the B2 `S3_*` values and the passphrase exported, as the `forge`
+   user, run `bun scripts/restore-drill.ts <empty-data-dir>`
+   ([RESTORE.md](../RESTORE.md), _The drill on the box_). Exit 0 is the pass
+   condition: it restored, booted, answered `/` and the counts matched. Exit
+   1 is a failed drill, whatever the step it names.
+3. Check that the backup tile reads green once the check has run.
+4. Record the date, snapshot name and counts in this issue.
+
+Not done here: the drill itself, the dump decision, and the lane rows. Each
+needs the box or the owner; this section is what they follow.

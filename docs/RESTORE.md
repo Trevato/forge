@@ -55,3 +55,5 @@ differs. It writes only into the directory it is given, which must be empty,
 refuses `/data`, and leaves the restored copy in place.
 `test/restore-drill-script.test.ts` runs it against a tiny snapshot and a
 stub bucket.
+
+With the platform unreachable (the B2 mirror only): [backup-truth.md](features/backup-truth.md), _Leaving the platform_.
