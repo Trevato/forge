@@ -31,6 +31,7 @@ import type { User } from "../../core/users.ts";
 import { worksOf } from "../../core/talk_work.ts";
 import { fileQueued, queuedOf, turnRunning } from "../../crew/conversation.ts";
 import { crossOrigin, type Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { readBounded } from "../limits.ts";
 import { apiError, boundedBody, forbidden, json, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
@@ -178,7 +179,12 @@ export function conversationTalkRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/conversations", (ctx) => {
     const user = ctx.auth.user;
     if (user === undefined) return unauthorized();
-    return json({ conversations: listConversations(ctx.app.db, user.id, { archived: ctx.url.searchParams.get("archived") === "1" }) });
+    // The tag is over the viewer and the rendered body, so any create, rename, archive or turn moves it; the 304 is after the access check.
+    const text = JSON.stringify({ conversations: listConversations(ctx.app.db, user.id, { archived: ctx.url.searchParams.get("archived") === "1" }) });
+    const etag = weakEtag(`${user.id}\n${text}`);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { status: 200, headers: { "content-type": "application/json", ...headers } });
   });
 
   router.add("POST", "/api/v1/conversations", async (ctx) => {
