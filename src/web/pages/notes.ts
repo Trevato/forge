@@ -52,10 +52,13 @@ if (form) {
 }
 `;
 
-const css = /* css */ `
+export const NOTES_CSS = /* css */ `
 .note-box { display: grid; gap: 6px; margin-bottom: 1rem; }
 .note-box textarea { width: 100%; min-height: 3.5rem; font-size: 16px; box-sizing: border-box; resize: vertical; }
 .note-line a { margin-right: 6px; }
+[data-notes] { overflow-wrap: anywhere; }
+[data-notes] .row-title, [data-notes] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-notes] .row { align-items: flex-start; }
 `;
 
 // GET /notes
@@ -90,16 +93,16 @@ export async function notesView(ctx: Ctx): Promise<Response> {
           }),
     });
   });
-  const body = html`<div class="page-head"><h1>Notes</h1></div>
+  const body = html`<div data-notes><div class="page-head"><h1>Notes</h1></div>
     <form class="note-box" method="post" action="${HERE}">
       <textarea class="input" name="text" rows="2" maxlength="${THOUGHT_MAX}" required enterkeyhint="send" autofocus placeholder="Write an idea. Enter saves it." aria-label="A note"></textarea>
       <div class="bar"><span class="muted small">Enter saves · Shift+Enter for a new line</span><span class="spacer"></span>${btn("Save", { variant: "primary" })}</div>
     </form>
     ${rows.length === 0
       ? empty({ icon: "comment", title: "No notes yet", note: "Write an idea above. The crew plans it, builds it, and this page says where it is." })
-      : listCard(rows)}`;
+      : listCard(rows)}</div>`;
   return timePhase(ctx.request, "render", () =>
-    page({ ctx, title: "Notes", body, styleCss: css, scriptJs: notesJs, description: "Write an idea; watch it become shipped work." }),
+    page({ ctx, title: "Notes", body, styleCss: NOTES_CSS, scriptJs: notesJs, description: "Write an idea; watch it become shipped work." }),
   );
 }
 
