@@ -322,6 +322,44 @@ describe("the client list", () => {
     expect(step.words).toBe("going: last tell 2030-02-03T04:05:06.000Z");
   });
 
+  test("GET /api/v1/forges answers the MCP tool's rows, and an old unclaimed child is flagged", async () => {
+    const made = await spawn({ name: "dusty", apps: ["alice/bakery"], dryRun: false });
+    expect(made.status).toBe(201);
+    // A calm second child, named to sort before dusty: attention first must put dusty ahead of it.
+    expect((await spawn({ name: "calm", apps: ["alice/bakery"], dryRun: false })).status).toBe(201);
+    const file = join(dir, "spawn", "dusty.json");
+    const ledger = JSON.parse(await Bun.file(file).text());
+    ledger.createdAt = new Date(Date.now() - 5 * 86_400_000).toISOString();
+    await Bun.write(file, JSON.stringify(ledger));
+    const before = parent;
+    useChildFetch(before, (url) =>
+      url.startsWith("https://dusty--forge.test/")
+        ? Promise.resolve(Response.json({ claimed: false, lastActivityAt: new Date().toISOString() }))
+        : url.startsWith("https://calm--forge.test/")
+          ? Promise.resolve(Response.json({ claimed: true, lastActivityAt: new Date().toISOString() }))
+          : Promise.reject(new Error("unreachable")),
+    );
+    const api = await fetch(`${parentServers.url}/api/v1/forges`, { headers: { authorization: `Bearer ${adminRw}` } });
+    expect(api.status).toBe(200);
+    const body = (await api.json()) as { items: any[]; next_cursor: null };
+    expect(body.next_cursor).toBeNull();
+    const tool = (await (await mcp(adminRw)).json()) as any;
+    const forges = JSON.parse(tool.result.content[0].text).forges as any[];
+    expect(body.items.map((r) => r.name)).toEqual(forges.map((r) => r.name));
+    const names = body.items.map((r) => r.name);
+    expect(names.indexOf("dusty")).toBeLessThan(names.indexOf("calm"));
+    expect(body.items.find((r) => r.name === "calm").attention).toBeNull();
+    const dustyApi = body.items.find((r) => r.name === "dusty");
+    expect(dustyApi.attention).toBe("unclaimed");
+    expect(dustyApi.claimed).toBe(false);
+    expect(dustyApi).toMatchObject(forges.find((r) => r.name === "dusty"));
+    expect(dustyApi.nextStep.key).toBe("unreported");
+    // Admin only: a non-admin is 403, a signed-out caller 401.
+    const bob = await fetch(`${parentServers.url}/api/v1/forges`, { headers: { authorization: `Bearer ${bobRw}` } });
+    expect(bob.status).toBe(403);
+    expect((await fetch(`${parentServers.url}/api/v1/forges`)).status).toBe(401);
+  });
+
   test("each step in words, and a beat with a bad value loses the field, not the beat", () => {
     const beat = (o: Record<string, unknown>) =>
       parseBeat(JSON.stringify({ name: "maria", at: 1, version: "1.0.0", openProposals: 0, children: 0, ...o }));

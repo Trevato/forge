@@ -6,6 +6,7 @@
 
 import { listChildren } from "../../actions/spawn.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { clientRows } from "../../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../../spawn/door.ts";
 import { sizesView } from "../../spawn/sizes.ts";
 import { templatesView } from "../../spawn/templates.ts";
@@ -32,13 +33,24 @@ export function forgeRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/forges/sizes", (ctx) => publicTable(ctx, "sizes", sizesView));
   router.add("GET", "/api/v1/forges/templates", (ctx) => publicTable(ctx, "templates", templatesView));
 
-  // A forge's children (docs/SPAWN.md): an admin's, planned before made.
+  // The client list (docs/SPAWN.md): an admin's, the rows /forges and the MCP
+  // `forges` tool show, what needs attention first.
   router.add("GET", "/api/v1/forges", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     if (!ctx.auth.user?.isAdmin) return forbidden();
-    const items = await timePhaseAsync(ctx.request, "read", () => listChildren(ctx.app));
+    const items = await timePhaseAsync(ctx.request, "read", async () => {
+      // The row, and beside it what the list always carried: which template a child came from, where it is placed.
+      const [rows, children] = await Promise.all([clientRows(ctx.app), listChildren(ctx.app)]);
+      const kept = new Map(children.map((c) => [c.name, c]));
+      return rows.map((row) => {
+        const c = kept.get(row.name);
+        return c === undefined
+          ? row
+          : { ...row, bodyId: c.bodyId, done: c.done, createdAt: c.createdAt, placement: c.placement, placementNote: c.placementNote, ...(c.template === undefined ? {} : { template: c.template }) };
+      });
+    });
     return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
   });
 
