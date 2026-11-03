@@ -33,3 +33,7 @@ writing anything; a missing one restores without the key and lists the
 sealed values to set again. To pick an older snapshot, put its name
 (`2026-09-22T08-00-00Z`) where line 5 says `latest`. Details:
 [SNAPSHOT.md](SNAPSHOT.md).
+
+On a box that stays: `scripts/box-install.sh`, then lines 3–6 as the `forge`
+user with `<data-dir>` `/var/lib/forge`, then `systemctl enable --now forge`
+in place of line 7 ([EXTRACT.md](EXTRACT.md), _The box beside production_).

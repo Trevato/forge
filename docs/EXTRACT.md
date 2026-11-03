@@ -118,3 +118,16 @@ The edge sign-in becomes the forge's own sign-in and grants. Zero-downtime
 deploys become the forge's swap. Backups become the snapshot. TLS becomes
 the proxy's. The crew, the studio, the contracts, the audit, the following —
 all of it already lives in the forge and moves with the data.
+
+## The box beside production
+
+Steps 1–3 as files: `scripts/box-install.sh` (user, `/var/lib/forge`,
+`/etc/forge/forge.env`, checkout at `/opt/forge`, `bun install`, the unit) and
+`infra/forge-box/forge.service` (`Restart=always`, enabled at boot, so a
+killed process or a reboot brings it back). Then the lines of
+[RESTORE.md](RESTORE.md) with `<data-dir>` = `/var/lib/forge` as the `forge`
+user, and `systemctl enable --now forge`. Nothing points at the box; compare
+repository and app counts with production, kill the process and reboot to see
+it return. Restoring reads the bucket by the card's lines only — no platform
+service is involved. `test/forge-box-unit.test.ts` parses the unit.
+Done on a machine: the drill itself (restore, counts, reboot) is the owner's to run.
