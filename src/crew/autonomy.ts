@@ -546,7 +546,7 @@ async function driveOnce(
       if (!cleared.ok) return "idle";
     }
     const current = getIssueById(app.db, next.issue.id) ?? next.issue;
-    const assigned = assignIssue(app, by, repo, current, builder.user);
+    const assigned = assignIssue(app, by, repo, current, builder.user, undefined, true);
     if (!assigned.ok) {
       log.warn("could not assign the next ready issue", {
         repo: `${repo.ownerName}/${repo.name}`,

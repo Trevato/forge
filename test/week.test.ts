@@ -17,6 +17,7 @@ const base: WeekInput = {
   meter: { freePct: 50, keptPct: 0, burnPctPerHour: 0.4, resetsAt: new Date(NOW.getTime() + 3.5 * DAY) },
   now: NOW,
   ceiling: 4,
+  floorSlots: 2,
   idleSlots: 2,
   startable: 0,
   gated: 3,
@@ -32,7 +33,7 @@ describe("weekDecision", () => {
   });
 
   test("settings are plain values", () => {
-    expect(WEEK).toEqual({ tolerance: 0.25, reserve: 0.1, floorSlots: 2, unknownSlots: 2, burnHours: 1 });
+    expect(WEEK).toEqual({ tolerance: 0.25, reserve: 0.1, unknownSlots: 2, burnHours: 1 });
   });
 
   test("on pace: a burn near allowed keeps the ceiling", () => {
@@ -79,7 +80,7 @@ describe("weekDecision", () => {
   test("a fast burn slows the crew", () => {
     const fast = used(50, { burnPctPerHour: 2.7 });
     expect(fast.status).toBe("ahead");
-    expect(fast.slots).toBe(WEEK.floorSlots);
+    expect(fast.slots).toBe(2);
     expect(fast.runsOutAt).not.toBeNull();
     expect(fast.sentence).toContain("running out about");
   });
@@ -91,13 +92,14 @@ describe("weekDecision", () => {
         meter: { freePct, keptPct: 0, burnPctPerHour, resetsAt },
         now: new Date(iso),
         ceiling: 5,
+        floorSlots: 2,
         idleSlots: 3,
         startable: 0,
         gated: 2,
       })!;
     const hot = at("2026-11-02T19:25:00Z", 46, 2.7);
     expect(hot.status).toBe("ahead");
-    expect(hot.slots).toBe(WEEK.floorSlots);
+    expect(hot.slots).toBe(2);
     expect(hot.release).toBe(false);
     expect(hot.sentence).toContain("running out about 2026-11-03");
     const flat = at("2026-11-02T20:45:00Z", 45, 0);

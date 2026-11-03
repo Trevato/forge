@@ -16,7 +16,7 @@ import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
 import { resolveListConflicts } from "../actions/list-conflicts.ts";
 import { markHeard } from "../core/issues.ts";
-import { capacityCount, noteBooted } from "../core/capacity.ts";
+import { capacityCount, noteBooted, paceFloor } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
@@ -1441,6 +1441,39 @@ export function sweepAssigned(app: App): void {
   }
 }
 
+/**
+ * Whether the run's newest assignment was a person's (`assignIssue` marks it
+ * `person`; the tick's own pick says `pick`). An assignment event without
+ * either mark was written before the marks existed and counts as a pick.
+ */
+export function assignedByPerson(app: App, run: Run): boolean {
+  if (run.issueId === null) return false;
+  const row = app.db
+    .query<{ person: number | null }, [string]>(
+      `SELECT json_extract(e.payload, '$.person') AS person FROM event e INDEXED BY event_repo_kind_number_at
+         JOIN issue ON issue.repo_id = e.repo_id AND e.kind = issue.kind || '.assigned'
+          AND json_extract(e.payload, '$.number') = issue.number + 0
+        WHERE issue.id = ? ORDER BY e.id DESC LIMIT 1`,
+    )
+    .get(run.issueId);
+  return row?.person === 1;
+}
+
+/**
+ * A review, or work a person assigned: the runs the pace leaves a floor for.
+ * `memo` holds the answer per run for one pump pass, so the events are read
+ * once for each run, and only for `assigned` ones.
+ */
+export function isPriorityRun(app: App, run: Run, memo?: Map<string, boolean>): boolean {
+  if (!PRIORITY_REASONS.includes(run.reason)) return false;
+  if (run.reason !== "assigned") return true;
+  const known = memo?.get(run.id);
+  if (known !== undefined) return known;
+  const person = assignedByPerson(app, run);
+  memo?.set(run.id, person);
+  return person;
+}
+
 /** Per app, the runs already told why they wait, so the log says it once. */
 const notedBy = new WeakMap<App, Set<string>>();
 
@@ -1471,6 +1504,7 @@ function pump(
   const started: string[] = [];
   const goingIn = new Map<string, number>();
   const priorityIn = new Map<string, number>();
+  const priorityMemo = new Map<string, boolean>();
   const noted = notedBy.get(app) ?? new Set<string>();
   notedBy.set(app, noted);
   // Builder starts go to teams in proportion to their dials (`team_share.ts`),
@@ -1504,8 +1538,8 @@ function pump(
       const going = (goingIn.get(home.id) ?? 0) + active.filter((r) => r.state === "running" && r.repoId === home.id).length;
       const priorityGoing =
         (priorityIn.get(home.id) ?? 0) +
-        active.filter((r) => r.state === "running" && r.repoId === home.id && PRIORITY_REASONS.includes(r.reason)).length;
-      const held = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going - priorityGoing, fresh.reason, priorityGoing);
+        active.filter((r) => r.state === "running" && r.repoId === home.id && isPriorityRun(app, r, priorityMemo)).length;
+      const held = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, paceFloor(app.db));
       if (held !== null) {
         if (!noted.has(fresh.id)) {
           noted.add(fresh.id);
@@ -1532,7 +1566,7 @@ function pump(
     }
     started.push(fresh.id);
     goingIn.set(fresh.repoId, (goingIn.get(fresh.repoId) ?? 0) + 1);
-    if (PRIORITY_REASONS.includes(fresh.reason)) priorityIn.set(fresh.repoId, (priorityIn.get(fresh.repoId) ?? 0) + 1);
+    if (isPriorityRun(app, fresh, priorityMemo)) priorityIn.set(fresh.repoId, (priorityIn.get(fresh.repoId) ?? 0) + 1);
     noted.delete(fresh.id);
     slots--;
     if (queued.issueId !== null) runningIssues.add(queued.issueId);

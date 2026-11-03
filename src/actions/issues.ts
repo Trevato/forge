@@ -298,6 +298,8 @@ export function assignIssue(
   issue: Issue,
   assignee: User | null,
   variantGroup?: string,
+  /** The crew's own pick under the operator's name: the pace holds it (`week_hold.ts`). */
+  pick = false,
 ): Result<
   Issue,
   AccessError | "assignee_cannot_read" | "agent_not_on_crew" | "unverified" | "not_member" | "archived"
@@ -335,6 +337,8 @@ export function assignIssue(
       assignee: assignee?.username ?? null,
       agent: assignee?.kind === "agent",
       ...(variantGroup ? { variantGroup } : {}),
+      // A person's assignment says so; an event without it (queued before the mark) is a pick.
+      ...(pick ? { pick: true } : { person: true }),
     },
   });
   return ok(updated);

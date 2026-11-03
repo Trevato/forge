@@ -464,3 +464,19 @@ something only a passport may reach.
 An open vision pull's page shows, to an admin of the repository, "Direction after the merge": today's direction beside the one an admin's merge will write, computed by the same `nextDirection` the merge uses (`src/crew/vision.ts`), so the two cannot differ. Repository settings (Crew) marks the direction's fenced block `follows docs/VISION.md` and the words around it `the owner's`. Today and After the merge stack vertically at every width.
 
 The same read is a second door: the MCP `vision` tool takes an optional `number`, and for an admin returns `preview` (`{ today, after }`, or `{ why }` the direction would stay) for that open vision pull, plus `directionParts` (the direction cut into `vision` and `owner` parts). The terminal (TUI) has no such view; it is not touched by this change.
+
+## What the pace limits (#8962)
+
+The week's pace (`src/crew/week.ts`) limits only the crew's own picks: the
+builds the tick assigns under the operator's name (marked `pick` on the
+`issue.assigned` event). Reviews and issues a person assigned are not slowed
+by it: while the pace allows any slots at all, up to `pace.floor` of them (a
+capacity setting, env `FORGE_PACE_FLOOR`, default 2, 1 to 16, read on every
+pump) run at once, apart from the picks; it is also the fewest slots a fast burn
+slows a repository to. At the reserve's wall (no slots) everything waits for the
+reset. Not covered: feedback, check and conflict runs still count with the picks.
+
+A person's assignment is marked `person` on its `issue.assigned` event. An
+assignment event with neither mark was written before the marks existed and is
+held as a pick: an `assigned` run queued before this deployed uses the pace
+like a pick until it starts, then the cutover is over (no migration).

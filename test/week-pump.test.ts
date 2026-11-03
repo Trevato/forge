@@ -97,6 +97,8 @@ test("builds fill the pace slots, yet a review or assigned run still starts; a t
   const run = (reason: string, going: boolean) => {
     const issue = openIssue(app, alice, repo, { title: `${reason} work`, body: "Do it." });
     if (!issue.ok) throw new Error(String(issue.error));
+    // A person's assignment says so on its event (`assignedByPerson`).
+    if (reason === "assigned") app.bus.append({ kind: `${issue.value.kind}.assigned`, repoId: repo.id, actorId: alice.id, payload: { number: issue.value.number, person: true } });
     const made = createRun(app.db, { repoId: repo.id, kind: "agent", issueId: issue.value.id, reason, actorId: bot.id });
     if (going) claimRun(app.db, made.id);
     return made.id;

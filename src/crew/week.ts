@@ -31,8 +31,6 @@ export const WEEK = {
   tolerance: 0.25,
   /** The share of the week's crew capacity kept for conversations and a person's own requests. */
   reserve: 0.1,
-  /** Slots never fall below this while the reserve holds. */
-  floorSlots: 2,
   /** Slots the crew holds at while the week's capacity is unknown. */
   unknownSlots: 2,
   /** How many hours back the burn is read over. */
@@ -58,6 +56,8 @@ export interface WeekInput {
   readonly now: Date;
   /** The operator's slot ceiling. */
   readonly ceiling: number;
+  /** Slots a fast burn never slows below while the reserve holds (`pace.floor`). */
+  readonly floorSlots: number;
   /** Builder slots not in use. */
   readonly idleSlots: number;
   /** Ready issues a builder may start now. */
@@ -120,7 +120,7 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   const status: Status = burning ? "ahead" : idling ? "behind" : "on pace";
 
   let slots = burn === null ? Math.min(ceiling, WEEK.unknownSlots) : ceiling;
-  if (burning && burn !== null && burn > 0) slots = Math.min(slots, Math.max(WEEK.floorSlots, Math.floor((ceiling * allowed) / burn)));
+  if (burning && burn !== null && burn > 0) slots = Math.min(slots, Math.max(input.floorSlots, Math.floor((ceiling * allowed) / burn)));
   // The reserve is a wall: past it the crew waits for the reset.
   if (used >= wall) slots = 0;
   slots = Math.min(ceiling, Math.max(0, slots));

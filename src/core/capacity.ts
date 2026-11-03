@@ -26,7 +26,8 @@ export type CapacityKey =
   | "guard_new_accounts"
   | "signin.edge"
   | "slots.smallShare"
-  | "polish.capMinutes";
+  | "polish.capMinutes"
+  | "pace.floor";
 
 interface Definition {
   /** What the settings page and the API call it. */
@@ -123,6 +124,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "count", min: 1, max: 1440 },
     fallback: "60",
     help: "An issue labelled polish is small work: a builder run on it that has gone this many minutes is stopped, not extended, and the issue gets one comment saying what is left. Read on every tick.",
+  },
+  "pace.floor": {
+    label: "Slots the pace always leaves reviews and assigned work",
+    env: "FORGE_PACE_FLOOR",
+    kind: { type: "count", min: 1, max: 16 },
+    fallback: "2",
+    help: "While the week's pace allows any slots, this many reviews and issues a person assigned may run at once, apart from the crew's own picks, however hard the pace slows them; also the fewest slots a fast burn slows a repository to. At the reserve's wall everything waits. Read on every pump.",
   },
 };
 
@@ -325,6 +333,11 @@ export function capacityCount(
   const stored = storedCapacity(db, key);
   const n = stored === undefined ? Number.NaN : Number(stored);
   return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+/** The slots the pace leaves reviews and assigned work (`pace.floor`). */
+export function paceFloor(db: Database): number {
+  return Number(capacityValue(db, "pace.floor"));
 }
 
 /** How many hosted children this forge may hold now; read on every use. */

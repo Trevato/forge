@@ -8,6 +8,7 @@ import { listAutonomousRepos, type Repo } from "../core/repos.ts";
 import { standings, WINDOW_MS } from "../core/standing.ts";
 import { grantedAccounts, PLATFORM } from "../core/subscriptions.ts";
 import { burnFrom, noteReading, readingsSince } from "./week_burn.ts";
+import { paceFloor } from "../core/capacity.ts";
 import { efficiencyWords, WEEK, weekDecision, type Efficiency, type WeekDecision, type WeekMeter } from "./week.ts";
 
 /** The week as the provider's meter reads it: a meter, or null while no account's limit is known. */
@@ -114,7 +115,7 @@ export function weekFor(
   seen: { idleSlots: number; startable: number; gated: number } = { idleSlots: 0, startable: 0, gated: 0 },
 ): WeekDecision | null {
   const week = weekOf(app, repo, now);
-  return week === null ? null : weekDecision({ ...week, now, ceiling: repo.autonomySlots, ...seen });
+  return week === null ? null : weekDecision({ ...week, now, ceiling: repo.autonomySlots, floorSlots: paceFloor(app.db), ...seen });
 }
 
 /**

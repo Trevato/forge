@@ -29,6 +29,14 @@ describe("the snapshot destination in the terminal", () => {
   const frames: string[] = [];
   const saved = { ...process.env };
 
+  /** Under a loaded machine a screen can land a turn after the first settle: settle again until it shows. */
+  async function until(h: { text(): string; press(...k: string[]): Promise<string> }, what: string) {
+    for (let i = 0; i < 100 && !h.text().includes(what); i++) {
+      await Bun.sleep(20);
+      await h.press();
+    }
+  }
+
   function boot(username: string) {
     const terminal = headlessTerminal(140, 40);
     const user = getUserByName(forge.db, username)!;
@@ -100,7 +108,9 @@ describe("the snapshot destination in the terminal", () => {
     const h = boot("alice");
     await h.open();
     // The prompt says up front that a refusal is told in full on the screen behind it.
-    expect(await h.press("d")).toContain("a refusal is said whole behind");
+    await h.press("d");
+    await until(h, "a refusal is said whole behind");
+    expect(h.text()).toContain("a refusal is said whole behind");
     await h.type("ftp://user:pw@example.com");
     const t = await h.press("enter");
     // The prompt has room for the start of it; the modal covers the middle of the line behind.
