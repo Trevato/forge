@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { pillWhere, proxyApp, signGrant, type AppSocket, type AppTarget } from "../src/apps/proxy.ts";
-import { toolbarJs, toolbarTag } from "../src/apps/toolbar.ts";
+import { FRESHNESS_WORDS, toolbarJs, toolbarTag } from "../src/apps/toolbar.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
 import { createIssue } from "../src/core/issues.ts";
@@ -201,5 +201,96 @@ describe("the pill's freshness, through the proxy", () => {
     expect(tag).toContain("data-pull=");
     for (const a of ["data-state", "data-behind", "data-deploying"]) expect(tag).not.toContain(a);
     live = HEAD;
+  });
+});
+
+describe("the pill's script draws the freshness line", () => {
+  /** A stand-in element: it keeps what the script sets and who it holds, and nothing more. */
+  class El {
+    children: El[] = [];
+    attrs: Record<string, string> = {};
+    style: Record<string, unknown> = {};
+    dataset: Record<string, string> = {};
+    textContent = "";
+    [k: string]: unknown;
+    constructor(public tag: string) {}
+    setAttribute(k: string, v: string) { this.attrs[k] = v; }
+    removeAttribute() {}
+    appendChild(c: El) { this.children.push(c); return c; }
+    append(...c: El[]) { this.children.push(...c); }
+    prepend(c: El) { this.children.unshift(c); }
+    addEventListener() {}
+    removeEventListener() {}
+    attachShadow() { return new El("#shadow"); }
+    focus() {}
+    getBoundingClientRect() { return { left: 0, top: 0, width: 0, height: 0 }; }
+  }
+
+  /** Run the script on a page whose tag carries `data`; return the panel's lines, top to bottom. */
+  function panelLines(data: Record<string, string>): string[] {
+    const made: El[] = [];
+    const me = new El("script");
+    me.dataset = { forge: "http://forge.test", ...data };
+    const doc = {
+      currentScript: me,
+      readyState: "complete",
+      documentElement: new El("html"),
+      body: new El("body"),
+      head: new El("head"),
+      createElement: (t: string) => { const e = new El(t); made.push(e); return e; },
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    const win: Record<string, unknown> = {
+      innerWidth: 1000, innerHeight: 800, scrollX: 0, scrollY: 0,
+      localStorage: { getItem: () => null, setItem() {} },
+      addEventListener() {}, removeEventListener() {},
+    };
+    const loc = { href: "http://site.test/", origin: "http://site.test", pathname: "/", search: "" };
+    const never = () => new Promise<never>(() => {});
+    new Function("window", "document", "location", "fetch", "getComputedStyle", "requestAnimationFrame", "setTimeout", "setInterval",
+      toolbarJs)(win, doc, loc, never, () => ({}), () => 0, () => 0, () => 0);
+    const panel = made.find((e) => e.attrs["role"] === "region");
+    if (!panel) throw new Error("no panel");
+    return panel.children.map((c) => c.textContent).filter((t) => t !== "");
+  }
+
+  const base = { app: "site", repo: "alice/site", env: "pull-7", pull: "7", title: "Add a thing" };
+  const words = Object.values(FRESHNESS_WORDS);
+  /** The lines after the title, if the panel has one freshness line among the pull's own. */
+  const after = (lines: string[]) => lines.slice(lines.indexOf("Add a thing") + 1).filter((l) => words.includes(l as never));
+
+  test("merged, closed, deploying and behind each draw one line, right after the pull and its title", () => {
+    const cases: [Record<string, string>, string][] = [
+      [{ state: "merged" }, FRESHNESS_WORDS.merged],
+      [{ state: "closed" }, FRESHNESS_WORDS.closed],
+      [{ state: "open", deploying: "1" }, FRESHNESS_WORDS.deploying],
+      [{ state: "open", behind: "1" }, FRESHNESS_WORDS.behind],
+    ];
+    for (const [extra, said] of cases) {
+      const lines = panelLines({ ...base, ...extra });
+      expect(lines.slice(0, 4)).toEqual(["site", "Preview of pull #7", "Add a thing", said]);
+      expect(lines.filter((l) => words.includes(l as never))).toEqual([said]);
+    }
+  });
+
+  test("the line follows the pull when there is no title", () => {
+    const lines = panelLines({ ...base, title: "", state: "merged" });
+    expect(lines.slice(0, 3)).toEqual(["site", "Preview of pull #7", FRESHNESS_WORDS.merged]);
+  });
+
+  test("merged and closed win over deploying and behind; deploying wins over behind", () => {
+    const both = { deploying: "1", behind: "1" };
+    expect(after(panelLines({ ...base, state: "merged", ...both }))).toEqual([FRESHNESS_WORDS.merged]);
+    expect(after(panelLines({ ...base, state: "closed", ...both }))).toEqual([FRESHNESS_WORDS.closed]);
+    expect(after(panelLines({ ...base, state: "open", ...both }))).toEqual([FRESHNESS_WORDS.deploying]);
+  });
+
+  test("an open, current preview draws none; so does production; so does a viewer told nothing", () => {
+    expect(panelLines({ ...base, state: "open" }).filter((l) => words.includes(l as never))).toEqual([]);
+    expect(panelLines({ ...base }).filter((l) => words.includes(l as never))).toEqual([]);
+    const prod = panelLines({ app: "site", repo: "alice/site", env: "production" });
+    expect(prod.slice(0, 2)).toEqual(["site", "Production"]);
+    expect(prod.filter((l) => words.includes(l as never))).toEqual([]);
   });
 });
