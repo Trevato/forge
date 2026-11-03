@@ -30,6 +30,16 @@ matches; people then sign in with a password or a passkey. An admin with
 neither is refused, so no one locks themselves out. Accounts the edge made
 cannot sign in while it is off until they add a passkey (a password-less
 account cannot set a password: `/settings/password` asks for the current one). Before switching it off, see [edge-only accounts](features/edge-only-accounts.md).
+To switch it off on a preview: sign in there as an admin with a password or a
+passkey (Settings → Passkeys adds one), open Settings → Capacity, set "Sign in
+through the platform edge" to `off`, then sign out and back in with the passkey
+to prove the way in. To roll back, set the same row to `on` (or Put back, which
+returns to `FORGE_SIGNIN_EDGE`, `on` when unset); with no browser,
+`PUT /api/v1/admin/capacity/signin.edge` with `{"value":"on"}` and an admin
+token (`POST /api/v1/tokens` with the password still mints one while it is
+off). A stored value outranks `FORGE_SIGNIN_EDGE`, so changing the environment
+alone does not roll back. Switching production off is the owner's to do, with
+the owner present. `test/signin-edge-off.test.ts` walks this round trip.
 Account settings show "open-platform.sh: linked as <login>" or "not linked": Link
 records the login the request carries against the signed-in account, Unlink removes
 it (same-origin POSTs). An edge sign-in finds the account by its link first, then by
