@@ -75,6 +75,13 @@ a.where-place:hover, button.where-place:hover {
 .row-meta .where-place > span[aria-hidden="true"] { margin-right: 3px; }
 .row-title a { color: inherit; text-decoration: none; }
 .row-title a:hover { color: var(--accent); }
+/* The signed-in home (#9378). Its rows already clip one line and its
+   sections are grid cells with min-width 0 (feed_style.ts); what is left is a
+   long app name, which wraps inside its chip, and the tell box's input and
+   select, which may shrink. The chip row is server-rendered, so a wrapped
+   chip is its final height on first paint. */
+#live-chips .btn { max-width: 100%; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.tell-box .input { min-width: 0; max-width: 100%; }
 .row-trail form { display: inline-flex; }
 
 /* "Where it lives": the origin, when it was last fetched, the button that
