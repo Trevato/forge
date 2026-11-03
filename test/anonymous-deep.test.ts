@@ -79,6 +79,21 @@ test("the budget divides while the loop is behind, and the explorer's folder exp
   setCrawlClock(app, () => 6_500_000, false);
 });
 
+test("while the loop is behind, strangers on many addresses share one ceiling; on time they don't; a person is never counted", async () => {
+  setCrawlClock(app, () => 7_000_000, true);
+  const deep = `/alice/open/blob/${sha}/a.txt`;
+  for (let i = 0; i < STRANGER_BUDGET.behindAll; i++) {
+    expect((await get(deep, from(`10.3.${i >> 8}.${(i & 255) + 1}`))).status).toBe(200);
+  }
+  const refused = await get(deep, from("10.4.0.1"));
+  expect(refused.status).toBe(429);
+  expect(await refused.text()).toContain("sign in");
+  const cookie = `forge_session=${createSession(app.db, alice.id).token}`;
+  expect((await get(deep, from("10.4.0.1", { cookie }))).status).toBe(200);
+  setCrawlClock(app, () => 7_000_000, false);
+  expect((await get(deep, from("10.4.0.1"))).status).toBe(200);
+});
+
 test("the board counts the browser-looking traffic and the refusals", () => {
   const record = createPerfRecord();
   const at = Date.now();
