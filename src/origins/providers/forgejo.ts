@@ -41,6 +41,8 @@ import type {
   RemoteReadme,
   RemoteRepo,
   RemoteReview,
+  ArchivedPage,
+  ArchivedRepo,
   RemoteReviewState,
   RemoteTreeEntry,
   RepoWalk,
@@ -870,6 +872,76 @@ export class ForgejoProvider implements Provider {
     return succeed(undefined);
   }
 
+  async listArchived(options: {
+    query: string;
+    page: number;
+  }): Promise<ProviderResult<ArchivedPage>> {
+    const me = await this.whoami();
+    if (!me.ok) return me;
+    if (this.uid === undefined)
+      return fail("invalid_response", "the origin gave no id for the account");
+    const limit = await this.pageSize();
+    const result = await this.api.call({
+      path: "/repos/search",
+      query: {
+        uid: this.uid,
+        archived: "true",
+        q: options.query === "" ? undefined : options.query,
+        sort: "alpha",
+        order: "asc",
+        limit,
+        page: options.page,
+      },
+    });
+    if (!result.ok) return result;
+    const rows = asArray(field(result.value.data, "data"));
+    const counted = Number(result.value.headers.get("x-total-count") ?? "");
+    const total = Number.isInteger(counted) && counted >= 0 ? counted : null;
+    return succeed({
+      items: rows.map(toArchived),
+      total,
+      hasNext:
+        total === null ? rows.length === limit : options.page * limit < total,
+    });
+  }
+
+  async unarchiveRepo(
+    fullName: string,
+  ): Promise<ProviderResult<{ archived: boolean | null }>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const path = `/repos/${seg(named.owner)}/${seg(named.name)}`;
+    const changed = await this.api.call({
+      path,
+      method: "PATCH",
+      body: { archived: false },
+    });
+    if (!changed.ok) return changed;
+    const read = await this.api.call({ path });
+    return succeed({
+      archived: read.ok ? asBool(field(read.value.data, "archived")) : null,
+    });
+  }
+
+  /**
+   * A token's scopes are checked before the repository is looked up, so a
+   * write to a name that cannot exist answers 403 naming the scope, or 404
+   * when the token has it, and touches nothing either way.
+   */
+  async repoWriteReach(
+    login: string,
+  ): Promise<ProviderResult<"yes" | "unknown" | { missing: readonly string[] }>> {
+    const asked = await this.api.call({
+      path: `/repos/${seg(login)}/forge-write-check-${crypto.randomUUID()}`,
+      method: "PATCH",
+      body: {},
+    });
+    if (asked.ok || asked.error.error === "not_found") return succeed("yes");
+    if (asked.error.error !== "forbidden") return asked;
+    const missing = asked.error.missingScopes ?? [];
+    return succeed(missing.length > 0 ? { missing } : "unknown");
+  }
+
   /**
    * Git over HTTPS takes the token as a Basic password, with the username
    * ignored — so a personal access token pairs with the login it belongs to,
@@ -913,6 +985,20 @@ export function nextPage(
 }
 
 // ---- mapping ----
+
+function toArchived(raw: unknown): ArchivedRepo {
+  const repo = toRepo(raw);
+  // A repository archived before the field existed reports the zero time.
+  const at = asTime(field(raw, "archived_at"));
+  return {
+    fullName: repo.fullName,
+    owner: repo.owner,
+    name: repo.name,
+    private: repo.private,
+    archivedAt: at !== null && Date.parse(at) > 0 ? at : null,
+    canChange: repo.permissions.admin,
+  };
+}
 
 export function toRepo(raw: unknown): RemoteRepo {
   const fullName = asString(field(raw, "full_name"));

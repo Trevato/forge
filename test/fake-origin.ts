@@ -57,8 +57,12 @@ export interface FakeRepo {
   openPulls?: number;
   /** KiB, as both forges report `size`. */
   sizeKb?: number;
-  /** Set by a successful `PATCH` with `archived: true`. */
+  /** Set by a successful `PATCH` with `archived`. */
   archived?: boolean;
+  /** What `archived_at` says. */
+  archivedAt?: string;
+  /** A `PATCH` answers 200 and changes nothing. */
+  ignoresPatch?: boolean;
 }
 
 export interface FakeIssue {
@@ -229,6 +233,8 @@ export interface FakeState {
    * answers it, a 403 that names the scope.
    */
   userScopeMissing?: string;
+  /** A scope the token lacks for any repository write, checked before the lookup as Forgejo does. */
+  repoWriteScopeMissing?: string;
   /** The account administers the instance: `is_admin` / `site_admin` on `/user`. */
   siteAdmin?: boolean;
   /** Called before each page of a repository listing is answered: the world moving mid-walk. */
@@ -443,11 +449,15 @@ function route(
     const page = Math.max(1, Number(q.get("page") ?? "1") || 1);
     state.onRepoPage?.(page);
     const visibility = q.get("visibility");
+    const archivedOnly = q.get("archived") === "true";
+    const named = (q.get("q") ?? "").toLowerCase();
     const ordered = state.repos.filter(
       (r) =>
-        visibility === null ||
-        visibility === "all" ||
-        (visibility === "private") === (r.private ?? false),
+        (visibility === null ||
+          visibility === "all" ||
+          (visibility === "private") === (r.private ?? false)) &&
+        (!archivedOnly || r.archived === true) &&
+        r.fullName.split("/")[1]!.toLowerCase().includes(named),
     );
     if (q.get("sort") === "id") ordered.sort((a, b) => a.id - b.id);
     if (q.get("sort") === "updated")
@@ -462,7 +472,9 @@ function route(
       .map((r) => repoJson(state, r));
     const payload = rest === "/repos/search" ? { ok: true, data: rows } : rows;
     return jsonResponse(payload, 200, {
-      "x-total-count": String(state.repoTotalOverride ?? state.repos.length),
+      "x-total-count": String(
+        state.repoTotalOverride ?? (archivedOnly ? ordered.length : state.repos.length),
+      ),
     });
   }
 
@@ -482,6 +494,13 @@ function route(
 
   const repoMatch = /^\/repos\/([^/]+)\/([^/]+)(.*)$/.exec(rest);
   if (!repoMatch) return new Response("no route", { status: 404 });
+  if (method !== "GET" && state.repoWriteScopeMissing !== undefined)
+    return jsonResponse(
+      {
+        message: `token does not have at least one of required scope(s): [${state.repoWriteScopeMissing}]`,
+      },
+      403,
+    );
   const fullName = `${repoMatch[1]}/${repoMatch[2]}`;
   const tail = repoMatch[3] ?? "";
   const repo = state.repos.find(
@@ -513,7 +532,9 @@ function route(
   if (tail === "" && method === "PATCH") {
     if (repo.admin === false)
       return jsonResponse({ message: "Must have admin rights to Repository." }, 403);
-    if (parse(bodyText).archived === true) repo.archived = true;
+    const archived = parse(bodyText).archived;
+    if (typeof archived === "boolean" && repo.ignoresPatch !== true)
+      repo.archived = archived;
     return jsonResponse(repoJson(state, repo));
   }
   if (tail === "") {
@@ -1068,6 +1089,8 @@ function repoJson(state: FakeState, repo: FakeRepo): Record<string, unknown> {
     id: repo.id,
     full_name: repo.fullName,
     name,
+    archived: repo.archived ?? false,
+    archived_at: repo.archivedAt ?? "1970-01-01T00:00:00Z",
     owner: { login: owner },
     description: repo.description ?? "",
     private: repo.private ?? false,

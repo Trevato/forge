@@ -32,6 +32,7 @@ import {
   syncOriginNow,
   type Reattachment,
 } from "../../actions/origins.ts";
+import { hasArchive } from "../../actions/origin_archive.ts";
 import {
   NO_SUCH_ORIGIN,
   connectWords,
@@ -405,6 +406,14 @@ function originCard(origin: Origin, mirrors: number, paused = false): Html {
           variant: "outline",
           icon: "repo",
         })}
+        ${when(hasArchive(origin), () =>
+          btn("Archived", {
+            href: `${base}/archived`,
+            size: "sm",
+            variant: "outline",
+            icon: "clock",
+          }),
+        )}
         <span class="spacer"></span>
         ${confirmAction({
           action: `${base}/delete`,
@@ -952,11 +961,17 @@ function frozenCard({ frozen, repos }: ReturnType<typeof readFrozen>): Html | nu
   );
 }
 
-export function shell(ctx: Ctx, body: Html, status = 200): Response {
+export function shell(
+  ctx: Ctx,
+  body: Html,
+  status = 200,
+  scriptJs?: string,
+): Response {
   return page(
     {
       ctx,
       title: "Origins",
+      ...(scriptJs === undefined ? {} : { scriptJs }),
       body: html`<div class="page-head"><h1>Origins</h1></div>
         ${settingsLayout(
           accountSections("origins", {

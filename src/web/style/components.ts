@@ -460,6 +460,11 @@ a.row:hover .row-title { color: var(--accent); }
 .list > li.has-after > .row, .list > li.has-after > details { flex: 1 1 0; min-width: 0; }
 .row-after { flex: none; padding: 0 14px 0 0; }
 .list > li.has-after > .row-children { flex-basis: 100%; }
+.archived-list .row-title, .archived-list .row-meta { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .archived-list .list > li.has-after > .row { flex-basis: 100%; }
+  .archived-list .row-after { width: 100%; display: flex; justify-content: flex-end; gap: 8px; padding: 0 14px 10px; }
+}
 .row-trail { display: flex; align-items: center; gap: 8px; flex: none; }
 /* The leading glyph is the row's state; a badge repeating it is noise. */
 .row[data-state="open"] .row-lead { color: var(--success); }

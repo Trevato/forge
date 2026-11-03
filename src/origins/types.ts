@@ -258,6 +258,25 @@ export type ProviderError =
   | "unreachable"
   | "invalid_response";
 
+/** A repository archived on the origin, as the recovery page lists it. */
+export interface ArchivedRepo {
+  readonly fullName: string;
+  readonly owner: string;
+  readonly name: string;
+  readonly private: boolean;
+  /** When it was archived, or null when the origin does not say. */
+  readonly archivedAt: string | null;
+  /** The account has admin on it, which is what taking it out needs. */
+  readonly canChange: boolean;
+}
+
+export interface ArchivedPage {
+  readonly items: readonly ArchivedRepo[];
+  /** All the matches across pages, or null when the origin does not say. */
+  readonly total: number | null;
+  readonly hasNext: boolean;
+}
+
 export interface ProviderFailure {
   readonly error: ProviderError;
   readonly message: string;
@@ -496,6 +515,25 @@ export interface Provider {
    * `forbidden` and nothing changed.
    */
   archiveRepo(fullName: string): Promise<ProviderResult<void>>;
+  /** One page of the repositories this token sees archived. Forgejo and Gitea only. */
+  listArchived?(options: {
+    query: string;
+    page: number;
+  }): Promise<ProviderResult<ArchivedPage>>;
+  /**
+   * Take a repository out of the archive and read it back: what the origin
+   * now says, or `null` when it took the change and then gave no answer.
+   */
+  unarchiveRepo?(
+    fullName: string,
+  ): Promise<ProviderResult<{ archived: boolean | null }>>;
+  /**
+   * Whether this token may write repositories at all, asked without changing
+   * anything. `unknown` when the origin's answer does not settle it.
+   */
+  repoWriteReach?(
+    login: string,
+  ): Promise<ProviderResult<"yes" | "unknown" | { missing: readonly string[] }>>;
 
   /**
    * What git needs to talk to this origin over HTTPS with the credential,

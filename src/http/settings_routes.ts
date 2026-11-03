@@ -111,6 +111,7 @@ import {
   originReplaceToken,
   originTrustedHosts,
 } from "../web/pages/origins.ts";
+import { originArchivedPage, originArchivedRestore } from "../web/pages/origin-archived.ts";
 import { originFlowPage, originFlowPoll } from "../web/pages/origin-flow.ts";
 import { originMirrorSubmit, originReposPage } from "../web/pages/origin-repos.ts";
 
@@ -260,6 +261,8 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/origins/flows/:id", originFlowPage);
   router.add("POST", "/settings/origins/flows/:id/poll", originFlowPoll);
   router.add("GET", "/settings/origins/:id/repos", originReposPage);
+  router.add("GET", "/settings/origins/:id/archived", originArchivedPage);
+  router.add("POST", "/settings/origins/:id/archived", originArchivedRestore);
   router.add("POST", "/settings/origins/:id/mirror", originMirrorSubmit);
   // A mirror is a job with stages, so it has a page of its own to watch it
   // on. The literal "mirror" third segment is registered above the :id/:job
