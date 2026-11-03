@@ -17,7 +17,9 @@ the forge's configuration, never in this repository:
 
 ```json
 [{ "name": "backup/postgres", "endpoint": "https://s3.example.com", "bucket": "platform-backups",
-   "prefix": "postgres/", "region": "us-east-1", "accessKey": "…", "secretKey": "…" }]
+   "prefix": "postgres/", "region": "us-east-1", "accessKey": "…", "secretKey": "…",
+   "backsUp": "the platform's Postgres dump, nightly",
+   "afterSpinDown": "ops reads it from the bucket with the restore runbook" }]
 ```
 
 - **List-only keys.** `src/snapshot/lanes.ts` only lists; give each lane keys
@@ -36,6 +38,12 @@ the forge's configuration, never in this repository:
 - **Nothing unsafe printed.** Errors are scrubbed of keys, and every key or
   error the store wrote has its control bytes replaced with `?` before it
   reaches a terminal or an MCP client.
+- **A line per lane (#9067).** `backsUp` (one sentence) and `afterSpinDown` (who
+  reads it once the platform is gone, or `retired`) are optional strings of at
+  most 200 characters, control bytes replaced. A lane missing either shows
+  `No line yet: say what it backs up and who reads it after spin-down` beside
+  its newest object: information, never red. A lane marked `retired` is listed,
+  never read, and never turns the tile red.
 - **Where to see it.** MCP `backups` → `verdict.lanes`; the terminal's
   Resilience dialog; home's backup tile reads the same verdict.
 
@@ -103,20 +111,12 @@ Owner's answer: _pending_. Until it is written, the dump stays where it is.
 
 ### A line per lane
 
-The lane list lives in the forge's configuration, never in the repository, so
-the names are filled in from the Resilience dialog (`verdict.lanes` in the MCP
-`backups` tool), one row each. Every row says what it backs up and one of:
-**read after spin-down** (who, how) or **retired** (on what date, by whom).
-
-| Lane | Backs up | After spin-down |
-| --- | --- | --- |
-| `primary` | the forge's snapshot, platform bucket | the app's bucket; read by the in-process check |
-| `mirror` | the same snapshot, B2 | B2; read by the in-process check and `scripts/backup-probe.ts` |
-| each `backup/<name>` | _fill in from the dialog_ | _read after spin-down, or retired_ |
-
-A lane with no reader after spin-down is retired, and removed from
-`FORGE_BACKUP_LANES` in the same step, so the tile does not go red for a lane
-nobody keeps.
+Each lane's `backsUp` and `afterSpinDown` now live beside it in
+`FORGE_BACKUP_LANES` (the forge's own `primary` and `mirror` say theirs in
+`src/snapshot/bucket.ts`) and show next to its newest object in MCP `backups` →
+`verdict.lanes`, the Resilience dialog and `/settings/backups`. A lane with no
+reader after spin-down is marked `retired` there, so the tile does not go red
+for a lane nobody keeps.
 
 ### Restore drill with the platform unreachable
 

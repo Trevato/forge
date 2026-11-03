@@ -41,11 +41,38 @@ export interface LaneRead {
   readonly error?: string;
   /** When this read ended. */
   readonly readAt: string;
+  /** What the lane backs up, one sentence, from the configuration (#9067). */
+  readonly backsUp?: string;
+  /** Who reads the lane once the platform is gone, or `retired`. */
+  readonly afterSpinDown?: string;
 }
 
-export interface LaneVerdict extends LaneRead {
-  readonly state: "green" | "red";
+/** `retired` in any case: the lane is listed, never read, never red. */
+export const isRetired = (afterSpinDown: string | undefined): boolean => afterSpinDown?.trim().toLowerCase() === "retired";
+
+/** The forge's own lanes say their line here; the platform's say it in `FORGE_BACKUP_LANES`. */
+const OWN_LINES: Record<string, { backsUp: string; afterSpinDown: string }> = {
+  primary: { backsUp: "the forge's snapshot, platform bucket", afterSpinDown: "the app's bucket; read by the in-process check" },
+  mirror: { backsUp: "the same snapshot, B2", afterSpinDown: "B2; read by the in-process check and scripts/backup-probe.ts" },
+};
+
+/** Shown on a lane that has no line: information, never red. */
+export const NO_LINE = "No line yet: say what it backs up and who reads it after spin-down";
+
+/** The two values beside the newest object: each as given, the missing one named; `NO_LINE` when neither is. */
+export function laneLine(backsUp: string | null, afterSpinDown: string | null): string {
+  if (backsUp === null && afterSpinDown === null) return NO_LINE;
+  return `backs up ${backsUp === null ? "(not said)" : printable(backsUp)}; after spin-down: ${afterSpinDown === null ? "(not said)" : printable(afterSpinDown)}`;
+}
+
+export interface LaneVerdict extends Omit<LaneRead, "backsUp" | "afterSpinDown"> {
+  readonly state: "green" | "red" | "retired";
   readonly says: string;
+  /** Both values, or null where the lane has none. */
+  readonly backsUp: string | null;
+  readonly afterSpinDown: string | null;
+  /** What to show beside the newest object: the two values (a missing one named), or `NO_LINE`. */
+  readonly line: string;
 }
 
 export interface BackupVerdict {
@@ -216,6 +243,14 @@ export function judge(
     // Every word a store or the configuration supplied is made printable before it joins the line.
     const lane = printable(r.lane);
     const where = printable(r.where);
+    const own = OWN_LINES[r.lane];
+    const backsUp = r.backsUp ?? own?.backsUp ?? null;
+    const afterSpinDown = r.afterSpinDown ?? own?.afterSpinDown ?? null;
+    const line = laneLine(backsUp, afterSpinDown);
+    if (isRetired(afterSpinDown ?? undefined)) {
+      lanes.push({ ...r, backsUp, afterSpinDown, state: "retired", says: `${lane} retired${backsUp === null ? "" : `: ${printable(backsUp)}`}`, line });
+      continue;
+    }
     if (r.error !== undefined) says = `${lane} (${where}) cannot be read: ${printable(r.error)}`;
     else if (r.newestAt === null) says = `${lane} (${where}) holds no snapshot`;
     else {
@@ -232,9 +267,9 @@ export function judge(
       causes.push(r.error !== undefined ? "unreadable" : r.newestAt === null ? "empty" : "late");
       reasons.push(`${says[0]!.toUpperCase()}${says.slice(1)}.`);
     }
-    lanes.push({ ...r, state: red ? "red" : "green", says });
+    lanes.push({ ...r, backsUp, afterSpinDown, state: red ? "red" : "green", says, line });
   }
-  if (state !== undefined && state.lanes.length === 0) {
+  if (state !== undefined && !lanes.some((l) => l.state !== "retired")) {
     causes.push("no destination");
     reasons.push("No place is given for snapshots; none is being taken.");
   }

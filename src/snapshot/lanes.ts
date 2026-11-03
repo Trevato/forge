@@ -24,7 +24,7 @@
  * error is one line with the lane's keys struck out (`scrubError`).
  */
 
-import { LATE_MS, printable, scrubError, type LaneRead } from "./bucket.ts";
+import { LATE_MS, isRetired, printable, scrubError, type LaneRead } from "./bucket.ts";
 import { isOffBox } from "./off_box.ts";
 import { s3Where, type S3Target } from "./store.ts";
 
@@ -161,10 +161,27 @@ export function s3Lister(target: S3Target): Lister {
 const NAME = /^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,63}$/;
 const BUCKET = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
 
+/** The longest `backsUp` or `afterSpinDown` a lane may carry. */
+export const LINE_MAX = 200;
+
+/** What a lane says of itself: what it backs up, and who reads it once the platform is gone (or `retired`). */
+export interface LaneLine {
+  readonly backsUp?: string | undefined;
+  readonly afterSpinDown?: string | undefined;
+}
+
+/** One optional sentence: a string of at most `LINE_MAX`, control bytes replaced; `false` when it is not one. */
+function sentence(v: unknown): string | undefined | false {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string" || v.length > LINE_MAX) return false;
+  const t = printable(v).trim();
+  return t === "" ? undefined : t;
+}
+
 const text = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined);
 
 /** One declared lane, or why it is refused; the sentence never carries a value but the name. */
-function declared(raw: unknown, i: number): { name: string; target: S3Target; prefix: string } | { name: string; refused: string } {
+function declared(raw: unknown, i: number): { name: string; target: S3Target; prefix: string; line: LaneLine } | { name: string; refused: string } {
   const o = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const given = text(o["name"]);
   const name = given !== undefined && NAME.test(given) ? given : `lane ${i + 1}`;
@@ -190,11 +207,20 @@ function declared(raw: unknown, i: number): { name: string; target: S3Target; pr
   const region = o["region"] === undefined ? undefined : text(o["region"]);
   if (o["region"] !== undefined && (region === undefined || !/^[A-Za-z0-9-]{1,32}$/.test(region)))
     return { name, refused: "its region is not a region name" };
-  return { name, prefix, target: { endpoint: url.href.replace(/\/$/, ""), bucket, accessKeyId, secretAccessKey, region } };
+  const backsUp = sentence(o["backsUp"]);
+  const afterSpinDown = sentence(o["afterSpinDown"]);
+  if (backsUp === false || afterSpinDown === false)
+    return { name, refused: `its backsUp or afterSpinDown is not a string of at most ${LINE_MAX} characters` };
+  return {
+    name,
+    prefix,
+    line: { backsUp, afterSpinDown },
+    target: { endpoint: url.href.replace(/\/$/, ""), bucket, accessKeyId, secretAccessKey, region },
+  };
 }
 
 export interface Declared {
-  readonly lanes: readonly { name: string; target: S3Target; prefix: string }[];
+  readonly lanes: readonly { name: string; target: S3Target; prefix: string; line: LaneLine }[];
   /** Lanes the configuration names but that do not read whole: each a red lane on the screen. */
   readonly refused: readonly { name: string; says: string }[];
 }
@@ -239,7 +265,23 @@ export async function readDeclaredLanes(
 ): Promise<LaneRead[]> {
   const { lanes, refused } = parseLanes(env["FORGE_BACKUP_LANES"]);
   const read = await Promise.all(
-    lanes.map((d) => readObjectLane({ name: d.name, prefix: d.prefix, lister: listerFor(d.target), target: d.target }, now)),
+    lanes.map(async (d): Promise<LaneRead> => {
+      const line = { ...(d.line.backsUp === undefined ? {} : { backsUp: d.line.backsUp }), ...(d.line.afterSpinDown === undefined ? {} : { afterSpinDown: d.line.afterSpinDown }) };
+      // A retired lane is listed, never read: its store may be gone.
+      if (isRetired(d.line.afterSpinDown))
+        return {
+          lane: d.name,
+          where: s3Where(d.target),
+          offBox: false,
+          newestAt: null,
+          newestName: null,
+          newestBytes: null,
+          count: 0,
+          readAt: new Date(now).toISOString(),
+          ...line,
+        };
+      return { ...(await readObjectLane({ name: d.name, prefix: d.prefix, lister: listerFor(d.target), target: d.target }, now)), ...line };
+    }),
   );
   return [
     ...read,

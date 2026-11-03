@@ -25,6 +25,7 @@ import {
   type LanePage,
   type Lister,
 } from "../src/snapshot/lanes.ts";
+import { startSnapshots, type SnapshotsHandle } from "../src/snapshot/service.ts";
 import { dirStore } from "../src/snapshot/store.ts";
 import { verdictLines } from "../src/tui/screens/resilience.ts";
 
@@ -193,7 +194,7 @@ describe("configuration", () => {
     const got = parseLanes(JSON.stringify([lane]));
     expect(got.refused).toEqual([]);
     expect(got.lanes).toEqual([
-      { name: "backup/postgres", prefix: "pg/", target: { endpoint: "https://s3.test", bucket: "backups", accessKeyId: ACCESS, secretAccessKey: SECRET, region: undefined } },
+      { name: "backup/postgres", prefix: "pg/", line: { backsUp: undefined, afterSpinDown: undefined }, target: { endpoint: "https://s3.test", bucket: "backups", accessKeyId: ACCESS, secretAccessKey: SECRET, region: undefined } },
     ]);
   });
 
@@ -367,3 +368,129 @@ describe("the S3 lister asks for one delimited page", () => {
   });
 });
 
+describe("a line per lane (#9067)", () => {
+  const lane = { name: "backup/postgres", endpoint: "https://s3.test", bucket: "backups", prefix: "pg/", accessKey: ACCESS, secretKey: SECRET };
+  const fresh = { "pg/2026-11-02T10:00:00Z/dump": { bytes: 10, at: NOW - H } };
+  const env = (lanes: object[]) => ({ FORGE_BACKUP_LANES: JSON.stringify(lanes) });
+  const verdictOf = async (lanes: object[], listerFor?: (t: unknown) => Lister) => {
+    const read = await readDeclaredLanes(env(lanes), NOW, listerFor as never ?? (() => fakeStore(fresh).lister));
+    return judge({ lanes: read, checkedAt: new Date(NOW).toISOString() }, undefined, NOW);
+  };
+
+  test("a lane with both values shows them", async () => {
+    const v = await verdictOf([{ ...lane, backsUp: "the postgres dump", afterSpinDown: "ops, from B2" }]);
+    expect(v.lanes[0]!.line).toBe("backs up the postgres dump; after spin-down: ops, from B2");
+    expect(v.lanes[0]!.state).toBe("green");
+  });
+
+  test("a lane with neither says there is no line, and stays green", async () => {
+    const v = await verdictOf([lane]);
+    expect(v.lanes[0]!.line).toBe("No line yet: say what it backs up and who reads it after spin-down");
+    expect(v.state).not.toBe("red");
+    expect(v.lanes[0]!.state).toBe("green");
+  });
+
+  test("a lane with one value shows it and names the missing one", async () => {
+    const a = await verdictOf([{ ...lane, backsUp: "the postgres dump" }]);
+    expect(a.lanes[0]!.line).toBe("backs up the postgres dump; after spin-down: (not said)");
+    const b = await verdictOf([{ ...lane, afterSpinDown: "ops, from B2" }]);
+    expect(b.lanes[0]!.line).toBe("backs up (not said); after spin-down: ops, from B2");
+  });
+
+  test("values are bounded, typed and printable; no key reaches the line", async () => {
+    expect(parseLanes(JSON.stringify([{ ...lane, backsUp: 7 }])).refused).toHaveLength(1);
+    expect(parseLanes(JSON.stringify([{ ...lane, afterSpinDown: "x".repeat(201) }])).refused).toHaveLength(1);
+    const v = await verdictOf([{ ...lane, backsUp: "a\u001b[31mb", afterSpinDown: "ops" }]);
+    expect(v.lanes[0]!.line).not.toContain("\u001b");
+    expect(JSON.stringify(v)).not.toContain(SECRET);
+  });
+
+  test("a retired lane with an unreachable store is listed, never read, and the verdict stays green", async () => {
+    const boom: Lister = { where: "gone.test/b", async page() { throw new Error("connection refused"); } };
+    const v = await verdictOf(
+      [lane, { ...lane, name: "backup/old", bucket: "oldb", backsUp: "the old thing", afterSpinDown: "retired" }],
+      (t: any) => (t.bucket === "oldb" ? boom : fakeStore(fresh).lister),
+    );
+    const old = v.lanes.find((l) => l.lane === "backup/old")!;
+    expect(old.state).toBe("retired");
+    expect(old.says).toContain("retired");
+    expect(v.reasons).toEqual([]);
+    expect(v.state).not.toBe("red");
+  });
+
+  test("a retired lane's store is never asked", async () => {
+    let asked = 0;
+    const read = await readDeclaredLanes(env([{ ...lane, afterSpinDown: "Retired" }]), NOW, () => {
+      asked++;
+      return fakeStore(fresh).lister;
+    });
+    expect(read[0]!.error).toBeUndefined();
+    expect(asked).toBe(0);
+    expect(read[0]!.newestAt).toBeNull();
+  });
+});
+
+describe("the lanes in the web door and the terminal (#9067)", () => {
+  let root = "";
+  let app: App;
+  let servers: Servers;
+  let stop: () => void;
+  let svc: SnapshotsHandle;
+  const fresh = { "pg/2026-11-02T10:00:00Z/dump": { bytes: 10, at: Date.now() - H } };
+  const lane = { name: "backup/pg", endpoint: "https://s3.test", bucket: "backups", prefix: "pg/", accessKey: ACCESS, secretKey: SECRET };
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "forge-lanes-door-"));
+    app = createApp({ dataDir: root, port: 0 });
+    const u = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "a@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    if (!u.ok) throw new Error(u.error);
+    // The page draws only where a snapshot service is running.
+    svc = startSnapshots(app, dirStore(join(root, "store")), { version: "t", nightly: false });
+    servers = await serve(app);
+    const env = {
+      FORGE_BACKUP_LANES: JSON.stringify([
+        { ...lane, backsUp: "the postgres dump", afterSpinDown: "ops, from B2" },
+        { ...lane, name: "backup/bare", bucket: "bare" },
+        { ...lane, name: "backup/old", bucket: "old", backsUp: "the old thing", afterSpinDown: "retired" },
+      ]),
+    };
+    const w = watchBucket(root, () => [], 3_600_000, 3_600_000, () => [], (now) => readDeclaredLanes(env, now, () => fakeStore(fresh).lister));
+    stop = w.stop;
+    await w.pass();
+  });
+  afterAll(async () => {
+    stop();
+    await svc.stop();
+    await servers.stop();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("/settings/backups lists each lane as a row, with its line, the missing line said, and a retired mark", async () => {
+    const r = await fetch(`${servers.url}/settings/backups`, { headers: { cookie: await login() } });
+    const t = await r.text();
+    const li = (name: string) => t.split("<li").find((x) => x.includes(`data-lane="${name}"`)) ?? "";
+    expect(li("backup/pg")).toContain("backs up the postgres dump; after spin-down: ops, from B2");
+    expect(li("backup/pg")).toContain('data-lane-state="green"');
+    expect(li("backup/bare")).toContain("No line yet: say what it backs up and who reads it after spin-down");
+    expect(li("backup/old")).toContain('data-lane-state="retired"');
+    expect(li("backup/old")).toContain("retired");
+    expect(li("backup/old")).toContain('class="badge"');
+    expect(t).toContain('class="list setting-list"');
+  });
+
+  test("the terminal's verdict lines carry each lane's line", () => {
+    const text = verdictLines({ app } as never).join("\n");
+    expect(text).toContain("backs up the postgres dump; after spin-down: ops, from B2");
+    expect(text).toContain("No line yet");
+  });
+
+  async function login(): Promise<string> {
+    const r = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      headers: { origin: servers.url },
+      body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+      redirect: "manual",
+    });
+    return (r.headers.get("set-cookie") ?? "").split(";")[0]!;
+  }
+});

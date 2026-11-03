@@ -108,7 +108,7 @@ export function verdictLines(f: Session): string[] {
   return [
     ...wrap(`Backups ${mark}: ${v.line}`, INNER),
     ...wrap(`  ${v.checkLine}`, INNER),
-    ...v.lanes.flatMap((l) => wrap(`  ${l.state === "red" ? "!" : " "} ${l.says}`, INNER)),
+    ...v.lanes.flatMap((l) => wrap(`  ${l.state === "red" ? "!" : " "} ${l.says}`, INNER).concat(wrap(`      ${l.line}`, INNER))),
     ...[...v.reasons, ...v.unknowns].flatMap((r) => wrap(`  - ${r}`, INNER)),
   ];
 }
