@@ -19,6 +19,7 @@ import { canAdmin, forkParentFor, visibleForks } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { getFollow } from "../../core/upstream_follow.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { loadRepo, pageParams, slicePage } from "../api.ts";
 import type { Handler } from "../context.ts";
 import { apiError, body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
@@ -90,8 +91,10 @@ export function upstreamRoutes(router: Router<Handler>): void {
       return ranked;
     });
     const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
-    return timePhase(ctx.request, "render", () =>
-      json({
+    // The tag is of the exact bytes sent: a fork made, pushed or hidden, or a parent that moved, changes
+    // the body; limit and cursor choose the page. A 404 or bad page returned above carries none.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({
         parent: parent === undefined ? null : `${parent.ownerName}/${parent.name}`,
         items: drifts.map(({ fork, drift, pushedAt }) => ({
           ...fork,
@@ -100,8 +103,12 @@ export function upstreamRoutes(router: Router<Handler>): void {
           updatedAt: pushedAt,
         })),
         next_cursor,
-      }),
-    );
+      });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
