@@ -34,13 +34,8 @@ interface Kept {
 }
 
 const kept = new WeakMap<App, Map<string, Kept>>();
-let builds = 0;
-
-/** How many times a view was built rather than reused (the cost test reads it). */
-export const viewBuilds = (): number => builds;
 
 export function forgeView(ctx: Pick<Ctx, "app">, user: User): ForgeView {
-  builds++;
   const { repos, records } = appsOf(ctx, user);
   const runs = crewNow(ctx, user);
   const tally = new Map<string, { running: number; queued: number }>();

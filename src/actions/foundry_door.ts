@@ -20,11 +20,6 @@ export const DOOR_TTL_MS = 5000;
 
 const kept = new WeakMap<App, Map<string, { at: number; href: string | undefined }>>();
 
-/** Forget the held answers (a test that installs or removes the app). */
-export function forgetFoundryDoor(app: App): void {
-  kept.delete(app);
-}
-
 /**
  * Foundry's open address for `user`, or undefined. The common forge has no
  * app with the slug, so that one indexed read comes first and ends the work;

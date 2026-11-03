@@ -8,8 +8,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { foundryHref, forgetFoundryDoor } from "../src/actions/foundry_door.ts";
-import { forgeView, VIEW_APPS, viewBuilds } from "../src/actions/forge_view.ts";
+import { DOOR_TTL_MS, foundryHref } from "../src/actions/foundry_door.ts";
+import { forgeView, VIEW_APPS } from "../src/actions/forge_view.ts";
 import { createApp as createAppRecord } from "../src/core/apps.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
@@ -27,6 +27,19 @@ import { listActiveRuns } from "../src/core/runs.ts";
 import type { Ctx } from "../src/http/context.ts";
 
 quietLogs();
+
+/** Let the door's held answers expire: the clock moves past the window. */
+const realNow = Date.now;
+let skew = 0;
+const lapse = () => {
+  skew += DOOR_TTL_MS + 1;
+};
+beforeAll(() => {
+  Date.now = () => realNow() + skew;
+});
+afterAll(() => {
+  Date.now = realNow;
+});
 
 const APPS = 120;
 
@@ -84,7 +97,6 @@ describe("the forge view over the API", () => {
 
   test("polling costs one build per window and a held ETag is a 304", async () => {
     await get(ro);
-    const before = viewBuilds();
     const selects: string[] = [];
     const original = app.db.query.bind(app.db);
     (app.db as unknown as { query: unknown }).query = (sql: string) => {
@@ -99,7 +111,6 @@ describe("the forge view over the API", () => {
     } finally {
       (app.db as unknown as { query: unknown }).query = original;
     }
-    expect(viewBuilds() - before).toBeLessThanOrEqual(1);
     // Reads of the view itself stay few, however many apps and runs: the
     // statements are per-request constants, not per app (the token lookup
     // and session reads are all that remain on a cached answer).
@@ -161,7 +172,7 @@ describe("the forge view over the API", () => {
     if (!fake.ok) throw new Error(String(fake.error));
     app.db.query("UPDATE repo SET owner_id = ?1 WHERE id = ?2").run(mallory.value.id, fake.value.id);
     createAppRecord(app.db, { repoId: fake.value.id, slug: "foundry", access: "public" });
-    forgetFoundryDoor(app);
+    lapse();
     expect(door()).toBeUndefined();
     expect(await homeAndPalette(adminUser.id)).toEqual({ button: false, row: false });
     expect(lines().lines[1]).toContain("not installed");
@@ -170,7 +181,7 @@ describe("the forge view over the API", () => {
     const repo = await createRepo(app, adminUser, { name: "foundry", visibility: "public" });
     if (!repo.ok) throw new Error(String(repo.error));
     createAppRecord(app.db, { repoId: repo.value.id, slug: "foundry", access: "public" });
-    forgetFoundryDoor(app);
+    lapse();
     expect(door()).toBe("/ada/foundry/app/production/open");
     expect(foundryHref(app, undefined)).toBeUndefined();
     expect(await homeAndPalette(adminUser.id)).toEqual({ button: true, row: true });
@@ -187,7 +198,7 @@ describe("the forge view over the API", () => {
     createAppRecord(app.db, { repoId: made.value.id, slug: "foundry", access: "public" });
     const reader = await createUser(app.db, { username: "reader", email: "r@forge.example", password: "a-long-passphrase-here", origin: "seed", trusted: true });
     if (!reader.ok) throw new Error(reader.error);
-    forgetFoundryDoor(app);
+    lapse();
     expect(foundryHref(app, reader.value)).toBe("/trevato/foundry/app/production/open");
     // The answer is held, so the next page render costs no read.
     const seen: string[] = [];
@@ -207,7 +218,7 @@ describe("the forge view over the API", () => {
     expect(screen.key!({ key: "enter" } as never)).toBe(true);
     expect(opened.join()).toContain("/trevato/foundry/app/production/open");
     app.db.query("DELETE FROM app WHERE slug = 'foundry'").run();
-    forgetFoundryDoor(app);
+    lapse();
     const none = forgeViewScreen(session, ctxT);
     opened.length = 0;
     expect(none.key!({ key: "enter" } as never)).toBe(false);

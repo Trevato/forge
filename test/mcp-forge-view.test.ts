@@ -8,7 +8,6 @@ import { createApp as createAppRecord } from "../src/core/apps.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { createRepo } from "../src/actions/repos.ts";
-import { viewBuilds } from "../src/actions/forge_view.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
 import { proveAll } from "./helpers/verified.ts";
@@ -82,10 +81,17 @@ test("a ro token lists the tool and is answered; polling builds once", async () 
   const listed = ((await res.json()) as any).result.tools.find((t: any) => t.name === "forge_view");
   expect(listed).toBeDefined();
   expect(listed.inputSchema.properties).toEqual({});
-  const before = viewBuilds();
-  const first = await mcpTool(servers.url, adaRo, "forge_view", {});
-  expect(first.error).toBeUndefined();
-  await mcpTool(servers.url, adaRo, "forge_view", {});
-  await api(adaRo);
-  expect(viewBuilds() - before).toBeLessThanOrEqual(1);
+  // A build reads the runs once; three calls in one window may build once.
+  const selects: string[] = [];
+  const original = app.db.query.bind(app.db);
+  (app.db as unknown as { query: unknown }).query = (sql: string) => (selects.push(sql), original(sql));
+  try {
+    const first = await mcpTool(servers.url, adaRo, "forge_view", {});
+    expect(first.error).toBeUndefined();
+    await mcpTool(servers.url, adaRo, "forge_view", {});
+    await api(adaRo);
+  } finally {
+    (app.db as unknown as { query: unknown }).query = original;
+  }
+  expect(selects.filter((q) => /FROM run\b/.test(q)).length).toBeLessThanOrEqual(1);
 });
