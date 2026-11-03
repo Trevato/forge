@@ -23,6 +23,7 @@ import { entry as crewSplits } from "./crewsplits.ts";
 import { entry as domains } from "./domains.ts";
 import { entry as edgeOnly } from "./edgeonly.ts";
 import { entry as feed } from "./feed.ts";
+import { entry as forgeView } from "./forgeview.ts";
 import { entry as front } from "./front.ts";
 import { entry as forges } from "./forges.ts";
 import { entry as homePins } from "./home_pins.ts";
@@ -109,6 +110,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   originAhead,
   profile,
   now,
+  forgeView,
   repos,
   newIssue,
 ];

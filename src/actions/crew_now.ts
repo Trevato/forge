@@ -21,7 +21,7 @@ import type { Ctx } from "../http/context.ts";
 import type { User } from "../core/users.ts";
 
 /** Rows of the crew's work as `user` may see them (none for no one). */
-export function crewNow(ctx: Ctx, user: User) {
+export function crewNow(ctx: Pick<Ctx, "app">, user: User) {
   const { repos } = appsOf(ctx, user);
   const byId = new Map(repos.map((r) => [r.id, r]));
   // A private app's runs are for those who may enter it (`mayReadRuns`).

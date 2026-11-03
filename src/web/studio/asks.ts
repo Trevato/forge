@@ -68,7 +68,7 @@ import { NO_LONGER_ASKS } from "../../actions/asks_words.ts";
 /** Repos narrowed to those with an app record, with the records — the one
  * join `appsOf` and `writableAppsOf` share. */
 function appsFiltered(
-  ctx: Ctx,
+  ctx: Pick<Ctx, "app">,
   repos: readonly Repo[],
 ): { repos: Repo[]; records: ReturnType<typeof appsForRepos> } {
   const records = appsForRepos(
@@ -83,7 +83,7 @@ function appsFiltered(
  * Everyone's public apps sit in this list beside the viewer's own: right
  * for search, the palette and the asks count, wrong for a shelf headed
  * "your apps" — that reading is `writableAppsOf`. */
-export function appsOf(ctx: Ctx, user: User | undefined, archived = false) {
+export function appsOf(ctx: Pick<Ctx, "app">, user: User | undefined, archived = false) {
   return appsFiltered(
     ctx,
     listReposVisibleTo(

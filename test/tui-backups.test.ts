@@ -17,7 +17,7 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp } from "./helpers/tui.ts";
+import { settleApp, settlePalette } from "./helpers/tui.ts";
 
 quietLogs();
 
@@ -83,6 +83,7 @@ describe("the snapshot destination in the terminal", () => {
       key("k", true);
       await settleApp(app);
       await type("Resilience");
+      await settlePalette(app);
       return press("enter");
     };
     return { text: frame, press, type, open, stop: () => app.stop() };

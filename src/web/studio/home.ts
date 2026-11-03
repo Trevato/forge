@@ -6,6 +6,7 @@
  * best of what is public (`actions/front.ts`).
  */
 
+import { foundryHref } from "../../actions/foundry_door.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { liveLine } from "../pages/releases.ts";
 import {
@@ -119,6 +120,7 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
     });
   });
   const archived = archivedAppCount(ctx);
+  const foundry = foundryHref(ctx.app, ctx.auth.user);
   const list = html`${rows.length === 0
         ? html`<p class="muted small">No apps yet.</p>`
         : html`<ul class="list">
@@ -135,6 +137,7 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
         ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
         ${btn("Audit", { href: "/audit", size: "sm", icon: "shield" })}
         ${btn("Board", { href: "/board", size: "sm", icon: "activity" })}
+        ${foundry === undefined ? "" : btn("Foundry", { href: foundry, size: "sm", icon: "eye" })}
         ${when(user.isAdmin, () =>
           btn("Front page", { href: "/front", size: "sm", icon: "globe" }),
         )}

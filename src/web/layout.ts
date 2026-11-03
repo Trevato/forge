@@ -13,6 +13,7 @@ import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch
 import { protectionNotice } from "../kernel/protection.ts";
 import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
+import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   enterableApps,
@@ -423,6 +424,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     return app !== undefined && enterable.has(app.id) ? [app] : [];
   });
   const states = open.length > 0 ? appsRuntime(ctx.app)?.statusMany(open) : undefined;
+  const foundry = foundryHref(ctx.app, ctx.auth.user);
   const items: PaletteItem[] = [
     ...extra,
     ...repos.map((r): PaletteItem => {
@@ -460,6 +462,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     ...(sendsForges(ctx)
       ? [{ t: "New forge", h: "/forges/new", c: "Create" }]
       : []),
+    ...(foundry === undefined ? [] : [{ t: "Foundry", h: foundry, c: "Go to" }]),
     ...(ctx.auth.user?.isAdmin
       ? [
           { t: "System", h: "/system", c: "Go to" },
