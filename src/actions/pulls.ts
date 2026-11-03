@@ -65,8 +65,9 @@ import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
 import { coAuthorLines, messagesBetween } from "../git/coauthors.ts";
-import { carriedSummary, resolveOid, type MergeStrategy } from "../git/merge.ts";
-import { landingKind, thanksNote } from "../core/landing_kind.ts";
+import { resolveOid, type MergeStrategy } from "../git/merge.ts";
+import { landingKind } from "../core/landing_kind.ts";
+import { thankAuthor } from "../origins/thanks.ts";
 import { repoDir } from "../git/repos.ts";
 import { importIssue, importReviewStates } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -501,14 +502,6 @@ export async function mergePull(
     ...kept,
     ...(from === undefined ? [] : [sourceTrailers(from, ownHost(app.config))]),
   ].join("\n");
-  const carriedBefore =
-    strategy === "merge" && pull.crossRepo
-      ? await carriedSummary(
-          baseDir,
-          (await resolveOid(baseDir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid,
-          (getPull(app.db, repo.id, pull.number) ?? pull).headOid,
-        )
-      : undefined;
   const merged = await landPull(
     app.db,
     baseDir,
@@ -533,21 +526,12 @@ export async function mergePull(
     },
   );
   if (!merged.ok) return merged;
-  if (carriedBefore !== undefined) {
-    const thanks = thanksNote({ number: pull.number, ...carriedBefore });
-    const noted = addIssueComment(app.db, {
-      issueId: pull.id,
-      authorId: writer.value.id,
-      body: thanks,
-    });
-    if (noted.ok)
-      app.bus.append({
-        kind: "pull.commented",
-        repoId: repo.id,
-        actorId: writer.value.id,
-        payload: { number: pull.number, body: thanks, commentId: noted.value.id },
-      });
-  }
+  // Its author, when they live elsewhere, reads what landed and what changed on the way (#9013).
+  await thankAuthor(app, repo, getPull(app.db, repo.id, pull.number) ?? pull, {
+    mergeOid: merged.value.mergeOid,
+    strategy,
+    by: writer.value.id,
+  });
   // What came of the decision to show it, when there was one.
   resolveOpen(app.db, pull.id, "land", "shipped");
   app.bus.append({

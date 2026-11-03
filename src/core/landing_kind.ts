@@ -32,18 +32,3 @@ export function landingKind(
 ): MergeStrategy {
   return fromKeptFork(db, pull) ? "merge" : asked;
 }
-
-/** The note the author reads when their work landed: what came across and under which names. */
-export function thanksNote(landed: {
-  readonly number: number;
-  readonly commits: number;
-  readonly authors: readonly string[];
-  readonly files: number;
-}): string {
-  const who = landed.authors.length === 0 ? "you" : landed.authors.join(", ");
-  return [
-    `Thank you: pull #${landed.number} landed as a merge, so your commits are ancestors of main and \`git merge main\` on your side stays clean.`,
-    `${landed.commits} commit${landed.commits === 1 ? "" : "s"} by ${who} touched ${landed.files} file${landed.files === 1 ? "" : "s"}.`,
-  ]
-    .join("\n");
-}
