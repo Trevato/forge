@@ -18,6 +18,7 @@ describe("GET /api/v1/releases", () => {
   let servers: Servers;
   let admin: string;
   let bob: string;
+  let repoId: Parameters<typeof recordRelease>[1]["repoId"];
   const saved = process.env["FORGE_COMMIT"];
   const get = (query: string, token?: string) =>
     fetch(`${servers.url}/api/v1/releases${query}`, token ? { headers: { authorization: `Bearer ${token}` } } : {});
@@ -41,6 +42,7 @@ describe("GET /api/v1/releases", () => {
     bob = createToken(app.db, b.id, "b", "admin").token;
     const made = await createRepo(app, alice, { name: "forge", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));
+    repoId = made.value.id;
     recordRelease(app.db, { sha: LIVE, repoId: made.value.id, pullNumber: 2, ok: true, line: "ok" });
   }, 30_000);
 
@@ -86,6 +88,54 @@ describe("GET /api/v1/releases", () => {
       expect(res.status).toBe(422);
       expect(((await res.json()) as any).error).toBe("invalid_shipped");
     }
+  });
+
+  test("each 200 carries an etag; a repeat gets 304; a new shipped release changes the tag", async () => {
+    const again = async (query: string, token?: string) => {
+      const first = await get(query, token);
+      expect(first.status).toBe(200);
+      const etag = first.headers.get("etag")!;
+      expect(etag).toMatch(/^W\//);
+      await first.text();
+      const headers: Record<string, string> = { "if-none-match": etag };
+      if (token) headers["authorization"] = `Bearer ${token}`;
+      const second = await fetch(`${servers.url}/api/v1/releases${query}`, { headers });
+      expect(second.status).toBe(304);
+      expect(second.headers.get("etag")).toBe(etag);
+      expect(await second.text()).toBe("");
+      return { etag, first };
+    };
+    const shipped = await again("?shipped=true");
+    expect(shipped.first.headers.get("cache-control")).toBe("public, max-age=60");
+    const kept = await again("", admin);
+    expect(kept.first.headers.get("cache-control")).toBe("private, no-cache");
+    expect(kept.first.headers.get("vary")).toStartWith("authorization, cookie");
+
+    // A reader now refused never gets a 304, even holding the tag.
+    const refused = await fetch(`${servers.url}/api/v1/releases`, {
+      headers: { authorization: `Bearer ${bob}`, "if-none-match": kept.etag },
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("etag")).toBeNull();
+
+    recordRelease(app.db, { sha: "b".repeat(40), repoId, pullNumber: 3, ok: true, line: "ok" });
+    // What ?shipped=true reads is the merged pulls: a new one landing changes its tag.
+    const author = app.db.query<{ id: string }, []>("SELECT id FROM user LIMIT 1").get()!.id;
+    const branch = app.db.query<{ default_branch: string }, [string]>("SELECT default_branch FROM repo WHERE id = ?1").get(repoId as string)!.default_branch;
+    app.db.query(`INSERT INTO issue (id, repo_id, number, kind, title, author_id, state) VALUES ('ship-new', ?1, 3, 'pull', 'A new landing', ?2, 'closed')`).run(repoId as string, author);
+    app.db.query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at, merged_oid) VALUES ('ship-new', ?1, 'b', 'base', '', '2026-10-09T10:00:00.000Z', 'oid-new')`).run(branch);
+    const newShipped = await fetch(`${servers.url}/api/v1/releases?shipped=true`, { headers: { "if-none-match": shipped.etag } });
+    expect(newShipped.status).toBe(200);
+    expect(newShipped.headers.get("etag")).not.toBe(shipped.etag);
+    const after = await get("", admin);
+    expect(after.status).toBe(200);
+    expect(after.headers.get("etag")).not.toBe(kept.etag);
+  });
+
+  test("an invalid shipped carries no etag", async () => {
+    const res = await get("?shipped=maybe");
+    expect(res.status).toBe(422);
+    expect(res.headers.get("etag")).toBeNull();
   });
 
   test("the OpenAPI document lists the route", async () => {
