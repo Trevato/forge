@@ -47,6 +47,9 @@ export const PREVIEW_BETS_PAGE = `${PREVIEW_REPO_HOME}/bets`;
 /** The waves page, whose long headlines must wrap at a 390 px phone (#9325). */
 export const PREVIEW_WAVES_PAGE = `${PREVIEW_REPO_HOME}/waves`;
 
+/** The issues list, whose long titles must wrap at a 390 px phone (#9344). */
+export const PREVIEW_ISSUES_PAGE = `${PREVIEW_REPO_HOME}/issues`;
+
 /** The pulls list, whose long titles must wrap at a 390 px phone (#9346). */
 export const PREVIEW_PULLS_PAGE = `${PREVIEW_REPO_HOME}/pulls`;
 
@@ -85,6 +88,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_BETS_PAGE,
   PREVIEW_WAVES_PAGE,
   PREVIEW_PULLS_PAGE,
+  PREVIEW_ISSUES_PAGE,
 ].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));
 
 /**

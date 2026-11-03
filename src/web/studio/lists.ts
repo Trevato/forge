@@ -381,6 +381,15 @@ export function tellsListActions(o: {
 }
 
 /**
+ * An issue's title is the writer's words, so inside `[data-tells]` a row wraps
+ * them (a long word breaks anywhere) in place of the one-line ellipsis, and the
+ * page never scrolls sideways at 390 px. No new class.
+ */
+export const TELLS_CSS = `[data-tells] { overflow-wrap: anywhere; }
+[data-tells] .row-title, [data-tells] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-tells] .row { align-items: flex-start; }`;
+
+/**
  * GET /:owner/:name/issues: every issue, for every
  * repository and every viewer — one row per issue in its studio word, who
  * has it, its labels, when it last moved, and the tell itself as the row's
@@ -515,7 +524,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
       : html`${reports ?? null} ${compose} ${outside ?? null} ${signIn}`;
 
   const body = html`${repoHeader(ctx, repo, "issues")}
-    <div class="mt">
+    <div class="mt" data-tells>
       ${wordFilterBar(
         (word) => facetHref(listBase, f, { word }),
         f.word,
@@ -548,7 +557,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
       }),
     ],
     body,
-    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
+    styleCss: `${TELLS_CSS}\n${labelCss([...repoLabels, ...[...labels.values()].flat()])}`,
     scriptJs: liveClientJs,
   });
   notePhase(ctx.request, "render", performance.now() - at);
