@@ -8,7 +8,7 @@ import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../share
 
 export const tool: Tool = {
   name: "say",
-  doc: "speak on an issue or a pull; a working builder hears it as its next step. With no `repo` or `number` it speaks to the forge's own agent (`forge talk`), which answers in `GET /api/v1/conversation/turns`. `conversation` names one of your conversations (default: the latest); `action` list | new | rename | archive | restore manages them (`title` for rename and new)",
+  doc: "`{ repo?, number?, text?, conversation?, action?, title?, archived? }`: speak on an issue or a pull; a working builder hears it as its next step. With no `repo` or `number` it speaks to the forge's own agent (`forge talk`), which answers in `GET /api/v1/conversation/turns`. `conversation` names one of your conversations (default: the latest); `action` list | new | rename | archive | restore manages them (`title` for rename and new; `archived` lists archived ones)",
   description:
     "Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action).",
   inputSchema: {

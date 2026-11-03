@@ -4,7 +4,7 @@ import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../share
 
 export const tool: Tool = {
   name: "stop",
-  doc: "stop one run by its id from `now`; with no `repo` it stops the forge's own agent mid-answer",
+  doc: "`{ repo?, run? }`: stop one run by its id from `now`; with no `repo` it stops the forge's own agent mid-answer",
   description:
     "Stop a crew run by its id from `now`; with no repo, the forge's own agent mid-answer.",
   inputSchema: {

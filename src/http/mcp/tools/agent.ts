@@ -4,7 +4,7 @@ import { good, bad, type Tool, str } from "../shared.ts";
 
 export const tool: Tool = {
   name: "agent",
-  doc: "`{ action, username, … }`: `create` a crew agent, `update` its `model`, `brief`, `budgetUsd` or `roles` (planner, builder, reviewer), or `remove` it; an admin's, with an `admin` token, as `/api/v1/agents`",
+  doc: "`{ action, username, displayName?, model?, brief?, budgetUsd?, roles? }`: `create` a crew agent (with a `displayName`), `update` its `model`, `brief`, `budgetUsd` or `roles` (planner, builder, reviewer), or `remove` it; an admin's, with an `admin` token, as `/api/v1/agents`",
   description: "Admin: create|update|remove an agent.",
   inputSchema: {
     type: "object",

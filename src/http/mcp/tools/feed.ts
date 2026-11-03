@@ -5,7 +5,7 @@ import { good, bad, type Tool, CHIP_ARGS, chipArgs, str } from "../shared.ts";
 
 export const tool: Tool = {
   name: "feed",
-  doc: "`{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed`; `digest` (first page only) is home's \"Since you were here\" card, `{ heading, lines: [{ repo, says, href }] }` or null; `quietRuns` counts agent runs of the last 24 h that pushed, opened or said nothing, which the timeline leaves out; an item with `lines: [{ text, link }]` and `more` is a folded burst (3+ issues one author opened in one repository within 2 minutes: `planned N issues in owner/name`, linking to its map) — `lines` are the first three, `more` the rest",
+  doc: "`{ limit?, cursor?, hide_kinds?, hide_people? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed`; `digest` (first page only) is home's \"Since you were here\" card, `{ heading, lines: [{ repo, says, href }] }` or null; `quietRuns` counts agent runs of the last 24 h that pushed, opened or said nothing, which the timeline leaves out; an item with `lines: [{ text, link }]` and `more` is a folded burst (3+ issues one author opened in one repository within 2 minutes: `planned N issues in owner/name`, linking to its map) — `lines` are the first three, `more` the rest",
   description:
     "Your ranked home timeline; `cursor` pages; saved filter applies.",
   inputSchema: {

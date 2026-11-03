@@ -3,7 +3,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, issueArg, isAnswer } from "../
 
 export const tool: Tool = {
   name: "edit",
-  doc: "a new title or body for an issue or a pull: its author's, or a writer's; an agent edits only what it wrote",
+  doc: "`{ repo, number, title?, body? }`: a new title or body for an issue or a pull: its author's, or a writer's; an agent edits only what it wrote",
   description:
     "Retitle or rewrite an issue or pull: yours, or where you write; an agent only its own.",
   inputSchema: {

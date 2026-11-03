@@ -98,7 +98,6 @@ export { route as getApiV1ReposOwnerNameAppNotes } from "./getApiV1ReposOwnerNam
 export { route as getApiV1ReposOwnerNameAppProductionOpen } from "./getApiV1ReposOwnerNameAppProductionOpen.ts";
 export { route as getApiV1ReposOwnerNameBranches } from "./getApiV1ReposOwnerNameBranches.ts";
 export { route as getApiV1ReposOwnerNameBuilds } from "./getApiV1ReposOwnerNameBuilds.ts";
-export { route as getApiV1ReposOwnerNameIterations } from "./getApiV1ReposOwnerNameIterations.ts";
 export { route as getApiV1ReposOwnerNameCommits } from "./getApiV1ReposOwnerNameCommits.ts";
 export { route as getApiV1ReposOwnerNameCommitsOid } from "./getApiV1ReposOwnerNameCommitsOid.ts";
 export { route as getApiV1ReposOwnerNameCommitsOidCheck } from "./getApiV1ReposOwnerNameCommitsOidCheck.ts";
@@ -121,6 +120,7 @@ export { route as getApiV1ReposOwnerNameIssuesNumberComments } from "./getApiV1R
 export { route as getApiV1ReposOwnerNameIssuesNumberDependencies } from "./getApiV1ReposOwnerNameIssuesNumberDependencies.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberPlan } from "./getApiV1ReposOwnerNameIssuesNumberPlan.ts";
 export { route as getApiV1ReposOwnerNameIssuesNumberTeams } from "./getApiV1ReposOwnerNameIssuesNumberTeams.ts";
+export { route as getApiV1ReposOwnerNameIterations } from "./getApiV1ReposOwnerNameIterations.ts";
 export { route as getApiV1ReposOwnerNameLabels } from "./getApiV1ReposOwnerNameLabels.ts";
 export { route as getApiV1ReposOwnerNameMap } from "./getApiV1ReposOwnerNameMap.ts";
 export { route as getApiV1ReposOwnerNameMilestones } from "./getApiV1ReposOwnerNameMilestones.ts";
