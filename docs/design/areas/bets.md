@@ -26,3 +26,10 @@ scale in DESIGN §4; there are no spacing custom properties to use). It is an
 attribute because the area adds no component class. The preview seed holds a
 third proposed bet with a long name and an unbroken address as a journey, so
 the worst case is on `/preview-admin/sample/bets`.
+
+### Bounded body (#9321)
+
+`[data-bet-card]` also carries `max-height: 80vh` with `overflow-x: hidden; overflow-y: auto`, so
+no proposed bet card is taller than one phone screen (844 px) even with every
+disclosure open; the overflow scrolls inside the card, never the page. No new
+class. `test/bets-card-fit.test.ts` fails if the bound is removed.

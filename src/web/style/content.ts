@@ -148,6 +148,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 [data-apps], [data-bet-card] { overflow-wrap: anywhere; }
 [data-bet-card] h2, [data-bet-card] ul, [data-bet-card] p { margin-block: 8px; }
 [data-bet-card] ul { padding-inline-start: 16px; }
+[data-bet-card] { max-height: 80vh; overflow-x: hidden; overflow-y: auto; }
 [data-bet-actions] { align-items: flex-start; }
 
 .bar > .device-code { flex: 1 1 auto; }

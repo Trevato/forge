@@ -16,6 +16,10 @@ import { utilities as base } from "../src/web/style/base.ts";
 import { components } from "../src/web/style/components.ts";
 import { content } from "../src/web/style/content.ts";
 import { SHOWN_JOURNEYS } from "../src/web/pages/bets.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { findChromium } from "../src/looks/capture.ts";
+import { previewAdmin } from "../src/spawn/preview-seed.ts";
+import { chromiumRuns, evaluateLoaded } from "./helpers/chrome.ts";
 
 const KEY = "bets-card-fit-key";
 let dir: string;
@@ -86,6 +90,14 @@ describe("the owner's bets page, a proposed bet card at rest", () => {
     for (const r of rules) expect(r).not.toMatch(/(?<![-\w])width\s*:\s*\d/);
   });
 
+  test("a proposed bet's body is bounded: a max-height under one 844 px screen, scrolling inside (#9321)", () => {
+    const rule = content.match(/\[data-bet-card\]\s*\{[^}]*max-height:\s*(\d+)(vh|px)[^}]*\}/);
+    expect(rule).not.toBeNull();
+    const px = rule![2] === "vh" ? (Number(rule![1]) / 100) * 844 : Number(rule![1]);
+    expect(px).toBeLessThanOrEqual(844);
+    expect(rule![0]).toMatch(/overflow-y:\s*auto/);
+  });
+
   test("long words wrap", () => {
     expect(content).toMatch(/\[data-bet-card\][^{]*\{[^}]*overflow-wrap:\s*anywhere/);
   });
@@ -111,4 +123,57 @@ test("a forge preview takes the owner's bets page at desk and phone (#9275)", ()
   const looks = ownerLooksFor("trevato/forge", { ownerName: "trevato", name: "forge" }, "preview");
   expect(PREVIEW_BETS_PAGE).toBe("/preview-admin/sample/bets");
   for (const kind of ["desktop", "phone"] as const) expect(looks).toContainEqual({ page: PREVIEW_BETS_PAGE, kind });
+});
+
+/**
+ * The phone look measured, not read from the CSS (#9321): the owner's bets
+ * page in a real Chromium at 390x844 does not scroll sideways, and every
+ * proposed card is shorter than the screen with its actions in view at rest.
+ * Skipped where no Chromium starts; the forge's check runs it and logs the
+ * numbers.
+ */
+const found = findChromium();
+const chromium = found !== undefined && chromiumRuns(found) ? found : undefined;
+if (chromium === undefined) console.log("SKIPPING: no chromium that starts on this machine, so the bets phone look is not measured");
+
+describe.skipIf(chromium === undefined)("the owner's bets page, measured at phone and desk", () => {
+  const measure = `(() => {
+    const vw = document.documentElement.clientWidth;
+    const cards = [...document.querySelectorAll("[data-bet-card]")].map((c) => {
+      const box = c.parentElement.getBoundingClientRect();
+      const body = c.getBoundingClientRect();
+      const actions = c.querySelector("[data-bet-actions]").getBoundingClientRect();
+      return { height: Math.round(box.height), innerScroll: c.scrollHeight - c.clientHeight, sideways: c.scrollWidth - c.clientWidth, actionsInView: actions.bottom <= body.bottom + 1 };
+    });
+    // Within the cards: the layout's own chrome (off-canvas, clipped) is web-phone.test.ts's to hold.
+    const overflowing = [...document.querySelectorAll("[data-bet-card], [data-bet-card] *")].filter((el) => el.getBoundingClientRect().right > vw + 1).slice(0, 8).map((el) => el.tagName.toLowerCase());
+    return JSON.stringify({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: vw, cards, overflowing });
+  })()`;
+  type Measured = { scrollWidth: number; viewportWidth: number; overflowing: string[]; cards: { height: number; innerScroll: number; sideways: number; actionsInView: boolean }[] };
+  const look = async (width: number, height: number): Promise<Measured> => {
+    const admin = previewAdmin(app)!;
+    const cookies = [{ name: "forge_session", value: createSession(app.db, admin.id).token }];
+    const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}${PREVIEW_BETS_PAGE}`, { width, height }, cookies, measure)) as Measured;
+    console.log(`bets look ${width}x${height}: ${JSON.stringify(m)}`);
+    return m;
+  };
+
+  test("phone, 390x844: no sideways scroll, every proposed card under one screen with its actions in view", async () => {
+    const m = await look(390, 844);
+    expect(m.cards.length).toBe(2);
+    expect(m.overflowing).toEqual([]);
+    expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
+    for (const c of m.cards) {
+      expect(c.height).toBeLessThanOrEqual(844);
+      expect(c.sideways).toBe(0);
+      expect(c.innerScroll).toBe(0);
+      expect(c.actionsInView).toBe(true);
+    }
+  }, 30_000);
+
+  test("desk, 1280x800: no sideways scroll", async () => {
+    const m = await look(1280, 800);
+    expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
+    for (const c of m.cards) expect(c.sideways).toBe(0);
+  }, 30_000);
 });
