@@ -251,6 +251,7 @@ describe("the forge over MCP", () => {
       "org_create",
       "stop",
       "health",
+      "forge_view",
       "audit",
       "model_grant",
       "accounts",

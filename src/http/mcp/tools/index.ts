@@ -64,6 +64,7 @@ export { tool as flow } from "./flow.ts";
 export { tool as follow_mode } from "./follow_mode.ts";
 export { tool as following } from "./following.ts";
 export { tool as forge_proposals } from "./forge_proposals.ts";
+export { tool as forge_view } from "./forge_view.ts";
 export { tool as forges } from "./forges.ts";
 export { tool as forks } from "./forks.ts";
 export { tool as front_page } from "./front_page.ts";

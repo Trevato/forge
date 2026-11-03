@@ -23,6 +23,8 @@ composed, so its numbers are the ones home and the board show.
   rows waiting on a person by what `crewNow` finds, and apps at 200 (`VIEW_APPS`; `counts.apps` is still the true number). Poll every
   2–5 s; there is no stream, deliberately, so an always-on view adds no connection to hold (#7559).
 
+**MCP.** The `forge_view` tool (read-only, no arguments) answers the same body for the same caller, from the same two-second build.
+
 **Links.** Home (the apps card) and the command palette show **Foundry** when an app with the slug `foundry` is
 installed and the reader may enter it (`actions/foundry_door.ts`). The slug is not enough: the app must be owned by
 a site admin or by the `trevato` org, so nobody can plant a "Foundry" link by naming an app first. Nothing in the
