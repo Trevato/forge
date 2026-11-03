@@ -16,6 +16,7 @@ import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
 import { chosenRepo, readLandings, type Landing, type Landings } from "../../release/landings.ts";
 import { liveRegionsJs } from "../client.ts";
 import { pageHead } from "../chrome.ts";
+import { changelogTag, holds } from "../feeds.ts";
 import { json } from "../../http/respond.ts";
 import { shippedAnswer } from "../../release/answer.ts";
 import { html, type Html } from "../html.ts";
@@ -176,7 +177,13 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
 // GET /api/v1/changelog?repo=all|owner/name: the page's rows as JSON, public repositories only.
 export async function changelogJson(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  return json(await shippedAnswer(ctx.app, ctx.url.searchParams.get("repo")), 200, { "cache-control": "public, max-age=5" });
+  const asked = ctx.url.searchParams.get("repo");
+  const answer = await shippedAnswer(ctx.app, asked);
+  // The answer is the same for every viewer (public repositories only), so a shared cache may keep it.
+  const etag = changelogTag(answer.version, [...answer.live, ...answer.onItsWay], [asked ?? "", answer.live.length]);
+  const headers = { etag, "cache-control": "public, max-age=5" };
+  if (holds(ctx.request.headers.get("if-none-match"), etag)) return new Response(null, { status: 304, headers });
+  return json(answer, 200, headers);
 }
 
 /**
