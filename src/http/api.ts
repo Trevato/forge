@@ -2530,7 +2530,7 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     return timePhase(ctx.request, "render", () => {
       const hold = getHold(ctx.app.db, found.pull.id);
-      return json({
+      const text = JSON.stringify({
         ...withLabels(ctx, found.pull),
         check: checkWord(checkSummary(ctx.app.db, found.pull.id, status.headOid).run ?? undefined, status.headOid),
         checkStale: checkStaleNow,
@@ -2541,6 +2541,11 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(diff === undefined ? {} : { diff }),
         hold: hold === undefined ? null : holdJson(hold),
       });
+      // Tagged by the exact bytes sent, after access was checked: a new head, verdict, review or merge is never hidden behind a 304.
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
     });
   });
 
