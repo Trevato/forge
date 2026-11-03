@@ -14,7 +14,7 @@ export const tool: Tool = {
   async run(ctx, user, args) {
     const repo = repoArg(ctx, user, { repo: `${str(args["owner"])}/${str(args["name"])}` });
     if (isAnswer(repo)) return repo;
-    const forks = (await iterationsOf(ctx.app, user, repo)) ?? [];
+    const forks = (await iterationsOf({ app: ctx.app, auth: { user } }, repo))?.forks ?? [];
     return good({ forks, lanes: lanesOf(forks) });
   },
 };

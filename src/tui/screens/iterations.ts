@@ -61,8 +61,8 @@ export function iterationsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     async load() {
       // Gated here as well as on the command: the screen is exported.
       hidden = !canRead(f.db, repo, f.user);
-      const forks = hidden ? undefined : await iterationsOf(f.app, f.user, repo);
-      lines = forks === undefined ? [] : iterationLines(lanesOf(forks));
+      const forks = hidden ? undefined : await iterationsOf({ app: f.app, auth: { user: f.user } }, repo);
+      lines = forks === undefined ? [] : iterationLines(lanesOf(forks.forks));
       state.clamp(lines.length);
       ctx.invalidate();
     },

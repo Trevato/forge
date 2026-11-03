@@ -64,6 +64,7 @@ import { approveGuest } from "../origins/guest.ts";
 import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
+import { coAuthorLines, messagesBetween } from "../git/coauthors.ts";
 import { carriedSummary, resolveOid, type MergeStrategy } from "../git/merge.ts";
 import { landingKind, thanksNote } from "../core/landing_kind.ts";
 import { repoDir } from "../git/repos.ts";
@@ -477,15 +478,29 @@ export async function mergePull(
   const requester =
     asked === null ? undefined : getUserByName(app.db, asked);
   const from = pullSourceOf(app.db, pull.id);
+  const baseDir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const at = await pullDir(app.db, app.reposRoot, repo, pull);
+  // A squash folds the pull's commits into one: the people they credit as
+  // `Co-authored-by` stay credited on the commit that lands.
+  const kept =
+    strategy === "squash"
+      ? coAuthorLines(
+          await messagesBetween(
+            at,
+            (await resolveOid(baseDir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid,
+            (getPull(app.db, repo.id, pull.number) ?? pull).headOid,
+          ),
+          [lander.email, ...(requester ? [commitIdentity(app.config, requester).email] : [])],
+        )
+      : [];
   const trailers = [
     landingTrailers(
       requester ? commitIdentity(app.config, requester) : null,
       lander,
     ),
+    ...kept,
     ...(from === undefined ? [] : [sourceTrailers(from, ownHost(app.config))]),
   ].join("\n");
-  const baseDir = repoDir(app.reposRoot, repo.ownerName, repo.name);
-  const at = await pullDir(app.db, app.reposRoot, repo, pull);
   const carriedBefore =
     strategy === "merge" && pull.crossRepo
       ? await carriedSummary(

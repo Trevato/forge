@@ -12,7 +12,7 @@ import { promote } from "./helpers/members.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { iterationLines, iterationsCommands, iterationsScreen, NO_ITERATIONS_LINE, NOT_FOUND_LINE } from "../src/tui/screens/iterations.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
-import { lanesOf } from "../src/core/iterations.ts";
+import { lanesOf, type IterationBuild } from "../src/core/iterations.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
 
@@ -80,8 +80,11 @@ async function drive(repo: Repo, user: User | undefined): Promise<string> {
 }
 
 test("iterationLines indents a run under the one it grew from", () => {
-  const b = (label: string, parent: string | null) => ({ key: `a/g:${label}`, label, oid: "a".repeat(40), at: "2026-01-02T00:00:00Z", note: "", parent, edge: parent === null ? null : ("git" as const) });
-  const lines = iterationLines(lanesOf([{ repo: "a/g", name: "g", forkOf: null, builds: [b("v1", null), b("v2", "a/g:v1"), b("side", "a/g:v1")] }]));
+  const b = (label: string, parent: string | null): IterationBuild => ({
+    key: `a/g:${label}`, label, oid: "a".repeat(40), at: "2026-01-02T00:00:00Z", note: "", parent, edge: parent === null ? null : "git",
+    repo: "a/g", branch: "", by: "alice", notes: [], tag: "", forkHas: { branch: null, tagged: false }, plays: "none", page: "/", preview: false, canNote: false,
+  });
+  const lines = iterationLines(lanesOf([{ repo: "a/g", name: "g", depth: 0, tips: [], forkOf: null, builds: [b("v1", null), b("v2", "a/g:v1"), b("side", "a/g:v1")] }]));
   expect(lines.map((l) => [l.depth, l.head, l.text.split("  ")[0]])).toEqual([
     [0, true, "g"],
     [1, false, "v1"],

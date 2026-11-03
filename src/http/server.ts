@@ -183,7 +183,7 @@ import {
   branchDelete,
   branchesPage,
 } from "../web/pages/branches.ts";
-import { iterationsPage } from "../web/pages/iterations.ts";
+import { iterationsPage, noteSubmit } from "../web/pages/iterations.ts";
 import { buildsPage, deletePinSubmit, newBuildPage, pinBuildSubmit, previewBuildSubmit } from "../web/pages/builds.ts";
 import { wavePage, wavesAtom, wavesPage } from "../web/pages/waves.ts";
 import {
@@ -1264,6 +1264,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/builds", pinBuildSubmit);
   router.add("POST", "/:owner/:name/builds/preview", previewBuildSubmit);
   router.add("POST", "/:owner/:name/builds/:label/delete", deletePinSubmit);
+  router.add("POST", "/:owner/:name/builds/:label/note", noteSubmit);
   router.add("GET", "/:owner/:name/waves.atom", wavesAtom);
   router.add("GET", "/:owner/:name/waves", wavesPage);
   router.add("GET", "/:owner/:name/waves/:version", wavePage);

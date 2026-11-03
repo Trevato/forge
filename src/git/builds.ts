@@ -470,3 +470,62 @@ async function listTagPins(dir: string, label?: string): Promise<BuildPin[]> {
   }
   return pins;
 }
+
+/** A pin's note as its notes, whole: a first line that only repeats the label is dropped. */
+export function wholeNotes(label: string, note: string): string {
+  const at = note.indexOf("\n");
+  const first = (at === -1 ? note : note.slice(0, at)).trim();
+  return first === label ? (at === -1 ? "" : note.slice(at + 1).trim()) : note.trim();
+}
+
+/** A pin's note split at its first line: the pin note, then the dev notes. */
+export function splitPinNote(label: string, note: string): { readonly note: string; readonly body: string } {
+  const at = note.indexOf("\n");
+  const first = (at === -1 ? note : note.slice(0, at)).trim();
+  return { note: first === label ? "" : first, body: at === -1 ? "" : note.slice(at + 1).trim() };
+}
+
+/** One pin by label, or undefined. */
+export async function readBuildPin(dir: string, label: string): Promise<BuildPin | undefined> {
+  if (!isPinLabel(label)) return undefined;
+  return (await listBuildPins(dir, label))[0];
+}
+
+/**
+ * Whether `pin` is the copy of a parent's pin a fork carries
+ * (`copyForgeRefs`): the same label, commit, pinner and time. A family or
+ * a display drawing both shows the parent's alone.
+ */
+export function isCopiedPin(pin: BuildPin, parentPins: readonly BuildPin[]): boolean {
+  return parentPins.some((p) => p.label === pin.label && p.oid === pin.oid && p.pinnedAt === pin.pinnedAt && p.pinnedBy === pin.pinnedBy);
+}
+
+/** The labels of the pins whose commit `oid` contains, itself included. */
+export async function pinsMergedInto(dir: string, oid: string): Promise<Set<string>> {
+  if (!isSafeOid(oid)) return new Set();
+  const listed = await runGit(
+    ["for-each-ref", `--merged=${oid}`, "--format=%(refname:strip=2)", BUILDS_PREFIX.slice(0, -1)],
+    { cwd: dir },
+  );
+  if (!listed.ok) return new Set();
+  return new Set(listed.value.split("\n").filter((l) => l !== ""));
+}
+
+/** The branches and tags whose history holds `oid`: what a fork, which copies those, carries of it. */
+export async function refsContaining(dir: string, oid: string): Promise<{ readonly branches: readonly string[]; readonly tags: readonly string[] }> {
+  if (!isSafeOid(oid)) return { branches: [], tags: [] };
+  const listed = await runGit(["for-each-ref", `--contains=${oid}`, "--format=%(refname)", "refs/heads", "refs/tags"], { cwd: dir });
+  if (!listed.ok) return { branches: [], tags: [] };
+  const refs = listed.value.split("\n").filter((l) => l !== "");
+  return {
+    branches: refs.filter((r) => r.startsWith("refs/heads/")).map((r) => r.slice("refs/heads/".length)),
+    tags: refs.filter((r) => r.startsWith("refs/tags/")).map((r) => r.slice("refs/tags/".length)),
+  };
+}
+
+/** Whether `ancestor` is in `oid`'s history, read in `dir`. */
+export async function isAncestor(dir: string, ancestor: string, oid: string): Promise<boolean> {
+  if (!isSafeOid(ancestor) || !isSafeOid(oid)) return false;
+  const r = await runGitCapture(["merge-base", "--is-ancestor", ancestor, oid], { cwd: dir });
+  return r.code === 0;
+}

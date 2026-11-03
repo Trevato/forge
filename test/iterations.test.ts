@@ -16,8 +16,9 @@ import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { promote } from "./helpers/members.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { FAMILY_LIMIT, familyRepos, iterationsOf, lanesOf, type IterationBuild, type IterationFork } from "../src/core/iterations.ts";
-import { ITERATIONS_CSS, ITERATIONS_JS } from "../src/web/pages/iterations_script.ts";
+import { familyRepos } from "../src/core/lineage.ts";
+import { lanesOf, type IterationBuild, type IterationFork } from "../src/core/iterations.ts";
+import { ITERATIONS_CSS, ITERATIONS_JS } from "../src/web/pages/iterations.ts";
 
 const build = (repo: string, label: string, parent: string | null = null, edge: IterationBuild["edge"] = parent === null ? null : "git"): IterationBuild => ({
   key: `${repo}:${label}`,
@@ -27,12 +28,22 @@ const build = (repo: string, label: string, parent: string | null = null, edge: 
   note: "",
   parent,
   edge,
+  repo,
+  branch: "",
+  by: "alice",
+  notes: [],
+  tag: "",
+  forkHas: { branch: null, tagged: false },
+  plays: "none",
+  page: "/",
+  preview: false,
+  canNote: false,
 });
 
 describe("lanesOf", () => {
   test("a pin continues its repository's run; a second child of a build starts a branch run under it", () => {
     const forks: IterationFork[] = [
-      { repo: "a/g", name: "g", forkOf: null, builds: [build("a/g", "v1"), build("a/g", "v2", "a/g:v1"), build("a/g", "side", "a/g:v1")] },
+      { repo: "a/g", name: "g", depth: 0, tips: [], forkOf: null, builds: [build("a/g", "v1"), build("a/g", "v2", "a/g:v1"), build("a/g", "side", "a/g:v1")] },
     ];
     const lanes = lanesOf(forks);
     expect(lanes.map((l) => [l.id, l.main, l.builds.map((b) => b.label)])).toEqual([
@@ -45,9 +56,9 @@ describe("lanesOf", () => {
 
   test("a fork with no parent pin hangs under its upstream's head; a concept edge keeps its kind", () => {
     const forks: IterationFork[] = [
-      { repo: "a/g", name: "g", forkOf: null, builds: [build("a/g", "v1")] },
-      { repo: "b/g", name: "b/g", forkOf: "a/g", builds: [build("b/g", "x1")] },
-      { repo: "c/g", name: "c/g", forkOf: "a/g", builds: [build("c/g", "y1", "a/g:v1", "concept")] },
+      { repo: "a/g", name: "g", depth: 0, tips: [], forkOf: null, builds: [build("a/g", "v1")] },
+      { repo: "b/g", name: "b/g", depth: 1, tips: [], forkOf: "a/g", builds: [build("b/g", "x1")] },
+      { repo: "c/g", name: "c/g", depth: 1, tips: [], forkOf: "a/g", builds: [build("c/g", "y1", "a/g:v1", "concept")] },
     ];
     const lanes = lanesOf(forks);
     const b = lanes.find((l) => l.id === "b/g")!;
@@ -58,8 +69,8 @@ describe("lanesOf", () => {
 
   test("a fork with no builds still has a card; a parent cycle ends", () => {
     const forks: IterationFork[] = [
-      { repo: "a/g", name: "g", forkOf: null, builds: [build("a/g", "v1", "a/g:v2"), build("a/g", "v2", "a/g:v1")] },
-      { repo: "b/g", name: "b/g", forkOf: "a/g", builds: [] },
+      { repo: "a/g", name: "g", depth: 0, tips: [], forkOf: null, builds: [build("a/g", "v1", "a/g:v2"), build("a/g", "v2", "a/g:v1")] },
+      { repo: "b/g", name: "b/g", depth: 1, tips: [], forkOf: "a/g", builds: [] },
     ];
     expect(lanesOf(forks).map((l) => l.id).sort()).toEqual(["a/g", "b/g"]);
   });
@@ -128,34 +139,38 @@ describe("iterations page", () => {
   });
 
   test("the family is drawn from any member, each pin once, with the runs as data", async () => {
-    for (const path of ["/alice/game/iterations", "/bob/game/iterations"]) {
+    for (const path of ["/alice/game/iterations?layout=tree", "/bob/game/iterations?layout=tree", "/alice/game/iterations"]) {
       const res = await get(path);
       expect(res.status).toBe(200);
       const text = await res.text();
       expect(text).toContain("Iterations");
       for (const key of ["alice/game:v1", "alice/game:v2", "alice/game:side", "bob/game:b1"]) expect(text).toContain(`data-key="${key}"`);
-      expect(text.split('data-key="alice/game:v1"').length).toBe(2);
-      expect(text.split('data-key="bob/game:v1"').length).toBe(1);
-      expect(text).toContain("alice/game:side");
+      expect(text.split('class="it-b').filter((r) => r.includes('data-key="alice/game:v1"')).length).toBe(1);
+      expect(text).not.toContain('data-key="bob/game:v1"');
     }
   });
 
-  test("the markup the script relies on is there for a folded run, and no button waits for the script", async () => {
-    const text = await (await get("/alice/game/iterations")).text();
+  test("the tree has Align, Reset, zoom with Fit, and Collapse and Expand forks; columns have no Align", async () => {
+    const tree = await (await get("/alice/game/iterations?layout=tree")).text();
+    for (const id of ["it-align", "it-reset", "it-zfit", "it-zin", "it-zout", "it-zval", "it-fold-all", "it-open-all"]) expect(tree).toContain(`id="${id}"`);
+    expect(tree).toContain("Drag a run to move it");
+    const lanes = JSON.parse(/<script type="application\/json" id="it-data">(.*?)<\/script>/s.exec(tree)![1]!);
+    expect(lanes.here).toBe("alice/game");
+    expect(lanes.lanes.map((l: { id: string }) => l.id)).toContain("alice/game");
+    const columns = await (await get("/alice/game/iterations")).text();
+    expect(columns).toContain('id="it-zfit"');
+    expect(columns).not.toContain('id="it-align"');
+    expect(columns).not.toContain('"lanes"');
+  });
+
+  test("the markup the script relies on is there for a folded run", async () => {
+    const text = await (await get("/alice/game/iterations?layout=tree")).text();
     expect(text).toContain('data-lane="alice/game" data-repo="alice/game"');
-    // Pins made in the same second sort by label.
-    const keys = "alice/game:side alice/game:v1 alice/game:v2";
-    expect(text).toContain(`data-act="fork" data-keys="${keys}"`);
-    expect(text).toContain(`data-act="run" data-keys="${keys}"`);
-    expect(text).toContain('data-lanes="[{');
-    expect(text).toContain('data-here="alice/game"');
-    // Names and the controls are drawn inert; the script turns them on.
-    expect(text).toContain('<span class="it-nm" data-act="fork">');
-    expect(text).not.toContain('<button type="button" class="it-nm"');
-    expect(text).toContain('id="it-zfit"');
-    expect(ITERATIONS_JS).toContain("classList.add('it-on')");
-    expect(ITERATIONS_CSS).toMatch(/\.it-sp\{[^}]*display:none/);
-    expect(ITERATIONS_CSS).toContain(".it-on .it-sp{display:flex}");
+    expect(text).toMatch(/data-act="fork" data-keys="[^"]*alice\/game:v1/);
+    expect(text).toMatch(/data-act="run" data-keys="[^"]*alice\/game:v1/);
+    expect(ITERATIONS_JS).toContain("forge:iterations-tree:");
+    expect(ITERATIONS_JS).toContain("forge:iterations-folds:");
+    expect(ITERATIONS_JS).toContain("forge:iterations-zoom");
   });
 
   test("a fold hides its rows and shows the one node it leaves", () => {
@@ -164,6 +179,36 @@ describe("iterations page", () => {
     expect(rule(".it-lane.it-shut .it-fcoll")).toMatch(/\{display:flex\}$/);
     expect(rule(".it-lane.it-runshut:not(.it-shut) .it-rcoll")).toMatch(/\{display:flex\}$/);
     expect(rule(".it-coll{")).toContain("display:none");
+  });
+
+  test("the info panel carries the build, its notes and its actions", async () => {
+    const text = await (await get("/alice/game/iterations?build=alice/game:v1")).text();
+    expect(text).toContain('id="it-i-');
+    for (const word of ["Pin", "Lineage", "Notes", "Actions", "Copy link", "Clone", "Fork"]) expect(text).toContain(word);
+    expect(text).toContain("refs/builds/v1");
+    // A guest cannot add a note or delete a pin.
+    expect(text).not.toContain("Add a note");
+    expect(text).not.toContain("Delete pin");
+    const mine = await (await get("/alice/game/iterations?build=alice/game:v1", await signIn("alice"))).text();
+    expect(mine).toContain("Add a note");
+    expect(mine).toContain("Delete pin");
+  });
+
+  test("a note is saved from the panel, as the writer who asked, and not by a stranger or another origin", async () => {
+    const cookie = await signIn("alice");
+    const post = (c: string, origin: string, text: string) =>
+      fetch(`${base}/alice/game/builds/v1/note`, { method: "POST", redirect: "manual", headers: { cookie: c, origin, accept: "application/json" }, body: new URLSearchParams({ notes: text }) });
+    const bad = await post(cookie, "https://evil.example", "no");
+    expect(bad.status).toBeGreaterThanOrEqual(400);
+    const guest = await post("", base, "no");
+    expect(guest.status).toBe(303);
+    const ok = await post(cookie, base, "Tuned <i>the jump</i>\nMore.");
+    expect(ok.status).toBe(200);
+    const j = (await ok.json()) as { note: string; html: string };
+    expect(j.html).toContain("Tuned &lt;i&gt;the jump&lt;/i&gt;");
+    expect(j.html).not.toContain("<i>the jump</i>");
+    const empty = await post(cookie, base, "   ");
+    expect(empty.status).toBe(422);
   });
 
   test("a private fork and its pin are drawn to its owner and never to a guest", async () => {
@@ -178,27 +223,13 @@ describe("iterations page", () => {
     expect(mine.split("carol/hush:v1").length).toBe(1);
   });
 
-  test("a family is capped at the limit, root first", () => {
-    expect(FAMILY_LIMIT).toBe(40);
-    const all = familyRepos(app, carol, game());
+  test("a family is the root first, then the forks the viewer may read", () => {
+    const ctx = (user: User | undefined) => ({ app, auth: { user } }) as Parameters<typeof familyRepos>[0];
+    const all = familyRepos(ctx(carol), game());
     expect(all[0]!.name).toBe("game");
     expect(all.length).toBe(3);
-    expect(familyRepos(app, carol, game(), 2).length).toBe(2);
-    expect(familyRepos(app, bob, game()).length).toBe(2);
-    expect(familyRepos(app, undefined, game(), 5).map((r) => r.name)).toEqual(["game", "game"]);
-  });
-
-  test("a read of a family's pins is kept for a few seconds", async () => {
-    const made = await createRepo(app, alice, { name: "kept", visibility: "public" });
-    if (!made.ok) throw new Error(String(made.error));
-    const c = await commitToBranch(app, alice, made.value, { branch: "main", message: "k", files: [{ path: "k.txt", content: "k\n" }] });
-    if (!c.ok) throw new Error(JSON.stringify(c.error));
-    const first = await pinBuild(app, alice, made.value, { label: "k1", oid: c.value.commitOid });
-    if (!first.ok) throw new Error(JSON.stringify(first.error));
-    expect((await iterationsOf(app, undefined, made.value))![0]!.builds.length).toBe(1);
-    const second = await pinBuild(app, alice, made.value, { label: "k2", oid: c.value.commitOid });
-    if (!second.ok) throw new Error(JSON.stringify(second.error));
-    expect((await iterationsOf(app, undefined, made.value))![0]!.builds.length).toBe(1);
+    expect(familyRepos(ctx(bob), game()).length).toBe(2);
+    expect(familyRepos(ctx(undefined), game()).map((r) => r.name)).toEqual(["game", "game"]);
   });
 
   test("a note is escaped", async () => {
@@ -213,6 +244,8 @@ describe("iterations page", () => {
     expect(res.headers.get("referrer-policy")).toBeTruthy();
     expect(res.headers.get("content-security-policy") ?? "").not.toContain("frame-src http");
     expect(() => new Function(ITERATIONS_JS)).not.toThrow();
+    // A build plays only as a build preview on the forge's own origin: no frame.
+    expect(await res.text()).not.toContain("<iframe");
   });
 
   test("a family with no pin is not found", async () => {
@@ -226,8 +259,21 @@ describe("iterations page", () => {
     expect((await get("/alice/secret/iterations", cookie)).status).toBe(200);
   });
 
+  test("Builds draws the family's pins as a lineage, each under its parent, and the pin form offers them as Parent", async () => {
+    const list = await (await get("/alice/game/builds")).text();
+    expect(list).toMatch(/data-depth="0"[^>]*class="build-row">[\s\S]*?>v1</);
+    expect(list).toMatch(/data-depth="1"[^>]*class="build-row">[\s\S]*?>v2</);
+    expect(list).toMatch(/<span class="muted">bob\/game:<\/span>b1/);
+    const cookie = await signIn("alice");
+    const form = await (await get("/alice/game/builds/new", cookie)).text();
+    expect(form).toContain('name="parent"');
+    expect(form).toContain('value="alice/game:v2"'.replace("alice/game:", ""));
+    expect(form).toContain('value="bob/game:b1"');
+    expect(form).not.toContain("make_demo");
+  });
+
   test("Builds links to Iterations when it holds a pin", async () => {
-    expect(await (await get("/alice/game/builds")).text()).toContain('href="/alice/game/iterations"');
+    expect(await (await get("/alice/game/builds")).text()).toContain('href="/alice/game/iterations?layout=tree"');
     expect(await (await get("/alice/empty/builds")).text()).not.toContain("/iterations");
   });
 

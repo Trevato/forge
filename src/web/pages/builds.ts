@@ -1,24 +1,46 @@
 /**
- * Builds: the pins people made (`git/builds.ts`), a short form to make one,
- * and "preview now" for any commit. A pin is a git ref, so pinning runs no
- * check and wakes no agent.
+ * Builds: the pins people made, drawn as a lineage. A pin's parent is the
+ * one its person named, else the nearest pin in its history — read from git
+ * (`for-each-ref --merged`), so the tree follows the work even across
+ * merges and squashes that a strict commit graph would split. A fork's
+ * first pins hang from its parent repository's, which its objects share.
  */
 
-import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
-import { previewBuild } from "../../actions/build_preview.ts";
-import { openEnvUrl } from "../../actions/apps.ts";
 import { deletePin, pinBuild } from "../../actions/builds.ts";
+import { previewBuild } from "../../actions/build_preview.ts";
+import { getAppByRepo } from "../../core/apps.ts";
+import { openEnvUrl } from "../../actions/apps.ts";
+import { buildLineage, type BuildNode } from "../../core/lineage.ts";
 import { canWrite } from "../../core/repos.ts";
+import {
+  isPinLabel,
+  listBuildPins,
+  type BuildPin,
+} from "../../git/builds.ts";
 import { exactRefOid } from "../../git/branches.ts";
-import { listBuildPins, type BuildPin } from "../../git/builds.ts";
 import { isSafeOid } from "../../git/guard.ts";
 import { repoDir } from "../../git/repos.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette, signInFirst } from "../chrome.ts";
-import { field as formValue, readForm } from "../form.ts";
-import { html, when } from "../html.ts";
+import { backTo, field as formValue, readForm } from "../form.ts";
+import { isLocalPath } from "../flash.ts";
+import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, field, icon, sha, time } from "../ui.ts";
+import { btn, card, field, icon, selectField, sha, time } from "../ui.ts";
+
+/**
+ * The label a new pin is offered. An iteration branch (`iter-3`) pinned
+ * for the first time offers its own name, and a fork's first pin is
+ * `iter-1`: each iteration is a checkpoint under the name it was made as.
+ * Otherwise the newest label, stepped on by one.
+ */
+export function suggestLabel(pins: readonly BuildPin[], forked: boolean, source: string): string {
+  const branch = /^branch (iter-\d+[A-Za-z0-9._-]*)$/.exec(source)?.[1];
+  if (branch !== undefined && isPinLabel(branch) && !pins.some((p) => p.label === branch)) return branch;
+  if (pins.length === 0 && forked) return "iter-1";
+  return nextLabel(pins);
+}
 
 /** The newest label stepped on by one. */
 export function nextLabel(pins: readonly BuildPin[]): string {
@@ -31,75 +53,113 @@ export function nextLabel(pins: readonly BuildPin[]): string {
   return `${last}-2`;
 }
 
-/** Renders a page and names `session` and `render` in Server-Timing. */
-function timedPage(ctx: Ctx, opts: Parameters<typeof page>[0]): Response {
-  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const started = performance.now();
-  const response = page(opts);
-  notePhase(ctx.request, "render", performance.now() - started);
-  return response;
-}
+/** The lineage as a card: one line per pin, indented under its parent. */
+const hidden = (error: string): boolean => error === "unauthorized" || error === "not_found" || error === "forbidden";
 
-// GET /:owner/:name/builds — the pins, newest first.
+// GET /:owner/:name/builds — the pins as a lineage, each under the one it grew from.
 export async function buildsPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const base = repoBase(repo);
-  const pins = await listBuildPins(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name));
+  const nodes = await buildLineage(ctx, repo);
   const writer = ctx.auth.user !== undefined && canWrite(ctx.app.db, repo, ctx.auth.user);
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
   const body = html`${repoHeader(ctx, repo, "branches", { compact: true })}
-    <div class="mt">
-      ${card(
-        pins.length === 0
-          ? html`<p class="muted builds-none">No builds pinned yet.</p>`
-          : html`<ul class="list">
-              ${pins.map(
-                (p) => html`<li>
-                  <div class="row build-row">
-                    <span class="row-lead">${icon("pin")}</span>
-                    <span class="row-main">
-                      <span class="row-title mono">${p.label}</span>
-                      <span class="row-meta"
-                        >${sha(p.oid, `${base}/commit/${p.oid}`)} · ${p.source} · pinned ${time(p.pinnedAt)} by
-                        ${p.pinnedBy}${when(p.parent, (parent) => html` · under ${parent}`)}${when(
-                          p.note,
-                          (note) => html` · ${note}`,
-                        )}</span
-                      >
-                    </span>
-                    <span class="row-trail">
-                      ${when(writer, () =>
-                        html`<form method="post" action="${base}/builds/preview" class="build-preview">
-                          <input type="hidden" name="sha" value="${p.oid}" />
-                          ${btn("Preview", { type: "submit", size: "sm", variant: "outline", icon: "eye" })}
-                        </form>`,
-                      )}
-                      ${when(writer, () =>
-                        btn("Delete", {
-                          href: `/-/confirm?to=${encodeURIComponent(`${base}/builds/${encodeURIComponent(p.label)}/delete`)}`,
-                          size: "sm",
-                          variant: "danger",
-                          label: `Delete pin ${p.label}`,
-                        }),
-                      )}
-                    </span>
-                  </div>
-                </li>`,
-              )}
-            </ul>`,
-        {
-          head: html`${icon("pin")}
-            <h2>Builds</h2>
-            ${when(pins.length > 0, () => btn("Iterations", { href: `${base}/iterations`, size: "sm", variant: "ghost" }))}
-            ${when(writer, () => btn("Pin a build", { href: `${base}/builds/new`, size: "sm", variant: "primary" }))}`,
-        },
-      )}
-    </div>`;
-  return timedPage(ctx, { ctx, title: `Builds · ${repo.name}`, crumbs: crumbsFor(repo), palette: repoPalette(ctx, repo), body });
+    <div class="mt">${buildsCard(base, nodes, writer, writer && isApp, writer)}</div>`;
+  return timePhase(ctx.request, "render", () =>
+    page({ ctx, title: `Builds · ${repo.name}`, crumbs: crumbsFor(repo), palette: repoPalette(ctx, repo), body, styleCss: BUILDS_CSS }),
+  );
 }
+
+// POST /:owner/:name/builds/:label/delete — behind /-/confirm.
+export async function deletePinSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const gone = await deletePin(ctx.app, ctx.auth.user, repo, ctx.params.label ?? "");
+  if (!gone.ok && hidden(gone.error)) return notFoundPage(ctx);
+  const to = backTo(form, `${repoBase(repo)}/builds`);
+  return flashTo(ctx, to, gone.ok ? { message: `Deleted pin ${gone.value.label}.` } : { tone: "danger", message: "Delete failed." });
+}
+
+export function buildsCard(
+  base: string,
+  nodes: readonly BuildNode[],
+  canPin: boolean,
+  /** Whether each pin of this repository offers Preview now: a writer, on an app. */
+  canPreview = false,
+  /** Whether each pin of this repository offers Delete: a writer. */
+  canDelete = false,
+): Html {
+  return card(
+    nodes.length === 0
+      ? html`<p class="muted small builds-none">No pinned builds</p>`
+      : html`<ol class="builds">
+          ${nodes.map(
+            (n) => html`<li data-depth="${String(Math.min(n.depth, 8))}" class="build-row">
+              ${when(n.edge === "concept", () => html`<span class="build-concept" title="Concept edge: parent set by hand, not by commit history">┄</span>`)}
+              <span class="build-label mono">${n.from === undefined ? null : html`<span class="muted">${n.from}:</span>`}${n.pin.label}</span>
+              ${sha(n.pin.oid, `${n.from === undefined ? base : `/${n.from}`}/commit/${n.pin.oid}`)}
+              <span class="build-note truncate" title="${n.pin.note}">${n.pin.note === n.pin.label ? "" : n.pin.note}</span>
+              <span class="muted small build-meta"
+                >${n.pin.source} · ${n.pin.pinnedBy} · ${time(n.pin.pinnedAt)}</span
+              >
+              ${when(
+                canPreview && n.from === undefined,
+                () => html`<form method="post" action="${base}/builds/preview" class="build-preview">
+                  <input type="hidden" name="sha" value="${n.pin.oid}" />
+                  ${btn("Preview now", { size: "sm", variant: "ghost", icon: "eye" })}
+                </form>`,
+              )}
+              ${when(
+                canDelete && n.from === undefined,
+                () => btn("Delete", {
+                  href: `/-/confirm?to=${encodeURIComponent(`${base}/builds/${encodeURIComponent(n.pin.label)}/delete`)}`,
+                  size: "sm",
+                  variant: "danger",
+                  label: `Delete pin ${n.pin.label}`,
+                }),
+              )}
+            </li>`,
+          )}
+        </ol>`,
+    {
+      head: html`${icon("pin")}
+        <h2>Builds</h2>
+        <span class="spacer"></span>
+        ${when(nodes.length > 0, () => btn("Iterations", { href: `${base}/iterations?layout=tree`, size: "sm", variant: "ghost", icon: "map" }))}
+        ${when(canPin, () =>
+          html`${btn("Pin a build", {
+            href: `${base}/builds/new`,
+            size: "sm",
+            icon: "plus",
+          })}`,
+        )}`,
+      extra: "builds-card",
+    },
+  );
+}
+
+export const BUILDS_CSS = `
+.builds{list-style:none;margin:0;padding:6px 12px}
+.build-row{display:flex;align-items:center;gap:8px;min-height:30px;min-width:0}
+${[1, 2, 3, 4, 5, 6, 7, 8].map((d) => `.build-row[data-depth="${d}"]{padding-left:${d * 20}px}`).join("\n")}
+.build-row + .build-row{border-top:1px solid var(--border)}
+.build-label{font-weight:600;flex:none}
+.build-concept{color:var(--muted-fg);flex:none}
+.build-note{min-width:0;flex:1}
+.build-meta{flex:none;margin-left:auto}
+.build-preview{flex:none;margin:0}
+.builds-none{padding:10px 14px;margin:0}
+@media (max-width:640px){.build-meta{display:none}}
+`;
 
 // GET /:owner/:name/builds/new?sha=&source= — the pin form.
 export async function newBuildPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
@@ -107,26 +167,60 @@ export async function newBuildPage(ctx: Ctx): Promise<Response> {
   const base = repoBase(repo);
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const pins = await listBuildPins(dir);
+  const family = await buildLineage(ctx, repo);
+  // From Pin a build with nothing chosen: the default branch's tip.
   const asked = ctx.url.searchParams.get("sha") ?? "";
-  const want = isSafeOid(asked) ? asked : ((await exactRefOid(dir, `refs/heads/${repo.defaultBranch}`)) ?? "");
-  const source = ctx.url.searchParams.get("source") ?? (isSafeOid(asked) ? "" : `branch ${repo.defaultBranch}`);
+  const want = isSafeOid(asked)
+    ? asked
+    : ((await exactRefOid(dir, `refs/heads/${repo.defaultBranch}`)) ?? "");
+  const source =
+    ctx.url.searchParams.get("source") ?? (isSafeOid(asked) ? "" : `branch ${repo.defaultBranch}`);
+  // From the build graph: back to it, not to Branches.
+  const askedBack = ctx.url.searchParams.get("back") ?? "";
+  const back = isLocalPath(askedBack) ? askedBack : undefined;
   const body = html`${repoHeader(ctx, repo, "branches", { compact: true })}
     <div class="mt">
       ${card(
         html`<form method="post" action="${base}/builds" class="stack">
           ${field({ label: "Commit", name: "sha", value: isSafeOid(want) ? want : "", required: true, mono: true, hint: "Full commit SHA." })}
           <input type="hidden" name="source" value="${source}" />
-          ${field({ label: "Label", name: "label", value: nextLabel(pins), required: true, mono: true, hint: "Letters, digits, dot, dash or underscore. Example: v3." })}
+          ${when(back, (b) => html`<input type="hidden" name="back" value="${b}" />`)}
+          ${field({ label: "Label", name: "label", value: suggestLabel(pins, repo.forkParentId !== null, source), required: true, mono: true, hint: "Letters, digits, dot, dash or underscore. Example: iter-3, v3." })}
           ${field({ label: "Note", name: "note", rows: 3, hint: "Optional." })}
+          ${selectField({
+            label: "Parent",
+            name: "parent",
+            hint: "Automatic: the nearest pin in the commit history. A pin in another repository creates a concept edge.",
+            options: [
+              { value: "", label: "Automatic", selected: true },
+              // Any pin of the family: one in another repository is a
+              // concept edge, an idea shared without history.
+              ...family.map((n) => {
+                const value = n.from === undefined ? n.pin.label : `${n.from}:${n.pin.label}`;
+                return { value, label: value };
+              }),
+            ],
+          })}
           <div class="bar">
             ${btn("Pin build", { variant: "primary", icon: "pin" })}
-            ${btn("Cancel", { href: `${base}/builds`, variant: "ghost" })}
+            ${btn("Cancel", { href: back ?? `${base}/branches`, variant: "ghost" })}
           </div>
         </form>`,
-        { head: html`${icon("pin")}<h2>Pin a build</h2>` },
+        {
+          head: html`${icon("pin")}
+            <h2>Pin a build</h2>`,
+        },
       )}
     </div>`;
-  return timedPage(ctx, { ctx, title: `Pin a build · ${repo.name}`, crumbs: crumbsFor(repo), palette: repoPalette(ctx, repo), body });
+  return timePhase(ctx.request, "render", () =>
+    page({
+      ctx,
+      title: `Pin a build · ${repo.name}`,
+      crumbs: crumbsFor(repo),
+      palette: repoPalette(ctx, repo),
+      body,
+    }),
+  );
 }
 
 const PIN_ERRORS: Record<string, string> = {
@@ -137,8 +231,6 @@ const PIN_ERRORS: Record<string, string> = {
   mirrored: "This repository is a mirror. Pin builds in a fork.",
   git_failed: "Pin failed: git refused the ref.",
 };
-
-const hidden = (error: string): boolean => error === "unauthorized" || error === "not_found" || error === "forbidden";
 
 // POST /:owner/:name/builds — pin it.
 export async function pinBuildSubmit(ctx: Ctx): Promise<Response> {
@@ -156,31 +248,17 @@ export async function pinBuildSubmit(ctx: Ctx): Promise<Response> {
     source: formValue(form, "source") || "commit",
   });
   if (!pinned.ok) {
-    if (hidden(pinned.error)) return notFoundPage(ctx);
+    if (pinned.error === "unauthorized" || pinned.error === "not_found" || pinned.error === "forbidden")
+      return notFoundPage(ctx);
     return flashTo(ctx, `${base}/builds/new?sha=${encodeURIComponent(formValue(form, "sha"))}`, {
       tone: "danger",
       message: PIN_ERRORS[pinned.error] ?? "Pin failed.",
     });
   }
-  return flashTo(ctx, `${base}/builds`, {
-    message: `Pinned ${pinned.value.label} at ${pinned.value.oid.slice(0, 7)}.`,
-  });
-}
-
-// POST /:owner/:name/builds/:label/delete — behind /-/confirm.
-export async function deletePinSubmit(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  if (!ctx.auth.user) return signInFirst(ctx);
-  const form = await readForm(ctx, "rw");
-  if (form instanceof Response) return form;
-  const gone = await deletePin(ctx.app, ctx.auth.user, repo, ctx.params.label ?? "");
-  if (!gone.ok && hidden(gone.error)) return notFoundPage(ctx);
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/builds`,
-    gone.ok ? { message: `Deleted pin ${gone.value.label}.` } : { tone: "danger", message: "Delete failed." },
-  );
+  const said = `Pinned ${pinned.value.label} at ${pinned.value.oid.slice(0, 7)}.`;
+  // On Iterations, the new pin is picked.
+  const to = backTo(form, `${base}/iterations?build=${encodeURIComponent(`${repo.ownerName}/${repo.name}:${pinned.value.label}`)}`);
+  return flashTo(ctx, to, { message: said });
 }
 
 const PREVIEW_ERRORS: Record<string, string> = {
@@ -190,36 +268,44 @@ const PREVIEW_ERRORS: Record<string, string> = {
   no_runtime: "Apps are disabled on this forge.",
 };
 
-// POST /:owner/:name/builds/preview — serve one commit for a while, then open it.
 export async function previewBuildSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const oid = formValue(form, "sha");
-  const preview = await previewBuild(ctx.app, ctx.auth.user, repo, oid);
+  const preview = await previewBuild(ctx.app, ctx.auth.user, repo, formValue(form, "sha"));
   if (!preview.ok) {
-    if (hidden(preview.error)) return notFoundPage(ctx);
-    return flashTo(ctx, `${repoBase(repo)}/builds`, {
+    // A reader is told what a stranger is; an agent never holds a session.
+    if (preview.error === "unauthorized" || preview.error === "not_found" || preview.error === "forbidden")
+      return notFoundPage(ctx);
+    return flashTo(ctx, `${repoBase(repo)}/branches`, {
       tone: "danger",
       message: PREVIEW_ERRORS[preview.error] ?? "Preview failed.",
     });
   }
-  // Through the forge's own opener, so a private app's preview gets its grant.
-  const opened = openEnvUrl(ctx.app, ctx.auth.user, repo, preview.value.env, "/");
-  const url = opened.ok ? opened.value : preview.value.url;
+  const path = "/";
+  // Through the forge's own opener, so a private app's preview gets its
+  // grant; a public one's is the plain address.
+  const opened = openEnvUrl(ctx.app, ctx.auth.user, repo, preview.value.env, path);
+  const url = opened.ok
+    ? opened.value
+    : path === "/"
+      ? preview.value.url
+      : preview.value.url.replace(/\/$/, "") + path;
   // Not a redirect: a form's redirect to another origin is held to the
-  // page's CSP form-action. A script navigation is not; the proxy there
-  // shows a page that refreshes itself until the build is up.
+  // page's CSP form-action, which allows only the forge. A page that moves
+  // itself on by script is a navigation, and the app's own address opens. The proxy
+  // there shows a page that refreshes itself until the build is up.
+  const short = formValue(form, "sha").slice(0, 7);
   return page({
     ctx,
-    title: `Opening ${oid.slice(0, 7)} · ${repo.name}`,
+    title: `Opening ${short} · ${repo.name}`,
     crumbs: crumbsFor(repo),
     scriptJs: `location.replace(${JSON.stringify(url).replace(/</g, "\\u003c")});`,
     body: html`<div class="mt">
       ${card(
-        html`<p>Starting build <span class="mono">${oid.slice(0, 7)}</span>.</p>
+        html`<p>Starting build <span class="mono">${short}</span>.</p>
           <p><a class="btn" data-variant="primary" href="${url}">Open ${url}</a></p>`,
         { head: html`${icon("eye")}<h2>Opening preview</h2>` },
       )}

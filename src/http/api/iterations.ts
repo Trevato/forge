@@ -16,7 +16,7 @@ export function iterationRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const forks = (await iterationsOf(ctx.app, ctx.auth.user, repo)) ?? [];
+    const forks = (await iterationsOf(ctx, repo))?.forks ?? [];
     const res = json({ forks, lanes: lanesOf(forks) });
     res.headers.set("cache-control", "private, no-cache");
     res.headers.set("vary", "authorization, cookie");

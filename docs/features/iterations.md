@@ -1,20 +1,27 @@
 # Iterations
 
-A fork family's build pins, drawn as a tree of runs. Read-only: pinning, notes and deletes stay on Builds.
+A fork family's build pins, after Jay Moran's design: fork cards in columns, or a downward tree of runs, with a player and an info panel under the graph. Pinning and deleting stay on Builds; notes can be added from the panel.
 
 ## On the web
 
-Open `/:owner/:name/iterations`, or the **Iterations** button on a repository's Builds page (shown once it holds a pin). The page is not found when neither the repository nor any fork you may read holds a pin, and it is a 404 for a private repository you may not read.
+Open `/:owner/:name/iterations`, or the **Iterations** button on Builds (shown once the repository holds a pin). It is not found when neither the repository nor any fork you may read holds a pin, and for a private repository you may not read.
 
-- A **run** is a card: the fork's name, then one row per pin (label, date, first line of its note). A pin continues its repository's run, oldest first, unless it names a parent (`--parent`), in which case it hangs under that pin; a parent in another fork (`owner/name:label`) draws a dashed concept line.
-- A fork carries its parent's pins; each is drawn once, in the parent.
-- The family is the root you may read, and every fork below it you may read, at most 40 repositories. A private fork is simply absent for anyone who may not read it.
-- With JavaScript: runs are placed under the build they grew from and joined by lines; **Collapse forks** / **Expand forks** fold every fork to its name; the fork name folds one fork, **fold run** folds a run to one node; **−**, **100%**, **+** and **Fit** zoom (Ctrl/⌘ + wheel too). Folds and zoom are remembered in this browser only. Without JavaScript the runs stand side by side and no button is shown.
-- Pins are read from git and kept for 5 seconds per repository, so a new pin may take that long to appear.
+- **Columns** (default): a card per fork, in a column by fork depth. **Tree** (`?layout=tree`): a card per run, each hung under the build it grew from, joined by lines.
+- A pin hangs under the parent it names (`--parent`; `owner/name:label` for a concept edge, a dashed line), else the nearest pin in its history, else it continues its repository's run. A fork carries its parent's pins; each is drawn once, in the parent. The family is the root you may read and every fork below it you may read.
+- **Tree**: drag a run anywhere; **Align** keeps the order you dragged and snaps columns and spacing to a grid; **Reset** puts every run back. Positions are kept in this browser only.
+- **−**, **100%**, **+**, **Fit** zoom (Ctrl/⌘ + wheel too). **Collapse forks** / **Expand forks** fold every fork to its name; the fork name folds one fork, **fold run** folds a run. Folds and zoom are per browser; a fork that gained or lost a pin since it was folded opens again.
+- **Notes** hides the note lines. Click a build: its info panel (pin, commit, branch, lineage, notes, actions: copy link, clone, fork, delete pin for a writer) and its player. The player opens a build preview for an app; a repository that is no app plays nothing. `?build=owner/name:label` links to one.
+- A writer adds a note in the panel (`POST /:owner/:name/builds/:label/note`); it is saved to `refs/forge/notes`.
+
+Not here yet, as they wait for displays and the arcade: the Showcased / display picker, Edit display selections, captured pages (Build and play, Download) and screenshots.
 
 ## In the terminal
 
-Open a repository, then the palette (`ctrl+k`) and **Iterations**. The family's runs are an indented list, a run under the build it grew from, its builds beneath; `j`/`k` move, `esc` goes back. It shows exactly what the page shows for the same viewer.
+Open a repository, then the palette (`ctrl+k`) and **Iterations**. The family's runs are an indented list; `j`/`k` move, `esc` goes back.
+
+## Builds
+
+`/:owner/:name/builds` is Jay's lineage too: the family's pins as one list, each indented under the pin it grew from (the parent its person named, else the nearest pin in its history), a pin from another repository marked `owner/name:` with a dotted concept edge. The Pin a build form suggests a label (`iter-N` for an iteration branch or a fork's first pin) and offers every pin of the family as **Parent**; a pin made there lands on Iterations with it picked. The demo options wait for demos.
 
 ## Over the API
 

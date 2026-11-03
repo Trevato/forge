@@ -100,7 +100,7 @@ describe("build pins", () => {
       source: "branch main",
     });
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/alice/game/builds");
+    expect(res.headers.get("location")).toBe("/alice/game/iterations?build=alice%2Fgame%3Av1");
     const [pin] = await pins();
     expect(pin?.label).toBe("v1");
     expect(pin?.oid).toBe(oids.one!);

@@ -5,6 +5,7 @@
  * is what the feed and webhooks read.
  */
 
+import { forget } from "../core/ttl_cache.ts";
 import type { App } from "../app.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { copyNoteToIntent } from "../core/intent_notes.ts";
@@ -65,6 +66,7 @@ export async function pinBuild(
     tagger: who,
   });
   if (!pinned.ok) return pinned;
+  forget(app);
   app.bus.append({
     kind: "build.pinned",
     repoId: repo.id,
@@ -95,6 +97,7 @@ export async function deletePin(
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const gone = await gitDeletePin(dir, label);
   if (!gone.ok) return gone;
+  forget(app);
   // Its notes stay: they are append-only (`git/builds.ts`).
   app.bus.append({
     kind: "build.deleted",
@@ -126,6 +129,7 @@ export async function notePin(
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const noted = await notePinBuild(dir, label, text, who, commitIdentity(app.config, writer.value));
   if (!noted.ok) return noted;
+  forget(app);
   const { pin, note, commit } = noted.value;
   app.bus.append({
     kind: "build.noted",
