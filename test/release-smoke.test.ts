@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { HEAVY_PAGES, forgeMs, smoke } from "../src/release/smoke.ts";
+import { HEAVY_PAGES, emptyEvidence, forgeMs, smoke } from "../src/release/smoke.ts";
 
 let server: ReturnType<typeof Bun.serve> | undefined;
 afterEach(() => server?.stop(true));
@@ -153,6 +153,15 @@ test("a /healthz that gets no answer twice in a row in the watch fails (#7724)",
   expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("did not answer"))).toBe(true);
 });
 
+test("an empty 200 names the headers that say which layer lost the body (#9343)", async () => {
+  const empty = (p: string) => (p === "/explore" ? new Response("", { headers: { "cf-cache-status": "HIT", "server-timing": "app;dur=3" } }) : undefined);
+  const failures = await smoke(forge(0, [], empty), "t", { heavy });
+  const f = failures.find((x) => x.url.endsWith("/explore"));
+  expect(f?.why).toContain("answered with an empty body");
+  expect(f?.why).toContain("cf-cache-status: HIT");
+  expect(f?.why).toContain("server-timing: app;dur=3");
+});
+
 test("a heavy page that answers an empty body once is asked again and passes (#9334)", async () => {
   let n = 0;
   const flaky = (p: string) => (p === "/explore" && ++n === 1 ? new Response("", { status: 200 }) : undefined);
@@ -179,4 +188,10 @@ test("a polled heavy page that answers an empty body twice in a row in the watch
   const flaky = (p: string) => (p === "/explore" && (n += 1) >= 2 && n <= 3 ? new Response("", { status: 200 }) : undefined);
   const failures = await smoke(forge(0, [], flaky), "t", { heavy });
   expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("empty body"))).toBe(true);
+});
+
+test("an empty 200 with no forge or edge headers says so, pointing past the forge (#9343)", () => {
+  // Called directly: a real server adds a content-length of its own to any body.
+  expect(emptyEvidence(new Response(""))).toBe(" (no forge or edge headers)");
+  expect(emptyEvidence(new Response("", { headers: { "x-forge-version": "v1" } }))).toBe(" (x-forge-version: v1)");
 });

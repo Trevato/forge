@@ -49,6 +49,20 @@ export function forgeMs(res: Response): number | undefined {
   return app && Number.isFinite(app.ms) ? app.ms : undefined;
 }
 
+/**
+ * What an empty 200 says about which layer lost the body (#9343): the forge
+ * writes `Server-Timing` and `X-Forge-Version` and never an empty page, so
+ * their absence points at the edge or the wire; a declared length with no
+ * bytes points at a body cut short.
+ */
+export function emptyEvidence(res: Response): string {
+  const seen = ["content-length", "content-encoding", "cf-cache-status", "age", "server-timing", "x-forge-version"]
+    .map((name) => [name, res.headers.get(name)] as const)
+    .filter((pair): pair is readonly [string, string] => pair[1] !== null)
+    .map(([name, value]) => `${name}: ${value.slice(0, 80)}`);
+  return seen.length === 0 ? " (no forge or edge headers)" : ` (${seen.join("; ")})`;
+}
+
 export interface Heavy {
   watchMs?: number;
   pollMs?: number;
@@ -180,7 +194,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
         return gone(`/healthz reported X-Forge-Version ${res.headers.get("x-forge-version") ?? "none"}, wanted ${heavy.version}`, res.status);
       if (path === "/boards" && anonymousBoard && !token && isSignInRedirect(url, res)) return { failure: null, slow: false };
       if (res.status !== 200) return gone(`${path} expected 200`, res.status);
-      if (!body.trim()) return { ...gone(`${path} answered with an empty body`, res.status), empty: true };
+      if (!body.trim()) return { ...gone(`${path} answered with an empty body${emptyEvidence(res)}`, res.status), empty: true };
       return { failure: null, slow: false };
     } catch (error) {
       return { ...gone(`${path} did not answer within ${slowMs * 2} ms (${error})`), hung: true };
