@@ -1364,3 +1364,78 @@ export function setDirectionIssue(
     issueId,
   );
 }
+
+// Reads a display lists from (display/known.ts, display/items.ts).
+
+/**
+ * When each repository was created and last pushed to (the newest `push`
+ * event, null when there is none), for a list of forks: one query per chunk.
+ */
+export function repoDatesFor(
+  db: Database,
+  repoIds: readonly string[],
+): Map<string, { createdAt: string; pushedAt: string | null }> {
+  const out = new Map<string, { createdAt: string; pushedAt: string | null }>();
+  for (let i = 0; i < repoIds.length; i += 500) {
+    const chunk = repoIds.slice(i, i + 500);
+    const marks = chunk.map((_, j) => `?${j + 1}`).join(",");
+    const rows = db
+      .query<{ id: string; created_at: string; pushed_at: string | null }, string[]>(
+        `SELECT repo.id, repo.created_at,
+                (SELECT MAX(event.created_at) FROM event
+                  WHERE event.repo_id = repo.id AND event.kind = 'push') AS pushed_at
+           FROM repo WHERE repo.id IN (${marks})`,
+      )
+      .all(...chunk);
+    for (const r of rows)
+      out.set(r.id, { createdAt: r.created_at, pushedAt: r.pushed_at });
+  }
+  return out;
+}
+
+/**
+ * Every repo one user or org owns, whoever looks: for a display, whose
+ * showcased demos are published from private repositories too
+ * (`display/items.ts`). Never a listing a person sees as repositories.
+ */
+export function listAllReposByOwner(db: Database, ownerName: string, limit: number): Repo[] {
+  return db
+    .query<RepoRow, [string, number]>(`${SELECT} WHERE user.username = ?1 COLLATE NOCASE ORDER BY repo.id DESC LIMIT ?2`)
+    .all(ownerName, limit)
+    .map(toRepo);
+}
+
+/**
+ * Which of these repositories the viewer may read — `REPO_VISIBLE` (or
+ * `PUBLIC_VISIBLE` signed out) for many rows in one query per chunk: the
+ * rule every listing applies, so a row never links a page that would 404.
+ */
+export function readableRepoIds(
+  db: Database,
+  viewer: User | undefined,
+  repoIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ id: string }, string[]>(
+        `SELECT repo.id FROM repo
+         WHERE repo.id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+           AND ${viewer ? REPO_VISIBLE : PUBLIC_VISIBLE}`,
+      )
+      .all(viewer?.id ?? "", ...batch);
+    for (const row of rows) out.add(row.id);
+  }
+  return out;
+}
+
+/** Every repository a site admin owns (a person, never an agent), its owner in standing. */
+export function listAdminOwnedRepos(db: Database): Repo[] {
+  return db
+    .query<RepoRow, []>(`${SELECT} WHERE user.is_admin = 1 AND user.is_agent = 0 AND ${OWNER_STANDING} ORDER BY owner_name, repo.name`)
+    .all()
+    .map(toRepo);
+}
