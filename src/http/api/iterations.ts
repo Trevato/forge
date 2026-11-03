@@ -8,7 +8,8 @@ import { iterationsOf, lanesOf } from "../../core/iterations.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { loadRepo } from "../api.ts";
 import type { Handler } from "../context.ts";
-import { json, notFound } from "../respond.ts";
+import { holds, weakEtag } from "../etag.ts";
+import { notFound } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 export function iterationRoutes(router: Router<Handler>): void {
@@ -17,9 +18,12 @@ export function iterationRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const forks = (await iterationsOf(ctx, repo))?.forks ?? [];
-    const res = json({ forks, lanes: lanesOf(forks) });
-    res.headers.set("cache-control", "private, no-cache");
-    res.headers.set("vary", "authorization, cookie");
-    return res;
+    // The tag is of the exact bytes sent for this viewer, reached only past the access check: a fork made,
+    // deleted, pushed or turned private changes the body, and so the tag (#9223).
+    const text = JSON.stringify({ forks, lanes: lanesOf(forks) });
+    const etag = weakEtag(text);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
 }
