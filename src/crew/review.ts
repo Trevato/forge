@@ -29,6 +29,7 @@ import { reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
 import { getTeam } from "../core/teams.ts";
 import { createLog } from "../kernel/log.ts";
+import { guestWaits } from "../origins/guest.ts";
 import { reviewerPaused } from "./reviewer_paused.ts";
 import { queueAgentRun } from "./dispatch.ts";
 import { type Handover, handoverOf, handoversOf } from "./guard.ts";
@@ -451,6 +452,9 @@ export async function sendToReview(
   const reviewers = reviewersOf(app.db, repo.id);
   // A paused reviewer reads like an empty seat: the pull waits for a person, and says so.
   if (reviewers.length === 0 || reviewerPaused(repo)) return "none";
+  // A guest from another forge waits for a person's word before the crew
+  // touches it (`origins/guest.ts`).
+  if (guestWaits(app.db, pull)) return "held";
   // The reviewer's slots bound every route, the teams' too. The most (PILLAR_MAX) is no cap: the sweep already bounds what it sends.
   if (repo.reviewerSlots < PILLAR_MAX && reviewsInFlight(app.db, repo.id) >= repo.reviewerSlots) return "wait";
   if (teamsOfPull(app.db, pull).length > 0) {

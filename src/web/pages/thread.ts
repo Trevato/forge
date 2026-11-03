@@ -170,6 +170,11 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       tone: "default",
       verb: "let this head run",
     },
+    "pull.guest_approved": {
+      icon: "check",
+      tone: "default",
+      verb: "approved this guest",
+    },
     "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
     "pull.released": {
       icon: "check",

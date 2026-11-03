@@ -335,6 +335,7 @@ import {
   pullThreadFragment,
   threadResolveSubmit,
 } from "../web/pages/pull.ts";
+import { pullApproveGuestSubmit } from "../web/pages/pull-guest.ts";
 import { conflictsFinish, conflictsPage, proposeSubmit } from "../web/pages/conflicts.ts";
 import {
   appDisable,
@@ -1131,6 +1132,11 @@ export function buildRouter(): Router<Handler> {
     "POST",
     "/:owner/:name/pulls/:number/approve-here",
     pullApproveHereSubmit,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/pulls/:number/approve-guest",
+    pullApproveGuestSubmit,
   );
   router.add(
     "POST",

@@ -299,7 +299,7 @@ export const liveClientJs = /* js */ `
     'push', 'repo.created', 'repo.forked',
     'issue.opened', 'issue.closed', 'issue.reopened', 'issue.commented', 'issue.labeled', 'issue.teams', 'issue.edited',
     'pull.opened', 'pull.closed', 'pull.reopened', 'pull.merged', 'pull.commented', 'pull.reviewed',
-    'pull.held', 'pull.released', 'pull.edited', 'pull.run_granted',
+    'pull.held', 'pull.released', 'pull.edited', 'pull.run_granted', 'pull.guest_approved',
     'branch.created', 'branch.deleted',
     'label.created', 'label.updated', 'label.deleted',
     'run.queued', 'run.started', 'run.finished', 'app.serving',

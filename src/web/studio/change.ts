@@ -65,6 +65,7 @@ import {
 import { previewCard } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
 import { approveHereCard, pullChecksLineFor, teamsCard } from "../pages/pull.ts";
+import { guestCard } from "../pages/pull-guest.ts";
 import { teamVerdicts } from "../../core/issue_teams.ts";
 import { liveRegionsJs } from "../client.ts";
 import { pullState } from "../pages/pulls.ts";
@@ -676,6 +677,7 @@ async function changeConversation(
     spent,
     "gate",
     () => html`${held ? holdCard(ctx, repo, pull, { act: true }) : null}
+    ${guestCard(ctx, repo, pull, `${thread}/approve-guest`)}
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
     ${when(wall, (w) => wallCard(w, writer ? thread : undefined))}`,

@@ -99,6 +99,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "pull.reviewed",
   "pull.thread_resolved",
   "pull.run_granted",
+  "pull.guest_approved",
   "team.changed",
   "forge.severed",
   "forge.follow_mode",

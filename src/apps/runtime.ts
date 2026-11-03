@@ -36,6 +36,7 @@ import { requeueAbandonedChecks } from "../checks/service.ts";
 import { checkInstallCache } from "../checks/install.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
+import { guestWaits } from "../origins/guest.ts";
 import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
 import { runningLimitSentence } from "../settings/quotas.ts";
 import type { User } from "../core/users.ts";
@@ -908,7 +909,9 @@ export class AppsRuntime {
         return;
       }
       // An approval is what lets a reader's pull run: deploy its head now.
+      // A guest's approval restarts its preview with the app's variables.
       case "pull.run_granted":
+      case "pull.guest_approved":
       case "pull.reviewed": {
         // A writer asking for changes may withdraw what let the preview run:
         // if the code it serves may no longer run, it stops now, not at its
@@ -943,7 +946,9 @@ export class AppsRuntime {
             repo,
             previewEnv(pull.number),
             head,
-            "approved",
+            // The same head may be serving already: start it again so it
+            // comes up holding the variables it ran without.
+            event.kind === "pull.guest_approved" ? "redeploy" : "approved",
             event.actorId ?? undefined,
           );
         return;
@@ -1395,13 +1400,7 @@ export class AppsRuntime {
       ssh: this.sshFor(state.app, state.env),
       // Read at start, never cached: a change is a redeploy, and the
       // process that comes up is the one that sees it.
-      vars: resolveAppEnv(
-        this.app.db,
-        this.app.config.dataDir,
-        state.app.id,
-        state.env,
-      ),
-      forgeToken: token.token,
+      ...this.secretsFor(repo, state.app.id, state.env, token.token),
       log: write,
       warm,
       cell: this.cellFor(state.app, state.env),
@@ -1634,6 +1633,28 @@ export class AppsRuntime {
   }
 
   /**
+   * What a process for `env` starts holding: the operator's variables, read
+   * at start, and the forge token. A preview of a guest pull nobody has
+   * approved yet (`origins/guest.ts`) holds neither.
+   */
+  secretsFor(
+    repo: Repo,
+    appId: string,
+    env: EnvName,
+    forgeToken: string,
+  ): { vars: Record<string, string>; forgeToken: string | undefined } {
+    const number = envPull(env);
+    const pull =
+      number === undefined ? undefined : getPull(this.app.db, repo.id, number);
+    if (pull !== undefined && guestWaits(this.app.db, pull))
+      return { vars: {}, forgeToken: undefined };
+    return {
+      vars: resolveAppEnv(this.app.db, this.app.config.dataDir, appId, env),
+      forgeToken,
+    };
+  }
+
+  /**
    * An environment asleep is started again, warm, from the checkout it
    * kept; one start serves every request that arrives while it happens.
    * Returns once it is live, or once it is clear it will not be.
@@ -1712,13 +1733,7 @@ export class AppsRuntime {
         forgeUrl: this.options.forgeUrl,
         identityKey: identityKey(this.app.config.dataDir, record.id),
         ssh: this.sshFor(record, env),
-        vars: resolveAppEnv(
-          this.app.db,
-          this.app.config.dataDir,
-          record.id,
-          env,
-        ),
-        forgeToken: token.token,
+        ...this.secretsFor(repo, record.id, env, token.token),
         log: write,
         signal: new AbortController().signal,
         warm: true,

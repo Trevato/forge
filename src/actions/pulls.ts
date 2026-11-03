@@ -60,6 +60,7 @@ import {
   type ThreadState,
 } from "../core/reviews.ts";
 import { isProposed } from "../core/pull_trust.ts";
+import { approveGuest } from "../origins/guest.ts";
 import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
@@ -899,3 +900,26 @@ export const approveToRun = (
   isProposed(app.db, pull)
     ? letRun(app, actor, repo, pull)
     : approveHere(app, actor, repo, pull);
+
+/**
+ * The one door every surface calls to approve a guest from another forge
+ * (`origins/guest.ts`): the page's form and the terminal's `G`. Announced, so
+ * the preview restarts holding the app's variables and every open view of
+ * the pull hears it.
+ */
+export function approveGuestPull(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  pull: Pull,
+): Result<"approved" | "already", "forbidden" | "not_guest"> {
+  const done = approveGuest(app.db, repo, pull, actor);
+  if (done.ok && done.value === "approved")
+    app.bus.append({
+      kind: "pull.guest_approved",
+      repoId: repo.id,
+      actorId: actor?.id,
+      payload: { number: pull.number },
+    });
+  return done;
+}

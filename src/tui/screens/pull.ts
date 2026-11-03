@@ -33,6 +33,7 @@ import {
 } from "../../actions/issues.ts";
 import {
   addReview,
+  approveGuestPull,
   approveToRun as letItRun,
   mergePull,
   pullThreads,
@@ -58,6 +59,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
+import { guestWaits, mayApproveGuest } from "../../origins/guest.ts";
 import { runningProgress, stepsLine } from "../../checks/progress.ts";
 import { askCheck } from "../../checks/again.ts";
 import { checkStale, checksHold } from "../../checks/stale.ts";
@@ -215,6 +217,9 @@ export function teamLine(v: TeamVerdict): string {
 
 /** How often a pull's screen re-reads while its check is queued or running. */
 const CHECK_TICK_MS = 5000;
+
+/** A waiting guest's line on its screen; the page says it in full (`web/pages/pull-guest.ts`). */
+export const GUEST_NOTE = "a guest from another forge: no app variables, no crew, until a writer approves";
 
 export function pullScreen(
   f: Session,
@@ -875,6 +880,43 @@ export function pullScreen(
     });
   };
 
+  /** Whether this open pull is a guest from another forge nobody has approved yet. */
+  const guestWaiting = (): boolean => {
+    if (repo === undefined) return false;
+    const row = getPull(f.db, repo.id, number);
+    return (
+      row !== undefined &&
+      row.state === "open" &&
+      row.mergedAt === null &&
+      guestWaits(f.db, row)
+    );
+  };
+
+  /** `G` on offer: a waiting guest, and a person who can write here. The page's gate. */
+  const mayApproveThisGuest = (): boolean =>
+    repo !== undefined && guestWaiting() && mayApproveGuest(f.db, repo, f.user);
+
+  /** `G` — approve this guest once; `approveGuestPull` asks again who may. */
+  const approveThisGuest = (): void => {
+    if (repo === undefined) return;
+    const row = getPull(f.db, repo.id, number);
+    if (row === undefined) return;
+    const done = approveGuestPull(f.app, f.user, repo, row);
+    if (!done.ok) {
+      ctx.toast(
+        done.error === "forbidden"
+          ? "only a person with write access can approve a guest"
+          : "this pull is from this forge: it is no guest",
+        "danger",
+      );
+      return;
+    }
+    runAsync(ctx, async () => {
+      await reload();
+      ctx.toast("approved as a guest: its preview starts again with the app's variables", "success");
+    });
+  };
+
   /** `v` — the conflict blocks, read; `pullConflicts` holds the writer gate. */
   const seeConflicts = (): void => {
     if (repo === undefined) return;
@@ -964,6 +1006,7 @@ export function pullScreen(
                     ),
                   ]
                 : []),
+              ...(mayApproveThisGuest() ? [binding(["G"], "approve this guest")] : []),
               binding(["a"], "assign"),
               ...(mayHold() && (hold !== undefined || detail?.issue.state === "open")
                 ? [binding(["h"], hold === undefined ? "hold" : "let it go")]
@@ -1055,7 +1098,7 @@ export function pullScreen(
         x1,
         head!.y + 1,
         truncate(
-          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${stepLine(step)}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${guestWaiting() ? ` · ${GUEST_NOTE}` : ""}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${stepLine(step)}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
           Math.max(0, edge - x1),
         ),
         style(c.mutedFg, c.bg),
@@ -1181,6 +1224,10 @@ export function pullScreen(
       }
       if (e.key === "R" && mayWrite()) {
         review();
+        return true;
+      }
+      if (e.key === "G" && mayApproveThisGuest()) {
+        approveThisGuest();
         return true;
       }
       if (e.key === "A" && mayApproveHere()) {

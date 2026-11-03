@@ -112,6 +112,7 @@ import { specFindings } from "./pull-spec.ts";
 import { pullPreviewFindings } from "../../core/preview_findings.ts";
 import { crewActivityCard } from "./runs.ts";
 import { holdCard } from "../studio/hold.ts";
+import { guestCard } from "./pull-guest.ts";
 import {
   changeHead,
   changeTabs,
@@ -1012,6 +1013,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}
     <div class="split">
       <div>
+        ${guestCard(ctx, repo, pull, `${thread}/approve-guest`)}
         ${approveHereCard(ctx, repo, pull, status.headOid, `${thread}/approve-here`)}
         ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
       </div>
@@ -1232,7 +1234,7 @@ export function approveHereCard(
       <p>
         ${proposed
           ? "A child forge proposed this head, so its check and preview wait for you. Letting it run is not a review and does not count toward one; it runs this exact code here, holding the repository owner's app token. A new push waits again."
-          : "This head is from a fork on the origin, so its check and preview wait for you. Approving lets them run this exact code here, holding the repository owner's app token. A new push waits again."}
+          : "This head is from a fork on the origin, so its check and preview wait for you. Approving lets them run this exact code here; it holds the repository's secrets only once it is approved as a guest too. A new push waits again."}
       </p>
       ${btn(proposed ? "Let it run here" : "Approve to run here", { size: "sm", icon: "check" })}
     </form>`,
