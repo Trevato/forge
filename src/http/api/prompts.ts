@@ -13,6 +13,7 @@ import {
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { loadRepo } from "../api.ts";
 import type { Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { body, json, notFound, requireScope, respondAccess, str } from "../respond.ts";
 import type { Router } from "../router.ts";
 
@@ -28,7 +29,15 @@ export function promptRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const listed = timePhase(ctx.request, "prompts", () => listPromptSources(ctx.app, ctx.auth.user, repo));
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
+    // Tagged only after the access check, over the exact bytes sent: an added, edited, run or removed
+    // source moves it, and a viewer shown a different body gets a different tag.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({ items: listed.value, next_cursor: null });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/prompts", async (ctx) => {
