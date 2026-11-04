@@ -821,7 +821,10 @@ export function contributionJson(ctx: Ctx, result: ContributeResult) {
  * ordinary access and origin codes every other route already speaks.
  */
 export function contributeFailure(error: unknown): Response {
-  if (String(error) === "origin_refused" || (typeof error === "object" && JSON.stringify(error).includes("origin_refused")))
+  // Only a refusal that left nothing behind. A pull refused after its commit
+  // landed is `pull_failed` below, which carries that commit.
+  const landed = typeof error === "object" && error !== null && (error as { kind?: unknown }).kind === "pull_failed";
+  if (!landed && (String(error) === "origin_refused" || JSON.stringify(error).includes("origin_refused")))
     return apiError(
       "origin_refused",
       403,

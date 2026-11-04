@@ -209,7 +209,12 @@ describe("connecting a friend's forge, from the address to a repository here", (
     return dir;
   };
 
+  // A check is told its forge's public URL as `FORGE_URL`, and that wins the
+  // callback address (`forgeBaseUrl`): these two forges would send the browser there.
+  const toldUrl = process.env.FORGE_URL;
+
   beforeAll(async () => {
+    delete process.env.FORGE_URL;
     friend = createApp({ dataDir: await make(), port: 0 });
     friendServers = await serve(friend);
     await seedAdmin(friend, {
@@ -257,6 +262,7 @@ describe("connecting a friend's forge, from the address to a repository here", (
   }, 120_000);
 
   afterAll(async () => {
+    if (toldUrl !== undefined) process.env.FORGE_URL = toldUrl;
     await syncsSettled();
     older.stop();
     mineServers.stop();
