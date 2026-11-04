@@ -3,7 +3,7 @@
 Connect another forge at `/settings/origins`: type its address and press "Sign in there". A token it gave you (Settings, Tokens there; `ro` is enough to bring code across) is the path for when sign-in is unavailable. `discover` asks `GET /api/v1/version`; a forge answers `{"version", "software":"forge"}` (a 0.5.x forge has no such route, and is known by `/api/v1/health` with its OAuth metadata), and is stored as an origin with `software = forge` (kind `gitea`, the dialect it speaks).
 
 - **Picker:** `GET /api/v1/user/repos` lists the token's account's repositories, private ones included, in the Gitea shape. Only that route speaks the Gitea shape; a repository's own JSON is unchanged.
-- **Credential:** the token travels as `Authorization: token …` for the API (accepted as a Bearer token) and as Basic through `GIT_CONFIG_*` for git — never argv, never config.
+- **Credential:** the token travels as `Authorization: Bearer …` for the API, the one scheme every release of a forge takes (`token …` only since 0.7.346), and as Basic through `GIT_CONFIG_*` for git — never argv, never config.
 - **Mirror:** brings the code and its history, and the issues, pulls and comments, read in the forge's own JSON (`src/origins/providers/forge-work.ts`) with the real author kept. The origin's card and `GET /api/v1/user/origins` (`carries`) say what did not come: labels and how the app runs (not yet), and its data and secrets (never by default).
 - **Write-through:** a comment, an issue or a state change here goes to the other forge first, with the connecting person's token (`rw` needed), and is refused with nothing changed here when the forge is down or says no. A pull is opened there with `createPull` (the contribute path); its merge comes back with the next sync.
 

@@ -13,6 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { getOriginById, listOrigins } from "../src/core/origins.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
+import { createToken } from "../src/core/tokens.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -162,9 +163,10 @@ function olderForge(behind: string): { url: string; stop: () => void } {
     idleTimeout: 60,
     async fetch(request) {
       const url = new URL(request.url);
-      // What 0.5.x reports of itself: a real version, and no commit in the worst case.
+      // What 0.5.x reports of itself: a real version, and no commit, as at 9ebb3345.
 
-      if (url.pathname === "/api/v1/health") return Response.json({ ok: true, version: "0.5.29", commit: null, draining: false });
+      if (url.pathname === "/api/v1/health") return Response.json({ ok: true, version: "0.5.29", draining: false });
+      // Before 0.7.346 only `Bearer` named a token: `token <secret>` was no credential at all.
 
       if (absent.has(url.pathname))
         return new Response("{}", {
@@ -173,6 +175,7 @@ function olderForge(behind: string): { url: string; stop: () => void } {
         });
       const headers = new Headers(request.headers);
       headers.set("host", url.host);
+      if ((headers.get("authorization") ?? "").startsWith("token ")) headers.delete("authorization");
       return fetch(`${behind}${url.pathname}${url.search}`, {
         method: request.method,
         headers,
@@ -494,6 +497,27 @@ describe("connecting a friend's forge, from the address to a repository here", (
     expect(history).toEqual(["commit 3", "commit 2", "commit 1"]);
   });
 
+  test("a 0.5.x forge, with a token made there: accepted, listed, brought with its history", async () => {
+    await seedAdmin(mine, { username: "dave", email: "dave@forge.test", password: "dave-login-secret" });
+    proveAll(mine);
+    const dave = getUserByName(mine.db, "dave")!;
+    const browser = new Browser({ [mineServers.url]: `forge_session=${createSession(mine.db, dave.id).token}` });
+    const token = createToken(friend.db, getUserByName(friend.db, "bob")!.id, "dave", "ro").token;
+
+    const connected = await browser.post(`${mineServers.url}/settings/origins/token`, { host: older.url, token });
+    expect(connected.response.status).toBe(200);
+    expect(connected.url.pathname).toBe("/settings/origins");
+    expect(connected.text).not.toContain("refused");
+
+    const origin = listOrigins(mine.db, dave.id)[0]!;
+    expect(origin).toMatchObject({ login: "bob", authKind: "pat", software: "forge" });
+    const repos = await browser.walk(`${mineServers.url}/settings/origins/${origin.id}/repos`);
+    expect(repos.text).toContain("bob/widgets");
+
+    const started = await browser.post(`${mineServers.url}/settings/origins/${origin.id}/mirror`, { fullName: "bob/widgets", name: "" });
+    const history = await broughtHistory(browser, "dave", started.url.href);
+    expect(history).toEqual(["commit 3", "commit 2", "commit 1"]);
+  });
   test("a 0.5.x forge, from a /bring link: it signs in, returns to the link, and brings the app", async () => {
     const browser = new Browser({
       [mineServers.url]: `forge_session=${createSession(mine.db, carol.id).token}`,
