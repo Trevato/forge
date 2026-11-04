@@ -484,6 +484,7 @@ Once a minute the forge measures its landing rate, names the one cause binding i
 ## Where the rest is
 
 - [`docs/DEVELOP.md`](docs/DEVELOP.md) — developing the forge: tests, checks, the gate, lint and types.
+- [`docs/SECURITY-RUNBOOK.md`](docs/SECURITY-RUNBOOK.md) — what to do, with no AI, if the forge is under load, a token leaks or an account looks wrong.
 - [`docs/STATUS.md`](docs/STATUS.md) — what works today, one bullet per feature.
 - [`docs/ON-YOUR-MACHINE.md`](docs/ON-YOUR-MACHINE.md) — the `forge` command on your machine: the local copy, offline work and building the binary.
 - [`docs/web.md`](docs/web.md) — the rules for assets and HTML: what is cached where, how a page streams, and the byte budgets a test enforces.
