@@ -118,6 +118,7 @@ const UNSEEDED: Record<string, string> = {
   "/origins/:id/r/:owner/:name/tree/:ref": ORIGIN,
   "/origins/:id/r/:owner/:name/tree/:ref/*path": ORIGIN,
   "/resilience/nightly/:job": "a nightly job's name (flake-hunt, outside-gate); the placeholder names none, so its not-found page is what gets the floor checked",
+  "/settings/origins/:id/archived": ORIGIN,
   "/settings/origins/:id/mirror/:job": ORIGIN,
   "/settings/origins/:id/repos": ORIGIN,
   "/settings/origins/flows/:id": ORIGIN,
