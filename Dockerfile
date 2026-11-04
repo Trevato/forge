@@ -9,6 +9,7 @@
 # runtime unasked. Whether to move off 1.3.14 waits on the decode issue (#3726).
 FROM oven/bun:1.3.14-debian
 RUN apt-get update \
+ && apt-get -y upgrade \
  && apt-get install -y --no-install-recommends git ca-certificates curl bubblewrap socat nodejs npm tini chromium fonts-liberation \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code \
