@@ -16,6 +16,7 @@ import { envPull } from "./data.ts";
 import { forgeApiUrl } from "./token.ts";
 import { backgroundArgv } from "./background.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
+import { isFeatureVarName } from "./feature_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
@@ -56,6 +57,8 @@ export interface StartInput {
   readonly ssh?: string | undefined;
   /** The operator's variables for this app (`core/app_env.ts`). */
   readonly vars?: Record<string, string> | undefined;
+  /** An absorbed app's `FORGE_FEATURE` and `FORGE_SETTING_*` (`apps/feature_env.ts`). */
+  readonly feature?: Record<string, string> | undefined;
   /** The process's read-only credential into the forge (`apps/token.ts`). */
   readonly forgeToken?: string | undefined;
   readonly log: (line: string) => void;
@@ -158,6 +161,8 @@ export function appEnv(input: {
   ssh?: string | undefined;
   /** The operator's variables: an admin password, an API key. */
   vars?: Record<string, string> | undefined;
+  /** An absorbed app's settings, as the forge keeps them (`apps/feature_env.ts`). */
+  feature?: Record<string, string> | undefined;
   /** A read-only forge token for this process (`apps/token.ts`). */
   forgeToken?: string | undefined;
 }): Record<string, string> {
@@ -168,6 +173,7 @@ export function appEnv(input: {
   // matters, in case that path is ever bypassed.
   const env = {
     ...operatorVars(input.vars),
+    ...featureVars(input.feature),
     ...childEnv({
       PORT: String(input.port),
       HOST: "127.0.0.1",
@@ -196,6 +202,13 @@ export function appEnv(input: {
   delete env["USER"];
   delete env["LOGNAME"];
   return env;
+}
+
+/** An absorbed app's settings: only the names a feature owns, never one the forge sets itself. */
+function featureVars(vars: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(vars ?? {})) if (isFeatureVarName(name)) out[name] = value;
+  return out;
 }
 
 /** The operator's variables minus any name the forge owns. */
@@ -551,6 +564,7 @@ export async function startProcess(
       identityKey: input.identityKey,
       ssh: input.ssh,
       vars: input.vars,
+      feature: input.feature,
       forgeToken: input.forgeToken,
     });
     const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {

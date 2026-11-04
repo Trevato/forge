@@ -15,6 +15,8 @@ import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { absorbedForNav } from "../actions/features.ts";
+import { getAppById } from "../core/apps.ts";
 import {
   enterableApps,
   getRepo,
@@ -254,6 +256,24 @@ function newMenu(ctx: Ctx): Html {
   });
 }
 
+/**
+ * The apps absorbed as the forge's own features, for the menu: each
+ * opens at its declared page through the forge's door, which vouches for the
+ * viewer, so a private feature opens without a second sign-in.
+ */
+function featureItems(ctx: Ctx, user: User): MenuItem[] {
+  const runtime = appsRuntime(ctx.app);
+  return absorbedForNav(ctx.app, user).map((f) => {
+    const record = getAppById(ctx.app.db, f.appId);
+    // Without a runtime there is no host to open: the app's own page instead.
+    const href =
+      runtime === undefined || record === undefined
+        ? `/${f.repo}`
+        : `/apps/open?host=${encodeURIComponent(new URL(runtime.urlFor(record, "production")).host)}&to=${encodeURIComponent(f.page)}`;
+    return { label: f.name, href, icon: "rocket" as const };
+  });
+}
+
 function userMenu(
   ctx: Ctx,
   user: User,
@@ -268,6 +288,7 @@ function userMenu(
     { label: "Talk", href: "/talk", icon: "comment" },
     { label: "Explore", href: "/explore", icon: "search" },
     { label: "Map", href: "/map", icon: "map" },
+    ...featureItems(ctx, user),
     { separator: true, label: "" },
     // The "+" menu shows on every width; these repeat it for the user menu.
     ...newIssueItem(ctx),

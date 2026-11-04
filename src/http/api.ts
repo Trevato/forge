@@ -368,6 +368,7 @@ import { promptRoutes } from "./api/prompts.ts";
 import { cloudRoutes } from "./api/cloud.ts";
 import { secretRoutes } from "./api/secrets.ts";
 import { drillRoutes } from "./api/drills.ts";
+import { featureRoutes } from "./api/features.ts";
 import { upstreamRoutes } from "./api/upstream.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
@@ -3660,6 +3661,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   secretRoutes(router);
   drillRoutes(router);
+  featureRoutes(router);
 
   // What the crew's runs here spent over a window (`core/usage.ts`):
   // tokens, cost, wall time and outcome, by subscription, agent and issue.

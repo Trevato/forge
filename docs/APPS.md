@@ -650,6 +650,8 @@ The forge starts the app with:
 | `FORGE_URL`        | the forge's own base URL                                                 |
 | `FORGE_API_URL`    | the forge's JSON API, `FORGE_URL` + `/api/v1`                            |
 | `FORGE_TOKEN`      | a read-only token of the repository owner's, this process's alone        |
+| `FORGE_FEATURE`    | `1` while a site admin has absorbed the app as a forge feature ([docs/features/absorb.md](features/absorb.md)) |
+| `FORGE_SETTING_*`  | each setting the app's `feature` declares, as the forge keeps it, while absorbed |
 
 That last one is for the app to call the forge back on, not to run the forge
 software itself — a shell that already has it set (a crew workspace does)

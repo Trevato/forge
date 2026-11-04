@@ -66,6 +66,17 @@ export const ASKING: Readonly<Record<string, Asking>> = {
   // Secrets and credentials.
   secrets: { does: "set or remove a sealed secret", asks: not("action", "list") },
   app_env: { does: "set or unset an app's variable", asks: not("action", "list") },
+  // Absorbing restarts the app and changes the forge's menu for its readers.
+  features: {
+    does: "absorb or un-absorb an app as a forge feature, or change its settings",
+    asks: (a) => a["absorb"] !== undefined || a["settings"] !== undefined,
+    undo: (a) =>
+      a["absorb"] === true
+        ? "`features` with `absorb: false` puts it back; its settings are kept"
+        : a["absorb"] === false
+          ? "`features` with `absorb: true` absorbs it again, with its settings"
+          : "`features` with the old values sets them back",
+  },
   proposal_tokens: {
     does: "mint or revoke a child forge's propose-only credential",
     asks: not("verb", "list"),

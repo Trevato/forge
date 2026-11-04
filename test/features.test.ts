@@ -1,0 +1,333 @@
+/**
+ * Absorb: an app declares a `feature` in forge.json, a site admin
+ * absorbs it, and the forge keeps its typed settings and hands them to the
+ * app's process as FORGE_SETTING_*. Held here: the declaration is fail-closed;
+ * declaring alone does nothing; only a site admin absorbs or changes settings
+ * (a repository's own admin is refused, a stranger learns nothing); a value
+ * that does not fit changes nothing; un-absorbing keeps the values for the
+ * next absorb; and an app is told only names a feature owns.
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { absorbApp, absorbedForNav, changeFeatureSettings, getFeature, unabsorbApp } from "../src/actions/features.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { checkSetting, featureEnv, parseFeature, settingEnvName } from "../src/apps/feature.ts";
+import { featureVarsAt } from "../src/apps/feature_env.ts";
+import { appEnv } from "../src/apps/process.ts";
+import { createApp as insertApp } from "../src/core/apps.ts";
+import { listEvents } from "../src/core/events.ts";
+import { featureSettings, getAbsorbed } from "../src/core/features.ts";
+import type { Repo } from "../src/core/repos.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { createUser, type User } from "../src/core/users.ts";
+import { eventVerb } from "../src/design/activity.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { quietLogs } from "./helpers/globals.ts";
+import { mcpTool } from "./helpers/mcp.ts";
+import { promote } from "./helpers/members.ts";
+
+quietLogs();
+
+const FEATURE = {
+  name: "Radar",
+  summary: "What the platform runs against what exists",
+  page: "/",
+  settings: {
+    runDays: { type: "days", default: ["mon", "thu"], label: "Run on" },
+    runHourUtc: { type: "int", default: 13, min: 0, max: 23, label: "Hour (UTC)" },
+    claudeCode: { type: "choice", choices: ["stable", "latest"], default: "latest", label: "Claude Code follows" },
+    scout: { type: "bool", default: true, label: "Search the web for ideas" },
+  },
+};
+const FORGE_JSON = JSON.stringify({ app: { run: "bun run src/server.ts" }, feature: FEATURE });
+
+describe("the declaration", () => {
+  test("a good one parses, with each default kept as canonical text", () => {
+    const parsed = parseFeature(JSON.parse(FORGE_JSON));
+    if (!parsed.ok || parsed.value === undefined) throw new Error(JSON.stringify(parsed));
+    expect(parsed.value.name).toBe("Radar");
+    expect(parsed.value.settings.map((s) => [s.key, s.default])).toEqual([
+      ["runDays", "mon,thu"],
+      ["runHourUtc", "13"],
+      ["claudeCode", "latest"],
+      ["scout", "true"],
+    ]);
+  });
+
+  test("none is no feature, not an error", () => {
+    expect(parseFeature({ app: { run: "x" } })).toEqual({ ok: true, value: undefined });
+  });
+
+  test("a wrong one is refused with the field named, never guessed", () => {
+    const wrong = (feature: unknown) => {
+      const r = parseFeature({ feature });
+      return r.ok ? "ok" : r.error;
+    };
+    expect(wrong("Radar")).toContain("must be an object");
+    expect(wrong({ name: "" })).toContain("name");
+    expect(wrong({ name: "R", page: "https://evil.example/" })).toContain("page");
+    expect(wrong({ name: "R", page: "//evil.example" })).toContain("page");
+    expect(wrong({ name: "R", extra: 1 })).toContain("unknown field extra");
+    expect(wrong({ name: "R", settings: { RunDays: { type: "days" } } })).toContain("camelCase");
+    expect(wrong({ name: "R", settings: { a: { type: "secret" } } })).toContain("type is one of");
+    expect(wrong({ name: "R", settings: { h: { type: "int", min: 5, max: 1 } } })).toContain("min is above max");
+    expect(wrong({ name: "R", settings: { h: { type: "int", default: 30, max: 23 } } })).toContain("default is at most 23");
+    expect(wrong({ name: "R", settings: { c: { type: "choice", choices: ["only"] } } })).toContain("choices");
+    expect(wrong({ name: "R", settings: { s: { type: "string", min: 1 } } })).toContain("only an int");
+    // Two keys that would be one environment variable (both FORGE_SETTING_A_BC).
+    expect(wrong({ name: "R", settings: { aBC: { type: "bool" }, aBc: { type: "bool" } } })).toContain("share one FORGE_SETTING_ name");
+    expect(wrong({ name: "R", settings: { a_b: { type: "bool" } } })).toContain("camelCase");
+  });
+
+  test("values are checked by type, and kept in one form", () => {
+    expect(checkSetting({ type: "days" }, ["Thursday", "mon"])).toEqual({ ok: true, value: "mon,thu" });
+    expect(checkSetting({ type: "days" }, "fri,mon")).toEqual({ ok: true, value: "mon,fri" });
+    expect(checkSetting({ type: "days" }, ["someday"]).ok).toBe(false);
+    expect(checkSetting({ type: "bool" }, "on")).toEqual({ ok: true, value: "true" });
+    expect(checkSetting({ type: "bool" }, "yes").ok).toBe(false);
+    expect(checkSetting({ type: "int", min: 0, max: 23 }, "24").ok).toBe(false);
+    expect(checkSetting({ type: "int" }, "1e3").ok).toBe(false);
+    expect(checkSetting({ type: "list" }, "a\nb, c")).toEqual({ ok: true, value: "a,b,c" });
+    expect(checkSetting({ type: "string" }, "line\u0007bell").ok).toBe(false);
+    expect(checkSetting({ type: "choice", choices: ["a", "b"] }, "c").ok).toBe(false);
+  });
+
+  test("the process is told every setting: kept, else default, and a kept value that no longer fits is the default", () => {
+    const parsed = parseFeature(JSON.parse(FORGE_JSON));
+    if (!parsed.ok || parsed.value === undefined) throw new Error("no feature");
+    const env = featureEnv(parsed.value, new Map([["runHourUtc", "99"], ["scout", "false"], ["gone", "x"]]));
+    expect(env).toEqual({
+      FORGE_FEATURE: "1",
+      FORGE_SETTING_RUN_DAYS: "mon,thu",
+      FORGE_SETTING_RUN_HOUR_UTC: "13",
+      FORGE_SETTING_CLAUDE_CODE: "latest",
+      FORGE_SETTING_SCOUT: "false",
+    });
+    expect(settingEnvName("runHourUtc")).toBe("FORGE_SETTING_RUN_HOUR_UTC");
+  });
+
+  test("an app is told only names a feature owns, never one the forge sets itself", () => {
+    const env = appEnv({
+      port: 4000,
+      dataDir: "/data",
+      env: "production",
+      url: "http://radar.test",
+      commitOid: "abc",
+      forgeUrl: "http://forge.test",
+      identityKey: "k",
+      feature: { FORGE_SETTING_RUN_DAYS: "mon", PORT: "1", FORGE_APP_DATA: "/etc", FORGE_TOKEN: "stolen", FORGE_FEATURE: "1" },
+    });
+    expect(env["FORGE_SETTING_RUN_DAYS"]).toBe("mon");
+    expect(env["FORGE_FEATURE"]).toBe("1");
+    expect(env["PORT"]).toBe("4000");
+    expect(env["FORGE_APP_DATA"]).toBe("/data");
+    expect(env["FORGE_TOKEN"]).toBeUndefined();
+  });
+});
+
+describe("absorbing an app", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let ada: User; // site admin
+  let bob: User; // a stranger to the repository
+  let cy: User; // owns the repository, no site admin
+  let repo: Repo;
+  let appId = "";
+  let adaToken = "";
+  let adaReadToken = "";
+  let bobToken = "";
+  let cyToken = "";
+  let adaCookie = "";
+  let cyCookie = "";
+
+  const api = (method: string, token: string, path: string, body?: unknown) =>
+    fetch(`${servers.url}/api/v1/features${path}`, {
+      method,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  const signIn = async (username: string): Promise<string> => {
+    const response = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({ username, password: "a-good-passphrase" }),
+      redirect: "manual",
+    });
+    return `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=dev`;
+  };
+  const web = (cookie: string, path: string, form?: URLSearchParams) =>
+    fetch(`${servers.url}${path}`, {
+      method: form === undefined ? "GET" : "POST",
+      headers: { cookie, origin: servers.url },
+      redirect: "manual",
+      ...(form === undefined ? {} : { body: form }),
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-features-"));
+    app = createApp({ dataDir, port: 0, host: "forge.test" });
+    servers = await serve(app);
+    const make = async (username: string, adminIfFirst = false): Promise<User> => {
+      const made = await createUser(app.db, {
+        origin: "seed",
+        trusted: true,
+        username,
+        email: `${username}@forge.local`,
+        password: "a-good-passphrase",
+        adminIfFirst,
+      });
+      if (!made.ok) throw new Error(made.error);
+      return made.value;
+    };
+    ada = await make("ada", true);
+    bob = await make("bob");
+    cy = await make("cy");
+    promote(app.db, cy);
+    const made = await createRepo(app, cy, { name: "radar", visibility: "private", description: "" });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const committed = await commitToBranch(app, cy, repo, {
+      message: "Radar can be a feature",
+      files: [{ path: "forge.json", content: FORGE_JSON }],
+    });
+    if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+    const row = insertApp(app.db, { repoId: repo.id, slug: "radar", access: "private" });
+    if (!row.ok) throw new Error(row.error);
+    appId = row.value.id;
+    adaToken = createToken(app.db, ada.id, "admin", "admin").token;
+    adaReadToken = createToken(app.db, ada.id, "read", "ro").token;
+    bobToken = createToken(app.db, bob.id, "admin", "admin").token;
+    cyToken = createToken(app.db, cy.id, "admin", "admin").token;
+    adaCookie = await signIn("ada");
+    cyCookie = await signIn("cy");
+  }, 60_000);
+
+  afterAll(async () => {
+    servers?.stop();
+    app?.close();
+    if (dataDir) await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("declaring is not absorbing: nothing is in the nav and the app is told nothing", async () => {
+    expect(getAbsorbed(app.db, appId)).toBeUndefined();
+    expect(absorbedForNav(app, ada)).toEqual([]);
+    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toEqual({});
+    const seen = await getFeature(app, cy, "radar");
+    expect(seen.ok && seen.value.absorbed).toBe(false);
+  });
+
+  test("only a site admin absorbs: the repository's own admin is refused, a stranger learns nothing", async () => {
+    const byOwner = await absorbApp(app, cy, "radar");
+    expect(!byOwner.ok && byOwner.error).toBe("forbidden");
+    expect((await api("PUT", cyToken, "/radar")).status).toBe(403);
+    expect((await api("PUT", bobToken, "/radar")).status).toBe(404);
+    expect((await api("GET", bobToken, "/radar")).status).toBe(404);
+    expect((await api("GET", cyToken, "")).status).toBe(404);
+    // A read-scope token of the admin may look, not absorb.
+    expect((await api("PUT", adaReadToken, "/radar")).status).toBe(403);
+    expect((await web(cyCookie, "/settings/features")).status).toBe(404);
+    expect((await web(cyCookie, "/settings/features/radar/absorb", new URLSearchParams())).status).toBe(404);
+    expect(getAbsorbed(app.db, appId)).toBeUndefined();
+  });
+
+  test("an app that declares no feature cannot be absorbed", async () => {
+    const plain = await createRepo(app, cy, { name: "plain", visibility: "public", description: "" });
+    if (!plain.ok) throw new Error("no repo");
+    const row = insertApp(app.db, { repoId: plain.value.id, slug: "plain", access: "public" });
+    if (!row.ok) throw new Error(row.error);
+    expect((await api("PUT", adaToken, "/plain")).status).toBe(422);
+    expect(getAbsorbed(app.db, row.value.id)).toBeUndefined();
+  });
+
+  test("a site admin absorbs it: an event, a nav entry for its readers only", async () => {
+    const res = await api("PUT", adaToken, "/radar");
+    expect(res.status).toBe(200);
+    const view = (await res.json()) as { absorbed: boolean; name: string };
+    expect(view).toMatchObject({ absorbed: true, name: "Radar" });
+    expect(absorbedForNav(app, ada).map((f) => f.name)).toEqual(["Radar"]);
+    expect(absorbedForNav(app, cy).map((f) => f.name)).toEqual(["Radar"]);
+    expect(absorbedForNav(app, bob)).toEqual([]); // absorbing widens nothing
+    const events = listEvents(app.db, { repoId: repo.id }).filter((e) => e.kind === "app.absorbed");
+    expect(events).toHaveLength(1);
+    expect(eventVerb(events[0]!)).toContain("absorbed Radar");
+    // Absorbing again changes nothing, and says nothing new.
+    expect((await api("PUT", adaToken, "/radar")).status).toBe(200);
+    expect(listEvents(app.db, { repoId: repo.id }).filter((e) => e.kind === "app.absorbed")).toHaveLength(1);
+    // The menu names it (with no runtime here, it opens the app's own page).
+    const home = await (await web(adaCookie, "/settings")).text();
+    expect(home).toMatch(/href="\/cy\/radar"[^>]*>[\s\S]{0,400}Radar/);
+    const strangers = await (await web(await signIn("bob"), "/settings")).text();
+    expect(strangers).not.toContain("Radar");
+  });
+
+  test("a value that does not fit changes nothing, and names the setting", async () => {
+    const res = await api("PATCH", adaToken, "/radar/settings", { settings: { runDays: ["mon"], runHourUtc: 30 } });
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { message: string }).message).toContain("Hour (UTC) is at most 23");
+    const unknown = await changeFeatureSettings(app, ada, "radar", { notASetting: 1 });
+    expect(!unknown.ok && unknown.error.error).toBe("invalid_setting");
+    expect(featureSettings(app.db, appId).size).toBe(0);
+    const byOwner = await changeFeatureSettings(app, cy, "radar", { runHourUtc: 9 });
+    expect(!byOwner.ok && byOwner.error.error).toBe("forbidden");
+  });
+
+  test("good values are kept and reach the app as FORGE_SETTING_*", async () => {
+    const res = await api("PATCH", adaToken, "/radar/settings", { settings: { runDays: ["wed", "mon", "fri"], runHourUtc: 9 } });
+    expect(res.status).toBe(200);
+    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toMatchObject({
+      FORGE_FEATURE: "1",
+      FORGE_SETTING_RUN_DAYS: "mon,wed,fri",
+      FORGE_SETTING_RUN_HOUR_UTC: "9",
+      FORGE_SETTING_SCOUT: "true",
+    });
+    const changed = listEvents(app.db, { repoId: repo.id }).filter((e) => e.kind === "app.feature_settings");
+    expect(changed).toHaveLength(1);
+    expect(changed[0]!.payload["keys"]).toEqual(["runDays", "runHourUtc"]);
+    // The page's form: days from checkboxes, an unchecked bool off.
+    const form = new URLSearchParams([
+      ["s.runDays", ""],
+      ["s.runDays", "tue"],
+      ["s.runHourUtc", "9"],
+      ["s.claudeCode", "stable"],
+      ["s.scout", "off"],
+    ]);
+    const saved = await web(adaCookie, "/settings/features/radar", form);
+    expect(saved.status).toBe(303);
+    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toMatchObject({
+      FORGE_SETTING_RUN_DAYS: "tue",
+      FORGE_SETTING_CLAUDE_CODE: "stable",
+      FORGE_SETTING_SCOUT: "false",
+    });
+    const page = await (await web(adaCookie, "/settings/features/radar")).text();
+    expect(page).toContain("FORGE_SETTING_RUN_DAYS");
+  });
+
+  test("un-absorbing puts it back as an ordinary app and keeps its values for the next absorb", async () => {
+    const out = await unabsorbApp(app, ada, "radar");
+    expect(out.ok && out.value.absorbed).toBe(false);
+    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toEqual({});
+    expect(absorbedForNav(app, ada)).toEqual([]);
+    expect((await api("DELETE", adaToken, "/radar")).status).toBe(409);
+    const changeWhileOut = await changeFeatureSettings(app, ada, "radar", { runHourUtc: 1 });
+    expect(!changeWhileOut.ok && changeWhileOut.error.error).toBe("not_absorbed");
+    await absorbApp(app, ada, "radar");
+    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toMatchObject({ FORGE_SETTING_RUN_DAYS: "tue", FORGE_SETTING_RUN_HOUR_UTC: "9" });
+  });
+
+  test("the MCP tool plans first, and applies only with an admin-scope token", async () => {
+    const plan = await mcpTool(servers.url, adaToken, "features", { slug: "radar", settings: { runHourUtc: 14 } });
+    expect(plan.value?.says).toContain("Would set runHourUtc");
+    expect(featureSettings(app.db, appId).get("runHourUtc")).toBe("9");
+    const readOnly = await mcpTool(servers.url, adaReadToken, "features", { slug: "radar", settings: { runHourUtc: 14 }, dryRun: false });
+    expect(readOnly.error).toBeDefined();
+    const done = await mcpTool(servers.url, adaToken, "features", { slug: "radar", settings: { runHourUtc: 14 }, dryRun: false });
+    expect(done.value?.absorbed).toBe(true);
+    expect(featureSettings(app.db, appId).get("runHourUtc")).toBe("14");
+    const stranger = await mcpTool(servers.url, bobToken, "features", { slug: "radar" });
+    expect(stranger.error).toBeDefined();
+  });
+});

@@ -54,6 +54,7 @@ export { tool as email_verify } from "./email_verify.ts";
 export { tool as events } from "./events.ts";
 export { tool as explore } from "./explore.ts";
 export { tool as family } from "./family.ts";
+export { tool as features } from "./features.ts";
 export { tool as feed } from "./feed.ts";
 export { tool as feed_chips } from "./feed_chips.ts";
 export { tool as feed_dismiss } from "./feed_dismiss.ts";

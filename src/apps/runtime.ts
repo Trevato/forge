@@ -29,6 +29,7 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
 import { resolveAppEnv } from "../core/app_env.ts";
+import { featureVarsAt } from "./feature_env.ts";
 import { mintAppToken, renewAppToken, revokeAppToken } from "./token.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
@@ -1445,6 +1446,7 @@ export class AppsRuntime {
       // Read at start, never cached: a change is a redeploy, and the
       // process that comes up is the one that sees it.
       ...this.secretsFor(repo, state.app.id, state.env, token.token),
+      feature: this.featureFor(state.app.id, dir),
       log: write,
       warm,
       cell: this.cellFor(state.app, state.env),
@@ -1677,6 +1679,20 @@ export class AppsRuntime {
   }
 
   /**
+   * An absorbed app's settings for a process about to start in `dir`, read
+   * from that checkout's forge.json; nothing for an app not absorbed.
+   */
+  featureFor(appId: string, dir: string): Record<string, string> {
+    let forgeJson: string | undefined;
+    try {
+      forgeJson = readFileSync(join(dir, "forge.json"), "utf8");
+    } catch {
+      forgeJson = undefined;
+    }
+    return featureVarsAt(this.app.db, appId, forgeJson);
+  }
+
+  /**
    * What a process for `env` starts holding: the operator's variables, read
    * at start, and the forge token. A preview of a guest pull nobody has
    * approved yet (`origins/guest.ts`) holds neither.
@@ -1788,6 +1804,7 @@ export class AppsRuntime {
         identityKey: identityKey(this.app.config.dataDir, record.id),
         ssh: this.sshFor(record, env),
         ...this.secretsFor(repo, record.id, env, token.token),
+        feature: this.featureFor(record.id, asleep.dir),
         log: write,
         signal: new AbortController().signal,
         warm: true,

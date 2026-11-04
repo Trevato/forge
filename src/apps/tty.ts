@@ -186,6 +186,8 @@ export async function runAppTty(
       target.app.id,
       target.env,
     ),
+    // An absorbed app's settings, as its process was started with.
+    feature: runtime.featureFor(target.app.id, live.dir),
   });
   env["TERM"] = host.term;
   env["COLORTERM"] = "truecolor";

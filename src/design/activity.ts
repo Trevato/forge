@@ -59,6 +59,17 @@ export function eventVerb(event: ForgeEvent): string {
       ? `set ${which} in the app's environment`
       : `removed ${which} from the app's environment`;
   }
+  // An app taken in as one of the forge's features.
+  if (kind === "app.absorbed") {
+    const name = payload["name"];
+    return `absorbed ${typeof name === "string" ? name : "the app"} as a forge feature`;
+  }
+  if (kind === "app.unabsorbed") return "put the app back as an ordinary app";
+  if (kind === "app.feature_settings") {
+    const keys = payload["keys"];
+    const which = Array.isArray(keys) && keys.every((k) => typeof k === "string") ? keys.join(", ") : "settings";
+    return `changed the feature's ${which}`;
+  }
   if (kind === "app.egress.granted" || kind === "app.egress.revoked") {
     const destination = payload["destination"];
     const which = typeof destination === "string" ? destination : "a destination";
