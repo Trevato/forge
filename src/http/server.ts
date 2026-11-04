@@ -73,7 +73,7 @@ import {
   verifyPasswordThrottled,
 } from "../core/users.ts";
 import { activeEdgeToken, edgeIdentity } from "./edge.ts";
-import { crawlRefused, familyOf, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, takeCrawl, wasCrawler, wasDeepStranger } from "./crawl.ts";
+import { crawlRefused, familyOf, finishedStrangerDeep, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, takeCrawl, wasCrawler, wasDeepStranger } from "./crawl.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
@@ -2159,6 +2159,7 @@ export async function serve(app: App): Promise<Servers> {
   ): void => {
     const tag = takeUsage(request);
     const ms = performance.now() - started;
+    finishedStrangerDeep(owner, request);
     try {
       const header = serverTiming(ms, takeDbTime(request), takePhases(request));
       response.headers.set("server-timing", header);

@@ -40,8 +40,14 @@ export const SHARED_BUDGET = { page: 240, deep: 24 } as const;
  * 91% of the forge's answering time and left it stalling for everyone.
  * `behindAll` is what they may spend together, per minute, only while the loop
  * is late. A signed-in person or a token is never counted.
+ *
+ * Late isn't only the loop: a test at 100 pages a second (#9405) left the loop
+ * on time while pages queued on git for seconds and people waited behind them.
+ * So `inFlight` of these pages unanswered at once counts as behind too.
  */
-export const STRANGER_BUDGET = { address: 30, behindAll: 60 } as const;
+export const STRANGER_BUDGET = { address: 30, behindAll: 60, inFlight: 32 } as const;
+/** A page unanswered this long no longer counts, so a lost finish can't hold the forge "behind" for good. */
+const IN_FLIGHT_MAX_MS = 60_000;
 /** The budgets divide by this while the event loop runs late. */
 export const BEHIND_DIVISOR = 4;
 /** An average wake later than this (ms) is "behind". */
@@ -110,6 +116,8 @@ interface State {
   readonly strangerAddress: RateLimiter;
   /** The same, all of them together; counted only while the loop is behind. */
   readonly strangerAll: RateLimiter;
+  /** Deep pages being answered for strangers, by when they started. */
+  readonly strangersInFlight: Map<Request, number>;
   readonly refused: Map<string, number>;
   readonly refusedBy: Record<Scope, number>;
   readonly clock: { now: () => number; behind: boolean };
@@ -147,6 +155,7 @@ function stateOf(app: App): State {
       shared: pair(SHARED_BUDGET),
       strangerAddress: new RateLimiter(limits(STRANGER_BUDGET.address), () => clock.now()),
       strangerAll: new RateLimiter(limits(STRANGER_BUDGET.behindAll), () => clock.now()),
+      strangersInFlight: new Map(),
       refused: new Map(),
       refusedBy: { address: 0, agent: 0, shared: 0, stranger: 0 },
       clock,
@@ -225,17 +234,34 @@ function takeStrangerDeep(app: App, request: Request, pathname: string): CrawlVe
   if (new URL(request.url).searchParams.get("fragment") === "explorer") return undefined;
   watchLag();
   const state = stateOf(app);
-  const behind = state.clock.behind || mainThreadBehind();
+  const behind = state.clock.behind || mainThreadBehind() || strangersQueued(state);
   const scale = behind ? BEHIND_DIVISOR : 1;
   state.strangerAddress.setLimits(limits(Math.max(1, Math.floor(STRANGER_BUDGET.address / scale))));
   const key = bucketOf(clientAddress(request));
   const own = state.strangerAddress.take(key, "ro");
   const all = own.allowed && behind ? state.strangerAll.take("all", "ro") : own;
-  if (all.allowed) return undefined;
+  if (all.allowed) {
+    state.strangersInFlight.set(request, state.clock.now());
+    return undefined;
+  }
   if (own.allowed) state.strangerAddress.refund(key);
   state.refusedBy.stranger++;
   return { retryAfter: all.retryAfter, agent: "browser", scope: "stranger" };
 }
+
+/** Whether strangers' deep pages are queued past their share, forgetting any too old to be real. */
+function strangersQueued(state: State): boolean {
+  const open = state.strangersInFlight;
+  if (open.size < STRANGER_BUDGET.inFlight) return false;
+  const oldest = state.clock.now() - IN_FLIGHT_MAX_MS;
+  for (const [request, at] of open) if (at < oldest) open.delete(request);
+  return open.size >= STRANGER_BUDGET.inFlight;
+}
+
+/** The server has answered this request: if it was a stranger's deep page, it no longer counts as queued. */
+export const finishedStrangerDeep = (app: App, request: Request): void => {
+  stateOf(app).strangersInFlight.delete(request);
+};
 
 /** Requests refused so far in this process, by agent, most first. */
 export const crawlRefusals = (app: App): { agent: string; refused: number }[] =>
