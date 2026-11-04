@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 type Seeded = { cookie: string; ro: string; rw: string; admin: string; revokable: { id: string; token: string } };
-type Seed = Record<"ann" | "rick" | "boss" | "ona" | "pat" | "uma", Seeded>;
+type Seed = Record<"ann" | "rick" | "boss" | "ona" | "pat" | "uma" | "dee", Seeded>;
 type Verdict = "pass" | "fail" | "absent";
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -378,7 +378,7 @@ const runPair = async (rName: string, sName: string, work: { issue: number; pull
     must(names.has("ann/secret"), "private repository missing");
     must(names.has("ann/widgets"), "public repository missing");
     must(![...names].some((n) => n.startsWith("rick/")), "another account's repositories listed");
-    const want = Number(process.env.LAB_BULK ?? 130) + 4;
+    const want = Number(process.env.LAB_BULK ?? 130) + 5;
     // A forge that has brought repositories itself has more than it was seeded with.
     must(names.size >= want, `saw ${names.size} of ${want} in ${pages} pages`);
     return `${names.size} in ${pages} pages`;
@@ -668,6 +668,98 @@ const runPair = async (rName: string, sName: string, work: { issue: number; pull
     must(retry.stage === "done", `retry: ${retry.stage} ${retry.error ?? ""}`);
     must(refsOf(s, "ann/huge", "ann", sSeed.ann.ro) === refsOf(r, "ann/got-huge", "ann", rSeed.ann.ro), "refs differ after the retry");
     return `first: ${end.stage} ${end.error ?? ""}; retry done, refs identical`;
+  });
+
+  // Someone who owns nothing there: the owner's first real connection.
+  const dee = rSeed.dee.cookie;
+  let deeId = "";
+  const groupOf = async (group: string, extra = ""): Promise<{ names: string[]; next: string | null }> => {
+    const seen = await api(r, `/api/v1/user/origins/${deeId}/repos?group=${group}${extra}`, dee);
+    must(seen.status === 200, `${group} ${seen.status} ${seen.text.slice(0, 100)}`);
+    return { names: rows(seen.data).map((x) => x.fullName as string), next: (seen.data.next_cursor ?? null) as string | null };
+  };
+  await cell(pair, "4 groups", "owning nothing: yours is empty, the organization's repository is shared, others' are public", async () => {
+    const seen = await api(r, "/api/v1/user/origins", dee, { method: "POST", body: { host: s, token: sSeed.dee.ro } });
+    must(seen.status === 201, `${seen.status} ${seen.data.error}`);
+    deeId = seen.data.id as string;
+    // Empty on a forge that has brought nothing; a forge earlier in this run holds what dee brought.
+    const yours = (await groupOf("yours")).names;
+    must(yours.every((n) => n.startsWith("dee/")), `yours ${yours.join(",")}`);
+    const shared = (await groupOf("shared")).names;
+    must(shared.length === 1 && shared[0] === "dee-crew/crew-thing", `shared ${shared.join(",")}`);
+    const open = (await groupOf("public")).names;
+    must(open.length > 0 && !open.includes("ann/secret") && !open.includes("rick/ricks-private"), `public ${open.slice(0, 5).join(",")}`);
+    return `${open.length} public on the first page`;
+  });
+  await cell(pair, "4 groups", "public pages past the first, and search narrows it", async () => {
+    must(deeId, "not connected");
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page: { names: string[]; next: string | null } = await groupOf("public", cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`);
+      for (const name of page.names) seen.add(name);
+      cursor = page.next;
+      pages++;
+    } while (cursor !== null && pages < 20);
+    must(seen.has("ann/bulk-129") || seen.size > 100, `${seen.size} in ${pages} pages`);
+    const found = (await groupOf("public", "&q=lantern")).names;
+    must(found.length === 1 && found[0] === "ann/lantern", `search ${found.join(",")}`);
+    return `${seen.size} in ${pages} pages`;
+  });
+  await cell(pair, "4 groups", "the page labels all three", async () => {
+    must(deeId, "not connected");
+    const page = await new Browser({ [r]: dee }).walk(`${r}/settings/origins/${deeId}/repos?q=e`);
+    for (const word of ["Yours", "Shared with you", "Public on this forge", "ann/lantern", "dee-crew/crew-thing"])
+      must(page.text.includes(word), `no "${word}" on the page`);
+  });
+  const contribute = (id: string) =>
+    api(r, `/api/v1/user/origins/${id}/browse/ann/lantern/contribute`, dee, {
+      method: "POST",
+      body: { branch: "from-dee", base: "main", message: "from dee", files: [{ path: "dee.txt", content: "dee\n" }], openPull: { title: "From dee", body: "work back" } },
+    });
+  await cell(pair, "6 work with", "someone else's public repository comes across for someone with read only", async () => {
+    must(deeId, "not connected");
+    const job = await mirror(r, dee, deeId, "ann/lantern");
+    must(job.stage === "done", `job ${job.stage}: ${job.error ?? ""}`);
+    must(refsOf(s, "ann/lantern", "ann", sSeed.ann.ro) === refsOf(r, "dee/got-lantern", "dee", rSeed.dee.ro), "refs differ");
+  });
+  await cell(pair, "6 work with", "ro: sending work back is refused in words, nothing there", async () => {
+    must(deeId, "not connected");
+    const sent = await contribute(deeId);
+    must(sent.status === 403 && /cannot write/.test(String(sent.data.message)), `${sent.status} ${sent.text.slice(0, 120)}`);
+    must(!(await sApi("/api/v1/repos/ann/lantern/pulls?state=all")).text.includes("From dee"), "a pull opened there");
+    return String(sent.data.message);
+  });
+  await cell(pair, "6 work with", "rw: sending work back forks it there and opens a pull, authored by them", async () => {
+    must(deeId, "not connected");
+    await api(r, `/api/v1/user/origins/${deeId}`, dee, { method: "DELETE" });
+    const again = await api(r, "/api/v1/user/origins", dee, { method: "POST", body: { host: s, token: sSeed.dee.rw } });
+    must(again.status === 201, `${again.status} ${again.data.error}`);
+    deeId = again.data.id as string;
+    const sent = await contribute(deeId);
+    must(sent.status < 300, `${sent.status} ${sent.text.slice(0, 140)}`);
+    const there = rows((await sApi("/api/v1/repos/ann/lantern/pulls?state=all")).data).find((p) => p.title === "From dee");
+    must(there, "no pull there");
+    must(there!.authorName === "dee", `author ${there!.authorName}`);
+    return `#${there!.number} by dee, from their fork`;
+  });
+
+  // Followed sources: a plain copy here follows a repository there, by address.
+  await cell(pair, "6 follow", "a followed source: a new commit there opens one pull here", async () => {
+    const made = await api(r, "/api/v1/repos", ann, { method: "POST", body: { name: "follower", visibility: "public" } });
+    must(made.status === 201, `repo ${made.status} ${made.text.slice(0, 100)}`);
+    const dir = `/tmp/follow-${rName}`;
+    git(["clone", "-q", `${s}/ann/bulk-009.git`, dir], gitEnv("ann", sSeed.ann.ro));
+    git(["push", "-q", `${r}/ann/follower.git`, "main"], gitEnv("ann", rSeed.ann.rw), dir);
+    const browser = new Browser({ [r]: ann });
+    const added = await browser.post(`${r}/ann/follower/settings/sources`, { sources: `${s}/ann/bulk-009.git` });
+    must(added.status === 200, `add ${added.status} ${said(added.text)}`);
+    const wrote = await sApi("/api/v1/repos/ann/bulk-009/contents", { method: "POST", body: { branch: "main", message: "new there", files: [{ path: "new.txt", content: "new\n" }] } });
+    must(wrote.status < 300, `contents ${wrote.status}`);
+    const checked = await browser.post(`${r}/ann/follower/settings/sources/check`, {});
+    const pulls = await eventually(async () => rows((await api(r, "/api/v1/repos/ann/follower/pulls?state=all", ann)).data).length > 0, 15_000);
+    must(pulls, `no pull: ${said(checked.text)}`);
   });
 
   // Sign-in, as a person who has not used up the connect limit.

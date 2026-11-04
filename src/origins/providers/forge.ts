@@ -424,7 +424,12 @@ export class ForgeProvider extends ForgejoProvider {
     if (parts.length > 2 || parts.some((p) => p === ""))
       return fail("not_found", `not a branch: ${input.head}`);
     const [owner, branch] = parts.length === 2 ? parts : [undefined, parts[0]];
-    const name = named.name;
+    // The fork may go by a second name, when its owner already has a repository by this one.
+    let name = named.name;
+    if (owner !== undefined) {
+      const forks = await this.listForks(fullName);
+      if (forks.ok) name = forks.value.find((f) => f.owner.toLowerCase() === owner.toLowerCase())?.name ?? name;
+    }
     const result = await this.api.call({
       path: `${path}/pulls`,
       method: "POST",

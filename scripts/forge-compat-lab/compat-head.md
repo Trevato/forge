@@ -11,7 +11,10 @@ Written by `scripts/forge-compat-lab.sh`; run it on any docker host to get this 
 - An old forge cannot connect another forge at all: it has no forge provider, so that direction asks for an upgrade, not a fix here.
 - A webhook needs `admin` scope at the origin, so a `ro` or `rw` token and every sign-in register none; issues and pulls come back on a sync or the sweep. With an admin token the hook registers, but the lab's source refuses to deliver to a private address, as its SSRF guard should, so a delivery end to end is unproven here.
 - The live 0.5.29 was read anonymously only: its OAuth metadata, health, OpenAPI and 401s. Nothing was signed in to it.
-- Not carried by design or not built: how the app runs, its data and secrets, and following a source by the Followed sources action between forges (this table reads origins, not followed sources).
+- Not carried by design or not built: how the app runs, and its data and secrets.
+- On a forge, a public repository someone was given write on reads as public, since a forge's JSON carries no rights.
+
+The public group was also read from the real forge-apps.benjivers.com, anonymously, through the provider (`scripts/forge-compat-lab/live-public.ts`): 16 public repositories, none yours or shared, as an account owning nothing there should see.
 
 ## Result
 

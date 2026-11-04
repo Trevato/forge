@@ -179,6 +179,33 @@ describe("an origin's repositories, in three groups", () => {
     const listed = (await pulls.json()) as { items: { title: string; authorName: string }[] };
     expect(listed.items.map((p) => [p.title, p.authorName])).toEqual([["A change", "bob"]]);
   });
+
+  test("the fork takes a second name when the account already has that name, and the pull still opens", async () => {
+    const bobsOwn = await createRepo(friend, bob, { name: "beacon", visibility: "public" });
+    if (!bobsOwn.ok) throw new Error(String(bobsOwn.error));
+    const carols = await createRepo(friend, carol, { name: "beacon", visibility: "public" });
+    if (!carols.ok) throw new Error(String(carols.error));
+    const first = await commitToBranch(friend, carol, carols.value, {
+      branch: "main",
+      message: "first",
+      files: [{ path: "a.txt", content: "a\n" }],
+    });
+    if (!first.ok) throw new Error(String(first.error));
+    const sent = await api(`/api/v1/user/origins/${originId}/browse/carol/beacon/contribute`, {
+      method: "POST",
+      body: JSON.stringify({
+        branch: "to-carol",
+        base: "main",
+        message: "to carol",
+        files: [{ path: "c.txt", content: "c\n" }],
+        openPull: { title: "To Carol", body: "" },
+      }),
+    });
+    const answer = await sent.text();
+    expect(sent.status, answer).toBeLessThan(300);
+    const pulls = await fetch(`${friendServers.url}/api/v1/repos/carol/beacon/pulls`);
+    expect(((await pulls.json()) as { items: { title: string }[] }).items.map((p) => p.title)).toEqual(["To Carol"]);
+  });
 });
 
 describe("Forgejo and Gitea, by /repos/search", () => {
