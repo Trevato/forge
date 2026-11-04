@@ -213,3 +213,11 @@ test("pages queued past their share count as behind even with the loop on time, 
   now += 61_000;
   for (let i = 0; i < 90; i++) expect(ask().verdict).toBeUndefined();
 });
+
+test("a made-up Authorization header buys nothing: it's counted like anyone with no account", async () => {
+  setCrawlClock(app, () => 9_500_000);
+  const deep = `/alice/open/blob/${sha}/a.txt`;
+  const statuses: number[] = [];
+  for (let i = 0; i <= STRANGER_BUDGET.address; i++) statuses.push((await get(deep, from("10.8.0.1", { authorization: "Bearer made-up" }))).status);
+  expect(statuses.at(-1)).toBe(429);
+});

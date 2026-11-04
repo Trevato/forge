@@ -2557,7 +2557,7 @@ async function answerGet(
   // that resolved to no one is still a stranger to the Shield.
   const shield = auth.user === undefined ? shieldState(app) : undefined;
   const signInOnly = shield === "signin" && (request.method === "GET" || request.method === "HEAD") && isDeepPath(url.pathname);
-  if (auth.user === undefined && !request.headers.has("authorization")) {
+  if (auth.user === undefined) {
     const crawl = shield === "open" || signInOnly ? undefined : takeCrawl(app, request, url.pathname);
     if (isCrawler(request)) {
       noteCrawler(request);
