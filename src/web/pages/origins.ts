@@ -89,6 +89,7 @@ import {
 } from "../ui.ts";
 
 export type AccountSection =
+  | "security"
   | "profile"
   | "confirms"
   | "password"
@@ -194,6 +195,12 @@ export function accountSections(
             href: "/settings/spend",
             icon: "activity" as const,
             current: USAGE.has(current),
+          },
+          {
+            label: "Security",
+            href: "/settings/security",
+            icon: "lock" as const,
+            current: current === "security",
           },
           {
             label: "Traffic",

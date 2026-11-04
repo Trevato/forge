@@ -291,6 +291,27 @@ export function crawlRefused(verdict: CrawlVerdict): Response {
   });
 }
 
+/** The Shield's answer to an anonymous deep read: small, plain, and no page work. */
+export function shieldRefused(signIn: string): Response {
+  const words = `<!doctype html><meta charset="utf-8"><title>Sign in to read this</title>
+<h1>Sign in to read this page</h1>
+<p>The forge is asking visitors to sign in for now. <a href="${Bun.escapeHTML(signIn)}">Sign in</a> to go straight through.</p>
+`;
+  return new Response(words, {
+    status: 503,
+    headers: {
+      "retry-after": "300",
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+const shielded = new WeakSet<Request>();
+/** The Shield turned this request away: a refusal on the traffic board, though it answers 503. */
+export const noteShielded = (request: Request): void => void shielded.add(request);
+export const wasShielded = (request: Request): boolean => shielded.has(request);
+
 const noted = new WeakSet<Request>();
 /** The server says this request was a crawler's, for the usage count and the performance record. */
 export const noteCrawler = (request: Request): void => void noted.add(request);
