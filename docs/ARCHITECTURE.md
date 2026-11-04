@@ -1,20 +1,25 @@
-# forge — architecture
+# Forge architecture
 
-A software forge: git hosting, code review, issues, and automation, built as one
-fast process that does the whole job. Forgejo is the
-reference point for _what_ a forge should feel like — this is a distillation of
-that feeling onto a foundation sized for one human.
+This document explains the forge's design principles and how its parts fit
+together. It is for developers who change the forge and operators who want to
+know what runs where.
+
+One Bun process serves git, web, API and SSH. It stores the forge's state in one
+SQLite file, `forge.db`, next to bare git repositories in one data directory. The
+process spawns `git`, and it runs apps and agents as child processes. Each app
+keeps its own SQLite file. Forgejo is the reference for how a forge should behave.
 
 ## Principles
 
-1. **The repository holds truth.** Git is the durable log. Application state
-   that can be derived from git is derived from git; the database is an index,
-   and it self-heals from git on boot. No state lives only in memory.
+1. **The repository holds truth for code.** Git is the durable log. The database
+   indexes git, and it is the only record of what git does not hold: issues,
+   comments, accounts. Boot reconciliation (`src/core/reconcile.ts`) refreshes
+   hook stubs today. It does not yet repair index rows from git.
 2. **One process, one file of state.** A single Bun process serves git, web,
    and API. SQLite is the only database. Everything a forge instance _is_ lives
    in one data directory you can tar up and move.
-3. **Zero runtime dependencies.** The `package.json` dependency list is empty
-   and stays empty. Anything worth having is worth writing: the Result type,
+3. **Zero runtime dependencies.** The `dependencies` list in `package.json` is
+   empty and stays empty. Development tools are named in `docs/REFERENCE.md`. Anything worth having is worth writing: the Result type,
    the router, the templates, the design system, the markdown renderer. Take a
    20-line utility as a 20-line file, never as a package.
 4. **Real git, thin wrapper.** Never reimplement pack negotiation, diff, blame,

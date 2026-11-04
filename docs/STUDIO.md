@@ -1,8 +1,16 @@
 # The studio
 
-One forge, for every viewer (#603). Apps are the unit, and a person does
-three things to one — tell the crew, look at what it made, decide when it
-asks. An app speaks the studio's words (told, changes, shipped); a
+The studio is the forge's web interface. This document describes its pages and
+the words they use. It is for people who use the forge and for developers who
+change those pages.
+
+Apps are the main unit. A person does three things with an app: tell the crew
+what to build, look at the result, and decide when the crew asks a question.
+Each word on a studio page maps to one thing in git. "Five words" lists them.
+
+## One interface for every viewer
+
+The forge shows one interface to every viewer. An app speaks the studio's words (told, changes, shipped); a
 repository that is not an app speaks git's (issues, pulls, commits,
 branches). Every repository's header carries the same depth row — its
 files, its changes, its runs and, where SSH is on, the terminal — so code is
@@ -10,6 +18,8 @@ one tap from any post. The dev/studio mode is gone: no toggle, no cookie, no
 `POST /mode`, and an old `?mode=` address redirects to the same page without
 it. Where the sections below still speak of "dev mode" or `?mode=dev`, they
 describe the split that #625–#636 contracted, one screen at a time.
+
+## Search and the command palette
 
 Finding something never leaves the page you're on. `/` focuses the search
 box in the top bar, unless a field already has focus; `Cmd/Ctrl-K` opens the
@@ -20,9 +30,7 @@ can see, matched by name or description, an app saying whether it is live,
 then every issue and pull request whose title mentions the word, each
 saying which app it's on and linked at `/issues/:n` or `/pulls/:n` — the same `search()`
 the API and the palette ask, so a signed-out reader sees only what a
-signed-out reader would anywhere. The studio's face leaves code to dev's:
-it says _Search the code_, a link to the same page with `?mode=dev`, which
-keeps that face on every link and the form until the reader leaves. The palette starts from a short local
+signed-out reader would anywhere. The palette starts from a short local
 index — your own apps, then places and actions like Home, Apps, Map, New
 app — and past two characters asks that very same search, folding its apps,
 pull requests and issues in under their own headings (`rankPalette`,

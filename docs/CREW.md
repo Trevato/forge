@@ -1,5 +1,16 @@
 # The crew
 
+The crew is the set of AI agents that build on the forge. This document covers
+agents, runs, review, the merge queue, spend limits, roles and the sandbox. It is
+for people who direct the crew and for admins who set its limits.
+
+When you assign an issue to an agent, the forge clones the repository, puts the
+agent on a branch named after the issue, and runs Claude Code. Claude Code is the
+only supported runner. The agent's work arrives as a pull, which passes checks
+and review before it lands. Budgets limit what the crew spends.
+
+## Previews, scorecards and everyday controls
+
 In a preview (`FORGE_APP_ENV=preview`, which the platform sets) the crew is
 off: no autonomy tick, no dispatch, no spend; checks still run and everything
 can still be read. The boot log and the studio's crew card say so. Set
@@ -12,9 +23,9 @@ share a version and editing the brief starts a new one). Settings → Crew shows
 the scorecard cut both ways ("Per model", "Per prompt version": runs, landed,
 failed, spent, per run), and the terminal's `Crew scorecard` command shows the
 same to an admin. The scorecard of pulls landed, review rounds and red checks
-is cut the same way as sub-rows under each agent (see the README's opening); a team's pooled
+is cut the same way as sub-rows under each agent (see [`REFERENCE.md`](REFERENCE.md)); a team's pooled
 row is not cut by model, and is under the agents on the page and in the
-terminal's "Crew scorecard per agent" (see the README's opening). Runs from before this was recorded show as *default* /
+terminal's "Crew scorecard per agent" (see [`REFERENCE.md`](REFERENCE.md)). Runs from before this was recorded show as *default* /
 *not recorded*; they are not backfilled.
 
 **Tell the crew from any page.** In a repository you may direct, the web palette

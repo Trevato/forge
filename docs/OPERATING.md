@@ -1,6 +1,14 @@
 # Operating the forge
 
-What an operator sets and watches once the forge is running: its configuration, its health, how a release proves itself, the switches and limits an admin turns, and how its checks are run. How to start it is the README's "Run it".
+This document is for the person who runs a forge after it has started. It covers
+configuration, health, how a release proves itself, the switches and limits an
+admin controls, and how checks run. Configuration is environment variables with
+defaults.
+
+To start a forge, see "Run it" in [`REFERENCE.md`](REFERENCE.md#run-it). To
+respond to an attack or a leaked token, see
+[`SECURITY-RUNBOOK.md`](SECURITY-RUNBOOK.md). To recover from a failure, see
+[`RECOVERY.md`](RECOVERY.md).
 
 ## Configuration
 

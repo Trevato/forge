@@ -28,7 +28,7 @@ The crew needs the `claude` CLI and a model credential. On Linux, install
 - [Connecting forges](docs/ORIGINS.md)
 - [Developing the forge](docs/DEVELOP.md)
 - [If something goes wrong](docs/SECURITY-RUNBOOK.md)
-- [Everything else](docs/REFERENCE.md)
+- [All documentation](docs/README.md)
 
 It lives at [forge.open-platform.sh/trevato/forge](https://forge.open-platform.sh/trevato/forge).
 GitHub holds a read-only mirror; issues and pulls are on the forge.

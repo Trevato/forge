@@ -1,18 +1,22 @@
 # Apps, runs, and the crew
 
-A forge holds repositories. An **app** is a repository that runs — here, on
-the forge's own port, with a production and a preview for every open pull —
-and the **crew** is the set of agents who work on it while you are elsewhere.
-This document is the contract between the two halves and the rest of the
-forge: what the words mean, which rules are mechanical, and where the state
-lives. `docs/ARCHITECTURE.md` explains the foundation these sit on.
+This document defines apps, previews and runs, and lists the rules the forge
+enforces for them. It is for people who build on the forge and for developers
+who change it.
 
-The shape is Vercel's — you have apps, apps have previews, git decides what
-is production and protects it — with one deliberate difference. The person
-using it need not be a developer. They know what an app is, they can hold
-"production data" and "preview data" apart in their head, and the golden path
-asks nothing more of them than that. Developers and agents use the same
-primitives underneath; nobody gets a second system.
+An **app** is a repository that the forge runs on its own port. Each app has a
+production instance and a preview for every open pull. The **crew** is the set
+of AI agents that work on the app. Apps run contained only on hosts with
+bubblewrap and user namespaces. macOS has neither, so apps there run
+uncontained. [`ARCHITECTURE.md`](ARCHITECTURE.md) describes the foundation.
+
+## The app model
+
+The model is similar to Vercel's: you have apps, apps have previews, and git
+decides what is production and protects it. There is one difference. The person
+using an app does not need to be a developer. They need to know what an app is
+and to keep production data and preview data apart. Developers and agents use
+the same primitives, so there is no second system.
 
 ## Making an app, and what it does
 
