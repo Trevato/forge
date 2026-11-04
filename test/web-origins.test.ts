@@ -205,9 +205,8 @@ describe("origins on the web", () => {
     const html = await (await asUser(alice, "/settings/origins")).text();
     expect(html).toContain("No origins connected");
     expect(html).toContain("Forgejo / Gitea, one click");
-    // Another forge leads (#9388), with where its token is made; the rest are folded.
+    // Another forge leads (#9388); the rest are folded.
     expect(html).toContain("Another forge");
-    expect(html).toContain("/settings/tokens");
     expect(html.indexOf("Another forge")).toBeLessThan(html.indexOf("A token for GitHub, Forgejo or Gitea"));
     expect(html.indexOf("Another forge")).toBeLessThan(html.indexOf("One-click sign-in"));
     // Drawn with §5's rows and buttons, not the page's own classes.

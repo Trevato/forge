@@ -15,7 +15,7 @@ import { connectSite, parseBringLink, PLAIN_HTTP_WORDS } from "../../origins/bri
 import { notFoundPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import type { Flash } from "../flash.ts";
-import { html, type Html } from "../html.ts";
+import { html, raw, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { mirrorJs } from "../client.ts";
 import { btn, card, field, icon } from "../ui.ts";
@@ -40,6 +40,14 @@ function connectCard(host: string, link: string, error?: string): Html {
         This app is on <strong>${hostLabel(site)}</strong>, and you have not
         connected your account there yet. Do it here: your link is kept.
       </p>
+      <form method="post" action="/settings/origins/oauth" class="form-actions">
+        <input type="hidden" name="host" value="${site}" />
+        <input type="hidden" name="then" value="bring" />
+        <input type="hidden" name="link" value="${link}" />
+        ${btn("Sign in there", { variant: "primary", icon: "external" })}
+      </form>
+      <details class="mt"${error === undefined ? null : raw(" open")}>
+      <summary class="muted small">Sign-in not working?</summary>
       <form method="post" action="/bring/connect" class="stack" id="bring-connect">
         <input type="hidden" name="link" value="${link}" />
         <p class="small">
@@ -57,15 +65,9 @@ function connectCard(host: string, link: string, error?: string): Html {
           hint: "Read is enough to bring an app; private repositories come with it. It is never shown again.",
           ...(error === undefined ? {} : { error }),
         })}
-        <div class="form-actions">${btn("Connect and bring it", { variant: "primary", icon: "download" })}</div>
+        <div class="form-actions">${btn("Connect and bring it", { icon: "download" })}</div>
       </form>
-      <form method="post" action="/settings/origins/oauth" class="form-actions">
-        <input type="hidden" name="host" value="${site}" />
-        <input type="hidden" name="then" value="bring" />
-        <input type="hidden" name="link" value="${link}" />
-        ${btn("Sign in there instead", { icon: "external" })}
-        <span class="muted small">One click, no token to copy.</span>
-      </form>`,
+      </details>`,
     { id: "bring-connect-card", head: html`${icon("globe")}<h2>Connect ${hostLabel(site)} first</h2>` },
   );
 }

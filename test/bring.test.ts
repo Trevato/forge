@@ -162,7 +162,7 @@ describe("bringing an app whole", () => {
     expect(card).toContain('action="/bring/connect"');
     expect(card).toContain(`value="${fake.url}/octo/widgets"`);
     expect(card).toContain(`${fake.url}/settings/tokens`);
-    expect(card).toContain("Sign in there instead");
+    expect(card).toContain("Sign in there");
     // The sign-in carries the link through and back.
     expect(card).toContain('name="then" value="bring"');
     // A token the forge refuses keeps the card and the link, and echoes nothing.

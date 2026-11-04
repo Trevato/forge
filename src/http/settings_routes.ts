@@ -100,6 +100,7 @@ import {
 import { completeOAuthCallback } from "../actions/origins.ts";
 import { mirrorJobPage } from "../web/pages/browse.ts";
 import {
+  callbackLanding,
   originAppCreate,
   originAppDelete,
   originConnectToken,
@@ -239,15 +240,11 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
     const done = await completeOAuthCallback(ctx.app, ctx.auth.user, {
       state: ctx.url.searchParams.get("state") ?? "",
       code: ctx.url.searchParams.get("code") ?? "",
+      error: ctx.url.searchParams.get("error") ?? "",
     });
-    const query = !done.ok
-      ? "error=state"
-      : done.value.status === "done"
-        ? "connected=1"
-        : `error=${encodeURIComponent(done.value.detail.slice(0, 300))}`;
     return new Response(null, {
       status: 303,
-      headers: { location: `/settings/origins?${query}` },
+      headers: { location: callbackLanding(ctx, done) },
     });
   });
   // Origins. Literal thirds first, so `flows` and `apps` can never be

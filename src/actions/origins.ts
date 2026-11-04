@@ -528,8 +528,8 @@ export interface OAuthStart {
 export async function startOAuthConnect(
   app: App,
   actor: User | undefined,
-  input: { host: string; kind?: OriginKind; redirectUri?: string },
-): Promise<Result<OAuthStart, { error: OAuthStartError; message: string }>> {
+  input: { host: string; kind?: OriginKind; redirectUri?: string; returnQuery?: string },
+): Promise<Result<OAuthStart, { error: OAuthStartError; message: string; kind?: OriginKind }>> {
   const user = requireUser(actor);
   if (!user.ok) return err({ error: "unauthorized", message: "sign in first" });
   if (tooManyAttempts(app, user.value.id))
@@ -574,6 +574,7 @@ export async function startOAuthConnect(
   if (!registration.ok) {
     return err({
       error: "no_app",
+      kind: found.value.kind,
       message:
         found.value.kind === "github"
           ? "no GitHub OAuth app is configured; paste a token instead"
@@ -630,6 +631,7 @@ export async function startOAuthConnect(
     state,
     verifier: challenge.verifier,
     redirectUri,
+    returnQuery: input.returnQuery ?? "",
     target: url,
   });
   return ok({
@@ -648,6 +650,7 @@ export interface FlowStatus {
   readonly status: "pending" | "done" | "failed";
   readonly detail: string;
   readonly originId: string | null;
+  readonly returnQuery: string;
   readonly userCode: string;
   readonly url: string;
   readonly intervalSecs: number;
@@ -658,6 +661,7 @@ const statusOf = (flow: FlowRow): FlowStatus => ({
   status: flow.status,
   detail: flow.detail,
   originId: flow.originId,
+  returnQuery: flow.returnQuery,
   userCode: flow.userCode,
   url: flow.verificationUri,
   intervalSecs: flow.intervalSecs,
@@ -740,7 +744,7 @@ export async function pollOAuthConnect(
 export async function completeOAuthCallback(
   app: App,
   actor: User | undefined,
-  input: { state: string; code: string },
+  input: { state: string; code: string; error?: string },
 ): Promise<Result<FlowStatus, "unauthorized" | "not_found">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
@@ -760,7 +764,10 @@ export async function completeOAuthCallback(
   if (input.code === "") {
     finishFlow(app.db, flow.id, {
       status: "failed",
-      detail: "the origin returned no authorization code",
+      detail:
+        input.error === "access_denied"
+          ? `You said no at ${hostOf(flow.webUrl)}. Nothing was connected.`
+          : `${hostOf(flow.webUrl)} did not finish the sign-in. Nothing was connected. Start again.`,
     });
     return ok(statusOf(getFlowFor(app.db, user.value.id, flow.id)!));
   }
@@ -782,7 +789,7 @@ export async function completeOAuthCallback(
   if (!exchanged.ok) {
     finishFlow(app.db, flow.id, {
       status: "failed",
-      detail: exchanged.error.message,
+      detail: `${hostOf(flow.webUrl)} did not finish the sign-in. Nothing was connected. Start again.`,
     });
     return ok(statusOf(getFlowFor(app.db, user.value.id, flow.id)!));
   }
@@ -832,7 +839,7 @@ async function completeConnect(
       detail:
         (identity.error.missingScopes ?? []).length > 0
           ? `The grant is missing ${scopeWords(identity.error.missingScopes!)}. The application asks for it; remove the grant on the instance and connect again.`
-          : "the new token did not work",
+          : `${hostOf(registration.webUrl)} did not accept the sign-in it had just given. Nothing was connected. Start again.`,
     };
   // The account that consented is the one checked: an administrator's grant
   // or a protected repository's pusher is refused here, before anything is

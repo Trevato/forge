@@ -1,6 +1,6 @@
 # A forge is an origin (#8900, first piece)
 
-Connect another forge at `/settings/origins` the way you connect Forgejo: type its address, paste a token it gave you (Settings, Tokens there; `ro` is enough to bring code across). `discover` asks `GET /api/v1/version`; a forge answers `{"version", "software":"forge"}`, and is stored as an origin with `software = forge` (kind `gitea`, the dialect it speaks).
+Connect another forge at `/settings/origins`: type its address and press "Sign in there". A token it gave you (Settings, Tokens there; `ro` is enough to bring code across) is the path for when sign-in is unavailable. `discover` asks `GET /api/v1/version`; a forge answers `{"version", "software":"forge"}` (a 0.5.x forge has no such route, and is known by `/api/v1/health` with its OAuth metadata), and is stored as an origin with `software = forge` (kind `gitea`, the dialect it speaks).
 
 - **Picker:** `GET /api/v1/user/repos` lists the token's account's repositories, private ones included, in the Gitea shape. Only that route speaks the Gitea shape; a repository's own JSON is unchanged.
 - **Credential:** the token travels as `Authorization: token …` for the API (accepted as a Bearer token) and as Basic through `GIT_CONFIG_*` for git — never argv, never config.
@@ -9,7 +9,7 @@ Connect another forge at `/settings/origins` the way you connect Forgejo: type i
 
 ## Sign in with one click (#8902)
 
-Type the friend's address at `/settings/origins` and press Continue. If the address is a forge, this forge registers itself there (`POST /oauth/register`, RFC 7591, a public client, kept per user and host), then sends the browser to its approval page with PKCE and the scope `ro` — the least that brings code across. The friend sees who asks and what for, picks the lifetime, and the browser returns to `/settings/origins/callback`. No client id or token is copied.
+Type the friend's address at `/settings/origins` and press "Sign in there". If the address is a forge, this forge registers itself there (`POST /oauth/register`, RFC 7591, a public client, kept per user and host), then sends the browser to its approval page with PKCE and the scope `ro` — the least that brings code across. The friend sees who asks and what for, picks the lifetime, and the browser returns to `/settings/origins/callback`. No client id or token is copied. A sign-in begun from `/bring` keeps its link on the flow (`return_query`) and carries straight on with the bring; a callback reaching a browser signed out here signs in and resumes, its state unspent.
 
 - **Refresh:** pick a lifetime other than "Until I revoke it" and the friend's forge issues a rotating refresh token; this forge refreshes before expiry. A spent one (`invalid_grant`) marks the origin needs-reauth, as on every other kind. A token that never expires carries no refresh token and needs none.
 - **Registration is per callback address:** if this forge's public URL changes, forget the app and connect again.

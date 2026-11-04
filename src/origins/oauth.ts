@@ -356,6 +356,8 @@ export interface FlowRow {
   readonly clientId: string;
   /** `forge` when the origin is another forge, learned when the connect began. */
   readonly software: string;
+  /** `then=…` naming the page this connect returns to; empty for Origins. */
+  readonly returnQuery: string;
   readonly redirectUri: string;
   readonly userCode: string;
   readonly verificationUri: string;
@@ -379,6 +381,7 @@ interface RawFlow {
   web_url: string;
   client_id: string;
   software: string;
+  return_query: string;
   client_secret_enc: string;
   state_hash: string | null;
   verifier_enc: string;
@@ -405,6 +408,7 @@ const toFlow = (row: RawFlow): FlowRow => ({
   webUrl: row.web_url,
   clientId: row.client_id,
   software: row.software,
+  returnQuery: row.return_query,
   redirectUri: row.redirect_uri,
   userCode: row.user_code,
   verificationUri: row.verification_uri,
@@ -451,6 +455,7 @@ export interface NewFlow {
   state?: string;
   verifier?: string;
   redirectUri?: string;
+  returnQuery?: string;
   ttlMs?: number;
 }
 
@@ -464,9 +469,9 @@ export function createFlow(
     `INSERT INTO oauth_flow
        (id, user_id, flow, kind, api_url, web_url, client_id, client_secret_enc,
         state_hash, verifier_enc, redirect_uri, device_code_enc, user_code,
-        verification_uri, interval_secs, expires_at, short_code, target_enc, software)
+        verification_uri, interval_secs, expires_at, short_code, target_enc, software, return_query)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-             ?17, ?18, ?19)`,
+             ?17, ?18, ?19, ?20)`,
   ).run(
     flowId,
     input.userId,
@@ -498,6 +503,7 @@ export function createFlow(
       ? ""
       : seal(dataDir, input.target, flowId),
     input.app.software ?? "",
+    input.returnQuery ?? "",
   );
   return getFlow(db, flowId)!;
 }

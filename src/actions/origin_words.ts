@@ -22,7 +22,7 @@ export function connectWords(error: string): string {
   const words: Record<string, string> = {
     unknown_host: "That does not look like a forge this can talk to.",
     private_host: "That address is inside a network, not on the internet.",
-    unreachable: "That instance could not be reached.",
+    unreachable: "That address could not be reached, or no forge answered there.",
     bad_token: "That token was refused by the origin.",
     already_connected: "That account is already connected.",
     rate_limited: "Too many connect attempts. Wait a few minutes.",

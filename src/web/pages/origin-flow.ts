@@ -58,6 +58,7 @@ export function originFlowPage(ctx: Ctx): Response {
 
   const pollAction = `/settings/origins/flows/${flow.id}/poll${then === undefined ? "" : `?${thenQuery(then, link)}`}`;
   const authorize = flow.flow === "code" ? authorizeFor(ctx, flow) : undefined;
+  const forge = flow.software === "forge";
   const base = forgeBaseUrl(ctx.url, ctx.app.config.host);
   const shortLink =
     base === "" || flow.shortCode === "" ? "" : `${base}/go/${flow.shortCode}`;
@@ -95,12 +96,15 @@ export function originFlowPage(ctx: Ctx): Response {
             : html`<p>
                   Continue to
                   <span class="mono">${hostLabel(flow.webUrl)}</span> and
-                  approve the application. You will come straight back here.
+                  ${forge ? "say yes" : "approve the application"}. You will come straight back here.
                 </p>
-                ${handoff(authorize, shortLink, "Continue to the instance")}`,
+                ${handoff(authorize, shortLink, forge ? `Continue to ${hostLabel(flow.webUrl)}` : "Continue to the instance")}`,
           {
-            head: html`${icon("forgejo")}
-              <h2>Authorize on the instance</h2>`,
+            head: forge
+              ? html`${icon("globe")}
+                  <h2>Sign in at ${hostLabel(flow.webUrl)}</h2>`
+              : html`${icon("forgejo")}
+                  <h2>Authorize on the instance</h2>`,
           },
         )}`;
 
@@ -116,7 +120,9 @@ export function originFlowPage(ctx: Ctx): Response {
       >Waiting for you to authorize
       ${flow.flow === "device"
         ? "on the other device"
-        : "on the instance"}…</span
+        : forge
+          ? `at ${hostLabel(flow.webUrl)}`
+          : "on the instance"}…</span
     >
     <span class="spacer"></span>
     ${btn("Check again", { size: "sm", variant: "outline", icon: "sync" })}

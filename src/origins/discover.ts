@@ -265,8 +265,9 @@ async function viaVersionEndpoint(
 /**
  * A forge too old to answer `/api/v1/version` (0.5.x). It is known by two
  * answers no other software gives together: `/api/v1/health` with a boolean
- * `ok`, a dotted `version` and a `commit`; and `/api/v1/here` with the
- * manifest's `here` and `actions`. Its repositories are then listed through
+ * `ok` and a dotted `version`; and either its OAuth metadata naming its own
+ * `/oauth/authorize` and `/oauth/register`, or a `commit` beside `/api/v1/here`
+ * with the manifest's `here` and `actions`. Its repositories are then listed through
  * `GET /api/v1/repos` (`ForgeProvider.listRepos`).
  */
 async function viaOlderForge(
@@ -278,18 +279,20 @@ async function viaOlderForge(
   const version = asString(field(health.value, "version"));
   if (
     typeof field(health.value, "ok") !== "boolean" ||
-    !/^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,40}$/.test(version) ||
-    asString(field(health.value, "commit")) === ""
+    !/^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,40}$/.test(version)
   )
     return undefined;
-  const here = await getJson(`${web}/api/v1/here`, web, probe);
-  if (!here.ok) return undefined;
-  if (
-    typeof field(here.value, "here") !== "object" ||
-    field(here.value, "here") === null ||
-    !Array.isArray(field(here.value, "actions"))
-  )
-    return undefined;
+  if (!(await oauthPathsAreForges(web, probe))) {
+    if (asString(field(health.value, "commit")) === "") return undefined;
+    const here = await getJson(`${web}/api/v1/here`, web, probe);
+    if (
+      !here.ok ||
+      typeof field(here.value, "here") !== "object" ||
+      field(here.value, "here") === null ||
+      !Array.isArray(field(here.value, "actions"))
+    )
+      return undefined;
+  }
   return {
     kind: "gitea",
     apiUrl: `${web}/api/v1`,
@@ -297,6 +300,14 @@ async function viaOlderForge(
     via: "health",
     software: `forge ${version}`,
   };
+}
+
+/** A forge's OAuth metadata names `/oauth/authorize` and `/oauth/register`; Forgejo's and Gitea's do not. */
+async function oauthPathsAreForges(web: string, probe: Probe): Promise<boolean> {
+  const doc = await getJson(`${web}/.well-known/oauth-authorization-server`, web, probe);
+  if (!doc.ok) return false;
+  const path = (name: string): string | undefined => URL.parse(asString(field(doc.value, name)))?.pathname;
+  return path("authorization_endpoint") === "/oauth/authorize" && path("registration_endpoint") === "/oauth/register";
 }
 
 async function viaNodeInfo(

@@ -22,6 +22,7 @@ import {
   checkOriginAgain,
   connectOrigin,
   connectRefusal,
+  completeOAuthCallback,
   deleteOriginApp,
   disconnectOrigin,
   listOriginApps,
@@ -32,6 +33,7 @@ import {
   syncOriginNow,
   type Reattachment,
 } from "../../actions/origins.ts";
+import { startBring } from "../../actions/bring.ts";
 import { hasArchive } from "../../actions/origin_archive.ts";
 import {
   NO_SUCH_ORIGIN,
@@ -435,6 +437,8 @@ interface ConnectValues {
   tokenHost: string;
   tokenError?: string;
   registerError?: string;
+  /** Sign-in cannot work for this address, so the token path opens. */
+  offerToken?: boolean;
   trustedText?: string;
   trustedError?: string;
 }
@@ -624,7 +628,6 @@ function forgejoSection(
         required: true,
         placeholder: "codeberg.org",
         autocomplete: "off",
-        ...(values.hostError ? { error: values.hostError } : {}),
       })}
       <div class="form-actions">
         ${btn("Continue", { variant: registered ? "secondary" : "primary" })}
@@ -688,10 +691,30 @@ function tokenSection(values: ConnectValues): Html {
 }
 
 /**
- * The path a friend's forge needs, first on the page: its address and a token
- * made on it, or the one click. The line says where that token is made.
+ * The path a friend's forge needs, first on the page: its address and one
+ * button. Only a forge that cannot name its own callback asks for a token here,
+ * and the line says where that token is made.
  */
 function forgeSection(ctx: Ctx, values: ConnectValues): Html {
+  if (callbackUri(ctx) !== "")
+    return html`<p class="muted small">
+        You have an account on a friend's forge and want their apps here. Type
+        their address and sign in there; you come straight back. Their forge may
+        run an older release than this one: that is fine.
+      </p>
+      <form method="post" action="/settings/origins/oauth">
+        ${uiField({
+          label: "Their forge's address",
+          name: "host",
+          id: "f-forge-host",
+          value: values.host || values.tokenHost,
+          required: true,
+          placeholder: "forge.example.com",
+          autocomplete: "off",
+          ...(values.hostError ? { error: values.hostError } : {}),
+        })}
+        <div class="form-actions">${btn("Sign in there", { variant: "primary", icon: "external" })}</div>
+      </form>`;
   const site =
     values.tokenHost === ""
       ? null
@@ -715,7 +738,7 @@ function forgeSection(ctx: Ctx, values: ConnectValues): Html {
         required: true,
         placeholder: "forge.example.com",
         autocomplete: "off",
-        ...(values.tokenError ? { error: values.tokenError } : {}),
+        ...(values.tokenError || values.hostError ? { error: values.tokenError ?? values.hostError ?? "" } : {}),
       })}
       ${uiField({
         label: "Token",
@@ -730,10 +753,6 @@ function forgeSection(ctx: Ctx, values: ConnectValues): Html {
       <p class="muted small">Make the token there: ${tokens} (Settings → Access tokens).</p>
       <div class="form-actions">
         ${btn("Connect that forge", { variant: "primary", icon: "globe" })}
-        ${callbackUri(ctx) === ""
-          ? null
-          : html`${btn("Or sign in there", { variant: "outline", icon: "external", formaction: "/settings/origins/oauth", formnovalidate: true })}
-              <span class="muted small">With the address above; no token to copy.</span>`}
       </div>
     </form>`;
 }
@@ -868,7 +887,7 @@ function originsView(
           "connect-token",
           "key",
           "A token for GitHub, Forgejo or Gitea",
-          false,
+          values.offerToken === true || values.tokenError !== undefined,
           tokenSection(values),
         )}
         ${connectPath(
@@ -902,10 +921,9 @@ function originsView(
         head: html`${icon("plus")}
           <h2>Connect an origin</h2>`,
         foot: html`<span class="muted small"
-          ><strong>One-click sign-in.</strong> Both of these are OAuth, and both
-          need somebody to register an application once — for GitHub, per forge; for Forgejo and Gitea,
-          per instance. Worth it if several people use this forge; a token is
-          faster if it is just you.</span
+          ><strong>One-click sign-in.</strong> Another forge needs nothing set up.
+          GitHub, Forgejo and Gitea need somebody to register an application
+          once: for GitHub, per forge; for Forgejo and Gitea, per instance.</span
         >`,
       },
     )}`;
@@ -1104,6 +1122,33 @@ export function thenTarget(then: Then, link?: string): string {
   return `${then ?? "/settings/origins"}?connected=1`;
 }
 
+/**
+ * Where the browser goes when the other forge sends it back. A connect begun
+ * from `/bring` carries straight on with the bring, as the token path does: the
+ * person asked for it, and the state just proved this is their connect. Nobody
+ * signed in here (a phone that scanned the code) signs in and comes back to
+ * this same callback, its state unspent.
+ */
+export function callbackLanding(
+  ctx: Ctx,
+  done: Awaited<ReturnType<typeof completeOAuthCallback>>,
+): string {
+  if (!done.ok)
+    return done.error === "unauthorized"
+      ? `/signin?next=${encodeURIComponent(ctx.url.pathname + ctx.url.search)}`
+      : "/settings/origins?error=state";
+  if (done.value.status !== "done")
+    return `/settings/origins?error=${encodeURIComponent(done.value.detail.slice(0, 300))}`;
+  const back = new URLSearchParams(done.value.returnQuery);
+  const then = thenOf(back.get("then"));
+  const link = linkOf(back.get("link"));
+  if (then === "/bring" && link !== undefined) {
+    const started = startBring(ctx.app, ctx.auth.user, link);
+    if (started.ok) return `/bring/${started.value.originId}/${started.value.job.id}`;
+  }
+  return thenTarget(then, link);
+}
+
 export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   const denied = accountOnly(ctx);
   if (denied) return denied;
@@ -1116,26 +1161,25 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
 
   if (host === "" && kind !== "github") {
     const values = blankValues();
-    values.mode = "host";
     values.hostError = "Type the forge's address first, then sign in there.";
     return shell(ctx, originsView(ctx, values), 422);
   }
   const back = callbackUri(ctx);
   if (back === "" && kind !== "github") {
     const values = blankValues();
-    values.host = host;
-    values.mode = "host";
+    values.tokenHost = host;
     values.hostError =
-      "This forge does not know its own public URL. Set FORGE_URL (or FORGE_HOST) and try again — or paste a token instead.";
+      "This forge does not know its own public URL, so sign-in cannot come back to it. Make a token there and connect with that, or set FORGE_URL (or FORGE_HOST).";
     return shell(ctx, originsView(ctx, values), 422);
   }
   const started = await startOAuthConnect(ctx.app, ctx.auth.user, {
     host: host || kind,
     ...(kind === "github" ? { kind: "github" as const } : {}),
     redirectUri: back,
+    returnQuery: thenQuery(then, link),
   });
   if (!started.ok) {
-    if (started.error.error === "no_app" && kind !== "github") {
+    if (started.error.error === "no_app" && kind !== "github" && started.error.kind !== "github") {
       // The instance is real but has no application yet: that is the
       // registration step, not an error the user did anything about.
       return redirect(
@@ -1144,11 +1188,14 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
     }
     const values = blankValues();
     values.host = host;
-    values.mode = "host";
+    values.tokenHost = host;
+    values.offerToken = started.error.error === "no_app" || started.error.error === "provider_refused";
     values.hostError =
       started.error.error === "no_app"
-        ? "This forge has no GitHub application configured. Paste a token instead."
-        : connectMessage(started.error.error);
+        ? "This forge has no GitHub application configured. Paste a token below instead."
+        : started.error.error === "provider_refused"
+          ? `${hostLabel(host.includes("://") ? host : `https://${host}`)} would not take a sign-in from this forge. Nothing was connected. A token made there works below.`
+          : connectMessage(started.error.error);
     return shell(ctx, originsView(ctx, values), 422);
   }
   // The flow's page knows where to go from the flow itself, not the link.

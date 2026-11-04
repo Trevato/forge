@@ -1,4 +1,4 @@
-/** "Or sign in there" uses the address typed beside it, and an empty one says so. */
+/** "Sign in there" uses the address typed beside it, and an empty one says so. */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -33,12 +33,12 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("the button submits the form holding the typed address, skipping the token it doesn't need", async () => {
+test("one address and one button: sign in there, with no token to make", async () => {
   const page = await (await fetch(`${servers.url}/settings/origins`, { headers: { cookie } })).text();
-  const form = /<form method="post" action="\/settings\/origins\/token">[\s\S]*?<\/form>/.exec(page)?.[0] ?? "";
+  const form = /<form method="post" action="\/settings\/origins\/oauth">[\s\S]*?<\/form>/.exec(page)?.[0] ?? "";
   expect(form).toContain('name="host"');
-  expect(form).toMatch(/formnovalidate\s+formaction="\/settings\/origins\/oauth"/);
-  expect(form).toContain("Or sign in there");
+  expect(form).toContain("Sign in there");
+  expect(form).not.toContain('name="token"');
 });
 
 test("with no address it asks for one, rather than saying it isn't a forge", async () => {
