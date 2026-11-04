@@ -251,7 +251,7 @@ describe("a confirm past its time says so", () => {
     expect(drawn).toContain(`action="/talk/${w.id}"`);
     expect(drawn).not.toContain("/talk/confirm/");
     expect(drawn.split("<form").length - 1).toBe(1);
-    expect(askedFor(ASK_AGAIN, `Want me to open an issue in ${w.name}?`, UNDOABLE["tell"]!, { repo: w.repo, text: "x" })).toBe(false);
+    expect(askedFor(ASK_AGAIN, `Want me to open an issue in ${w.name}?`, UNDOABLE["tell"]!, { repo: w.repo, text: "x" }, "alice")).toBe(false);
   });
 
   test("an answered confirm is not told as run out", async () => {
