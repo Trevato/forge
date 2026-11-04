@@ -1,8 +1,9 @@
 /**
- * GET /settings/traffic: who is using the forge's answering time, from memory
- * alone (`perf/traffic.ts`). No git and no query of its own beyond the page's
- * chrome, so it stays quick while the forge is being flooded, which is when
- * it is wanted. Address prefixes are shown here and to no one but an admin.
+ * GET /settings/traffic: who is using the forge's answering time, over 15
+ * minutes, 24 hours or 7 days (`perf/traffic_store.ts`). One range read of a
+ * small table and no git, so it stays quick while the forge is being flooded,
+ * which is when it is wanted. Address prefixes are shown here and to no one
+ * but an admin.
  */
 
 import type { Ctx } from "../../http/context.ts";
@@ -19,11 +20,17 @@ import {
   type TopRow,
   type TrafficTotals,
 } from "../../perf/traffic.ts";
+import {
+  trafficHistory,
+  TRAFFIC_WINDOWS,
+  windowOf,
+  type TrafficHistory,
+} from "../../perf/traffic_store.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { TRAFFIC_TONES, trafficColumns } from "../studio/kpi_row.ts";
-import { card, empty } from "../ui.ts";
+import { card, empty, seg } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const CHART_W = 600;
@@ -32,7 +39,7 @@ const CHART_H = 96;
 const seconds = (ms: number): string =>
   `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
 
-function classes(t: TrafficTotals): Html {
+function classes(t: TrafficHistory): Html {
   return html`<div class="table-scroll">
     <table class="table" data-dense>
       <caption class="sr-only">
@@ -45,6 +52,7 @@ function classes(t: TrafficTotals): Html {
           <th scope="col" class="num">Time</th>
           <th scope="col" class="num">Requests</th>
           <th scope="col" class="num">Refused</th>
+          <th scope="col" class="num">Addresses, busiest ${t.grain}</th>
         </tr>
       </thead>
       <tbody>
@@ -56,6 +64,7 @@ function classes(t: TrafficTotals): Html {
               <td class="num">${seconds(t.classes[c].ms)}</td>
               <td class="num">${t.classes[c].requests}</td>
               <td class="num">${t.classes[c].refused}</td>
+              <td class="num">${t.peaks[c]}</td>
             </tr>`,
         )}
       </tbody>
@@ -119,15 +128,17 @@ export function trafficPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const rendering = performance.now();
   const now = Date.now();
-  const t = perfRecord.ledger.totals(now);
-  const tops = perfRecord.ledger.tops(now);
+  const chosen = windowOf(new URL(ctx.request.url).searchParams.get("window"));
+  const t = trafficHistory(ctx.app.db, perfRecord.ledger, now, chosen);
+  const tops = t.tops;
   const wrong = trafficAttention(t);
+  const span = TRAFFIC_WINDOWS[chosen].words;
   const body =
     t.requests === 0
       ? empty({
           icon: "users",
-          title: "No requests in the last 15 minutes",
-          note: "This process has answered nothing yet, or has just started: the figures are held in memory.",
+          title: `No requests in the last ${span}`,
+          note: "Each finished minute is written down; this one is still counting.",
         })
       : html`${wrong === null
             ? null
@@ -142,14 +153,15 @@ export function trafficPage(ctx: Ctx): Response {
             html`<p class="small muted mb">
                 ${t.requests} requests, ${seconds(t.ms)} of answering time,
                 ${t.refused} refused, about ${t.addresses} client
-                ${t.addresses === 1 ? "address" : "addresses"}.
+                ${t.addresses === 1 ? "address" : "addresses"}
+                ${chosen === "15m" ? null : `in its busiest ${t.grain}`}.
               </p>
               <div class="table-scroll muted">
                 ${trafficColumns(
                   t.minutes,
                   CHART_W,
                   CHART_H,
-                  "Answering time each minute over the last 15 minutes, by who asked",
+                  `Answering time over the last ${span}, by who asked`,
                 )}
               </div>
               ${legend()}${classes(t)}`,
@@ -157,9 +169,17 @@ export function trafficPage(ctx: Ctx): Response {
           ${top("Repository read", tops.repos, t)}
           ${top("User agent", tops.families, t)}
           ${top("Address prefix", tops.prefixes, t)}
+          ${top("Country", tops.countries, t)}
+          ${top("Request signature", tops.signatures, t)}
           <p class="small muted mt">
-            ${KPI_COUNTS.traffic} Addresses are an estimate within about 3%:
-            only each one's /16 or /32 is kept, in this process's memory.
+            ${chosen === "15m"
+              ? KPI_COUNTS.traffic
+              : "Share of summed time to answer. Refused means answered 429."}
+            Addresses are an estimate within about 3%:
+            only each one's /16 or /32 is kept. A signature is the user agent's
+            family, accept-language, whether a referer came and sec-fetch-site.
+            Past 15 minutes the tables are by the hour; minutes are kept 7 days
+            and hours 90.
           </p>`;
   notePhase(ctx.request, "render", performance.now() - rendering);
   return page({
@@ -168,7 +188,16 @@ export function trafficPage(ctx: Ctx): Response {
     body: html`<div class="page-head"><h1>Traffic</h1></div>
       ${settingsLayout(
         accountSections("traffic", { admin: true }),
-        body,
+        html`<div class="mb">
+            ${seg(
+              Object.entries(TRAFFIC_WINDOWS).map(([key, w]) => ({
+                label: w.words,
+                href: `/settings/traffic?window=${key}`,
+                current: key === chosen,
+              })),
+            )}
+          </div>
+          ${body}`,
         "Account settings",
       )}`,
   });

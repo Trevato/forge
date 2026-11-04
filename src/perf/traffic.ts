@@ -7,7 +7,8 @@
  * Fifteen buckets: this minute and the 14 before. Bounded: each bucket keeps at
  * most `MAX_KEYS` repositories, user-agent families and prefixes, and whatever
  * comes after falls under `OTHER_KEY`, so the tables can say how much they
- * could not name. Memory only, never written anywhere.
+ * could not name. `traffic_store.ts` writes each finished minute to the
+ * database, off the request path.
  *
  * An address is never kept. Its /16 (IPv4) or /32 (IPv6) is, and the count of
  * distinct addresses is a HyperLogLog over a hash salted once per process: an
@@ -28,8 +29,10 @@ const SKETCH_BITS = 10;
 const SKETCH_SIZE = 1 << SKETCH_BITS;
 const SALT = crypto.getRandomValues(new Uint32Array(1))[0]!;
 const MAX_REPO = 120;
+/** Names a minute hands the store per table; the rest are summed. */
+const MINUTE_TOPS = 50;
 
-export const TRAFFIC_CLASSES = ["people", "crawlers", "deep", "other"] as const;
+export const TRAFFIC_CLASSES = ["people", "crawlers", "deep", "other", "internal"] as const;
 export type TrafficClass = (typeof TRAFFIC_CLASSES)[number];
 
 export interface ClassTotals {
@@ -45,6 +48,10 @@ export interface TrafficWho {
   readonly address: string;
   readonly family: string;
   readonly repo: string | null;
+  /** Two letters from `cf-ipcountry` (`countryOf`), when it was sent. */
+  readonly country?: string | null;
+  /** The shape of the request (`signatureOf`): groups a fleet that varies only its address. */
+  readonly signature?: string;
 }
 
 export interface TrafficMinute {
@@ -79,6 +86,35 @@ export interface TrafficTops {
   readonly repos: readonly TopRow[];
   readonly families: readonly TopRow[];
   readonly prefixes: readonly TopRow[];
+  readonly countries: readonly TopRow[];
+  readonly signatures: readonly TopRow[];
+}
+
+export const TOP_KINDS = ["repos", "families", "prefixes", "countries", "signatures"] as const;
+export type TopKind = (typeof TOP_KINDS)[number];
+
+/** One minute as the store writes it: its figures, each class's distinct addresses, and its largest names. */
+export interface TrafficSnapshot {
+  readonly minute: number;
+  readonly classes: Readonly<Record<TrafficClass, ClassTotals>>;
+  readonly addresses: Readonly<Record<TrafficClass, number>>;
+  readonly tops: Readonly<Record<TopKind, readonly TopRow[]>>;
+}
+
+/** The `cf-ipcountry` two letters, or null for anything else a client wrote there. */
+export function countryOf(headers: Headers): string | null {
+  const c = headers.get("cf-ipcountry")?.toUpperCase() ?? "";
+  return /^[A-Z][A-Z0-9]$/.test(c) ? c : null;
+}
+
+/** Family, accept-language, whether a referer came, and sec-fetch-site: what a distributed crawler keeps the same. */
+export function signatureOf(family: string, headers: Headers): string {
+  const language =
+    headers.get("accept-language")?.slice(0, 40).replace(/[^\w,;=.*-]/g, "") || "none";
+  const site = headers.get("sec-fetch-site") ?? "";
+  const known = ["same-origin", "same-site", "cross-site", "none"].includes(site);
+  const referer = headers.has("referer") ? "referer" : "no referer";
+  return `${family} | ${language} | ${referer} | ${known ? site : "no fetch-site"}`;
 }
 
 /** The class a request belongs to: one answer, for the ledger and for a scan of the samples. */
@@ -86,7 +122,9 @@ export function classOf(s: {
   readonly signedIn: boolean;
   readonly crawler?: boolean;
   readonly deepStranger?: boolean;
+  readonly internal?: boolean;
 }): TrafficClass {
+  if (s.internal === true) return "internal";
   if (s.signedIn) return "people";
   if (s.crawler === true) return "crawlers";
   if (s.deepStranger === true) return "deep";
@@ -126,8 +164,12 @@ interface Bucket {
   readonly repos: Map<string, Row>;
   readonly families: Map<string, Row>;
   readonly prefixes: Map<string, Row>;
-  /** One register per hash bucket; allocated with the first address. */
-  sketch: Uint8Array | null;
+  readonly countries: Map<string, Row>;
+  readonly signatures: Map<string, Row>;
+  /** Per class, one register per hash bucket; allocated with its first address. */
+  readonly sketches: Partial<Record<TrafficClass, Uint8Array>>;
+  /** The store has this minute; a later request in it starts the minute anew. */
+  written: boolean;
 }
 
 const noTotals = (): Record<TrafficClass, Totals> => ({
@@ -135,6 +177,7 @@ const noTotals = (): Record<TrafficClass, Totals> => ({
   crawlers: { requests: 0, ms: 0, refused: 0 },
   deep: { requests: 0, ms: 0, refused: 0 },
   other: { requests: 0, ms: 0, refused: 0 },
+  internal: { requests: 0, ms: 0, refused: 0 },
 });
 
 function bump(
@@ -186,6 +229,25 @@ export interface TrafficLedger {
   ): void;
   totals(now: number): TrafficTotals;
   tops(now: number, limit?: number): TrafficTops;
+  /** Minutes the store has yet to write, oldest first; the running minute only with `running`. */
+  unwritten(now: number, running: boolean): TrafficSnapshot[];
+  /** The store has these minutes. */
+  markWritten(minutes: readonly number[]): void;
+}
+
+/** A table's `limit` largest by answering time, the rest summed under `OTHER_KEY`. */
+function largest(table: Map<string, Row>, limit: number): TopRow[] {
+  const rows = [...table]
+    .map(([key, row]) => ({ key, ...row }))
+    .sort((a, b) => b.ms - a.ms || b.requests - a.requests || a.key.localeCompare(b.key));
+  if (rows.length <= limit) return rows;
+  const rest = { key: OTHER_KEY, requests: 0, ms: 0, anonymous: 0 };
+  for (const row of rows.slice(limit)) {
+    rest.requests += row.requests;
+    rest.ms += row.ms;
+    rest.anonymous += row.anonymous;
+  }
+  return [...rows.slice(0, limit), rest];
 }
 
 export function createTrafficLedger(): TrafficLedger {
@@ -194,14 +256,17 @@ export function createTrafficLedger(): TrafficLedger {
     const index = minute % TRAFFIC_MINUTES;
     let bucket = buckets.get(index);
     if (bucket !== undefined && bucket.minute > minute) return undefined;
-    if (bucket === undefined || bucket.minute < minute) {
+    if (bucket === undefined || bucket.minute < minute || bucket.written) {
       bucket = {
         minute,
         classes: noTotals(),
         repos: new Map(),
         families: new Map(),
         prefixes: new Map(),
-        sketch: null,
+        countries: new Map(),
+        signatures: new Map(),
+        sketches: {},
+        written: false,
       };
       buckets.set(index, bucket);
     }
@@ -222,17 +287,20 @@ export function createTrafficLedger(): TrafficLedger {
       totals.ms += ms;
       if (refused) totals.refused++;
       if (who === undefined) return;
-      const anonymous = cls !== "people";
+      const anonymous = cls !== "people" && cls !== "internal";
       bump(bucket.families, who.family, ms, anonymous);
+      if (who.signature !== undefined) bump(bucket.signatures, who.signature, ms, anonymous);
+      // The forge asking itself says what it is, and nothing about who is reading.
+      if (cls === "internal") return;
       if (who.repo !== null) bump(bucket.repos, who.repo, ms, anonymous);
+      if (who.country) bump(bucket.countries, who.country, ms, anonymous);
       const bytes = addressBytes(who.address);
       if (bytes === undefined) {
         bump(bucket.prefixes, "unknown", ms, anonymous);
         return;
       }
       bump(bucket.prefixes, prefixOf(bytes), ms, anonymous);
-      bucket.sketch ??= new Uint8Array(SKETCH_SIZE);
-      sketchAdd(bucket.sketch, bytes);
+      sketchAdd((bucket.sketches[cls] ??= new Uint8Array(SKETCH_SIZE)), bytes);
     },
     totals(now) {
       const newest = Math.floor(now / MINUTE_MS);
@@ -253,8 +321,7 @@ export function createTrafficLedger(): TrafficLedger {
           sum[c].ms += classes[c].ms;
           sum[c].refused += classes[c].refused;
         }
-        const sketch = bucket?.sketch;
-        if (sketch)
+        for (const sketch of Object.values(bucket?.sketches ?? {}))
           for (let i = 0; i < SKETCH_SIZE; i++)
             if (sketch[i]! > merged[i]!) merged[i] = sketch[i]!;
       }
@@ -297,7 +364,38 @@ export function createTrafficLedger(): TrafficLedger {
         repos: top((b) => b.repos),
         families: top((b) => b.families),
         prefixes: top((b) => b.prefixes),
+        countries: top((b) => b.countries),
+        signatures: top((b) => b.signatures),
       };
+    },
+    unwritten(now, running) {
+      const newest = Math.floor(now / MINUTE_MS);
+      return inWindow(now)
+        .filter((b) => !b.written && (running || b.minute < newest))
+        .sort((a, b) => a.minute - b.minute)
+        .map((b) => ({
+          minute: b.minute,
+          classes: b.classes,
+          addresses: Object.fromEntries(
+            TRAFFIC_CLASSES.map((c) => {
+              const sketch = b.sketches[c];
+              return [c, sketch === undefined ? 0 : sketchCount(sketch)];
+            }),
+          ) as Record<TrafficClass, number>,
+          tops: {
+            repos: largest(b.repos, MINUTE_TOPS),
+            families: largest(b.families, MINUTE_TOPS),
+            prefixes: largest(b.prefixes, MINUTE_TOPS),
+            countries: largest(b.countries, MINUTE_TOPS),
+            signatures: largest(b.signatures, MINUTE_TOPS),
+          },
+        }));
+    },
+    markWritten(minutes) {
+      for (const minute of minutes) {
+        const bucket = buckets.get(minute % TRAFFIC_MINUTES);
+        if (bucket?.minute === minute) bucket.written = true;
+      }
     },
   };
 }

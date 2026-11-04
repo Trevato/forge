@@ -31,6 +31,8 @@ export interface Sample {
   readonly crawler?: boolean;
   /** An unauthenticated, browser-looking read of a deep git page (#8199). */
   readonly deepStranger?: boolean;
+  /** The forge asking itself: a loopback or proxy peer that names no client (`http/peer.ts`). */
+  readonly internal?: boolean;
   /** Answered 429. */
   readonly refused?: boolean;
   readonly phases: readonly PhaseSample[];
@@ -192,6 +194,7 @@ export function scanTraffic(record: PerfRecord, since: number, to: number): Reco
     crawlers: { requests: 0, ms: 0, refused: 0 },
     deep: { requests: 0, ms: 0, refused: 0 },
     other: { requests: 0, ms: 0, refused: 0 },
+    internal: { requests: 0, ms: 0, refused: 0 },
   };
   for (const pattern of record.patterns())
     for (const s of record.traffic(pattern, since)) {

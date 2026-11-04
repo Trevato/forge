@@ -19,7 +19,7 @@ export const KPI_COUNTS = {
   spend: "What crew runs cost since UTC midnight at token list price, which is not what a subscription bills, of the forge's daily ceiling.",
   backup: "How long ago a snapshot was last known to be off this machine.",
   bugs: "Open bugs, and those past their clock: 4 h high, 48 h otherwise.",
-  traffic: "Who used the forge's answering time this minute and the 14 before, as a share of summed time to answer: people and tokens, named crawlers, anonymous readers on deep pages, other anonymous. Refused means answered 429.",
+  traffic: "Who used the forge's answering time this minute and the 14 before, as a share of summed time to answer: people and tokens, named crawlers, anonymous readers on deep pages, other anonymous, the forge asking itself. Refused means answered 429.",
   visitors: "Browsers whose page sent a report back today (UTC); scrapers don't run the page, so they never count. The 7-day figure adds each day's count, so a browser seen on three days counts three times.",
   accounts: "Accounts with a browser session seen since UTC midnight, of every account including organizations and machine accounts; a token alone doesn't count.",
   speed: "The slowest quarter of page views that reported back over 7 days: page load at the 75th percentile, and the delay after a tap. Scrapers don't report and an outage reports nothing, so this shows neither.",
@@ -153,6 +153,7 @@ export const TRAFFIC_WORDS: Readonly<Record<TrafficClass, string>> = {
   crawlers: "named crawlers",
   deep: "anonymous deep pages",
   other: "other anonymous",
+  internal: "the forge itself",
 };
 
 const share = (part: number, whole: number): string => {

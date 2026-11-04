@@ -457,12 +457,13 @@ import {
   type RouteTiming,
 } from "../core/route_timing.ts";
 import { loopWatch, perfRecord } from "../perf/live.ts";
-import { repoOf } from "../perf/traffic.ts";
+import { countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
+import { createTrafficWriter } from "../perf/traffic_store.ts";
 import { parseServerTiming } from "../perf/record.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
-import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
+import { carryPeer, clientAddress, notePeer, wasInternal, type ProxyTrust } from "./peer.ts";
 import { isProbe } from "../kernel/probe.ts";
 import { takeStrangerRead } from "./stranger_reads.ts";
 import { parseCidrs } from "../kernel/cidr.ts";
@@ -569,6 +570,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
         user: verified.value.user,
         scope: verified.value.scope,
         via: "token",
+        tokenName: verified.value.name,
         ...(verified.value.proposal ? { proposal: verified.value.proposal } : {}),
         ...(verified.value.run ? { run: verified.value.run } : {}),
         ...(verified.value.via ? { through: verified.value.via } : {}),
@@ -594,6 +596,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
           user: verified.value.user,
           scope: verified.value.scope,
           via: "token",
+          tokenName: verified.value.name,
           ...(verified.value.proposal
             ? { proposal: verified.value.proposal }
             : {}),
@@ -2151,6 +2154,8 @@ export async function serve(app: App): Promise<Servers> {
   // map increment; a refused event would be a programming error, not worth a 500.
   const counters = new Map<Database, UsageCounter>();
   const timings = new Map<Database, RouteTiming>();
+  // The minute ledger's history: one write a minute, never on a request.
+  const trafficWriter = createTrafficWriter(app.db, perfRecord.ledger, app.log);
   const counted = (
     owner: App,
     request: Request,
@@ -2164,12 +2169,15 @@ export async function serve(app: App): Promise<Servers> {
       const header = serverTiming(ms, takeDbTime(request), takePhases(request));
       response.headers.set("server-timing", header);
       const end = performance.now();
+      const family = familyOf(request.headers.get("user-agent") ?? "");
       perfRecord.add(
         tag.pattern,
-        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), refused: response.status === 429, phases: parseServerTiming(header) },
+        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), internal: wasInternal(request), refused: response.status === 429, phases: parseServerTiming(header) },
         {
           address: clientAddress(request),
-          family: familyOf(request.headers.get("user-agent") ?? ""),
+          family,
+          country: countryOf(request.headers),
+          signature: signatureOf(family, request.headers),
           repo: response.status < 400 ? repoOf(tag.pattern, new URL(request.url).pathname) : null,
         },
       );
@@ -2422,6 +2430,7 @@ export async function serve(app: App): Promise<Servers> {
         }
       }
       timings.clear();
+      trafficWriter.stop();
       for (const http of childHttps.values()) http.close();
       childHttps.clear();
       closeHostedChildren(app);
@@ -2644,9 +2653,13 @@ async function answerGet(
   // A conversation's token writes as its person, by way of the agent:
   // every event the handler appends carries it, at no append site's cost.
   const acting =
-    auth.through !== undefined && auth.user !== undefined
-      ? { userId: auth.user.id, via: auth.through }
-      : undefined;
+    auth.user === undefined
+      ? undefined
+      : {
+          userId: auth.user.id,
+          door: auth.tokenName === undefined ? auth.via : `token:${auth.tokenName}`,
+          ...(auth.through === undefined ? {} : { via: auth.through }),
+        };
   const response = await actingVia(acting, () =>
     replayAs === undefined
       ? invoke(request)

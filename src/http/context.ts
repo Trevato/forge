@@ -20,6 +20,8 @@ export interface Auth {
   readonly via: "session" | "edge" | "token" | "password" | "none";
   /** Which signed-in browser asked, when `via` is `session`. */
   readonly sessionId?: string;
+  /** Set for a token: the name its owner gave it, never its secret. */
+  readonly tokenName?: string;
   /** Set for a proposal token: all it may do (`http/proposal_gate.ts`). */
   readonly proposal?: Proposal;
   /** Set for a crew run's token: the repositories it may reach

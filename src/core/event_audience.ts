@@ -26,10 +26,29 @@ import {
 import type { Database } from "bun:sqlite";
 import type { ForgeEvent } from "./events.ts";
 import { getAppByRepo } from "./apps.ts";
+import { personOwners } from "./orgs.ts";
 import { canAdmin, canEnterApp, canSeeOwnerFacts, getRepoById } from "./repos.ts";
 import type { User } from "./users.ts";
 
 export type EventAudience = "readers" | "admins" | "actor" | "app";
+
+/**
+ * Whether this viewer answers for a deleted repository: the forge's admin, who
+ * deleted it, or its owner (a person, or an org's owners while the org lasts).
+ * Its row is gone, so its owner comes from the event.
+ */
+function answersForDeleted(db: Database, viewer: User | undefined, event: ForgeEvent): boolean {
+  if (viewer === undefined || !isActive(viewer)) return false;
+  if (viewer.isAdmin || event.actorId === viewer.id) return true;
+  const owner = event.payload.ownerId;
+  return typeof owner === "string" && (owner === viewer.id || personOwners(db, owner).includes(viewer.id));
+}
+
+/** A `repo.deleted` names its repository; unless it was public (said so outright), the name is not for readers. */
+const namesHiddenRepo = (event: ForgeEvent): boolean =>
+  event.kind === "repo.deleted" &&
+  event.payload.repo !== undefined &&
+  event.payload.visibility !== "public";
 
 const READER_KINDS: ReadonlySet<string> = new Set([
   // Whether a repository follows an upstream, never where: the address is
@@ -312,6 +331,7 @@ export function audienceFilter(
   };
   return (event) => {
     if (hidden(event)) return false;
+    if (namesHiddenRepo(event) && !answersForDeleted(db, viewer, event)) return false;
     switch (eventAudience(event.kind)) {
       case "readers":
         return true;
@@ -350,6 +370,16 @@ export function eventForReader(
     return yes;
   };
   return (event) => {
+    // Which door an actor used (a token's name) is for those who answer for the repository.
+    if (event.payload.door !== undefined) {
+      const answers =
+        event.repoId === null
+          ? answersForDeleted(db, viewer, event)
+          : event.actorId === viewer?.id || isOwner(event.repoId);
+      if (answers) return event;
+      const { door: _, ...payload } = event.payload;
+      return { ...event, payload };
+    }
     if (!event.kind.startsWith("run.")) return event;
     if (event.repoId !== null && isOwner(event.repoId)) return event;
     const payload = { ...event.payload };

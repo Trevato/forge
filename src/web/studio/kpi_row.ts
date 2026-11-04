@@ -87,6 +87,7 @@ export function visitorsSpark(days: readonly number[]): Html {
 
 /** Lightest first, stacked from the bottom: the strangers sit on top and read darkest. */
 export const TRAFFIC_TONES: readonly (readonly [TrafficClass, string])[] = [
+  ["internal", "0.12"],
   ["people", "0.25"],
   ["other", "0.45"],
   ["crawlers", "0.7"],
@@ -95,7 +96,7 @@ export const TRAFFIC_TONES: readonly (readonly [TrafficClass, string])[] = [
 
 /** The minutes as stacked columns of answering time, one tone per class; the numbers are the only input. */
 export function trafficColumns(minutes: readonly TrafficMinute[], width: number, height: number, label: string): Html {
-  const top = Math.max(1, ...minutes.map((m) => m.classes.people.ms + m.classes.crawlers.ms + m.classes.deep.ms + m.classes.other.ms));
+  const top = Math.max(1, ...minutes.map((m) => TRAFFIC_TONES.reduce((n, [c]) => n + m.classes[c].ms, 0)));
   const step = width / minutes.length;
   const rects = minutes.flatMap((m, i) => {
     let y = height;
