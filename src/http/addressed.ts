@@ -31,7 +31,8 @@ export const PINNED_PUBLIC = `public, max-age=31536000, s-maxage=${SHARED_MAX_AG
 export function mayShare(request: Request, anonymous: boolean, repo: { readonly visibility: string }, rev: string): boolean {
   if (!anonymous || repo.visibility !== "public" || !isFullId(rev)) return false;
   const h = request.headers;
-  return !h.has("cookie") && !h.has("authorization") && !h.has("x-plat-user") && !h.has("x-plat-edge-token");
+  // The edge's own token comes on every request it carries, a visitor's too; only a named user changes the page.
+  return !h.has("cookie") && !h.has("authorization") && !h.has("x-plat-user");
 }
 
 export function immutableWhenAddressed(
