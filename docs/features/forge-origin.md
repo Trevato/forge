@@ -3,9 +3,11 @@
 Connect another forge at `/settings/origins`: type its address and press "Sign in there". A token it gave you (Settings, Tokens there; `ro` is enough to bring code across) is the path for when sign-in is unavailable. `discover` asks `GET /api/v1/version`; a forge answers `{"version", "software":"forge"}` (a 0.5.x forge has no such route, and is known by `/api/v1/health` with its OAuth metadata), and is stored as an origin with `software = forge` (kind `gitea`, the dialect it speaks).
 
 - **Picker:** `GET /api/v1/user/repos` lists the token's account's repositories, private ones included, in the Gitea shape. Only that route speaks the Gitea shape; a repository's own JSON is unchanged.
-- **Credential:** the token travels as `Authorization: Bearer …` for the API, the one scheme every release of a forge takes (`token …` only since 0.7.346), and as Basic through `GIT_CONFIG_*` for git — never argv, never config.
-- **Mirror:** brings the code and its history, and the issues, pulls and comments, read in the forge's own JSON (`src/origins/providers/forge-work.ts`) with the real author kept. The origin's card and `GET /api/v1/user/origins` (`carries`) say what did not come: labels and how the app runs (not yet), and its data and secrets (never by default).
+- **Credential:** the token travels as `Authorization: Bearer …` for the API, the one scheme every release of a forge reads (one older than `/api/v1/version` answers `token …` with 401), and as Basic through `GIT_CONFIG_*` for git — never argv, never config.
+- **Mirror:** brings the code and its history, and the issues, pulls, comments and labels, read in the forge's own JSON (`src/origins/providers/forge-work.ts`) with the real author kept. A bring whose first fetch failed is finished by asking again. The origin's card and `GET /api/v1/user/origins` (`carries`) say what did not come: how the app runs (not yet), and its data and secrets (never by default).
 - **Write-through:** a comment, an issue or a state change here goes to the other forge first, with the connecting person's token (`rw` needed), and is refused with nothing changed here when the forge is down or says no. A pull is opened there with `createPull` (the contribute path); its merge comes back with the next sync.
+
+Measured against an older forge and itself, in containers: [the compatibility matrix](forge-origin-compat.md), `scripts/forge-compat-lab.sh`.
 
 ## Sign in with one click (#8902)
 
@@ -25,7 +27,7 @@ On a brought repository an issue or comment opened here is written to the origin
 
 - **Webhook:** the origin's issues, comments and pulls arrive by a signed delivery to `/api/v1/repos/:owner/:name/origin-hook` (`src/origins/hook.ts`). It is believed for nothing but "look again": the named issue and its thread are read from the origin (`item-check.ts`; a pull goes to `pull-check.ts` and is never imported as an issue). If the origin cannot be read the delivery is refused (404) so it is sent again.
 - **Catch-up:** the sync sweep fetches whatever moved since its last clean run, so after the origin was down nothing is lost. Comments are keyed on the origin's id, so a webhook, a sweep and the echo of our own write are one row.
-- **Registration:** the hook is asked for once, when a mirror is first imported (and after a pull is proposed upstream), and only a forge origin can be asked. A GitHub or Gitea origin relies on the sweep alone. Asking is idempotent (the origin's hooks are listed first, none is added twice).
+- **Registration:** the hook is asked for once, when a mirror is first imported (and after a pull is proposed upstream), and only a forge origin can be asked. Making a hook takes `admin` scope there, so a `ro` or `rw` token, and every sign-in, registers none and relies on the sweep; a GitHub or Gitea origin does too. Asking is idempotent (the origin's hooks are listed first, none is added twice).
 - Test: `test/origin-issues.test.ts` runs two forges through write, webhook and catch-up.
 
 ## Both doors, and what was exercised

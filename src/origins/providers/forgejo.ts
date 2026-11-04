@@ -106,17 +106,16 @@ export class ForgejoProvider implements Provider {
     this.kind = credential.kind === "gitea" ? "gitea" : "forgejo";
     this.apiUrl = credential.apiUrl;
     this.webUrl = credential.webUrl;
-    this.api = new ApiClient(credential, (token) => ({
-      // The OpenAPI document is explicit: "API tokens must be prepended with
-      // 'token' followed by a space." Bearer works on new builds and is what
-      // an OAuth access token wants; `token` is what a PAT wants on Forgejo
-      // and Gitea. Another forge takes Bearer on every release, and before
-      // 0.7.346 only Bearer: `token` there is a 401 for a good token.
-      authorization:
-        credential.authKind === "oauth" || credential.software === "forge"
-          ? `Bearer ${token}`
-          : `token ${token}`,
-    }));
+    this.api = new ApiClient(credential, (token) => ({ authorization: this.authorization(token, credential) }));
+  }
+
+  /**
+   * The OpenAPI document is explicit: "API tokens must be prepended with
+   * 'token' followed by a space." Bearer works on new builds and is what an
+   * OAuth access token wants; `token` is what a PAT wants everywhere.
+   */
+  protected authorization(token: string, credential: ProviderCredential): string {
+    return credential.authKind === "oauth" || credential.software === "forge" ? `Bearer ${token}` : `token ${token}`;
   }
 
   /**

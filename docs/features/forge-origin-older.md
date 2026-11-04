@@ -8,9 +8,7 @@
 
 A forge from before `/api/v1/version` (0.5.x) is recognised by two answers no other software gives together: `/api/v1/health` (`ok`, a dotted `version`, a `commit`) and `/api/v1/here` (`here`, `actions`). It is stored like any forge (`software = forge`). Without `/api/v1/user/repos`, its repositories are listed from `GET /api/v1/repos` with the token, keeping the account's own, private ones included (`src/origins/providers/forge.ts`, at most 10 pages per call). Test: `test/forge-origin-older.test.ts` runs a fixture of such a forge's answers.
 
-Not checked: the live forge-apps.benjivers.com — the build sandbox reaches only this forge, so the old-forge path is proven against the fixture, not against that host.
-
-The fixture is written from this repository's own routes, not captured from a real 0.5.x forge, so what a 0.5.x forge actually answers is unverified. There is no "needs a newer release" error either: a forge that matches neither fingerprint is refused as unrecognised.
+Measured against real old code in containers, and compared with the live forge-apps.benjivers.com by anonymous reads only: [the compatibility matrix](forge-origin-compat.md). There is no "needs a newer release" error either: a forge that matches neither fingerprint is refused as unrecognised.
 
 ## Tokens and plain http
 

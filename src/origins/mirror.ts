@@ -117,7 +117,19 @@ export async function mirrorRepo(
   // sync pass reads it back from there.
   rememberOriginRepo(app.db, origin.id, remote);
   const already = getOriginRepo(app.db, origin.id, remote.fullName);
-  if (already?.mirroredAs != null) return err("already_mirrored");
+  if (already?.mirroredAs != null) {
+    // Its first fetch failed (the origin went down part way): the repository
+    // is there with nothing in it yet, and asking again is the retry.
+    const failed = getRepoById(app.db, already.mirroredAs);
+    if (!failed?.origin?.fetchError) return err("already_mirrored");
+    const again = await syncOrigin(app, origin, {
+      initial: true,
+      onlyRepoId: failed.id,
+      ...(job === undefined ? {} : { onProgress: (stageName, detail) => stage({ stage: stageName, detail }) }),
+    });
+    await adoptDefaultBranch(repoDir(app.reposRoot, failed.ownerName, failed.name), defaultBranch);
+    return ok({ repo: getRepoById(app.db, failed.id)!, remote, error: again.error });
+  }
 
   const wanted = name ?? remote.name;
   const chosen = availableName(app, actor.id, wanted, origin);

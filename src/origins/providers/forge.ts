@@ -5,8 +5,7 @@
  * `GET /user/repos`; who you are and one repository are read in its own
  * shape, so the rest of its API grows no Gitea fields. Git comes over HTTPS
  * as ever. Issues, pulls and comments are read and written in its own JSON
- * (`forge-work.ts`); labels do not come yet and say "none" rather than
- * failing, and the origin's `carries` note says so.
+ * (`forge-work.ts`).
  */
 
 import type {
@@ -29,9 +28,19 @@ import { asArray, asId, asString, asTime, dig, fail, field, seg, splitFullName, 
 
 const MAX_COMMENT_PAGES = 1000;
 const OLDER_PAGES = 10;
+const MAX_LABEL_PAGES = 100;
 const NONE = { ok: true, value: [] } as const;
 
 export class ForgeProvider extends ForgejoProvider {
+  /**
+   * Always Bearer: a forge takes any of its tokens that way. `token` is a Gitea
+   * client's scheme and only a forge of this release's or later knows it; an
+   * older one answers 401, which would read as a refused token.
+   */
+  protected override authorization(token: string): string {
+    return `Bearer ${token}`;
+  }
+
   /** The account is `username` on a forge, not Gitea's `login`. */
   override async whoami(): Promise<ProviderResult<RemoteIdentity>> {
     const result = await this.api.call({ path: "/user" });
@@ -129,8 +138,28 @@ export class ForgeProvider extends ForgejoProvider {
     return succeed(this.repoFrom(result.value.data, named));
   }
 
-  override listLabels(): Promise<ProviderResult<readonly RemoteLabel[]>> {
-    return Promise.resolve(NONE);
+  /** The repository's labels, in a forge's own JSON, to the end of its pages. */
+  override async listLabels(fullName: string): Promise<ProviderResult<readonly RemoteLabel[]>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const labels: RemoteLabel[] = [];
+    let cursor: string | null = null;
+    for (let walked = 0; walked < MAX_LABEL_PAGES; walked++) {
+      const result = await this.api.call({
+        path: `${base}/labels`,
+        query: { limit: 100, ...(cursor === null ? {} : { cursor }) },
+      });
+      if (!result.ok) return result;
+      for (const raw of asArray(field(result.value.data, "items")))
+        labels.push({
+          remoteId: asId(field(raw, "id")),
+          name: asString(field(raw, "name")),
+          color: asString(field(raw, "color")).replace(/^#/, ""),
+        });
+      cursor = forgeCursor(result.value.data);
+      if (cursor === null) return succeed(labels);
+    }
+    return fail("invalid_response", "the origin has more labels than one sync reads");
   }
 
   /** Implements the optional `Provider.listMilestones`; Forgejo has none to override. */
