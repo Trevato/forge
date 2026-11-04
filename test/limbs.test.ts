@@ -9,6 +9,7 @@
  * writes, what something outside the limb still needs is never taken, and
  * undo puts it back.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,7 +21,7 @@ import { undoFleetOp } from "../src/actions/fleet.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { applyLimb, previewLimb } from "../src/actions/limbs.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import {
   dependenciesOf,
   readyNow,
@@ -202,7 +203,7 @@ describe("limb actions", () => {
     }
     mason = getUserByName(app.db, "mason")!;
     atlas = getUserByName(app.db, "atlas")!;
-    setCrewRole(app.db, engine.id, atlas.id, "planner");
+    seatAs(app.db, engine.id, atlas.id, "planner");
 
     trust = issue(engine, "P0 Trust: agents contained");
     feed = issue(engine, "P1 Feed: one front door");

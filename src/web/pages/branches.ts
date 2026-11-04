@@ -210,6 +210,15 @@ function branchRow(
       </span>
       <span class="row-trail">
         ${divergence(row)}
+        ${when(canWrite, () =>
+          btn("Pin", {
+            href: `${base}/builds/new?sha=${row.oid}&source=${encodeURIComponent(`branch ${row.name}`)}`,
+            size: "sm",
+            variant: "outline",
+            icon: "pin",
+            label: `Pin a build of ${row.name}`,
+          }),
+        )}
         ${when(!row.isDefault && canWrite, () =>
           btn("New pull", {
             href: `${base}/pulls/new?head=${encoded}`,
@@ -311,6 +320,7 @@ export async function renderBranches(
               head: html`<h2>
                   ${rows.length} branch${rows.length === 1 ? "" : "es"}
                 </h2>
+                ${when(scope.kind === "local", () => html`<span class="spacer"></span>${btn("Builds", { href: `${scope.base}/builds`, size: "sm", variant: "ghost", icon: "pin" })}`)}
                 ${when(
                   !compared && scope.kind === "local",
                   () =>
@@ -349,6 +359,10 @@ export const CREATE_ERRORS: Record<string, string> = {
     "The origin could not be reached, so nothing was created.",
   origin_refused:
     "The origin refused that branch, so nothing was created here.",
+  origin_protected:
+    "The operator protects this repository at its origin, so no branch is pushed to it from here. Propose the change from your fork.",
+  origin_paused:
+    "This connection is not verified yet, so writes through it are paused. Nothing was created. Check it again under Settings → Origins.",
   forbidden: "You need write access to create a branch.",
   unauthorized: "You need write access to create a branch.",
   not_found: "You need write access to create a branch.",

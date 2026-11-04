@@ -17,7 +17,8 @@ import { createIssue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+import { edgeLoginUrl } from "../src/http/edge.ts";
+import { forgeHttp, serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
@@ -53,7 +54,8 @@ describe("the one line", () => {
     );
     expect(parseExploreQuery("updated:7d").updated).toBe("7d");
     expect(parseExploreQuery("updated:2y").updated).toBe("all");
-    expect(parseExploreQuery("updated:2y").text).toBe("updated:2y");
+    expect(parseExploreQuery("updated:2y").text).toBe("");
+    expect(parseExploreQuery("updated:").text).toBe("updated:");
     expect(exploreLine(parseExploreQuery("updated:30d kind:app garden"))).toBe(
       "kind:app updated:30d garden",
     );
@@ -262,7 +264,8 @@ describe("explore", () => {
     expect(names((await api("kind:app owner:alice")).items).sort()).toEqual(["alice/gated", "alice/loved", "alice/quiet"]);
     expect(names((await api("kind:app owner:bob")).items)).toEqual(["bob/busy"]);
     expect(names((await api("owner:bob")).items).sort()).toEqual(["bob", "bob/busy"]);
-    expect((await api("kind:app owner:..")).items).toEqual([]);
+    const bad = await api("kind:app owner:..");
+    expect((bad as { note?: string }).note).toBe("owner:.. is not a name");
     const page = await (await fetch(`${base}/explore?q=kind:person`)).text();
     expect(page).toContain(`href="/explore?q=${encodeURIComponent("kind:app owner:bob")}">1 app</a>`);
   });
@@ -434,11 +437,13 @@ describe("explore on a forge with nothing public", () => {
     const out = await get("/explore", false);
     expect(out).toContain("Nothing public yet");
     expect(out).toContain('href="/signin?next=/apps/new"');
+    expect(out).toContain('href="/signup?next=/apps/new"');
+    expect(out).toContain("Create an account");
     expect(out).not.toContain("Clear the line");
     const mine = await get("/explore", true);
     expect(mine).toContain("Nothing public yet");
     expect(mine).toContain('href="/apps/new"');
-    expect(mine).not.toContain("Sign in to make one");
+    expect(mine).not.toContain("Create an account");
   });
 
   test("a query with no hits still says nothing matches", async () => {
@@ -629,4 +634,41 @@ test("isExploreLine is true for each explore key and false for plain words", () 
   for (const line of ["kind:app", "sort:forks", "updated:7d", "owner:trevato", "archived:yes", "garden OWNER:x"])
     expect(isExploreLine(line)).toBe(true);
   for (const line of ["", "garden", "zed-one", "downer:x"]) expect(isExploreLine(line)).toBe(false);
+});
+
+describe("explore's empty state behind a platform edge", () => {
+  const TOKEN = "edge-secret-for-explore";
+  let dataDir: string;
+  let app: App;
+  let http: ReturnType<typeof forgeHttp>;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-explore-edge-"));
+    app = createApp({ dataDir, port: 0, url: "https://forge.example", edgeToken: TOKEN });
+    http = forgeHttp(app);
+  }, 30_000);
+
+  afterAll(async () => {
+    http.close();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const get = async (headers: Record<string, string>) =>
+    (await http.handle(new Request("http://forge.test/explore", { headers }))).text();
+
+  test("a stranger the edge has not vouched for gets one Sign in to the edge, no Create an account", async () => {
+    const out = await get({});
+    expect(out).toContain("Nothing public yet");
+    expect(out).toContain(`href="${edgeLoginUrl("/apps/new")}"`);
+    expect(out).not.toContain("/signup");
+    expect(out).not.toContain("Create an account");
+    expect(out).not.toContain('href="/signin?next=/apps/new"');
+  });
+
+  test("a stranger the edge vouches for is offered Create an account", async () => {
+    const out = await get({ "x-plat-edge-token": TOKEN, "x-plat-user": "newcomer" });
+    expect(out).toContain("Create an account");
+    expect(out).toContain('href="/signup?next=/apps/new"');
+  });
 });

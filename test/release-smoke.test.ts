@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { HEAVY_PAGES, smoke } from "../src/release/smoke.ts";
+import { HEAVY_PAGES, emptyEvidence, forgeMs, smoke } from "../src/release/smoke.ts";
 
 let server: ReturnType<typeof Bun.serve> | undefined;
 afterEach(() => server?.stop(true));
@@ -85,10 +85,56 @@ test("a page slow on both first-load attempts fails", async () => {
   expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
 });
 
-test("a /healthz that is slow once in the watch fails, with no retry", async () => {
-  // hit 1 is the pre-watch check of /healthz by smoke; the watch's polls follow
+test("a /healthz that is slow once in the watch is asked again and passes (#8917)", async () => {
   const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && hit === 4 ? 300 : 0)), "t", { heavy });
-  expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("took"))).toBe(true);
+  expect(failures.filter((f) => f.url.endsWith("/healthz"))).toEqual([]);
+});
+
+test("a /healthz that is slow twice in a row in the watch fails", async () => {
+  // hit 1 is the pre-watch check of /healthz by smoke; the watch's polls follow
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && (hit === 4 || hit === 5) ? 300 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("took") && f.slow === true)).toBe(true);
+});
+
+test("a failure that is not slowness is not marked slow (#9238)", async () => {
+  const failures = await smoke(forge(0, [], () => undefined, () => 0), "t", { heavy });
+  expect(failures.every((f) => f.slow !== true)).toBe(true);
+});
+
+test("a polled heavy page that is slow once in the watch is asked again and passes", async () => {
+  // hit 1 is the first load; hit 2 is the watch's poll of /explore
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/explore" && hit === 2 ? 300 : 0)), "t", { heavy });
+  expect(failures).toEqual([]);
+});
+
+test("a polled heavy page that is slow twice in a row in the watch fails", async () => {
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/explore" && (hit === 2 || hit === 3) ? 300 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
+});
+
+test("a page slow on the wall clock whose Server-Timing says the forge was quick passes (#9022)", async () => {
+  // Every /explore answer arrives late, but the forge says it spent 5 ms: the delay is the road, not the release.
+  const quick = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "db;dur=1.0, app;dur=5.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], quick, (p) => (p === "/explore" ? 300 : 0)), "t", { heavy });
+  expect(failures).toEqual([]);
+});
+
+test("a page whose Server-Timing says the forge itself was slow still fails", async () => {
+  const slowOwn = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=290.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], slowOwn, (p) => (p === "/explore" ? 300 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("took"))).toBe(true);
+});
+
+test("a hang is a failure whatever Server-Timing would have said", async () => {
+  const quick = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=5.0" } }) : undefined);
+  const failures = await smoke(forge(0, [], quick, (p, hit) => (p === "/explore" && hit === 1 ? 2_000 : 0)), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("did not answer"))).toBe(true);
+});
+
+test("forgeMs reads the app entry of Server-Timing, and nothing when there is none", () => {
+  expect(forgeMs(new Response("", { headers: { "server-timing": "db;dur=2.5, app;dur=7.6, render;dur=2.4" } }))).toBe(7.6);
+  expect(forgeMs(new Response("", { headers: { "server-timing": "render;dur=2.4" } }))).toBeUndefined();
+  expect(forgeMs(new Response(""))).toBeUndefined();
 });
 
 test("a hung first load is not asked again", async () => {
@@ -105,4 +151,47 @@ test("a /healthz that gets no answer once in the watch is asked again and passes
 test("a /healthz that gets no answer twice in a row in the watch fails (#7724)", async () => {
   const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/healthz" && (hit === 4 || hit === 5) ? 1_000 : 0)), "t", { heavy });
   expect(failures.some((f) => f.url.endsWith("/healthz") && f.why.includes("did not answer"))).toBe(true);
+});
+
+test("an empty 200 names the headers that say which layer lost the body (#9343)", async () => {
+  const empty = (p: string) => (p === "/explore" ? new Response("", { headers: { "cf-cache-status": "HIT", "server-timing": "app;dur=3" } }) : undefined);
+  const failures = await smoke(forge(0, [], empty), "t", { heavy });
+  const f = failures.find((x) => x.url.endsWith("/explore"));
+  expect(f?.why).toContain("answered with an empty body");
+  expect(f?.why).toContain("cf-cache-status: HIT");
+  expect(f?.why).toContain("server-timing: app;dur=3");
+});
+
+test("a heavy page that answers an empty body once is asked again and passes (#9334)", async () => {
+  let n = 0;
+  const flaky = (p: string) => (p === "/explore" && ++n === 1 ? new Response("", { status: 200 }) : undefined);
+  expect(await smoke(forge(0, [], flaky), "t", { heavy })).toEqual([]);
+});
+
+test("a heavy page that answers an empty body twice in a row fails (#9334)", async () => {
+  let n = 0;
+  const flaky = (p: string) => (p === "/explore" && ++n <= 2 ? new Response("", { status: 200 }) : undefined);
+  const failures = await smoke(forge(0, [], flaky), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("empty body"))).toBe(true);
+});
+
+test("a polled heavy page that answers an empty body once in the watch is asked again and passes (#9334)", async () => {
+  // call 1 is the first load; call 2 is the watch's poll of /explore
+  let n = 0;
+  const flaky = (p: string) => (p === "/explore" && ++n === 2 ? new Response("", { status: 200 }) : undefined);
+  expect(await smoke(forge(0, [], flaky), "t", { heavy })).toEqual([]);
+  expect(n).toBeGreaterThanOrEqual(3);
+});
+
+test("a polled heavy page that answers an empty body twice in a row in the watch fails naming it (#9334)", async () => {
+  let n = 0;
+  const flaky = (p: string) => (p === "/explore" && (n += 1) >= 2 && n <= 3 ? new Response("", { status: 200 }) : undefined);
+  const failures = await smoke(forge(0, [], flaky), "t", { heavy });
+  expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("empty body"))).toBe(true);
+});
+
+test("an empty 200 with no forge or edge headers says so, pointing past the forge (#9343)", () => {
+  // Called directly: a real server adds a content-length of its own to any body.
+  expect(emptyEvidence(new Response(""))).toBe(" (no forge or edge headers)");
+  expect(emptyEvidence(new Response("", { headers: { "x-forge-version": "v1" } }))).toBe(" (x-forge-version: v1)");
 });

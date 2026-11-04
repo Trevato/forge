@@ -60,6 +60,22 @@ export function resolveClient(
 }
 
 const clients = new WeakMap<Request, string>();
+const internals = new WeakSet<Request>();
+
+/** Headers a proxy names a client in. The tunnel always sets its own, so no stranger can leave them all out. */
+const CLIENT_HEADERS = ["cf-connecting-ip", "x-forwarded-for", "x-real-ip", "forwarded"];
+
+/** The forge asking itself: from loopback or a trusted proxy, with no client named. */
+export function isInternalPeer(
+  peer: string | undefined,
+  headers: Headers,
+  trust: ProxyTrust,
+): boolean {
+  if (peer === undefined) return false;
+  if (!LOOPBACK.has(peer) && !inCidrs(peer, trust.proxies)) return false;
+  if (trust.header !== undefined && headers.has(trust.header)) return false;
+  return !CLIENT_HEADERS.some((h) => headers.has(h));
+}
 
 /** The listener notes each request's client once, as it arrives. */
 export const notePeer = (
@@ -68,7 +84,10 @@ export const notePeer = (
   trust: ProxyTrust = NO_TRUST,
 ): void => {
   clients.set(request, resolveClient(address, request.headers, trust));
+  if (isInternalPeer(address, request.headers, trust)) internals.add(request);
 };
+
+export const wasInternal = (request: Request): boolean => internals.has(request);
 
 export function clientAddress(request: Request): string {
   return clients.get(request) ?? "unknown";

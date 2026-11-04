@@ -20,6 +20,10 @@ quietLogs();
 
 /** Top-level routes that are not pages, or are not worth a picture, and why. */
 const NOT_A_PAGE: Record<string, string> = {
+  "/deploy-to": "a form for a forge admin that fills from its link; covered by test/pinned-page.test.ts",
+  "/asked": "no picture: the cap of 24 looks went to /notes, the page that now leads with a person's thoughts; /asked is covered by test/asked.test.ts",
+  "/forges": "no picture: the cap of 24 looks went to the preview's /waves and /milestones; the page is covered by its own tests",
+  "/family": "no picture: the cap of 24 looks went to the preview's /waves and /milestones; the page is covered by its own tests",
   "/llms.txt": "plain markdown for machines, not a page to picture",
   "/robots.txt": "plain text for crawlers",
   "/openapi.json": "a redirect to the contract document",
@@ -41,8 +45,9 @@ const NOT_A_PAGE: Record<string, string> = {
   "/theme": "a mutation, answers 404 to a GET",
   "/tell": "answers 404 to a GET",
   "/asks": "redirects to /#needs-you",
+  "/bring": "a form that needs a sign-in and a link to another forge; covered by test/bring.test.ts",
   "/big": "redirects to /board?wall",
-  "/flow": "redirects to /boards",
+  "/pipeline": "four static words on how a change travels; /flow is the page with numbers",
   "/login": "redirects to /signin",
   "/sign-in": "redirects to /signin",
   "/mcp": "a protocol endpoint, answers 405 to a GET",
@@ -50,6 +55,11 @@ const NOT_A_PAGE: Record<string, string> = {
   "/apple-touch-icon.png": "an icon, not a page",
   "/apple-touch-icon-precomposed.png": "an icon, not a page",
   "/events": "a live event stream that never ends",
+  "/boards": "the list of boards; /board is pictured, and the slot went to the preview seed's repository as its owner (#8865); covered by test/boards-page.test.ts",
+  "/changelog": "the merged changes in words; /releases is pictured, and the slot went to the preview seed's pull as its owner (#8865); covered by test/changelog.test.ts",
+  "/search": "a search box; its slot went to the preview seed's /next as its owner (#8866)",
+  "/contribute": "a static page about how to help; its slot went to the preview seed's /bets as its owner (#8866)",
+  "/migrate": "an import form, nothing to picture until a job runs; the look slot went to /repos",
 };
 
 let dir: string;
@@ -84,8 +94,11 @@ const topLevel = () =>
     .patterns()
     .filter((p) => p === "/" || /^\/[^/:*]+$/.test(p));
 
-const declared = (): string[] =>
-  JSON.parse(readFileSync(join(import.meta.dir, "..", "forge.json"), "utf8")).app.looks;
+const manifest = (): { looks: string[]; looksAsOwner: string[] } =>
+  JSON.parse(readFileSync(join(import.meta.dir, "..", "forge.json"), "utf8")).app;
+const isTopLevel = (p: string) => p === "/" || /^\/[^/]+$/.test(p);
+/** The top-level pages; a deeper one is the preview seed's, taken as the owner (test/looks-owner.test.ts). */
+const declared = (): string[] => manifest().looks.filter(isTopLevel);
 
 const get = (path: string) =>
   fetch(`${servers.url}${path}`, {
@@ -111,6 +124,15 @@ test("every listed path answers 200 to an admin", async () => {
 });
 
 test("app.looks stays within 24 paths, each once", () => {
-  expect(declared().length).toBeLessThanOrEqual(24);
-  expect(new Set(declared()).size).toBe(declared().length);
+  const { looks } = manifest();
+  expect(looks.length).toBeLessThanOrEqual(24);
+  expect(new Set(looks).size).toBe(looks.length);
+});
+
+test("a look below the top level is the preview seed's, taken as the owner", () => {
+  const { looks, looksAsOwner } = manifest();
+  for (const p of looks.filter((p) => !isTopLevel(p))) {
+    expect(p.startsWith("/preview-admin/sample")).toBe(true);
+    expect(looksAsOwner).toContain(p);
+  }
 });

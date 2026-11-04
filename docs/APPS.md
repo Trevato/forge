@@ -1016,7 +1016,11 @@ someone tries.
 Apps are served from the forge's port by `Host`. With `FORGE_APP_DOMAIN`
 (default: the forge's own host), production is `<slug>.<domain>` and the
 preview of pull 12 is `<slug>--12.<domain>`. `--` cannot occur inside a slug,
-so the two never collide. Where only single-label hosts are routable (a
+so the two never collide. A build preview, one commit a writer asked to see
+now (`POST /api/v1/repos/:owner/:name/builds/preview` with `{ "sha": … }`), is
+`<slug>--b<sha7>.<domain>` (`build-<sha7>`): held in memory, at most three per
+app, the oldest giving way, gone with the process; a slug may not be `b` and
+seven hex digits. Where only single-label hosts are routable (a
 wildcard certificate covers one label), give the attachment itself:
 `FORGE_APP_DOMAIN=--forge.example` serves `notes--forge.example` and
 `notes--12--forge.example`; a value that starts with a separator is used
@@ -1260,7 +1264,11 @@ a signed-in admin exactly as when the owner opens it — and they are its
 writers' alone. The thumb is taken as nobody, for the tiles strangers see. A
 public app on a public repository is the world's to see, so all three of its
 pictures are taken as nobody, and a reader of its pulls sees the Look card
-too; each row records who it was `taken_as` (#727, #738). It is taken as the page loads — what an
+too; each row records who it was `taken_as` (#727, #738). A page named in
+`app.looksAsOwner` (each must also be in `app.looks`) is the exception: its
+phone and desktop are taken as the owner even of a public app, and stay the
+writers' — an admin's own page shows a stranger nothing (#8812,
+`docs/features/preview-owner-looks.md`). It is taken as the page loads — what an
 app draws after that is not in it — and one at a time, forge-wide, bounded
 in time and memory. A look is best-effort: it never blocks a check or fails
 a run; one that could not be taken is recorded with its reason, and the
@@ -1590,7 +1598,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_CREW_TIMEOUT_MIN`  | `45`                            | wall-clock limit of one agent run                 |
 | `FORGE_CREW_ALLOW_HOSTS`  | —                               | hosts an agent's shell may reach, comma-separated |
 | `FORGE_CLAUDE`            | `claude` on `PATH`              | the Claude Code binary                            |
-| `FORGE_CLAUDE_CONFIG_DIR` | Claude Code's own               | a `CLAUDE_CONFIG_DIR` for runs, when wanted       |
+| `FORGE_CLAUDE_CONFIG_DIR` | conversations: `$FORGE_APP_DATA/claude-config`; runs: Claude Code's own | a `CLAUDE_CONFIG_DIR`; conversation sessions live there so a release keeps them |
 | `FORGE_CHROMIUM`          | `chromium` on `PATH`            | the browser the look is taken with                |
 | `ANTHROPIC_API_KEY`       | —                               | handed to agent runs when set                     |
 | `CLAUDE_CODE_OAUTH_TOKEN` | —                               | handed to agent runs when set                     |

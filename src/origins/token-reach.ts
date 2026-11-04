@@ -64,6 +64,12 @@ export function replaceTokenMessage(error: string): string {
     unreachable: "That instance could not be reached.",
     rate_limited: "Too many connect attempts. Wait a few minutes.",
     unauthorized: "Sign in first.",
+    admin_account:
+      "That token is an administrator's. This forge does not accept one; use an everyday account's.",
+    can_push:
+      "That token can push to a protected repository. This forge does not accept one that can.",
+    guard_unchecked:
+      "This forge could not check what that token can do. Try again in a minute.",
   };
   return words[error] ?? "That token could not be put on this origin.";
 }

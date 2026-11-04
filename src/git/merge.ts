@@ -377,6 +377,21 @@ export async function aheadCount(
 }
 
 /**
+ * The head is ahead of the base by commit count while merging it onto the
+ * base would write the base's own tree: its content is already there (a
+ * squash landed it), so there is nothing to propose. The one test `watchForPull`,
+ * `landWork` and the autonomy's carried check share.
+ */
+export async function contentOnBase(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<boolean> {
+  const merged = await mergeable(dir, baseOid, headOid);
+  return merged.ok && merged.value.treeOid === (await treeOf(dir, baseOid));
+}
+
+/**
  * Fetch a ref from another local repo (a fork) into this one, bringing its
  * objects across, and return the fetched tip. Used to pull a fork's head into
  * the base repo so a cross-repo PR can be diffed and merged entirely in the
@@ -406,4 +421,25 @@ export async function writeRef(
   if (!isSafeRef(ref) || !isSafeOid(oid)) return false;
   const result = await runGit(["update-ref", ref, oid], { cwd: dir });
   return result.ok;
+}
+
+/** Who wrote the commits a pull carries, and how many files they touch — for the note an author is sent. */
+export async function carriedSummary(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<{ commits: number; authors: string[]; files: number }> {
+  if (!isSafeOid(baseOid) || !isSafeOid(headOid))
+    return { commits: 0, authors: [], files: 0 };
+  const log = await runGit(
+    ["log", "--format=%an", `${baseOid}..${headOid}`],
+    { cwd: dir },
+  );
+  const names = log.ok ? log.value.split("\n").filter(Boolean) : [];
+  const diff = await runGit(
+    ["diff", "--name-only", `${baseOid}...${headOid}`],
+    { cwd: dir },
+  );
+  const files = diff.ok ? diff.value.split("\n").filter(Boolean).length : 0;
+  return { commits: names.length, authors: [...new Set(names)].slice(0, 10), files };
 }

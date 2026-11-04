@@ -11,13 +11,16 @@ import { landingStopped, stoppedSentence } from "../checks/gate_stopped.ts";
 import { redHref, redMain } from "../checks/red_main.ts";
 import { getRepo } from "../core/repos.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
+import { bugClockAlarm } from "./bugs.ts";
 import { alarmIdleCrew } from "./alarm_idle_crew.ts";
 import { noReleaseAlarm } from "./alarm_no_release.ts";
 import { redMainAlarm } from "./alarm_red_main.ts";
+import { alarmRepeat } from "./alarm_repeat.ts";
+import { alarmSilent } from "./alarm_silent.ts";
 import { alarmStuck } from "./alarm_stuck.ts";
 
 export interface FiredAlarm {
-  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "unreachable";
+  readonly key: "landing_stopped" | "red_main" | "stuck" | "idle_crew" | "no_release" | "bug_clock" | "silent" | "repeat" | "unreachable";
   readonly says: string;
   readonly since: string;
   /** A same-origin path to the item the alarm names. */
@@ -48,10 +51,16 @@ export function firedAlarms(
     out.push({ key: "stuck", says: stuck.says, since: stuck.since!, href: `/${stuck.repo}/pulls/${stuck.number}` });
   }
   if (!opts.publicOnly) {
+    const silent = alarmSilent(db, now);
+    if (silent.fired) out.push({ key: "silent", says: silent.says, since: silent.since!, href: `/${silent.repo}/runs/${silent.runId}` });
+    const repeat = alarmRepeat(db);
+    if (repeat.fired) out.push({ key: "repeat", says: repeat.says, since: repeat.since!, href: `/${repeat.repo}/issues/${repeat.number}` });
     const idle = alarmIdleCrew(db, now, { ceilingUsd: opts.ceilingUsd ?? null });
     if (idle.fired) out.push({ key: "idle_crew", says: idle.says, since: idle.since!, href: "/boards" });
   }
   const release = noReleaseAlarm(db, now);
   if (release.fired) out.push({ key: "no_release", says: release.says, since: release.since!, href: "/releases" });
+  const bug = bugClockAlarm(db, now, opts.publicOnly ? { publicOnly: true } : {});
+  if (bug.fired) out.push({ key: "bug_clock", says: bug.says, since: bug.since!, href: bug.href });
   return out;
 }

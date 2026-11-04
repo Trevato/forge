@@ -7,7 +7,9 @@
  * forge's health, and each subscription's windows; whoever owns an app gets
  * a line for each thing its crew waits on them for. Nothing on it
  * needs a click, and everything on it links somewhere. It reads the same
- * tables as the studio and adds no state of its own.
+ * tables as the studio and adds no state of its own — nor words: every
+ * run, change and decision on it is worded by `runWord`/`pullWord`/
+ * `tellWord`, the studio's own, and coloured by `wordVariant`.
  *
  * `?wall` is its one wall mode, for a screen across the room that nobody
  * touches: the same regions in larger type, without the key hints or a
@@ -15,7 +17,7 @@
  */
 
 import { usd } from "../../core/money.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { ASKS_WINDOW_DAYS, askMeasureWeek, asksMeasureEmpty, asksMeasureParts } from "../../core/ask_ledger.ts";
@@ -59,13 +61,20 @@ import {
   pillarView,
   reposWithUmbrellas,
 } from "../../core/pillars.ts";
-import { listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
+import {
+  getPull,
+  mergedPullCount,
+  mergedPullsForRepos,
+  openPullsClosing,
+  toldBy,
+  type Pull,
+} from "../../core/pulls.ts";
 import {
   listReposVisibleTo,
   ownerFactRepoIds,
   type Repo,
 } from "../../core/repos.ts";
-import { listActiveRuns, listRuns, type Run } from "../../core/runs.ts";
+import { agentRunTotals, listActiveRuns, type Run } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import {
   autonomyStatus,
@@ -92,14 +101,22 @@ import {
   pill,
   time,
   tokenCount,
-  type Tone,
 } from "../ui.ts";
+import { tellWord } from "../studio/tell.ts";
 import { voiceFor } from "../studio/voice.ts";
+import { repoDir } from "../../git/repos.ts";
 import { perShippedWords } from "../../core/efficiency.ts";
 import {
+  pausedWords,
+  pullWord,
+  runWord,
+  servingHistory,
   windowWords,
+  wordBadge,
   type FigureWords,
+  type WordCtx,
 } from "../studio/words.ts";
+import { appsRuntime } from "../../apps/runtime.ts";
 import { lookUrl } from "../../core/looks.ts";
 import { thumbLook } from "./looks.ts";
 import { milestoneHref } from "./milestones.ts";
@@ -125,29 +142,6 @@ function reasonWords(reason: string): string {
       return reason.replace(/_/g, " ");
   }
 }
-
-type StateWord = "queued" | "working" | "paused";
-
-function stateWord(run: Run): StateWord {
-  if (run.state === "running") return "working";
-  return run.notBefore === null ? "queued" : "paused";
-}
-
-/** How a run's state word wears its badge: working is what moves. */
-const STATE_LOOK: Record<StateWord, Parameters<typeof badge>[1]> = {
-  working: { tone: "attn" },
-  queued: { variant: "secondary" },
-  paused: { variant: "outline" },
-};
-
-/** What came of a decision, in the tone of the thing it came to. */
-const OUTCOME_TONE: Readonly<Record<string, Tone>> = {
-  shipped: "success",
-  green: "success",
-  red: "danger",
-  shown: "attn",
-  closed: "attn",
-};
 
 const KIND_WORDS: Record<DecisionKind, string> = {
   next: "next issue",
@@ -191,6 +185,9 @@ interface BoardScope {
    * access, same as the studio. A repo the viewer can only read is on the
    * board (it is still theirs to watch land) but carries none of that. */
   readonly ownerFacts: ReadonlySet<string>;
+  /** What the studio's word functions need to see each app's production,
+   * every app sharing one render's memo of production's history. */
+  readonly words: (repo: Repo) => WordCtx;
 }
 
 /** The scope for some repositories: the ones among them that are apps. */
@@ -200,19 +197,37 @@ function boardScope(
   records: ReadonlyMap<string, AppRecord>,
 ): BoardScope {
   const kept = repos.filter((r) => records.has(r.id));
+  const runtime = appsRuntime(ctx.app);
+  const history = servingHistory();
+  const contexts = new Map<string, WordCtx>();
   return {
     repos: kept,
     ids: kept.map((r) => r.id),
     byId: new Map(kept.map((r) => [r.id, r])),
     records,
     ownerFacts: ownerFactRepoIds(ctx.app.db, kept, ctx.auth.user),
+    words: (repo) => {
+      let made = contexts.get(repo.id);
+      if (made === undefined) {
+        made = {
+          db: ctx.app.db,
+          dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+          runtime,
+          record: records.get(repo.id),
+          history,
+          viewer: ctx.auth.user,
+        };
+        contexts.set(repo.id, made);
+      }
+      return made;
+    },
   };
 }
 
 // ---- the page ----
 
 /** GET /board — signed in; every app the viewer can see, or `?apps=` some; `?wall` for the wall mode. */
-export function boardPage(ctx: Ctx): Response {
+export async function boardPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (!user) return signInFirst(ctx);
@@ -251,9 +266,9 @@ export function boardPage(ctx: Ctx): Response {
   const asks = timePhase(rq, "asks", () => asksStrip(ctx));
   const returns = timePhase(rq, "returns", () => returnsStrip(ctx, scope));
   const windows = timePhase(rq, "windows", () => windowsStrip(ctx));
-  const workingNow = timePhase(rq, "working", () => working(ctx, scope));
-  const landedNow = timePhase(rq, "landed", () => landed(ctx, scope));
-  const decidedNow = timePhase(rq, "decided", () => decided(ctx, scope));
+  const workingNow = await timePhaseAsync(rq, "working", () => working(ctx, scope));
+  const landedNow = await timePhaseAsync(rq, "landed", () => landed(ctx, scope));
+  const decidedNow = await timePhaseAsync(rq, "decided", () => decided(ctx, scope));
   const spendNow = timePhase(rq, "today", () => today(ctx, scope));
   const rendering = performance.now();
 
@@ -435,7 +450,7 @@ function reviewNotes(ctx: Ctx, scope: BoardScope): Note[] {
             key: `review:${w.repo.id}`,
             need: true,
             line: html`<a data-need href="/asks"
-              >${dot("attn")} <b>${w.repo.name}</b>: ${w.none ? "No reviewer: agent pulls wait for you" : "agent pulls wait for your review"}${w.waiting === 0 || w.since === null
+              >${dot("attn")} <b>${w.repo.name}</b>: ${w.none ? "No reviewer: agent pulls wait for you" : w.paused ? "The reviewer is paused: agent pulls wait for you" : "agent pulls wait for your review"}${w.waiting === 0 || w.since === null
                 ? null
                 : html` · <b>${w.waiting}</b> waiting since ${w.since.slice(0, 10)}`}</a
             >`,
@@ -651,7 +666,7 @@ function windowsStrip(ctx: Ctx): Html | null {
 
 // ---- working now ----
 
-function working(ctx: Ctx, scope: BoardScope): Html {
+async function working(ctx: Ctx, scope: BoardScope): Promise<Html> {
   const db = ctx.app.db;
   const runs = listActiveRuns(db, scope.ids);
   // Working first, by when it started; then what waits, by when it was queued.
@@ -669,7 +684,10 @@ function working(ctx: Ctx, scope: BoardScope): Html {
     db,
     runs.map((r) => r.issueId).filter((id): id is string => id !== null),
   );
-  const rows = runs.map((run) => {
+  const words = await Promise.all(
+    runs.map((run) => runWord(scope.words(scope.byId.get(run.repoId)!), run)),
+  );
+  const rows = runs.map((run, n) => {
     const repo = scope.byId.get(run.repoId)!;
     // The same rule the app's page signs its rows by, `voiceFor`
     // (`studio/voice.ts`): the crew's own work reads as the app's own story
@@ -683,7 +701,7 @@ function working(ctx: Ctx, scope: BoardScope): Html {
       scope.ownerFacts.has(repo.id),
     );
     const issue = run.issueId === null ? undefined : about.get(run.issueId);
-    const word = stateWord(run);
+    const { word, note } = words[n]!;
     return boardRow({
       key: `run:${run.id}`,
       href: `${repoBase(repo)}/runs/${run.id}`,
@@ -692,12 +710,12 @@ function working(ctx: Ctx, scope: BoardScope): Html {
       titleAttr: issue?.title ?? run.summary,
       meta: [
         html`<b>${who}</b> · ${repo.name} ·
-          ${word === "paused" ? "resumes soon" : reasonWords(run.reason)}${when(
+          ${run.notBefore === null ? reasonWords(run.reason) : note}${when(
             run.costUsd > 0 && scope.ownerFacts.has(repo.id),
             () => html` · <span class="num">${money(run.costUsd)}</span>`,
           )}`,
       ],
-      trail: html`${badge(word, STATE_LOOK[word])}<span
+      trail: html`${wordBadge(word)}<span
           class="num"
           data-started="${at(run)}"
         ></span>`,
@@ -717,7 +735,7 @@ function working(ctx: Ctx, scope: BoardScope): Html {
 
 // ---- landed ----
 
-function landed(ctx: Ctx, scope: BoardScope): Html {
+async function landed(ctx: Ctx, scope: BoardScope): Promise<Html> {
   const db = ctx.app.db;
   const pulls = mergedPullsForRepos(db, scope.ids, 12);
   // The newest production picture of each app, on a phone, in one read.
@@ -741,7 +759,10 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
       lookUrl(repoBase(repo), look)
     );
   };
-  const rows = pulls.map((pull: Pull) => {
+  const words = await Promise.all(
+    pulls.map((pull) => pullWord(scope.words(scope.byId.get(pull.repoId)!), pull)),
+  );
+  const rows = pulls.map((pull: Pull, n) => {
     const repo = scope.byId.get(pull.repoId)!;
     const picture = pictureOf(repo);
     const author = voiceFor(
@@ -759,7 +780,7 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
       title: pull.title,
       titleAttr: pull.title,
       meta: [html`${repo.name} · ${author}${told === null ? "" : html` · told by ${told}`}`],
-      trail: time(pull.mergedAt ?? pull.createdAt),
+      trail: html`${wordBadge(words[n]!.word)}${time(pull.mergedAt ?? pull.createdAt)}`,
     });
   });
   return region(
@@ -843,7 +864,7 @@ const PILE_LEAD: Record<DeciderPile, string> = {
   asked: "What the decider asked you about today.",
 };
 
-function decided(ctx: Ctx, scope: BoardScope): Html {
+async function decided(ctx: Ctx, scope: BoardScope): Promise<Html> {
   const db = ctx.app.db;
   // The decision ledger is the owner's own record of what the crew chose —
   // never shown for a repository this viewer can only read.
@@ -863,15 +884,41 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
     db,
     decisions.map((d) => d.issueId).filter((id): id is string => id !== null),
   );
-  const rows = decisions.map((d: Decision) => {
+  // What each decision was about: the issue picked for `next`, the pull
+  // for the rest. A pick names its issue by number.
+  const subjects = decisions.map((d): Issue | undefined => {
+    const issue = d.issueId === null ? undefined : about.get(d.issueId);
+    if (d.kind === "next" && /^\d+$/.test(d.answer))
+      return getIssue(db, d.repoId, Number(d.answer)) ?? issue;
+    return issue;
+  });
+  // What came of it is where that pull or tell stands now, in the studio's
+  // own words — never the ledger's private outcome, so a merge production
+  // has not served yet reads *waiting* here as it does on the app's page.
+  const closing = new Map<string, Map<number, Pull>>();
+  const words = await Promise.all(
+    decisions.map(async (d, n) => {
+      const issue = subjects[n];
+      if (issue === undefined) return undefined;
+      const repo = scope.byId.get(d.repoId)!;
+      const wordCtx = scope.words(repo);
+      if (issue.kind === "pull") {
+        const pull = getPull(db, repo.id, issue.number);
+        return pull && (await pullWord(wordCtx, pull));
+      }
+      let pulls = closing.get(repo.id);
+      if (pulls === undefined) {
+        pulls = openPullsClosing(db, repo.id);
+        closing.set(repo.id, pulls);
+      }
+      return await tellWord(wordCtx, repo, issue, pulls.get(issue.number));
+    }),
+  );
+  const rows = decisions.map((d: Decision, n) => {
     const repo = scope.byId.get(d.repoId)!;
     const base = repoBase(repo);
-    // What the decision was about: the issue picked for `next`, the pull
-    // for the rest. A pick names its issue by number.
-    let issue: Issue | undefined =
-      d.issueId === null ? undefined : about.get(d.issueId);
-    if (d.kind === "next" && /^\d+$/.test(d.answer))
-      issue = getIssue(db, repo.id, Number(d.answer)) ?? issue;
+    const issue = subjects[n];
+    const word = words[n]?.word;
     const href =
       issue === undefined
         ? base
@@ -890,9 +937,7 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
       ],
       under: meter(sure, `${sure}% sure`),
       trail: html`${
-        d.outcome === null
-          ? html`<span class="muted">—</span>`
-          : badge(d.outcome, { tone: OUTCOME_TONE[d.outcome] ?? "default" })
+        word === undefined ? html`<span class="muted">—</span>` : wordBadge(word)
       }<span class="num muted small" title="${sure}% sure">${sure}%</span>${time(d.createdAt)}`,
     });
   });
@@ -956,26 +1001,16 @@ function today(ctx: Ctx, scope: BoardScope): Html {
     )
     .map((repo) => {
       const s = autonomyStatus(ctx.app, repo);
-      const runs = listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
-        (r) => r.createdAt >= since,
-      ).length;
-      const shipped = listPulls(db, repo.id, {
-        state: "closed",
-        limit: 100,
-      }).filter((p) => p.mergedAt !== null && p.mergedAt >= since).length;
+      // The app page's own reads (`studio/app.ts`), over today rather
+      // than the week: counted by the database, not off a page of rows.
+      const runs = agentRunTotals(db, repo.id, since).runs;
+      const shipped = mergedPullCount(db, repo.id, since);
       const share = s.ceilingUsd > 0 ? s.spentTodayUsd / s.ceilingUsd : 0;
       const review = reviewWords(reviewStats(db, repo.id, since));
       const held =
         repo.autonomy === "autonomous" ? plannerHold(ctx.app, repo, now) : null;
       const holdLine = held === null ? null : holdWords(held);
-      const note =
-        s.paused === "ceiling"
-          ? "at its ceiling until 00:00 UTC"
-          : s.paused === "nobody"
-            ? "nobody turned it on"
-            : s.paused === "no crew"
-              ? "no crew"
-              : repo.autonomy;
+      const note = s.paused === null ? repo.autonomy : pausedWords(s.paused);
       return boardRow({
         key: `app:${repo.ownerName}/${repo.name}`,
         href: repoBase(repo),

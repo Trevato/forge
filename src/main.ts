@@ -5,6 +5,8 @@
  */
 
 import { runModelReview } from "./actions/model_review.ts";
+import { getRepoById } from "./core/repos.ts";
+import { plannedRepoIds, tickWeeks } from "./flow/retro.ts";
 import { BOOT_ACTOR, setSignup, signupFromEnv } from "./settings/signup.ts";
 import { startMemorySampler } from "./boards/memory.ts";
 import { startSampler } from "./boards/sampler.ts";
@@ -13,6 +15,7 @@ import { drainOnHandover, handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
+import { warmFlow } from "./system/flow_cache.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { loadTrustedHosts } from "./origins/trusted-hosts.ts";
 import { flushFlagUses, loadFlags } from "./core/flags.ts";
@@ -21,6 +24,8 @@ import { offerStartingBoards } from "./actions/boards.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
+import { previewIdentityKey } from "./spawn/preview-owner.ts";
+import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
 import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { startUpstreamWatch } from "./spawn/upstream.ts";
 import { startReachWatch } from "./spawn/reach.ts";
@@ -32,6 +37,8 @@ import { drainStreams } from "./http/sse.ts";
 import { serve } from "./http/server.ts";
 import { checkDue } from "./actions/upstream_follow.ts";
 import { runSync } from "./origins/sync.ts";
+import { runAheadReads } from "./origins/ahead.ts";
+import { runGuardSweep } from "./origins/credential.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { listApps } from "./core/apps.ts";
@@ -43,7 +50,9 @@ import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
+import { startMirrorPulls } from "./origins/mirror-pulls.ts";
 import { startProbes } from "./contract/probes.ts";
+import { startNightly } from "./nightly/service.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
 import { resolveMirror } from "./snapshot/mirror.ts";
@@ -86,7 +95,7 @@ import { createLog } from "./kernel/log.ts";
 import { watchStalls } from "./kernel/loop_lag.ts";
 import { startPerfWatcher, TICK_MS } from "./perf/duty.ts";
 import { stallLine } from "./perf/loop.ts";
-import { gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
+import { bootStall, gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
 
@@ -213,9 +222,12 @@ if (parentProblem !== null) {
 // draining included.
 const loopLog = createLog("loop");
 watchStalls(loopLog, undefined, undefined, undefined, (late, at) => {
+  bootStall.note(late, at);
   const stall = loopWatch.stalled(late, at);
   if (stall !== null) loopLog.warn(stallLine(stall));
 });
+
+const previewKey = previewIdentityKey(process.env);
 
 const app = createApp({
   dataDir,
@@ -228,6 +240,9 @@ const app = createApp({
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
   ...(edgeToken === "" ? {} : { edgeToken }),
+  // A preview of this forge hears its parent's admins as the preview admin
+  // (spawn/preview-owner.ts); production is never handed the key.
+  ...(previewKey === undefined ? {} : { previewIdentityKey: previewKey }),
   // Hosted, the host says how this forge's terminal is reached; printed
   // verbatim wherever the forge tells people how to connect.
   ...(hosted && (process.env.FORGE_APP_SSH ?? "").trim() !== ""
@@ -236,6 +251,8 @@ const app = createApp({
   // The repository holding this forge's own code: a landing there is
   // checked out under releases/ and preflighted (#1662).
   ...releaseEnv(process.env),
+  // FORGE_NOTES_INTENT: the intent doc people's build notes are copied into.
+  ...((process.env.FORGE_NOTES_INTENT ?? "").trim() !== "" ? { notesIntent: (process.env.FORGE_NOTES_INTENT ?? "").trim() } : {}),
   // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
   // across every repository. Unset is no forge-wide ceiling.
   ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"
@@ -429,12 +446,18 @@ const checks =
       });
 // Migrated repositories kept as a read-only mirror push to their source.
 const mirrorOut = startMirrorOut(app);
+// …and take the pulls opened on that mirror as pulls here (#9011).
+const mirrorPulls = startMirrorPulls(app);
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
 const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
 // Is it so: the forge knocks on every door of an app with a contract after
 // each production deploy and once a night, and compares with the table.
 const probes = apps === undefined ? undefined : startProbes(app, apps);
+// The nightly jobs that were Forgejo workflows: the flake hunt and the run
+// of what the gate excludes, filing the same `Flaky:` and `Red:` issues and
+// the quarantine pull (docs/DEVELOP.md).
+const nightly = appsOn ? startNightly(app, { forgeUrl, token: process.env["FORGE_TOKEN"] }) : undefined;
 // The snapshot: everything that cannot be rebuilt, nightly, to what an
 // operator sealed on the Backups page, else the platform's (`S3_*`) or a
 // directory (`FORGE_SNAPSHOT_DIR`). A forge given none says so on that page.
@@ -502,9 +525,19 @@ if (crew !== undefined) {
 // Hosted children come back with their apps, awake before the first visit.
 // The listener is up; the children open behind it, not in front of /healthz.
 void bootHostedChildren(app);
+// The pipeline answer is filled in slices behind the listener, so no read computes it (#8978).
+void warmFlow(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
+// A preview of this forge seeds its admin and a small world to look at
+// (spawn/preview-seed.ts); anywhere else this is refused and says nothing.
+await seedPreview(app)
+  .then((seeded) => {
+    if (seeded.ok && seeded.value.seeded) app.log.info("preview seeded", { admin: PREVIEW_ADMIN });
+    else if (!seeded.ok && seeded.error !== "not_preview") app.log.warn("preview not seeded", { error: seeded.error });
+  })
+  .catch((error) => app.log.warn("preview not seeded", { error: String(error) }));
 // A spawned child reports its standing to its parent (spawn/heartbeat.ts).
 const heartbeatTimer = startHeartbeat(app);
 // ...and looks upstream once an hour (spawn/upstream.ts).
@@ -546,8 +579,17 @@ function positive(value: string | undefined, fallback: number): number {
 // pushed to: an origin is due every ten minutes by default, and the tick only
 // asks who is due — so this costs one indexed read a minute when nothing is
 // connected. Like runDelivery, runSync never throws into the timer.
-const syncTimer = setInterval(() => runSync(app), 60_000);
+// The mirrors' "N new commits upstream" readings ride the same tick under
+// their own guard (`origins/ahead.ts`), so a slow origin there never holds
+// the sweep. The operator guard's sweep of stored origins rides it too: one
+// origin a tick, the never-checked first (so on boot), every other daily.
+const syncTimer = setInterval(() => {
+  runSync(app);
+  void runAheadReads(app);
+  void runGuardSweep(app);
+}, 60_000);
 runSync(app); // one pass on boot: a forge that was down has fetching to do
+void runGuardSweep(app);
 
 // Which green pulls no longer merge as they stand, so the asks can leave
 // them out (`crew/stale_asks.ts`): git answers, off the request path, and an
@@ -638,6 +680,16 @@ const modelReviewTimer = setInterval(() => {
     runModelReview(app);
   } catch (error) {
     app.log.warn("model review failed", { error: String(error) });
+  }
+}, 3_600_000);
+// The week is the sprint (#8704): at each weekly reset the forge writes its retrospective, unasked.
+const weekTimer = setInterval(() => {
+  try {
+    const repos = plannedRepoIds(app.db).flatMap((id) => getRepoById(app.db, id) ?? []);
+    for (const repo of tickWeeks(app.db, repos, new Date()))
+      app.bus.append({ kind: "week.retro", repoId: repo.id, payload: {} });
+  } catch (error) {
+    app.log.warn("week retrospective failed", { error: String(error) });
   }
 }, 3_600_000);
 const processTimer = setInterval(processTick, 60_000);
@@ -791,6 +843,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(processTimer);
   clearInterval(holdTimer);
   clearInterval(modelReviewTimer);
+  clearInterval(weekTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.
@@ -811,8 +864,10 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     // longer ends it: a person's stop cuts checks off (queued again) at once.
     checks?.stop({ drain: signal === "SIGTERM" }),
     mirrorOut(),
+    mirrorPulls(),
     looks?.stop(),
     probes?.stop(),
+    nightly?.stop(),
     snapshots.stop(),
     sampler.stop(),
     memorySampler.stop(),

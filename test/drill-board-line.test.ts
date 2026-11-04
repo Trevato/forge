@@ -151,6 +151,7 @@ describe("the drill's board line", () => {
     expect(sent).toHaveLength(0);
     clock = T0 + 10 * DAY + DRILL_STALE_MS + 1;
     for (let i = 0; i < 100 && sent.length === 0; i++) await Bun.sleep(10);
+    if (sent.length === 0) throw new Error(`never came: still waiting while sent.length === 0`);
     await n.settled();
     await Bun.sleep(50);
     await n.settled();

@@ -96,6 +96,7 @@ test("the card foot holds the take and propose forms, each a post form with a bt
     page = await (await fetch(`${servers.url}/bob/lib`, { headers: { cookie } })).text();
     if (!page.includes('value="take"')) await Bun.sleep(40);
   }
+  if (!page.includes('value="take"')) throw new Error(`never came: still waiting while !page.includes('value="take"')`);
   const foot = page.match(/<div class="card-foot">([\s\S]*?)<\/div>\s*<\/div>/);
   expect(foot).not.toBeNull();
   // Prose wraps: sentences and notes are paragraphs, never a (nowrap) row title.

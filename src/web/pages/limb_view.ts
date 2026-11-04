@@ -29,14 +29,14 @@ export const list = (rows: Html[], wrap = false): Html =>
 export const wrappedCard = (rows: Html[]): Html =>
   card(list(rows, true), { pad: false });
 
-/** A card of rows that shows its first `shown` and folds the rest. */
+/** A card of wrapping rows that shows its first `shown` and folds the rest: a long title wraps on a phone rather than running past its edge. */
 export function folded(rows: Html[], what: string, shown: number): Html {
-  if (rows.length <= shown) return card(list(rows), { pad: false });
-  return card(list(rows.slice(0, shown)), {
+  if (rows.length <= shown) return wrappedCard(rows);
+  return card(list(rows.slice(0, shown), true), {
     pad: false,
     foot: html`<details>
       <summary class="small">${rows.length - shown} more ${what}</summary>
-      ${list(rows.slice(shown))}
+      ${list(rows.slice(shown), true)}
     </details>`,
   });
 }

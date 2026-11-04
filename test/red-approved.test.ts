@@ -2,6 +2,7 @@
  * An approved pull red for 24 h gets one re-check per head, then goes back
  * to its builder naming the failing test (#6349). `now` is passed in.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { listComments } from "../src/core/issues.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -54,7 +55,7 @@ beforeAll(async () => {
   }
   const mason = getUserByName(app.db, "mason")!;
   quill = getUserByName(app.db, "quill")!;
-  setCrewRole(app.db, repo.id, quill.id, "reviewer");
+  seatAs(app.db, repo.id, quill.id, "reviewer");
   await commitToBranch(app, alice, repo, {
     branch: "feature/x",
     base: "main",

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
+import { closedByReview, reviewedClosed } from "../src/core/gate_hold.ts";
 import { askToLiveByPillar } from "../src/core/pillars.ts";
 
 let root = "";
@@ -62,4 +63,15 @@ test("the window of merged pulls walks the merged ones, not the repository's iss
   const lines = plans(() => void askToLiveByPillar(app.db, "r", set, new Map(), "2026-01-01T00:00:00Z"));
   expect(lines.join("\n")).toContain("pull_merged");
   expect(lines.join("\n")).not.toContain("issue_repo_updated");
+});
+
+test("whether the Later gate review closed an issue reads the event index, not the table", () => {
+  const one = plans(() => void closedByReview(app.db, { id: "i", state: "closed" } as never));
+  expect(one.join("\n")).toContain("SEARCH e USING");
+  noScan(one.filter((l) => !/^SCAN issue|SEARCH issue/.test(l)));
+  const many = plans(
+    () => void reviewedClosed(app.db, { id: "r" } as never, { gate: { id: "g" } } as never),
+  );
+  expect(many.join("\n")).toContain("SEARCH e USING");
+  noScan(many);
 });

@@ -98,6 +98,27 @@ export function unticked(body: string): string[] {
   return [...open.matchAll(/^[ \t]*[-*+][ \t]+\[ \][ \t]+(.+)$/gm)].map((m) => m[1]!.trim());
 }
 
+/**
+ * `body` with the given boxes ticked: each number counts the unticked boxes
+ * as `unticked` lists them, from 1. The boxes that were ticked, as written;
+ * a number that names no box is ignored.
+ */
+export function tickBoxes(body: string, boxes: readonly number[]): { body: string; ticked: string[] } {
+  // Fenced code is blanked, not cut, so the offsets still say where the boxes are in `body`.
+  const open = body.replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[`~]*[ \t]*$|(?![\s\S]))/gm, (m) => m.replace(/[^\n]/g, " "));
+  const found = [...open.matchAll(/^([ \t]*[-*+][ \t]+)\[ \]([ \t]+(.+))$/gm)];
+  const ticked: string[] = [];
+  let out = body;
+  for (const n of [...new Set(boxes)].sort((a, b) => b - a)) {
+    const m = found[n - 1];
+    if (m === undefined) continue;
+    const at = m.index! + m[1]!.length;
+    out = `${out.slice(0, at)}[x]${out.slice(at + 3)}`;
+    ticked.unshift(m[3]!.trim());
+  }
+  return { body: out, ticked };
+}
+
 /** The one line a pull carries when an issue it names keeps work left. */
 export function leftNote(number: number, left: readonly string[]): string {
   return `Left #${number} open: ${left.length} unticked item${left.length === 1 ? "" : "s"} remain (${left
@@ -116,5 +137,8 @@ export const LANDED_LEAD = "Left open after pull #";
 export function landedNote(pull: number, left: readonly string[]): string {
   return `${LANDED_LEAD}${pull} landed: ${left.length} unticked ${left.length === 1 ? "item remains" : "items remain"} (${left
     .slice(0, 3)
-    .join("; ")}${left.length > 3 ? "; …" : ""}). Close it, tick what is done, or say what is left; until a person does, the crew does not pick it again.`;
+    .join("; ")}${left.length > 3 ? "; …" : ""}). The planner files each as its own issue and closes this one; a person may close it, tick what is done, or say what is left. Until then the crew does not pick it again.`;
 }
+
+/** What the reviewer's note on an issue starts with, when it ticked boxes at its pull's head (#8682). */
+export const PASS_LEAD = "Reviewed pull #";

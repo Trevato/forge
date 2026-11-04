@@ -167,12 +167,22 @@ a failed or killed install only logs and lets the run start.
 
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
-stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`
-(a devDependency, with its own few transitive packages) lets
-`test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code
-builds from the crew's settings; it never ships and the app never imports it. Everything worth having is written here: the Result type, the
+stays that way. The dev-only exceptions are listed under Dependencies below;
+none ships and the app never imports them. Everything worth having is written here: the Result type, the
 router, the SSR templates, the design system, the markdown renderer. The only
 thing forge asks of the host is a `git` binary.
+
+## Dependencies
+
+Every package in `package.json`, with why it is there. A package with no line
+here fails `test/dependencies-named.test.ts`; so does a line for one that left.
+
+- `@anthropic-ai/sandbox-runtime` — lets `test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code builds from the crew's settings.
+- `@types/bun` — the type check's types for Bun's own APIs.
+- `axe-core` — the release check's accessibility rules (`src/release/axe.ts`); they need a rendered page, and there is no zero-dependency equivalent.
+- `happy-dom` — a DOM for tests that run a page's script (`test/changelog.test.ts`) without a browser.
+- `typescript` — the native 7.x checker behind `bun x tsc --noEmit`.
+- `typescript-api` — TypeScript 5.x, kept only for the compiler API `scripts/hollow.ts` walks; 7.x has none yet.
 
 Forgejo is the reference for what a forge should _feel_ like. This is that
 feeling on a foundation sized for one person.
@@ -477,6 +487,7 @@ Once a minute the forge measures its landing rate, names the one cause binding i
 - [`docs/STATUS.md`](docs/STATUS.md) — what works today, one bullet per feature.
 - [`docs/ON-YOUR-MACHINE.md`](docs/ON-YOUR-MACHINE.md) — the `forge` command on your machine: the local copy, offline work and building the binary.
 - [`docs/web.md`](docs/web.md) — the rules for assets and HTML: what is cached where, how a page streams, and the byte budgets a test enforces.
+- [`docs/PRINCIPLES.md`](docs/PRINCIPLES.md) — what the forge holds to, each with what enforces it; capped, and read by the crew and the in-forge conversation.
 This page is the front door. Everything else is a file of its own under
 `docs/`, each about one thing:
 
@@ -549,6 +560,7 @@ This page is the front door. Everything else is a file of its own under
 - [`docs/CLOUD.md`](docs/CLOUD.md) — clouds are capacity, never dependency, and the cloud accounts an admin keeps.
 - [`docs/CLUSTER.md`](docs/CLUSTER.md) — the check lane as Kubernetes Jobs.
 - [`docs/EXTRACT.md`](docs/EXTRACT.md) — the forge on a machine of its own, and the platform it grew up in switched off: what a host owes it, the moves in order, and what is given up.
+- [`docs/PLATFORM.md`](docs/PLATFORM.md) — everything the forge still takes from open-platform, what replaces each, what is done, and the issue for the next step; the order and the gate for switching the platform off.
 - [`docs/ops/ROLL.md`](docs/ops/ROLL.md) — rolling a release.
 
 **Design and records**

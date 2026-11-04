@@ -8,6 +8,7 @@
  * same-origin POST and every one of them says what happened.
  */
 
+import { POLISH_SHARE_DEFAULT, POLISH_SHARE_MAX } from "../../crew/small_share.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import { getProvenance, parentUrl, sourceLabel } from "../../core/provenance.ts";
@@ -82,7 +83,7 @@ import {
   settingsLayout,
 } from "../chrome.ts";
 import { daySpark } from "../studio/kpi_row.ts";
-import { settingsLead } from "../studio/crew.ts";
+import { settingsLead, teamJs } from "../studio/crew.ts";
 import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
@@ -107,7 +108,7 @@ import { cutWaveFor } from "../../actions/cut_wave.ts";
 import { proposalTokensSection } from "./proposal-tokens.ts";
 import { secretsSection } from "./secrets.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
-import { followUpstreamCard } from "./upstream-follow.ts";
+import { followSourcesCard, followUpstreamCard } from "./upstream-follow.ts";
 
 type Section =
   | "general"
@@ -190,6 +191,7 @@ export function settingsPageResponse(
       crumbs: crumbsFor(repo),
       palette: repoPalette(ctx, repo),
       ...(styleCss !== undefined ? { styleCss } : {}),
+      scriptJs: teamJs,
       body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
       ${settingsLayout(sections(repoBase(repo), active), body)}`,
     },
@@ -235,6 +237,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
         title: pageTitle("settings", readable, true),
         crumbs: crumbsFor(readable),
         palette: repoPalette(ctx, readable),
+        scriptJs: teamJs,
         body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
       ${lead}${proposals ? html`<div class="mt">${proposals}</div>` : null}`,
       });
@@ -331,6 +334,27 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           >
         </label>
       </div>
+      <div class="field">
+        <input type="hidden" name="polishShareShown" value="1" />
+        <label for="polish-share">Polish share</label>
+        <input
+          class="input mono"
+          id="polish-share"
+          type="number"
+          name="polishShare"
+          min="0"
+          max="${String(POLISH_SHARE_MAX)}"
+          step="1"
+          value="${String(repo.polishShare)}"
+          inputmode="numeric"
+        />
+        <p class="hint">
+          Percent of the week's agent spend that polish may take, 0 to ${String(POLISH_SHARE_MAX)}
+          (starts at ${String(POLISH_SHARE_DEFAULT)}) — so small fixes get steady attention without crowding out the plan.
+          Over it, the crew stops picking issues labelled polish or in the small-fixes lane until the week catches up; the
+          <a href="${base}/week">week</a> shows where it stands.
+        </p>
+      </div>
       ${cellMemory === undefined
         ? null
         : html`<div class="field"><p class="hint" data-check-memory>${
@@ -346,6 +370,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   );
   const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
   const upstream = followUpstreamCard(ctx, repo);
+  const sources = followSourcesCard(ctx, repo);
   const wave = card(
     html`<form method="post" action="${base}/settings/wave">
       <p class="muted">
@@ -402,7 +427,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     "Settings",
     html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
       ? html`<div class="mt">${trail}</div>`
-      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
+      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}${sources ? html`<div class="mt">${sources}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
       : null}${secrets
       ? html`<div class="mt">${secrets}</div>`
@@ -411,6 +436,9 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "render", renderMs + performance.now() - since);
   return response;
 }
+
+/** A form's polish share: the number if it is all digits, else NaN, which the action refuses. */
+const parseShare = (raw: string): number => (/^\d{1,3}$/.test(raw.trim()) ? Number(raw) : Number.NaN);
 
 export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
@@ -443,6 +471,8 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
       ? { crewOutsiders: form.get("crewOutsiders") !== null }
       : {}),
     ...(branch !== "" ? { defaultBranch: branch } : {}),
+    // Sent only by a form that draws the field; anything but a whole 0–50 is refused by the action.
+    ...(form.get("polishShareShown") !== null ? { polishShare: parseShare(field(form, "polishShare")) } : {}),
   };
   const updated = await updateRepoSettings(
     ctx.app,
@@ -457,6 +487,8 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
         message:
           updated.error === "unknown_branch"
             ? "That branch does not exist in this repository."
+            : updated.error === "polish_share"
+            ? `Polish share is a whole number of percent, 0 to ${POLISH_SHARE_MAX}.`
             : "Those settings could not be saved.",
       };
   return flashTo(ctx, `${base}/settings`, flash);
@@ -1430,7 +1462,9 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
   const { repo, form } = gate;
   const base = repoBase(repo);
   const ceiling = Number(field(form, "ceiling"));
-  const slots = Number(field(form, "slots"));
+  // The builders' slots are the Builder pillar's number on the team card; this form only keeps them.
+  const slotsField = field(form, "slots");
+  const slots = slotsField === "" ? repo.autonomySlots : Number(slotsField);
   const checked = checkAutonomy(field(form, "autonomy"), ceiling, slots);
   if (!checked.ok)
     return flashTo(ctx, `${base}/settings#autonomy`, {

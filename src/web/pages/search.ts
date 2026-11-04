@@ -57,6 +57,19 @@ import {
 
 // ---- search ----
 
+/**
+ * What a search finds is other people's words (titles, descriptions, paths,
+ * lines of code), so inside `[data-search]` a row wraps them and breaks a long
+ * word anywhere, in place of the one-line ellipsis; the matching line of code
+ * keeps `white-space: pre` and scrolls inside its own box. No new class.
+ */
+export const SEARCH_CSS = `[data-search] { overflow-wrap: anywhere; }
+[data-search] .row-title, [data-search] .row-meta:not(.code-line) { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-search] .row { align-items: flex-start; }
+[data-search] .row-main { min-width: 0; }
+[data-search] .code-line { max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
+[data-search] form .input { min-width: 0; }`;
+
 /** What was asked — everything a link back needs. */
 interface Asked {
   readonly query: string;
@@ -296,7 +309,18 @@ function section(
           >`}
     </h2>
     ${rows.length === 0
-      ? empty({ icon: emptyIcon, title: emptyText })
+      ? empty({
+          icon: emptyIcon,
+          title: emptyText,
+          ...(a.kind === "all"
+            ? {}
+            : {
+                action: btn("Search everything", {
+                  href: searchHref(a, { kind: "all" }),
+                  size: "sm",
+                }),
+              }),
+        })
       : listCard(rows)}
     ${after}
     ${when(
@@ -398,12 +422,13 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     const blank = page({
       ctx,
       title: "Search",
-      body: html`${pageHead("Search")} ${form}
+      styleCss: SEARCH_CSS,
+      body: html`<div data-search>${pageHead("Search")} ${form}
       ${empty({
         icon: "search",
         title: "Search this forge",
         note: "An app or repository by name or description, a word from what was told or changed, or a line of the code itself — across everything you can see, here and on every origin you have connected.",
-      })}`,
+      })}</div>`,
     });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return blank;
@@ -483,7 +508,10 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       </p>`,
   );
 
-  const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
+  const nothing =
+    a.kind === "all" &&
+    found.repos.length + found.issues.length + found.code.length === 0;
+  const body = html`<div data-search>${pageHead(html`Results for “${a.query}”`)} ${form}
   <div class="bar mb">${chips}</div>
   ${liveToggle}
   ${when(
@@ -503,14 +531,21 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
         shortly.
       </p>`,
   )}
-  ${WORDS
-    .filter(
-      ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
-    )
-    .map((w) =>
-      section(a, w, ...rows[w[0]](), w[0] === "code" ? moreCode : null),
-    )}`;
-  const response = page({ ctx, title: `Search · ${a.query}`, body });
+  ${nothing
+    ? empty({
+        icon: "search",
+        title: `Nothing matches “${a.query}”`,
+        note: "Search reads app and repository names and descriptions, issues, pull requests and the code you can see.",
+        action: btn("Explore", { href: "/explore", size: "sm" }),
+      })
+    : WORDS
+        .filter(
+          ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
+        )
+        .map((w) =>
+          section(a, w, ...rows[w[0]](), w[0] === "code" ? moreCode : null),
+        )}</div>`;
+  const response = page({ ctx, title: `Search · ${a.query}`, body, styleCss: SEARCH_CSS });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }

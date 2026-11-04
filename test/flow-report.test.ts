@@ -58,6 +58,7 @@ beforeEach(async () => {
   bot = await mk("builder");
   carol = await mk("carol");
   app.db.query(`UPDATE user SET is_agent = 1 WHERE id = ?1`).run(bot);
+  app.db.query(`INSERT INTO agent (user_id, model, brief, budget_usd, created_by, roles) VALUES (?1, 'm', '', 1, ?2, 'builder')`).run(bot, alice);
   const repo = (rname: string, visibility: string) => {
     const rid = id();
     app.db.query(`INSERT INTO repo (id, owner_id, name, visibility) VALUES (?1, ?2, ?3, ?4)`).run(rid, alice, rname, visibility);

@@ -83,6 +83,7 @@ async function pullCheck(name: string, names: string[], branchFiles: { path: str
     const deadline = Date.now() + 40_000;
     const finished = () => listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find((r) => r.commitOid === oid && (r.state === "ok" || r.state === "failed"));
     while (Date.now() < deadline && finished() === undefined) await Bun.sleep(100);
+    if (finished() === undefined) throw new Error(`never came: still waiting while finished() === undefined`);
     const run = finished()!;
     return { oid, run, log: readRunLog(app.config.dataDir, run.id).lines.join("\n"), flakes: () => flakeList(app.db, Date.now()).filter((f) => f.repo === `alice/${name}`) };
   } finally {

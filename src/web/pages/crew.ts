@@ -15,6 +15,7 @@ import {
 } from "../../actions/crew.ts";
 import {
   BRIEF_MAX,
+  CREW_ROLES,
   MODEL_MAX,
   type Agent,
 } from "../../core/agents.ts";
@@ -50,7 +51,7 @@ import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 import { listAutonomousRepos, type Repo } from "../../core/repos.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import {
   btn,
@@ -158,6 +159,7 @@ interface AgentValues {
   model: string;
   brief: string;
   budgetUsd: string;
+  roles: readonly string[];
 }
 
 const agentErrors = (ctx: Ctx): Record<string, string> => ({
@@ -166,6 +168,8 @@ const agentErrors = (ctx: Ctx): Record<string, string> => ({
   email_taken: USERNAME_TAKEN,
   invalid_model: `A model is up to ${MODEL_MAX} characters with no spaces.`,
   brief_too_long: `A brief is at most ${BRIEF_MAX} characters.`,
+  invalid_roles: "Pick at least one job: planner, builder or reviewer.",
+  role_held: "That agent still holds a seat it would lose on a repository. Move it there first, under Settings → Crew.",
   invalid_budget: `A budget is a number of dollars between 0 and ${limitValue(ctx.app.db, "agent.budget_max_usd")}.`,
 });
 
@@ -190,6 +194,14 @@ function agentFields(values: AgentValues, error?: string): Html {
     hint: "Who this agent is, in its own voice — appended to the prompt of every run. The repository's AGENTS.md says what the work is; this says who does it.",
     ...(error !== undefined && error.startsWith("A brief") ? { error } : {}),
   })}
+  <fieldset class="field" id="agent-roles">
+    <legend>Jobs</legend>
+    ${CREW_ROLES.map(
+      (r) => html`<label class="check"><input type="checkbox" name="roles" value="${r}" ${values.roles.includes(r) ? raw("checked") : null} />
+        <span>${r}</span></label>`,
+    )}
+    <p class="hint">What this agent does. A repository's team lists offer it only for these, and a dispatch never hands it another kind of job.${error !== undefined && error.startsWith("Pick at least") ? html` <strong>${error}</strong>` : null}</p>
+  </fieldset>
   ${uiField({
     label: "Budget per run (USD)",
     name: "budgetUsd",
@@ -206,7 +218,10 @@ const valuesOf = (agent: Agent): AgentValues => ({
   model: agent.model,
   brief: agent.brief,
   budgetUsd: agent.budgetUsd === 0 ? "" : String(agent.budgetUsd),
+  roles: agent.roles,
 });
+
+const rolesOf = (form: Form): string[] => form.getAll("roles").map(String);
 
 const budgetOf = (form: Form): number | undefined => {
   const raw = field(form, "budgetUsd").trim();
@@ -930,6 +945,7 @@ const EMPTY: AgentValues = {
   model: "",
   brief: "",
   budgetUsd: "",
+  roles: ["builder"],
 };
 
 // GET /settings/crew
@@ -963,6 +979,7 @@ export async function agentCreate(ctx: Ctx): Promise<Response> {
     model: field(form, "model").trim(),
     brief: field(form, "brief"),
     budgetUsd: field(form, "budgetUsd").trim(),
+    roles: rolesOf(form),
   };
   const budgetUsd = budgetOf(form);
   const made = await createAgent(ctx.app, ctx.auth.user, {
@@ -970,6 +987,7 @@ export async function agentCreate(ctx: Ctx): Promise<Response> {
     ...(values.displayName === "" ? {} : { displayName: values.displayName }),
     model: values.model,
     brief: values.brief,
+    roles: values.roles,
     ...(budgetUsd === undefined ? {} : { budgetUsd }),
   });
   if (!made.ok) {
@@ -1059,11 +1077,13 @@ export async function agentUpdate(ctx: Ctx): Promise<Response> {
     model: field(form, "model").trim(),
     brief: field(form, "brief"),
     budgetUsd: field(form, "budgetUsd").trim(),
+    roles: rolesOf(form),
   };
   const updated = updateAgent(ctx.app, ctx.auth.user, agent.user.username, {
     model: values.model,
     brief: values.brief,
     budgetUsd: budgetOf(form) ?? 0,
+    roles: values.roles,
   });
   if (!updated.ok) {
     if (updated.error === "not_found") return notFoundPage(ctx);

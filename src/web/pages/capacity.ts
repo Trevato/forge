@@ -7,7 +7,7 @@
  */
 
 import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
-import { CAPACITY, type CapacityKey } from "../../core/capacity.ts";
+import { CAPACITY, belowCeiling, type CapacityKey } from "../../core/capacity.ts";
 import { bytes } from "../../system/format.ts";
 import { egressSnapshot } from "../../apps/egress.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -85,10 +85,14 @@ export function capacityPage(ctx: Ctx): Response {
   );
   const now = Date.now();
   const rendering = performance.now();
-  const rows = settings.map((s) =>
-    row({
+  const rows = settings.map((s) => {
+    const low = belowCeiling(ctx.app.db, s.key);
+    return row({
       lead: icon("activity"),
-      title: html`${s.label} <span class="muted small mono">${s.key}</span>`,
+      title: html`${s.label} <span class="muted small mono">${s.key}</span>${when(
+        low !== null,
+        () => html` ${badge(`below ceiling ${low?.ceiling}`, { tone: "attn" })}`,
+      )}`,
       meta: html`${s.help} <br />Now <span class="mono">${s.value === "" ? "auto" : s.value}</span>. ${s.source === "setting"
           ? html`Set here; the boot default is
               <span class="mono">${s.default === "" ? "auto" : s.default}</span>
@@ -118,8 +122,8 @@ export function capacityPage(ctx: Ctx): Response {
             })}`,
         )}
       </form>`,
-    }),
-  );
+    });
+  });
   const history = changes.map((c) =>
     row({
       lead: icon("history"),

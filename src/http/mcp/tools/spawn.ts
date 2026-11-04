@@ -4,7 +4,7 @@ import { good, bad, type Tool, APP_ARG, REVEAL_ARG, LINK_KEPT, LINK_REVEALED } f
 
 export const tool: Tool = {
   name: "spawn",
-  doc: "`{ name, apps?, crew?, template?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make",
+  doc: "`{ name, apps?, crew?, direction?, fresh?, followMode?, size?, template?, keepAccess?, dryRun?, reveal? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make; `reveal: true` shows the claim link",
   description:
     "Spawn a child forge. Plans first.",
   inputSchema: {

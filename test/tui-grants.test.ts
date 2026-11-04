@@ -62,6 +62,7 @@ async function grants(h: ReturnType<typeof open>): Promise<void> {
   await h.feed(":", ..."Crew grants");
   for (let i = 0; i < 100 && !h.text().includes("which subscriptions each"); i++)
     await new Promise<void>((r) => setTimeout(r, 10)), await h.feed();
+  if (!h.text().includes("which subscriptions each")) throw new Error(`never came: still waiting while !h.text().includes("which subscriptions each")`);
   await h.feed("\r");
 }
 

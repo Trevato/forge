@@ -26,3 +26,15 @@ test("routes() lists method and pattern in the order added", () => {
     { method: "POST", pattern: "/a/:b" },
   ]);
 });
+
+test("allowed names the methods a path takes, HEAD wherever GET is", () => {
+  const router = new Router<string>()
+    .add("POST", "/r", "make")
+    .add("GET", "/r", "list")
+    .add("DELETE", "/r/:id", "drop")
+    .add("GET", "/f/*rest", "files");
+  expect(router.allowed("/r")).toEqual(["GET", "HEAD", "POST"]);
+  expect(router.allowed("/r/7")).toEqual(["DELETE"]);
+  expect(router.allowed("/f/a/b")).toEqual(["GET", "HEAD"]);
+  expect(router.allowed("/nope")).toEqual([]);
+});

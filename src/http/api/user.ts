@@ -8,7 +8,7 @@
 import { contribute, forkOrigin } from "../../actions/contribute.ts";
 import { CAPPED_WORDS } from "../../actions/mail.ts";
 import { ORIGIN_UNREACHABLE } from "../../actions/origin_app_words.ts";
-import { connectOrigin, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
+import { connectOrigin, connectRefusal, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
 import { addSshKey, changePassword, deleteSshKey, updateProfile } from "../../actions/users.ts";
 import { VERIFY_WORDS } from "../../actions/verify_words.ts";
 import { resendVerification } from "../../actions/verify.ts";
@@ -27,6 +27,7 @@ import { sshCloneUrl } from "../../ssh/command.ts";
 import { type RepoSource, type SourceError, sourceFor } from "../../view/source.ts";
 import { connectMessage, contributeFailure, contributionJson, editFilesFrom, jobJson, keyedPage, keyedWindow, loadRepo, oauthCallbackUri, originFacts, originJson, remoteRepoJson } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { clientAddress } from "../peer.ts";
 import { apiError, body, json, notFound, publicProfile, publicUser, requireAccount, requireScope, respondAccess, str, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
@@ -183,7 +184,15 @@ export function userRoutes(router: Router<Handler>): void {
     const window = keyedWindow(ctx);
     if (window instanceof Response) return window;
     const keys = timePhase(ctx.request, "keys", () => listKeys(ctx.app.db, user.id));
-    return timePhase(ctx.request, "render", () => json(keyedPage(keys.map(publicKey), (k) => k.id, window)));
+    return timePhase(ctx.request, "render", () => {
+      // The body shows every key and its last use, so a tag over the body (and
+      // the viewer it was rendered for) moves whenever any of them does (#9243).
+      const page = keyedPage(keys.map(publicKey), (k) => k.id, window);
+      const etag = weakEtag(`${user.id}|${JSON.stringify(page)}`);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return json(page, 200, headers);
+    });
   });
   router.add("POST", "/api/v1/user/keys", async (ctx) => {
     const denied = requireScope(ctx, "rw");
@@ -260,12 +269,16 @@ export function userRoutes(router: Router<Handler>): void {
         : {}),
       token: str(input.token),
     });
-    if (!connected.ok)
+    if (!connected.ok) {
+      // A refusal that names its own reason (a missing scope) keeps it;
+      // every other code has its sentence here.
+      const refused = connectRefusal(connected.error);
       return apiError(
-        connected.error,
-        connected.error === "rate_limited" ? 429 : 422,
-        connectMessage(connected.error),
+        refused.code,
+        refused.code === "rate_limited" ? 429 : 422,
+        refused.message ?? connectMessage(refused.code),
       );
+    }
     // The frozen mirrors connecting this account brought back, and the ones
     // it could not, each with its reason.
     return json(
@@ -753,7 +766,16 @@ export function userRoutes(router: Router<Handler>): void {
       }
       return out;
     });
-    return timePhase(ctx.request, "render", () => json({ items, next_cursor: null }));
+    // Tagged by its own bytes: a retitle, a close or an assignment changes
+    // them, and the viewer's own list is all they cover. Only reached with
+    // a session or a token of `ro` or more.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({ items, next_cursor: null });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   // The first three steps on a spawned forge, as MCP `next_steps`: empty

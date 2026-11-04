@@ -15,7 +15,8 @@ import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { setTelemetryGrant } from "../src/actions/telemetry.ts";
 import { hasGrant } from "../src/core/telemetry.ts";
-import { forgeLines, historyLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
+import { countRead, resetTelemetryReads } from "../src/system/telemetry_reads.ts";
+import { forgeLines, historyLines, readerLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -281,5 +282,30 @@ describe("tui system: the forge's own state (#7296)", () => {
   test("a stranger's answer, as MCP gives it, never has a second line", async () => {
     await seed({ down: "the edge answered 502" });
     expect(forgeLines(readHealth(app, undefined))).toEqual(["forge 9.8.7 · 0123456 · serving"]);
+  });
+});
+
+describe("tui system telemetry readers (#9069)", () => {
+  test("an admin sees each reader's pace and the flag; anyone else sees nothing", async () => {
+    resetTelemetryReads();
+    const t0 = Date.now();
+    for (let i = 0; i < 5; i++) countRead("flow", "fastbot", t0 - 10_000 + i * 2000);
+    countRead("system", "slowbot", t0 - 4000);
+    countRead("system", "slowbot", t0 - 1000);
+    const lines = readerLines(new Session(app, identity(carol)), t0);
+    expect(lines[0]).toContain("Telemetry readers");
+    expect(lines.find((l) => l.includes("fastbot"))).toMatch(/flow\s+fastbot\s+5\s+2\.0 s\s+TOO FAST/);
+    expect(lines.find((l) => l.includes("slowbot"))).toMatch(/system\s+slowbot\s+2\s+3\.0 s$/);
+    for (const who of [bob, bot, undefined]) expect(readerLines(new Session(app, identity(who)), t0)).toEqual([]);
+
+    const terminal = headlessTerminal(120, 60);
+    const { app: tui, session } = createForgeApp(app, identity(carol), { terminal, exitHooks: false });
+    tui.start();
+    tui.ctx.push(systemScreen(tui.ctx, ["CPU"], session));
+    await settleApp(tui);
+    expect(tui.screen.toText()).toContain("fastbot");
+    expect(tui.screen.toText()).toContain("TOO FAST");
+    tui.stop?.();
+    resetTelemetryReads();
   });
 });

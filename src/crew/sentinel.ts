@@ -23,7 +23,6 @@ import { getAgentByName } from "../core/agents.ts";
 import {
   getIssueById,
   getLabel,
-  setIssueLabels as writeLabels,
   type Issue,
 } from "../core/issues.ts";
 import { canWrite, getRepo, type Repo } from "../core/repos.ts";
@@ -41,12 +40,15 @@ import {
   assertionLines,
   mainVerdict,
   pullsFailedSince,
+  pullsOwn,
   SHARED_PULLS,
   SHARED_WINDOW_MS,
   sharedRuns,
 } from "../checks/shared_red.ts";
 import { readRunLogTail } from "../runs/log.ts";
 import { clip } from "../text/clip.ts";
+import type { FindingKind } from "../hunt/finding.ts";
+import { addLabels, kindLabels } from "../hunt/label.ts";
 
 const log = createLog("sentinel");
 
@@ -70,6 +72,8 @@ export interface Finding {
   readonly evidence: readonly string[];
   readonly pillar: string;
   readonly lookFor: string;
+  /** How it is filed: its labels, and so its clock (#8856). */
+  readonly kind: FindingKind;
   /** A budget breach: filed at once, labelled, left unassigned for a builder (#3002). */
   readonly urgent?: true;
   /** What a person or a run would do, when it is mechanical and reversible. */
@@ -130,6 +134,8 @@ export function strayTriggers(db: Database): Finding[] {
         `sql: ${clip(t.sql ?? "", QUOTE_MAX)}`,
       ],
       pillar: "Trust: the database does only what the schema says",
+      // Someone's hand on the database: a trigger can refuse or rewrite any write.
+      kind: "security",
       lookFor: `\`SELECT name FROM sqlite_master WHERE type = 'trigger'\` lists only triggers the schema creates.`,
       fix: `Drop it at boot like \`dropLegacyNewAccountGuards\` does (\`DROP TRIGGER "${t.name}"\`), with a test that plants it and boots.`,
     }));
@@ -171,6 +177,7 @@ export function heldSlots(db: Database, now: number): Finding[] {
           : []),
       ],
       pillar: "Reliability: the gate always has a slot",
+      kind: "defect",
       lookFor: `No ${w.kind} run queued for ${QUEUE_WAIT_MAX_MS / 60_000} minutes while the slots are free; a cancelled run's process is gone with it.`,
       fix: "End the process of a cancelled run on the cancel path, and free its slot.",
     });
@@ -212,6 +219,7 @@ export function ledgerStreaks(db: Database, now: number): Finding[] {
         `a check passed after the first stop: run ${green.id} at ${green.finished_at}`,
       ],
       pillar: "Throughput: red checks end in a fix, not a stop",
+      kind: "defect",
       lookFor: "A retry decision that is not stop, or a green check after a stop.",
     });
   }
@@ -249,6 +257,7 @@ export function ledgerStreaks(db: Database, now: number): Finding[] {
         ...(skipped > 0 ? [`${skipped} skips of a run with nothing new are not counted`] : []),
       ],
       pillar: "Throughput: the crew spends on work, not on being refused",
+      kind: "defect",
       lookFor: "Fewer than 20 guard decisions a day for the repository.",
     });
   }
@@ -284,15 +293,19 @@ export function runStreaks(db: Database): Finding[] {
     warnedUnresolved = true;
     log.warn("sentinel repository does not resolve; never-green checks are not filed", { repo: sentinelRepoPath() });
   }
-  const rows = db
-    .query<SummaryRow, [number]>(
-      `SELECT id, repo_id, kind, state, summary FROM (
-         SELECT id, repo_id, kind, state, summary,
-                ROW_NUMBER() OVER (PARTITION BY repo_id, kind ORDER BY created_at DESC, id DESC) AS n
-           FROM run WHERE kind IN ('check', 'agent') AND state IN ('ok', 'failed')
-       ) WHERE n <= ?1`,
+  // One top-N read per repository and kind, not one window over every run:
+  // the window sorted all of them, 150 ms on a production-sized table (#8848).
+  const pairs = db
+    .query<{ repo_id: string; kind: string }, []>(
+      "SELECT DISTINCT repo_id, kind FROM run WHERE kind IN ('check', 'agent') AND state IN ('ok', 'failed')",
     )
-    .all(RUNS_READ);
+    .all();
+  const latest = db.query<SummaryRow, [string, string, number]>(
+    `SELECT id, repo_id, kind, state, summary FROM run
+      WHERE repo_id = ?1 AND kind = ?2 AND state IN ('ok', 'failed')
+      ORDER BY created_at DESC, id DESC LIMIT ?3`,
+  );
+  const rows = pairs.flatMap((p) => latest.all(p.repo_id, p.kind, RUNS_READ));
   const groups = new Map<string, SummaryRow[]>();
   for (const r of rows) {
     const k = `${r.repo_id}\u0000${r.kind}`;
@@ -320,6 +333,7 @@ export function runStreaks(db: Database): Finding[] {
           `runs: ${hits.slice(0, 5).map((r) => r.id).join(", ")}`,
         ],
         pillar: "Trust: a green check means something",
+        kind: "defect",
         lookFor: "A green check run for the repository's newest head.",
       });
     } else {
@@ -343,6 +357,7 @@ export function runStreaks(db: Database): Finding[] {
           `runs: ${pushes.slice(0, 5).map((r) => r.id).join(", ")}`,
         ],
         pillar: "Throughput: a crew run can finish what it starts",
+        kind: "defect",
         lookFor: "An agent run that pushes its branch from inside its sandbox.",
       });
     }
@@ -370,6 +385,7 @@ export function repeatedErrors(now: number): Finding[] {
         `line: ${clip(lines[0]?.message ?? "", QUOTE_MAX)}`,
       ],
       pillar: "Reliability: a quiet log",
+      kind: "defect",
       lookFor: "No ERROR line of this shape in an hour.",
     });
   }
@@ -413,6 +429,7 @@ export function degradedCauses(db: Database, now: number, forgeRepoId?: string, 
         ...sharedLines(db, cause, now, forgeRepoId, dataDir),
       ],
       pillar: "P0 Trust: the forge says when it is not well, and is well again",
+      kind: "defect",
       lookFor: `\`${cause}\` stays out of the degraded list for a day, or holds under ${DEGRADED_DAY_MS / 60_000} minutes.`,
       incident: new Date(d.opened).toISOString(),
       cause,
@@ -466,6 +483,7 @@ export function budgetBreaches(db: Database, now: number, forgeRepoId?: string, 
         ...sharedLines(db, s.cause, now, forgeRepoId, dataDir),
       ],
       pillar: "P0 Trust: the forge says when it is not well, and is well again",
+      kind: "defect",
       lookFor: `\`${s.cause}\` is gone from the degraded list and the cause is fixed, not waited out.`,
       fix: s.cause.startsWith("red:")
         ? "Fix the failing test on main in one pull. This is the only issue for it: pulls red on the same test wait for main, and no other builder is handed it while this is open."
@@ -612,27 +630,23 @@ const bodyOf = (f: Finding, now: string): string =>
   ].join("\n");
 
 /**
- * A breach is crew work at once: the P0 Trust label, and no assignee, so a
- * builder may start it on the next tick (#3002). The sentinel never builds,
- * so it never assigns itself: a finding parked on it is held from every
- * builder. The label may fail alone (no such label): the issue is filed
- * either way, and the failure is said.
+ * Every finding is filed sorted (#8856): its kind's labels (`bug`, with
+ * `high` for a security hole), through `hunt/label.ts`, so the bug clock runs
+ * from the moment it is filed. A breach is crew work at once: the P0 Trust label as
+ * well, and no assignee, so a builder may start it on the next tick (#3002).
+ * The sentinel never builds, so it never assigns itself: a finding parked on
+ * it is held from every builder. Labels already on the issue stay. The
+ * labelling may fail alone: the issue is filed either way, and the failure is said.
  */
-function labelBreach(app: App, repo: Repo, actor: User, issue: Issue): void {
+function labelFinding(app: App, repo: Repo, actor: User, issue: Issue, f: Finding): void {
   try {
-    // The forge acts on its own finding: no access check stands between it
-    // and its label, as none stands between it and the issue it just filed.
-    const label = getLabel(app.db, repo.id, "P0 Trust");
-    if (label === undefined) log.warn("sentinel has no P0 Trust label to apply", { issue: issue.number });
-    else {
-      writeLabels(app.db, issue.id, [label.id]);
-      app.bus.append({
-        kind: "issue.labeled",
-        repoId: repo.id,
-        actorId: actor.id,
-        payload: { number: issue.number, labels: [label.name] },
-      });
+    const wanted = kindLabels(app, repo.id, f.kind);
+    if (f.urgent) {
+      const label = getLabel(app.db, repo.id, "P0 Trust");
+      if (label === undefined) log.warn("sentinel has no P0 Trust label to apply", { issue: issue.number });
+      else wanted.push(label);
     }
+    addLabels(app, repo.id, actor.id, issue, wanted);
   } catch (error) {
     log.error("sentinel could not label", { issue: issue.number, error: String(error) });
   }
@@ -804,9 +818,35 @@ function settled(db: Database, cause: string, test: string | undefined, now: num
   };
 }
 
+/** A finding's cause, read back from its evidence, once its span has left the day. */
+const causeOf = (evidence: readonly string[]): string | undefined =>
+  evidence.find((e) => e.startsWith("cause: "))?.slice(7);
+
+/**
+ * Why a shared finding's test is each pull's own (#8786): main's newest
+ * check passes it and no re-run since `since` passed it. Undefined while
+ * the test is the lane's, or unknown.
+ */
+function ownedByPulls(db: Database, cause: string, test: string | undefined, since: number): string[] | undefined {
+  if (!cause.startsWith("shared:") || test === undefined) return undefined;
+  const repoId = cause.split(":")[1] ?? "";
+  if (!pullsOwn(db, repoId, test, since)) return undefined;
+  const main = mainVerdict(db, repoId, test);
+  if (main === undefined) return undefined;
+  return [
+    `cause: ${cause}`,
+    `test: ${test}`,
+    `main: passes on main's newest check, run ${main.runId} at ${main.commitOid}`,
+    `re-runs that passed it since ${new Date(since).toISOString()}: none`,
+  ];
+}
+
 /**
  * A shared red that passed again on its own closes its own open issue as
- * dropped, before a builder is handed it and finds nothing to fix (#8287).
+ * dropped, before a builder is handed it and finds nothing to fix (#8287);
+ * so does one the rule now calls each pull's own (#8786: main passes it and
+ * no re-run did), saying so — its cause read from the issue's evidence when
+ * its span has left the day.
  * Not one a person has spoken on: they decide. If the cause opens again,
  * the next hunt files it fresh and quotes this one. A sentinel that may not
  * close issues here closes nothing and says so: no access check is skipped.
@@ -817,8 +857,8 @@ function settled(db: Database, cause: string, test: string | undefined, now: num
  */
 function settleShared(app: App, repo: Repo, actor: User, now: number): void {
   const open = app.db
-    .query<{ key: string; issue_id: string; evidence: string }, []>(
-      `SELECT t.key, t.issue_id, t.evidence FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+    .query<{ key: string; issue_id: string; evidence: string; first_seen: string }, []>(
+      `SELECT t.key, t.issue_id, t.evidence, t.first_seen FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
         WHERE i.state = 'open' AND t.key LIKE 'degraded:shared-%'`,
     )
     .all();
@@ -830,10 +870,14 @@ function settleShared(app: App, repo: Repo, actor: User, now: number): void {
   const causes = new Map(spans(app.db, now - DAY_MS, now).map((s) => [`degraded:${keyPart(s.cause)}`, s.cause]));
   for (const t of open) {
     try {
-      const cause = causes.get(t.key);
-      if (cause === undefined) continue;
-      const done = settled(app.db, cause, testOf(t.evidence.split("\n")), now);
-      if (done === undefined || personSpoke(app.db, t.issue_id)) continue;
+      const evidence = t.evidence.split("\n");
+      const cause = causes.get(t.key) ?? causeOf(evidence);
+      if (cause === undefined || `degraded:${keyPart(cause)}` !== t.key) continue;
+      const test = testOf(evidence);
+      const firstSeen = Date.parse(t.first_seen);
+      const owned = ownedByPulls(app.db, cause, test, (Number.isNaN(firstSeen) ? now : firstSeen) - SHARED_WINDOW_MS);
+      const done = owned === undefined ? settled(app.db, cause, test, now) : undefined;
+      if ((owned === undefined && done === undefined) || personSpoke(app.db, t.issue_id)) continue;
       const issue = getIssueById(app.db, t.issue_id);
       if (issue === undefined || issue.repoId !== repo.id) continue;
       const said = addComment(
@@ -841,18 +885,25 @@ function settleShared(app: App, repo: Repo, actor: User, now: number): void {
         actor,
         repo,
         issue,
-        [
-          `Passed again on its own at ${new Date(done.at).toISOString()}; evidence:`,
-          ...done.evidence.map((e) => `- ${e}`),
-          "",
-          "Closing as dropped: there is nothing to fix. If it opens again it is filed fresh, quoting this.",
-        ].join("\n"),
+        owned !== undefined
+          ? [
+              "Each pull's own red, not the lane's (#8786): main's newest check passes this test and no re-run of a failing pull passed it, so each pull failed it for what it added. Evidence:",
+              ...owned.map((e) => `- ${e}`),
+              "",
+              "Closing as dropped: there is nothing for the lane to fix. Each pull's builder gets its red as its own follow-up, with the test named.",
+            ].join("\n")
+          : [
+              `Passed again on its own at ${new Date(done!.at).toISOString()}; evidence:`,
+              ...done!.evidence.map((e) => `- ${e}`),
+              "",
+              "Closing as dropped: there is nothing to fix. If it opens again it is filed fresh, quoting this.",
+            ].join("\n"),
       );
       if (!said.ok) {
         log.warn("sentinel could not comment", { key: t.key, error: String(said.error) });
         continue;
       }
-      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "dropped" });
+      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "dropped", system: true });
       if (!closed.ok) {
         log.warn("sentinel could not close", { key: t.key, error: String(closed.error) });
         continue;
@@ -936,7 +987,7 @@ function closeHeld(app: App, repo: Repo, actor: User, active: ReadonlySet<string
         log.warn("sentinel could not comment", { key: t.key, error: String(said.error) });
         continue;
       }
-      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "done" });
+      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "done", system: true });
       if (!closed.ok) log.warn("sentinel could not close", { key: t.key, error: String(closed.error) });
     } catch (error) {
       log.error("sentinel close failed", { key: t.key, error: String(error) });
@@ -948,19 +999,21 @@ function closeHeld(app: App, repo: Repo, actor: User, active: ReadonlySet<string
  * Read, file, record. One open issue per finding: a tracked finding whose
  * issue is open is commented on only when its evidence changed; one whose
  * issue is closed and returns is a new issue. A setting away from its default
- * is no finding: the capacity page says so beside it (#3269).
+ * is no finding: the capacity page says so beside it (#3269). `find` is the
+ * detectors, `findFaults` unless a test files findings of its own.
  */
 export function hunt(
   app: App,
   repoPath: string,
   now = Date.now(),
+  find: typeof findFaults = findFaults,
 ): HuntResult {
   const at = new Date(now).toISOString();
   let filed = 0;
   let commented = 0;
   const [owner = "", name = ""] = repoPath.split("/");
   const repo = getRepo(app.db, owner, name);
-  const findings = findFaults(app.db, now, repo?.id, app.config.dataDir);
+  const findings = find(app.db, now, repo?.id, app.config.dataDir);
   const actor = sentinelActor(app.db);
   if (repo !== undefined && actor !== undefined) {
     settleShared(app, repo, actor, now);
@@ -994,6 +1047,8 @@ export function hunt(
         }
         // A shared red that passed again on its own is no work: the day's total does not file it again.
         if (settled(app.db, f.cause ?? "", testFor(app.db, f), now) !== undefined) continue;
+        // Nor is each pull's own red (#8786): its builders hold it, not the lane.
+        if (ownedByPulls(app.db, f.cause ?? "", testFor(app.db, f), now - SHARED_WINDOW_MS) !== undefined) continue;
         const told =
           sinceFix(app, repo, actor, f, evidence, at, now) ??
           (f.incident === undefined ? undefined : continuesDone(app, repo, actor, f, evidence, at, now));
@@ -1019,7 +1074,11 @@ export function hunt(
           }
           issueId = made.value.id;
           filed++;
-          if (f.urgent) labelBreach(app, repo, actor, made.value);
+          labelFinding(app, repo, actor, made.value, f);
+        } else {
+          // Adopted: its labels may have been lost with its record.
+          const issue = getIssueById(app.db, issueId);
+          if (issue !== undefined) labelFinding(app, repo, actor, issue, f);
         }
         app.db
           .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen, incident) VALUES (?1, ?2, ?3, ?4, ?4, ?5)")

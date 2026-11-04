@@ -17,6 +17,7 @@ import { style } from "../term/style.ts";
 import { wrap } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import type { Session } from "../session.ts";
+import { FORGE_SIGN_IN_ON_PAGE } from "../../origins/words.ts";
 import { ListState, confirmScreen, drawList, later, promptScreen, type ListRow } from "./common.ts";
 
 /** A row's name: the host of its web address, as the page shows it. */
@@ -102,7 +103,7 @@ export function originAppsScreen(f: Session, ctx: Ctx): Screen {
           : f.user === undefined
             ? "Sign in to see your origin apps."
             : rows.length === 0
-              ? "No origin app yet. Press a to register one."
+              ? `No origin app yet. Press a to register one. ${FORGE_SIGN_IN_ON_PAGE}`
               : `${rows.length} registered; a secret is never shown.`;
       // A refusal is the API's sentence, whole: it wraps rather than cuts.
       const said = wrap(text, Math.max(1, area.w)).slice(0, 3);

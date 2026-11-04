@@ -1,4 +1,5 @@
 import { WORDS_MAX } from "../../core/fence.ts";
+import { thinkingOf } from "../../core/talk_work.ts";
 import { ForgeApi } from "../api.ts";
 import type { Args } from "../args.ts";
 import { requireConfig } from "../context.ts";
@@ -8,6 +9,12 @@ import type { Command } from "./types.ts";
 
 /** Seconds `forge talk` waits for the answer before it says where to read it. */
 const WAIT_S = 120;
+
+/** A thought on one line: its first words, ended with an ellipsis when cut. */
+const oneLine = (text: string): string => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > 80 ? `${flat.slice(0, 79)}…` : flat;
+};
 
 /**
  * `forge talk "words"`: say something to the forge's own agent, as you, and
@@ -41,7 +48,15 @@ async function talk(out: Out, args: Args): Promise<number> {
     for (const turn of now.value.turns)
       if (!seen.has(turn.id)) {
         seen.add(turn.id);
-        if (turn.role === "agent") out.line(inert(turn.text));
+        // A thought is one folded line; the steps and links follow the reply, as on the page.
+        const thought = thinkingOf(turn);
+        if (thought !== undefined) out.line(inert(`thinking: ${oneLine(thought)}`));
+        if (turn.role !== "agent") continue;
+        out.line(inert(turn.text));
+        if (turn.work) {
+          out.line(inert(turn.work.steps));
+          for (const link of turn.work.links) out.line(inert(link.href));
+        }
       }
     if (!now.value.running) return EXIT.ok;
   }

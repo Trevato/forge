@@ -7,7 +7,7 @@ import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../share
 
 export const tool: Tool = {
   name: "tell",
-  doc: "a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick",
+  doc: "`{ repo?, text, from?, context? }`: a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick",
   description:
     "Tell an app's crew what to change (first line: title). No `repo`: kept.",
   inputSchema: {

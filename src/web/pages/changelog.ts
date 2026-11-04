@@ -8,17 +8,20 @@
 
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { canRead, getRepo } from "../../core/repos.ts";
+import { betNamesOfPulls } from "../../core/bets.ts";
+import { sourcesOfPulls } from "../../core/trusted_sources.ts";
+import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { newestLive, secondsWords } from "../../keeper/landed.ts";
 import { dayHeading, dayOf, daysJs, shippedToday } from "../../release/days.ts";
 import { chosenRepo, readLandings, type Landing, type Landings } from "../../release/landings.ts";
 import { liveRegionsJs } from "../client.ts";
 import { pageHead } from "../chrome.ts";
+import { changelogTag, holds } from "../feeds.ts";
 import { json } from "../../http/respond.ts";
 import { shippedAnswer } from "../../release/answer.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { badge, card, empty, listCard, row, seg, sha, time } from "../ui.ts";
+import { badge, card, empty, row, seg, sha, time } from "../ui.ts";
 
 /** Where the live client looks: a merge lands, or production serves a commit. */
 const LIVE = "pull.merged,app.serving";
@@ -29,7 +32,7 @@ function landingRow(l: Landing, own: string | undefined, showRepo: boolean): Htm
   return row({
     href: `/${l.repo}/pulls/${l.number}`,
     title: l.title,
-    meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}`,
+    meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}${l.bet === undefined ? null : html` · ${badge(l.bet, { variant: "outline" })}`}${l.from === undefined ? null : html` · folded in from ${l.from}`}${l.with === undefined ? null : html` · with ${l.with.join(", ")}`}`,
     trail: time(l.at),
   });
 }
@@ -39,7 +42,7 @@ function byDay(list: readonly Landing[], own: string | undefined, showRepo: bool
   const days = new Map<string, Landing[]>();
   for (const l of list) days.set(dayOf(l.at, zone), [...(days.get(dayOf(l.at, zone)) ?? []), l]);
   return [...days].map(([day, items]) =>
-    card(html`<ul class="list">${items.map((l) => landingRow(l, own, showRepo))}</ul>`, {
+    card(html`<ul class="list setting-list">${items.map((l) => landingRow(l, own, showRepo))}</ul>`, {
       head: html`<h2><time datetime="${day}">${dayHeading(day, today)}</time>${zone === "UTC" ? html`<span data-zone>${badge("UTC", { variant: "outline" })}</span>` : null}</h2>${badge(String(items.length))}`,
       attrs: html`data-day="${day}"`,
       pad: false,
@@ -133,7 +136,7 @@ export function shippedRegion(
   const way =
     onItsWay.length === 0
       ? null
-      : html`<h2 class="mt">On its way</h2>${listCard(onItsWay.map((l) => landingRow(l, read.own, choice === "all")))}`;
+      : html`<h2 class="mt">On its way</h2>${card(html`<ul class="list setting-list">${onItsWay.map((l) => landingRow(l, read.own, choice === "all"))}</ul>`, { pad: false })}`;
   const gone =
     live.length === 0
       ? empty({ title: "Nothing has shipped yet", note: "Each pull appears here once the running commit contains it." })
@@ -144,8 +147,11 @@ export function shippedRegion(
 // GET /changelog?repo=all|owner/name
 export async function changelogPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const read = await timePhaseAsync(ctx.request, "releases", () => readLandings(ctx.app));
+  const landed = await timePhaseAsync(ctx.request, "releases", () => readLandings(ctx.app));
   const rendering = performance.now();
+  const ownRepo = landed.own === undefined ? undefined : getRepo(ctx.app.db, ...(landed.own.split("/") as [string, string]));
+  const readable = ownRepo !== undefined && canRead(ctx.app.db, ownRepo, ctx.auth.user);
+  const { read, bets, bet } = withBets(ctx, landed, readable ? ownRepo : undefined);
   const everything = [...read.onItsWay, ...read.live];
   const choice = chosenRepo(new URL(ctx.request.url).searchParams.get("repo"), everything, read.own);
   const others = [...new Set(everything.map((l) => l.repo))].filter((r) => r !== read.own).slice(0, FILTERS);
@@ -154,9 +160,14 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
     { label: "Everything", href: "/changelog?repo=all", current: choice === "all" },
     ...others.map((r) => ({ label: r, href: `/changelog?repo=${encodeURIComponent(r)}`, current: choice === r })),
   ]);
-  const ownRepo = read.own === undefined ? undefined : getRepo(ctx.app.db, ...(read.own.split("/") as [string, string]));
-  const readable = ownRepo !== undefined && canRead(ctx.app.db, ownRepo, ctx.auth.user);
-  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${filters}
+  const betFilters =
+    bets.length === 0 || choice !== read.own
+      ? null
+      : seg([
+          { label: "Every bet", href: "/changelog", current: bet === "" },
+          ...bets.map((b) => ({ label: b, href: `/changelog?bet=${encodeURIComponent(b)}`, current: bet === b })),
+        ]);
+  const body = html`${pageHead("Changelog", { sub: "What went live, as it happens." })}${filters}${betFilters}
     <div id="shipped" data-live="${LIVE}" aria-live="polite">${shippedRegion(read, choice, new Date(), "UTC", newestLive(ctx.app.db), readable)}</div>`;
   const response = page({ ctx, title: "Changelog", body, feed: { href: "/changelog.atom", title: "Changelog" }, json: { href: `/api/v1/changelog${choice === read.own ? "" : `?repo=${encodeURIComponent(choice)}`}`, title: "Changelog (JSON)" }, scriptJs: `${liveRegionsJs}\n${localDaysJs}` });
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -166,5 +177,35 @@ export async function changelogPage(ctx: Ctx): Promise<Response> {
 // GET /api/v1/changelog?repo=all|owner/name: the page's rows as JSON, public repositories only.
 export async function changelogJson(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  return json(await shippedAnswer(ctx.app, ctx.url.searchParams.get("repo")), 200, { "cache-control": "public, max-age=5" });
+  const asked = ctx.url.searchParams.get("repo");
+  const answer = await shippedAnswer(ctx.app, asked);
+  // The answer is the same for every viewer (public repositories only), so a shared cache may keep it.
+  const etag = changelogTag(answer.version, [...answer.live, ...answer.onItsWay], [asked ?? "", answer.live.length]);
+  const headers = { etag, "cache-control": "public, max-age=5" };
+  if (holds(ctx.request.headers.get("if-none-match"), etag)) return new Response(null, { status: 304, headers });
+  return json(answer, 200, headers);
+}
+
+/**
+ * The landings with the bet each built (#8713), and `?bet=` narrowing them to
+ * one bet's. Only the forge's own repository, and only for a reader of it.
+ */
+function withBets(ctx: Ctx, read: Landings, repo: Repo | undefined): { read: Landings; bets: string[]; bet: string } {
+  if (repo === undefined) return { read, bets: [], bet: "" };
+  const numbers = [...read.live, ...read.onItsWay].filter((l) => l.repo === read.own).map((l) => l.number);
+  const names = betNamesOfPulls(ctx.app.db, repo.id, numbers);
+  const froms = sourcesOfPulls(ctx.app.db, repo.id, numbers);
+  const mark = (l: Landing): Landing => {
+    if (l.repo !== read.own) return l;
+    const bet = names.get(l.number);
+    const from = froms.get(l.number);
+    return { ...l, ...(bet === undefined ? {} : { bet }), ...(from === undefined ? {} : { from }) };
+  };
+  const live = read.live.map(mark);
+  const onItsWay = read.onItsWay.map(mark);
+  const bets = [...new Set([...live, ...onItsWay].flatMap((l) => (l.bet === undefined ? [] : [l.bet])))].sort();
+  const asked = ctx.url.searchParams.get("bet") ?? "";
+  const bet = bets.includes(asked) ? asked : "";
+  const keep = (l: Landing) => bet === "" || l.bet === bet;
+  return { read: { ...read, live: live.filter(keep), onItsWay: onItsWay.filter(keep) }, bets, bet };
 }

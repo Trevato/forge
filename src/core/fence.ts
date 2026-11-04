@@ -12,6 +12,10 @@
  *
  * Each conversation keeps what the person last said and whether the agent
  * has read fenced text; once it has, the fence stays up for the conversation.
+ * Up, a write goes ahead when the person's newest words name it whole
+ * (`named`), or, for undoable work in a repository they may write, when
+ * those words ask for that work or answer the proposal that named it
+ * (`askedFor`, #9401). Anything else is held, with buttons in the thread.
  * Plain data in and out; who may call is decided at the door (`http/mcp.ts`).
  */
 
@@ -161,7 +165,7 @@ const plain = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim()
 
 // A word at most two before that turns the ask around: "do not close",
 // "never merge", "do not turn on flow only".
-const NEGATED = /(^|[^a-z0-9'])(not|no|never|don't|dont|without|stop)\s+(\S+\s+){0,2}$/;
+const NEGATED = /(^|[^a-z0-9'])(not|no|never|don't|dont|won't|wont|without|stop)\s+(\S+\s+){0,2}$/;
 
 /**
  * Whether these words hold `w` starting at a word boundary ("closing" holds
@@ -214,6 +218,93 @@ export function named(words: string, tool: string, args: Record<string, unknown>
         if (value !== "" && !saysValue(said, value)) return false;
       } else if (typeof leaf === "number") {
         if (!Number.isInteger(leaf) || !saysNumber(said, leaf)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Undoable work the fence may let go on the person's ask (`crew/conversation_confirm.ts` lists it). */
+export interface Work {
+  /** Words that ask for this work, in lower case, each global. */
+  readonly ask: readonly RegExp[];
+  /** Arguments the agent composes (a title, a body): the person need not have said them. */
+  readonly composed: ReadonlySet<string>;
+}
+
+/** Longest message taken as a direct ask: past it, the words are more likely a paste than a request. */
+const ASK_CHARS_MAX = 600;
+
+/** Longest message taken as an answer to a proposal. */
+const ANSWER_WORDS_MAX = 12;
+
+/** Opening a message with one of these asks about the work rather than for it. */
+const WONDERS = /^(what|why|when|where|who|which|how|did|does|do you|is|are|was|were|has|have|should i)(?![a-z0-9])/;
+
+/** A plain yes, at the start of the message. */
+const ASSENT = /^(yes|yeah|yep|yup|ya|sure|ok|okay|please|absolutely|definitely|lgtm|go ahead|go for it|do it|sounds good|ship it|make it so|let's do it|lets do it)(?![a-z0-9])/;
+
+/** Anywhere in a short message, a sign it is not a plain answer. */
+const DOUBT = /(^|[^a-z0-9'])(no|nope|not|don't|dont|never|stop|wait|later|cancel|but|instead|first|why|what|how|when|where|who|which|if|maybe|hold)(?![a-z0-9'])/;
+
+/** Words that say nothing of the work: "port it" is "port". Thanks is not a yes. */
+const FILLER: ReadonlySet<string> = new Set(["it", "this", "that", "them", "the", "a", "an", "and", "then", "now", "please", "go", "ahead"]);
+const NOT_ASSENT: ReadonlySet<string> = new Set(["thanks", "thank", "thx", "you", "cool", "nice", "great", "interesting", "hm", "hmm"]);
+
+/**
+ * The closing question of the agent's last message, as the person read it:
+ * what a comment or tag hides from the page is not proposed, and neither is
+ * what an earlier paragraph buried. Undefined when it does not close on a question.
+ */
+export function proposalIn(text: string): string | undefined {
+  const shown = text.replace(/<!--[\s\S]*?(-->|$)/g, " ").replace(/<[^>]*>/g, " ").trim();
+  const last = shown.split(/\n\s*\n/).at(-1) ?? "";
+  return last.includes("?") ? last : undefined;
+}
+
+/** Whether these plain words answer yes to this plain proposal: "yeah", or "port it" when it offered to port. */
+function answers(said: string, proposal: string): boolean {
+  const tokens = said.split(/[^a-z0-9'-]+/).filter((t) => t !== "");
+  if (tokens.length === 0 || tokens.length > ANSWER_WORDS_MAX || said.includes("?") || DOUBT.test(said)) return false;
+  if (ASSENT.test(said)) return true;
+  const content = tokens.filter((t) => !FILLER.has(t));
+  return content.length > 0 && content.every((t) => !NOT_ASSENT.has(t) && saysValue(proposal, t));
+}
+
+/** Whether these plain words hold an ask for the work, at least once not negated. */
+const asksWork = (said: string, work: Work): boolean =>
+  work.ask.some((re) =>
+    [...said.matchAll(re)].some((m) => !NEGATED.test(said.slice(0, m.index))),
+  );
+
+/**
+ * Whether the person asked for this undoable write after fenced text was
+ * read (#9401): their newest words ask for the work, or answer yes to the
+ * agent's closing question and that question names the work. Then every
+ * argument the agent does not compose — the repository first, a number, a
+ * label, an assignee — must be in what the person said or the question they
+ * answered, so a steered agent cannot aim the work elsewhere; and composed
+ * text may not carry a data block whole. Strict the same way as `named`: what
+ * it misses is a confirm the person answers. `proposal` is what the agent
+ * said before the person's newest words, never during the turn they started.
+ */
+export function askedFor(words: string, proposal: string | undefined, work: Work, args: Record<string, unknown>): boolean {
+  const said = plain(words);
+  const offered = proposal === undefined ? undefined : proposalIn(proposal);
+  const closing = offered === undefined ? "" : plain(offered);
+  const asked = words.length <= ASK_CHARS_MAX && !WONDERS.test(said) && asksWork(said, work);
+  const answered = closing !== "" && answers(said, closing) && asksWork(closing, work);
+  if (!asked && !answered) return false;
+  const scope = `${said} ${closing}`;
+  for (const [k, v] of Object.entries(args)) {
+    for (const leaf of leaves(v)) {
+      if (work.composed.has(k)) {
+        if (typeof leaf === "string" && leaf.includes("[[data ")) return false;
+      } else if (typeof leaf === "string") {
+        const value = k === "repo" ? (leaf.split("/").pop() ?? "") : leaf;
+        if (value !== "" && !saysValue(scope, value)) return false;
+      } else if (typeof leaf === "number") {
+        if (!Number.isInteger(leaf) || !saysNumber(scope, leaf)) return false;
       }
     }
   }
@@ -275,6 +366,17 @@ export function hold(
   })();
 }
 
+/**
+ * Every write a conversation still holds is answered no and its arguments
+ * cleared, so a stopped turn leaves nothing a late Confirm could apply.
+ * Returns how many were cancelled.
+ */
+export function cancelHeld(db: Database, via: string, now: number = Date.now()): number {
+  return db
+    .query("UPDATE conversation_held SET answered_at = ?2, args = '{}' WHERE via = ?1 AND answered_at IS NULL")
+    .run(via, new Date(now).toISOString()).changes;
+}
+
 /** A conversation's held writes, oldest first. */
 export function heldIn(db: Database, via: string): Held[] {
   return db
@@ -291,6 +393,21 @@ export function heldIn(db: Database, via: string): Held[] {
       args: JSON.parse(r.args) as Record<string, unknown>,
       createdAt: r.created_at,
     }));
+}
+
+/** Of these confirms, the person's that ran out of time rather than being answered. */
+export function pastTime(db: Database, userId: string, ids: readonly string[]): Set<string> {
+  if (ids.length === 0) return new Set();
+  const rows = db
+    .query<{ id: string; created_at: string; answered_at: string | null }, [string, string]>(
+      "SELECT id, created_at, answered_at FROM conversation_held WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?2))",
+    )
+    .all(userId, JSON.stringify(ids));
+  return new Set(
+    rows
+      .filter((r) => r.answered_at !== null && Date.parse(r.answered_at) - Date.parse(r.created_at) >= HELD_TTL_MS)
+      .map((r) => r.id),
+  );
 }
 
 /** Why a yes is refused: no such confirm of this person's, already answered, or past its time. */

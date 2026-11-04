@@ -5,7 +5,14 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
-import { followUpstreamCheck, followUpstreamUpdate } from "../web/pages/upstream-follow.ts";
+import { isTokenScheme, tokenSecret } from "./token_header.ts";
+import {
+  followSourceRemove,
+  followSourcesAdd,
+  followSourcesCheck,
+  followUpstreamCheck,
+  followUpstreamUpdate,
+} from "../web/pages/upstream-follow.ts";
 import { secureFor } from "./cookie_secure.ts";
 import { refusedByDatabase, shownRefusal } from "./refusal.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
@@ -18,13 +25,16 @@ import { prerenderComments } from "../web/prerender.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { pipelinePage } from "../web/pages/pipeline.ts";
-import { resiliencePage } from "../web/pages/resilience.ts";
+import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { measureSubmit } from "./measure.ts";
 import { settingsRoutes } from "./settings_routes.ts";
+import { pinnedRoutes } from "./pinned_routes.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
 import { boardsHoldPost } from "../web/pages/boards-holds.ts";
+import { nowPage } from "../web/pages/now.ts";
+import { myReposPage } from "../web/pages/my-repos.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
 import { actingVia } from "../core/acting_via.ts";
 import {
@@ -63,7 +73,7 @@ import {
   verifyPasswordThrottled,
 } from "../core/users.ts";
 import { activeEdgeToken, edgeIdentity } from "./edge.ts";
-import { crawlRefused, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, takeCrawl, wasCrawler, wasDeepStranger } from "./crawl.ts";
+import { crawlRefused, familyOf, finishedStrangerDeep, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, takeCrawl, wasCrawler, wasDeepStranger } from "./crawl.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
@@ -121,7 +131,7 @@ import {
   verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
-import { talkConfirm, talkSend, talkStream, talkView } from "../web/pages/talk.ts";
+import { talkAgainSend, talkArchive, talkConfirm, talkNew, talkQueueCancel, talkRename, talkSend, talkStream, talkView } from "../web/pages/talk.ts";
 import {
   recoverFinish,
   recoverOptions,
@@ -138,6 +148,7 @@ import { reconnectSubmit } from "../web/pages/frozen.ts";
 import { activityAtom, changelogAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
+import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
@@ -163,6 +174,7 @@ import {
   repoFiles,
   repoHome,
   repoSyncSubmit,
+  repoTakeSubmit,
   treePage,
 } from "../web/pages/repo.ts";
 import { mediaBlob } from "../web/pages/media.ts";
@@ -171,6 +183,10 @@ import {
   branchDelete,
   branchesPage,
 } from "../web/pages/branches.ts";
+import { iterationsPage, noteSubmit } from "../web/pages/iterations.ts";
+import { buildsPage, deletePinSubmit, newBuildPage, pinBuildSubmit, previewBuildSubmit } from "../web/pages/builds.ts";
+import { shotImage, shotsPage } from "../web/pages/build_shots.ts";
+import { cartArt, cartPage } from "../web/pages/build_cart.ts";
 import { wavePage, wavesAtom, wavesPage } from "../web/pages/waves.ts";
 import {
   contributeSubmit,
@@ -190,6 +206,7 @@ import {
   issueSealSubmit,
   issueThreadFragment,
   newIssuePage,
+  newIssueAnywhere,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import { noteModerate } from "../web/studio/notes.ts";
@@ -199,6 +216,8 @@ import { tellHerePage } from "../web/studio/tell_here.ts";
 import { globalMapPage } from "../web/pages/global-map.ts";
 import { mapPage } from "../web/pages/map.ts";
 import { firstSubmit } from "../web/pages/first.ts";
+import { nextPage, nextSubmit } from "../web/pages/next.ts";
+import { weekPage, weekSubmit } from "../web/pages/week.ts";
 import {
   milestonePage,
   milestonesPage,
@@ -226,6 +245,7 @@ import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
+import { notesOverrule, notesSave, notesView } from "../web/pages/notes.ts";
 import { reviewPage } from "../web/studio/review_page.ts";
 import { reviewAct } from "../web/studio/review_act.ts";
 import {
@@ -265,6 +285,8 @@ import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
+import { flowPage, suggestionTake, valveSet } from "../web/pages/flow.ts";
+import { heldApply, heldPage, liftHoldSubmit } from "../web/pages/gate.ts";
 import {
   assigneeSubmit,
   labelsSubmit,
@@ -316,6 +338,7 @@ import {
   pullFilesPage,
   pullChecksFragment,
   pullMergeSubmit,
+  pullSliceSubmit,
   pullLandPastSubmit,
   pullChecksSubmit,
   pullReviewStateSubmit,
@@ -324,6 +347,7 @@ import {
   pullThreadFragment,
   threadResolveSubmit,
 } from "../web/pages/pull.ts";
+import { pullApproveGuestSubmit } from "../web/pages/pull-guest.ts";
 import { conflictsFinish, conflictsPage, proposeSubmit } from "../web/pages/conflicts.ts";
 import {
   appDisable,
@@ -353,6 +377,7 @@ import {
   crewAdd,
   crewRemove,
   crewRoleUpdate,
+  pillarUpdate,
   crewSettingsPage,
   crewSubscriptionsSave,
 } from "../web/pages/crew-settings.ts";
@@ -398,6 +423,7 @@ import {
   browseRaw,
   browseTree,
 } from "../web/pages/browse.ts";
+import { bringConnect, bringEnvSubmit, bringJobPage, bringPage, bringRun, bringSubmit } from "../web/pages/bring.ts";
 import { pushThrough } from "../origins/push-through.ts";
 import { CAME_FROM_ELSEWHERE, forbiddenPage, notFoundPage, SENT_FROM_ELSEWHERE } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
@@ -431,11 +457,13 @@ import {
   type RouteTiming,
 } from "../core/route_timing.ts";
 import { loopWatch, perfRecord } from "../perf/live.ts";
+import { countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
+import { createTrafficWriter } from "../perf/traffic_store.ts";
 import { parseServerTiming } from "../perf/record.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
-import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
+import { carryPeer, clientAddress, notePeer, wasInternal, type ProxyTrust } from "./peer.ts";
 import { isProbe } from "../kernel/probe.ts";
 import { takeStrangerRead } from "./stranger_reads.ts";
 import { parseCidrs } from "../kernel/cidr.ts";
@@ -456,6 +484,7 @@ import {
 import {
   apiError,
   json,
+  methodNotAllowed,
   noRoute,
   notFound,
   pageNotFoundAsJson,
@@ -501,6 +530,7 @@ import {
   watchHostedChildClose,
 } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
+import { previewOwner } from "../spawn/preview-owner.ts";
 
 // ---- auth ----
 
@@ -515,6 +545,12 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
     const user = ensureEdgeUser(app.db, login);
     if (user) return { user, scope: "admin", via: "edge" };
   }
+
+  // In a preview of this forge, the parent forge in front of it vouches for
+  // its admins as the preview admin (`spawn/preview-owner.ts`): an edge of
+  // its own, ridden by its grant cookie, so held to the same-origin rule.
+  const owner = previewOwner(app, request);
+  if (owner) return { user: owner, scope: "admin", via: "edge" };
 
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {
@@ -531,14 +567,18 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   const header = request.headers.get("authorization");
   if (!header) return NO_AUTH;
 
-  // Bearer is always a token.
-  if (header.startsWith("Bearer ")) {
-    const verified = verifyToken(app.db, header.slice(7));
+  // Bearer is always a token; so is `token <secret>`, the scheme a Gitea
+  // client sends — another forge connecting to this one as an origin.
+  if (isTokenScheme(header)) {
+    const secret = tokenSecret(header);
+    if (secret === null) return NO_AUTH;
+    const verified = verifyToken(app.db, secret);
     if (verified.ok) {
       return {
         user: verified.value.user,
         scope: verified.value.scope,
         via: "token",
+        tokenName: verified.value.name,
         ...(verified.value.proposal ? { proposal: verified.value.proposal } : {}),
         ...(verified.value.run ? { run: verified.value.run } : {}),
         ...(verified.value.via ? { through: verified.value.via } : {}),
@@ -564,6 +604,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
           user: verified.value.user,
           scope: verified.value.scope,
           via: "token",
+          tokenName: verified.value.name,
           ...(verified.value.proposal
             ? { proposal: verified.value.proposal }
             : {}),
@@ -741,6 +782,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
+  router.add("GET", "/notes", notesView);
+  router.add("POST", "/notes", notesSave);
+  router.add("POST", "/notes/:id/overrule", notesOverrule);
   router.add("GET", "/review", reviewPage);
   router.add("POST", "/review/act", reviewAct);
   // The big view, folded into the board: every old address lands on its wall mode.
@@ -750,6 +794,15 @@ export function buildRouter(): Router<Handler> {
   // is registered before /:owner/:name can claim the shape.
   router.add("GET", "/-/confirm", confirmPage);
   router.add("GET", "/new", newRepoPage);
+  router.add("GET", "/bring", bringPage);
+  router.add("POST", "/bring", bringSubmit);
+  router.add("POST", "/bring/connect", bringConnect);
+  router.add("GET", "/bring/:id/:job", bringJobPage);
+  router.add("POST", "/bring/:id/:job/run", bringRun);
+  router.add("POST", "/bring/:id/:job/env", bringEnvSubmit);
+  router.add("GET", "/new/issue", newIssueAnywhere);
+  router.add("GET", "/repos", myReposPage);
+  router.add("GET", "/now/:stage", nowPage);
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
   router.add("GET", "/changelog", changelogPage);
@@ -776,7 +829,10 @@ export function buildRouter(): Router<Handler> {
   // Every app on one canvas; a literal route, so it must sit above /:owner.
   router.add("GET", "/map", globalMapPage);
   // The pipeline moved to a panel on /boards (#2774); the old address follows it. Literal, above /:owner.
-  router.add("GET", "/flow", (ctx) => new Response(null, { status: 301, headers: { location: `/boards${ctx.url.search}` } }));
+  // /flow is the week's valves (#8698); a query string is an old pipeline drill, which went to /boards.
+  router.add("GET", "/flow", flowPage);
+  router.add("POST", "/flow/valve", valveSet);
+  router.add("POST", "/flow/suggestion", suggestionTake);
   router.add("GET", "/system", systemPage);
   router.add("GET", "/system/stream", systemStream);
   router.add("GET", "/contribute", contributePage);
@@ -785,8 +841,11 @@ export function buildRouter(): Router<Handler> {
   // Every /settings… page, in its own module (settings_routes.ts); literal, above /:owner.
   // The usage page is handed the pattern list, so settings_routes.ts never imports server.ts.
   settingsRoutes(router, knownPatterns);
+  // The Deploy to… page for a pinned forge (#8744); literal, above /:owner.
+  pinnedRoutes(router);
   // Each THREATS.md protection against the last gate; literal, above /:owner.
   router.add("GET", "/resilience", resiliencePage);
+  router.add("GET", "/resilience/nightly/:job", nightlyOutputPage);
   // A selection's spend and runs over time; literal, above /:owner.
   router.add("GET", "/fleet/graph", fleetGraphPage);
   router.add("GET", "/fleet/graph/live", fleetGraphLive);
@@ -821,7 +880,15 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/talk", talkView);
   router.add("POST", "/talk", talkSend);
   router.add("GET", "/talk/stream", talkStream);
+  router.add("POST", "/talk/again/:how", talkAgainSend);
+  router.add("POST", "/talk/queue/:id/cancel", talkQueueCancel);
   router.add("POST", "/talk/confirm/:id", talkConfirm);
+  router.add("POST", "/talk/new", talkNew);
+  router.add("GET", "/talk/:id", talkView);
+  router.add("POST", "/talk/:id", talkSend);
+  router.add("POST", "/talk/:id/rename", talkRename);
+  router.add("POST", "/talk/:id/archive", talkArchive);
+  router.add("POST", "/talk/:id/again/:how", talkAgainSend);
   router.add("POST", "/signin/passkey/options", signinOptions);
   router.add("POST", "/signin/passkey", signinPasskey);
   router.add("GET", "/recover", recoverPage);
@@ -1022,8 +1089,19 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/issues/:number/dependencies",
     dependencySubmit,
   );
+  router.add("POST", "/:owner/:name/issues/:number/lift", liftHoldSubmit);
+  router.add("GET", "/:owner/:name/held", heldPage);
+  router.add("POST", "/:owner/:name/held/apply", heldApply);
   router.add("GET", "/:owner/:name/map", mapPage);
+  router.add("GET", "/:owner/:name/next", nextPage);
+  router.add("POST", "/:owner/:name/next", nextSubmit);
+  router.add("GET", "/:owner/:name/week", weekPage);
+  router.add("POST", "/:owner/:name/week", weekSubmit);
   router.add("POST", "/:owner/:name/issues/:number/first", firstSubmit);
+  router.add("GET", "/:owner/:name/bets", betsPage);
+  router.add("POST", "/:owner/:name/bets/propose", betPropose);
+  router.add("GET", "/:owner/:name/bets/:id", betPage);
+  router.add("POST", "/:owner/:name/bets/:id/:verb", betAct);
   router.add("GET", "/:owner/:name/milestones", milestonesPage);
   router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
   router.add("POST", "/:owner/:name/milestones/:number/watch", milestoneWatch);
@@ -1083,6 +1161,11 @@ export function buildRouter(): Router<Handler> {
   );
   router.add(
     "POST",
+    "/:owner/:name/pulls/:number/approve-guest",
+    pullApproveGuestSubmit,
+  );
+  router.add(
+    "POST",
     "/:owner/:name/pulls/:number/threads/:anchor/resolve",
     threadResolveSubmit(true),
   );
@@ -1092,6 +1175,7 @@ export function buildRouter(): Router<Handler> {
     threadResolveSubmit(false),
   );
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/slice", pullSliceSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/land-past", pullLandPastSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/state", (ctx) =>
     stateSubmit(ctx, "pull"),
@@ -1188,6 +1272,20 @@ export function buildRouter(): Router<Handler> {
   // The repository's activity, for a feed reader.
   router.add("GET", "/:owner/:name/activity.atom", activityAtom);
   router.add("GET", "/:owner/:name/branches", branchesPage);
+  // Build pins (`git/builds.ts`): the list, the form, and the writes behind them.
+  router.add("GET", "/:owner/:name/builds", buildsPage);
+  router.add("GET", "/:owner/:name/builds/new", newBuildPage);
+  // A pin's screenshot, read: a tree kept by refs/shots/<label> (`git/shots.ts`).
+  router.add("GET", "/:owner/:name/builds/:label/shots", shotsPage);
+  router.add("GET", "/:owner/:name/builds/:label/shots/:file", shotImage);
+  // A pin's cart: its captured page, played sandboxed, and its picture (`arcade/carts.ts`).
+  router.add("GET", "/:owner/:name/builds/:label/cart", cartPage);
+  router.add("GET", "/:owner/:name/builds/:label/cart.png", cartArt);
+  router.add("GET", "/:owner/:name/iterations", iterationsPage);
+  router.add("POST", "/:owner/:name/builds", pinBuildSubmit);
+  router.add("POST", "/:owner/:name/builds/preview", previewBuildSubmit);
+  router.add("POST", "/:owner/:name/builds/:label/delete", deletePinSubmit);
+  router.add("POST", "/:owner/:name/builds/:label/note", noteSubmit);
   router.add("GET", "/:owner/:name/waves.atom", wavesAtom);
   router.add("GET", "/:owner/:name/waves", wavesPage);
   router.add("GET", "/:owner/:name/waves/:version", wavePage);
@@ -1233,6 +1331,7 @@ export function buildRouter(): Router<Handler> {
   // A mirror pulls on demand; a pin says "keep this on my machine". Both are
   // ordinary repo-scoped writes, not account-level ones.
   router.add("POST", "/:owner/:name/sync", repoSyncSubmit);
+  router.add("POST", "/:owner/:name/sync/take", repoTakeSubmit);
   router.add("POST", "/:owner/:name/pin", pinSubmit);
 
   // Settings (owner-gated inside the handlers).
@@ -1305,11 +1404,15 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/settings/crew/:username/role",
     crewRoleUpdate,
   );
+  router.add("POST", "/:owner/:name/settings/pillars", pillarUpdate);
   router.add("GET", "/:owner/:name/settings/autonomy", autonomySettingsPage);
   router.add("POST", "/:owner/:name/settings/autonomy", autonomySettingsUpdate);
   router.add("POST", "/:owner/:name/settings/holds", fileHoldUpdate);
   router.add("POST", "/:owner/:name/settings/upstream", followUpstreamUpdate);
   router.add("POST", "/:owner/:name/settings/upstream/check", followUpstreamCheck);
+  router.add("POST", "/:owner/:name/settings/sources", followSourcesAdd);
+  router.add("POST", "/:owner/:name/settings/sources/check", followSourcesCheck);
+  router.add("POST", "/:owner/:name/settings/sources/:id/remove", followSourceRemove);
   router.add("GET", "/:owner/:name/settings/labels", labelsPage);
   router.add("POST", "/:owner/:name/settings/labels", labelCreate);
   router.add("POST", "/:owner/:name/settings/labels/:id", labelUpdate);
@@ -1423,8 +1526,7 @@ async function withGitAccess(
     else if (created.error === "storage_limit") {
       const ownerId = resolveOwner(ctx.app, ctx.auth.user, ctx.params.owner!) ?? ctx.auth.user.id;
       return gitRefused(ctx, storageRefusedText(storageSentence(ctx.app, ownerId) ?? "at the limit"));
-    }
-    else if (created.error === "not_member")
+    } else if (created.error === "not_member")
       return gitRefused(ctx, `Not made: ${NOT_A_MEMBER}`);
     else if (created.error === "repository_limit")
       return gitRefused(
@@ -1522,7 +1624,10 @@ function tokenCredential(request: Request, auth: Auth): string | undefined {
   if (auth.via !== "token") return undefined;
   const header = request.headers.get("authorization");
   if (header === null) return undefined;
-  if (header.startsWith("Bearer ")) return sha256(header.slice(7));
+  if (isTokenScheme(header)) {
+    const secret = tokenSecret(header);
+    return secret === null ? undefined : sha256(secret);
+  }
   if (header.startsWith("Basic ")) {
     const decoded = Buffer.from(header.slice(6), "base64").toString();
     const colon = decoded.indexOf(":");
@@ -2118,6 +2223,8 @@ export async function serve(app: App): Promise<Servers> {
   // map increment; a refused event would be a programming error, not worth a 500.
   const counters = new Map<Database, UsageCounter>();
   const timings = new Map<Database, RouteTiming>();
+  // The minute ledger's history: one write a minute, never on a request.
+  const trafficWriter = createTrafficWriter(app.db, perfRecord.ledger, app.log);
   const counted = (
     owner: App,
     request: Request,
@@ -2126,13 +2233,22 @@ export async function serve(app: App): Promise<Servers> {
   ): void => {
     const tag = takeUsage(request);
     const ms = performance.now() - started;
+    finishedStrangerDeep(owner, request);
     try {
       const header = serverTiming(ms, takeDbTime(request), takePhases(request));
       response.headers.set("server-timing", header);
       const end = performance.now();
+      const family = familyOf(request.headers.get("user-agent") ?? "");
       perfRecord.add(
         tag.pattern,
-        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), phases: parseServerTiming(header) },
+        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), internal: wasInternal(request), refused: response.status === 429, phases: parseServerTiming(header) },
+        {
+          address: clientAddress(request),
+          family,
+          country: countryOf(request.headers),
+          signature: signatureOf(family, request.headers),
+          repo: response.status < 400 ? repoOf(tag.pattern, new URL(request.url).pathname) : null,
+        },
       );
       loopWatch.finished(tag.pattern, started, end);
     } catch {
@@ -2371,6 +2487,7 @@ export async function serve(app: App): Promise<Servers> {
         }
       }
       timings.clear();
+      trafficWriter.stop();
       // A child's hooks stop answering before its database closes.
       for (const key of [...new Set([...childHttps.keys(), ...childInternals.keys()])]) letGo(key);
       closeHostedChildren(app);
@@ -2469,6 +2586,10 @@ async function answerGet(
       // No session was read, so it cannot tell signed-out from signed-in:
       // it offers no sign-in rather than one to someone who has signed in.
       return notFoundPage(anonCtx, { plain: true });
+    }
+    if (isApiPath && request.method !== "OPTIONS") {
+      const allowed = apiRouter.allowed(url.pathname);
+      if (allowed.length > 0) return methodNotAllowed(request.method, allowed);
     }
     return noRoute(request.method, url.pathname);
   }
@@ -2588,9 +2709,13 @@ async function answerGet(
   // A conversation's token writes as its person, by way of the agent:
   // every event the handler appends carries it, at no append site's cost.
   const acting =
-    auth.through !== undefined && auth.user !== undefined
-      ? { userId: auth.user.id, via: auth.through }
-      : undefined;
+    auth.user === undefined
+      ? undefined
+      : {
+          userId: auth.user.id,
+          door: auth.tokenName === undefined ? auth.via : `token:${auth.tokenName}`,
+          ...(auth.through === undefined ? {} : { via: auth.through }),
+        };
   const response = await actingVia(acting, () =>
     replayAs === undefined
       ? invoke(request)

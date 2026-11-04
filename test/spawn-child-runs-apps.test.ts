@@ -53,6 +53,7 @@ describe("a hosted child's apps run in the parent", () => {
     const child = childRuntime(parent, name)!;
     const until = Date.now() + 150_000;
     while (child.startingCount() > 0 && Date.now() < until) await Bun.sleep(100);
+    if (child.startingCount() > 0) throw new Error(`never came: still waiting while child.startingCount() > 0`);
     const summary = hostedChildApps(parent, name)!;
     if (summary.running !== summary.total) throw new Error(`${name}: ${JSON.stringify(summary.notRunning)}`);
   };

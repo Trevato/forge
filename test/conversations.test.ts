@@ -5,6 +5,12 @@ import { join } from "node:path";
 import { migrations } from "../src/core/schema.ts";
 import {
   appendTurn,
+  archiveConversation,
+  getConversation,
+  listConversations,
+  newConversation,
+  renameConversation,
+  TITLE_MAX,
   listTurns,
   MAX_TURN_CHARS,
   openConversation,
@@ -128,5 +134,54 @@ describe("conversations", () => {
     expect(add("person", "  ")).toEqual({ ok: false, error: "empty_text" });
     expect(add("robot", "hi")).toEqual({ ok: false, error: "bad_role" });
     db.close();
+  });
+});
+
+describe("many conversations (#8814)", () => {
+  test("new starts another; the list is newest activity first and the latest is where messages go", () => {
+    const db = open("many.db");
+    const a = openConversation(db, "u1");
+    const b = newConversation(db, "u1");
+    expect(b.id).not.toBe(a.id);
+    expect(listConversations(db, "u1").map((c) => c.id)).toEqual([b.id, a.id]);
+    Bun.sleepSync(3);
+    appendTurn(db, "u1", a.id, { role: "person", text: "hi" });
+    expect(listConversations(db, "u1").map((c) => c.id)).toEqual([a.id, b.id]);
+    expect(openConversation(db, "u1").id).toBe(a.id);
+  });
+
+  test("rename keeps a clean title and refuses a long or multi-line one", () => {
+    const db = open("rename.db");
+    const c = openConversation(db, "u1");
+    const named = renameConversation(db, "u1", c.id, "  Plan the week ");
+    expect(named.ok && named.value.title).toBe("Plan the week");
+    expect(renameConversation(db, "u1", c.id, "x".repeat(TITLE_MAX + 1))).toEqual({ ok: false, error: "bad_title" });
+    expect(renameConversation(db, "u1", c.id, "a\nb")).toEqual({ ok: false, error: "bad_title" });
+    expect(getConversation(db, "u1", c.id)?.title).toBe("Plan the week");
+  });
+
+  test("archive puts one behind the filter, restore brings it back, turns survive", () => {
+    const db = open("archive.db");
+    const a = openConversation(db, "u1");
+    appendTurn(db, "u1", a.id, { role: "person", text: "keep me" });
+    const b = newConversation(db, "u1");
+    expect(archiveConversation(db, "u1", b.id, true).ok).toBe(true);
+    expect(listConversations(db, "u1").map((c) => c.id)).toEqual([a.id]);
+    expect(listConversations(db, "u1", { archived: true }).map((c) => c.id)).toEqual([b.id]);
+    expect(openConversation(db, "u1").id).toBe(a.id);
+    archiveConversation(db, "u1", a.id, true);
+    expect(openConversation(db, "u1").id).not.toBe(a.id);
+    archiveConversation(db, "u1", a.id, false);
+    expect(listTurns(db, "u1", a.id)).toMatchObject({ ok: true, value: [{ text: "keep me" }] });
+  });
+
+  test("another person's id is not found for every call", () => {
+    const db = open("other.db");
+    const mine = openConversation(db, "u1");
+    expect(getConversation(db, "u2", mine.id)).toBeUndefined();
+    expect(renameConversation(db, "u2", mine.id, "x")).toEqual({ ok: false, error: "not_found" });
+    expect(archiveConversation(db, "u2", mine.id, true)).toEqual({ ok: false, error: "not_found" });
+    expect(listConversations(db, "u2")).toEqual([]);
+    expect(listTurns(db, "u2", mine.id)).toEqual({ ok: false, error: "not_found" });
   });
 });

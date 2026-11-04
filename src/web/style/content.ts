@@ -22,7 +22,10 @@ export const content = /* css */ `
   .repo-head p.muted.small a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
 .repo-head p.muted.small { margin-top: 4px; text-wrap: pretty; }
-.repo-head .tabs { margin-top: 12px; }
+.repo-head .tabs, .repo-head .repo-nav { margin-top: 12px; }
+.repo-nav { display: flex; align-items: flex-start; gap: 4px; border-bottom: 1px solid var(--border); }
+.repo-nav .tabs { margin-top: 0; border-bottom: 0; flex: 1 1 auto; }
+.repo-nav .menu { margin-top: 4px; }
 
 /* Provenance and pinning: one line under the title, so a <form> never has to
    live inside the <h1>. */
@@ -72,6 +75,13 @@ a.where-place:hover, button.where-place:hover {
 .row-meta .where-place > span[aria-hidden="true"] { margin-right: 3px; }
 .row-title a { color: inherit; text-decoration: none; }
 .row-title a:hover { color: var(--accent); }
+/* The signed-in home (#9378). Its rows already clip one line and its
+   sections are grid cells with min-width 0 (feed_style.ts); what is left is a
+   long app name, which wraps inside its chip, and the tell box's input and
+   select, which may shrink. The chip row is server-rendered, so a wrapped
+   chip is its final height on first paint. */
+#live-chips .btn { max-width: 100%; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.tell-box .input { min-width: 0; max-width: 100%; }
 .row-trail form { display: inline-flex; }
 
 /* "Where it lives": the origin, when it was last fetched, the button that
@@ -142,7 +152,11 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   font-variant-numeric: tabular-nums; letter-spacing: 0.14em;
   text-align: center; user-select: all; word-break: break-all;
 }
-[data-apps] { overflow-wrap: anywhere; }
+[data-apps], [data-apps-page], [data-bet-card], [data-milestone], [data-now] { overflow-wrap: anywhere; }
+[data-bet-card] h2, [data-bet-card] ul, [data-bet-card] p { margin-block: 8px; }
+[data-bet-card] ul { padding-inline-start: 16px; }
+[data-bet-card] { max-height: 80vh; overflow-x: hidden; overflow-y: auto; }
+[data-bet-actions] { align-items: flex-start; }
 
 .bar > .device-code { flex: 1 1 auto; }
 
@@ -210,6 +224,7 @@ form.inline { display: inline; margin-left: auto; }
    than the phone rather than letting its own ellipsis do the work. A zero
    min-width is what makes truncation inside a grid actually truncate. */
 .split > * { min-width: 0; }
+.split { grid-template-columns: minmax(0, 1fr); }
 
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
@@ -323,7 +338,7 @@ form.inline { display: inline; margin-left: auto; }
 .imgview-pane.is-actual .imgview-img { max-width: none; cursor: zoom-out; }
 
 /* ---- prose (markdown) ---- */
-.prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }
+.prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
 .prose > * { max-width: var(--measure); }
 .prose h1, .prose h2, .prose h3, .prose h4 { margin: 24px 0 8px; }
 .prose h1 { font-size: 20px; }
@@ -849,6 +864,26 @@ textarea.editor:focus-visible { outline: none; }
     #needs-you #asks-phone-more > .stack { margin-top: 0; }
   }
 }
+/* Flow (#8698): the week's pipes. Width is spend; a valve is drawn open,
+   half-open (a share) or shut, in tokens. */
+.pipes { width: 100%; height: auto; display: block; }
+.pipe { fill: none; stroke: currentColor; opacity: .5; }
+.pipe-out { color: var(--series-3); }
+.pipe-out.pipe-valve-shut { stroke-dasharray: 4 4; opacity: .35; }
+.pipe-valve rect { fill: var(--bg); stroke: var(--border); stroke-width: 1.5; }
+.pipe-valve-share rect { stroke: var(--series-1); }
+.pipe-valve-shut rect { stroke: var(--series-5); fill: var(--bg); }
+.pipe-label { font-size: 12.5px; fill: var(--fg); }
+.pipe-repo { font-size: 12.5px; fill: var(--muted-fg); }
+.valve-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0; }
+/* A valve row's name and body are sentences, not one clipped line (#9323): they wrap inside the row. */
+.valve-name, .valve-body { white-space: normal; overflow-wrap: anywhere; }
+.valve-name, .valve-body { display: block; }
+.valve-range { flex: 1 1 12rem; min-width: 8rem; }
+/* The week on Next up (#8704): the cut line and a row's cost range. */
+.next-week { opacity: 0.55; }
+.cut-line { list-style: none; padding: 6px 16px; font-size: 13px; color: var(--muted-fg); border-top: 2px dashed var(--series-1); border-bottom: 1px solid var(--border); background: var(--bg); }
+.estimate { color: var(--fg); font-variant-numeric: tabular-nums; }
 /* The config form (#7336): nested objects as quiet fieldsets, scalar
    arrays as a wrapping row of chips, object arrays as cards. */
 .config-group { border-left: 2px solid var(--border); padding-left: 12px; }

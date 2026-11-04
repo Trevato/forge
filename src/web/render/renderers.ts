@@ -7,7 +7,8 @@
 import type { Html } from "../html.ts";
 import type { Blob } from "../../view/source.ts";
 import { audio } from "./audio.ts";
-import { config, isFormJson } from "./config.ts";
+import { config } from "./config.ts";
+import { isFormConfig } from "./config-format.ts";
 import { csv } from "./csv.ts";
 import { image } from "./image.ts";
 import { claimedMedia, fileKind, HEAD_BYTES, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
@@ -85,9 +86,9 @@ export function rendererFor(
         : claimedMedia(path)?.kind;
   if (kind === undefined || blob.size > RENDER_CAP[kind]) return undefined;
   if (blob.kind === "too_large" && !MEDIA_KINDS.has(kind)) return undefined;
-  // A kind may draw only some of its files: `config` draws JSON as a form,
-  // and leaves YAML and TOML their source.
-  const render = kind === "config" && !isFormJson(path) ? undefined : renderers[kind];
+  // A kind may draw only some of its files: `config` draws JSON, YAML and
+  // TOML as a form, and leaves the rest (INI, .env …) their source.
+  const render = kind === "config" && !isFormConfig(path) ? undefined : renderers[kind];
   if (render === undefined) return undefined;
   return { render, body: blob.kind === "too_large" ? NO_BYTES : blob.body };
 }

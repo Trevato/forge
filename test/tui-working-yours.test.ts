@@ -59,6 +59,7 @@ async function palette(user: User, keys: string[], shows?: string): Promise<stri
     await settleApp(tui);
     text = tui.screen.toText();
   }
+  if ((text.includes("searching…") || (shows !== undefined && !text.includes(shows)))) throw new Error(`never came: still waiting while (text.includes("searching…") || (shows !== undefined && !text.includes(shows)))`);
   tui.stop?.();
   return text;
 }

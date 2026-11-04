@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,33 +48,48 @@ test("a site-admin person is offered the whole roster", () => {
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
     ["profile", "Open a profile", "username or org"],
+    ["repos", "Repositories", "the repositories you may write"],
+    ["new-issue-anywhere", "New issue", "pick a repository"],
     ["repo", "Open a repository", "owner/name"],
     ["issues", "Issues in a repository", "owner/name"],
+    ["held", "Held by the Later gate", "owner/name"],
     ["pulls", "Pull requests in a repository", "owner/name"],
     ["milestones", "Milestones in a repository", "owner/name"],
+    ["next-up", "Next up in a repository", "owner/name"],
+    ["week", "The week in a repository", "owner/name"],
     ["repo-usage", "Usage of a repository", "owner/name"],
     ["new-issue", "New issue", "owner/name"],
     ["new-pull", "New pull request", "owner/name"],
     ["settings", "Repository settings", "owner/name"],
     ["new-repo", "New repository", undefined],
     ["new-app", "New app", "say what it does in a sentence; the crew starts on it"],
+    ["bring-app", "Bring an app", "paste a link from another forge; it runs here"],
     ["new-org", "New organization", "an organization you own, for a client's apps"],
     ["migrate", "Migrate a repository", "bring one in from an origin or a URL, pick its branch, put a crew on it"],
     ["new-forge", "New forge", "spawn a client's forge and get its claim link"],
     ["asked", "Asked", "your thoughts and what became of them"],
+    ["thought-notes", "Notes", "write an idea and watch it become shipped work"],
     ["decider", "Decider", "what it closed, deferred and asked you about today"],
     ["notify", "Phone notifications", "where the crew reaches your phone; s sets, x turns off"],
     ["confirms", "Confirms", "what the forge's agent asked to do; y does it once"],
+    ["trusted", "Trusted sources", "who folds in without review; a trusts, x removes, s stops all, v reverts"],
+    ["conversations", "Conversations", "your talks with the forge's agent; n starts one, r renames, x archives"],
     ["ssh-keys", "SSH keys", "list, add and remove the keys that sign in as you"],
     ["passkeys", "Passkeys", "the passkeys that sign in as you"],
     ["account", "Account settings", undefined],
     ["signins", "Signed in", "your browsers and tokens; d signs a browser out"],
     ["sentinel", "Sentinel", "the forge's open faults"],
     ["boards", "Boards", "the forge's boards and their panels"],
+    ["bugs", "Bugs", "open bugs and the bug clock"],
+    ["home-pins", "Pinned panels", "the panels pinned to home: reorder and unpin"],
+    ["now", "Now", "what check, review, land and live count, with the rows"],
+    ["forge-view", "Forge view", "the forge's counts, and Foundry when it is installed"],
     ["origin-apps", "Origin apps", "your OAuth apps for connecting origins; a adds, d removes"],
     ["system-memory", "System memory", "RSS beside the JS heap, hourly for 24 h"],
     ["flow", "Flow", "the pipeline's bottleneck and throughput"],
     ["system", "System", "the machine now: CPU, memory, disks, processes"],
+    ["valves", "Valves", "the week's budget as a valve per repository; turn one and the crew obeys"],
+    ["stalls", "Main-thread stalls", "the last hour's stall ms by route"],
     ["telemetry", "Telemetry", "which agents may read flow and system; enter flips the grant"],
     ["capacity", "Capacity", "concurrency and guards, live; e changes a settable one"],
     ["resilience", "Resilience", "where snapshots go and the mirror; each protection green, red or untested"],
@@ -107,15 +122,19 @@ test("a site-admin person is offered the whole roster", () => {
     ["invites", "Invite links", "make a single-use link, see which are open, revoke one"],
     ["bulk", "Bulk actions", "your last bulk actions; u undoes one inside its day"],
     ["subscriptions", "Crew subscriptions", "each account's budget and rest; wake one, set its budget, add or remove one"],
+    ["edge-only-accounts", "Edge-only accounts", "who would be locked out if the platform edge sign-in went off"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
     ["archived", "Archived repositories", "put away, not gone: open one or wake it"],
     ["cloud", "Cloud accounts", "provider tokens, what they are used for, today's calls"],
+    ["pinned", "Pinned forges", "deploy, update and roll back a forge on your cloud"],
+    ["bets", "Bets", "back, stop and finish a repository\'s bets"],
     ["origins", "Connected origins", "the hosts your mirrors come from"],
     ["domains", "Failure domains", "failure domains and their last drill"],
     ["feed", "Feed", "what happened, ranked; r replies on a post about an issue or pull, l likes"],
     ["front", "Front page", "the apps a first visitor sees, ranked; an admin pins or hides"],
     ["owner", "Owner's needs", "what needs the owner, snapshots, failure domains"],
     ["forges", "Forges you sent", "each forge sent, claimed or not, and its apps"],
+    ["origin-ahead", "New commits upstream", "mirrors whose origin has moved on: take them"],
     ["profile", "Your profile", "display name and email"],
     ["family", "Family", "the forge that sent this one, and the forges it sent"],
     ["chain", "Chain", "the forges this forge's code descends from, root first"],
@@ -128,10 +147,15 @@ test("a site-admin agent is offered the roster without the person-only entries",
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
     ["profile", "Open a profile", "username or org"],
+    ["repos", "Repositories", "the repositories you may write"],
+    ["new-issue-anywhere", "New issue", "pick a repository"],
     ["repo", "Open a repository", "owner/name"],
     ["issues", "Issues in a repository", "owner/name"],
+    ["held", "Held by the Later gate", "owner/name"],
     ["pulls", "Pull requests in a repository", "owner/name"],
     ["milestones", "Milestones in a repository", "owner/name"],
+    ["next-up", "Next up in a repository", "owner/name"],
+    ["week", "The week in a repository", "owner/name"],
     ["repo-usage", "Usage of a repository", "owner/name"],
     ["new-issue", "New issue", "owner/name"],
     ["new-pull", "New pull request", "owner/name"],
@@ -140,6 +164,7 @@ test("a site-admin agent is offered the roster without the person-only entries",
     ["migrate", "Migrate a repository", "bring one in from an origin or a URL, pick its branch, put a crew on it"],
     ["new-forge", "New forge", "spawn a client's forge and get its claim link"],
     ["asked", "Asked", "your thoughts and what became of them"],
+    ["thought-notes", "Notes", "write an idea and watch it become shipped work"],
     ["decider", "Decider", "what it closed, deferred and asked you about today"],
     ["ssh-keys", "SSH keys", "list, add and remove the keys that sign in as you"],
     ["account", "Account settings", undefined],
@@ -161,12 +186,16 @@ test("a site-admin agent is offered the roster without the person-only entries",
     ["forge-spend", "Forge spend", "today and the last 24 hours, headroom per subscription"],
     ["proposal-tokens", "Proposal tokens", "mint, list and revoke what a child proposes with"],
     ["can", "What I can do", "your role and what it allows here"],
+    ["bugs", "Bugs", "open bugs and the bug clock"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
     ["archived", "Archived repositories", "put away, not gone: open one or wake it"],
     ["cloud", "Cloud accounts", "provider tokens, what they are used for, today's calls"],
+    ["pinned", "Pinned forges", "deploy, update and roll back a forge on your cloud"],
     ["feed", "Feed", "what happened, ranked; r replies on a post about an issue or pull, l likes"],
     ["front", "Front page", "the apps a first visitor sees, ranked; an admin pins or hides"],
     ["forges", "Forges you sent", "each forge sent, claimed or not, and its apps"],
+    ["origin-ahead", "New commits upstream", "mirrors whose origin has moved on: take them"],
+    ["forge-view", "Forge view", "the forge's counts, and Foundry when it is installed"],
     ["family", "Family", "the forge that sent this one, and the forges it sent"],
     ["chain", "Chain", "the forges this forge's code descends from, root first"],
     ["quit", "Quit", "disconnect"],
@@ -182,23 +211,31 @@ test("a member person is offered the signed-in roster without the admin entries"
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
     ["profile", "Open a profile", "username or org"],
+    ["repos", "Repositories", "the repositories you may write"],
+    ["new-issue-anywhere", "New issue", "pick a repository"],
     ["repo", "Open a repository", "owner/name"],
     ["issues", "Issues in a repository", "owner/name"],
+    ["held", "Held by the Later gate", "owner/name"],
     ["pulls", "Pull requests in a repository", "owner/name"],
     ["milestones", "Milestones in a repository", "owner/name"],
+    ["next-up", "Next up in a repository", "owner/name"],
+    ["week", "The week in a repository", "owner/name"],
     ["repo-usage", "Usage of a repository", "owner/name"],
     ["new-issue", "New issue", "owner/name"],
     ["new-pull", "New pull request", "owner/name"],
     ["settings", "Repository settings", "owner/name"],
     ["new-repo", "New repository", undefined],
     ["new-app", "New app", "say what it does in a sentence; the crew starts on it"],
+    ["bring-app", "Bring an app", "paste a link from another forge; it runs here"],
     ["new-org", "New organization", "an organization you own, for a client's apps"],
     ["migrate", "Migrate a repository", "bring one in from an origin or a URL, pick its branch, put a crew on it"],
     ["new-forge", "New forge", "spawn a client's forge and get its claim link"],
     ["asked", "Asked", "your thoughts and what became of them"],
+    ["thought-notes", "Notes", "write an idea and watch it become shipped work"],
     ["decider", "Decider", "what it closed, deferred and asked you about today"],
     ["notify", "Phone notifications", "where the crew reaches your phone; s sets, x turns off"],
     ["confirms", "Confirms", "what the forge's agent asked to do; y does it once"],
+    ["conversations", "Conversations", "your talks with the forge's agent; n starts one, r renames, x archives"],
     ["ssh-keys", "SSH keys", "list, add and remove the keys that sign in as you"],
     ["passkeys", "Passkeys", "the passkeys that sign in as you"],
     ["account", "Account settings", undefined],
@@ -213,13 +250,17 @@ test("a member person is offered the signed-in roster without the admin entries"
     ["proposal-tokens", "Proposal tokens", "mint, list and revoke what a child proposes with"],
     ["model", "Model budget", "what your crew may spend, and add your own subscription"],
     ["can", "What I can do", "your role and what it allows here"],
+    ["bugs", "Bugs", "open bugs and the bug clock"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
     ["archived", "Archived repositories", "put away, not gone: open one or wake it"],
     ["bulk", "Bulk actions", "your last bulk actions; u undoes one inside its day"],
+    ["bets", "Bets", "back, stop and finish a repository\'s bets"],
     ["origins", "Connected origins", "the hosts your mirrors come from"],
     ["feed", "Feed", "what happened, ranked; r replies on a post about an issue or pull, l likes"],
     ["front", "Front page", "the apps a first visitor sees, ranked; an admin pins or hides"],
+    ["origin-ahead", "New commits upstream", "mirrors whose origin has moved on: take them"],
     ["profile", "Your profile", "display name and email"],
+    ["forge-view", "Forge view", "the forge's counts, and Foundry when it is installed"],
     ["family", "Family", "the forge that sent this one, and the forges it sent"],
     ["chain", "Chain", "the forges this forge's code descends from, root first"],
     ["quit", "Quit", "disconnect"],
@@ -233,8 +274,11 @@ test("signed out, the palette offers sign-in and the public entries", () => {
     ["profile", "Open a profile", "username or org"],
     ["repo", "Open a repository", "owner/name"],
     ["issues", "Issues in a repository", "owner/name"],
+    ["held", "Held by the Later gate", "owner/name"],
     ["pulls", "Pull requests in a repository", "owner/name"],
     ["milestones", "Milestones in a repository", "owner/name"],
+    ["next-up", "Next up in a repository", "owner/name"],
+    ["week", "The week in a repository", "owner/name"],
     ["repo-usage", "Usage of a repository", "owner/name"],
     ["new-issue", "New issue", "owner/name"],
     ["new-pull", "New pull request", "owner/name"],
@@ -242,10 +286,185 @@ test("signed out, the palette offers sign-in and the public entries", () => {
     ["signin", "Sign in", undefined],
     ["api", "API", "the forge's endpoints; run a GET"],
     ["changelog", "Changelog", "the last 30 releases and their pulls"],
+    ["bugs", "Bugs", "open bugs and the bug clock"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
     ["front", "Front page", "the apps a first visitor sees, ranked; an admin pins or hides"],
+    ["origin-ahead", "New commits upstream", "mirrors whose origin has moved on: take them"],
     ["family", "Family", "the forge that sent this one, and the forges it sent"],
     ["chain", "Chain", "the forges this forge's code descends from, root first"],
     ["quit", "Quit", "disconnect"],
   ]);
+});
+
+// ---- the pull page's palette: the page's actions and the palette's rows are one set ----
+
+import { openPull } from "../src/actions/pulls.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { pullRoster, type PullRosterInput } from "../src/web/studio/pull_roster.ts";
+
+describe("on a pull's Files step the palette lists what the page offers this reader", () => {
+  let pdir: string;
+  let papp: App;
+  let servers: Servers;
+  let writerCookie = "";
+  let readerCookie = "";
+  const thread = "/wendy/lib/pulls/1";
+
+  const signIn = async (username: string) => {
+    const res = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({ username, password: "a-good-passphrase" }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+  };
+
+  beforeAll(async () => {
+    pdir = await mkdtemp(join(tmpdir(), "forge-palette-pull-"));
+    papp = createApp({ dataDir: pdir, port: 0, host: "forge.test" });
+    servers = await serve(papp);
+    const mk = async (username: string, adminIfFirst: boolean) => {
+      const r = await createUser(papp.db, {
+        origin: "seed", trusted: true, username, email: `${username}@forge.local`,
+        password: "a-good-passphrase", adminIfFirst,
+      });
+      if (!r.ok) throw new Error(r.error);
+      return r.value;
+    };
+    const wendy = await mk("wendy", true);
+    await mk("rhea", false);
+    const r = await createRepo(papp, wendy, { name: "lib", visibility: "public" });
+    if (!r.ok) throw new Error(String(r.error));
+    for (const [branch, content] of [["main", "a\n"], ["feat", "a\nb\n"]] as const) {
+      const done = await commitToBranch(papp, wendy, r.value, {
+        branch, message: branch, files: [{ path: "f.txt", content }],
+      });
+      if (!done.ok) throw new Error(JSON.stringify(done.error));
+    }
+    const opened = await openPull(papp, wendy, r.value, { title: "Feat", baseBranch: "main", headBranch: "feat" });
+    if (!opened.ok) throw new Error(String(opened.error));
+    // A second pull, closed without merging: its page offers Reopen.
+    const second = await openPull(papp, wendy, r.value, { title: "Gone", baseBranch: "main", headBranch: "feat" });
+    if (!second.ok) throw new Error(String(second.error));
+    writerCookie = await signIn("wendy");
+    readerCookie = await signIn("rhea");
+  }, 120_000);
+
+  afterAll(async () => {
+    await servers.stop();
+    papp.close();
+    await rm(pdir, { recursive: true, force: true });
+  });
+
+  // The page's form actions, by the palette row that stands for each.
+  const STANDS_FOR: Record<string, string> = {
+    checks: "Check again", merge: "Merge pull request", "review-state": "Review", assignee: "Assign",
+    labels: "Labels", ship: "Ship", hold: "Hold", state: "Close pull request", edit: "Edit", comments: "Comment",
+  };
+  const READING = ["Conversation", "Files", "Branch", "Commits"];
+
+  const read = async (path: string, cookie: string, at = thread) => {
+    const html = await (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
+    const index = JSON.parse(/id="palette-index">([^<]*)</.exec(html)![1]!) as {
+      items: { t: string; h: string; c?: string; p?: Record<string, string> }[];
+    };
+    const forms = [...html.matchAll(/<form\s[^>]*action="([^"]+)"/g)]
+      .map((m) => m[1]!)
+      .filter((a) => a.startsWith(`${at}/`))
+      .map((a) => {
+        const verb = STANDS_FOR[a.slice(at.length + 1)];
+        if (verb === undefined) throw new Error(`the page has a form the palette does not know: ${a}`);
+        return verb;
+      });
+    return { rows: index.items.filter((i) => i.c === "This pull"), forms };
+  };
+
+  for (const [who, kind] of [["writer", () => writerCookie], ["reader", () => readerCookie]] as const) {
+    for (const [tab, path] of [["Conversation", thread], ["Files", `${thread}/files`]] as const) {
+      test(`on the ${tab} tab a ${who}'s action rows are exactly the page's forms`, async () => {
+        const { rows, forms } = await read(path, kind());
+        // The Files tab has no comment form of its own: its Comment row links to the Conversation's.
+        const acts = rows.map((r) => r.t).filter((t) => !READING.includes(t) && !(tab === "Files" && t === "Comment"));
+        const same = (t: string) => (t === "Bring up to date" ? "Ship" : t);
+        expect(acts.map(same).sort()).toEqual([...new Set(forms)].sort());
+        // A row that posts goes to a form action the page has, with a path of its own.
+        for (const r of rows.filter((x) => x.p)) expect(r.h.startsWith(`${thread}/`)).toBe(true);
+        // No title twice.
+        expect(new Set(rows.map((r) => r.t)).size).toBe(rows.length);
+      });
+    }
+  }
+
+  test("on a closed pull, Reopen is on the page and in the palette for its author or a writer alone", async () => {
+    const at = "/wendy/lib/pulls/2";
+    const shut = await fetch(`${servers.url}${at}/state`, {
+      method: "POST",
+      headers: { cookie: writerCookie, origin: servers.url, "content-type": "application/x-www-form-urlencoded" },
+      body: "state=closed",
+      redirect: "manual",
+    });
+    expect(shut.status).toBeLessThan(400);
+    const same = (t: string) => (t === "Close pull request" ? "Reopen pull request" : t);
+    for (const [cookie, may] of [[writerCookie, true], [readerCookie, false]] as const) {
+      for (const path of [at, `${at}/files`]) {
+        const { rows, forms } = await read(path, cookie, at);
+        const acts = rows
+          .map((r) => r.t)
+          .filter((t) => !READING.includes(t) && !(path.endsWith("/files") && t === "Comment"));
+        expect(acts.sort()).toEqual([...new Set(forms.map(same))].sort());
+        const reopen = rows.find((r) => r.t === "Reopen pull request");
+        if (may) expect(reopen).toMatchObject({ h: `${at}/state`, p: { state: "open" } });
+        else expect(reopen).toBeUndefined();
+      }
+    }
+  });
+
+  test("both tabs list the same reading rows, and no row points at the Files page twice", async () => {
+    for (const path of [thread, `${thread}/files`]) {
+      const { rows } = await read(path, writerCookie);
+      expect(rows.filter((r) => READING.includes(r.t)).map((r) => r.t)).toEqual(READING);
+      expect(rows.filter((r) => r.h === `${thread}/files`).length).toBe(1);
+    }
+  });
+
+  test("a reader may review and comment on the Files tab, but not assign, check or merge", async () => {
+    const titles = (await read(`${thread}/files`, readerCookie)).rows.map((r) => r.t);
+    expect(titles).toEqual(expect.arrayContaining(["Conversation", "Files", "Branch", "Comment", "Review"]));
+    for (const t of ["Assign", "Labels", "Check again", "Merge pull request"]) expect(titles).not.toContain(t);
+  });
+
+  test("a writer is offered every action the page has", async () => {
+    const titles = (await read(`${thread}/files`, writerCookie)).rows.map((r) => r.t);
+    expect(titles).toEqual(
+      expect.arrayContaining(["Conversation", "Files", "Branch", "Commits", "Comment", "Review", "Assign", "Check again", "Merge pull request"]),
+    );
+  });
+
+  test("a signed-out visitor is offered only the reading rows", async () => {
+    const titles = (await read(`${thread}/files`, "")).rows.map((r) => r.t);
+    expect(titles).toEqual(["Conversation", "Files", "Branch", "Commits"]);
+  });
+
+  test("the rules, one by one", () => {
+    const base: PullRosterInput = {
+      base: "/o/r", number: 3, headBranch: "a b", crossRepo: false, signedIn: true, writer: true,
+      state: "open", merged: false, mergeReady: true, labels: true, mayState: true,
+    };
+    const titles = (o: Partial<PullRosterInput>) => pullRoster({ ...base, ...o }).map((r) => r.t);
+    expect(pullRoster(base).find((r) => r.t === "Merge pull request")).toMatchObject({ h: "/o/r/pulls/3/merge", p: { strategy: "merge" } });
+    expect(titles({ mergeReady: false })).not.toContain("Merge pull request");
+    expect(pullRoster(base).find((r) => r.t === "Branch")!.h).toBe("/o/r/tree/a%20b");
+    expect(titles({ crossRepo: true })).not.toContain("Branch");
+    expect(titles({ merged: true })).not.toContain("Comment");
+    expect(titles({ state: "closed" })).not.toContain("Check again");
+    expect(titles({ labels: false })).not.toContain("Labels");
+    expect(titles({ labels: true })).toContain("Labels");
+    expect(titles({})).not.toContain("Diff");
+    expect(titles({})).not.toContain("Reopen pull request");
+    expect(titles({ state: "closed" })).toContain("Reopen pull request");
+    expect(titles({ state: "closed", mayState: false })).not.toContain("Reopen pull request");
+    expect(titles({ state: "closed", merged: true })).not.toContain("Reopen pull request");
+    expect(pullRoster(base).filter((r) => r.p).every((r) => r.h.startsWith("/o/r/pulls/3/"))).toBe(true);
+  });
 });

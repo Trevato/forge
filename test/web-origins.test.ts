@@ -205,12 +205,10 @@ describe("origins on the web", () => {
     const html = await (await asUser(alice, "/settings/origins")).text();
     expect(html).toContain("No origins connected");
     expect(html).toContain("Forgejo / Gitea, one click");
-    expect(html).toContain("Personal access token");
-    // The token path comes first and is open; the OAuth pair is folded away.
-    expect(html.indexOf("Personal access token")).toBeLessThan(
-      html.indexOf("One-click sign-in"),
-    );
-    expect(html).toContain("recommended");
+    // Another forge leads (#9388); the rest are folded.
+    expect(html).toContain("Another forge");
+    expect(html.indexOf("Another forge")).toBeLessThan(html.indexOf("A token for GitHub, Forgejo or Gitea"));
+    expect(html.indexOf("Another forge")).toBeLessThan(html.indexOf("One-click sign-in"));
     // Drawn with §5's rows and buttons, not the page's own classes.
     for (const gone of ["handoff", "connect-more", "connect-path"]) {
       expect(html).not.toContain(gone);
@@ -240,6 +238,7 @@ describe("origins on the web", () => {
     const closed = await (await asUser(alice, "/settings/origins")).text();
     const used = await (await asUser(alice, "/settings/origins?host=codeberg.org")).text();
     for (const [id, brand] of [
+      ["connect-forge", "globe"],
       ["connect-token", "key"],
       ["connect-github", "github"],
       ["connect-forgejo", "forgejo"],
@@ -254,10 +253,12 @@ describe("origins on the web", () => {
         expect(/<span\s+class="row-title"[^>]*>([\s\S]*?)<\/span\s*>/.exec(summary)![1]).toContain(pointAtSprite(icon(brand).text, spriteAsset().path));
       }
     }
-    expect(fold(closed, "connect-token").open).toBe(true);
+    expect(fold(closed, "connect-forge").open).toBe(true);
+    expect(fold(closed, "connect-token").open).toBe(false);
     expect(fold(closed, "connect-github").open).toBe(false);
     expect(fold(closed, "connect-forgejo").open).toBe(false);
-    expect(fold(used, "connect-token").open).toBe(true);
+    expect(fold(used, "connect-forge").open).toBe(true);
+    expect(fold(used, "connect-token").open).toBe(false);
     expect(fold(used, "connect-github").open).toBe(true);
     expect(fold(used, "connect-forgejo").open).toBe(true);
   });
@@ -771,6 +772,9 @@ describe("origins on the web", () => {
       redirect: "manual",
     });
     expect(unknown.status).toBe(404);
+    const plainBody = await unknown.clone().text();
+    expect(plainBody).not.toContain("/search?q=");
+    expect(plainBody).not.toContain("Create an account");
     app.db
       .query("UPDATE oauth_flow SET expires_at = ?1 WHERE id = ?2")
       .run("2020-01-01T00:00:00.000Z", flowId);
@@ -785,7 +789,8 @@ describe("origins on the web", () => {
       text
         .replaceAll(/nonce="[^"]*"/g, 'nonce="N"')
         .replaceAll(/here\?path=[^"&\s]*/g, "here?path=")
-        .replaceAll(/next=[^"]*/g, "next=");
+        .replaceAll(/next=[^"]*/g, "next=")
+        .replaceAll(/\/new\/issue\?from=[^"]*/g, "/new/issue?from=");
     const staleText = await stale.text();
     const unknownText = await unknown.text();
     expect(sameBut(staleText)).toBe(sameBut(unknownText));
@@ -865,7 +870,7 @@ describe("origins on the web", () => {
     expect(html).not.toContain("error-note");
     expect(html).not.toContain("origin-callback-err");
     // The token path is unaffected, and still offered.
-    expect(html).toContain("Personal access token");
+    expect(html).toContain("Another forge");
 
     const started = await fetch(`${base}/settings/origins/oauth`, {
       method: "POST",

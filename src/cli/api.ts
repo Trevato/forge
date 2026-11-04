@@ -473,7 +473,7 @@ export class ForgeApi {
   }
 
   /** The latest turns of the person's conversation (`GET /api/v1/conversation/turns`). */
-  async conversation(): Promise<ApiResult<{ running: boolean; turns: { id: string; role: string; text: string }[] }>> {
+  async conversation(): Promise<ApiResult<{ running: boolean; turns: { id: string; role: string; text: string; work?: { steps: string; links: { href: string; label: string }[] } | null }[] }>> {
     return this.call("/api/v1/conversation/turns?limit=20");
   }
 

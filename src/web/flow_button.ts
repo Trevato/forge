@@ -11,7 +11,7 @@ const ON = "Adds the flow label: it goes ahead of other ready work";
 const OFF = "Takes the flow label off: it no longer goes ahead of other ready work";
 
 export function flowButton(action: string, first: boolean, back: string): Html {
-  return html`<form method="post" action="${action}" class="inline" title="${first ? OFF : ON}">
+  return html`<form method="post" action="${action}" class="inline" title="${first ? OFF : ON}" data-now="${first ? "Flow first" : "Not first"}" data-now-alt="${first ? "Not first" : "Flow first"}" data-now-flip="flow">
     <input type="hidden" name="flow" value="${first ? "0" : "1"}" />
     <input type="hidden" name="back" value="${back}" />
     ${btn(first ? "Not first" : "Flow first", { size: "sm", variant: "outline" })}

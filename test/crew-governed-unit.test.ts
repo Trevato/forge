@@ -7,6 +7,7 @@
  * (runs started, the feed, the tick line) is proved in crew-governed.test.ts.
  * Each test has its own database, so none depends on another's pulls.
  */
+import { quietWeek } from "./helpers/week-quiet.ts";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,6 +37,7 @@ afterEach(() => {
 async function forge(slots: number) {
   const root = mkdtempSync(join(tmpdir(), "forge-governed-unit-"));
   const app: App = createApp({ dataDir: root, port: 0 });
+  quietWeek(app.db);
   cleanup.push(() => {
     app.close();
     rmSync(root, { recursive: true, force: true });

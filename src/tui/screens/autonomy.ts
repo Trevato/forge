@@ -4,16 +4,24 @@
  * the repository (`canAdmin`), an agent included, as the page's API lets one:
  * they pick the mode with `m` (a confirm offering Off, Assisted and Autonomous
  * outright, naming what each does and the ceiling that will apply, Cancel
- * selected), the ceiling with `c` and the slots with `s`; each saves through
+ * selected), the ceiling with `c` and, for each seat of the team, how much it
+ * may do at once with `p` (planner), `s` (builder) or `r` (reviewer), 0 pausing
+ * it (`setSeatSlots`, the web card's and the MCP's one door); each saves through
  * `updateRepoSettings` with the fields the page writes and toasts the page's
  * flash (`AUTONOMY_SAID`), and a value out of bounds is refused with the
  * page's sentence (`checkAutonomy`).
+ * `o` sets the polish share (0–50, #8853) through the same `updateRepoSettings`, so a web viewer sees it live.
  * Anyone else gets no palette entry and, if the screen is reached, no values.
  */
 
 import { updateRepoSettings } from "../../actions/repos.ts";
+import { POLISH_SHARE_MAX, validPolishShare } from "../../crew/small_share.ts";
+import { seatSlotsSaid, setSeatSlots } from "../../actions/seat_slots.ts";
+import { checkSeatSlots, seatSlotsOf, seatSlotsWords } from "../../crew/seat_slots.ts";
+import type { CrewRole } from "../../core/agents.ts";
 import {
   AUTONOMY,
+  AUTONOMY_BOUNDS,
   AUTONOMY_SAID,
   canAdmin,
   checkAutonomy,
@@ -96,7 +104,7 @@ export function autonomyScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     title: "Autonomy",
     get keys() {
       return mayChange()
-        ? [binding(["m"], "mode"), binding(["c"], "ceiling"), binding(["s"], "slots")]
+        ? [binding(["m"], "mode"), binding(["c"], "ceiling"), binding(["p"], "planner"), binding(["s"], "builder"), binding(["r"], "reviewer"), binding(["o"], "polish share")]
         : [];
     },
     render(area, s) {
@@ -110,7 +118,10 @@ export function autonomyScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
             `Mode     ${r.autonomy}`,
             `         ${AUTONOMY_SAID[r.autonomy]}`,
             `Ceiling  ${dollars(r.autonomyCeilingUsd)} a day`,
-            `Slots    ${r.autonomySlots}`,
+            `Polish   ${r.polishShare}% of the week's spend`,
+            ...seatSlotsOf(f.db, r).map(
+              (p) => `${(p.role[0]!.toUpperCase() + p.role.slice(1)).padEnd(9)}${p.slots} at once · ${seatSlotsWords(p)}`,
+            ),
           ];
       lines.forEach((line, i) => {
         if (i < area.h)
@@ -153,10 +164,30 @@ export function autonomyScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         });
         return true;
       }
-      if (e.key === "s") {
-        ask("Slots", "a whole number, 1 to 8", "1 to 8", String(current().autonomySlots), (raw) => {
-          const n = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
-          save({ slots: n }, `Slots are ${n}.`);
+      if (e.key === "o") {
+        ask("Polish share", `percent of the week's spend, 0 to ${POLISH_SHARE_MAX}`, `0 to ${POLISH_SHARE_MAX}`, String(current().polishShare), (raw) => {
+          const n = /^\d{1,3}$/.test(raw) ? Number(raw) : Number.NaN;
+          if (!validPolishShare(n)) return void ctx.toast(`Polish share is a whole number of percent, 0 to ${POLISH_SHARE_MAX}.`, "danger");
+          void updateRepoSettings(f.app, f.user, current(), { polishShare: n }).then((done) => {
+            ctx.toast(done.ok ? `Polish share is ${n}% of the week's spend.` : "Only an admin of this repository sets its polish share.", done.ok ? "success" : "danger");
+            ctx.invalidate();
+          });
+          return undefined;
+        });
+        return true;
+      }
+      const seat: Partial<Record<string, CrewRole>> = { p: "planner", s: "builder", r: "reviewer" };
+      const role = seat[e.key];
+      if (role !== undefined) {
+        const max = role === "planner" ? 1 : 8;
+        const slots = seatSlotsOf(f.db, current()).find((p) => p.role === role)!.slots;
+        ask(`${role[0]!.toUpperCase()}${role.slice(1)}`, `a whole number, 0 (paused) to ${max}`, `0 to ${max}`, String(slots), (raw) => {
+          const checked = checkSeatSlots(role, raw);
+          if (checked === undefined) return void ctx.toast(AUTONOMY_BOUNDS, "danger");
+          void setSeatSlots(f.app, f.user, current(), role, checked.slots).then((done) => {
+            ctx.toast(done.ok ? seatSlotsSaid(role, checked.slots) : "Only an admin of this repository sets its crew.", done.ok ? "success" : "danger");
+            ctx.invalidate();
+          });
           return undefined;
         });
         return true;

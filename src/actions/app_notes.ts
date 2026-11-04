@@ -229,7 +229,7 @@ export async function sendNote(
     // Without its label the crew's warning would not show: take it back.
     console.error(`app note: issue #${opened.value.number} could not take the ${FROM_APP_LABEL} label: ${labelled.error}`);
     // Through the action layer, as the owner: the bus, the webhooks and a mirror's origin see it.
-    const closed = await setIssueStateThrough(app, owner, repo, opened.value, "closed", { reason: "dropped" });
+    const closed = await setIssueStateThrough(app, owner, repo, opened.value, "closed", { reason: "dropped", system: true });
     if (!closed.ok) console.error(`app note: issue #${opened.value.number} could not be closed: ${closed.error}`);
     return unavailable;
   }
@@ -258,7 +258,7 @@ export async function moderateNote(
   const issue = getIssue(app.db, repo.id, note.issueNumber);
   // Close first: a note is hidden only once its issue is, wherever the issue lives.
   if (issue !== undefined && issue.state === "open") {
-    const closed = await setIssueStateThrough(app, actor, repo, issue, "closed", { reason: "dropped" });
+    const closed = await setIssueStateThrough(app, actor, repo, issue, "closed", { reason: "dropped", system: true });
     if (!closed.ok) {
       console.error(`app note: issue #${issue.number} could not be closed: ${closed.error}`);
       return err("unavailable");

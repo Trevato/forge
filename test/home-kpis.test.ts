@@ -140,8 +140,8 @@ describe("home kpi row titles", () => {
     expect(full).toContain('class="stat-value num" title="abcdef0123456789"');
     expect(full).toContain('class="stat-value num" title="0.25"');
     expect(full).toContain('class="stat-value num" title="3m 05s"');
-    expect(full).toContain('title="Live since 2026-10-19T11:00:00.000Z"');
-    expect(full).toContain('title="6 changes in 24 h"');
+    expect(full).toContain('title="Live since 2026-10-19T11:00:00.000Z.');
+    expect(full).toContain('title="6 changes in 24 h. Changes shipped');
   });
 
   test("no value or note lacks a title, and none brings back a git word", () => {

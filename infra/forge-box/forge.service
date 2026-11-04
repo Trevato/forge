@@ -1,0 +1,22 @@
+[Unit]
+Description=The forge, restored from a snapshot, beside production
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=forge
+Group=forge
+WorkingDirectory=/opt/forge
+EnvironmentFile=/etc/forge/forge.env
+Environment=FORGE_DATA=/var/lib/forge
+ExecStart=/usr/local/bin/bun run src/main.ts
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/forge
+
+[Install]
+WantedBy=multi-user.target

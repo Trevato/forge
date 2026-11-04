@@ -10,7 +10,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 /** Who acts through the agent, and in which conversation. */
 interface Acting {
   readonly userId: string;
-  readonly via: string;
+  /** The conversation it acts in, when the agent is speaking for the person. */
+  readonly via?: string;
+  /** The door it came in by: `session`, `edge`, `password` or `token:<name>`. */
+  readonly door?: string;
 }
 
 const store = new AsyncLocalStorage<Acting | undefined>();
@@ -27,6 +30,12 @@ export const actingVia = <T>(acting: Acting | undefined, fn: () => T): T =>
 export const currentVia = (actorId: string | undefined): string | undefined => {
   const acting = store.getStore();
   return acting !== undefined && acting.userId === actorId ? acting.via : undefined;
+};
+
+/** The door an actor's request came in by, for the audit of what it did; none outside a request (the terminal, a tick). */
+export const currentDoor = (actorId: string): string | undefined => {
+  const acting = store.getStore();
+  return acting !== undefined && acting.userId === actorId ? acting.door : undefined;
 };
 
 /** The words that follow the person's name on the trail. */

@@ -8,7 +8,8 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { BEHIND_DIVISOR, STRANGER_BUDGET, setCrawlClock } from "../src/http/crawl.ts";
+import { BEHIND_DIVISOR, STRANGER_BUDGET, finishedStrangerDeep, setCrawlClock, takeCrawl } from "../src/http/crawl.ts";
+import { notePeer } from "../src/http/peer.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { crawlerShare, createPerfRecord } from "../src/perf/record.ts";
 import { crawlReport } from "../src/perf/crawlers.ts";
@@ -77,6 +78,21 @@ test("the budget divides while the loop is behind, and the explorer's folder exp
   expect((await get(deep, from("10.4.0.1"))).status).toBe(429);
   for (let i = 0; i < 40; i++) expect((await get("/alice/open/tree/main?fragment=explorer", from("10.4.0.2"))).status).toBe(200);
   setCrawlClock(app, () => 6_500_000, false);
+});
+
+test("while the loop is behind, strangers on many addresses share one ceiling; on time they don't; a person is never counted", async () => {
+  setCrawlClock(app, () => 7_000_000, true);
+  const deep = `/alice/open/blob/${sha}/a.txt`;
+  for (let i = 0; i < STRANGER_BUDGET.behindAll; i++) {
+    expect((await get(deep, from(`10.3.${i >> 8}.${(i & 255) + 1}`))).status).toBe(200);
+  }
+  const refused = await get(deep, from("10.4.0.1"));
+  expect(refused.status).toBe(429);
+  expect(await refused.text()).toContain("sign in");
+  const cookie = `forge_session=${createSession(app.db, alice.id).token}`;
+  expect((await get(deep, from("10.4.0.1", { cookie }))).status).toBe(200);
+  setCrawlClock(app, () => 7_000_000, false);
+  expect((await get(deep, from("10.4.0.1"))).status).toBe(200);
 });
 
 test("the board counts the browser-looking traffic and the refusals", () => {
@@ -165,4 +181,35 @@ test("the pages behind the listing's commit links carry the immutable headers fo
   expect(blob).toBeDefined();
   expect((await get(blob!, from("10.6.0.1"))).headers.get("cache-control")).toContain("immutable");
   expect((await get(blob!.replace("/blob/", "/tree/").replace("/a.txt", ""), from("10.6.0.1"))).headers.get("cache-control")).toContain("immutable");
+});
+
+test("pages queued past their share count as behind even with the loop on time, and stop counting once answered", () => {
+  const fresh = {} as App;
+  let now = 8_000_000;
+  setCrawlClock(fresh, () => now, false);
+  let n = 0;
+  const ask = () => {
+    n++;
+    const request = new Request("http://forge.test/alice/open/blob/c/a.txt", { headers: { "user-agent": "Mozilla/5.0 Chrome/150.0" } });
+    notePeer(request, `10.9.${n >> 8}.${(n & 255) + 1}`);
+    return { request, verdict: takeCrawl(fresh, request, "/alice/open/blob/c/a.txt") };
+  };
+  const open: Request[] = [];
+  for (let i = 0; i < STRANGER_BUDGET.inFlight; i++) {
+    const a = ask();
+    expect(a.verdict).toBeUndefined();
+    open.push(a.request);
+  }
+  for (let i = 0; i < STRANGER_BUDGET.behindAll; i++) {
+    const a = ask();
+    expect(a.verdict).toBeUndefined();
+    open.push(a.request);
+  }
+  expect(ask().verdict?.scope).toBe("stranger");
+  for (const r of open) finishedStrangerDeep(fresh, r);
+  expect(ask().verdict).toBeUndefined();
+  // A finish that never came is forgotten after a minute.
+  for (let i = 0; i < STRANGER_BUDGET.inFlight; i++) ask();
+  now += 61_000;
+  for (let i = 0; i < 90; i++) expect(ask().verdict).toBeUndefined();
 });

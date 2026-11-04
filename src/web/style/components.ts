@@ -141,13 +141,6 @@ fieldset.field > .check + .check { margin-top: 8px; }
 .field-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
 .field-row .field { flex: 1; min-width: 160px; margin-bottom: 0; }
 .form-actions { margin-top: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.error-note {
-  display: block; color: var(--danger); font-size: 13px; font-weight: 500;
-  padding: 8px 12px; margin: 0 0 12px;
-  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  border-radius: var(--radius-sm);
-}
 
 /* ---- stat tile ---- fixed heights: a changing value shifts nothing */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
@@ -235,6 +228,7 @@ progress::-webkit-progress-value { background: var(--success); }
 progress::-moz-progress-bar { background: var(--success); }
 
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: var(--faint); flex: none; }
+.word-text { font-weight: 600; color: var(--fg); }
 .dot[data-tone="success"] { background: var(--success); }
 .dot[data-tone="danger"] { background: var(--danger); }
 .dot[data-tone="attn"] { background: var(--attn); }
@@ -276,6 +270,43 @@ kbd {
   border-radius: var(--radius-sm); background: var(--muted);
   font-family: var(--mono); font-size: var(--fs-min); font-weight: 500; color: var(--muted-fg);
 }
+
+/* A menu or palette row's key sits in its own column (#8930); anywhere else a
+   key is a tooltip or an overlay and takes no room. */
+.keyhint { margin-left: 6px; }
+@media (pointer: coarse), (max-width: 640px) { .keyhint { display: none; } }
+
+/* ::before, because components already use ::after (the current tab's line,
+   a menu's caret). :where() keeps the host rule at zero specificity, so a
+   component that positions itself (sticky, absolute) keeps its position. The
+   text after "/" is the chip's accessible text: none, so a name is never read
+   with its key glued on; the key is \`aria-keyshortcuts\` instead. */
+:where([data-hint]) { position: relative; }
+[data-hint]::before {
+  content: attr(data-hint); content: attr(data-hint) / ""; position: absolute; z-index: 40;
+  top: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+  min-width: 20px; padding: 2px 5px; box-sizing: border-box; text-align: center;
+  border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: var(--radius-sm); background: var(--muted); color: var(--muted-fg);
+  font-family: var(--mono); font-size: var(--fs-min); font-weight: 500; line-height: 16px; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity 120ms var(--ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  [data-hint]:hover::before, [data-hint]:focus-visible::before, [data-hint]:focus-within::before,
+  html[data-hints] [data-hint]::before { opacity: 1; }
+}
+/* At the window's edges the chip hangs inward, so it never leaves the viewport. */
+.wordmark[data-hint]::before { left: 0; transform: none; }
+.topbar-tools [data-hint]::before { left: auto; right: 0; transform: none; }
+/* A card clips what leaves its box: there the chip sits on the element's top
+   right corner, mostly above it, clear of the label's text. */
+.card [data-hint]::before { top: 0; left: auto; right: 0; transform: translateY(-60%); }
+/* The tab strip scrolls sideways, so it clips above and below too: the chip is
+   small and sits in the tab's own top padding, above the label. */
+.tabs [data-hint]::before {
+  top: 0; min-width: 0; padding: 0 3px; border-bottom-width: 1px; line-height: 12px;
+}
+@media (pointer: coarse) { [data-hint]::before { display: none; } }
 
 .sha {
   font-family: var(--mono); font-size: 12.5px; padding: 1px 5px;
@@ -429,6 +460,11 @@ a.row:hover .row-title { color: var(--accent); }
 .list > li.has-after > .row, .list > li.has-after > details { flex: 1 1 0; min-width: 0; }
 .row-after { flex: none; padding: 0 14px 0 0; }
 .list > li.has-after > .row-children { flex-basis: 100%; }
+.archived-list .row-title, .archived-list .row-meta { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .archived-list .list > li.has-after > .row { flex-basis: 100%; }
+  .archived-list .row-after { width: 100%; display: flex; justify-content: flex-end; gap: 8px; padding: 0 14px 10px; }
+}
 .row-trail { display: flex; align-items: center; gap: 8px; flex: none; }
 /* The leading glyph is the row's state; a badge repeating it is noise. */
 .row[data-state="open"] .row-lead { color: var(--success); }
@@ -783,7 +819,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin: 20px 0 14px;
 }
-.page-head h1 { min-width: 0; }
+.page-head h1 { min-width: 0; overflow-wrap: anywhere; }
 .page-head > .page-head-sub { flex-basis: 100%; margin-top: -4px; }
 
 /* ---- breadcrumbs ---- */
@@ -816,7 +852,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   content: ""; position: absolute; left: 13px; top: 8px; bottom: 8px;
   width: 2px; background: var(--border);
 }
-.tl-item { position: relative; padding-left: 36px; }
+.tl-item { position: relative; padding-left: 36px; min-width: 0; }
 .tl-item .tl-dot {
   position: absolute; left: 4px; top: 6px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -862,6 +898,9 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .bp-w3 { grid-column: span 3; }
 .bgrid h2 { font-size: 14px; }
 @media (max-width: 720px) { .bgrid { grid-template-columns: minmax(0, 1fr); } .bp-w2, .bp-w3 { grid-column: auto; } }
+
+/* Home's slot for pinned panels holds one panel row until the fragment lands, then the panels size it. */
+.home-panels-slot[data-refresh] { min-height: 240px; margin-bottom: 16px; }
 
 /* ---- settings shell ---- */
 .settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 16px; }

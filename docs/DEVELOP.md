@@ -162,10 +162,41 @@ record and exits non-zero unless all ten are green.
 A brand-new test file does not need that record: it joins the gate on its
 own green check, not ten runs. That is accepted on purpose — a flaky new
 test can turn the gate red once before anyone sees it — and the nightly
-flake hunt below is the backstop that files it and quarantines it.
+flake hunt below is the backstop that files it and quarantines it. One
+shape is refused on sight, new file or not, because ten runs on a fast box
+miss it: a wait that runs out of time and carries on — a loop that polls a
+condition at most N times or until a deadline, and whose next statement
+neither checks the outcome nor returns it (`fallThroughWaits` in
+`scripts/flake.ts`). `admit` refuses such a file before any run, naming the
+line, and `test/flake.test.ts` refuses it in every test file except the 47
+that held one when the rule began (`FALL_THROUGH_OWED`, owned by #9025; the
+rule goes red on a listed file that no longer breaches, so the list only
+shrinks). The fix is one line after the loop: fail saying what never came.
 
-**No flaky tests.** Nightly, `.forgejo/workflows/flake-hunt.yml` runs every
-gate file five times on a loaded box, each run a fresh seed that orders both
+### How tui-backups and conversation-queue got in (#9017)
+
+Neither passed an admission run; neither was ever given one. Both were new
+files, so each joined the gate on its pull's own green check: no seed (the
+gate runs every file's tests in written order, without `--randomize`), the
+check cell's own load, one run.
+
+- `test/tui-backups.test.ts` joined with #7278 (6e48d8c0). Its tests read
+  the destination an earlier test sealed, and its key check read the frames
+  every earlier test drew, so it was green only in written order. Run
+  through `admit` as it landed, it is red in 9 of 10 runs (seeds 2899264984
+  … 2895068531, the one green seed 3988233074); as #8995 left it, 0 of 10,
+  and refused first for its prompt wait. #9017 made each test make its own
+  destination and check every frame as it is drawn: 10 of 10 green.
+- `test/conversation-queue.test.ts` joined with #8893 (65654ceb). Its
+  `until` polled 200 × 20 ms and then went on as if the condition had
+  come, so on a slow box the test stopped a turn before the forge had read
+  its partial answer. Under `admit` as it landed it was red once in 10
+  (seed 795951491), so one admission run could have passed it; it is now
+  refused before any run, at its line 48. As #8995 left it, it passes:
+  10 of 10 green.
+
+**No flaky tests.** Nightly at 02:17 UTC the forge itself (`src/nightly/`,
+a cell on a checkout of main) runs every gate file five times on a loaded box, each run a fresh seed that orders both
 the files and (through `--randomize`) the tests inside them, nothing stopped
 early. A file red in some runs and green in others is flaky: the hunt files
 a `Flaky: test/x.test.ts` issue carrying the failure text, the seed and the
@@ -182,18 +213,51 @@ a retry: `test/flake.test.ts` fails on `--retry`, `--rerun-each`, a bunfig
 `retry` or a `{ retry: N }` anywhere the gate runs, and on any test that
 bounds a measured time under 200 ms (a loopback fetch on a loaded runner
 takes tens of ms): assert relative to a baseline from the same run, or bound
-only the failure the test names. The workflow needs a
-`FORGE_TOKEN` secret and a `FORGE_URL` variable on the mirror.
+only the failure the test names. The hunt takes the gate in
+20 slices, one after another, each cut at 30 minutes, and ends by proposing the
+quarantine as a pull on `flake-hunt/<date>`. Worst case, all 20 slices hit
+their cut: 20 x 30 minutes, plus the install and the quarantine (10 each), so
+about 10 h 20 min, ending near 12:40 UTC. Jobs run one at a time, so the
+outside run (03:47) queues behind a long hunt and starts late; it still keeps
+its own slot, which is what the record and the owed-on-waking rule read. A
+stop (a release) aborts the running step at once. The forge needs `FORGE_TOKEN` (the
+hunt's author) and cells; a preview runs none, and a forge without either says
+so in its log and runs none. A job whose slot passed while the forge was down
+runs on waking; one restarted mid-run is not run twice (`nightly/<job>.json`
+in `FORGE_APP_DATA`). What each last did, and what it filed (`filed #12`,
+`closed #4`, `quarantined test/x.test.ts`), is on Resilience and in the
+terminal's Resilience dialog; the run's whole output is
+`/resilience/nightly/<job>` (`nightly/<job>.log`), the run every issue it
+files names, as the Forgejo jobs named their Actions run
+(`docs/features/nightly.md`).
 
-**No unseen red outside the gate.** Nightly, `.forgejo/workflows/outside-gate.yml`
+**No unseen red outside the gate.** Nightly at 03:47 UTC, the forge itself
 runs `bun scripts/flake-hunt.ts outside --file-issues`: every file in
 `EXCLUDED` (the complement of the gate, from the same list, so a file moved
 into the gate is no longer run there), once, one at a time, with the gate's
 60 s timeout. A file that newly fails opens one `Red: test/x.test.ts` issue
 naming its first failing test; still red on another test, it updates that
 issue; still red on the same test, it says nothing, so the owner's asks show
-it once; passing again, it closes the issue. Same `FORGE_TOKEN` and
-`FORGE_URL` as the hunt.
+it once; passing again, it closes the issue. Same `FORGE_TOKEN` as the hunt.
+
+The Forgejo workflows these replace, and `sync-env`, are covered in
+`docs/features/nightly.md`.
+
+**Can the Forgejo jobs be switched off? Not yet.** They go (#9020) once one
+night of each side has been set side by side and agrees:
+`bun scripts/flake-compare.ts --forge hunt.log --forge outside.log --forgejo
+slice-1.log … --forgejo outside.log` reads what each side's run printed (the
+forge's `/resilience/nightly/<job>`, with the job's Resilience line pasted in
+so its `quarantine pull on flake-hunt/<date>` counts; each Forgejo step log)
+and prints what each filed — `Red:` issues opened, updated or closed, `Flaky:`
+issues, broken and quarantined files, the quarantine pull — then every
+difference, naming the file; it exits 1 when there is one
+(`test/flake-compare.test.ts`). One side silent where the other filed is the
+dedupe, not a difference. A flaky file only one side found can be the seed;
+a file red outside the gate on one side and green on the other is the cell
+differing from the `isolated` runner, and blocks the switch until explained.
+No such night has been compared yet: the logs are admin-only on both sides,
+so an admin runs it and posts the output on #9045.
 
 Bun's own `--randomize --seed=N` drives every hunt and admission run. Not
 used: `--rerun-each` (one seed for every rerun, so ten reruns explore one

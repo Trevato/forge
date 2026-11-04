@@ -3,6 +3,7 @@
  * word), not in the owner's asks, and moves to the owner on a verdict (#1602).
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -84,7 +85,7 @@ describe("a green agent pull and its reviewer", () => {
       await createAgent(app, alice, { username: name });
       addToCrew(app, alice, repo, name);
     }
-    setCrewRole(app.db, repo.id, getUserByName(app.db, "rev")!.id, "reviewer");
+    seatAs(app.db, repo.id, getUserByName(app.db, "rev")!.id, "reviewer");
     pull = await greenPull(1);
     await home(); // warm the first render so no test pays for it under load
   }, 60_000);

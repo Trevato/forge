@@ -85,6 +85,7 @@ import { gateFiles, gateRefusal, presentTests } from "./gate.ts";
 import { cgroupMemory, summaryLines } from "./gate-summary.ts";
 import { GATE_FILE, executedFiles, formatImpact, gateListAdds, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
 import { importsReader, readImpact } from "./tier-input.ts";
+import { shardHome, spaceLine } from "../src/checks/disk_full.ts";
 import { fastSet, duration } from "../src/checks/tiers.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
@@ -481,10 +482,11 @@ type Timed = ShardResult & { seconds: number };
  */
 async function runShard(slice: string[], index: number, live: boolean): Promise<Timed> {
   // Its own temp and data directories: shards side by side never share a
-  // path. They sit under the TMPDIR the cell set (tmpdir() reads it), and a
-  // FORGE_APP_DATA the cell set is nested under, never replaced. Removed
+  // path. They sit on the cell's disk (FORGE_CHECK_SCRATCH, else a
+  // FORGE_APP_DATA, which is nested under, never replaced), not in its
+  // 256 MiB /tmp; the system temp directory when neither is set. Removed
   // however the shard ends.
-  const home = mkdtempSync(join(tmpdir(), "shard-"));
+  const home = shardHome(process.env, tmpdir());
   try {
     return await runShardIn(slice, index, live, home);
   } finally {
@@ -624,6 +626,13 @@ async function runShardIn(
       through?.(note);
       if (verdict.red.length === 0) code = 0;
     }
+  }
+  // Where the room went, named on the log of a red shard, before its
+  // directories are removed: the next red says its own cause (#8679).
+  if (code !== 0) {
+    const note = `${spaceLine({ scratch: home, tmp: tmpdir() })}\n`;
+    output.push(note);
+    through?.(note);
   }
   if (process.env["FORGE_APP_DATA"])
     rmSync(childEnv["FORGE_APP_DATA"], { recursive: true, force: true });

@@ -3,7 +3,7 @@ import { good, bad, type Tool, str, REVEAL_ARG, LINK_KEPT, LINK_REVEALED } from 
 
 export const tool: Tool = {
   name: "claim_link",
-  doc: "`{ name }`: a new claim link for a child you spawned that nobody has claimed; the old one stops working. An admin's",
+  doc: "`{ name, reveal? }`: a new claim link for a child you spawned that nobody has claimed; the old one stops working. An admin's, and only `reveal: true` makes it",
   description:
     "A new claim link for an unclaimed child forge, only with `reveal: true`; the old stops.",
   inputSchema: {

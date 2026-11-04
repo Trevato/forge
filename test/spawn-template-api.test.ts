@@ -135,7 +135,7 @@ describe("choosing a template for a new forge", () => {
     const ledger = await Bun.file(join(dataDir, "spawn", "tpl.json")).json();
     expect(ledger.template).toBe("starter");
     const parent = await Bun.file(join(childDirOf(app, body.bodyId), "parent.json")).json();
-    expect(parent.template).toBe("starter");
+    expect(parent.template).toEqual({ id: "starter" });
 
     const list = (await (await fetch(`${base}/api/v1/forges`, { headers: { authorization: `Bearer ${rw}` } })).json()) as any;
     expect(list.items.find((c: any) => c.name === "tpl").template).toBe("starter");

@@ -9,6 +9,8 @@
  * mistaken for a young one.
  */
 
+import { classOf, createTrafficLedger, type TrafficClass, type TrafficLedger, type TrafficWho } from "./traffic.ts";
+
 export const WINDOW_MS = 15 * 60_000;
 export const MAX_SAMPLES = 20_000;
 export const MAX_PATTERNS = 200;
@@ -29,17 +31,27 @@ export interface Sample {
   readonly crawler?: boolean;
   /** An unauthenticated, browser-looking read of a deep git page (#8199). */
   readonly deepStranger?: boolean;
+  /** The forge asking itself: a loopback or proxy peer that names no client (`http/peer.ts`). */
+  readonly internal?: boolean;
+  /** Answered 429. */
+  readonly refused?: boolean;
   readonly phases: readonly PhaseSample[];
 }
 
 export interface PerfRecord {
-  /** Add one request; a pattern that is not a route pattern is dropped. */
-  add(pattern: string, sample: Sample): void;
+  /**
+   * Add one request; a pattern that is not a route pattern is dropped from the
+   * samples. `who` goes only into the minute totals (`traffic.ts`): a sample
+   * keeps nothing about the viewer but signed in or not.
+   */
+  add(pattern: string, sample: Sample, who?: TrafficWho): void;
   /** Requests for `pattern` at or after `since`. */
   traffic(pattern: string, since: number): Sample[];
   /** When `pattern` was first seen in this process, undefined if never. */
   first(pattern: string): number | undefined;
   patterns(): string[];
+  /** Who used the answering time, by the minute: exact however the samples are thinned. */
+  readonly ledger: TrafficLedger;
 }
 
 const validPattern = (p: string): boolean =>
@@ -56,9 +68,13 @@ export function percentile(xs: readonly number[], p: number): number | null {
 export function createPerfRecord(valid: (key: string) => boolean = validPattern): PerfRecord {
   const real = new Map<string, Sample[]>();
   const firsts = new Map<string, number>();
+  const ledger = createTrafficLedger();
   return {
-    add(pattern, sample) {
-      if (!valid(pattern) || !Number.isFinite(sample.ms) || sample.ms < 0) return;
+    ledger,
+    add(pattern, sample, who) {
+      if (!Number.isFinite(sample.ms) || sample.ms < 0) return;
+      ledger.note(sample.at, sample.ms, classOf(sample), sample.refused === true, who);
+      if (!valid(pattern)) return;
       let list = real.get(pattern);
       if (list === undefined) {
         if (real.size >= MAX_PATTERNS) return;
@@ -163,4 +179,30 @@ export function crawlerShare(record: PerfRecord, since: number): CrawlerShare {
       }
     }
   return { requests, crawlerRequests, ms, crawlerMs, strangerRequests, strangerMs, share: ms > 0 ? crawlerMs / ms : 0 };
+}
+
+export interface ScannedClass {
+  requests: number;
+  ms: number;
+  refused: number;
+}
+
+/** The per-class totals counted again from the samples themselves, from `since` on: what the probe compares the ledger with. */
+export function scanTraffic(record: PerfRecord, since: number, to: number): Record<TrafficClass, ScannedClass> {
+  const out: Record<TrafficClass, ScannedClass> = {
+    people: { requests: 0, ms: 0, refused: 0 },
+    crawlers: { requests: 0, ms: 0, refused: 0 },
+    deep: { requests: 0, ms: 0, refused: 0 },
+    other: { requests: 0, ms: 0, refused: 0 },
+    internal: { requests: 0, ms: 0, refused: 0 },
+  };
+  for (const pattern of record.patterns())
+    for (const s of record.traffic(pattern, since)) {
+      if (s.at > to) continue;
+      const row = out[classOf(s)];
+      row.requests++;
+      row.ms += s.ms;
+      if (s.refused === true) row.refused++;
+    }
+  return out;
 }

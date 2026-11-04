@@ -19,6 +19,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { LATER_TITLED } from "../../core/pillars.ts";
 import { deferredOf, linkedIssueIds } from "../../core/dependencies.ts";
 import { hasPicture } from "../../core/note_pictures.ts";
+import { heldBanner } from "../pages/gate.ts";
 import {
   getIssuesByNumbers,
   labelsFor,
@@ -452,7 +453,7 @@ async function studioTell(
     doneBy.length === 0
       ? null
       : card(
-          html`<form method="post" action="${thread}/state" class="row">
+          html`<form method="post" action="${thread}/state" class="row" data-now="Closed" data-now-once>
             <input type="hidden" name="state" value="closed" />
             <input type="hidden" name="reason" value="done" />
             <span
@@ -564,6 +565,7 @@ async function studioTell(
       ownTitle: true,
     })}
     ${head}
+    ${heldBanner(ctx, repo, issue)}
     <div class="split">
       <div>
         ${talk.node} ${doneLine}

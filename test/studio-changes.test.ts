@@ -363,7 +363,7 @@ describe("the studio, continued", () => {
       expect(issues).toContain("Plain list: an issue");
       // A plain repository speaks of issues: an untouched one reads "open",
       // and neither Told nor Look is a filter there (#683 follow-up).
-      expect(issues).toMatch(/data-word="told"\s*>open</);
+      expect(issues).toMatch(/data-word="told"[^>]*aria-label="open\b/);
       expect(issues).toContain(`href="/alice/plainlists/issues?word=working"`);
       expect(issues).not.toContain(`href="/alice/plainlists/issues?word=told"`);
       expect(issues).not.toContain(`href="/alice/plainlists/issues?word=look"`);

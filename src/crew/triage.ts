@@ -90,6 +90,48 @@ function targetOf(text: string, open: readonly Open[]): Open | undefined {
   return best;
 }
 
+/** Words that say an idea can wait. */
+const SNOOZE = /\b(someday|some day|maybe later|not now|eventually|nice to have|when we have time|low priority)\b/i;
+/** At most this many issues come of one note. */
+const IDEAS_MAX = 8;
+const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+/;
+
+/**
+ * The ideas in a dump: its bullets or numbered lines when it has two or more
+ * (a line that continues one belongs to it), else its blank-line paragraphs;
+ * otherwise the whole text, one idea. An item of under three words is
+ * a heading or a stray, and is kept with the one before it.
+ */
+export function splitIdeas(text: string): string[] {
+  const lines = text.split("\n");
+  let items: string[] = [];
+  if (lines.filter((l) => BULLET.test(l)).length >= 2) {
+    for (const l of lines) {
+      if (BULLET.test(l)) items.push(l.replace(BULLET, "").trim());
+      else if (items.length > 0 && l.trim() !== "") items[items.length - 1] += `\n${l.trim()}`;
+    }
+  } else items = text.split(/\n\s*\n/).map((p) => p.trim());
+  const kept: string[] = [];
+  for (const item of items.filter((i) => i !== "")) {
+    if (words(item).size < 3 && kept.length > 0) kept[kept.length - 1] += `\n${item}`;
+    else kept.push(item);
+  }
+  return kept.length < 2 || kept.length > IDEAS_MAX ? [text] : kept;
+}
+
+/** The open issue an idea clearly touches (most of the shorter side's words are shared), else none. */
+export function attachTarget(idea: string, open: readonly Open[]): Open | undefined {
+  const mine = words(idea);
+  let best: Open | undefined;
+  let most = 0;
+  for (const o of open) {
+    const theirs = words(o.title);
+    const n = overlap(mine, theirs);
+    if (n >= 3 && n / Math.min(mine.size, theirs.size) >= 0.6 && n > most && !opposed(idea, o.title)) (best = o), (most = n);
+  }
+  return best;
+}
+
 function pillarOf(text: string, set: Pillars): string | undefined {
   if (set.pillars.length === 0) return undefined;
   const mine = words(text);
@@ -309,22 +351,51 @@ export async function placeThought(
     kind = kind === "reversal" ? "decision" : "work";
   }
   if (kind === "work") {
-    const first = text.trim().split("\n")[0] ?? "";
-    const opened = openPlan(app, by, repo, [
-      {
-        key: "thought",
-        title: clip(first, Math.min(MAX_TITLE, 120)) || "Thought",
-        body: `${ref}\n\n${quote(text)}${pillar ? `\n\nServes ${set.pillars.find((p) => p.short === pillar)?.name}.` : ""}`,
-        blockedBy: [],
-        ...(pillar ? { pillar } : {}),
-      },
-    ]);
-    if (opened.ok) {
-      const number = opened.value.opened[0]!.number;
-      placed.push({ action: "opened", repo: slug, number, ...(pillar ? { pillar } : {}) });
+    // A long dump is several ideas: each is attached to the open issue it
+    // touches, or becomes an issue of its own, linked back to this thought.
+    const ideas = splitIdeas(text);
+    const fresh: string[] = [];
+    for (const idea of ideas) {
+      const near = attachTarget(idea, open);
+      const issue = near ? here(near.number) : undefined;
+      if (issue) {
+        comment(issue, "A new thought touches this:");
+        placed.push({ action: "amended", repo: slug, number: issue.number });
+        say.push(`Added to #${issue.number}.`);
+      } else fresh.push(idea);
+    }
+    // Said to wait: it is opened, and sits behind the Later gate until its author says otherwise.
+    const waits = (idea: string): boolean => set.gate !== undefined && SNOOZE.test(idea);
+    const opened =
+      fresh.length === 0
+        ? undefined
+        : openPlan(
+            app,
+            by,
+            repo,
+            fresh.map((idea, i) => ({
+              key: `thought${i}`,
+              title: clip(idea.split("\n")[0] ?? "", Math.min(MAX_TITLE, 120)) || "Thought",
+              body: `${ref}\n\n${quote(idea)}${pillar ? `\n\nServes ${set.pillars.find((p) => p.short === pillar)?.name}.` : ""}`,
+              blockedBy: [],
+              ...(waits(idea) ? { later: "You said it can wait." } : pillar ? { pillar } : {}),
+            })),
+          );
+    if (opened?.ok) {
       const name = set.pillars.find((p) => p.short === pillar)?.name;
-      say.push(`Opened #${number}${name ? ` under ${name}` : ""}.`);
-    } else if (direction) {
+      const numbers = opened.value.opened.map((o) => o.number);
+      const later = new Set(fresh.flatMap((idea, i) => (waits(idea) ? [`thought${i}`] : [])));
+      const waiting = opened.value.opened.filter((o) => later.has(o.key)).map((o) => o.number);
+      for (const number of numbers) {
+        const waits = waiting.includes(number);
+        placed.push({ action: "opened", repo: slug, number, ...(pillar && !waits ? { pillar } : {}) });
+        if (waits) placed.push({ action: "deferred", repo: slug, number });
+      }
+      const list = (ns: readonly number[]) => ns.map((n) => `#${n}`).join(", ");
+      const now = numbers.filter((n) => !waiting.includes(n));
+      if (now.length > 0) say.push(`Opened ${list(now)}${name ? ` under ${name}` : ""}.`);
+      if (waiting.length > 0) say.push(`Snoozed: you said it can wait, so ${list(waiting)} sits behind the Later gate.`);
+    } else if (opened && direction) {
       comment(direction, "A thought that could not be opened as an issue:");
       placed.push({ action: "amended", repo: slug, number: direction.number });
       say.push(`Could not open it as an issue (${opened.error.message}); kept on #${direction.number}.`);

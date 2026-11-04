@@ -25,6 +25,15 @@ import { btn, empty, listCard, pill, row } from "../ui.ts";
 import { localScope } from "../scope.ts";
 import { milestoneHref, planFor, progress } from "./milestones.ts";
 
+/**
+ * A wave's headline is the writer's words, so a row lets it wrap (a long word
+ * breaks anywhere) instead of the list's one-line ellipsis, and the page
+ * never scrolls sideways at 390 px. Scoped to `[data-waves]`; no new class.
+ */
+export const WAVES_CSS = `[data-waves] { overflow-wrap: anywhere; }
+[data-waves] .row-title, [data-waves] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-waves] .row { align-items: flex-start; }`;
+
 const WHAT_A_WAVE =
   "A wave is a release note in waves/<version>.md that names its highlights and the pulls merged since the last one.";
 
@@ -64,7 +73,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
   );
 
   const body = html`${scopeHeader(ctx, scope, "none", { compact: true })}
-    <div class="mt">
+    <div class="mt" data-waves>
       ${entries.length === 0
         ? empty({
             title: "No waves yet",
@@ -86,6 +95,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: WAVES_CSS,
     feed: {
       href: `${repoBase(repo)}/waves.atom`,
       title: `${repo.ownerName}/${repo.name} waves`,

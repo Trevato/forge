@@ -12,9 +12,13 @@ One bounded `git log` read, cached per head oid; Server-Timing names `releases` 
 
 The list is a live region (`pull.merged`, `app.serving`): it swaps in place without a reload. MCP `releases` with `{shipped: true}` answers the same list to anyone. The "no release" alarm reads the same record (`release/landings.ts`), refreshed each minute, and is silent until a read has happened. The older `Release <version>: …` commit read (`release/changelog.ts`) now serves only the terminal's Changelog screen.
 
+## Credit (#9181)
+
+A squash keeps the people behind its commits: the landed message carries every distinct `Co-authored-by` its commits carried and each commit's author, except the crew's agents (`@agents.invalid`), once per address. `/changelog` then shows "· with Jay Moran" on a row for everyone credited on the landed commit beyond whoever landed it (`creditsOf` in `git/coauthors.ts`, one git read, kept per commit); a landing with no one else shows nothing. Only the forge's own repository is read. `GET /api/v1/changelog` carries the same names as `with` on a landing that has them. The terminal's Changelog screen is the release-commit view and does not list landings, so it shows no credit.
+
 ## For agents
 
-`GET /api/v1/changelog` is the page's list as JSON, public, cached five seconds: `{version, commit, live, onItsWay}`, each landing `{repo, number, title, at, live}`. `?repo=all` or `?repo=owner/name` filters; the default is the forge's own repository, as on the page. MCP `releases` with `{shipped: true, repo?}` and `GET /api/v1/releases?shipped=true[&repo=]` answer the same rows with the same default. Only public repositories are read; concurrent requests share one read of git and the merged rows, so an anonymous caller costs no more than a page view. The page links the JSON with `rel="alternate"`. The terminal's Changelog screen is the release-commit view (`release/changelog.ts`); it does not show the landings list.
+`GET /api/v1/changelog` is the page's list as JSON, public, cached five seconds: `{version, commit, live, onItsWay}`, each landing `{repo, number, title, at, live[, with]}`. `?repo=all` or `?repo=owner/name` filters; the default is the forge's own repository, as on the page. MCP `releases` with `{shipped: true, repo?}` and `GET /api/v1/releases?shipped=true[&repo=]` answer the same rows with the same default. Only public repositories are read; concurrent requests share one read of git and the merged rows, so an anonymous caller costs no more than a page view. The page links the JSON with `rel="alternate"`. The terminal's Changelog screen is the release-commit view (`release/changelog.ts`); it does not show the landings list.
 
 ## As a feed (#8213)
 

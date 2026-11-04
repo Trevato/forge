@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { boot } from "./toolbar-move.test.ts";
+import { boot } from "./helpers/toolbar-boot.ts";
 
 const at = (corner: string, width: number) => boot({ "forge-pill-corner": corner }, width, 844);
 

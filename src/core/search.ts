@@ -61,15 +61,11 @@ export function searchKind(raw: string | null): SearchKind {
 
 /**
  * What a caller who asked wrongly is told, in one sentence, or undefined when
- * the request was fine. Plain text: the caller escapes it where it draws it.
+ * the request was fine (an unknown kind or limit is `searchRefusal`'s 422, not a note). Plain text: the caller escapes it where it draws it.
  */
-export function searchNote(rawQ: string | null, rawKind: string | null): string | undefined {
-  const kinds = "kind=all|repos|issues|code";
-  const asked = rawKind === null ? undefined : rawKind.length > 40 ? `${rawKind.slice(0, 39)}…` : rawKind;
-  if (rawKind !== null && rawKind !== "all" && searchKind(rawKind) === "all")
-    return `kind ${JSON.stringify(asked)} is not a kind — use ${kinds}`;
+export function searchNote(rawQ: string | null): string | undefined {
   if (cleanQuery(rawQ ?? "") === "")
-    return `q is empty — send what to find, e.g. q=parser&kind=code (${kinds})`;
+    return "q is empty — send what to find, e.g. q=parser&kind=code (kind=all|repos|issues|code)";
   return undefined;
 }
 

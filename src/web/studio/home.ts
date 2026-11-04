@@ -6,6 +6,7 @@
  * best of what is public (`actions/front.ts`).
  */
 
+import { foundryHref } from "../../actions/foundry_door.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { liveLine } from "../pages/releases.ts";
 import {
@@ -23,9 +24,9 @@ import { LOOK_SIZES } from "../../core/looks.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
+import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { repoBase, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
+import { repoBase, offersSignup, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
@@ -52,9 +53,11 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion, registerWorkerJs } from "./feed.ts";
+import { heldLine } from "./held.ts";
 import { appChips, movingRegion, tellBox } from "./living.ts";
 import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
 import { kpiRow, waitingLine } from "./kpi_row.ts";
+import { homeWeek } from "./week_line.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { idleReason } from "../../crew/idle_reason.ts";
@@ -63,7 +66,7 @@ import { accessFingerprint } from "../../core/access_fingerprint.ts";
 import { homeFresh, homeRegion, homeVariant, refreshJs, type HomeRegion } from "./home_last.ts";
 import type { KpiTimer } from "../../flow/kpis.ts";
 import { archivedAppCount } from "../pages/apps.ts";
-import { pinnedPanels } from "./pinned.ts";
+import { pinnedPanels, pinnedSlot } from "./pinned.ts";
 import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
 import { sinceYouWere } from "./since.ts";
 import { homeTabs, unshippedAsks } from "./home_tabs.ts";
@@ -117,6 +120,7 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
     });
   });
   const archived = archivedAppCount(ctx);
+  const foundry = foundryHref(ctx.app, ctx.auth.user);
   const list = html`${rows.length === 0
         ? html`<p class="muted small">No apps yet.</p>`
         : html`<ul class="list">
@@ -133,6 +137,7 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
         ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
         ${btn("Audit", { href: "/audit", size: "sm", icon: "shield" })}
         ${btn("Board", { href: "/board", size: "sm", icon: "activity" })}
+        ${foundry === undefined ? "" : btn("Foundry", { href: foundry, size: "sm", icon: "eye" })}
         ${when(user.isAdmin, () =>
           btn("Front page", { href: "/front", size: "sm", icon: "globe" }),
         )}
@@ -237,6 +242,7 @@ export function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html |
       const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
       const kpiOpts = { idle: () => idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
       return html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
+        ${homeWeek(ctx.app, user)}
         ${alarmLines(cachedAlarms(db, new Date(), ceilingUsd))}`;
     },
     waiting: () => timePhase(request, "waiting", () => waitingLine(db, user), () => waitingCache(db)),
@@ -297,7 +303,7 @@ export async function studioHome(
   ) {
     const apps = await clientApps(ctx, user);
     const lean = html`<h1 class="sr-only">Home</h1>
-      ${firstSteps} ${address} ${crewKeyNote(ctx)} ${apps}
+      ${firstSteps} ${address} ${crewKeyNote(ctx)} ${heldLine(ctx, user)} ${apps}
       <div class="stack">
         ${composer(ctx, user)}
         <p class="small muted">
@@ -325,7 +331,9 @@ export async function studioHome(
   const body = html`<h1 class="sr-only">Home</h1>
     ${tellBox(ctx, user)}
     ${ask} ${address}
+    ${timePhase(ctx.request, "held", () => heldLine(ctx, user))}
     <section class="stack" aria-label="The forge">${kpis}</section>
+    ${pinnedSlot(ctx.app.db, user)}
     ${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}
     ${appChips(ctx, user)}
     ${when(
@@ -608,7 +616,7 @@ export function studioDoor(ctx: Ctx): Response {
       <div class="bar">
         ${ctx.auth.user !== undefined
           ? null
-          : activeEdgeToken(ctx.app) === undefined || edgeStrangerLogin(ctx.request, activeEdgeToken(ctx.app), ctx.auth.user) !== undefined
+          : offersSignup(ctx)
             ? html`${btn("Create an account", {
                 href: `/signup${nextQuery}`,
                 variant: "primary",

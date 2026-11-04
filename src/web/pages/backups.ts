@@ -26,6 +26,7 @@ import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
 import { formatMinutes, formatSpan, timeByPart, type DrillResult } from "../../snapshot/drill.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
+import { backupVerdict } from "../../snapshot/bucket.ts";
 import type { Store } from "../../snapshot/store.ts";
 import { snapshotsOf, type SnapshotsHandle } from "../../snapshot/service.ts";
 import { drillNow, mirrorNow, snapshotNow } from "../../actions/backups_now.ts";
@@ -338,7 +339,7 @@ async function movingPart(
   const restore = snapshots[0]
     ? html`<pre class="restore-command" tabindex="0" aria-label="Restore command">bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
     : null;
-  return html`<div id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live">${recovery}${card(
+  return html`<div id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live">${recovery}${lanesCard(ctx)}${card(
       html`<p>
           Every night at 08:00 UTC the forge writes what cannot be rebuilt — its
           database, its keys, every repository, every app's production data, the
@@ -632,6 +633,34 @@ export async function backupsNow(ctx: Ctx): Promise<Response> {
     ctx,
     "/settings/backups",
     taken.ok ? { message: taken.value.says } : { tone: "danger", message: taken.error.says },
+  );
+}
+
+/**
+ * Each lane beside its newest object and its line (#9067); a lane without a
+ * line says so, as information. Nothing when no lane has been read. The
+ * verdict is the in-memory read the tile uses: no disk read on the live path.
+ */
+export function lanesCard(ctx: Ctx): Html | "" {
+  const lanes = backupVerdict(ctx.app.config.dataDir, lastDrill(ctx.app.db)).lanes;
+  if (lanes.length === 0) return "";
+  // The glyph is the mark that is not colour alone: ok, !, and a dash for a lane that is retired.
+  const mark = { green: "✓", red: "!", retired: "–" } as const;
+  const lead = { green: "open", red: "closed", retired: "draft" } as const;
+  return card(
+    html`<ul id="backup-lanes" class="list setting-list">
+      ${lanes.map((l) =>
+        row({
+          lead: html`<span aria-hidden="true">${mark[l.state]}</span>`,
+          state: lead[l.state],
+          title: l.says,
+          meta: html`${l.line}`,
+          ...(l.state === "retired" ? { trail: badge("retired", { variant: "outline" }) } : {}),
+          data: { lane: l.lane, "lane-state": l.state },
+        }),
+      )}
+    </ul>`,
+    { head: html`<strong>Lanes</strong>` },
   );
 }
 

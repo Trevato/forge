@@ -336,7 +336,7 @@ function authForm(
           type: "email",
           value: values.email ?? "",
           autocomplete: "email",
-          hint: "Optional. Given, we send a link to prove it.",
+          hint: "Optional. If you add one, we send a link to confirm it.",
           // A pinned name is not editable, so the keyboard goes to the email.
           ...(vouched !== undefined ? { autofocus: true } : {}),
           ...(errors.email ? { error: errors.email } : {}),
@@ -373,8 +373,8 @@ function authForm(
         kind === "signup" && !byPasskey,
         () => html`<div data-passkey="on" hidden>
           <p class="muted small mb">
-            Or skip the password: a passkey signs you in with a fingerprint,
-            face or device PIN. An email address above is optional.
+            Or skip the password and use a passkey: your fingerprint, face or
+            device PIN.
           </p>
           ${passkeyNote("passkey-signup-note")}
           <button type="button" id="passkey-signup" class="btn" data-variant="outline">Create account with a passkey</button>

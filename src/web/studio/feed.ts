@@ -25,10 +25,11 @@ import { DEFAULT_PAGE, looksForEnv, lookUrl } from "../../core/looks.ts";
 import { mayFetchLook, pictured } from "../pages/looks.ts";
 import { dividers } from "./day_divider.ts";
 import { html, type Html } from "../html.ts";
+import { DISMISS_KEY } from "../script_keys.ts";
 import { fragment } from "../layout.ts";
 import { draftJs } from "../draft.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, card, disclosure, empty, nameMark, row, stateBadge, time } from "../ui.ts";
+import { avatar, btn, card, disclosure, empty, hintAttr, nameMark, row, stateBadge, time } from "../ui.ts";
 import { stepLink } from "./step_link.ts";
 import { writableAppsOf } from "./asks.ts";
 
@@ -169,7 +170,7 @@ export function feedCard(
         <span class="bar">${btn(target ? "Steer" : "Tell", reply ? { size: "sm" } : { size: "sm", variant: "primary" })}</span>
       </form>
       <span class="bar">
-        <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
+        <button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="dismissed" ${hintAttr(DISMISS_KEY)}>Dismiss</button>
         ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn" data-variant="ghost" data-size="sm" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>`,
     { small: true, label: target ? "Steer, dismiss or mute" : reply ? "Reply, tell the crew, dismiss or mute" : "Tell the crew, dismiss or mute" },
@@ -642,7 +643,7 @@ ${dayKeepJs}
     outbox.flush().then(function (r) { if (r.refused && draft) draft.refused(text); });
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key !== 'x' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key !== '${DISMISS_KEY}' || e.metaKey || e.ctrlKey || e.altKey) return;
     var a = document.activeElement;
     if (!a || !a.matches || !a.matches('[data-item]') || !feed.contains(a)) return;
     e.preventDefault();

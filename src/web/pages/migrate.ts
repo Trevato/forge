@@ -69,7 +69,7 @@ import {
 } from "../../origins/token-reach.ts";
 import type { TokenReach } from "../../origins/types.ts";
 import { STAGE_BADGE_JS, stageRow, stageStateFor } from "../stage-row.ts";
-import { prefill, originHost } from "./migrate-prefill.ts";
+import { prefill, originHost, migrationBuilders } from "./migrate-prefill.ts";
 import { githubConnectable, hostLabel } from "./origins.ts";
 
 interface MigrateValues {
@@ -424,6 +424,7 @@ function migrateForm(
   branches: BranchChoices | undefined,
   error?: string,
   unmatched: readonly string[] = [],
+  refused: readonly string[] = [],
 ): Html {
   const user = ctx.auth.user!;
   const writeOrgs = listOrgsForUser(ctx.app.db, user.id).filter((org) =>
@@ -431,7 +432,7 @@ function migrateForm(
   );
   const owners = [user.username, ...writeOrgs.map((o) => o.username)];
   const agents = listAllAgents(ctx.app, user);
-  const crew = agents.ok ? agents.value : [];
+  const crew = agents.ok ? migrationBuilders(agents.value) : [];
 
   return html`<div class="narrow-wide">
     ${pageHead("Migrate a repository", {
@@ -448,6 +449,11 @@ function migrateForm(
       : html`<p class="muted small mb" id="prefill-unmatched">
           ${icon("globe")} Ignored, nothing here matches:
           ${unmatched.join(", ")}
+        </p>`}
+    ${refused.length === 0
+      ? null
+      : html`<p class="muted small mb" id="prefill-refused">
+          ${icon("globe")} ${refused.join(" ")}
         </p>`}
     ${accounts(ctx, origins)}
     <form method="get" action="/migrate" id="migrate-search"></form>
@@ -613,6 +619,7 @@ async function show(
   error?: string,
   status = 200,
   unmatched: readonly string[] = [],
+  refused: readonly string[] = [],
 ): Promise<Response> {
   // Asked for only: each draw is a listing and a commit per branch at the
   // origin (remembered a minute), so a plain visit costs none of it.
@@ -626,7 +633,7 @@ async function show(
     {
       ctx,
       title: "Migrate",
-      body: migrateForm(ctx, values, origins, branches, error, unmatched),
+      body: migrateForm(ctx, values, origins, branches, error, unmatched, refused),
       scriptJs: migrateJs,
     },
     status,
@@ -647,11 +654,14 @@ export async function migratePage(ctx: Ctx): Promise<Response> {
   const agents = timePhase(ctx.request, "agents", () =>
     listAllAgents(ctx.app, user),
   );
-  const names = agents.ok ? agents.value.map((a) => a.user.username) : [];
+  const all = agents.ok ? agents.value : [];
+  const builders = migrationBuilders(all);
+  const names = builders.map((a) => a.user.username);
   const linked = prefill(
     { from: q.get("from"), crew: q.get("crew") },
     origins,
     names,
+    all.filter((a) => !builders.includes(a)).map((a) => a.user.username),
   );
   return show(
     ctx,
@@ -676,6 +686,7 @@ export async function migratePage(ctx: Ctx): Promise<Response> {
     undefined,
     200,
     linked.unmatched,
+    linked.refused,
   );
 }
 

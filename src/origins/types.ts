@@ -42,6 +42,11 @@ export interface Origin {
    * is how one expired token becomes a permanent error loop.
    */
   readonly needsReauth: boolean;
+  /**
+   * What the origin runs when its kind does not say: `forge` for another
+   * forge (stored as a Gitea origin, which is the dialect it speaks), else "".
+   */
+  readonly software: string;
 }
 
 /** A repository as the origin describes it — the import picker's rows. */
@@ -162,6 +167,12 @@ export interface RemoteReviewState {
   readonly htmlUrl: string;
 }
 
+/** How a pull's check stands on its origin, for the head named. */
+export interface RemoteCheck {
+  readonly word: "green" | "red" | "running" | "none";
+  readonly headOid: string;
+}
+
 export interface RemoteReview {
   readonly remoteId: string;
   readonly author: string;
@@ -230,6 +241,13 @@ export interface RemoteIdentity {
   readonly login: string;
   readonly displayName: string;
   readonly htmlUrl: string;
+  /**
+   * The account administers the whole instance: Forgejo's and Gitea's
+   * `is_admin`, GitHub's `site_admin`. A credential of such an account can
+   * write every repository there is, which is what the operator guard
+   * (`origins/operator.ts`) refuses on the hosts it covers.
+   */
+  readonly siteAdmin: boolean;
 }
 
 export type ProviderError =
@@ -240,11 +258,50 @@ export type ProviderError =
   | "unreachable"
   | "invalid_response";
 
+/** A repository archived on the origin, as the recovery page lists it. */
+export interface ArchivedRepo {
+  readonly fullName: string;
+  readonly owner: string;
+  readonly name: string;
+  readonly private: boolean;
+  /** When it was archived, or null when the origin does not say. */
+  readonly archivedAt: string | null;
+  /** The account has admin on it, which is what taking it out needs. */
+  readonly canChange: boolean;
+}
+
+export interface ArchivedPage {
+  readonly items: readonly ArchivedRepo[];
+  /** All the matches across pages, or null when the origin does not say. */
+  readonly total: number | null;
+  readonly hasNext: boolean;
+}
+
 export interface ProviderFailure {
   readonly error: ProviderError;
   readonly message: string;
   /** For `rate_limited`: when to try again. */
   readonly retryAt?: string;
+  /**
+   * For `forbidden`: the token scopes the origin said it lacks, in the
+   * origin's own words (`read:user`), when it said (Forgejo, Gitea).
+   */
+  readonly missingScopes?: readonly string[];
+}
+
+/**
+ * Every repository a credential can see, read for a check that must not miss
+ * one. `complete` is false when the pages ran out before the list did.
+ */
+export interface RepoWalk {
+  /** What was read, complete or not: a protected repository among them counts. */
+  readonly repos: readonly RemoteRepo[];
+  readonly complete: boolean;
+  /**
+   * Why it is not complete: the pages ran out (`too_many`), the list moved
+   * or its count did not add up (`moved`), or a page failed (`failed`).
+   */
+  readonly why?: "too_many" | "moved" | "failed";
 }
 
 /** A page of a list, with the cursor for the next page (null at the end). */
@@ -285,6 +342,18 @@ export interface Provider {
    */
   tokenReach?(): Promise<ProviderResult<TokenReach>>;
   listRepos(cursor?: string): Promise<ProviderResult<Page<RemoteRepo>>>;
+  /**
+   * Every repository the credential can see, for the operator guard
+   * (`origins/operator.ts`): in an order a repository cannot move in while
+   * the walk runs (by id, or by creation), with no fallback to another
+   * endpoint, at most `maxPages` pages and `pauseMs` between them. A page
+   * that fails, or a count that does not add up, ends it incomplete, with
+   * what was read so far; only a walk that cannot start fails.
+   */
+  walkRepos(options: {
+    maxPages: number;
+    pauseMs?: number;
+  }): Promise<ProviderResult<RepoWalk>>;
   getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>>;
 
   // ---- reads for browsing a repository we have not mirrored ----
@@ -369,6 +438,24 @@ export interface Provider {
     number: number,
   ): Promise<ProviderResult<readonly RemoteReviewState[]>>;
 
+  /**
+   * Where the origin's check of a pull stands. Left out by an origin whose
+   * checks this adapter cannot read; the pull page then shows none.
+   */
+  getPullCheck?(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<RemoteCheck>>;
+
+  /**
+   * Ask the origin to deliver this repository's events to `url`, signed with
+   * `secret`, unless it already does. Left out by an origin that cannot.
+   */
+  watch?(
+    fullName: string,
+    hook: { url: string; secret: string },
+  ): Promise<ProviderResult<void>>;
+
   createIssue(
     fullName: string,
     input: { title: string; body: string; labels?: readonly string[] },
@@ -408,17 +495,45 @@ export interface Provider {
     },
   ): Promise<ProviderResult<RemoteReviewState>>;
   /**
+   * The forks of a repository, as many as fit a bounded walk: what finds an
+   * account's fork when it goes by a name this forge did not give it.
+   */
+  listForks(fullName: string): Promise<ProviderResult<readonly RemoteRepo[]>>;
+  /**
    * Fork a repo into the credential's account. GitHub creates the fork
    * *asynchronously* and answers 202 with a repo that does not exist yet, so
    * a caller must poll `getRepo` until it does (`actions/contribute.ts`).
    */
-  forkRepo(fullName: string): Promise<ProviderResult<RemoteRepo>>;
+  forkRepo(
+    fullName: string,
+    /** The fork's name, when not the upstream's own (a name already taken). */
+    name?: string,
+  ): Promise<ProviderResult<RemoteRepo>>;
   /**
    * Archive a repo (`PATCH /repos/{o}/{r}` with `archived: true`): read-only
    * on the origin from then on. Needs admin there; without it the answer is
    * `forbidden` and nothing changed.
    */
   archiveRepo(fullName: string): Promise<ProviderResult<void>>;
+  /** One page of the repositories this token sees archived. Forgejo and Gitea only. */
+  listArchived?(options: {
+    query: string;
+    page: number;
+  }): Promise<ProviderResult<ArchivedPage>>;
+  /**
+   * Take a repository out of the archive and read it back: what the origin
+   * now says, or `null` when it took the change and then gave no answer.
+   */
+  unarchiveRepo?(
+    fullName: string,
+  ): Promise<ProviderResult<{ archived: boolean | null }>>;
+  /**
+   * Whether this token may write repositories at all, asked without changing
+   * anything. `unknown` when the origin's answer does not settle it.
+   */
+  repoWriteReach?(
+    login: string,
+  ): Promise<ProviderResult<"yes" | "unknown" | { missing: readonly string[] }>>;
 
   /**
    * What git needs to talk to this origin over HTTPS with the credential,
@@ -463,11 +578,19 @@ export interface ProviderCredential {
    * Bearer for both. @default "pat"
    */
   readonly authKind?: AuthKind;
+  /** `forge` when the origin is another forge; see `Origin.software`. */
+  readonly software?: string;
   /**
    * The bearer secret for one call. A failure here is `unauthorized` — the
    * credential is gone or unrefreshable, and the origin needs reconnecting.
    */
   token(): Promise<ProviderResult<string>>;
+  /**
+   * Whether the credential may change anything on the origin now: asked
+   * before every request that is not a read. A refusal is `forbidden`, with
+   * the reason. Absent, it always may (a credential checked by nobody).
+   */
+  writable?(): ProviderResult<true>;
 }
 
 /** A credential that is just a stored secret — the PAT path, and tests. */
@@ -490,6 +613,6 @@ export interface Discovered {
   readonly apiUrl: string;
   readonly webUrl: string;
   /** How we knew: the evidence to show the user. */
-  readonly via: "known" | "nodeinfo" | "version-endpoint";
+  readonly via: "known" | "nodeinfo" | "version-endpoint" | "health";
   readonly software: string;
 }

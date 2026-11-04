@@ -14,6 +14,8 @@
  * answers the same 404 as one that is not there.
  */
 
+import { PINNED_PUBLIC, mayShare } from "../../http/addressed.ts";
+import { EDGE_VARY } from "../../http/edge_cache.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { blobStream, readerFor } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -62,6 +64,7 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
 
   const download = ctx.url.searchParams.get("download") === "1";
   const etag = `"${oid}"`;
+  const shared = mayShare(ctx.request, ctx.auth.user === undefined, repo, ref);
   const headers: Record<string, string> = {
     "x-content-type-options": "nosniff",
     "content-security-policy": MEDIA_POLICY,
@@ -71,9 +74,13 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
     "accept-ranges": "bytes",
     etag,
     // A full commit id names bytes that can never change; a branch does not.
-    "cache-control": FULL_OID.test(ref)
-      ? "private, max-age=31536000, immutable"
-      : "private, max-age=0",
+    // Only an anonymous request's copy of a public repository's may be shared.
+    "cache-control": shared
+      ? PINNED_PUBLIC
+      : FULL_OID.test(ref)
+        ? "private, max-age=31536000, immutable"
+        : "private, max-age=0",
+    ...(shared ? { vary: EDGE_VARY } : {}),
   };
   if (download) headers["content-disposition"] = attachment(path);
   // The tag is the blob id `stat` already gave, so a revalidation reads no byte.

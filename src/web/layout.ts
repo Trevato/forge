@@ -7,10 +7,13 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { NEW_ISSUE_KEY } from "./script_keys.ts";
+import { newIssueHref } from "./issue_from.ts";
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
 import { protectionNotice } from "../kernel/protection.ts";
 import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
+import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   enterableApps,
@@ -55,7 +58,7 @@ import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
 import { quotaFull } from "../spawn/quota.ts";
 import { icon, inlineIcons, pointAtSprite, themeGlyph } from "./icons.ts";
-import { btn, copyField, kbd, menu, type MenuItem } from "./ui.ts";
+import { btn, copyField, hintAttr, kbd, menu, type MenuItem } from "./ui.ts";
 import { SITE_LINE } from "./site_line.ts";
 
 /** One row of the command palette: title, href, category. */
@@ -68,6 +71,8 @@ export interface PaletteItem {
   x?: string;
   o?: string;
   m?: 1;
+  /** A mutation: the palette posts these fields to `h`, as the page's own form does. */
+  p?: Record<string, string>;
 }
 
 export interface PageOptions {
@@ -140,6 +145,12 @@ export interface PageOptions {
    * nothing else on this page is relaxed.
    */
   turnstile?: boolean;
+  /**
+   * One more origin this page may frame, as `scheme://host[:port]`: the
+   * display origin a captured page plays on. It loosens `frame-src` for this
+   * page alone; anything that is not a bare origin is ignored.
+   */
+  frameSrc?: string | undefined;
   /** Extra palette rows for this page's context (a repo's own tabs). */
   palette?: PaletteItem[];
   /**
@@ -184,10 +195,19 @@ const helpItem = html`<button class="menu-item js-only hide-sm" type="button" da
 </button>`;
 
 /** Someone not signed in has no user menu; theme and help share this one. */
-function guestMenu(theme: ThemeName | undefined): Html {
+/**
+ * "New issue" from this page, with no script (`c` is the same door): a link
+ * in the menus. Read-only origin browse has nowhere to write, so it has none.
+ */
+const newIssueItem = (ctx: Ctx): MenuItem[] =>
+  ctx.url.pathname.startsWith("/origins/")
+    ? []
+    : [{ label: "New issue", href: newIssueHref(ctx.url.pathname), hint: NEW_ISSUE_KEY }];
+
+function guestMenu(ctx: Ctx, theme: ThemeName | undefined): Html {
   return menu({
     trigger: themeGlyph,
-    items: [helpItem, themeForm(theme)],
+    items: [...newIssueItem(ctx), helpItem, themeForm(theme)],
     label: "Appearance and help",
     triggerOptions: { extra: "btn-icon" },
   });
@@ -214,6 +234,7 @@ const forgeDoor = (ctx: Ctx): MenuItem[] => {
 
 function newMenu(ctx: Ctx): Html {
   const items: MenuItem[] = [
+    ...newIssueItem(ctx),
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
@@ -237,13 +258,15 @@ function userMenu(
 ): Html {
   const items: (MenuItem | Html)[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
-    { label: "Your repositories", href: "/", icon: "repo" },
+    { label: "Repositories", href: "/repos", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
+    { label: "Notes", href: "/notes", icon: "comment" },
     { label: "Talk", href: "/talk", icon: "comment" },
     { label: "Explore", href: "/explore", icon: "search" },
     { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
     // The "+" menu shows on every width; these repeat it for the user menu.
+    ...newIssueItem(ctx),
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
@@ -317,6 +340,7 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "New repository", h: "/new", c: "Create" },
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
+  { t: "Notes", h: "/notes", c: "Go to" },
   { t: "Talk to the forge", h: "/talk", c: "Go to" },
   { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
@@ -400,6 +424,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     return app !== undefined && enterable.has(app.id) ? [app] : [];
   });
   const states = open.length > 0 ? appsRuntime(ctx.app)?.statusMany(open) : undefined;
+  const foundry = foundryHref(ctx.app, ctx.auth.user);
   const items: PaletteItem[] = [
     ...extra,
     ...repos.map((r): PaletteItem => {
@@ -437,6 +462,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     ...(sendsForges(ctx)
       ? [{ t: "New forge", h: "/forges/new", c: "Create" }]
       : []),
+    ...(foundry === undefined ? [] : [{ t: "Foundry", h: foundry, c: "Go to" }]),
     ...(ctx.auth.user?.isAdmin
       ? [
           { t: "System", h: "/system", c: "Go to" },
@@ -548,7 +574,7 @@ function topbar(
   const user = ctx.auth.user;
   return html`<a class="skip" href="#main">Skip to content</a>
     <header class="topbar" role="banner">
-      <a href="/" class="wordmark" data-shortcut="g h"
+      <a href="/" class="wordmark" data-shortcut="g h" ${hintAttr("g h")}
         ><span class="mark"></span>forge</a
       >
       ${when(
@@ -568,9 +594,9 @@ function topbar(
       <span class="topbar-tools">
         ${searchBar()}
         ${user
-          ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" title="Talk to the forge" data-shortcut="g t"
+          ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
                 >${icon("comment")}</a
-              ><a class="small" href="/asks" data-shortcut="g q">Asks</a
+              ><a class="small" href="/asks" data-shortcut="g q" ${hintAttr("g q")}>Asks</a
               >${newMenu(ctx)}${userMenu(
                 ctx,
                 user,
@@ -583,7 +609,7 @@ function topbar(
                     }
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
               )}`
-          : html`${guestMenu(theme)}${btn("Sign in", {
+          : html`${guestMenu(ctx, theme)}${btn("Sign in", {
               href: signInHref(ctx),
             })}`}
       </span>
@@ -804,7 +830,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The hashed stylesheet and scripts are 'self'; the two inline <style>s
     // are named by hash. connect-src 'self' lets the live event stream
     // (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${frameSources(options)}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are
@@ -839,6 +865,18 @@ export function page(options: PageOptions, status = 200): Response {
 }
 
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
+
+/** A bare origin: scheme, host and optional port, nothing that could add a directive. */
+const BARE_ORIGIN = /^https?:\/\/[a-z0-9.-]+(?::\d{1,5})?$/i;
+
+/** The `frame-src` directive (with its trailing space), or nothing when the page frames nothing. */
+export function frameSources(options: Pick<PageOptions, "turnstile" | "frameSrc">): string {
+  const origins = [
+    ...(options.turnstile ? [TURNSTILE_ORIGIN] : []),
+    ...(options.frameSrc !== undefined && BARE_ORIGIN.test(options.frameSrc) ? [options.frameSrc] : []),
+  ];
+  return origins.length === 0 ? "" : `frame-src ${origins.join(" ")}; `;
+}
 
 export interface RedirectOptions {
   /** A Set-Cookie value to send alongside (session, theme). */

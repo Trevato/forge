@@ -44,3 +44,21 @@ export function drillDue(
   const began = Date.parse(since ?? "");
   return Number.isFinite(began) && began < slot;
 }
+
+/** The latest 08:00 UTC at or before `now`, in ms: the nightly slot. */
+export function lastNightly(now: number): number {
+  const d = new Date(now);
+  d.setUTCHours(8, 0, 0, 0);
+  return d.getTime() > now ? d.getTime() - DAY : d.getTime();
+}
+
+/**
+ * Whether a snapshot is owed at `now`: the newest one finished (`newestAt`,
+ * undefined when the store holds none) before the latest nightly slot. A
+ * snapshot takes the better part of an hour, so one cut short by a release
+ * at 08:21 is owed again on the next boot (#8742).
+ */
+export function snapshotDue(newestAt: string | undefined, now: number): boolean {
+  const at = Date.parse(newestAt ?? "");
+  return !Number.isFinite(at) || at < lastNightly(now);
+}

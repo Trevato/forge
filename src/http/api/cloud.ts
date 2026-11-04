@@ -10,7 +10,8 @@ import { cloudOverview } from "../../cloud/overview.ts";
 import { scopeAllows } from "../../core/tokens.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Handler } from "../context.ts";
-import { apiError, json, notFound, unauthorized } from "../respond.ts";
+import { holds, weakEtag } from "../etag.ts";
+import { apiError, notFound, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 export function cloudRoutes(router: Router<Handler>): void {
@@ -25,6 +26,13 @@ export function cloudRoutes(router: Router<Handler>): void {
       () => new Map<string, VendorUse[]>(),
     );
     const seen = cloudOverview(ctx.app, user, uses);
-    return seen.ok ? json(seen.value) : notFound();
+    if (!seen.ok) return notFound();
+    // Tagged over the exact bytes, so a linked or removed account, a call, or a
+    // repository starting or stopping a vendor moves it; reached past the access checks only.
+    const text = JSON.stringify(seen.value);
+    const etag = weakEtag(text);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
 }

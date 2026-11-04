@@ -5,6 +5,7 @@
  * developer's words.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +18,7 @@ import { getAppByRepo } from "../src/core/apps.ts";
 import { clientApps } from "../src/web/studio/client_home.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { clientAppRows, cutTitle, doingLine } from "../src/core/client-apps.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { moveArchived } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { linkEveryday } from "../src/core/everyday.ts";
@@ -103,7 +104,7 @@ describe("a client's first screen", () => {
       createdBy: alice.id,
     });
     addCrew(parent.db, repo.value.id, atlas.value.id, alice.id);
-    setCrewRole(parent.db, repo.value.id, atlas.value.id, "planner");
+    seatAs(parent.db, repo.value.id, atlas.value.id, "planner");
     parentServers = await serve(parent);
     const spawned = await spawnForge(
       parent,

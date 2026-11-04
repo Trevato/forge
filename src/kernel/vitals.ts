@@ -24,6 +24,8 @@ import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { ownRepoPath } from "./own_repo.ts";
 import { BUDGETS } from "./budgets.ts";
 import { openDbFiles } from "./file_modes.ts";
+import { backupVerdict, isWatched } from "../snapshot/bucket.ts";
+import { lastDrill } from "../snapshot/drills.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
@@ -473,6 +475,12 @@ export function vitals(input: VitalsInput): Vitals {
   // A snapshot that failed is a card from that morning until one lands.
   const failing = snapshotNeed(lastSnapshotOutcome(input.dataDir));
   if (failing !== undefined) need("snapshot-failed", failing.sentence, failing.since, "/settings/backups");
+
+  // The bucket itself, read by this process: late, unreadable, a failed drill, or a check that stopped is one card.
+  if (isWatched(input.dataDir)) {
+    const backup = backupVerdict(input.dataDir, lastDrill(input.db), now);
+    if (backup.state === "red") need("backup", [...backup.reasons, ...(backup.reasons.some((r) => r.includes("last ran")) ? [] : [backup.checkLine])].join(" "), backup.checkedAt ?? undefined, "/settings/backups");
+  }
 
   // A snapshot that did not land off the box, or a mirror a day behind, is a card until it does.
   const behind = mirrorNeed(lastMirror(input.dataDir), now);

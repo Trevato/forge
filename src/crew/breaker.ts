@@ -9,6 +9,7 @@ import type { Database } from "bun:sqlite";
 import type { Repo } from "../core/repos.ts";
 import { CAP_NOTE } from "./guard.ts";
 import { directorsAmong } from "./direct.ts";
+import { REPEAT_NOTE } from "./repeat_note.ts";
 
 export const BREAKER_RUNS = 3;
 export const BREAKER_WINDOW_MS = 60 * 60_000;
@@ -51,7 +52,7 @@ export function breakerTripped(
  * agent's, not a reader's, not one imported from an origin, not the crew's
  * own parking note (#619).
  */
-function spokenSince(
+export function spokenSince(
   db: Database,
   repo: Repo,
   issueId: string,
@@ -69,7 +70,7 @@ function spokenSince(
 }
 
 /** The notes that park an issue until a person speaks: the breaker's and the run cap's. */
-export const WAITING_NOTES = [BREAKER_NOTE, CAP_NOTE] as const;
+export const WAITING_NOTES = [BREAKER_NOTE, CAP_NOTE, REPEAT_NOTE] as const;
 
 /** Open issues whose newest comment is one of `WAITING_NOTES`: the ones that wait for a person. */
 export function breakerParked(
@@ -84,7 +85,7 @@ export function breakerParked(
       `SELECT i.id AS issueId, i.repo_id AS repoId, c.created_at AS at
          FROM issue i JOIN comment c ON c.id = (SELECT id FROM comment WHERE issue_id = i.id
                                                 ORDER BY created_at DESC, id DESC LIMIT 1)
-         WHERE i.state = 'open' AND i.repo_id IN (${marks}) AND c.body IN (?${repoIds.length + 1}, ?${repoIds.length + 2})`,
+         WHERE i.state = 'open' AND i.repo_id IN (${marks}) AND c.body IN (${WAITING_NOTES.map(() => "?").join(", ")})`,
     )
     .all(...repoIds, ...WAITING_NOTES);
 }

@@ -16,6 +16,8 @@ import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { btn, listCard, row, timeAgo } from "../ui.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import type { NowStage } from "../../flow/now_rows.ts";
+import { nowHref } from "../pages/now.ts";
 import { writableAppsOf } from "./asks.ts";
 import { FORGE_TARGET, sharedDraft } from "./feed.ts";
 import { repoBase } from "../chrome.ts";
@@ -35,18 +37,18 @@ export function pipelineNow(db: Database, at = Date.now()): Now {
   return now;
 }
 
-/** `check 10 › review 1 › land 3 › live`: each word links to the boards where the same stage is. */
+/** `check 10 › review 1 › land 3 › live`: each word opens what it counts (`/now/:stage`). */
 export function nowLine(now: Now, boards = true): Html {
   // An agent admin has no boards to open: the word is then plain.
-  const part = (word: string, n: number) =>
-    boards ? html`<a href="/boards"><strong>${String(n)}</strong> ${word}</a>` : html`<span><strong>${String(n)}</strong> ${word}</span>`;
+  const part = (stage: NowStage, n: number) =>
+    boards ? html`<a href="${nowHref(stage)}"><strong>${String(n)}</strong> ${stage}</a>` : html`<span><strong>${String(n)}</strong> ${stage}</span>`;
   return html`<section aria-label="Now">
     <h2 class="small muted">Now</h2>
     <p class="bar" id="now-line">
       ${part("check", now.check)} <span class="muted" aria-hidden="true">›</span>
       ${part("review", now.review)} <span class="muted" aria-hidden="true">›</span>
       ${part("land", now.land)} <span class="muted" aria-hidden="true">›</span>
-      <a href="/releases"><strong>${String(now.live)}</strong> live</a>
+      ${part("live", now.live)}
     </p>
   </section>`;
 }
@@ -112,6 +114,7 @@ export function tellBox(ctx: Ctx, user: User): Html {
           <option value="${FORGE_TARGET}">the forge</option>
         </select>`}
     ${btn("Tell", { variant: "primary" })}
+    ${btn("Notes", { href: "/notes", icon: "comment", title: "Your notes and where they stand" })}
     ${btn("Talk", { href: "/talk", icon: "comment", title: "Talk to the forge" })}
   </form>`;
 }

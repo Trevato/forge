@@ -35,18 +35,36 @@ test("a missing or blank q answers the empty shape plus a note with an example a
   }
 });
 
-test("an unknown kind is named in the note", async () => {
-  const r = await get("?q=forge&kind=bogus");
-  expect(r.note).toContain('"bogus"');
-  expect(r.note).toContain("kind=all|repos|issues|code");
+const raw = (qs: string) => fetch(`${servers.url}/api/v1/search${qs}`);
+
+test("an unknown or empty kind is a 422 invalid_kind listing the kinds", async () => {
+  for (const kind of ["bogus", ""]) {
+    const res = await raw(`?q=forge&kind=${kind}`);
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as any;
+    expect(body.error).toBe("invalid_kind");
+    expect(body.message).toContain("all, repos, issues or code");
+  }
 });
 
-test("an empty kind is not a kind either", async () => {
-  expect((await get("?q=forge&kind=")).note).toContain("is not a kind");
+test("a limit outside 1 to 100 or not whole is a 422 invalid_limit naming the range", async () => {
+  for (const limit of ["0", "101", "-1", "1.5", "abc", "", "1e1"]) {
+    const res = await raw(`?q=forge&limit=${limit}`);
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as any;
+    expect(body.error).toBe("invalid_limit");
+    expect(body.message).toContain("1 to 100");
+  }
+  expect((await raw("?q=forge&limit=100")).status).toBe(200);
+  expect((await raw("?q=forge&limit=1")).status).toBe(200);
+});
+
+test("every listed kind still answers 200", async () => {
+  for (const kind of ["all", "repos", "issues", "code"]) expect((await raw(`?q=forge&kind=${kind}`)).status).toBe(200);
 });
 
 test("a good request carries no note", async () => {
   expect((await get("?q=forge&kind=repos")).note).toBeUndefined();
   expect((await get("?q=forge&kind=all")).note).toBeUndefined();
-  expect(searchNote("x", null)).toBeUndefined();
+  expect(searchNote("x")).toBeUndefined();
 });

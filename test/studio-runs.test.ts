@@ -5,6 +5,7 @@
  * test/studio*.test.ts. It runs in about 2.5 s with no waits (#3578).
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import {
   afterAll,
   afterEach,
@@ -34,7 +35,7 @@ import {
   createRepo,
   updateRepoSettings,
 } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import type { Issue } from "../src/core/issues.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -112,8 +113,8 @@ describe("the studio's slot count", () => {
     }
     const reviewer = getUserByName(app.db, "quill")!;
     const planner = getUserByName(app.db, "chart")!;
-    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
-    setCrewRole(app.db, repo.id, planner.id, "planner");
+    seatAs(app.db, repo.id, reviewer.id, "reviewer");
+    seatAs(app.db, repo.id, planner.id, "planner");
     const on = await updateRepoSettings(app, alice, repo, {
       autonomy: "autonomous",
       autonomyDirection: "",

@@ -71,7 +71,7 @@ export function verifyToken(
   db: Database,
   presented: string,
 ): Result<
-  { user: User; scope: TokenScope; proposal?: Proposal; run?: RunScope; via?: string },
+  { user: User; scope: TokenScope; name: string; proposal?: Proposal; run?: RunScope; via?: string },
   "invalid_token"
 > {
   const row = db
@@ -79,6 +79,7 @@ export function verifyToken(
       {
         id: string;
         user_id: string;
+        name: string;
         scope: TokenScope;
         last_used_at: string | null;
         expires_at: string | null;
@@ -91,7 +92,7 @@ export function verifyToken(
       },
       [string]
     >(
-      `SELECT t.id, t.user_id, t.scope, t.last_used_at, t.expires_at,
+      `SELECT t.id, t.user_id, t.name, t.scope, t.last_used_at, t.expires_at,
               p.repo_id AS p_repo, p.child AS p_child, p.origin AS p_origin,
               r.repo_id AS r_repo, r.fork_id AS r_fork, v.via AS v_via
          FROM token t LEFT JOIN proposal_token p ON p.token_id = t.id
@@ -121,6 +122,7 @@ export function verifyToken(
   if (row.p_repo !== null)
     return ok({
       user,
+      name: row.name,
       scope: row.scope,
       proposal: {
         tokenId: row.id,
@@ -133,12 +135,13 @@ export function verifyToken(
   if (row.r_repo !== null)
     return ok({
       user,
+      name: row.name,
       scope: row.scope,
       run: { repoId: row.r_repo, forkId: row.r_fork! },
     });
   // The forge's own agent, speaking for this person (`core/via_token.ts`).
-  if (row.v_via !== null) return ok({ user, scope: row.scope, via: row.v_via });
-  return ok({ user, scope: row.scope });
+  if (row.v_via !== null) return ok({ user, name: row.name, scope: row.scope, via: row.v_via });
+  return ok({ user, name: row.name, scope: row.scope });
 }
 
 export function listTokens(db: Database, userId: string): TokenInfo[] {

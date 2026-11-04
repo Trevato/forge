@@ -19,6 +19,7 @@ import { listOrigins } from "../core/origins.ts";
 import { canRead, enterableApps, listReposVisibleTo } from "../core/repos.ts";
 import {
   cleanQuery,
+  searchKind,
   grepRepos,
   searchLocalIssues,
   matchOneRepo,
@@ -40,6 +41,27 @@ import { providerForOrigin } from "../origins/credential.ts";
 export const SEARCH_LIMIT = 20;
 /** Hard ceiling on a caller-chosen limit. */
 export const SEARCH_LIMIT_MAX = 100;
+
+/**
+ * The refusal an API or MCP caller gets for a `kind` or `limit` the search
+ * does not accept, in one set of words; undefined when both are fine. The
+ * page keeps its softer `searchNote`.
+ */
+export function searchRefusal(
+  rawKind: string | null | undefined,
+  rawLimit: string | number | null | undefined,
+): { code: "invalid_kind" | "invalid_limit"; message: string } | undefined {
+  if (rawKind !== null && rawKind !== undefined && rawKind !== "all" && searchKind(rawKind) === "all") {
+    const asked = rawKind.length > 40 ? `${rawKind.slice(0, 39)}…` : rawKind;
+    return { code: "invalid_kind", message: `kind ${JSON.stringify(asked)} is not a kind — use all, repos, issues or code` };
+  }
+  if (rawLimit !== null && rawLimit !== undefined) {
+    const n = typeof rawLimit === "number" ? rawLimit : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+    if (!Number.isInteger(n) || n < 1 || n > SEARCH_LIMIT_MAX)
+      return { code: "invalid_limit", message: `limit is a whole number from 1 to ${SEARCH_LIMIT_MAX}` };
+  }
+  return undefined;
+}
 
 /**
  * The whole live half gets this long, all origins together. A search box

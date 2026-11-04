@@ -427,7 +427,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
           ]),
       "## Find things (no account)",
       "",
-      `- Explore repositories: GET ${o}/api/v1/explore?q=kind:app+sort:forks+garden. MCP: the tool "explore" with {"q"}. In q, kind: is app, person or forge; sort: is score, forks, ships, likes, use, fresh or name; any other word is free text matched against name, owner and description.`,
+      `- Explore repositories: GET ${o}/api/v1/explore?q=kind:app+sort:forks+garden. MCP: the tool "explore" with {"q"}. In q, kind: is app, person or forge; sort: is score, forks, ships, likes, use, fresh or name; updated: is 1d, 7d or 30d; owner:<name> is one account; archived: is yes or no; any other word is free text matched against name, owner and description.`,
       `- Search issues, pulls, repositories and code: GET ${o}/api/v1/search?q=websocket+timeout. MCP: the tool "search" with {"q"}.`,
       "- Both read only what is public to you.",
       "",

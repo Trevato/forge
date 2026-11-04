@@ -9,6 +9,9 @@
  * Below it, for a forge admin who is a person, the forge's resident memory
  * (RSS) beside its JS heap, hourly for 24 h (#2151): RSS climbing while the
  * heap stays flat is native memory growth. Drawn on the server as SVG.
+ * Between them, the main-thread stalls of the last hour by route (#9016),
+ * read once at first paint from the loop watch: the top routes plus
+ * /api/v1/telemetry/flow always, as /metrics exports them.
  */
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
@@ -18,6 +21,10 @@ import { bytes, spark, span } from "../../system/format.ts";
 import { eventStream } from "../../http/sse.ts";
 import type { SystemView } from "../../system/view.ts";
 import { live } from "../../system/live.ts";
+import { readerPaces, type ReaderPace } from "../../system/telemetry_reads.ts";
+import { stallHour } from "../../metrics/stalls.ts";
+import type { RouteStall } from "../../perf/loop.ts";
+import { loopWatch } from "../../perf/live.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
@@ -89,6 +96,32 @@ function memorySection(ctx: Ctx): Html {
           <thead><tr><th scope="col">Hour (UTC)</th><th scope="col" class="num">RSS mean</th><th scope="col" class="num">RSS max</th><th scope="col" class="num">Heap mean</th><th scope="col" class="num">Heap max</th></tr></thead>
           <tbody>${hours.map((h) => html`<tr><td class="mono">${hhmm(h.at)}</td><td class="num mono">${mib(h.rssMean)}</td><td class="num mono">${mib(h.rssMax)}</td><td class="num mono">${mib(h.heapMean)}</td><td class="num mono">${mib(h.heapMax)}</td></tr>`)}</tbody>
         </table></div>`;
+}
+
+/** The last hour's stalls by route, most milliseconds first; the rows are `stallHour`'s. */
+export function stallSection(rows: readonly RouteStall[]): Html {
+  return card(
+    html`<p class="small muted">Milliseconds the main thread was held past 250 ms in the last hour, charged in full to every route running across the stall (<code>none</code>: no request was). As of this page's load; <code>/metrics</code> has the series.</p>
+      <div class="table-scroll"><table class="table" aria-label="Main-thread stalls by route, last hour">
+        <thead><tr><th scope="col">Route</th><th scope="col" class="num">Stall ms</th><th scope="col" class="num">Stalls</th></tr></thead>
+        <tbody>${rows.map((r) => html`<tr data-route="${r.route}"><td class="mono">${r.route}</td><td class="num mono">${String(Math.round(r.ms))}</td><td class="num mono">${String(r.count)}</td></tr>`)}</tbody>
+      </table></div>`,
+    { head: html`<h2>Main-thread stalls, last hour</h2>` },
+  );
+}
+
+/** Who read the telemetry routes in the last 10 minutes and how fast (#9069); `readerPaces`' rows. */
+export function readersSection(rows: readonly ReaderPace[]): Html {
+  const secs = (ms: number | null): string => (ms === null ? "—" : `${(ms / 1000).toFixed(1)} s`);
+  return card(
+    rows.length === 0
+      ? html`<p class="muted">No telemetry reads in the last 10 minutes.</p>`
+      : html`<div class="table-scroll"><table class="table" aria-label="Telemetry readers, last 10 minutes">
+          <thead><tr><th scope="col">Route</th><th scope="col">Reader</th><th scope="col" class="num">Reads, 10 min</th><th scope="col" class="num">Mean interval</th><th scope="col"></th></tr></thead>
+          <tbody>${rows.map((r) => html`<tr data-route="${r.route}" data-reader="${r.reader}"><td class="mono">${r.route}</td><td class="mono">${r.reader}</td><td class="num mono">${String(r.reads)}</td><td class="num mono">${secs(r.meanIntervalMs)}</td><td>${r.tooFast ? badge("faster than the flow copy changes", { tone: "danger" }) : null}</td></tr>`)}</tbody>
+        </table></div>`,
+    { head: html`<h2>Telemetry readers</h2>` },
+  );
 }
 
 /**
@@ -164,6 +197,7 @@ export function systemPage(ctx: Ctx): Response {
       ? html`<p class="small" id="cell-caps" data-by="kernel">Each cell's memory is capped by the kernel (its own cgroup's <code>memory.max</code>): a cell over it is killed alone.</p>`
       : html`<p class="small" id="cell-caps" data-by="watch">Each cell's memory is watched once a second and the cell stopped over its cap; the kernel does not cap it (${holder.reason}).</p>`;
   const memory = memorySection(ctx);
+  const stalls = timePhase(ctx.request, "stalls", () => stallHour(loopWatch.tally(performance.now())));
   const rendering = performance.now();
   const r = regions(v);
   const at = (id: string): Html => raw(r[id]!);
@@ -190,6 +224,8 @@ export function systemPage(ctx: Ctx): Response {
       <p class="small muted"><span class="js-only">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></span></p></div>
     <div id="sys-procs">${at("sys-procs")}</div>
+    <div id="sys-stalls">${stallSection(stalls)}</div>
+    <div id="sys-readers">${readersSection(readerPaces())}</div>
     ${memory}`;
   const response = page({ ctx, title: "System", body, wide: true, scriptJs: systemLiveJs });
   notePhase(ctx.request, "render", performance.now() - rendering);

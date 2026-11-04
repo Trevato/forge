@@ -2,6 +2,7 @@
  * "This first" (#7806): a writer's rank puts a ready issue ahead of the rest
  * for the dispatcher; it never lifts a blocker, and it ends when the issue closes.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,7 +11,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { addDependency, readyNow, repoGraph } from "../src/core/dependencies.ts";
 import { firstAt, putFirst } from "../src/core/first.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
@@ -45,7 +46,7 @@ describe("this first", () => {
       if (!created.ok) throw new Error(String(created.error));
       expect(addToCrew(app, alice, made.value, agent).ok).toBe(true);
     }
-    setCrewRole(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
     const set = await updateRepoSettings(app, alice, made.value, {
       autonomy: "autonomous",
       autonomyDirection: "Keep the engine small.",

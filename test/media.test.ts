@@ -231,7 +231,7 @@ describe("the media route", () => {
   test("a full commit id is cached for a year; a branch revalidates", async () => {
     const pinned = await get(`/alice/gallery/media/${sha}/art/logo.png`);
     expect(pinned.status).toBe(200);
-    expect(pinned.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(pinned.headers.get("cache-control")).toBe("public, max-age=31536000, s-maxage=86400, immutable");
     const moving = await get("/alice/gallery/media/main/art/logo.png");
     expect(moving.headers.get("cache-control")).toBe("private, max-age=0");
   });

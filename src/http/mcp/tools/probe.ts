@@ -6,7 +6,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "probe",
-  doc: "knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract",
+  doc: "`{ repo }`: knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract",
   description:
     "Try every door of a running app as nobody, a user and an admin; read-only.",
   inputSchema: {

@@ -40,6 +40,7 @@ import {
 } from "../core/repos.ts";
 import { MAX_COMMIT_BYTES, MAX_FILE_BYTES } from "./contents.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
+import { currentDoor } from "../core/acting_via.ts";
 import type { User } from "../core/users.ts";
 import {
   createWebhook as insertWebhook,
@@ -66,6 +67,7 @@ import {
   requireWriter,
   type AccessError,
 } from "./access.ts";
+import { validPolishShare } from "../crew/small_share.ts";
 import { removeInstallCache } from "../crew/workdir.ts";
 import type { SettingsChanged } from "../core/settings_changed.ts";
 
@@ -174,9 +176,16 @@ export async function createRepo(
     kind: "repo.created",
     repoId: created.value.id,
     actorId: user.value.id,
+    payload: doorPayload(user.value.id),
   });
   return created;
 }
+
+/** How the actor came in (`core/acting_via.ts`); a conversation is the event's own `via`. */
+const doorPayload = (actorId: string): Record<string, string> => {
+  const door = currentDoor(actorId);
+  return door === undefined ? {} : { door };
+};
 
 /**
  * How many forks one person may make in any 24 hours (#853, #888): each may
@@ -283,7 +292,7 @@ export async function privateRepoForSealed(
   return sealedForkFor(app, actor, base);
 }
 
-export type UpdateSettingsError = "not_found" | "unknown_branch";
+export type UpdateSettingsError = "not_found" | "unknown_branch" | "polish_share";
 
 /** Each repository's archive transitions, one after another. */
 const archiveTurns = new WeakMap<App, Map<string, Promise<void>>>();
@@ -346,6 +355,10 @@ const AUDITED = [
   "crewOutsiders",
   "decisionsBy",
   "plansNeedNod",
+  "autonomySlots",
+  "plannerSlots",
+  "reviewerSlots",
+  "polishShare",
 ] as const;
 
 export type { SettingsChanged };
@@ -387,6 +400,8 @@ export async function updateRepoSettings(
   // base, whoever owns it (`core/sealed.ts`).
   if (repo.sealedFor !== null && settings.visibility === "public")
     return err("not_found");
+  if (settings.polishShare !== undefined && !validPolishShare(settings.polishShare))
+    return err("polish_share");
   const branch = settings.defaultBranch;
   if (branch !== undefined && branch !== repo.defaultBranch) {
     const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
@@ -528,8 +543,18 @@ export async function deleteRepo(
   await removeInstallCache(app.config.dataDir, repo.id);
   dropMirror(app.config.dataDir, repo.id);
   storageChanged(app, repo.ownerId);
-  // The row is gone (events cascade with it), so this event carries no repo.
-  app.bus.append({ kind: "repo.deleted", actorId: admin.value.id });
+  // The row is gone (events cascade with it), so the event names it: a private
+  // one's name is for those who answer for it (`core/event_audience.ts`).
+  app.bus.append({
+    kind: "repo.deleted",
+    actorId: admin.value.id,
+    payload: {
+      repo: `${repo.ownerName}/${repo.name}`,
+      visibility: repo.visibility,
+      ownerId: repo.ownerId,
+      ...doorPayload(admin.value.id),
+    },
+  });
   return ok();
 }
 

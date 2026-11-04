@@ -41,6 +41,8 @@ import { runGit } from "../git/env.ts";
 import { readTipOrAbsent } from "../git/tip.ts";
 import { readTips } from "../git/tips.ts";
 import { repoDir } from "../git/repos.ts";
+import { combine } from "../git/combined.ts";
+import { fromKeptFork } from "./landing_kind.ts";
 import { forkFollowMode } from "./fork_follow.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -453,6 +455,12 @@ export async function refreshPullHead(
   forge.db
     .query("UPDATE pull SET head_oid = ?2 WHERE issue_id = ?1")
     .run(pull.id, tip);
+  // A kept fork's pull is combined with main on our side (#9012).
+  if (!apart && fromKeptFork(forge.db, pull)) {
+    const baseTip = await resolveOid(baseDir, `refs/heads/${pull.baseBranch}`);
+    if (baseTip !== undefined)
+      await combine(baseDir, { number: pull.number, baseOid: baseTip, headOid: tip });
+  }
   return tip;
 }
 

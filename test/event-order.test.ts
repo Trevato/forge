@@ -109,6 +109,7 @@ describe("events keep their order across processes", () => {
       if (next === undefined || next.done) continue;
       text += new TextDecoder().decode(next.value);
     }
+    if (!text.includes(`id: ${second}`)) throw new Error(`never came: still waiting while !text.includes(\`id: \${second}\`)`);
     await reader.cancel();
     return text;
   };

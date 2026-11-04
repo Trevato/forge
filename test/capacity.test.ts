@@ -419,6 +419,43 @@ describe("report mode is loud to admins, and to nobody else", () => {
   const needs = (who: User | undefined): string[] =>
     "needs" in readHealth(app, who) ? (readHealth(app, who) as { needs: string[] }).needs : [];
 
+  const signedIn = async (): Promise<string> => {
+    const res = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url },
+      body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+    });
+    return (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+  };
+  const post = (cookie: string, origin: string, body: Record<string, string>): Promise<Response> =>
+    fetch(`${servers.url}/settings/capacity`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "content-type": "application/x-www-form-urlencoded", origin },
+      body: new URLSearchParams(body),
+    });
+
+  test("below its ceiling: a lowered crew concurrency is flagged, a cross-origin reset is refused, one reset clears it", async () => {
+    const ceiling = Number(capacityDefault("crew.concurrency"));
+    expect(ceiling).toBeGreaterThan(1);
+    const cookie = await signedIn();
+    expect(changeCapacity(app, alice, "crew.concurrency", String(ceiling)).ok).toBe(true);
+    expect(await page()).not.toContain("below ceiling");
+    expect(changeCapacity(app, alice, "crew.concurrency", "1").ok).toBe(true);
+    expect(await page()).toContain(`below ceiling ${ceiling}`);
+
+    const refused = await post(cookie, "https://evil.example", { key: "crew.concurrency", reset: "1" });
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+    expect(capacityValue(app.db, "crew.concurrency")).toBe("1");
+
+    const before = capacityChanges(app.db, 100).length;
+    expect((await post(cookie, servers.url, { key: "crew.concurrency", reset: "1" })).status).toBe(303);
+    expect(capacityValue(app.db, "crew.concurrency")).toBe(String(ceiling));
+    expect(capacityChanges(app.db, 100).length).toBe(before + 1);
+    expect(await page()).not.toContain("below ceiling");
+  });
+
   test("reported: the Capacity page says it once, as a note; vitals do not", async () => {
     expect(changeCapacity(app, alice, "cells.egress", "report").ok).toBe(true);
     expect(needs(alice)).toEqual([]);

@@ -33,11 +33,21 @@ export const SHARED_BUDGET = { page: 240, deep: 24 } as const;
  * Deep pages per minute, per address, for a reader whose User-Agent looks like
  * a browser (#8199): anyone can write that header, so what it may spend on the
  * pages that cost a git walk is bound too. Far looser than a crawler's, since
- * people click. There is deliberately no bucket for all such readers
+ * people click. On time, there is deliberately no bucket for all such readers
  * together: a few addresses could spend it and shut every other person out.
- * The aggregate is held by the tree cache and by the loop-lag divisor.
+ * Behind, there is: on 2026-11-03 browser-looking strangers on too many
+ * addresses for any one to reach its budget sent 31 deep pages a second, took
+ * 91% of the forge's answering time and left it stalling for everyone.
+ * `behindAll` is what they may spend together, per minute, only while the loop
+ * is late. A signed-in person or a token is never counted.
+ *
+ * Late isn't only the loop: a test at 100 pages a second (#9405) left the loop
+ * on time while pages queued on git for seconds and people waited behind them.
+ * So `inFlight` of these pages unanswered at once counts as behind too.
  */
-export const STRANGER_BUDGET = { address: 30 } as const;
+export const STRANGER_BUDGET = { address: 30, behindAll: 60, inFlight: 32 } as const;
+/** A page unanswered this long no longer counts, so a lost finish can't hold the forge "behind" for good. */
+const IN_FLIGHT_MAX_MS = 60_000;
 /** The budgets divide by this while the event loop runs late. */
 export const BEHIND_DIVISOR = 4;
 /** An average wake later than this (ms) is "behind". */
@@ -68,6 +78,23 @@ export function agentOf(userAgent: string): string {
   return token.toLowerCase();
 }
 
+/**
+ * A User-Agent as a family for the traffic board, from a short fixed set for
+ * browsers (the header is the client's word) and the product token otherwise.
+ */
+export function familyOf(userAgent: string): string {
+  const ua = userAgent.slice(0, 300);
+  if (ua === "") return "none";
+  if (!CRAWLER.test(ua) && /^Mozilla\//.test(ua)) {
+    if (/\bEdg(?:e|A|iOS)?\//.test(ua)) return "edge";
+    if (/\b(?:Chrome|Chromium|CriOS)\//.test(ua)) return "chrome";
+    if (/\b(?:Firefox|FxiOS)\//.test(ua)) return "firefox";
+    if (/\bSafari\//.test(ua)) return "safari";
+    return "other browser";
+  }
+  return agentOf(ua);
+}
+
 /** Whether this request says it is a crawler and is one the budget counts. */
 export function isCrawler(request: Request): boolean {
   if (request.method !== "GET" && request.method !== "HEAD") return false;
@@ -87,6 +114,10 @@ interface State {
   readonly shared: Pair;
   /** Deep pages read by browser-looking strangers, per address. */
   readonly strangerAddress: RateLimiter;
+  /** The same, all of them together; counted only while the loop is behind. */
+  readonly strangerAll: RateLimiter;
+  /** Deep pages being answered for strangers, by when they started. */
+  readonly strangersInFlight: Map<Request, number>;
   readonly refused: Map<string, number>;
   readonly refusedBy: Record<Scope, number>;
   readonly clock: { now: () => number; behind: boolean };
@@ -123,6 +154,8 @@ function stateOf(app: App): State {
       agent: pair(AGENT_BUDGET),
       shared: pair(SHARED_BUDGET),
       strangerAddress: new RateLimiter(limits(STRANGER_BUDGET.address), () => clock.now()),
+      strangerAll: new RateLimiter(limits(STRANGER_BUDGET.behindAll), () => clock.now()),
+      strangersInFlight: new Map(),
       refused: new Map(),
       refusedBy: { address: 0, agent: 0, shared: 0, stranger: 0 },
       clock,
@@ -201,13 +234,34 @@ function takeStrangerDeep(app: App, request: Request, pathname: string): CrawlVe
   if (new URL(request.url).searchParams.get("fragment") === "explorer") return undefined;
   watchLag();
   const state = stateOf(app);
-  const scale = state.clock.behind || mainThreadBehind() ? BEHIND_DIVISOR : 1;
+  const behind = state.clock.behind || mainThreadBehind() || strangersQueued(state);
+  const scale = behind ? BEHIND_DIVISOR : 1;
   state.strangerAddress.setLimits(limits(Math.max(1, Math.floor(STRANGER_BUDGET.address / scale))));
-  const own = state.strangerAddress.take(bucketOf(clientAddress(request)), "ro");
-  if (own.allowed) return undefined;
+  const key = bucketOf(clientAddress(request));
+  const own = state.strangerAddress.take(key, "ro");
+  const all = own.allowed && behind ? state.strangerAll.take("all", "ro") : own;
+  if (all.allowed) {
+    state.strangersInFlight.set(request, state.clock.now());
+    return undefined;
+  }
+  if (own.allowed) state.strangerAddress.refund(key);
   state.refusedBy.stranger++;
-  return { retryAfter: own.retryAfter, agent: "browser", scope: "stranger" };
+  return { retryAfter: all.retryAfter, agent: "browser", scope: "stranger" };
 }
+
+/** Whether strangers' deep pages are queued past their share, forgetting any too old to be real. */
+function strangersQueued(state: State): boolean {
+  const open = state.strangersInFlight;
+  if (open.size < STRANGER_BUDGET.inFlight) return false;
+  const oldest = state.clock.now() - IN_FLIGHT_MAX_MS;
+  for (const [request, at] of open) if (at < oldest) open.delete(request);
+  return open.size >= STRANGER_BUDGET.inFlight;
+}
+
+/** The server has answered this request: if it was a stranger's deep page, it no longer counts as queued. */
+export const finishedStrangerDeep = (app: App, request: Request): void => {
+  stateOf(app).strangersInFlight.delete(request);
+};
 
 /** Requests refused so far in this process, by agent, most first. */
 export const crawlRefusals = (app: App): { agent: string; refused: number }[] =>
@@ -223,7 +277,11 @@ export const crawlRefusalScopes = (app: App): Record<Scope, number> => ({ ...sta
 
 /** The refusal: small, plain, and not worth caching past the wait. */
 export function crawlRefused(verdict: CrawlVerdict): Response {
-  return new Response("Too many requests from this crawler: see /robots.txt for what to skip.\n", {
+  const words =
+    verdict.scope === "stranger"
+      ? "The forge is busy. Try again in a moment, or sign in to go straight through.\n"
+      : "Too many requests from this crawler: see /robots.txt for what to skip.\n";
+  return new Response(words, {
     status: 429,
     headers: {
       "retry-after": String(verdict.retryAfter),

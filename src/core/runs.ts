@@ -49,6 +49,8 @@ export interface CheckDetail {
   readonly failures?: readonly { readonly file: string; readonly name: string }[];
   /** The check machine's free disk share (0..1) when a red finished (#5453). */
   readonly diskFree?: number;
+  /** `temp_full`: a shard ran out of temp space, the environment's fault, not the change's (#8679). */
+  readonly environment?: "temp_full";
 }
 
 export interface Run {
@@ -695,11 +697,7 @@ export interface ListRunsOptions {
   cursor?: string | undefined;
 }
 
-export function listRuns(
-  db: Database,
-  repoId: string,
-  options: ListRunsOptions = {},
-): Run[] {
+function runsWhere(repoId: string, options: ListRunsOptions): { where: string; params: (string | number)[]; limit: number } {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const params: (string | number)[] = [repoId];
   let where = "repo_id = ?1";
@@ -723,14 +721,46 @@ export function listRuns(
     params.push(options.cursor);
     where += ` AND id < ?${params.length}`;
   }
+  return { where, params, limit };
+}
+
+export function listRuns(
+  db: Database,
+  repoId: string,
+  options: ListRunsOptions = {},
+): Run[] {
+  const { where, params, limit } = runsWhere(repoId, options);
   params.push(limit);
-  const rows = db
+  return db
     .query<RunRow, (string | number)[]>(
       `SELECT * FROM run WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRun);
-  return rows;
+}
+
+/**
+ * A cheap marker over the page `listRuns` would give: each row's id and every
+ * field a client sees move (state, timestamps, turns, cost, summary, error,
+ * attempt), plus the title of the pull or issue it is about. The same page
+ * gives the same marker; a run that starts, moves, finishes or spends more
+ * changes it. One indexed read, no rows built.
+ */
+export function runsMarker(db: Database, repoId: string, options: ListRunsOptions = {}): string {
+  const { where, params, limit } = runsWhere(repoId, options);
+  params.push(limit);
+  const rows = db
+    .query<{ m: string }, (string | number)[]>(
+      `SELECT r.id || '|' || COALESCE(r.state, '') || '|' || COALESCE(r.started_at, '') || '|' || COALESCE(r.finished_at, '')
+          || '|' || COALESCE(r.serving_at, '') || '|' || COALESCE(r.turns, '') || '|' || COALESCE(r.cost_usd, '') || '|' || COALESCE(r.attempt, '')
+          || '|' || COALESCE(r.not_before, '') || '|' || COALESCE(r.summary, '') || '|' || COALESCE(r.error_line, '') || '|' || COALESCE(r.error_at, '')
+          || '|' || COALESCE(r.check_detail, '') || '|' || COALESCE(i.title, '') AS m
+         FROM (SELECT * FROM run WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}) r
+         LEFT JOIN issue i ON i.id = r.issue_id
+        ORDER BY r.id DESC`,
+    )
+    .all(...params);
+  return `${rows.length}\n${rows.map((r) => r.m).join("\n")}`;
 }
 
 /** Queued runs of one kind, oldest first — what a worker takes from. */
@@ -1386,4 +1416,21 @@ export function getRunErrorLine(db: Database, runId: string): { text: string; at
     )
     .get(runId);
   return row === null || row === undefined || row.error_line === "" ? undefined : { text: row.error_line, at: row.error_at };
+}
+
+/**
+ * How many runs of a repository are really going: agent runs and checks in
+ * the `running` state, the pipeline's `building`, `review` and `checking`
+ * stages added (`flow/pipeline.ts`). Queued, paused and finished runs are
+ * not running, and a deploy is no work of the crew's.
+ */
+export function runningCount(db: Database, repoId: string): number {
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        `SELECT COUNT(*) AS n FROM run
+          WHERE state = 'running' AND repo_id = ?1 AND kind IN ('agent','check')`,
+      )
+      .get(repoId)?.n ?? 0
+  );
 }

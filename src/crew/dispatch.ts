@@ -8,11 +8,15 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { TEMP_FULL } from "../checks/disk_full.ts";
+import { freshPullFor } from "./fresh_pull.ts";
+import { PRIORITY_REASONS, weekHold } from "./week_hold.ts";
+import { weekFor } from "./week_read.ts";
 import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
 import { resolveListConflicts } from "../actions/list-conflicts.ts";
 import { markHeard } from "../core/issues.ts";
-import { capacityCount, noteBooted } from "../core/capacity.ts";
+import { capacityCount, noteBooted, paceFloor } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
@@ -22,6 +26,7 @@ import { addComment } from "../actions/issues.ts";
 import { planAnotherRound } from "../actions/give_back.ts";
 import { announceRun } from "../actions/runs.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
+import { LANDED_LEAD } from "../core/done_on_main.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import {
   getIssue,
@@ -39,7 +44,9 @@ import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { decideAndRecord } from "./ledger.ts";
+import { bugsFirst } from "../flow/bugs.ts";
 import { byDials } from "./team_share.ts";
+import { gateQueue } from "../flow/valve_gate.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
@@ -67,6 +74,7 @@ import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence, settleAll, settleOnPush } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
+import { REPEAT_NOTE, repeatTripped } from "./repeat.ts";
 import { unstickOwed } from "./stalls.ts";
 import {
   CAP_NOTE,
@@ -358,29 +366,6 @@ function unstickDue(app: App, repo: Repo, issue: Issue): boolean {
   return unstickOwed(app.db, repo, last?.at ?? "");
 }
 
-/** How long after a crew pull opens its issue takes no second build run. */
-export const BUILD_SETTLE_MS = 10 * 60_000;
-
-/** The crew pull opened for the issue within `BUILD_SETTLE_MS`, if any. */
-function freshPullFor(
-  app: App,
-  issue: Issue,
-  agent: Agent,
-): { number: number } | undefined {
-  const since = new Date(Date.now() - BUILD_SETTLE_MS).toISOString();
-  const name = agent.user.username.replace(/[\\%_]/g, "\\$&");
-  return (
-    app.db
-      .query<{ number: number }, [string, string, string, string]>(
-        `SELECT i.number FROM pull p JOIN issue i ON i.id = p.issue_id
-          WHERE i.repo_id = ?1 AND i.created_at > ?2
-            AND (p.head_branch = ?3 OR p.head_branch LIKE ?4 ESCAPE '\\')
-          LIMIT 1`,
-      )
-      .get(issue.repoId, since, `${agent.user.username}/${issue.number}`, `${name}/${issue.number}-%`) ?? undefined
-  );
-}
-
 /** Whether `spentUsd` has reached the repository's daily ceiling: the test that stops a run being queued. */
 export function atCeiling(
   repo: Pick<Repo, "autonomyCeilingUsd">,
@@ -388,6 +373,36 @@ export function atCeiling(
 ): boolean {
   return spentUsd >= repo.autonomyCeilingUsd;
 }
+
+/**
+ * Whether this run is a job outside the agent's seat here: a build for one
+ * that is not a builder (the direction issue is the planner's), a review for
+ * one that is not a reviewer. On the crew the seat is the repository's; off
+ * it, what the agent declares.
+ */
+export function outsideSeat(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  agent: Agent,
+  reason: RunReason,
+): boolean {
+  // Every reason but a review is building work: a first go, feedback, a red check, a conflict, a converge.
+  const seat =
+    reason === "review"
+      ? "reviewer"
+      : issue.id === repo.directionIssueId
+        ? "planner"
+        : "builder";
+  const held = crewRole(app.db, repo.id, agent.user.id);
+  // A pull assigned to its reviewer is asked for a look, a builder's for a fix: only a planner is outside.
+  if (reason !== "review" && issue.kind === "pull")
+    return (held ?? agent.roles[0]) === "planner";
+  return held === undefined ? !agent.roles.includes(seat) : held !== seat;
+}
+
+export const NOT_A_BUILDER_NOTE =
+  "I am not a builder here, so I have not started on this. Assign it to a builder on the crew, or change my roles in Settings.";
 
 /** Queue a run about an issue for an agent, unless one is already waiting. */
 export function queueAgentRun(
@@ -405,6 +420,8 @@ export function queueAgentRun(
 ): Run | undefined {
   // A suspended or removed owner's repositories run nothing, whoever asks.
   if (!accountActive(app.db, repo.ownerId)) return undefined;
+  // Never a job outside the agent's seat: building is a builder's, reviewing a reviewer's.
+  if (outsideSeat(app, repo, issue, agent, reason)) return undefined;
   // An archived repository starts nothing new; a run carrying on (`again`)
   // is one already going, and finishes. A first run
   // (`attempt` 0, as a conflict or converge run is queued) is new.
@@ -433,6 +450,11 @@ export function queueAgentRun(
   // Three failed or declined runs in an hour: parked, until a person speaks.
   if (breakerTripped(app.db, repo, issue.id)) {
     parkForBreaker(app, repo, issue, agent);
+    return undefined;
+  }
+  // The same issue run again and again within minutes: a loop, parked once.
+  if (repeatTripped(app.db, repo, issue.id)) {
+    parkForBreaker(app, repo, issue, agent, REPEAT_NOTE);
     return undefined;
   }
   // A day's share of runs on one issue without a person's word: a loop,
@@ -485,7 +507,7 @@ export function queueAgentRun(
     // One build run per issue: a pull opened a moment ago is that run's
     // answer, and a second build beside it is the same work twice.
     if (reason === "assigned") {
-      const fresh = freshPullFor(app, issue, agent);
+      const fresh = freshPullFor(app.db, repo.id, issue.number, [agent.user.username]);
       if (fresh !== undefined) {
         log.info("build run refused: a pull opened in the last 10 minutes", {
           repo: `${repo.ownerName}/${repo.name}`,
@@ -574,7 +596,7 @@ function releaseOtherRuns(
   });
 }
 
-function route(app: App, event: ForgeEvent): void {
+export function route(app: App, event: ForgeEvent): void {
   if (event.repoId === null) return;
   const number = event.payload["number"];
   const repo = getRepoById(app.db, event.repoId);
@@ -592,6 +614,12 @@ function route(app: App, event: ForgeEvent): void {
         ? getAgent(app.db, issue.assigneeId)
         : undefined;
       if (!agent || issue.state !== "open") return;
+      // Assigned to a planner or a reviewer: said once, never silently run.
+      if (outsideSeat(app, repo, issue, agent, "assigned")) {
+        if (!listComments(app.db, issue.id).some((c) => c.body === NOT_A_BUILDER_NOTE))
+          addComment(app, agent.user, repo, issue, NOT_A_BUILDER_NOTE);
+        return;
+      }
       queueAgentRun(
         app,
         repo,
@@ -611,6 +639,11 @@ function route(app: App, event: ForgeEvent): void {
     case "pull.reviewed": {
       if (typeof number !== "number") return;
       if (event.payload["via"] === "origin") return;
+      // The landing's own note goes to a person. Heard as the merger's word it
+      // sends the builder back, whose push opens a pull that closes as already
+      // on the base and writes the note again.
+      const spoken = event.payload["body"];
+      if (typeof spoken === "string" && spoken.startsWith(LANDED_LEAD)) return;
       const actor =
         event.actorId === null ? undefined : getUserById(app.db, event.actorId);
       if (!actor) return;
@@ -1165,6 +1198,10 @@ export async function judgeFailedCheck(
 ): Promise<CheckJudgement> {
   const run = getRun(app.db, runId);
   const failingTest = run?.checkDetail?.names[0];
+  // A shard that ran out of temp space is the machine's, whatever a decider
+  // might guess: the check runs again without spending the agent's tries.
+  if (run?.checkDetail?.environment === TEMP_FULL)
+    return { retry: "again", cause: "environment", failingTest };
   if (app.config.decider === undefined)
     return { retry: "again", cause: "change", failingTest };
   // A pull that does not merge is the change's, whatever a decider might
@@ -1404,8 +1441,50 @@ export function sweepAssigned(app: App): void {
   }
 }
 
+/**
+ * Whether the run's newest assignment was a person's (`assignIssue` marks it
+ * `person`; the tick's own pick says `pick`). An assignment event without
+ * either mark was written before the marks existed and counts as a pick.
+ */
+export function assignedByPerson(app: App, run: Run): boolean {
+  if (run.issueId === null) return false;
+  const row = app.db
+    .query<{ person: number | null }, [string]>(
+      `SELECT json_extract(e.payload, '$.person') AS person FROM event e INDEXED BY event_repo_kind_number_at
+         JOIN issue ON issue.repo_id = e.repo_id AND e.kind = issue.kind || '.assigned'
+          AND json_extract(e.payload, '$.number') = issue.number + 0
+        WHERE issue.id = ? ORDER BY e.id DESC LIMIT 1`,
+    )
+    .get(run.issueId);
+  return row?.person === 1;
+}
+
+/**
+ * A review, or work a person assigned: the runs the pace leaves a floor for.
+ * `memo` holds the answer per run for one pump pass, so the events are read
+ * once for each run, and only for `assigned` ones.
+ */
+export function isPriorityRun(app: App, run: Run, memo?: Map<string, boolean>): boolean {
+  if (!PRIORITY_REASONS.includes(run.reason)) return false;
+  if (run.reason !== "assigned") return true;
+  const known = memo?.get(run.id);
+  if (known !== undefined) return known;
+  const person = assignedByPerson(app, run);
+  memo?.set(run.id, person);
+  return person;
+}
+
 /** Per app, the runs already told why they wait, so the log says it once. */
 const notedBy = new WeakMap<App, Set<string>>();
+
+/**
+ * The order queued agent runs are started in: the team dials first, then bugs
+ * ahead of everything (#8709), then the valves a person turned. A bug outranks the dials by policy: the clock
+ * is a promise, the dials a share of the rest.
+ */
+export function startOrder(app: App): ReturnType<typeof gateQueue> {
+  return gateQueue(app.db, bugsFirst(app.db, byDials(app.db, listQueued(app.db, "agent", 50))));
+}
 
 /** Take queued runs, oldest first, up to the limit — one per issue at a time. */
 function pump(
@@ -1423,10 +1502,20 @@ function pump(
     capacityCount(app.db, "crew.concurrency", options.concurrency) -
     runningIssues.size;
   const started: string[] = [];
+  const goingIn = new Map<string, number>();
+  const priorityIn = new Map<string, number>();
+  const priorityMemo = new Map<string, boolean>();
   const noted = notedBy.get(app) ?? new Set<string>();
   notedBy.set(app, noted);
-  // Builder starts go to teams in proportion to their dials (`team_share.ts`).
-  for (const queued of byDials(app.db, listQueued(app.db, "agent", 50))) {
+  // Builder starts go to teams in proportion to their dials (`team_share.ts`),
+  // then through the valves a person turned (`flow/valve_gate.ts`).
+  const gated = startOrder(app);
+  for (const shut of gated.held) {
+    if (noted.has(shut.id)) continue;
+    noted.add(shut.id);
+    appendRunLog(app.config.dataDir, shut.id, "queued, not started: its repository's valve is shut (/flow)");
+  }
+  for (const queued of gated.order) {
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;
     const fresh = getRun(app.db, queued.id);
     if (!fresh || fresh.state !== "queued") continue;
@@ -1443,6 +1532,22 @@ function pump(
       continue;
     }
     if (slots <= 0) break;
+    // The week's pace holds every path that starts a run in an autonomous
+    // repository: assigned, review, feedback and check runs as much as picks (#8873).
+    if (home !== undefined && home.autonomy === "autonomous") {
+      const going = (goingIn.get(home.id) ?? 0) + active.filter((r) => r.state === "running" && r.repoId === home.id).length;
+      const priorityGoing =
+        (priorityIn.get(home.id) ?? 0) +
+        active.filter((r) => r.state === "running" && r.repoId === home.id && isPriorityRun(app, r, priorityMemo)).length;
+      const held = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, paceFloor(app.db));
+      if (held !== null) {
+        if (!noted.has(fresh.id)) {
+          noted.add(fresh.id);
+          appendRunLog(app.config.dataDir, fresh.id, held);
+        }
+        continue;
+      }
+    }
     // An account at its concurrent-runs limit keeps this run queued, with
     // the count in its log once, until one of its runs ends.
     const owner = getRepoById(app.db, fresh.repoId)?.ownerId;
@@ -1460,6 +1565,8 @@ function pump(
       continue;
     }
     started.push(fresh.id);
+    goingIn.set(fresh.repoId, (goingIn.get(fresh.repoId) ?? 0) + 1);
+    if (isPriorityRun(app, fresh, priorityMemo)) priorityIn.set(fresh.repoId, (priorityIn.get(fresh.repoId) ?? 0) + 1);
     noted.delete(fresh.id);
     slots--;
     if (queued.issueId !== null) runningIssues.add(queued.issueId);

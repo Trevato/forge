@@ -4,7 +4,7 @@ import { good, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "audit",
-  doc: "who can do what, per app, read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`)",
+  doc: "`{ repo? }`: who can do what, per app (all you can see without `repo`), read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`)",
   description:
     "Who can do what per app: resource × verb, yes, own or no.",
   inputSchema: {

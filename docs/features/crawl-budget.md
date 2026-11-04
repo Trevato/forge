@@ -14,3 +14,5 @@ Not done: a panel on a board page (the performance board has no page yet; the sh
 - Intended: only this anonymous path links by commit; a signed-in person's listing keeps the branch name in its links (`linkRef` is set only there).
 - That listing's links (entries and README) name the full commit, so the blob and tree pages behind them carry the immutable headers; a tree at a full id is `immutable` for anonymous readers too.
 - The crawler board (`/api/v1/admin/crawlers`, terminal "Crawlers") adds `deep_stranger_requests`, `deep_stranger_ms` and `refused_by_budget.stranger`.
+
+- Who used the answering time is on home's "Traffic, 15 min" tile and at `/settings/traffic` (admin), from minute totals the performance record keeps as each request is added (`perf/traffic.ts`): exact under a flood, no address kept, only its /16 or /32 and a salted sketch. `GET /api/v1/admin/kpis/probe` (admin) answers every home number with what it counts and its raw inputs read again past the home cache.

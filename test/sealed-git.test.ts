@@ -12,6 +12,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
@@ -286,6 +287,19 @@ describe("a stranger and a reader cannot reach the fix", () => {
         });
       }
     });
+
+  test("no answer about it may sit in a shared cache, for a stranger or for the writer who can read it", async () => {
+    expect(sealedRepo.visibility).not.toBe("public");
+    const session = createSession(app.db, alice.id).token;
+    for (const path of [`raw/${fixOid}/fix.ts`, `media/${fixOid}/fix.ts`, `blob/${fixOid}/fix.ts`, `tree/${fixOid}`, `commit/${fixOid}`]) {
+      for (const base of ["alice/square", `bot/${sealedRepo.name}`]) {
+        for (const headers of [{}, { cookie: `forge_session=${session}` }] as Record<string, string>[]) {
+          const answer = await fetch(`${servers.url}/${base}/${path}`, { headers, redirect: "manual" });
+          expect({ path, base, control: (answer.headers.get("cache-control") ?? "").includes("public") }).toEqual({ path, base, control: false });
+        }
+      }
+    }
+  });
 
   test("the push that carried it reaches neither a reader's events nor the base's", async () => {
     for (const viewer of [undefined, mallory]) {

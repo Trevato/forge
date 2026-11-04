@@ -24,6 +24,8 @@ import { CURSOR_NOT_ISSUED, KIND_HAS_NO_CHIP } from "../actions/feed_words.ts";
 import { getUserByName, getUsersByIds } from "../core/users.ts";
 import { drainQueue } from "../core/shares.ts";
 import { feedTag, hasQueuedShares } from "../feed/feed_tag.ts";
+import { lastVisit } from "../core/home_visit.ts";
+import { feedDigest } from "../web/studio/since.ts";
 import { holds } from "../web/feeds.ts";
 import { share, RECIPIENTS_MAX } from "../feed/share.ts";
 import { canRead, getRepo } from "../core/repos.ts";
@@ -86,6 +88,7 @@ export function feedRoutes(router: Router<Handler>): void {
       cursor: rawCursor,
       limit: limit ?? null,
       now,
+      visit: rawCursor === null ? lastVisit(ctx.app.db, viewer.id) : undefined,
     });
     const headers: Record<string, string> = {
       "cache-control": "private, no-store",
@@ -105,8 +108,13 @@ export function feedRoutes(router: Router<Handler>): void {
         ...(cursor === undefined ? {} : { cursor }),
       }),
     );
+    // The first page carries home's "Since you were here" card, as MCP `feed` does.
+    const digest =
+      cursor === undefined
+        ? timePhase(ctx.request, "digest", () => feedDigest(ctx.app.db, viewer, now))
+        : undefined;
     return timePhase(ctx.request, "render", () =>
-      json(page, 200, headers),
+      json(cursor === undefined ? { ...page, digest } : page, 200, headers),
     );
   });
 

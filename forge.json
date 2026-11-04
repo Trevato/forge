@@ -3,7 +3,8 @@
     "api.anthropic.com"
   ],
   "app": {
-    "looks": ["/", "/forges", "/family", "/front", "/explore", "/board", "/boards", "/asked", "/feed", "/review", "/search", "/new", "/audit", "/releases", "/changelog", "/apps", "/migrate", "/map", "/system", "/talk", "/contribute", "/pipeline", "/resilience", "/settings"],
+    "looks": ["/", "/front", "/explore", "/board", "/notes", "/feed", "/review", "/new", "/audit", "/releases", "/apps", "/repos", "/map", "/system", "/talk", "/flow", "/resilience", "/settings", "/preview-admin/sample", "/preview-admin/sample/pulls/3", "/preview-admin/sample/next", "/preview-admin/sample/bets", "/preview-admin/sample/waves", "/preview-admin/sample/milestones"],
+    "looksAsOwner": ["/", "/flow", "/talk", "/system", "/resilience", "/preview-admin/sample", "/preview-admin/sample/pulls/3", "/preview-admin/sample/next", "/preview-admin/sample/bets", "/preview-admin/sample/waves", "/preview-admin/sample/milestones"],
     "run": "bun run src/main.ts",
     "install": "",
     "health": "/healthz",

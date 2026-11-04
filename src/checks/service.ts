@@ -12,7 +12,8 @@
  */
 
 import { pullDir, runDir } from "../core/pulls.ts";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { chmod, lstat, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
@@ -59,6 +60,7 @@ import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.t
 import { parseBunTestFailure } from "./bun-test.ts";
 import { recordCrashFlakes, passedAlone, recordFlakes, rerunCommand, rerunnable, pullOwnsRed } from "./flake.ts";
 import { diskRecovered, withDisk } from "./disk_red.ts";
+import { scratchEnv } from "./disk_full.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
@@ -317,8 +319,9 @@ export function requeueAbandonedChecks(app: App, staleMs: number): number {
     appendRunLog(app.config.dataDir, run.id, run.summary);
     announceRun(app, run);
   }
-  // On the same timer: what a dead or lapsed run left on the disk.
-  sweepCheckouts(app);
+  // On the same timer: what a dead or lapsed run left on the disk. Removing
+  // a checkout is thousands of unlinks: off the loop, never in front of /healthz (#7688).
+  sweepSoon(app);
   return swept.requeued.length + swept.failed.length + swept.cancelled.length;
 }
 
@@ -328,30 +331,46 @@ export function requeueAbandonedChecks(app: App, staleMs: number): number {
  * permission, so permissions are restored and the removal tried again. A
  * removal that still fails is logged, never swallowed.
  */
-export function removeRunDir(path: string): void {
+export async function removeRunDir(path: string): Promise<void> {
   try {
-    rmSync(path, { recursive: true, force: true });
+    await rm(path, { recursive: true, force: true });
     return;
   } catch {
     /* fall through to restore permissions */
   }
-  const open = (p: string): void => {
+  const open = async (p: string): Promise<void> => {
     try {
-      if (lstatSync(p).isSymbolicLink()) return;
-      if (lstatSync(p).isDirectory()) {
-        chmodSync(p, 0o700);
-        for (const n of readdirSync(p)) open(join(p, n));
+      if ((await lstat(p)).isSymbolicLink()) return;
+      if ((await lstat(p)).isDirectory()) {
+        await chmod(p, 0o700);
+        for (const n of await readdir(p)) await open(join(p, n));
       }
     } catch {
       /* gone, or not ours: the retry says */
     }
   };
-  open(path);
+  await open(path);
   try {
-    rmSync(path, { recursive: true, force: true });
+    await rm(path, { recursive: true, force: true });
   } catch (error) {
     log.error("could not remove a run directory", { path, error: String(error) });
   }
+}
+
+/** The sweep of the checkouts under way, if any: one at a time. */
+let sweeping: Promise<void> | undefined;
+
+/**
+ * Sweep the checkouts in the background and answer when done. A sweep
+ * already running is the one answered, not doubled; a failure is logged.
+ */
+export function sweepSoon(app: App, now: number = Date.now()): Promise<void> {
+  sweeping ??= sweepCheckouts(app, now)
+    .catch((error) => log.error("could not sweep the checkouts", { error: String(error) }))
+    .finally(() => {
+      sweeping = undefined;
+    });
+  return sweeping;
 }
 
 /** Where a check's checkout lives while it runs. */
@@ -377,7 +396,7 @@ function gateMayBeRunning(path: string, now: number): boolean {
  * while it is younger than a gate's deadline, and past that while its
  * `check_gate` row is open, for as long as a check may run.
  */
-export function sweepCheckouts(app: App, now: number = Date.now()): void {
+export async function sweepCheckouts(app: App, now: number = Date.now()): Promise<void> {
   const root = checksRoot(app.config.dataDir);
   if (!existsSync(root)) return;
   const since = new Date(now - CHECK_TIMEOUT_MAX * 1000);
@@ -388,7 +407,7 @@ export function sweepCheckouts(app: App, now: number = Date.now()): void {
     const id = name.endsWith(".home") ? name.slice(0, -5) : name;
     const gate = GATE_DIR.exec(id);
     if (gate !== null) {
-      if (!gateHolding(app.db, gate[1]!, since)) removeRunDir(join(root, name));
+      if (!gateHolding(app.db, gate[1]!, since)) await removeRunDir(join(root, name));
       continue;
     }
     const run = getRun(app.db, id);
@@ -396,7 +415,7 @@ export function sweepCheckouts(app: App, now: number = Date.now()): void {
       run !== undefined &&
       run.state === "running" &&
       !leaseLapsed(run, STALE_AFTER_MS, now);
-    if (!live) removeRunDir(join(root, name));
+    if (!live) await removeRunDir(join(root, name));
   }
 }
 
@@ -405,9 +424,9 @@ export function sweepCheckouts(app: App, now: number = Date.now()): void {
  * (#6945): checkouts leaked by a crash sat on the disk until the next boot
  * while every check failed red on it. Answers whether it swept.
  */
-export function reclaimIfFull(app: App, now: number = Date.now()): boolean {
+export async function reclaimIfFull(app: App, now: number = Date.now()): Promise<boolean> {
   if (diskRecovered(app.config.dataDir)) return false;
-  sweepCheckouts(app, now);
+  await sweepCheckouts(app, now);
   return true;
 }
 
@@ -449,7 +468,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const settle = options.landSettleMs ?? 0;
   let stopped = false;
 
-  sweepCheckouts(app);
+  sweepSoon(app);
 
   async function request(
     repo: Repo,
@@ -1068,7 +1087,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       write(`already proven green by ${earlier}`);
       return { ok: true, proven: earlier };
     }
-    if (reclaimIfFull(app)) write("disk under its free floor: swept unused checkouts");
+    if (await reclaimIfFull(app)) write("disk under its free floor: swept unused checkouts");
     const dir = join(checksRoot(app.config.dataDir), run.id);
     mkdirSync(dir, { recursive: true });
     write(mergeLine === "" ? `checking out ${run.commitOid.slice(0, 7)}` : mergeLine);
@@ -1077,7 +1096,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (base !== undefined) {
       const given = await giveHistory(bare, dir, base, run.commitOid);
       if (!given.ok) {
-        rmSync(dir, { recursive: true, force: true });
+        await rm(dir, { recursive: true, force: true });
         return { ok: false, error: given.error };
       }
     }
@@ -1160,6 +1179,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         // The cell's CPU limit, which `availableParallelism()` may not
         // report inside it; the shard count follows this (#2257).
         FORGE_CELL_CPUS: String(cellCpus),
+        // The one place besides the checkout the cell can write on disk; its
+        // own /tmp is a 256 MiB tmpfs the shards would fill (#8679).
+        ...scratchEnv(cell === undefined ? undefined : home),
         ...(base === undefined
           ? {}
           : {
@@ -1421,8 +1443,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       if (key !== undefined) recordProven(app.db, key, x.id);
       return { ok: true };
     } finally {
-      if (existsSync(dir)) removeRunDir(dir);
-      removeRunDir(home);
+      if (existsSync(dir)) await removeRunDir(dir);
+      await removeRunDir(home);
     }
   }
 

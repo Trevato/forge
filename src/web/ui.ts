@@ -50,14 +50,16 @@ export function timeAgo(iso: string): string {
 /**
  * A timestamp a machine and a screen reader can both read: relative text for
  * the eye, the exact instant in `datetime` and `title` for everyone else.
+ * `date` words it as the calendar day (`2026-12-02`), for an instant ahead
+ * of now, which "ago" cannot name.
  */
-export function time(iso: string): Html {
+export function time(iso: string, opts: { date?: boolean } = {}): Html {
   const parsed = Date.parse(iso);
   if (Number.isNaN(parsed)) return html``;
   const at = new Date(parsed);
   const exact = `${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
   return html`<time datetime="${at.toISOString()}" title="${exact}"
-    >${timeAgo(iso)}</time
+    >${opts.date === true ? at.toISOString().slice(0, 10) : timeAgo(iso)}</time
   >`;
 }
 
@@ -173,6 +175,8 @@ export interface BtnOptions {
   /** A submit that skips the browser's checks: a structural step (add,
    * remove, go back) must not wait for a field to be filled in. */
   formnovalidate?: boolean;
+  /** Where this submit posts instead of its form's own action. */
+  formaction?: string;
   current?: boolean;
   /** A toggle: emits `aria-pressed` with its state. */
   pressed?: boolean;
@@ -187,7 +191,7 @@ function btnAttrs(o: BtnOptions): Html {
   ${o.size ? html`data-size="${o.size}"` : null}
   ${o.title ? html`title="${o.title}"` : null}
   ${o.label ? html`aria-label="${o.label}"` : null}
-  ${o.shortcut ? html`data-shortcut="${o.shortcut}"` : null}
+  ${o.shortcut ? html`data-shortcut="${o.shortcut}" ${hintAttr(o.shortcut)}` : null}
   ${o.copy ? html`data-copy="${o.copy}"` : null}
   ${o.pressed !== undefined ? html`aria-pressed="${o.pressed ? "true" : "false"}"` : null}${o.current ? raw('aria-current="page"') : null}`;
 }
@@ -210,6 +214,7 @@ export function btn(content: Html | string, o: BtnOptions = {}): Html {
     ${o.form ? html`form="${o.form}"` : null}
     ${o.disabled ? raw("disabled") : null}
     ${o.formnovalidate ? raw("formnovalidate") : null}
+    ${o.formaction ? html`formaction="${o.formaction}"` : null}
     ${btnAttrs(o)}
   >
     ${inner}
@@ -756,6 +761,25 @@ export function kbd(keys: string[]): Html {
   return html`${keys.map((k) => html`<kbd>${k}</kbd>`)}`;
 }
 
+/** The key of an action, as an attribute: it takes no room at rest, shows as a
+ * tooltip on hover or focus, and as an overlay while hints are held (#8930). An
+ * icon-only control passes its `name`, so the tooltip is its only one (no `title`). */
+export function hintAttr(shortcut: string, name?: string): Html {
+  const label = name === undefined ? shortcut : `${name} · ${shortcut}`;
+  // aria-keyshortcuts lists alternatives, not sequences: a chord like `g h`
+  // would read as "g or h", so only a single key is announced; the help lists the rest.
+  return shortcut.includes(" ")
+    ? html`data-hint="${label}"`
+    : html`data-hint="${label}" aria-keyshortcuts="${shortcut}"`;
+}
+
+/** The keys of a `g i`-style shortcut in a menu or palette row, where a column
+ * holds it (`.keyhint`). Never beside a button, tab or the top bar: those use
+ * `hintAttr`, and design-lint refuses a `keyHint(` outside a menu item. */
+export function keyHint(shortcut: string): Html {
+  return html`<kbd class="keyhint">${shortcut}</kbd>`;
+}
+
 // ---- identity ----
 
 /** Twelve stable buckets, so the same name always wears the same hue. */
@@ -987,7 +1011,7 @@ export function tabs(items: TabItem[], ariaLabel: string): Html {
         html`<a
           href="${t.href}"
           ${t.current ? raw('aria-current="page"') : null}
-          ${t.shortcut ? html`data-shortcut="${t.shortcut}"` : null}
+          ${t.shortcut ? html`data-shortcut="${t.shortcut}" ${hintAttr(t.shortcut)}` : null}
           >${t.icon ? icon(t.icon) : null}${t.label}${t.count !== undefined &&
           t.count > 0
             ? pill(t.count)
@@ -1061,6 +1085,8 @@ export interface MenuItem {
   post?: string;
   /** Shown but not usable: the reason, in words, under the label. */
   disabled?: string;
+  /** The key that does the same, drawn beside the label. */
+  hint?: string;
 }
 
 /** A dropdown built on `<details>` — the only construct correct with JS off. */
@@ -1116,7 +1142,7 @@ export function menu(o: {
           href="${i.href ?? "#"}"
           ${i.current ? raw('aria-current="true"') : null}
           >${i.icon ? icon(i.icon) : null}<span class="grow">${i.label}</span
-          >${i.current ? icon("check") : null}</a
+          >${i.hint ? keyHint(i.hint) : null}${i.current ? icon("check") : null}</a
         >`;
       })}
     </div>

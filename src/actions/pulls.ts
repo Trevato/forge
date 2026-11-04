@@ -8,8 +8,9 @@ import { addComment as addIssueComment } from "../core/issues.ts";
 import { landedNote, leftNote, unticked } from "../core/done_on_main.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
+import { applyBoxPass, holdPass, landHeldPass, type BoxPass } from "./box_pass.ts";
 import { landVision } from "../crew/vision.ts";
-import { isCrew } from "../core/agents.ts";
+import { crewRole, isCrew } from "../core/agents.ts";
 import {
   getIssueById,
   setAssignee,
@@ -59,10 +60,14 @@ import {
   type ThreadState,
 } from "../core/reviews.ts";
 import { isProposed } from "../core/pull_trust.ts";
+import { approveGuest } from "../origins/guest.ts";
 import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
-import type { MergeStrategy } from "../git/merge.ts";
+import { squashCredits } from "../git/coauthors.ts";
+import { resolveOid, type MergeStrategy } from "../git/merge.ts";
+import { landingKind } from "../core/landing_kind.ts";
+import { thankAuthor } from "../origins/thanks.ts";
 import { repoDir } from "../git/repos.ts";
 import { importIssue, importReviewStates } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -78,7 +83,34 @@ import {
 } from "./access.ts";
 import { canWrite } from "../core/repos.ts";
 import { refreshPullHead as refreshHead } from "../core/following.ts";
+import { getOriginRepo } from "../core/origins.ts";
+import { watchPullsSoon } from "../origins/hook.ts";
+import { adoptResolution, ownHost, pullSourceOf, sourceTrailers } from "../core/trusted_sources.ts";
 import { carryBranchThrough } from "../origins/push-through.ts";
+import { ensureFork, forkHead, pushToFork } from "../origins/fork-route.ts";
+import { denied } from "../origins/operator.ts";
+import type { WriteThrough } from "../origins/write-through.ts";
+
+/**
+ * How a fork of a mirror proposes to the mirror's origin: `direct`, its
+ * branch pushed into the origin repository, when the account may push
+ * there; `fork`, through the account's own fork at the origin, when it may
+ * only read — and always for a repository the operator protects
+ * (`FORGE_ORIGIN_DENY_PUSH`), which this forge never pushes to. The rights
+ * are the origin's own answer, asked now; when it cannot be asked, the
+ * cached one, and failing that the direct way, whose refusal falls back to
+ * the fork.
+ */
+async function proposalRoute(
+  app: App,
+  through: WriteThrough,
+): Promise<"direct" | "fork"> {
+  if (denied(through.origin, through.fullName)) return "fork";
+  const live = await through.provider.getRepo(through.fullName);
+  if (live.ok) return live.value.permissions.push ? "direct" : "fork";
+  const cached = getOriginRepo(app.db, through.origin.id, through.fullName);
+  return cached?.canPush === false ? "fork" : "direct";
+}
 
 export interface OpenPullInput {
   title: string;
@@ -92,6 +124,8 @@ export interface OpenPullInput {
   revertsIssueId?: string;
   /** The variant group the pull joins (`actions/tell.ts`); absent for an ordinary pull. */
   variantGroup?: string;
+  /** Who opened it on another forge, and where; native repos only (`CreatePullInput.origin`). */
+  origin?: { author: string; htmlUrl: string };
   /**
    * A person's deliberate yes to fixing a sealed report from a branch that
    * is already public (this repository, or a public fork). Without it such
@@ -130,10 +164,13 @@ export async function openPull(
     if (title === "") return err("empty_title");
     // A native fork of this mirror proposing upstream: its branch is
     // carried to the origin first, under the connecting account's
-    // credential like any push through, and the origin opens the pull
-    // from the branch it now holds.
+    // credential, and the origin opens the pull from it. Directly into the
+    // origin repository when the account can push there; otherwise — and
+    // always for a repository the operator protects — into the account's
+    // own fork at the origin, the pull's head then `<owner>:<branch>`.
     const head = input.headRepo;
     let carriedAs = input.headBranch;
+    let pullHead = input.headBranch;
     if (head !== undefined && head.id !== baseRepo.id) {
       if (
         !canRead(app.db, head, user.value) ||
@@ -147,15 +184,50 @@ export async function openPull(
       // name.
       if (input.headBranch === input.baseBranch)
         carriedAs = `${head.ownerName}/${input.headBranch}`;
-      const carried = await carryBranchThrough(
-        app,
-        baseRepo,
-        head,
-        input.headBranch,
-        user.value.id,
-        carriedAs,
-      );
-      if (!carried.ok) return err(refusal(carried.error.message));
+      pullHead = carriedAs;
+      const route = await proposalRoute(app, through.value);
+      let viaFork = route === "fork";
+      if (route === "direct") {
+        const carried = await carryBranchThrough(
+          app,
+          baseRepo,
+          head,
+          input.headBranch,
+          user.value.id,
+          carriedAs,
+        );
+        // The origin said no to the push itself: the account cannot write
+        // there after all. Reading is enough to propose, from a fork.
+        if (!carried.ok && carried.error.byOrigin !== true)
+          return err(refusal(carried.error.message));
+        viaFork = !carried.ok;
+      }
+      if (viaFork) {
+        const forked = await ensureFork(
+          app,
+          through.value.origin,
+          through.value.provider,
+          through.value.fullName,
+        );
+        if (!forked.ok)
+          return err(
+            forked.error === "origin_unreachable" ||
+              forked.error === "fork_timeout"
+              ? "origin_unreachable"
+              : "origin_refused",
+          );
+        const pushed = await pushToFork(
+          app,
+          through.value.origin,
+          through.value.provider,
+          forked.value.remote,
+          repoDir(app.reposRoot, head.ownerName, head.name),
+          input.headBranch,
+          carriedAs,
+        );
+        if (!pushed.ok) return err("origin_refused");
+        pullHead = forkHead(forked.value.remote, carriedAs);
+      }
     }
     const created = await through.value.provider.createPull(
       through.value.fullName,
@@ -163,7 +235,7 @@ export async function openPull(
         title,
         body: input.body ?? "",
         base: input.baseBranch,
-        head: carriedAs,
+        head: pullHead,
       },
     );
     if (!created.ok) return err(refusal(created.error.error));
@@ -177,6 +249,10 @@ export async function openPull(
       actorId: user.value.id,
       payload: { number: created.value.number, via: "origin" },
     });
+    // Ask the origin to say when this pull's check or reviews move; the sync
+    // poll covers an origin that cannot or will not. Not waited for: the
+    // person has their pull already.
+    void watchPullsSoon(app, baseRepo);
     const stored = getIssueById(app.db, imported.issueId);
     const pull = stored
       ? getPullByNumber(app, baseRepo, created.value.number)
@@ -225,9 +301,11 @@ export async function openPull(
         : {}),
       ...(input.revertsIssueId ? { revertsIssueId: input.revertsIssueId } : {}),
       ...(input.variantGroup ? { variantGroup: input.variantGroup } : {}),
+      ...(input.origin ? { origin: input.origin } : {}),
     },
   );
   if (!created.ok) return created;
+  adoptResolution(app.db, created.value.id);
   // A pull the crew opens is the crew's to see through: it starts assigned
   // to the agent, so "who is on it" is legible without a second step (an
   // agent cannot assign, so this is the one place it happens).
@@ -362,7 +440,7 @@ export async function mergePull(
   actor: User | undefined,
   repo: Repo,
   pull: Pull,
-  strategy: MergeStrategy,
+  requested: MergeStrategy,
   /** The merge queue's guard: land only onto this base, as this tree (#2036). */
   expect?: LandingExpect,
   /** `pastGate`: the owner's break-glass (`checks/bypass.ts`) skips the checks requirement. */
@@ -383,6 +461,8 @@ export async function mergePull(
   // reflects it, with the merge commit the origin actually made.
   if (pull.originHeadRepo !== null || repo.origin !== null)
     return err("mirrored");
+  // A fork someone keeps lands as a true merge whatever was asked (#8935).
+  const strategy = landingKind(app.db, pull, requested);
   // A fork may have pushed since the pull opened; merge what is being
   // proposed now, not the snapshot taken when it was.
   await refreshPullHead(app, repo, pull);
@@ -398,12 +478,28 @@ export async function mergePull(
   const asked = toldBy(app.db, pull);
   const requester =
     asked === null ? undefined : getUserByName(app.db, asked);
-  const trailers = landingTrailers(
-    requester ? commitIdentity(app.config, requester) : null,
-    lander,
-  );
+  const from = pullSourceOf(app.db, pull.id);
   const baseDir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const at = await pullDir(app.db, app.reposRoot, repo, pull);
+  // A squash folds the pull's commits into one: the people they credit as
+  // `Co-authored-by` stay credited on the commit that lands.
+  const kept =
+    strategy === "squash"
+      ? await squashCredits(
+          at,
+          (await resolveOid(baseDir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid,
+          (getPull(app.db, repo.id, pull.number) ?? pull).headOid,
+          [lander.email, ...(requester ? [commitIdentity(app.config, requester).email] : [])],
+        )
+      : [];
+  const trailers = [
+    landingTrailers(
+      requester ? commitIdentity(app.config, requester) : null,
+      lander,
+    ),
+    ...kept,
+    ...(from === undefined ? [] : [sourceTrailers(from, ownHost(app.config))]),
+  ].join("\n");
   const merged = await landPull(
     app.db,
     baseDir,
@@ -428,6 +524,12 @@ export async function mergePull(
     },
   );
   if (!merged.ok) return merged;
+  // Its author, when they live elsewhere, reads what landed and what changed on the way (#9013).
+  await thankAuthor(app, repo, getPull(app.db, repo.id, pull.number) ?? pull, {
+    mergeOid: merged.value.mergeOid,
+    strategy,
+    by: writer.value.id,
+  });
   // What came of the decision to show it, when there was one.
   resolveOpen(app.db, pull.id, "land", "shipped");
   app.bus.append({
@@ -438,6 +540,7 @@ export async function mergePull(
       number: pull.number,
       strategy,
       mergeOid: merged.value.mergeOid,
+      ...(from === undefined ? {} : { source: `${from.account}@${from.host}` }),
     },
   });
   // A vision pull, landed by an admin, rewrites the direction's fenced block.
@@ -446,6 +549,8 @@ export async function mergePull(
   // lands, as the person who landed it — which is what frees the map. Not
   // the plan's own issues: no change finishes an umbrella or opens the
   // Later gate, whatever its body says; a person closes those by hand.
+  // The reviewer's boxes first, so what it ticked at this head closes with it.
+  landHeldPass(app, repo, getPull(app.db, repo.id, pull.number) ?? pull);
   const plan = pillarsOf(app.db, repo);
   for (const n of closesFromBody(pull.body)) {
     const issue = getIssue(app.db, repo.id, n);
@@ -528,6 +633,8 @@ export interface SubmitReviewInput {
   readonly body?: string;
   /** Line comments posted with the verdict, all or none. */
   readonly comments?: readonly ReviewInput[];
+  /** An approval by a crew reviewer: the boxes of the issues the pull closes it ticks or leaves (`box_pass.ts`). */
+  readonly pass?: BoxPass | undefined;
 }
 
 /**
@@ -657,6 +764,17 @@ export async function submitReview(
       reviewId: recorded.value.id,
     },
   });
+  // The boxes the reviewer read at this head: only a crew reviewer's approval
+  // counts. A pull yet to land holds them for its landing, which applies them
+  // only if the head is still this one; one that landed takes them now.
+  if (
+    input.state === "approved" &&
+    input.pass !== undefined &&
+    crewRole(app.db, repo.id, user.id) === "reviewer"
+  ) {
+    if (pull.mergedAt !== null) applyBoxPass(app, repo, pull, user, input.pass);
+    else holdPass(app, pull, user, status.headOid, input.pass);
+  }
   return recorded;
 }
 
@@ -851,3 +969,26 @@ export const approveToRun = (
   isProposed(app.db, pull)
     ? letRun(app, actor, repo, pull)
     : approveHere(app, actor, repo, pull);
+
+/**
+ * The one door every surface calls to approve a guest from another forge
+ * (`origins/guest.ts`): the page's form and the terminal's `G`. Announced, so
+ * the preview restarts holding the app's variables and every open view of
+ * the pull hears it.
+ */
+export function approveGuestPull(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  pull: Pull,
+): Result<"approved" | "already", "forbidden" | "not_guest"> {
+  const done = approveGuest(app.db, repo, pull, actor);
+  if (done.ok && done.value === "approved")
+    app.bus.append({
+      kind: "pull.guest_approved",
+      repoId: repo.id,
+      actorId: actor?.id,
+      payload: { number: pull.number },
+    });
+  return done;
+}

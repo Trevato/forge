@@ -33,6 +33,7 @@ import {
 } from "../../actions/issues.ts";
 import {
   addReview,
+  approveGuestPull,
   approveToRun as letItRun,
   mergePull,
   pullThreads,
@@ -43,11 +44,13 @@ import { holdPull, releasePull } from "../../actions/holds.ts";
 import { getHold, type Hold } from "../../core/holds.ts";
 import { bypassOffered, cleanReason, landPastGate } from "../../checks/bypass.ts";
 import { revertPull } from "../../actions/revert.ts";
+import { landSlice, sliceChoices } from "../../actions/pull_slices.ts";
 import { takeBackWords } from "../../actions/revert_words.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
 import { pullLooks, type PullLook } from "../../looks/readable.ts";
 import { pullLooksScreen } from "./pulllooks.ts";
+import { combinedView, combinedWords, type CombinedView } from "../../core/combined_view.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { findingsWords, pullPreviewFindings } from "../../core/preview_findings.ts";
 import {
@@ -58,7 +61,9 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
+import { guestWaits, mayApproveGuest } from "../../origins/guest.ts";
 import { runningProgress, stepsLine } from "../../checks/progress.ts";
+import { originCheckLead, originCheckOf } from "../../origins/pull-check.ts";
 import { askCheck } from "../../checks/again.ts";
 import { checkStale, checksHold } from "../../checks/stale.ts";
 import { checkWords } from "../../checks/summary.ts";
@@ -66,6 +71,7 @@ import { oneLine } from "../../checks/words.ts";
 import { resolveOid } from "../../git/merge.ts";
 import { nextOfPull, type Next } from "../../flow/next_actor.ts";
 import { stepLine, stepOfPull, type PathStep } from "../../flow/path.ts";
+import { fromKeptFork } from "../../core/landing_kind.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
@@ -110,6 +116,7 @@ import {
   drawLines,
   hitScroll,
   errorText,
+  pickerScreen,
   live,
   openLink,
   plural,
@@ -215,6 +222,9 @@ export function teamLine(v: TeamVerdict): string {
 /** How often a pull's screen re-reads while its check is queued or running. */
 const CHECK_TICK_MS = 5000;
 
+/** A waiting guest's line on its screen; the page says it in full (`web/pages/pull-guest.ts`). */
+export const GUEST_NOTE = "a guest from another forge: no app variables, no crew, until a writer approves";
+
 export function pullScreen(
   f: Session,
   ctx: Ctx,
@@ -259,11 +269,15 @@ export function pullScreen(
   let preview: EnvStatus | undefined;
   /** The pictures taken of the preview, as the API would list them to this reader. */
   let looks: PullLook[] = [];
+  /** A fork's pull combined with main on our side: what its preview builds (#9012). */
+  let combined: CombinedView | undefined;
   /** The deploy of the *current* head — what the merge box calls the checks. */
   let check: CheckSummary = NO_CHECK;
   /** The pull's base branch, to name what the check was merged with. */
   let checkBase = "";
   let checkProgress = "";
+  /** The origin's own check on a mirrored pull, worded; "" when it never said. */
+  let originCheckText = "";
   /** The run page's three step rows as a line; empty when the log is hidden. */
   let checkSteps = "";
   /** `findingsWords` of the preview's website-spec findings; empty when none were recorded. */
@@ -320,6 +334,14 @@ export function pullScreen(
             return base === undefined ? undefined : wallOf(dir, base, facts.headOid);
           })()
         : undefined;
+    combined =
+      repo !== undefined && row !== undefined && facts !== null
+        ? await (async () => {
+            const dir = await pullDir(f.app.db, f.app.reposRoot, repo, row);
+            const base = await resolveOid(dir, `refs/heads/${row.baseBranch}`);
+            return base === undefined ? undefined : combinedView(dir, row, facts.headOid, base);
+          })()
+        : undefined;
     // The app half: the preview environment (in memory, from the runtime),
     // the checks at the live head (a row), and what the crew has done here.
     const record = repo === undefined ? undefined : getAppByRepo(f.db, repo.id);
@@ -337,6 +359,12 @@ export function pullScreen(
         ? NO_CHECK
         : checkSummary(f.db, row.id, row.headOid || (facts?.headOid ?? ""));
     checkBase = row?.baseBranch ?? facts?.baseBranch ?? "";
+    const originSaid =
+      row === undefined || repo?.origin == null ? undefined : originCheckOf(f.db, row.id);
+    originCheckText =
+      originSaid === undefined || repo?.origin == null || row === undefined
+        ? ""
+        : `${originCheckLead(repo.origin.fullName, originSaid, row.headOid)}, as of ${originSaid.checkedAt.slice(0, 16).replace("T", " ")} UTC`;
     next =
       row === undefined
         ? null
@@ -743,6 +771,60 @@ export function pullScreen(
   };
 
   /**
+   * Whether `S` is on offer: an open, unmerged pull from a fork on a local
+   * repository, for a person who may write — the page's slices form, by the
+   * same rule (#9010). `landSlice` holds the gate; this only shows the key.
+   */
+  const mayLandSlice = (): boolean => {
+    if (repo === undefined || repo.origin !== null || !mayWrite()) return false;
+    if (f.user === undefined || f.user.kind === "agent") return false;
+    const row = getPull(f.db, repo.id, number);
+    return row !== undefined && row.crossRepo && row.originHeadRepo === null && row.mergedAt === null && row.state === "open";
+  };
+
+  /** `S` — pick where the slice ends, then land the author's commits up to it as they are. */
+  const landSlices = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    runAsync(ctx, async () => {
+      const ends = await sliceChoices(f.app, target, row);
+      if (ends.length === 0) {
+        ctx.toast("nothing left to land");
+        return;
+      }
+      ctx.push(
+        pickerScreen(ctx, screen, {
+          title: `Land #${number} up to`,
+          items: ends.map((c, i) => ({
+            id: c.oid,
+            label: `${c.oid.slice(0, 7)} ${c.subject}`,
+            ...(i === ends.length - 1 ? { hint: "head: the last slice" } : {}),
+          })),
+          onPick: ([upTo]) => {
+            if (upTo === undefined) return;
+            runAsync(ctx, async () => {
+              const live = getPull(f.db, target.id, number);
+              if (live === undefined) return;
+              const landed = await landSlice(f.app, f.user, target, live, upTo);
+              if (!landed.ok) {
+                ctx.toast(`not landed: ${errorText(String(typeof landed.error === "string" ? landed.error : landed.error.kind))}`, "danger");
+                return;
+              }
+              await reload();
+              ctx.toast(
+                landed.value.last ? "last slice landed: the pull is merged" : `slice landed, ${landed.value.left} left`,
+                "success",
+              );
+            });
+          },
+        }),
+      );
+    });
+  };
+
+  /**
    * Whether `L` is on offer: an open pull, an owner who is a person, and
    * landing stopped (`checks/bypass.ts`). The same rule the page's form follows.
    */
@@ -874,6 +956,43 @@ export function pullScreen(
     });
   };
 
+  /** Whether this open pull is a guest from another forge nobody has approved yet. */
+  const guestWaiting = (): boolean => {
+    if (repo === undefined) return false;
+    const row = getPull(f.db, repo.id, number);
+    return (
+      row !== undefined &&
+      row.state === "open" &&
+      row.mergedAt === null &&
+      guestWaits(f.db, row)
+    );
+  };
+
+  /** `G` on offer: a waiting guest, and a person who can write here. The page's gate. */
+  const mayApproveThisGuest = (): boolean =>
+    repo !== undefined && guestWaiting() && mayApproveGuest(f.db, repo, f.user);
+
+  /** `G` — approve this guest once; `approveGuestPull` asks again who may. */
+  const approveThisGuest = (): void => {
+    if (repo === undefined) return;
+    const row = getPull(f.db, repo.id, number);
+    if (row === undefined) return;
+    const done = approveGuestPull(f.app, f.user, repo, row);
+    if (!done.ok) {
+      ctx.toast(
+        done.error === "forbidden"
+          ? "only a person with write access can approve a guest"
+          : "this pull is from this forge: it is no guest",
+        "danger",
+      );
+      return;
+    }
+    runAsync(ctx, async () => {
+      await reload();
+      ctx.toast("approved as a guest: its preview starts again with the app's variables", "success");
+    });
+  };
+
   /** `v` — the conflict blocks, read; `pullConflicts` holds the writer gate. */
   const seeConflicts = (): void => {
     if (repo === undefined) return;
@@ -963,6 +1082,7 @@ export function pullScreen(
                     ),
                   ]
                 : []),
+              ...(mayApproveThisGuest() ? [binding(["G"], "approve this guest")] : []),
               binding(["a"], "assign"),
               ...(mayHold() && (hold !== undefined || detail?.issue.state === "open")
                 ? [binding(["h"], hold === undefined ? "hold" : "let it go")]
@@ -973,6 +1093,7 @@ export function pullScreen(
               binding(["m"], "merge", { disabled: state() !== "ready" }),
               ...(wall !== undefined && mayWrite() ? [binding(["w"], "the access wall: allow or send back")] : []),
               ...(mayLandPast() ? [binding(["L"], "land past the gate")] : []),
+              ...(mayLandSlice() ? [binding(["S"], "land a slice")] : []),
               ...(tab === 1 && view.threadHere() !== null
                 ? [
                     binding(
@@ -1013,6 +1134,7 @@ export function pullScreen(
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
         (checksLine === "" ? 0 : 1) +
+        (originCheckText === "" ? 0 : 1) +
         teams.length;
       const [strip, head, previewRow, boxRow, tabRow, body, comp] = split(
         area,
@@ -1054,7 +1176,7 @@ export function pullScreen(
         x1,
         head!.y + 1,
         truncate(
-          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${stepLine(step)}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${guestWaiting() ? ` · ${GUEST_NOTE}` : ""}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${stepLine(step)}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
           Math.max(0, edge - x1),
         ),
         style(c.mutedFg, c.bg),
@@ -1068,6 +1190,7 @@ export function pullScreen(
         checkOld,
         check,
         checksLine,
+        originLine: originCheckText,
         standing: standing(),
         required: requireReview,
         teams,
@@ -1120,6 +1243,7 @@ export function pullScreen(
           width = body!.w;
           lines = [
             ...threadLines(entries(), Math.max(20, body!.w - 1), c),
+            ...combinedLines(combined, number, Math.max(20, body!.w - 1), c),
             ...looksLines(looks, lookOrigin(f.app.config), Math.max(20, body!.w - 1), c),
           ];
         }
@@ -1174,12 +1298,20 @@ export function pullScreen(
           );
         return true;
       }
+      if (e.key === "S" && mayLandSlice()) {
+        landSlices();
+        return true;
+      }
       if (e.key === "L" && mayLandPast()) {
         landPast();
         return true;
       }
       if (e.key === "R" && mayWrite()) {
         review();
+        return true;
+      }
+      if (e.key === "G" && mayApproveThisGuest()) {
+        approveThisGuest();
         return true;
       }
       if (e.key === "A" && mayApproveHere()) {
@@ -1374,22 +1506,31 @@ export function pullScreen(
         state() === "ready"
       ) {
         const base = facts.baseBranch;
+        const pullRow = repo === undefined ? undefined : getPull(f.db, repo.id, number);
+        const kept = pullRow !== undefined && fromKeptFork(f.db, pullRow);
         ctx.push(
           confirmScreen(ctx, screen, {
             title: `Merge #${number}`,
             body: [
               `${view.summary()} into ${base}.`,
+              kept ? "A kept fork lands as a merge commit; its authors keep their names." : "",
               repo?.protectDefault === true && base === repo.defaultBranch
                 ? `${base} is protected; history is preserved.`
                 : "",
             ],
-            actions: [
-              { label: "Cancel", variant: "ghost" },
-              { label: "Squash", variant: "secondary" },
-              { label: "Merge" },
-            ],
-            selected: 2,
+            actions: kept
+              ? [{ label: "Cancel", variant: "ghost" }, { label: "Merge" }]
+              : [
+                  { label: "Cancel", variant: "ghost" },
+                  { label: "Squash", variant: "secondary" },
+                  { label: "Merge" },
+                ],
+            selected: kept ? 1 : 2,
             onChoose: (choice) => {
+              if (kept) {
+                if (choice === 1) merge("merge");
+                return;
+              }
               if (choice === 1) merge("squash");
               if (choice === 2) merge("merge");
             },
@@ -1685,6 +1826,8 @@ function drawMergeBox(
     check: CheckSummary;
     /** The checks row, already worded; "" draws none. */
     checksLine: string;
+    /** The origin's check on a mirrored pull, already worded; "" draws none. */
+    originLine: string;
     standing: Standing;
     required: boolean;
     teams: readonly TeamVerdict[];
@@ -1789,6 +1932,10 @@ function drawMergeBox(
     );
     y++;
   }
+  if (o.originLine !== "" && y < inner.y + inner.h) {
+    s.text(inner.x, y, truncate(o.originLine, inner.w), style(c.mutedFg, c.card), inner.x + inner.w);
+    y++;
+  }
   // The teams the issue names, one row each: who still owes a review.
   for (const v of o.teams) {
     if (y >= inner.y + inner.h) break;
@@ -1820,6 +1967,40 @@ const lookOrigin = (config: {
  * The Looks section under the conversation: one line each, absolute URL so a
  * terminal can open it. Nothing at all when the pull has none.
  */
+/** The combined branch, said as the page's card says it (`web/pages/pull-combined.ts`). */
+function combinedLines(
+  view: CombinedView | undefined,
+  number: number,
+  width: number,
+  c: Tokens,
+): Span[][] {
+  if (view === undefined) return [];
+  const words = combinedWords(view, number);
+  const clean = (t: string): string => t.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ");
+  const wrap = (text: string, indent: string): string[] => {
+    const room = Math.max(10, width - indent.length);
+    const out: string[] = [];
+    let line = "";
+    for (const word of clean(text).split(" ")) {
+      if (line !== "" && line.length + 1 + word.length > room) {
+        out.push(indent + line);
+        line = word;
+      } else line = line === "" ? word : `${line} ${word}`;
+    }
+    if (line !== "") out.push(indent + line);
+    return out;
+  };
+  const say = (text: string, indent: string, fg: Color): Span[][] =>
+    wrap(text, indent).map((t): Span[] => [{ text: t, style: style(fg, c.bg) }]);
+  return [
+    [],
+    [{ text: ` Combined with main${view.stale ? " · stale" : ""}`, style: style(c.fg, c.bg, BOLD) }],
+    ...say(words.lead, "  ", c.fg),
+    ...words.files.flatMap((l) => say(`- ${l}`, "  ", c.fg)),
+    ...words.notes.flatMap((l) => say(l, "  ", c.mutedFg)),
+  ];
+}
+
 function looksLines(
   items: readonly PullLook[],
   origin: string,

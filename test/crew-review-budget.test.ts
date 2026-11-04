@@ -4,6 +4,7 @@
  * `crew.test.ts` so each part runs apart (#1798).
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { App } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -12,7 +13,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import { queueAgentRun } from "../src/crew/dispatch.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getIssue } from "../src/core/issues.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import {
@@ -45,7 +46,7 @@ describe("the crew, with a stand-in Claude Code: review budget", () => {
     const made = await createAgent(app, alice, { username: "slowrev" });
     if (!made.ok) throw new Error(String(made.error));
     expect(addToCrew(app, alice, repo, "slowrev").ok).toBe(true);
-    setCrewRole(app.db, repo.id, made.value.user.id, "reviewer");
+    seatAs(app.db, repo.id, made.value.user.id, "reviewer");
     const branch = await commitToBranch(app, alice, repo, {
       branch: "slow-fence",
       base: "main",

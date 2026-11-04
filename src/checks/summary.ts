@@ -9,6 +9,7 @@
 
 import type { CheckDetail, Run } from "../core/runs.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
+import { fullShard, OUT_OF_ROOM, TEMP_FULL } from "./disk_full.ts";
 import { oneLine } from "./words.ts";
 import { clip } from "../text/clip.ts";
 import { webvitals, type Entries } from "../release/webvitals.ts";
@@ -50,8 +51,15 @@ export function summariseCheckFailure(
   lines: readonly string[],
   fallback: string,
 ): CheckFailure {
-  const detail = parseBunTestFailure(lines);
-  if (detail !== undefined) {
+  const parsed = parseBunTestFailure(lines);
+  // A shard that ran out of temp space is marked on the detail, not worded
+  // into the summary: the crew reads the mark, the summary keeps the failures.
+  const full = fullShard(lines);
+  const detail = full
+    ? { ...(parsed ?? { passed: 0, failed: 0, names: [] }), environment: TEMP_FULL }
+    : parsed;
+  const note = full ? `${OUT_OF_ROOM} (the environment's fault): ` : "";
+  if (parsed !== undefined && detail !== undefined) {
     const total = detail.passed + detail.failed;
     const names = [...new Set(detail.names)].slice(0, 3);
     const quoted = names.map((n) => `"${n}"`);
@@ -65,11 +73,12 @@ export function summariseCheckFailure(
             ? `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}`
             : quoted[0]!;
     return {
-      summary: truncate(`${detail.failed} of ${total} tests — ${list}`),
+      summary: truncate(`${note}${detail.failed} of ${total} tests — ${list}`),
       detail,
     };
   }
   const unnamed = lines.find((line) => UNNAMED_SHARD.test(line.trim()));
+  if (full) return { summary: truncate(`${note}${unnamed?.trim() ?? fallback}`), detail };
   if (unnamed !== undefined)
     return { summary: truncate(unnamed.trim()), detail: undefined };
   const block = lines.findLastIndex((line) => line.trim() === GATE_SUMMARY_HEADING);

@@ -7,6 +7,7 @@
  * following its branch.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getIssueById } from "../src/core/issues.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -105,7 +106,7 @@ describe("a person's in-repo pull is a normal pull the crew leaves to its author
     }
     builder = getUserByName(app.db, "mason")!;
     reviewer = getUserByName(app.db, "quill")!;
-    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
+    seatAs(app.db, repo.id, reviewer.id, "reviewer");
     app.db
       .query("UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2, autonomy_slots = 3 WHERE id = ?1")
       .run(repo.id, alice.id);

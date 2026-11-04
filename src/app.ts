@@ -65,6 +65,13 @@ export interface ForgeConfig {
    */
   edgeToken?: string;
   /**
+   * In a preview of this forge run as another's app, the key the parent
+   * signs its visitors' identity with (`FORGE_APP_IDENTITY_KEY`): set, a
+   * visitor it names as an admin is the preview admin
+   * (`spawn/preview-owner.ts`). Never set in production.
+   */
+  previewIdentityKey?: string;
+  /**
    * Let anyone, not only an admin, migrate from a host inside the network
    * (loopback, private ranges): a forge run for one person on one machine.
    */
@@ -168,6 +175,11 @@ export interface ForgeConfig {
    * child). Printed verbatim wherever the forge says how to connect.
    */
   appSsh?: string;
+  /**
+   * The rolling intent doc a person's build note is copied into, once,
+   * under "## Iterator notes" (`core/intent_notes.ts`). Unset copies none.
+   */
+  notesIntent?: string;
   /**
    * The repository holding this forge's own code, as `owner/name`
    * (`FORGE_REPO`, e.g. `trevato-apps/forge`). A spawned child forks it,

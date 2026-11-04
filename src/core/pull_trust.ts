@@ -22,6 +22,7 @@ import { getIssueById, getPull, type Pull } from "./pulls.ts";
 import { canWrite, getRepoById, onCrew, type Repo } from "./repos.ts";
 import { listReviews } from "./reviews.ts";
 import { runGrantedAt } from "./run_grant.ts";
+import { foldsIn } from "./trusted_sources.ts";
 import { getUserById, type User } from "./users.ts";
 
 const trusted = (db: Database, repo: Repo, user: User | undefined): boolean =>
@@ -40,6 +41,8 @@ export function pullMayRun(
   headOid: string,
 ): boolean {
   const proposed = isProposed(db, pull);
+  // A trusted source's code runs its checks like the crew's (#8937).
+  if (foldsIn(db, pull.id)) return true;
   if (!proposed && !pull.crossRepo && pull.originHeadRepo === null) return true;
   if (!proposed && pull.crossRepo && pull.originHeadRepo === null) {
     const author = getUserById(db, pull.authorId);

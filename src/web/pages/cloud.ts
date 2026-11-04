@@ -161,7 +161,7 @@ export async function cloudPage(ctx: Ctx): Promise<Response> {
       ${settingsLayout(
         accountSections("cloud", { admin: true }),
         html`${accountsCard(accounts, reads, uses)}<div class="mt">${readsCard(reads)}</div>
-          <p class="muted small mt"><a href="/settings/cloud/audit">Every vendor call today</a></p>`,
+          <p class="muted small mt"><a href="/settings/cloud/audit">Every vendor call today</a> · <a href="/deploy-to">Deploy a pinned forge</a></p>`,
         "Account settings",
       )}`,
   });

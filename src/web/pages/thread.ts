@@ -59,6 +59,7 @@ import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
+import { planCard } from "./plan_card.ts";
 import { NOT_CHANGED } from "../edit_words.ts";
 import { flashOrJson, flashTo } from "../layout.ts";
 import {
@@ -91,6 +92,10 @@ export function originError(error: string): string | undefined {
     origin_owner_only:
       "Only the person who connected this origin can write through it. Your comment would otherwise appear upstream under their name.",
     origin_refused: "The origin refused that. Nothing was changed here either.",
+    origin_protected:
+      "The operator protects this repository at its origin, so nothing is pushed to it from here. Propose the change from your fork.",
+    origin_paused:
+      "This connection is not verified yet, so writes through it are paused. Nothing was changed. Check it again under Settings → Origins.",
     origin_unreachable: "The origin could not be reached. Nothing was changed.",
   };
   return words[error];
@@ -168,6 +173,11 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       icon: "check",
       tone: "default",
       verb: "let this head run",
+    },
+    "pull.guest_approved": {
+      icon: "check",
+      tone: "default",
+      verb: "approved this guest",
     },
     "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
     "pull.released": {
@@ -397,7 +407,7 @@ export function conversation(
     node: html`<div class="timeline" id="conversation">
       ${opening}${when(options.editAction, (action) =>
         editForm(issue, action),
-      )}${earlier}${shown.map((e) => e.node)}
+      )}${planCard(ctx.app.db, issue)}${earlier}${shown.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
   };
@@ -500,6 +510,8 @@ export interface ComposerOptions {
    * the button tells the crew, and `from` (a path on this forge, or null)
    * rides along as a hidden field so the tell remembers the page it was
    * said on (`actions/tell.ts`). `rows` sizes it; one is a single line. */
+  /** The page already has its one primary action; Comment steps down. */
+  plainSend?: boolean;
   tell?: { from: string | null; rows?: number; page?: string; pull?: number; text?: string; ask?: boolean };
 }
 
@@ -521,7 +533,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
   // action. The state form sits outside; the button joins it by id.
   const stateForm =
     o.stateAction !== undefined && !o.locked
-      ? html`<form method="post" action="${o.stateAction}" id="thread-state">
+      ? html`<form method="post" action="${o.stateAction}" id="thread-state" data-now="${o.state === "open" ? "Closed" : "Reopened"}" data-now-once>
           <input
             type="hidden"
             name="state"
@@ -551,6 +563,14 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
             inputmode="numeric"
             placeholder="#, #"
             aria-label="Issue numbers it was split into"
+          />
+          <input
+            class="input"
+            name="note"
+            form="thread-state"
+            maxlength="300"
+            placeholder="why (a bug needs one; else optional)"
+            aria-label="Why it closes, in a sentence"
           />`
       : null;
   const closeButton =
@@ -613,7 +633,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
         ${reasons} ${closeButton}
         ${tell
           ? btn("Tell the crew", { variant: "primary", icon: "bot" })
-          : btn("Comment", { variant: "primary", icon: "comment" })}
+          : btn("Comment", { ...(o.plainSend ? {} : { variant: "primary" as const }), icon: "comment" })}
       </div>
     </form>`;
 }
@@ -633,8 +653,8 @@ export function labelsCard(
   const mayEdit = canWrite(ctx.app.db, repo, ctx.auth.user);
   const chips =
     applied.length === 0
-      ? html`<p class="muted small">None yet.</p>`
-      : html`<div class="bar">
+      ? html`<p class="muted small" id="labels-now">None yet.</p>`
+      : html`<div class="bar" id="labels-now">
           ${applied.map((l) =>
             labelChip(
               l,
@@ -651,7 +671,7 @@ export function labelsCard(
   const applies = new Set(applied.map((l) => l.id));
   return card(
     html`${chips}
-      <form method="post" action="${action}" class="mt">
+      <form method="post" action="${action}" class="mt" data-now="Applied" data-now-into="#labels-now" data-now-from="labels">
         <fieldset class="stack">
           <legend class="sr-only">Labels on this thread</legend>
           ${all.map(
@@ -729,8 +749,8 @@ export function assigneeCard(
   const mayEdit = canWrite(ctx.app.db, repo, ctx.auth.user);
   const current =
     issue.assigneeName === null
-      ? html`<p class="muted small">Nobody yet.</p>`
-      : html`<p class="bar">
+      ? html`<p class="muted small" id="assignee-now">Nobody yet.</p>`
+      : html`<p class="bar" id="assignee-now">
           ${when(issue.assigneeIsAgent, () => icon("bot"))}
           ${userLink(issue.assigneeName, {
             mark: marksByName(ctx.app.db, [issue.assigneeName]).get(
@@ -746,7 +766,7 @@ export function assigneeCard(
   const candidates = assigneeCandidates(ctx, repo, issue);
   return card(
     html`${current}
-      <form method="post" action="${action}" class="edit-row mt">
+      <form method="post" action="${action}" class="edit-row mt" data-now="Assigned" data-now-into="#assignee-now" data-now-from="assignee">
         <label class="sr-only" for="f-assignee">Assign to</label>
         <select class="input" id="f-assignee" name="assignee">
           <option
@@ -789,7 +809,7 @@ export async function assigneeSubmit(
   const name = field(form, "assignee").trim();
   const assignee = name === "" ? null : getUserByName(ctx.app.db, name);
   if (assignee === undefined)
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message: `There is no account named ${name}.`,
     });
@@ -807,12 +827,12 @@ export async function assigneeSubmit(
       forbidden: "You need write access to assign.",
       archived: ARCHIVED_WHY,
     };
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message: words[assigned.error] ?? "That could not be assigned.",
     });
   }
-  return flashTo(ctx, dest, {
+  return flashOrJson(ctx, dest, {
     message:
       assignee === null
         ? "Unassigned."
@@ -855,11 +875,18 @@ export async function stateSubmit(
       tone: "danger",
       message: "Close as done, dropped, or split into issue numbers.",
     });
+  const note = field(form, "note").trim();
+  if (note.length > 300)
+    return flashOrJson(ctx, dest, {
+      tone: "danger",
+      message: "A reason is one sentence of at most 300 characters.",
+    });
   const closing: Closing =
-    wanted === "closed" && kind === "issue" && why !== ""
+    wanted === "closed" && kind === "issue"
       ? {
-          reason: why as CloseReason,
+          ...(why !== "" ? { reason: why as CloseReason } : {}),
           ...(why === "split" ? { into } : {}),
+          ...(note !== "" ? { note } : {}),
         }
       : {};
   // The `…Through` twin: identical on a native repo, and on a mirror it
@@ -879,13 +906,13 @@ export async function stateSubmit(
       studioRecord(ctx, found.repo) !== undefined
         ? "A merged change cannot be reopened."
         : "A merged pull request cannot be reopened.";
-    const message =
-      originError(changed.error) ??
-      (changed.error === "already_merged"
-        ? merged
-        : changed.error === "forbidden"
-          ? "Only the author or someone with write access can do that."
-          : NOT_CHANGED);
+    const refusals: Record<string, string> = {
+      reason_required: "A bug closed without a fix says why: add a sentence.",
+      invalid_note: "A reason is one sentence of at most 300 characters.",
+      already_merged: merged,
+      forbidden: "Only the author or someone with write access can do that.",
+    };
+    const message = originError(changed.error) ?? refusals[changed.error] ?? NOT_CHANGED;
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
   return flashOrJson(ctx, dest, {
@@ -951,7 +978,7 @@ export async function labelsSubmit(
     chosen,
   );
   if (!applied.ok) {
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message:
         originError(applied.error) ??
@@ -960,7 +987,7 @@ export async function labelsSubmit(
           : THREAD_SAYS.labelsForbidden),
     });
   }
-  return flashTo(ctx, dest, {
+  return flashOrJson(ctx, dest, {
     message:
       applied.value.length === 0
         ? "Labels cleared."
@@ -977,14 +1004,14 @@ export async function flowSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const asked = field(form, "flow");
   const dest = backTo(form, `${repoBase(found.repo)}/issues/${found.issue.number}`);
-  if (asked !== "0" && asked !== "1") return flashTo(ctx, dest, { tone: "danger", message: NOT_CHANGED });
+  if (asked !== "0" && asked !== "1") return flashOrJson(ctx, dest, { tone: "danger", message: NOT_CHANGED });
   const applied = await putFlowFirst(ctx.app, ctx.auth.user, found.repo, found.issue, asked === "1");
   if (!applied.ok)
-    return flashTo(ctx, dest, {
+    return flashOrJson(ctx, dest, {
       tone: "danger",
       message: originError(applied.error) ?? THREAD_SAYS.labelsForbidden,
     });
-  return flashTo(ctx, dest, { message: asked === "1" ? "Flow first." : "No longer first." });
+  return flashOrJson(ctx, dest, { message: asked === "1" ? "Flow first." : "No longer first." });
 }
 
 // ---- teams ----

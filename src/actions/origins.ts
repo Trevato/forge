@@ -28,6 +28,7 @@ import {
   findOrigin,
   getOriginById,
   getOriginFor,
+  hostOf,
   siteOf,
   linkRepoToOrigin,
   listDetachedMirrors,
@@ -54,8 +55,15 @@ import { canAdmin, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import { bustOrigin } from "../view/cache.ts";
+import { readAhead } from "../origins/ahead.ts";
 import { discover } from "../origins/discover.ts";
-import { providerForOrigin } from "../origins/credential.ts";
+import {
+  lastGuardTry,
+  noteGuardPassed,
+  providerForOrigin,
+  recheckOrigin,
+  type Recheck,
+} from "../origins/credential.ts";
 import { safeRemoteUrl } from "../origins/credentials.ts";
 import { configureMirror, mirrorRemoteUrl } from "../origins/git-mirror.ts";
 import { getJob, type MirrorJob } from "../origins/jobs.ts";
@@ -79,13 +87,16 @@ import {
   revokeGrant,
   saveApp,
   scopesFor,
+  registerClient,
   startDevice,
   touchFlow,
   type AppRow,
   type FlowRow,
 } from "../origins/oauth.ts";
+import { checkCredential, type GuardRefusal } from "../origins/operator.ts";
 import { forgetProvider, providerFor } from "../origins/providers/index.ts";
 import { forgetTokenReach } from "../origins/token-reach.ts";
+import { scopeWords } from "../origins/providers/http.ts";
 import {
   requestSyncNow,
   syncOrigin,
@@ -95,6 +106,7 @@ import { open } from "../kernel/secret.ts";
 import {
   staticCredential,
   type OriginKind,
+  type RemoteRepo,
 } from "../origins/types.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -157,13 +169,16 @@ export interface ConnectInput {
  * Connect with a pasted token — the fallback path, and the only one that
  * works with no OAuth application registered anywhere. The token is
  * validated against the origin before it is stored, and `login` comes from
- * the origin's answer rather than anything the user typed.
+ * the origin's answer rather than anything the user typed. On a host the
+ * operator guards, the account behind it is checked too (`checkCredential`)
+ * and a refusal stores nothing: it comes back as a `GuardRefusal`, with the
+ * sentence to show.
  */
 export async function connectOrigin(
   app: App,
   actor: User | undefined,
   input: ConnectInput,
-): Promise<Result<Connected, ConnectError>> {
+): Promise<Result<Connected, ConnectError | GuardRefusal | ScopeRefusal>> {
   const user = requireUser(actor);
   if (!user.ok) return user;
   if (tooManyAttempts(app, user.value.id)) return err("rate_limited");
@@ -176,18 +191,32 @@ export async function connectOrigin(
   );
   if (!found.ok) return err(found.error);
 
-  const identity = await providerFor(
+  const provider = providerFor(
     staticCredential({
       kind: found.value.kind,
       apiUrl: found.value.apiUrl,
       webUrl: found.value.webUrl,
+      software: softwareOf(found.value.software),
       token: input.token.trim(),
     }),
-  ).whoami();
-  if (!identity.ok)
+  );
+  const identity = await provider.whoami();
+  if (!identity.ok) {
+    // A token the origin knows but finds too narrow is not a bad token: say
+    // which scope it lacks, in the words of the page that makes tokens.
+    const missing = identity.error.missingScopes ?? [];
+    if (missing.length > 0)
+      return err({
+        error: "missing_scopes",
+        message: `This token is missing ${scopeWords(missing)}. ${TOKEN_NEEDS}`,
+        scopes: missing,
+      });
     return err(
       identity.error.error === "unreachable" ? "unreachable" : "bad_token",
     );
+  }
+  const guard = await checkCredential(provider, identity.value);
+  if (!guard.ok) return err(guard.error);
 
   const stored = storeOrigin(app, user.value, {
     kind: found.value.kind,
@@ -196,13 +225,23 @@ export async function connectOrigin(
     login: identity.value.login,
     token: input.token.trim(),
     authKind: "pat",
+    software: softwareOf(found.value.software),
   });
   if (!stored.ok) return stored;
+  if (guard.value.checked) noteGuardPassed(app, stored.value.id);
   return ok({
     ...stored.value,
-    reattached: await afterConnect(app, user.value, stored.value),
+    reattached: await afterConnect(
+      app,
+      user.value,
+      stored.value,
+      guard.value.listed,
+    ),
   });
 }
+
+/** What `discover` named the software, as the column that keeps it: another forge or nothing. */
+const softwareOf = (named: string): string => (named.startsWith("forge ") ? "forge" : "");
 
 export type ReplaceTokenError =
   | "unauthorized"
@@ -210,7 +249,8 @@ export type ReplaceTokenError =
   | "rate_limited"
   | "bad_token"
   | "unreachable"
-  | "other_account";
+  | "other_account"
+  | GuardRefusal["error"];
 
 /**
  * Put a new pasted token on an origin that is already connected — one that
@@ -233,20 +273,26 @@ export async function replaceOriginToken(
   const secret = token.trim();
   if (secret === "") return err("bad_token");
 
-  const identity = await providerFor(
+  const provider = providerFor(
     staticCredential({
       kind: origin.kind,
       apiUrl: origin.apiUrl,
       webUrl: origin.webUrl,
+      software: origin.software,
       token: secret,
     }),
-  ).whoami();
+  );
+  const identity = await provider.whoami();
   if (!identity.ok)
     return err(
       identity.error.error === "unreachable" ? "unreachable" : "bad_token",
     );
   if (identity.value.login.toLowerCase() !== origin.login.toLowerCase())
     return err("other_account");
+  // A new token is a new credential: on a guarded host it passes the same
+  // check a connect does, and a refusal leaves the old token as it was.
+  const guard = await checkCredential(provider, identity.value);
+  if (!guard.ok) return err(guard.error.error);
 
   renewOrigin(app.db, app.config.dataDir, origin.id, {
     token: secret,
@@ -254,6 +300,7 @@ export async function replaceOriginToken(
   });
   forgetProvider({ dataDir: app.config.dataDir, originId: origin.id });
   forgetTokenReach(app.config.dataDir, origin.id);
+  if (guard.value.checked) noteGuardPassed(app, origin.id);
   app.bus.append({
     kind: "origin.connected",
     actorId: user.value.id,
@@ -268,6 +315,27 @@ export async function replaceOriginToken(
   const renewed = getOriginById(app.db, origin.id)!;
   await listRemoteRepos(app, user.value, origin.id, true);
   return ok(renewed);
+}
+
+/** What a token for a Forgejo origin needs, in the token page's words. */
+export const TOKEN_NEEDS =
+  "A token for this forge needs User: Read, Repository: Read and write, and Issue: Read and write.";
+
+/** A token the origin refused for a scope it lacks: which, by name. */
+export interface ScopeRefusal {
+  readonly error: "missing_scopes";
+  readonly message: string;
+  /** In the origin's words: `read:user`. */
+  readonly scopes: readonly string[];
+}
+
+/** A refused connect as a stable code and the words to show for it. */
+export function connectRefusal(
+  error: ConnectError | GuardRefusal | ScopeRefusal,
+): { code: string; message: string | undefined } {
+  return typeof error === "string"
+    ? { code: error, message: undefined }
+    : { code: error.error, message: error.message };
 }
 
 /** A connected origin, and the frozen mirrors connecting it brought back. */
@@ -287,6 +355,7 @@ function storeOrigin(
     authKind: "pat" | "oauth";
     refreshToken?: string;
     expiresAt?: string | null;
+    software?: string;
   },
 ): Result<Origin, "already_connected"> {
   // Connecting an account whose credential died is re-authorizing it: the
@@ -330,6 +399,7 @@ function storeOrigin(
       ? {}
       : { refreshToken: input.refreshToken }),
     ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+    ...(input.software === undefined ? {} : { software: input.software }),
   });
   if (!created.ok) return created;
   // The payload names the host and the login and nothing else: an audit
@@ -397,6 +467,34 @@ export function listUserOrigins(app: App, actor: User): Origin[] {
   return listOrigins(app.db, actor.id);
 }
 
+// ---- checking again ----
+
+/** How soon a person may ask for another check of the same origin. */
+const CHECK_AGAIN_MS = 60_000;
+
+/**
+ * "Check again": the operator guard on one of the actor's origins, now
+ * (`recheckOrigin`). The way out of paused writes without waiting for the
+ * sweep — and, like it, refused outright when the account fails the guard.
+ * Once a minute per origin at most: it is a walk of the origin's API.
+ */
+export async function checkOriginAgain(
+  app: App,
+  actor: User | undefined,
+  originId: string,
+): Promise<Result<Recheck, "unauthorized" | "not_found" | "too_soon">> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const origin = getOriginFor(app.db, user.value.id, originId);
+  if (!origin) return err("not_found");
+  const last = lastGuardTry(app, origin.id);
+  if (last !== undefined && Date.now() - Date.parse(last) < CHECK_AGAIN_MS)
+    return err("too_soon");
+  const provider = providerForOrigin(app, origin);
+  if (!provider.ok) return ok("refused");
+  return ok(await recheckOrigin(app, origin, provider.value, { pauseMs: 250 }));
+}
+
 // ---- OAuth ----
 
 export type OAuthStartError =
@@ -430,8 +528,8 @@ export interface OAuthStart {
 export async function startOAuthConnect(
   app: App,
   actor: User | undefined,
-  input: { host: string; kind?: OriginKind; redirectUri?: string },
-): Promise<Result<OAuthStart, { error: OAuthStartError; message: string }>> {
+  input: { host: string; kind?: OriginKind; redirectUri?: string; returnQuery?: string },
+): Promise<Result<OAuthStart, { error: OAuthStartError; message: string; kind?: OriginKind }>> {
   const user = requireUser(actor);
   if (!user.ok) return err({ error: "unauthorized", message: "sign in first" });
   if (tooManyAttempts(app, user.value.id))
@@ -448,21 +546,42 @@ export async function startOAuthConnect(
       message: `cannot identify ${input.host}`,
     });
 
-  const registration = appFor(app.db, app.config.dataDir, user.value.id, {
+  const software = softwareOf(found.value.software);
+  const target = {
     kind: found.value.kind,
     apiUrl: found.value.apiUrl,
     webUrl: found.value.webUrl,
-  });
+    software,
+  };
+  let registration = appFor(app.db, app.config.dataDir, user.value.id, target);
+  if (!registration.ok && software === "forge" && (input.redirectUri ?? "") !== "") {
+    // Another forge registers us itself: no client id to copy.
+    const made = await registerClient(target.webUrl, {
+      redirectUri: input.redirectUri!,
+      name: `forge at ${new URL(input.redirectUri!).host}`,
+    });
+    if (!made.ok)
+      return err({ error: "provider_refused", message: made.error.message });
+    saveApp(app.db, app.config.dataDir, {
+      userId: user.value.id,
+      kind: target.kind,
+      apiUrl: target.apiUrl,
+      webUrl: target.webUrl,
+      clientId: made.value,
+    });
+    registration = appFor(app.db, app.config.dataDir, user.value.id, target);
+  }
   if (!registration.ok) {
     return err({
       error: "no_app",
+      kind: found.value.kind,
       message:
         found.value.kind === "github"
           ? "no GitHub OAuth app is configured; paste a token instead"
           : "register an OAuth application on this instance first",
     });
   }
-  const scope = scopesFor(found.value.kind);
+  const scope = scopesFor(found.value.kind, "oauth", software);
 
   if (flowFor(found.value.kind) === "device") {
     const started = await startDevice(registration.value, scope);
@@ -512,6 +631,7 @@ export async function startOAuthConnect(
     state,
     verifier: challenge.verifier,
     redirectUri,
+    returnQuery: input.returnQuery ?? "",
     target: url,
   });
   return ok({
@@ -530,6 +650,7 @@ export interface FlowStatus {
   readonly status: "pending" | "done" | "failed";
   readonly detail: string;
   readonly originId: string | null;
+  readonly returnQuery: string;
   readonly userCode: string;
   readonly url: string;
   readonly intervalSecs: number;
@@ -540,6 +661,7 @@ const statusOf = (flow: FlowRow): FlowStatus => ({
   status: flow.status,
   detail: flow.detail,
   originId: flow.originId,
+  returnQuery: flow.returnQuery,
   userCode: flow.userCode,
   url: flow.verificationUri,
   intervalSecs: flow.intervalSecs,
@@ -622,7 +744,7 @@ export async function pollOAuthConnect(
 export async function completeOAuthCallback(
   app: App,
   actor: User | undefined,
-  input: { state: string; code: string },
+  input: { state: string; code: string; error?: string },
 ): Promise<Result<FlowStatus, "unauthorized" | "not_found">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
@@ -642,7 +764,10 @@ export async function completeOAuthCallback(
   if (input.code === "") {
     finishFlow(app.db, flow.id, {
       status: "failed",
-      detail: "the origin returned no authorization code",
+      detail:
+        input.error === "access_denied"
+          ? `You said no at ${hostOf(flow.webUrl)}. Nothing was connected.`
+          : `${hostOf(flow.webUrl)} did not finish the sign-in. Nothing was connected. Start again.`,
     });
     return ok(statusOf(getFlowFor(app.db, user.value.id, flow.id)!));
   }
@@ -654,6 +779,7 @@ export async function completeOAuthCallback(
     webUrl: flow.webUrl,
     clientId: flow.clientId,
     clientSecret: secrets?.clientSecret ?? "",
+    software: flow.software,
   };
   const exchanged = await exchangeCode(registration, {
     code: input.code,
@@ -663,7 +789,7 @@ export async function completeOAuthCallback(
   if (!exchanged.ok) {
     finishFlow(app.db, flow.id, {
       status: "failed",
-      detail: exchanged.error.message,
+      detail: `${hostOf(flow.webUrl)} did not finish the sign-in. Nothing was connected. Start again.`,
     });
     return ok(statusOf(getFlowFor(app.db, user.value.id, flow.id)!));
   }
@@ -688,6 +814,7 @@ async function completeConnect(
     webUrl: string;
     clientId: string;
     clientSecret: string;
+    software?: string;
   },
   tokens: {
     accessToken: string;
@@ -695,17 +822,40 @@ async function completeConnect(
     expiresAt: string | null;
   },
 ): Promise<{ status: "done" | "failed"; detail: string; originId?: string }> {
-  const identity = await providerFor(
+  const provider = providerFor(
     staticCredential({
       kind: registration.kind,
       apiUrl: registration.apiUrl,
       webUrl: registration.webUrl,
       authKind: "oauth",
+      software: registration.software ?? "",
       token: tokens.accessToken,
     }),
-  ).whoami();
+  );
+  const identity = await provider.whoami();
   if (!identity.ok)
-    return { status: "failed", detail: "the new token did not work" };
+    return {
+      status: "failed",
+      detail:
+        (identity.error.missingScopes ?? []).length > 0
+          ? `The grant is missing ${scopeWords(identity.error.missingScopes!)}. The application asks for it; remove the grant on the instance and connect again.`
+          : `${hostOf(registration.webUrl)} did not accept the sign-in it had just given. Nothing was connected. Start again.`,
+    };
+  // The account that consented is the one checked: an administrator's grant
+  // or a protected repository's pusher is refused here, before anything is
+  // stored, and the grant is revoked where the provider lets us.
+  const guard = await checkCredential(provider, identity.value);
+  if (!guard.ok) {
+    const revoked = await revokeGrant(registration, tokens.accessToken);
+    return {
+      status: "failed",
+      detail: `${guard.error.message} ${
+        revoked.ok
+          ? "The grant was revoked."
+          : `This forge did not keep the token. You can remove the grant at ${hostOf(registration.webUrl)} under Settings → Applications.`
+      }`,
+    };
+  }
 
   const stored = storeOrigin(app, user, {
     kind: registration.kind,
@@ -716,10 +866,12 @@ async function completeConnect(
     authKind: "oauth",
     refreshToken: tokens.refreshToken,
     expiresAt: tokens.expiresAt,
+    software: registration.software ?? "",
   });
   if (!stored.ok)
     return { status: "failed", detail: ORIGIN_ALREADY_CONNECTED };
-  await afterConnect(app, user, stored.value);
+  if (guard.value.checked) noteGuardPassed(app, stored.value.id);
+  await afterConnect(app, user, stored.value, guard.value.listed);
   return { status: "done", detail: "", originId: stored.value.id };
 }
 
@@ -878,6 +1030,8 @@ export async function syncOriginNow(
 /**
  * Sync one mirror now. Any writer of the local repo may ask for this — it
  * only pulls, so it borrows nobody's identity and grants nobody anything.
+ * It is the one path that overwrites a default branch holding commits the
+ * origin lacks: the person asked for the origin's branches as they are.
  */
 export async function syncRepoNow(
   app: App,
@@ -888,7 +1042,38 @@ export async function syncRepoNow(
   if (!writer.ok) return writer;
   const link = originForRepo(app.db, repo.id);
   if (!link) return err("not_found");
-  return ok(await syncOrigin(app, link.origin, { onlyRepoId: repo.id }));
+  return ok(await syncOrigin(app, link.origin, { onlyRepoId: repo.id, overwrite: true }));
+}
+
+/** Taking the origin's new commits: what the sync did, or why it did not. */
+export type Taking =
+  | { readonly kind: "taken"; readonly count: number; readonly report: SyncReport }
+  | { readonly kind: "conflict"; readonly count: number }
+  | { readonly kind: "unread" };
+
+/**
+ * The one action behind "N new commits upstream": a mirror takes what its
+ * origin has, unless its default branch holds commits the origin lacks — a
+ * sync would overwrite them, so that is a conflict and nothing moves. When
+ * the origin cannot be read, nothing moves either: it is not known whether
+ * the sync would overwrite. The sweep holds such a mirror too; only Sync now
+ * (`syncRepoNow`) overwrites, because a person asked for exactly that.
+ */
+export async function takeFromOrigin(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Promise<Result<Taking, "unauthorized" | "forbidden" | "not_found">> {
+  const writer = requireWriter(app, actor, repo);
+  if (!writer.ok) return writer;
+  const link = originForRepo(app.db, repo.id);
+  if (link === undefined) return err("not_found");
+  const seen = await readAhead(app, repo);
+  if (seen === undefined) return ok({ kind: "unread" });
+  if (seen.diverged) return ok({ kind: "conflict", count: seen.count });
+  const report = await syncOrigin(app, link.origin, { onlyRepoId: repo.id });
+  await readAhead(app, repo);
+  return ok({ kind: "taken", count: seen.count, report });
 }
 
 // ---- reconnecting a frozen mirror ----
@@ -958,7 +1143,12 @@ async function afterConnect(
   app: App,
   user: User,
   origin: Origin,
+  listed: readonly RemoteRepo[] | null = null,
 ): Promise<Reattachment[]> {
+  // The guard listed what the account can see: that is the picker's list,
+  // at once — no second walk of the same pages. Anywhere the guard did not
+  // walk, the picker fetches it when it is opened, as before.
+  if (listed !== null) cacheOriginRepos(app.db, origin.id, listed);
   const out: Reattachment[] = [];
   for (const mirror of listDetachedMirrors(app.db, {
     site: siteOf(origin.webUrl),

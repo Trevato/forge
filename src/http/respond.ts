@@ -74,6 +74,19 @@ export const forbidden = () => apiError("forbidden", 403, FORBIDDEN_MESSAGE);
 export const noRoute = (method: string, path: string) =>
   apiError("no_route", 404, `no ${method} route for ${path}`);
 
+// A path some route takes under other methods: the path is right, the method
+// is not. `allowed` is sorted and carries HEAD with GET; the message leaves
+// HEAD out, as it is implied.
+export const methodNotAllowed = (method: string, allowed: string[]) =>
+  json(
+    {
+      error: "method_not_allowed",
+      message: `${method} is not taken here; use ${allowed.filter((m) => m !== "HEAD").join(", ")}`,
+    },
+    405,
+    { allow: allowed.join(", ") },
+  );
+
 /**
  * One media range beats another only when it names it (or a wildcard that
  * reaches it) at a strictly higher `q`; a tie — including the everything

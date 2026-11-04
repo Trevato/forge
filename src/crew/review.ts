@@ -23,12 +23,14 @@ import { crewWithRole, type Agent } from "../core/agents.ts";
 import { getHold, holdsFor, lastReleasesFor } from "../core/holds.ts";
 import { getIssueById, LIST_LIMIT_MAX } from "../core/issues.ts";
 import { listPulls, pullDiff, type Pull, pullDir} from "../core/pulls.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import { getRepoById, PILLAR_MAX, type Repo } from "../core/repos.ts";
 import { teamsOfPull, teamVerdicts } from "../core/issue_teams.ts";
 import { reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
 import { getTeam } from "../core/teams.ts";
 import { createLog } from "../kernel/log.ts";
+import { guestWaits } from "../origins/guest.ts";
+import { reviewerPaused } from "./reviewer_paused.ts";
 import { queueAgentRun } from "./dispatch.ts";
 import { type Handover, handoverOf, handoversOf } from "./guard.ts";
 
@@ -54,6 +56,18 @@ export const watchesSecurity = (agent: Agent): boolean =>
 
 /** Review runs a design reviewer holds in flight before a `src/web/` pull spills to the least busy. */
 export const REVIEW_DESIGN_INFLIGHT = 2;
+
+/** Review runs in flight (queued or running) on one repository: what the reviewer's slots bound. */
+export function reviewsInFlight(db: Database, repoId: string): number {
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        `SELECT COUNT(*) AS n FROM run WHERE repo_id = ?1 AND kind = 'agent'
+           AND reason = 'review' AND state IN ('queued','running')`,
+      )
+      .get(repoId)?.n ?? 0
+  );
+}
 
 /**
  * Review runs in flight (queued or running) per reviewer, by user id; an idle
@@ -436,7 +450,13 @@ export async function sendToReview(
 ): Promise<"none" | "done" | "sent" | "wait" | "lapsed" | "held"> {
   if (getHold(app.db, pull.id) !== undefined) return "held";
   const reviewers = reviewersOf(app.db, repo.id);
-  if (reviewers.length === 0) return "none";
+  // A paused reviewer reads like an empty seat: the pull waits for a person, and says so.
+  if (reviewers.length === 0 || reviewerPaused(repo)) return "none";
+  // A guest from another forge waits for a person's word before the crew
+  // touches it (`origins/guest.ts`).
+  if (guestWaits(app.db, pull)) return "held";
+  // The reviewer's slots bound every route, the teams' too. The most (PILLAR_MAX) is no cap: the sweep already bounds what it sends.
+  if (repo.reviewerSlots < PILLAR_MAX && reviewsInFlight(app.db, repo.id) >= repo.reviewerSlots) return "wait";
   if (teamsOfPull(app.db, pull).length > 0) {
     const sent = await sendToTeams(app, repo, reviewers, pull, now);
     if (sent !== undefined) return sent;

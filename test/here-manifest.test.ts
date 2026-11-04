@@ -356,6 +356,16 @@ describe("the manifest: what you can do here, as who you are", () => {
     expect(other.actions[0].do).toBe("explore apps and repositories");
   });
 
+  test("the explore and search actions name the MCP argument q", async () => {
+    const e = (await manifest("/explore?q=kind:app")).body;
+    expect(e.actions[0].mcpArgs).toEqual({ q: "kind:app" });
+    const long = (await manifest(`/search?q=${"x".repeat(300)}`)).body;
+    expect(long.actions[0].mcpArgs.q).toHaveLength(200);
+    const f = (await manifest("/")).body;
+    for (const tool of ["explore", "search"])
+      expect(f.actions.find((a: any) => a.mcp === tool).mcpArgs).toHaveProperty("q");
+  });
+
   test("it is small", async () => {
     for (const who of [undefined, "carol", "wes", "alice", "bot"]) {
       const res = await here("/acme/game", who);

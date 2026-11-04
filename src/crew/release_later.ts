@@ -12,6 +12,9 @@
 
 import type { Database } from "bun:sqlite";
 import { removeDependency } from "../core/dependencies.ts";
+import { getIssueById } from "../core/issues.ts";
+import { servePillar } from "../core/pillar_pick.ts";
+import { getRepoById } from "../core/repos.ts";
 import { laterGate } from "./later.ts";
 
 export interface Held {
@@ -45,11 +48,11 @@ export function heldByGateAlone(db: Database, repoId: string): Held[] {
 }
 
 /** Delete the gate edge of each issue named, all in one transaction (a failure releases none); returns the numbers released. */
-export function releaseFromGate(db: Database, repoId: string, numbers: readonly number[]): number[] {
-  return db.transaction(() => release(db, repoId, numbers)).immediate();
+export function releaseFromGate(db: Database, repoId: string, numbers: readonly number[], actorId?: string): number[] {
+  return db.transaction(() => release(db, repoId, numbers, actorId)).immediate();
 }
 
-function release(db: Database, repoId: string, numbers: readonly number[]): number[] {
+function release(db: Database, repoId: string, numbers: readonly number[], actorId?: string): number[] {
   const number = laterGate(db, repoId);
   if (number === undefined) return [];
   const gate = db
@@ -60,7 +63,13 @@ function release(db: Database, repoId: string, numbers: readonly number[]): numb
   if (gate === null) return [];
   const want = new Set(numbers);
   const out: number[] = [];
+  const repo = actorId === undefined ? undefined : getRepoById(db, repoId);
   for (const held of heldByGateAlone(db, repoId))
-    if (want.has(held.number) && removeDependency(db, held.id, gate.id)) out.push(held.number);
+    if (want.has(held.number) && removeDependency(db, held.id, gate.id)) {
+      out.push(held.number);
+      // Released means startable: under a pillar, in the releaser's name (#8924).
+      const issue = repo === undefined ? undefined : getIssueById(db, held.id);
+      if (repo !== undefined && issue !== undefined && actorId !== undefined) servePillar(db, repo, issue, actorId);
+    }
   return out;
 }

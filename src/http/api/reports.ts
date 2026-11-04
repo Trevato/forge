@@ -19,6 +19,7 @@ import { BODY_MAX, REQUEST_MAX, TITLE_MAX, byFiler } from "../../core/reports.ts
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { keyedPage, keyedWindow, loadRepo, originAware, withLabels } from "../api.ts";
 import type { Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { clientBucket } from "../peer.ts";
 import { proofOf } from "../report_filer.ts";
 import {
@@ -103,8 +104,8 @@ export function reportRoutes(router: Router<Handler>): void {
       waitingReports(ctx.app, ctx.auth.user, repo),
     );
     if (!waiting.ok) return respondAccess(waiting.error, 403);
-    return timePhase(ctx.request, "render", () =>
-      json({
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({
         ...keyedPage(
           reportViews(ctx.app, repo, waiting.value),
           (r) => r.id,
@@ -112,8 +113,22 @@ export function reportRoutes(router: Router<Handler>): void {
         ),
         // Every waiting report's filer, not only this page's.
         byAgent: byFiler(waiting.value),
-      }),
-    );
+      });
+      // The tag is of the exact bytes sent: a report filed, answered or out
+      // of the window moves it, and each window has its own. Only a writer
+      // reaches here, so every viewer who may ask is shown the same body.
+      const etag = weakEtag(text);
+      const headers = {
+        etag,
+        "cache-control": "private, no-cache",
+        vary: "authorization, cookie",
+      };
+      if (holds(ctx.request, etag))
+        return new Response(null, { status: 304, headers });
+      return new Response(text, {
+        headers: { "content-type": "application/json", ...headers },
+      });
+    });
   });
 
   router.add(

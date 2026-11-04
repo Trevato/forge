@@ -8,6 +8,7 @@
  * keys to change it, a guest sees nothing private, and a move reaches the
  * outbox (and so a milestones page open on the web) as `limb.moved`.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import { linkIssue } from "../src/actions/dependencies.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { pendingReplans } from "../src/core/limb_replan.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
@@ -274,7 +275,7 @@ describe("raise and lower a limb in the terminal", () => {
     const agent = await createAgent(forge, alice, { username: "atlas" });
     if (!agent.ok) throw new Error(String(agent.error));
     addToCrew(forge, alice, r, "atlas");
-    setCrewRole(forge.db, r.id, getUserByName(forge.db, "atlas")!.id, "planner");
+    seatAs(forge.db, r.id, getUserByName(forge.db, "atlas")!.id, "planner");
     await updateRepoSettings(forge, alice, r, {
       autonomy: "autonomous",
       autonomyDirection: "Keep it small.",

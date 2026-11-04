@@ -77,8 +77,28 @@ export async function forkBareRepo(
   const reflog = await runGit(["config", "core.logAllRefUpdates", "true"], {
     cwd: forkDir,
   });
-  if (!reflog.ok) return reflog;
+  if (!reflog.ok) return await undo(forkDir, reflog);
+  // A bare clone carries heads and tags only. A pin's refs ride with it:
+  // the build, its cover and its curated screenshots.
+  const pins = await runGit(
+    [
+      "fetch",
+      "--no-tags",
+      parentDir,
+      "+refs/builds/*:refs/builds/*",
+      "+refs/covers/*:refs/covers/*",
+      "+refs/shots/*:refs/shots/*",
+    ],
+    { cwd: forkDir, timeoutMs: 120_000 },
+  );
+  if (!pins.ok) return await undo(forkDir, pins);
   return ok();
+}
+
+/** A fork half made is no fork: remove it, so a second try finds a free place. */
+async function undo<E>(forkDir: string, failure: E): Promise<E> {
+  await rm(forkDir, { recursive: true, force: true });
+  return failure;
 }
 
 /**

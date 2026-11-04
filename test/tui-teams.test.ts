@@ -141,6 +141,7 @@ describe("teams in the terminal", () => {
       if (done) break;
       text += decoder.decode(value);
     }
+    if (!text.includes("7%")) throw new Error(`never came: still waiting while !text.includes("7%")`);
     await reader.cancel();
     h.stop();
     servers.stop();

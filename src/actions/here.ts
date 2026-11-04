@@ -45,6 +45,8 @@ export interface Action {
   readonly http?: string;
   /** The MCP tool that does the same, when there is one. */
   readonly mcp?: string;
+  /** The arguments that tool takes here, plain data (`{ q }` for a filter). */
+  readonly mcpArgs?: Readonly<Record<string, string>>;
   /** The shell command that does the same, when the forge's SSH is on. */
   readonly ssh?: string;
   /** `true`: needs an account the caller does not have; `false`: needs none. */
@@ -271,6 +273,7 @@ function pageRead(page: "explore" | "search", path: string): Action {
     do: `${page === "explore" ? "browse the forge" : "search the forge"}${q === "" ? "" : `: ${q.slice(0, 200)}`}`,
     http,
     mcp: page,
+    mcpArgs: { q: q.slice(0, 200) },
   };
 }
 
@@ -288,11 +291,13 @@ function forgeActions(
       do: "explore apps and repositories",
       http: "GET /api/v1/explore?q=",
       mcp: "explore",
+      mcpArgs: { q: "" },
     },
     {
       do: "search issues, pulls, repositories and code",
       http: "GET /api/v1/search?q=",
       mcp: "search",
+      mcpArgs: { q: "" },
     },
     { do: "list public repositories", http: "GET /api/v1/repos" },
     {

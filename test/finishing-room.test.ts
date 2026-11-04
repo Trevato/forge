@@ -4,6 +4,8 @@
  * queues no more bring-up-to-date runs — each a push, each a check — than
  * the lane has slots for, however many builder slots are free.
  */
+import { quietWeek } from "./helpers/week-quiet.ts";
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { setCapacity } from "../src/core/capacity.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -44,6 +46,7 @@ async function tick(): Promise<void> {
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-finishing-room-"));
   app = createApp({ dataDir, port: 0 });
+  quietWeek(app.db);
   const a = await createUser(app.db, {
     origin: "seed",
     trusted: true,
@@ -69,7 +72,7 @@ beforeAll(async () => {
   }
   const mason = getUserByName(app.db, "mason")!;
   const quill = getUserByName(app.db, "quill")!;
-  setCrewRole(app.db, repo.id, quill.id, "reviewer");
+  seatAs(app.db, repo.id, quill.id, "reviewer");
 
   // Three approved pulls that all touch the file main is about to change.
   for (const n of [1, 2, 3]) {

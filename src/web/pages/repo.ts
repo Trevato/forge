@@ -8,9 +8,12 @@
  * path segment and can never smuggle a path of its own.
  */
 
-import { immutableWhenAddressed } from "../../http/addressed.ts";
+import { recordLook } from "../../flow/valve_store.ts";
+import { PINNED_PUBLIC, immutableWhenAddressed, mayShare } from "../../http/addressed.ts";
+import { EDGE_VARY } from "../../http/edge_cache.ts";
 import { cachedTree, keepTree, resolveCommit } from "./tree_cache.ts";
-import { behindLine, followingLine } from "./upstream-follow.ts";
+import { behindLine, followingLine, originAheadLine } from "./upstream-follow.ts";
+import { CONFLICT_WORDS, UNREAD_WORDS } from "../../origins/ahead.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
 import { offerUpstream } from "./offer-upstream.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
@@ -37,7 +40,7 @@ import {
 } from "./following.ts";
 import { nothingNew } from "../../actions/follow.ts";
 import { frozenBlock } from "./frozen.ts";
-import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
+import { pinRepo, syncRepoNow, takeFromOrigin, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
   forkParentFor,
@@ -343,20 +346,42 @@ export async function repoSyncSubmit(ctx: Ctx): Promise<Response> {
     });
   }
   const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
-  if (!synced.ok)
-    return flashTo(ctx, repoBase(repo), {
-      tone: "danger",
-      message:
-        synced.error !== "not_found"
-          ? "You need write access to sync this mirror."
-          : repo.detached !== null
-            ? "This mirror is frozen: its origin was disconnected. Reconnect it first."
-            : "This repository does not mirror an origin.",
-    });
+  if (!synced.ok) return flashTo(ctx, repoBase(repo), { tone: "danger", message: mirrorRefusal(repo, synced.error) });
   return flashTo(ctx, repoBase(repo), {
     ...(synced.value.error === ""
       ? { message: "Synced from the origin." }
       : { tone: "danger" as const, message: synced.value.error }),
+  });
+}
+
+/** Why a mirror's sync or take was refused, in the words both say. */
+function mirrorRefusal(repo: Repo, error: "unauthorized" | "forbidden" | "not_found"): string {
+  return error !== "not_found"
+    ? "You need write access to sync this mirror."
+    : repo.detached !== null
+      ? "This mirror is frozen: its origin was disconnected. Reconnect it first."
+      : "This repository does not mirror an origin.";
+}
+
+// POST /:owner/:name/sync/take — "Take them" under "N new commits upstream":
+// the mirror's sync, asked first, so a default branch holding commits the
+// origin lacks is reported as a conflict and nothing moves.
+export async function repoTakeSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const taken = await takeFromOrigin(ctx.app, ctx.auth.user, repo);
+  if (!taken.ok) return flashTo(ctx, repoBase(repo), { tone: "danger", message: mirrorRefusal(repo, taken.error) });
+  const t = taken.value;
+  if (t.kind === "conflict")
+    return flashTo(ctx, repoBase(repo), { tone: "danger", message: CONFLICT_WORDS(repo.defaultBranch, t.count) });
+  if (t.kind === "unread") return flashTo(ctx, repoBase(repo), { tone: "danger", message: UNREAD_WORDS });
+  return flashTo(ctx, repoBase(repo), {
+    ...(t.report.error === ""
+      ? { message: `Took ${t.count} new commit${t.count === 1 ? "" : "s"} from the origin.` }
+      : { tone: "danger" as const, message: t.report.error }),
   });
 }
 
@@ -1155,12 +1180,15 @@ export function rawResponse(
 ): Response {
   if (blob.kind === "too_large") return new Response("", { status: 404 });
   // A full commit id names bytes that can never change; a branch name does
-  // not, so it revalidates every time, against the blob's own oid. Only a
-  // public repository's bytes may sit in a shared cache.
+  // not, so it revalidates every time, against the blob's own oid. Only an
+  // anonymous request's copy of a public repository's bytes may sit in a
+  // shared cache (`mayShare`).
   const etag = cache.oid ? `"${cache.oid}"` : undefined;
   const control =
     cache.immutable && etag
-      ? `${cache.public ? "public" : "private"}, max-age=31536000, immutable`
+      ? cache.public
+        ? PINNED_PUBLIC
+        : "private, max-age=31536000, immutable"
       : "private, max-age=0";
   const headers: Record<string, string> = {
     "content-type":
@@ -1170,6 +1198,7 @@ export function rawResponse(
     "x-content-type-options": "nosniff",
     "content-security-policy": "default-src 'none'; sandbox",
     "cache-control": control,
+    ...(cache.immutable && etag && cache.public ? { vary: EDGE_VARY } : {}),
   };
   if (etag) {
     headers.etag = etag;
@@ -1179,6 +1208,12 @@ export function rawResponse(
   return new Response(blob.body, { headers });
 }
 
+/** A forge admin looking at a repository is counted, to suggest a valve on /flow and never to set one. */
+function noteLook(ctx: Ctx, repoId: string): void {
+  const user = ctx.auth.user;
+  if (user?.isAdmin === true && user.kind !== "agent") recordLook(ctx.app.db, user.id, repoId);
+}
+
 // GET /:owner/:name — the repo home. An app's home is the app, for every
 // viewer: what it serves, who is on it, what it asks; its code is one tab
 // deeper, at /files. Any other repository's home is its code. An older
@@ -1186,6 +1221,7 @@ export function rawResponse(
 export async function repoHome(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  noteLook(ctx, repo.id);
   const record = getAppByRepo(ctx.app.db, repo.id);
   if (record === undefined) return await codeHome(ctx, repo);
   if (ctx.url.searchParams.has("ref"))
@@ -1310,7 +1346,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${archivedLine(ctx, repo)}${noApp}
+  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${originAheadLine(ctx, repo)}${archivedLine(ctx, repo)}${noApp}
   ${offerUpstream(repo, parent, offer)}
   ${latest === null
     ? ""
@@ -1461,6 +1497,7 @@ export async function treePage(ctx: Ctx): Promise<Response> {
     if (hit !== undefined) {
       git.done();
       return immutableWhenAddressed(
+        ctx.request,
         true,
         repo,
         ref,
@@ -1509,7 +1546,7 @@ export async function treePage(ctx: Ctx): Promise<Response> {
     content,
   });
   notePhase(ctx.request, "render", performance.now() - began);
-  return immutableWhenAddressed(anonymous, repo, ref, response);
+  return immutableWhenAddressed(ctx.request, anonymous, repo, ref, response);
 }
 
 // GET /:owner/:name/blob/:ref/*path
@@ -1570,7 +1607,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
   });
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
-  return immutableWhenAddressed(ctx.auth.user === undefined, repo, ref, response);
+  return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, ref, response);
 }
 
 /**
@@ -1625,7 +1662,7 @@ export async function rawBlob(ctx: Ctx): Promise<Response> {
   return rawResponse(blob, {
     oid: blob.oid,
     immutable: FULL_OID.test(ref),
-    public: repo.visibility === "public",
+    public: mayShare(ctx.request, ctx.auth.user === undefined, repo, ref),
     request: ctx.request,
   });
 }

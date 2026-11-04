@@ -252,12 +252,12 @@ describe("/flow: the forge shows its own bottleneck", () => {
     expect(await (await get("/", cookie)).text()).not.toContain('href="/flow"');
   });
 
-  test("/flow is a permanent redirect to /boards, and /boards is for a forge admin", async () => {
+  test("/flow with a query is the old drill, a permanent redirect to /boards; /boards is for a forge admin", async () => {
     const bob = await login("bob");
     for (const cookie of [bob, ""]) {
-      const res = await get("/flow", cookie);
+      const res = await get("/flow?out=approved", cookie);
       expect(res.status).toBe(301);
-      expect(res.headers.get("location")).toBe("/boards");
+      expect(res.headers.get("location")).toBe("/boards?out=approved");
     }
     expect((await get("/boards", bob)).status).toBe(404);
     expect(await (await get("/", bob)).text()).not.toContain('href="/flow"');

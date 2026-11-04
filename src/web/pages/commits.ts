@@ -51,6 +51,17 @@ import {
 
 const PER_PAGE = 30;
 
+/**
+ * A commit's subject, body and author are the writer's words, so inside
+ * `[data-commits]` a row wraps them (a long word breaks anywhere) in place of
+ * the list's one-line ellipsis, and the page never scrolls sideways at 390 px.
+ * A diff keeps scrolling inside its own `.diff-body`. No new class.
+ */
+export const COMMITS_CSS = `[data-commits] { overflow-wrap: anywhere; }
+[data-commits] .row-title, [data-commits] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-commits] .row { align-items: flex-start; }
+[data-commits] .card-head h2 { min-width: 0; }`;
+
 /** Infinity, 1e300 and NaN all collapse to page 1 — never a bogus skip. */
 function pageNumber(raw: string | null): number {
   const requested = Math.floor(Number(raw));
@@ -87,7 +98,7 @@ export function commitRows(
           () => html` · ${badge("merge", { variant: "secondary" })}`,
         )}</span
       >`;
-  return listCard(
+  return html`<div data-commits>${listCard(
     commits.map((commit) => {
       const verdict = verdicts.get(commit.oid);
       const step = verdict?.summary.split("\n")[0]?.trim() ?? "";
@@ -122,7 +133,7 @@ export function commitRows(
         </div>
       </li>`;
     }),
-  );
+  )}</div>`;
 }
 
 /** A commit's check in a sentence; on red, the first failing step as the check named it. */
@@ -194,7 +205,7 @@ export function renderCommit(
       </div>`,
     { head: html`<h2>${commit.subject}</h2>`, pad: false },
   );
-  return html`<div class="mt">${head}</div>
+  return html`<div data-commits><div class="mt">${head}</div></div>
     <div class="mt">
       ${renderDiff(diff, {
         syntax,
@@ -281,6 +292,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
       body: html`${scopeHeader(ctx, scope, "commits")}${switcher}
       ${noCommits(num > 1)} ${liveMount({ repo: base })}`,
       scriptJs: liveClientJs,
+      styleCss: COMMITS_CSS,
     });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return response;
@@ -308,6 +320,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
     palette: scope.palette,
     body,
     scriptJs: liveClientJs,
+    styleCss: COMMITS_CSS,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -349,9 +362,10 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: COMMITS_CSS,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
-  return immutableWhenAddressed(ctx.auth.user === undefined, repo, rev, response);
+  return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, rev, response);
 }
 
 // ---- the live-browse pages ----
@@ -404,6 +418,7 @@ export async function browseCommits(
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: COMMITS_CSS,
   });
 }
 
@@ -428,5 +443,6 @@ export async function browseCommit(
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: COMMITS_CSS,
   });
 }

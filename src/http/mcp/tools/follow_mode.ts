@@ -4,7 +4,7 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "follow_mode",
-  doc: "`{ repo, … }`: choose how a spawned forge follows its parent, `tell-me` or `take-updates`; its `forge` repository's admin only",
+  doc: "`{ repo, mode }`: choose how a spawned forge follows its parent, `mode` being `tell-me` or `take-updates`; its `forge` repository's admin only; answers `{ says, mode }`; refused `unauthorized`, `forbidden`, `not_following`, `invalid_mode` or `severed`",
   description:
     "How a spawned forge follows its parent: `tell-me` or `take-updates`.",
   inputSchema: {

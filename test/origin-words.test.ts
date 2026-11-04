@@ -15,7 +15,7 @@ const PROVIDERS = [
 const sentences = Object.entries(words) as [string, string][];
 
 test("each sentence is non-empty", () => {
-  expect(sentences.length).toBe(5);
+  expect(sentences.length).toBe(7);
   for (const [, s] of sentences) expect(s.trim().length).toBeGreaterThan(0);
 });
 

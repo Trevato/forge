@@ -36,6 +36,7 @@ async function palette(h: ReturnType<typeof open>): Promise<void> {
   await h.feed(":", ..."Webhooks");
   for (let i = 0; i < 100 && !h.text().includes("list, add and remove webhooks"); i++)
     await new Promise<void>((r) => setTimeout(r, 10)), await h.feed();
+  if (!h.text().includes("list, add and remove webhooks")) throw new Error(`never came: still waiting while !h.text().includes("list, add and remove webhooks")`);
   await h.feed("enter");
 }
 

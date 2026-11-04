@@ -89,6 +89,7 @@ describe("the crew, with a pull that does not merge", () => {
   const until = async (done: () => boolean, ms = 10_000) => {
     const end = Date.now() + ms;
     while (!done() && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+    if (!done()) throw new Error(`never came: still waiting while !done()`);
   };
   const headOf = (pull: Pull) => getPull(app.db, repo.id, pull.number)!.headOid;
   const fileAt = async (oid: string, path: string) =>

@@ -13,15 +13,17 @@ import type { Database } from "bun:sqlite";
 import { diffRange, type Diff, type DiffLaps } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { refTip } from "../git/read.ts";
+import { combine, combinedTip } from "../git/combined.ts";
+import { fromKeptFork } from "./landing_kind.ts";
 import { readTips } from "../git/tips.ts";
 import {
   aheadCount,
+  contentOnBase,
   fetchInto,
   merge,
   mergeBase,
   mergeable,
   resolveOid,
-  treeOf,
   writeRef,
   type MergeError,
   type MergeStrategy,
@@ -179,6 +181,12 @@ export interface CreatePullInput {
   revertsIssueId?: string;
   /** The variant group the pull joins; absent for an ordinary pull. */
   variantGroup?: string;
+  /**
+   * Who opened it on another forge, and where (#9011): written with the
+   * issue row, so the pull is a guest (`origins/guest.ts`) from its first
+   * moment and nothing can start it with secrets before it is marked.
+   */
+  origin?: { author: string; htmlUrl: string };
 }
 
 /**
@@ -290,6 +298,12 @@ export async function createPull(
     sealed,
   });
   if (!issue.ok) return err(issue.error);
+  if (input.origin !== undefined)
+    db.query("UPDATE issue SET origin_author = ?1, origin_html_url = ?2 WHERE id = ?3").run(
+      input.origin.author,
+      input.origin.htmlUrl,
+      issue.value.id,
+    );
 
   const headRepoId = input.headRepoId ?? input.repoId;
   db.query(
@@ -310,7 +324,11 @@ export async function createPull(
   // and (for cross-repo) the only place the base repo holds the fork's tip.
   await writeRef(at, `refs/pull/${issue.value.number}/head`, headOid);
 
-  return ok(join(db, issue.value)!);
+  const pull = join(db, issue.value)!;
+  // A kept fork's pull is combined with main on our side (#9012).
+  if (at === dir && fromKeptFork(db, pull))
+    await combine(dir, { number: pull.number, baseOid, headOid });
+  return ok(pull);
 }
 
 export function getPull(
@@ -834,10 +852,14 @@ export async function pullStatus(
   const baseOid = liveBase ?? pull.baseOid;
   const headOid = liveHead ?? pull.headOid;
   const reviews = gate === undefined ? null : reviewGate(gate, pull, headOid);
+  // A fork's pull combined on our side merges as its combined branch (#9012).
+  const lands = pull.crossRepo
+    ? ((await combinedTip(dir, pull.number, headOid)) ?? headOid)
+    : headOid;
   const { ahead, mergeable: clean, conflicts } = await mergeReading(
     dir,
     baseOid,
-    headOid,
+    lands,
   );
   return { baseOid, headOid, ahead, mergeable: clean, conflicts, reviews };
 }
@@ -1129,6 +1151,7 @@ export async function mergePull(
       actorId: input.actorId,
       baseOid: status.baseOid,
       headOid: status.headOid,
+      carried: true,
     });
     return ok({ mergeOid: carrier, carried: true });
   }
@@ -1150,10 +1173,16 @@ export async function mergePull(
     )
       return err("checks_required");
   }
+  // A kept fork lands its combined branch, brought up to the base first:
+  // the author's head is its ancestor, so it lands too (#9012).
+  const combined =
+    input.sealedFrom === undefined && fromKeptFork(db, pull)
+      ? await combine(dir, { number: pull.number, baseOid: status.baseOid, headOid: status.headOid })
+      : undefined;
   const landed = await merge(dir, {
     baseBranch: pull.baseBranch,
     baseOid: status.baseOid,
-    headOid: status.headOid,
+    headOid: combined?.oid ?? status.headOid,
     strategy: input.strategy,
     message: input.message,
     author: input.author,
@@ -1189,9 +1218,7 @@ async function carriedBy(
 ): Promise<string | undefined> {
   if (strategy !== "squash" || status.ahead === 0 || !status.mergeable)
     return undefined;
-  const merged = await mergeable(dir, status.baseOid, status.headOid);
-  if (!merged.ok) return undefined;
-  if (merged.value.treeOid !== (await treeOf(dir, status.baseOid)))
+  if (!(await contentOnBase(dir, status.baseOid, status.headOid)))
     return undefined;
   const landing = await resolveOid(dir, `refs/pull/${pull.number}/merged`);
   if (
@@ -1207,12 +1234,18 @@ async function carriedBy(
 function closeAsMerged(
   db: Database,
   pullId: string,
-  landed: { mergeOid: string; actorId: string; baseOid: string; headOid: string },
+  landed: {
+    mergeOid: string;
+    actorId: string;
+    baseOid: string;
+    headOid: string;
+    carried?: boolean;
+  },
 ): void {
   const now = new Date().toISOString();
   transact(db, () => {
     db.query(
-      "UPDATE pull SET merged_at = ?1, merged_oid = ?2, merged_by = ?3, base_oid = ?4, head_oid = ?5 WHERE issue_id = ?6 AND merged_at IS NULL",
+      "UPDATE pull SET merged_at = ?1, merged_oid = ?2, merged_by = ?3, base_oid = ?4, head_oid = ?5, carried = ?7 WHERE issue_id = ?6 AND merged_at IS NULL",
     ).run(
       now,
       landed.mergeOid,
@@ -1220,6 +1253,7 @@ function closeAsMerged(
       landed.baseOid,
       landed.headOid,
       pullId,
+      landed.carried === true ? 1 : 0,
     );
     setIssueState(db, pullId, "closed");
   });

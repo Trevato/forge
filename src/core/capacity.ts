@@ -25,7 +25,9 @@ export type CapacityKey =
   | "cells.egress"
   | "guard_new_accounts"
   | "signin.edge"
-  | "slots.smallShare";
+  | "slots.smallShare"
+  | "polish.capMinutes"
+  | "pace.floor";
 
 interface Definition {
   /** What the settings page and the API call it. */
@@ -114,7 +116,21 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     env: "FORGE_SLOTS_SMALL_SHARE",
     kind: { type: "count", min: 0, max: 100 },
     fallback: "30",
-    help: "The most of a repository's builder slots that tests-only and small-addition issues (\"A test pins …\", or a label test, tests, tests-only or small) hold at once, as a percent rounded up: 30 lets 2 of 5 slots go to them. At the cap a small issue is skipped and the slot goes to roadmap work; roadmap work is picked first either way. 100 lifts the cap; 0 starts none. Read on every pick.",
+    help: "The most of a repository's builder slots that tests-only and small-addition issues (\"A test pins …\", or a label test, tests, tests-only or small) hold at once, as a percent rounded up: 30 lets 2 of 5 slots go to them. At the cap a small issue is skipped and the slot goes to the next issue in the Next up order; a ranked small issue is still taken. 100 lifts the cap; 0 starts none. Read on every pick.",
+  },
+  "polish.capMinutes": {
+    label: "Run time a polish issue may take (minutes)",
+    env: "FORGE_POLISH_CAP_MINUTES",
+    kind: { type: "count", min: 1, max: 1440 },
+    fallback: "60",
+    help: "An issue labelled polish is small work: a builder run on it that has gone this many minutes is stopped, not extended, and the issue gets one comment saying what is left. Read on every tick.",
+  },
+  "pace.floor": {
+    label: "Slots the pace always leaves reviews and assigned work",
+    env: "FORGE_PACE_FLOOR",
+    kind: { type: "count", min: 1, max: 16 },
+    fallback: "2",
+    help: "While the week's pace allows any slots, this many reviews and issues a person assigned may run at once, apart from the crew's own picks, however hard the pace slows them; also the fewest slots a fast burn slows a repository to. At the reserve's wall everything waits. Read on every pump.",
   },
 };
 
@@ -306,6 +322,20 @@ export function bootDefault(db: Database, key: CapacityKey): string {
 }
 
 /**
+ * The ceiling `key` is held under: its default in force, when an admin's
+ * stored count is below it; null for a choice, an unset key or a value at
+ * or above the ceiling. A crew concurrency lowered at runtime holds the
+ * crew back, and this is how a page can say so.
+ */
+export function belowCeiling(db: Database, key: CapacityKey): { value: number; ceiling: number } | null {
+  if (CAPACITY[key].kind.type !== "count") return null;
+  const stored = storedCapacity(db, key);
+  const ceiling = Number(bootDefault(db, key));
+  if (stored === undefined || !Number.isFinite(ceiling) || ceiling <= 0) return null;
+  return Number(stored) < ceiling ? { value: Number(stored), ceiling } : null;
+}
+
+/**
  * A count setting as a number: an admin's value, else `fallback` — the
  * value the calling service booted with, which is the default in force.
  */
@@ -317,6 +347,11 @@ export function capacityCount(
   const stored = storedCapacity(db, key);
   const n = stored === undefined ? Number.NaN : Number(stored);
   return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+/** The slots the pace leaves reviews and assigned work (`pace.floor`). */
+export function paceFloor(db: Database): number {
+  return Number(capacityValue(db, "pace.floor"));
 }
 
 /** How many hosted children this forge may hold now; read on every use. */
@@ -342,6 +377,11 @@ export function queueBatch(db: Database): number {
 /** The percent of builder slots small issues may hold (#7571). */
 export function smallShare(db: Database): number {
   return Number(capacityValue(db, "slots.smallShare"));
+}
+
+/** The minutes of run time a polish issue may take before its run is stopped (#8852). */
+export function polishCapMinutes(db: Database): number {
+  return Number(capacityValue(db, "polish.capMinutes"));
 }
 
 /** Whether the platform edge's identity is read at all; on every request. */

@@ -162,7 +162,7 @@ test("the live part and the stream are an admin's alone", async () => {
   expect(part.status).toBe(404);
   expect((await fetch(`${servers.url}/settings/backups/live`)).status).toBeGreaterThanOrEqual(300);
 
-  const frames = async (cookie: string): Promise<string> => {
+  const frames = async (cookie: string, mustArrive: boolean): Promise<string> => {
     const ac = new AbortController();
     const res = await fetch(`${servers.url}/events`, { headers: { cookie }, signal: ac.signal });
     const reader = res.body!.getReader();
@@ -179,10 +179,11 @@ test("the live part and the stream are an admin's alone", async () => {
       ]);
       if (value) got += new TextDecoder().decode(value);
     }
+    if (mustArrive && !got.includes("backup.")) throw new Error(`never came: still waiting while !got.includes("backup.")`);
     ac.abort();
     return got;
   };
   const alice = await login("alice", "a-good-passphrase");
-  expect(await frames(alice)).toContain("backup.started");
-  expect(await frames(bob)).not.toContain("backup.started");
+  expect(await frames(alice, true)).toContain("backup.started");
+  expect(await frames(bob, false)).not.toContain("backup.started");
 });

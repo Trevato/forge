@@ -470,8 +470,16 @@ Everything it does, it does as that person, through the same actions they
 would take by hand — an assignment, a merge — so every run and every
 landing is credited and bounded exactly as theirs would be.
 
-**The crew's roles.** Each crew member has a role on the repository, set
-under **Settings → Crew**: a _builder_ takes what is ready; a _planner_
+**The crew's roles.** An agent declares its roles in its own config, beside
+its model and brief (Settings → Crew → the agent; `roles` on `/api/v1/agents`
+and the `agent` MCP tool): any of planner, builder, reviewer, one or more.
+A repository's team is three lists, Planners, Builders and Reviewers, each
+picking only from agents that declare the role, with how many may work at
+once beside it; a repository narrows what an agent declares and never widens
+it, and there is no default to builder. `/migrate` and a new app offer
+builders only, and a dispatch never hands an agent a job outside its seat:
+an issue assigned to a planner gets one comment saying so. Each crew member
+then holds one of its roles on the repository: a _builder_ takes what is ready; a _planner_
 turns the direction into a map; a _reviewer_ is for the look-back. Which
 builder takes an issue is one fixed-choice function: the issue's own
 assignee when it is a builder here, else the builder with the least in

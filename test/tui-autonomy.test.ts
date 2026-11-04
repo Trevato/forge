@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRepo } from "../src/actions/repos.ts";
+import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/core/orgs.ts";
 import { AUTONOMY_BOUNDS, AUTONOMY_SAID, getRepoById, type Repo } from "../src/core/repos.ts";
@@ -64,7 +64,7 @@ describe("autonomy in the terminal", () => {
       await type("Autonomy");
       await press("enter");
     };
-    return { text: () => app.screen.toText(), press, type, open, stop: () => app.stop() };
+    return { app, text: () => app.screen.toText(), press, type, open, stop: () => app.stop() };
   }
 
   beforeAll(async () => {
@@ -202,6 +202,28 @@ describe("autonomy in the terminal", () => {
     h.stop();
   });
 
+  test("p, s and r set the planner, builder and reviewer; 0 pauses and the audit line says from what to what", async () => {
+    const h = boot(ada);
+    await h.open();
+    expect(h.text()).toContain("Planner");
+    expect(h.text()).toContain("Reviewer");
+    for (const [key, value] of [["p", "0"], ["s", "0"], ["r", "2"]] as const) {
+      await h.press(key);
+      for (let i = 0; i < 4; i++) await h.press("backspace");
+      await h.type(value);
+      await h.press("enter");
+    }
+    expect(saved()).toMatchObject({ plannerSlots: 0, autonomySlots: 0, reviewerSlots: 2 });
+    expect(h.text()).toContain("Paused");
+    await h.press("p");
+    for (let i = 0; i < 4; i++) await h.press("backspace");
+    await h.type("2");
+    await h.press("enter");
+    expect(saved().plannerSlots).toBe(0);
+    expect(h.text()).toContain(AUTONOMY_BOUNDS);
+    h.stop();
+  });
+
   test("a ceiling or slots out of range are refused with the page's sentence and nothing is saved", async () => {
     const h = boot(ada);
     await h.open();
@@ -214,7 +236,7 @@ describe("autonomy in the terminal", () => {
       expect(h.text()).toContain(AUTONOMY_BOUNDS);
       expect(saved().autonomyCeilingUsd).toBe(before.autonomyCeilingUsd);
     }
-    for (const bad of ["0", "9", "2.5", "x"]) {
+    for (const bad of ["9", "2.5", "x", "-1"]) {
       await h.press("s");
       for (let i = 0; i < 4; i++) await h.press("backspace");
       await h.type(bad);
@@ -225,6 +247,43 @@ describe("autonomy in the terminal", () => {
     h.stop();
   });
 
+  test("o sets the polish share through updateRepoSettings, refuses what the page refuses, and the week screen shows it live", async () => {
+    const h = boot(ada);
+    await h.open();
+    expect(h.text()).toContain("Polish   10% of the week's spend");
+    await h.press("o");
+    for (let i = 0; i < 4; i++) await h.press("backspace");
+    await h.type("25");
+    await h.press("enter");
+    expect(saved().polishShare).toBe(25);
+    expect(h.text()).toContain("Polish   25% of the week's spend");
+    for (const bad of ["51", "-1", "2.5", "x", ""]) {
+      await h.press("o");
+      for (let i = 0; i < 4; i++) await h.press("backspace");
+      await h.type(bad);
+      await h.press("enter");
+      expect(h.text()).toContain("Polish share is a whole number of percent, 0 to 50.");
+      expect(saved().polishShare).toBe(25);
+    }
+    h.stop();
+
+    const w = boot(ada);
+    await w.open();
+    await w.press("esc");
+    await w.press("ctrl+k");
+    await w.type("The week");
+    await w.press("enter");
+    await w.type("acme/arm");
+    await w.press("enter");
+    expect(w.text()).toContain("polish 0.0% of 25% this week ($0.00 of $0.00)");
+    // A change made anywhere else reaches the open screen without a key.
+    expect((await updateRepoSettings(forge, ada, saved(), { polishShare: 30 })).ok).toBe(true);
+    await new Promise((r) => setTimeout(r, 400));
+    await settleApp(w.app);
+    expect(w.text()).toContain("of 30% this week");
+    w.stop();
+  });
+
   for (const [who, get] of [
     ["a writer who is not an admin", () => dave],
     ["a reader", () => undefined],
@@ -233,7 +292,7 @@ describe("autonomy in the terminal", () => {
       const before = saved();
       const h = boot(get());
       await h.open();
-      expect(h.text()).not.toContain("Slots");
+      expect(h.text()).not.toContain("Builder");
       expect(h.text()).not.toContain("Ceiling");
       expect(h.text()).not.toContain("Mode ");
       await h.press("m", "left", "enter", "c", "s");
@@ -249,7 +308,7 @@ describe("autonomy in the terminal", () => {
   test("an agent who administers the repository changes it, as the page's API lets it", async () => {
     const h = boot(bot);
     await h.open();
-    expect(h.text()).toContain("Slots");
+    expect(h.text()).toContain("Builder");
     await h.press("s");
     for (let i = 0; i < 4; i++) await h.press("backspace");
     await h.type("2");

@@ -25,6 +25,7 @@ import { listRefs } from "../git/read.ts";
 import { ZERO_OID } from "../git/hooks.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { trustedHosts } from "./trusted-hosts.ts";
+import { operatorAllowed } from "./discover.ts";
 import { vetHost, type OutboundOptions } from "../kernel/outbound.ts";
 import { pinFor, remoteGitEnv } from "../git/remote-env.ts";
 import { redact, safeRemoteUrl, secretsIn } from "./credentials.ts";
@@ -66,7 +67,13 @@ export async function vettedEnv(
   protocols?: string,
 ): Promise<Result<Record<string, string>, GitMirrorError>> {
   const host = new URL(url).hostname;
-  const vetted = await vetHost(host, { ...outbound, trusted: trustedHosts() });
+  // A host the operator vouched for as an origin (`FORGE_ORIGIN_ALLOW`) is
+  // trusted for that origin's git as an admin-trusted host is: by name, and
+  // pinned to the answer that passed. Otherwise it connects and can never
+  // be mirrored. An address literal named there is not trusted: trust is by
+  // name, never by address (`origins/trusted-hosts.ts`).
+  const trusted = operatorAllowed(url) ? [...trustedHosts(), host] : trustedHosts();
+  const vetted = await vetHost(host, { ...outbound, trusted });
   if (!vetted.ok)
     return err({
       message: vetted.error === "refused" ? MIRROR_REFUSED : MIRROR_UNRESOLVED,

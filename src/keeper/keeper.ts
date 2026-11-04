@@ -33,7 +33,8 @@ import { createIssue } from "../core/issues.ts";
 import { decideCut } from "./cadence.ts";
 import { imageAt, type Deployer } from "./deploy.ts";
 import { blocking, liftFixed, names, setCause, setHold, standingHolds, type Hold } from "./hold.ts";
-import { countRollProbe, dropCut, finish, getKeeperRelease, inFlight, keepTally, listKeeperReleases, markLive, recordCut, type KeeperRelease } from "./record.ts";
+import { stallReason, STALL_HOLD_MS } from "../perf/boot_stall.ts";
+import { countRollProbe, dropCut, finish, getKeeperRelease, inFlight, keepStall, keepTally, listKeeperReleases, markLive, releaseBefore, recordCut, type KeeperRelease } from "./record.ts";
 import { rollBackToNamed } from "./rollback.ts";
 import type { Probe, Tally, Verdict } from "./verify.ts";
 
@@ -60,6 +61,8 @@ export interface KeeperPorts {
   /** Ten minutes under page load. */
   readonly verify: (onProbe: (t: Tally) => void) => Promise<Verdict>;
   readonly minIntervalMs?: number;
+  /** The worst event-loop stall in this process's first five minutes, ms; none when unset (#8848). */
+  readonly bootStallMs?: () => number;
 }
 
 /** Pulls of the forge's repository merged since `since`: number, title and body. */
@@ -120,17 +123,36 @@ async function verifyAndDecide(p: KeeperPorts, r: KeeperRelease): Promise<string
     const kept = getKeeperRelease(p.db, r.id)!;
     const numbers = { version: r.version, probes: kept.probes, pages: kept.pages, worstMs: kept.worstMs, secondsDark: kept.secondsDark, rollNon200: kept.rollNon200 };
     if (verdict.ok) {
-      finish(p.db, r.id, "verified", "", p.now());
+      const stalled = holdStall(p, r);
+      finish(p.db, r.id, "verified", stalled ?? "", p.now());
       p.deployer.verified?.(r.version);
       const lifted = liftFixed(p.db, r.version, p.now());
       p.bus.append({ kind: "release.verified_live", repoId: p.repo.id, payload: { ...numbers, holdsLifted: lifted } });
       fileDark(p, getKeeperRelease(p.db, r.id)!);
-      return `${r.version} verified live: ${kept.probes} probes, worst ${kept.worstMs} ms, ${kept.secondsDark} s dark`;
+      return `${r.version} verified live: ${kept.probes} probes, worst ${kept.worstMs} ms, ${kept.secondsDark} s dark${stalled === undefined ? "" : `; ${stalled}`}`;
     }
     return await rollBack(p, kept, verdict.reason);
   } finally {
     verifying.delete(p);
   }
+}
+
+/**
+ * A release's worst stall in its first five minutes is kept, shown beside the last
+ * release's, and over {@link STALL_HOLD_MS} holds the next cut with the reason
+ * (#8848). The release itself stays live: it answers, only slowly for a while, so
+ * a rollback would trade a known stall for a restart. The hold lifts as any failed
+ * one does, when a pull naming it lands and a release verifies.
+ */
+function holdStall(p: KeeperPorts, r: KeeperRelease): string | undefined {
+  const ms = p.bootStallMs?.();
+  if (ms === undefined) return undefined;
+  keepStall(p.db, r.id, ms);
+  if (ms <= STALL_HOLD_MS) return undefined;
+  const reason = stallReason(r.version, ms, releaseBefore(p.db, r.id)?.worstStallMs);
+  const hold = setHold(p.db, { kind: "failed", version: r.version, reason, worstMs: ms, at: p.now() });
+  p.bus.append({ kind: "release.held", repoId: p.repo.id, payload: { version: r.version, hold: hold.id, reason, worstStallMs: ms } });
+  return `${reason}; hold ${hold.id} set`;
 }
 
 /** Hold with the numbers, then set the named known-good image. The hold first: this process may be the one replaced. */

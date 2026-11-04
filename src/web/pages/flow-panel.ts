@@ -42,6 +42,7 @@ import { hoursWords } from "../../flow/lead_time.ts";
 import { buildYieldSays } from "../../flow/build_yield.ts";
 import { reviewLatencySays } from "../../flow/review_latency.ts";
 import { openerCounts } from "../../flow/openers.ts";
+import { readRepeats, type Repeats } from "../../flow/repeats.ts";
 import { readHeld } from "../../flow/held.ts";
 import { readVerified, verifiedSays, type VerifiedRow } from "../../flow/verified.ts";
 import type { App } from "../../app.ts";
@@ -213,6 +214,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
       </div>`,
       { head: html`<h2>Pipeline</h2><a class="muted small" href="/pipeline">The four steps</a><a class="muted small" href="/settings/capacity">Capacity</a>`, id: "pipeline", pad: false },
     )}
+    ${repeatsCard(readRepeats(app.db, "", new Date(now), reader.kind !== "owner"))}
     ${verifiedCard(readVerified(app, reader.kind === "owner"), now)}
     ${hotFilesCard(app, reader)}
     ${heldCard(readHeld(app, reader.kind === "owner", now))}
@@ -220,6 +222,18 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     ${gatesCard(app.db, reader.kind === "owner", now)}
     ${url.searchParams.get("idle") === "all" && idle.length > 0 ? idleList(idle) : null}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
+}
+
+/** What reviewers repeated (#8716): the proposals and retirements, beside comments per pull. */
+function repeatsCard(r: Repeats): Html {
+  return card(
+    html`<h2>Review repeats</h2>
+      <p data-repeats data-scope="${r.scope}">${r.says}.</p>
+      ${r.findings.length === 0
+        ? null
+        : html`<ul>${r.findings.map((f) => html`<li data-finding>${f.sample} <span class="muted small">seen ${String(f.seen)}× · #${String(f.issue)}${f.retired ? " · retired" : ""}</span></li>`)}</ul>`}`,
+    { id: "repeats" },
+  );
 }
 
 /**

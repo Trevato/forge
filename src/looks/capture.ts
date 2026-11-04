@@ -58,6 +58,16 @@ export interface LookInput {
 /** What the page recorded while it loaded; a type the browser lacks is an empty list. */
 export interface Recorded {
   readonly entries: Entries;
+  /** The page's own size, when the page reported all four numbers. */
+  readonly size?: PageSize | undefined;
+}
+
+/** The document's scroll size and the window's inner size, in CSS pixels. */
+export interface PageSize {
+  readonly scrollWidth: number;
+  readonly scrollHeight: number;
+  readonly innerWidth: number;
+  readonly innerHeight: number;
 }
 
 /**
@@ -137,6 +147,16 @@ const OBSERVER = `(() => {
   watch("longtask", "longtask", (e) => ({ startTime: e.startTime, duration: e.duration }));
 })()`;
 
+/** Read after load, in the one evaluate that already fetches the entries. */
+const READ = `JSON.stringify(Object.assign({}, window.__forgeVitals, { size: {
+  scrollWidth: document.documentElement.scrollWidth,
+  scrollHeight: document.documentElement.scrollHeight,
+  innerWidth: window.innerWidth,
+  innerHeight: window.innerHeight } }))`;
+
+const whole = (v: unknown): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= 0;
+
 const finite = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v) && v >= 0;
 
@@ -172,7 +192,18 @@ export function parseRecorded(raw: unknown): Recorded {
     }
     return out;
   };
+  const sz = rec["size"];
+  const from =
+    sz !== null && typeof sz === "object"
+      ? (sz as Record<string, unknown>)
+      : {};
+  const { scrollWidth, scrollHeight, innerWidth, innerHeight } = from;
+  const size =
+    whole(scrollWidth) && whole(scrollHeight) && whole(innerWidth) && whole(innerHeight)
+      ? { scrollWidth, scrollHeight, innerWidth, innerHeight }
+      : undefined;
   return {
+    ...(size === undefined ? {} : { size }),
     entries: {
       lcp: list("lcp", ["startTime", "size"], "startTime"),
       layoutShift: list("layoutShift", ["startTime", "value", "hadRecentInput"], "value"),
@@ -470,7 +501,7 @@ async function shoot(
         const read = await dt.send(
           "Runtime.evaluate",
           {
-            expression: "JSON.stringify(window.__forgeVitals ?? null)",
+            expression: READ,
             returnByValue: true,
           },
           sessionId,

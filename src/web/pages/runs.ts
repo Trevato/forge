@@ -48,6 +48,16 @@ import {
   tokenCount,
 } from "../ui.ts";
 
+/**
+ * A run's page at a 390 px phone (#9347): its head (title, the issue it is
+ * about, summary, what it carries) and everything under the live region
+ * break a long word anywhere, so a pasted path or a 300-character token
+ * wraps in place and the page never scrolls sideways. The log box itself
+ * already wraps and scrolls inside its own bounds (`.run-log`,
+ * `style/content.ts`). Ids the page already carries; no new class.
+ */
+export const RUN_PAGE_CSS = `#run-head, #run-live { overflow-wrap: anywhere; }`;
+
 // ---- words ----
 
 /** The pull a preview environment is for, from its name; production has none. */

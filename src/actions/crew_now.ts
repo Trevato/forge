@@ -9,6 +9,8 @@ import { getIssueById, listOpenAgentPullsVisibleTo } from "../core/issues.ts";
 import { waitsForPerson } from "../crew/review.ts";
 import { getPull } from "../core/pulls.ts";
 import { ownerFactRepoIds } from "../core/repos.ts";
+import { reviewSays } from "../crew/review_says.ts";
+import { reviewerPaused } from "../crew/reviewer_paused.ts";
 import { plannerDeclines } from "../crew/autonomy.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { getUsersByIds } from "../core/users.ts";
@@ -19,7 +21,7 @@ import type { Ctx } from "../http/context.ts";
 import type { User } from "../core/users.ts";
 
 /** Rows of the crew's work as `user` may see them (none for no one). */
-export function crewNow(ctx: Ctx, user: User) {
+export function crewNow(ctx: Pick<Ctx, "app">, user: User) {
   const { repos } = appsOf(ctx, user);
   const byId = new Map(repos.map((r) => [r.id, r]));
   // A private app's runs are for those who may enter it (`mayReadRuns`).
@@ -71,7 +73,7 @@ export function crewNow(ctx: Ctx, user: User) {
               on: `#${issue.number} ${issue.title}`,
               why: "review",
               state: "waiting for your review",
-              says: wait.why === "lapsed" ? "the reviewer did not answer" : "no reviewer on the crew",
+              says: reviewSays(wait, reviewerPaused(repo)),
               since: wait.since,
               costUsd: 0,
             },

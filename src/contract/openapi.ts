@@ -11,7 +11,7 @@
  * so pulls describing different routes do not collide (#5936).
  */
 
-import type { Route } from "./openapi/shared.ts";
+import type { QueryType, Route } from "./openapi/shared.ts";
 import { OAUTH_SCOPES, type OAuthScope } from "../core/oauth.ts";
 import * as each from "./openapi/routes/index.ts";
 
@@ -41,7 +41,10 @@ export function operationId(r: Pick<Route, "method" | "path">): string {
   return `${r.method}${r.path.replace(/[^A-Za-z0-9]+(.)?/g, (_, c: string | undefined) => (c ?? "").toUpperCase())}`;
 }
 
-const schema = (t: string) => (t === "object" ? { type: "object" } : t === "array" ? { type: "array", items: { type: "object" } } : { type: t });
+const schema = (t: QueryType) =>
+  typeof t !== "string"
+    ? { type: t.type, ...(t.min === undefined ? {} : { minimum: t.min }), ...(t.max === undefined ? {} : { maximum: t.max }) }
+    : (t === "object" ? { type: "object" } : t === "array" ? { type: "array", items: { type: "object" } } : { type: t });
 
 /** The document, for the forge served at `origin`. */
 export function openapi(origin: string, version: string): Record<string, unknown> {

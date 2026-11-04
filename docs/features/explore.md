@@ -23,3 +23,5 @@ A like is a `feed_like` row (one per person and post, `src/feed/likes.ts`). An a
 In `score`, likes add `0.5 × ln(1 + likes)`, small next to forks (3) and ships (2). The weight is a constant in `explore.ts`, not one of the front page's admin weights.
 
 An unknown `sort:` word is ignored with a note naming the sorts above.
+
+When an unknown `kind:`, `sort:`, `updated:` or `archived:` value is within edit distance 2 of a known one (and nearer than the value is long, so one or two characters of junk suggest nothing), the note ends with `Did you mean <a>sort:forks</a>?`, a link to the whole line with that word mended. Only the first such word is mended per line; a word repeated is mended everywhere. `GET /api/v1/explore` and the MCP `explore` tool carry the same as `suggest` (`"garden sort:forks"`, the whole corrected line), absent when there is none. The terminal shows it as plain text under "Read as:". It is a pure function of the line: nothing is looked up.

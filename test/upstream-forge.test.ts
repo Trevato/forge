@@ -266,7 +266,13 @@ describe("a child forge proposes to its parent forge", () => {
     const screen = await chainScreen(child, kid, ctx);
     expect(screen.keys.map((k: any) => k.keys?.[0] ?? k[0])).toContain("p");
     screen.key({ key: "p" } as any);
-    await Bun.sleep(1500);
+    // Wait for what the lines below read: the press's toast and its event.
+    const deadline = Date.now() + 10_000;
+    while (toasts.length === 0 || heard.length === 0) {
+      if (Date.now() > deadline)
+        throw new Error(`after p: ${toasts.length === 0 ? "no toast" : "no forge.proposal event"} within 10 s (toasts: ${JSON.stringify(toasts)})`);
+      await Bun.sleep(10);
+    }
     off();
     expect(toasts.join("\n")).toContain("Proposed to the parent forge as #");
     // One event, tied to the forge's repository so only its readers hear it.

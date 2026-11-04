@@ -94,6 +94,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
       concurrency: 1,
       budgetUsd: 2,
       runTimeoutMs: 60_000,
+      // A queued run starts on the next tick, not up to 5 s later.
+      tickMs: 50,
     });
     const a = await createUser(app.db, {
       origin: "seed",
@@ -266,8 +268,15 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
         await Bun.sleep(20);
       }
       await press("v");
-      await Bun.sleep(1500);
-      await settleApp(tui);
+      // A writer's `v` opens the conflict blocks: wait for them to be drawn.
+      // A reader's `v` is ignored and draws nothing to wait for; what a
+      // reader may not do is asserted on the keys that follow.
+      const writer = user.id === alice.id;
+      while (writer && !tui.screen.toText().includes("conflict block in")) {
+        if (Date.now() > end) throw new Error(`v never opened the conflict blocks:\n${tui.screen.toText()}`);
+        await settleApp(tui);
+        await Bun.sleep(20);
+      }
       for (const key of keys) await press(key);
       while (until !== undefined && !until(tui.screen.toText())) {
         if (Date.now() > end + 30_000) throw new Error(tui.screen.toText());
@@ -376,7 +385,11 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
       issueId: pull.id,
       reason: "comment",
     });
-    app.db.query("UPDATE run SET state = 'running' WHERE id = ?1").run(run.id);
+    // A live run holds its lease; without a heartbeat the crew's next tick
+    // takes it for one a restart interrupted and queues it again for real.
+    app.db
+      .query("UPDATE run SET state = 'running', heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1")
+      .run(run.id);
     const before = agentRuns();
     const refused = await proposeResolution(app, alice, repo, current());
     expect(refused.ok).toBe(false);

@@ -1,5 +1,6 @@
 import { THREAD_SAYS } from "../../../actions/thread_words.ts";
-import { dependencyWords, linkIssue, unlinkIssue } from "../../../actions/dependencies.ts";
+import { dependencyWords, linkIssue } from "../../../actions/dependencies.ts";
+import { stopWaiting } from "../../../actions/gate.ts";
 import { good, bad, type Tool, APP_ARG, planRepo, issueArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
@@ -28,7 +29,7 @@ export const tool: Tool = {
     if ("ok" in blocker) return blocker;
     const stop = args["stop"] === true;
     const done = stop
-      ? unlinkIssue(ctx.app, user, repo, issue, blocker)
+      ? stopWaiting(ctx.app, user, repo, issue, blocker)
       : linkIssue(ctx.app, user, repo, issue, blocker);
     if (!done.ok)
       return bad(

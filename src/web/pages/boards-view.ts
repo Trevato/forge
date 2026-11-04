@@ -116,6 +116,7 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Boards</h1>
+        ${btn("Flow", { href: "/flow", variant: "ghost" })}
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
       ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))}
       ${card(make)} ${body} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,

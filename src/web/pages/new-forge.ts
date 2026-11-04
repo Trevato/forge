@@ -30,6 +30,7 @@ import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
+import { pickList } from "../pick.ts";
 import { btn, card, field as formField, row, selectField } from "../ui.ts";
 
 interface Values {
@@ -78,29 +79,6 @@ function errorsOf(door: Door): Errors {
   const m = /^([A-Za-z]+): (.*)$/.exec(message);
   if (door.body["error"] === "invalid" && m) return { [m[1]!]: m[2]! };
   return { form: message };
-}
-
-function checks(
-  name: string,
-  items: readonly { value: string; label: string; note?: string }[],
-  chosen: readonly string[],
-): Html {
-  return html`${items.map(
-    (i) =>
-      html`<label class="check">
-        <input
-          type="checkbox"
-          name="${name}"
-          value="${i.value}"
-          ${chosen.includes(i.value) ? html`checked` : null}
-        />
-        <span
-          >${i.label}${i.note
-            ? html` <span class="muted small">${i.note}</span>`
-            : null}</span
-        >
-      </label>`,
-  )}`;
 }
 
 /** What the form reads before it draws: room, then (when there is room) the repositories and the crew. */
@@ -212,20 +190,17 @@ function formView(
           hint: "In your words: the crew's first direction. Optional.",
           ...(errors["direction"] ? { error: errors["direction"] } : {}),
         })}
-        <fieldset class="field" ${errors["apps"] ? html`data-invalid` : null}>
-          <legend>Apps to fork, with their history</legend>
-          ${checks(
-            "apps",
-            repos.map((r) => ({
-              value: `${r.ownerName}/${r.name}`,
-              label: `${r.ownerName}/${r.name}`,
-            })),
-            values.apps,
-          )}
-          ${errors["apps"]
-            ? html`<span class="error" id="f-apps-err">${errors["apps"]}</span>`
-            : null}
-        </fieldset>
+        ${pickList({
+          legend: "Apps to fork, with their history",
+          name: "apps",
+          noun: "repositories",
+          items: repos.map((r) => ({
+            value: `${r.ownerName}/${r.name}`,
+            label: `${r.ownerName}/${r.name}`,
+          })),
+          chosen: values.apps,
+          error: errors["apps"],
+        })}
         ${formField({
           label: "Or a fresh app (optional)",
           name: "fresh",
@@ -263,22 +238,14 @@ function formView(
         </fieldset>
         ${crew.length === 0
           ? null
-          : html`<fieldset class="field">
-              <legend>Crew whose briefs go along</legend>
-              ${checks(
-                "crew",
-                crew.map((a) => ({
-                  value: a.user.username,
-                  label: a.user.username,
-                })),
-                values.crew,
-              )}
-              ${errors["crew"]
-                ? html`<span class="error" id="f-crew-err"
-                    >${errors["crew"]}</span
-                  >`
-                : null}
-            </fieldset>`}
+          : pickList({
+              legend: "Crew whose briefs go along",
+              name: "crew",
+              noun: "crew",
+              items: crew.map((a) => ({ value: a.user.username, label: a.user.username })),
+              chosen: values.crew,
+              error: errors["crew"],
+            })}
         ${anon
           ? null
           : html`<fieldset class="field">

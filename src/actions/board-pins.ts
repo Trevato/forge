@@ -35,6 +35,10 @@ async function resolved(app: App, who: User): Promise<{ live: Pinned[]; gone: Pi
   return { live, gone };
 }
 
+/** Every door showing these pins (home's slot, the terminal's screen) redraws: an event for its owner alone. */
+export const PINS_EVENT = "board.pins";
+const moved = (app: App, who: User): void => void app.bus.append({ kind: "board.pins", actorId: who.id });
+
 export async function listPinned(app: App, actor: User | undefined): Promise<Result<Pinned[], "not_found">> {
   const who = person(actor);
   return who ? ok((await resolved(app, who)).live) : err("not_found");
@@ -52,6 +56,7 @@ export async function pinPanel(app: App, actor: User | undefined, slug: unknown,
   if (live.length >= MAX_PINS && !live.some((p) => p.slug === which.slug && p.title === which.title)) return err("too_many");
   pin(app.db, who.id, which);
   forgetRegion(app.db, who.id, "panels");
+  moved(app, who);
   return ok(which);
 }
 
@@ -62,6 +67,7 @@ export function unpinPanel(app: App, actor: User | undefined, slug: unknown, tit
   if (!which) return err("invalid");
   unpin(app.db, who.id, which);
   forgetRegion(app.db, who.id, "panels");
+  moved(app, who);
   return ok(which);
 }
 
@@ -73,5 +79,6 @@ export function movePinned(app: App, actor: User | undefined, slug: unknown, tit
   if (!listPins(app.db, who.id).some((x) => x.slug === which.slug && x.title === which.title)) return err("not_found");
   movePin(app.db, who.id, which, by);
   forgetRegion(app.db, who.id, "panels");
+  moved(app, who);
   return ok(which);
 }

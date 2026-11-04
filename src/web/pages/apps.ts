@@ -81,7 +81,6 @@ import {
   envFacts,
   envStateBadge,
   icon,
-  listCard,
   previewDataNote,
   seg,
   selectField,
@@ -235,7 +234,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos),
   );
   const rendering = performance.now();
-  const body = html`${when(ctx.auth.user, (user) => homeTabs("apps", unshippedAsks(ctx.app.db, user)))}
+  const body = html`<div data-apps-page>${when(ctx.auth.user, (user) => homeTabs("apps", unshippedAsks(ctx.app.db, user)))}
     ${pageHead("Apps", { actions: create })}
     ${cost}
     ${filters}
@@ -259,7 +258,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
             : "A new app is a repository with a small working app in it, served at its own hostname a few seconds later.",
           action: create,
         })
-      : listCard(rows)}`;
+      : card(html`<ul class="list setting-list">${rows}</ul>`, { pad: false })}</div>`;
   const response = page({ ctx, title: "Apps", body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -422,6 +421,7 @@ function newAppForm(
         </div>
       </form>`,
     )}
+    <p class="muted">Already have an app on another forge? <a href="/bring">Bring it here whole</a>.</p>
   </div>`;
 }
 

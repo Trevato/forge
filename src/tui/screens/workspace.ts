@@ -133,6 +133,8 @@ import { makeItYoursScreen, yoursCommands } from "./yours.ts";
 import { deleteRepoCommands } from "./deleterepo.ts";
 import { grantsCommands } from "./grants.ts";
 import { visionCommands } from "./vision.ts";
+import { buildsCommands } from "./builds.ts";
+import { iterationsCommands } from "./iterations.ts";
 import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
 import { autonomyCommands } from "./autonomy.ts";
@@ -1450,6 +1452,8 @@ export function workspaceScreen(
       ...hooksCommands(f, ctx, repo),
       ...visionCommands(f, ctx, repo),
       ...labelsCommands(f, ctx, repo),
+      ...buildsCommands(f, ctx, repo),
+      ...iterationsCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
       ...autonomyCommands(f, ctx, repo),
     ],

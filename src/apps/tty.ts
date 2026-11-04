@@ -27,13 +27,18 @@ import { canEnterApp, canRead, canWrite, getRepoById } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { SshSession } from "../ssh/server.ts";
-import { isEnvName, previewEnv, type EnvName } from "./data.ts";
+import {
+  buildEnvFromLabel,
+  isEnvName,
+  previewEnv,
+  type EnvName,
+} from "./data.ts";
 import { appEnv, signalGroup } from "./process.ts";
 import { appsRuntime } from "./runtime.ts";
 
 const CRLF = "\r\n";
 
-/** `notes` → production, `notes--12` → the preview of pull 12. */
+/** `notes` → production, `notes--12` → the preview of pull 12, `notes--b1a2b3c4` → the build at 1a2b3c4. */
 export function parseAppLogin(
   login: string,
 ): { slug: string; env: EnvName } | undefined {
@@ -43,6 +48,8 @@ export function parseAppLogin(
     return isSlugLike(name) ? { slug: name, env: "production" } : undefined;
   const slug = name.slice(0, at);
   const number = name.slice(at + 2);
+  const build = buildEnvFromLabel(number);
+  if (isSlugLike(slug) && build !== undefined) return { slug, env: build };
   if (!isSlugLike(slug) || !/^[1-9]\d*$/.test(number)) return undefined;
   const env = previewEnv(Number(number));
   return isEnvName(env) ? { slug, env } : undefined;

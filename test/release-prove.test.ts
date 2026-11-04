@@ -6,7 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lastProof, proofDue, proofNeed, proveRelease, proveRunning, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
@@ -147,7 +147,7 @@ describe("proving a release", () => {
   });
 
   test("each failure in a row doubles the wait, up to an hour", async () => {
-    expect([1, 2, 3, 4, 5, 99].map(retryAfter)).toEqual([5, 10, 20, 40, 60, 60].map((m) => m * 60_000));
+    expect([1, 2, 3, 4, 5, 99].map((n) => retryAfter(n))).toEqual([5, 10, 20, 40, 60, 60].map((m) => m * 60_000));
     let t = Date.parse("2026-10-28T12:00:00Z");
     const clock = { now: () => t };
     const broken = () => site("4.3.0", { "/": () => new Response("x", { status: 500 }) }).fake;
@@ -235,5 +235,47 @@ describe("proving a release", () => {
     const s = site("dev");
     expect(await run("dev", s.fake)).toBeUndefined();
     expect(s.hits).toEqual([]);
+  });
+});
+
+describe("a slow-only proof is asked again sooner (#9238)", () => {
+  const slowProof: Proof = { version: "1.0.0", at: "2026-11-03T03:00:00.000Z", ok: false, failure: "https://x/healthz as desktop /healthz took 2032 ms, over 1000 ms (status 200)", failures: 1, slow: true };
+  const at = Date.parse(slowProof.at);
+  test("retryAfter", () => {
+    expect(retryAfter(1, true)).toBe(60_000);
+    expect(retryAfter(3, true)).toBe(180_000);
+    expect(retryAfter(5, true)).toBe(300_000);
+    expect(retryAfter(1)).toBe(RETRY_MS);
+  });
+  test("proofDue is due after a minute for slow, not for the same text without the flag", () => {
+    expect(proofDue(slowProof, "1.0.0", at + 61_000)).toBe(true);
+    const plain: Proof = { ...slowProof, slow: false };
+    expect(proofDue(plain, "1.0.0", at + 61_000)).toBe(false);
+  });
+  test("proofNeed says the shortened time", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prove-"));
+    try {
+      mkdirSync(join(dir, "release"), { recursive: true });
+      writeFileSync(join(dir, "release", "proof.json"), JSON.stringify(slowProof));
+      expect(proofNeed(dir)!.sentence).toEndWith("It is proven again at 03:01 UTC.");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("an empty-body proof is asked again sooner (#9358)", () => {
+  test("a version whose /explore answers empty twice is due again after a minute, not five", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-prove-"));
+    try {
+      const { fake } = site("5.0.0", { "/explore": () => new Response("", { status: 200 }) });
+      const p = await proveRelease({ dataDir: dir, version: "5.0.0", url: "https://forge.test", fetch: fake, sleep: async () => {}, heavy: { watchMs: 30, pollMs: 5 } });
+      expect(p?.ok).toBe(false);
+      expect(p?.failure).toContain("empty body");
+      expect(p?.slow).toBe(true);
+      expect(proofDue(p, "5.0.0", Date.parse(p!.at) + 61_000)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

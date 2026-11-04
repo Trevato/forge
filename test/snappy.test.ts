@@ -76,10 +76,12 @@ describe("the caches are exact", () => {
   // (docs/CACHING.md, "Lane writes").
   test("a write is on the very next map: a new issue, a new edge, a closed one", async () => {
     const repo = f.repos[1]!;
+    // A lane's drawing comes when asked for (#8693).
+    const lanePage = (cookie: string) => page(`/map?lane=${repo.ownerName}/${repo.name}`, cookie);
     await page("/map", f.ownerCookie);
     const opened = openIssue(f.app, f.owner, repo, { title: "Zeppelin moorings" });
     if (!opened.ok) throw new Error(String(opened.error));
-    expect(await page("/map", f.ownerCookie)).toContain("Zeppelin moorings");
+    expect(await lanePage(f.ownerCookie)).toContain("Zeppelin moorings");
 
     const second = openIssue(f.app, f.owner, repo, { title: "Quokka census" });
     if (!second.ok) throw new Error(String(second.error));
@@ -95,22 +97,23 @@ describe("the caches are exact", () => {
     // An issue on no edge leaves the map when it closes.
     const lone = openIssue(f.app, f.owner, repo, { title: "Narwhal tally" });
     if (!lone.ok) throw new Error(String(lone.error));
-    expect(await page("/map", f.ownerCookie)).toContain("Narwhal tally");
+    expect(await lanePage(f.ownerCookie)).toContain("Narwhal tally");
     expect(closeIssue(f.app, f.owner, repo, lone.value, "closed").ok).toBe(true);
-    expect(await page("/map", f.ownerCookie)).not.toContain("Narwhal tally");
+    expect(await lanePage(f.ownerCookie)).not.toContain("Narwhal tally");
   });
 
   test("a sealed issue the owner's map drew is not drawn for a member who may not see it", async () => {
     // app-0 is public: the member reads it, but not what is sealed in it.
     const repo = f.repos[0]!;
+    const lane = `/map?lane=${repo.ownerName}/${repo.name}`;
     const sealed = openIssue(f.app, f.owner, repo, { title: "Sealed vault combination", sealed: true });
     if (!sealed.ok) throw new Error(String(sealed.error));
     // Warm in both orders: the owner first, then the member, then the owner.
-    expect(await page("/map", f.ownerCookie)).toContain("Sealed vault combination");
-    const member = await page("/map", f.peerCookie);
+    expect(await page(lane, f.ownerCookie)).toContain("Sealed vault combination");
+    const member = await page(lane, f.peerCookie);
     expect(member).toContain(`lane-olive-${repo.name}`);
     expect(member).not.toContain("Sealed vault combination");
-    expect(await page("/map", f.ownerCookie)).toContain("Sealed vault combination");
+    expect(await page(lane, f.ownerCookie)).toContain("Sealed vault combination");
     // And the member's own private repository is never on the owner's
     // stranger-scoped lanes either way: it is listed by visibility per request.
     expect(await page("/map", f.peerCookie)).toContain("lane-pablo-notes");

@@ -25,6 +25,7 @@ import { migrationFiles, NUMBERED } from "../core/schema.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { ownProbeHeaders } from "../kernel/probe.ts";
+import { bootStall } from "../perf/live.ts";
 import { running } from "../kernel/version.ts";
 import { compareVersions, readTags, recordFor } from "../release/shipped.ts";
 import { checkoutRelease, preflightRelease } from "../release/checkout.ts";
@@ -106,6 +107,7 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
     repo: { id: repo.id, ownerId: repo.ownerId },
     now: () => Date.now(),
     live: () => running().version,
+    bootStallMs: () => bootStall.worst(),
     async main() {
       const head = await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${repo.defaultBranch}^{commit}`], { cwd: dir });
       return head.ok && OID.test(head.value) ? head.value : undefined;

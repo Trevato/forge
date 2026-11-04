@@ -44,8 +44,8 @@ export function verbsFor(a: Ask): readonly Verb[] {
   return a.pull !== undefined ? VERBS : a.issue !== undefined ? ["close", "reply"] : [];
 }
 
-/** The buttons and boxes under a row, a sibling of its link; `undefined` when it offers none. */
-export function actRow(a: Ask): Html | undefined {
+/** The buttons and boxes under a row (a guest's pull from another forge says Approve and Decline), a sibling of its link; `undefined` when it offers none. */
+export function actRow(a: Ask, guest = false): Html | undefined {
   const verbs = verbsFor(a);
   const number = a.pull?.number ?? a.issue?.number;
   if (verbs.length === 0 || number === undefined) return undefined;
@@ -66,7 +66,7 @@ export function actRow(a: Ask): Html | undefined {
   const quick = verbs.filter((v) => v === "merge" || v === "close");
   return html`<li data-act-forms>
     <div class="form-actions">${quick.map((v) =>
-      form(v, btn(v === "merge" ? "Merge" : "Close")),
+      form(v, btn(guest ? (v === "merge" ? "Approve" : "Decline") : v === "merge" ? "Merge" : "Close")),
     )}</div>
     ${verbs.includes("changes") ? box("changes", "Request changes: what must change", "Request changes") : null}
     ${box("reply", "Reply", "Reply")}

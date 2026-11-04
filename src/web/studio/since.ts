@@ -6,6 +6,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { lastVisit as visitOf } from "../../core/home_visit.ts";
 import { canRead, getRepoById, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import { digest, headingOf, windowOf, type DigestEvent, type DigestLine } from "../../feed/digest.ts";
@@ -102,6 +103,11 @@ export function sinceDigest(
   const window = windowOf(lastVisit, now);
   const lines = digest(eventsSince(db, viewer, now - window, now), now, window);
   return lines.length === 0 ? undefined : { heading: headingOf(window), lines };
+}
+
+/** The digest a feed's first page carries (HTTP and MCP alike): read-only, a visit is never noted; `null` when there is nothing. */
+export function feedDigest(db: Database, viewer: User, now: number): { heading: string; lines: DigestLine[] } | null {
+  return sinceDigest(db, viewer, visitOf(db, viewer.id), now) ?? null;
 }
 
 export function sinceYouWere(db: Database, viewer: User | undefined, lastVisit: number | undefined, now: number): Html {

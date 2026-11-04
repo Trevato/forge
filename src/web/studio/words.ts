@@ -8,6 +8,7 @@
  * thing about the same commit. Nothing here knows about a page.
  */
 
+import { shownState } from "../../runs/state.ts";
 import type { Database } from "bun:sqlite";
 import { ancestries, type AncestryCache } from "./ancestry.ts";
 import {
@@ -40,6 +41,7 @@ import {
 } from "../../core/runs.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../ui.ts";
+import type { Paused } from "../../crew/autonomy.ts";
 
 /**
  * The empty crew, said once: the shelf's stuck tell, the app page's autonomy
@@ -64,7 +66,9 @@ export type Word =
   | "planned"
   | "told"
   | "done"
-  | "cancelled";
+  | "cancelled"
+  | "silent"
+  | "needs input";
 
 /**
  * Production's history as one page has asked it: the ancestry of each
@@ -413,7 +417,13 @@ export async function runWord(
     return run.notBefore === null
       ? { word: "waiting", note: "queued" }
       : { word: "waiting", note: "paused, resumes soon" };
-  if (run.state === "running") return { word: "working", note: "now" };
+  if (run.state === "running") {
+    // Worked out from what the run did, never what it says (`runs/state.ts`).
+    const shown = shownState(ctx.db, run);
+    if (shown === "silent") return { word: "silent", note: "no sign of life" };
+    if (shown === "needs input") return { word: "needs input", note: "waiting on a person" };
+    return { word: "working", note: "now" };
+  }
   if (run.state === "failed")
     return { word: "stopped", note: run.summary || run.state };
   // A cancelled run is not a broken one — superseded by a newer push, its
@@ -526,28 +536,96 @@ export function productionFact(
   return failed ?? shipped;
 }
 
+/** The colour a word is drawn in. */
+export type WordVariant = "success" | "danger" | "accent" | "secondary";
+
+/**
+ * Each word's colour, decided once: the badge draws it and the board
+ * colours its cards by it, so a word added to `Word` cannot render
+ * uncoloured anywhere — the `Record` will not compile without it.
+ * `cancelled` draws the same quiet, secondary look as `waiting` and
+ * `planned` — a restart is never the danger red a real failure earns.
+ */
+const WORD_VARIANT: Record<Word, WordVariant> = {
+  working: "accent",
+  look: "success",
+  shipped: "success",
+  stopped: "danger",
+  waiting: "secondary",
+  planned: "secondary",
+  told: "secondary",
+  done: "success",
+  cancelled: "secondary",
+  silent: "danger",
+  "needs input": "secondary",
+};
+
+export const wordVariant = (word: Word): WordVariant => WORD_VARIANT[word];
+
 /** One of the five (or six) studio words, as a badge. An id names the one a
- * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws
- * the same quiet, secondary look as `waiting` and `planned` — a restart is
- * never the danger red a real failure earns. */
+ * live script repaints as a run finishes (`studioRunJs`). */
 export function wordBadge(word: Word, id?: string): Html {
-  const variant =
-    word === "look" || word === "shipped" || word === "done"
-      ? "success"
-      : word === "stopped"
-        ? "danger"
-        : word === "working"
-          ? "accent"
-          : "secondary";
   return html`<span
     class="badge"
-    data-variant="${variant}"
+    data-variant="${wordVariant(word)}"
     data-word="${word}"
     ${id === undefined ? null : html`id="${id}"`}
     >${word === "working" ? icon("loader") : null}${word === "told"
       ? "open"
       : word}</span
   >`;
+}
+
+/** Why an app that runs on its own is not running right now, in words —
+ * the app page's *On its own* card and the board's *Today* row both. */
+export function pausedWords(paused: Paused): string {
+  switch (paused) {
+    case "ceiling":
+      return "at the ceiling, until 00:00 UTC";
+    case "forge ceiling":
+      return "at the forge's ceiling, until 00:00 UTC";
+    case "nobody":
+      return "nobody turned it on";
+    case "no crew":
+      return "no crew";
+  }
+}
+
+/** A word at rest: one small coloured dot, the word (and its note) for a
+ * screen reader. Colour alone is not a mark, so a state that needs someone
+ * (`wordNeedsText`) is also written beside the row (see `wordText`). */
+export function wordNeedsText(word: Word): boolean {
+  return word === "working" || word === "look" || word === "stopped";
+}
+
+/** The visible word for a state that needs someone; nothing for the rest. */
+export function wordText(word: Word): Html | null {
+  return wordNeedsText(word)
+    ? html`<span class="word-text" data-word="${word}">${word}</span> · `
+    : null;
+}
+
+export function wordDot(word: Word, note?: string): Html {
+  const tone =
+    word === "look" || word === "shipped" || word === "done"
+      ? "success"
+      : word === "stopped"
+        ? "danger"
+        : word === "working"
+          ? "attn"
+          : "none";
+  const said = `${word === "told" ? "open" : word}${note ? ` — ${note}` : ""}`;
+  return html`<span class="dot" data-tone="${tone}" data-word="${word}" role="img" aria-label="${said}"></span>`;
+}
+
+/** A pull's own state at rest: the dot, its word for a screen reader. */
+export function stateDot(state: "open" | "closed" | "merged", parked = false): Html {
+  const said = state === "closed" && parked ? "parked" : state;
+  const tone = state === "open" ? "success" : state === "merged" ? "merged" : "none";
+  // Open is the quiet state; a settled one is written out beside its dot.
+  return html`<span class="dot" data-state="${state}" data-tone="${tone}" role="img" aria-label="${said}"></span>${
+    state === "open" ? null : html`<span class="word-text">${said === "merged" ? "Merged" : said === "parked" ? "Parked" : "Closed"}</span>`
+  }`;
 }
 
 // ---- what a subscription has left, and what a change costs ----

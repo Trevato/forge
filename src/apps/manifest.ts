@@ -15,6 +15,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { parseService, type ServiceSpec } from "./service.ts";
 import type { DeclaredLimits } from "./contain.ts";
 import { isPublicAddress } from "./egress.ts";
+import { isLaunch, LAUNCHES, type Launch } from "../git/builds.ts";
 
 export interface AppManifest {
   /** The command that serves on `$PORT`. Run through `sh -c`, `exec`-ed. */
@@ -39,6 +40,17 @@ export interface AppManifest {
    * before this field existed.
    */
   readonly looks: readonly string[];
+  /**
+   * `app.looksAsOwner`: the pages of `looks` whose phone and desktop
+   * pictures are taken signed in as the owner, even of a public app —
+   * the pages a stranger is shown nothing on (`looks/service.ts`). Unset
+   * or empty is none, exactly as before this field existed.
+   */
+  readonly looksAsOwner?: readonly string[] | undefined;
+  /** `app.pages`: paths the app serves as one self-contained page, offered to play and download. */
+  readonly pages?: readonly string[] | undefined;
+  /** `app.launch`: how this repository's demos open unless a pin says otherwise. */
+  readonly launch?: Launch | undefined;
   /**
    * Set when `app.kind` is `"service"`: declared TCP ports, always on,
    * a placement preference and synced volumes. `null` for an ordinary
@@ -142,6 +154,13 @@ export function parseManifest(
     );
   const looks = looksField(app);
   if (!looks.ok) return looks;
+  const looksAsOwner = looksAsOwnerField(app, looks.value);
+  if (!looksAsOwner.ok) return looksAsOwner;
+  const pages = pagesField(app);
+  if (!pages.ok) return pages;
+  const launch = app["launch"];
+  if (launch !== undefined && !isLaunch(launch))
+    return invalid(`forge.json: app.launch must be one of ${LAUNCHES.map((l) => `"${l}"`).join(", ")}`);
   const egress = egressField(parsed.value);
   if (!egress.ok) return egress;
   const limits = limitsField(app, "app");
@@ -174,6 +193,9 @@ export function parseManifest(
     ready: ready ?? READY_DEFAULT,
     tty: tty.value || null,
     looks: looks.value,
+    looksAsOwner: looksAsOwner.value,
+    pages: pages.value,
+    ...(launch === undefined ? {} : { launch }),
     service,
     egress: egress.value,
     limits: limits.value,
@@ -268,28 +290,75 @@ function limitsField(
 function looksField(app: Json): Result<readonly string[], ManifestError> {
   const value = app["looks"];
   if (value === undefined) return ok(["/"]);
+  const paths = pathList(value, "app.looks");
+  if (!paths.ok) return paths;
+  return ok(paths.value.length === 0 ? ["/"] : paths.value);
+}
+
+/**
+ * `app.looksAsOwner`: pages of `app.looks` to picture signed in as the
+ * owner. Held to the same rules, and each must be a page `app.looks`
+ * names — a page nobody pictures cannot be pictured as anyone.
+ */
+function looksAsOwnerField(
+  app: Json,
+  looks: readonly string[],
+): Result<readonly string[], ManifestError> {
+  const value = app["looksAsOwner"];
+  if (value === undefined) return ok([]);
+  const paths = pathList(value, "app.looksAsOwner");
+  if (!paths.ok) return paths;
+  const stray = paths.value.find((p) => !looks.includes(p));
+  if (stray !== undefined)
+    return invalid(
+      `forge.json: app.looksAsOwner names ${stray}, which app.looks does not`,
+    );
+  return ok(paths.value);
+}
+
+/** How many pages a manifest may offer to play. */
+export const PAGES_MAX = 20;
+
+function pagesField(app: Json): Result<readonly string[], ManifestError> {
+  const value = app["pages"];
+  if (value === undefined) return ok([]);
+  if (!Array.isArray(value) || value.length > PAGES_MAX)
+    return invalid(`forge.json: app.pages must be an array of at most ${PAGES_MAX} paths`);
+  const paths: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !/^\/[A-Za-z0-9._-]*(\/[A-Za-z0-9._-]+)*$/.test(item) || item.length > 120 || item.includes(".."))
+      return invalid('forge.json: app.pages entries are paths like "/" or "/spicy": letters, digits, dot, dash, underscore');
+    if (!paths.includes(item)) paths.push(item);
+  }
+  return ok(paths);
+}
+
+/** A list of page paths, as `app.looks` and `app.looksAsOwner` take them. */
+function pathList(
+  value: unknown,
+  field: string,
+): Result<string[], ManifestError> {
   if (!Array.isArray(value))
-    return invalid("forge.json: app.looks must be an array of paths");
+    return invalid(`forge.json: ${field} must be an array of paths`);
   if (value.length > LOOKS_MAX)
-    return invalid(`forge.json: app.looks may name at most ${LOOKS_MAX} paths`);
-  if (value.length === 0) return ok(["/"]);
+    return invalid(`forge.json: ${field} may name at most ${LOOKS_MAX} paths`);
   const paths: string[] = [];
   for (const item of value) {
     if (typeof item !== "string")
-      return invalid("forge.json: app.looks entries must be strings");
+      return invalid(`forge.json: ${field} entries must be strings`);
     if (item.length > LOOK_PATH_MAX)
       return invalid(
-        `forge.json: app.looks entries must be at most ${LOOK_PATH_MAX} characters`,
+        `forge.json: ${field} entries must be at most ${LOOK_PATH_MAX} characters`,
       );
     if (!item.startsWith("/") || item.startsWith("//"))
       return invalid(
-        "forge.json: app.looks entries must be a path starting with / (no scheme, no host)",
+        `forge.json: ${field} entries must be a path starting with / (no scheme, no host)`,
       );
     if (item.includes(".."))
-      return invalid("forge.json: app.looks entries must not contain ..");
+      return invalid(`forge.json: ${field} entries must not contain ..`);
     if (/[\x00-\x1f\x7f]/.test(item))
       return invalid(
-        "forge.json: app.looks entries must not contain control characters",
+        `forge.json: ${field} entries must not contain control characters`,
       );
     paths.push(item);
   }

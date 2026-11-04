@@ -101,7 +101,7 @@ export function isExploreLine(line: string): boolean {
   return EXPLORE_KEYS.test(line);
 }
 
-/** The query and the `kind:`/`sort:` words it did not know, as typed. */
+/** The query and the `kind:`, `sort:`, `updated:`, `archived:` and `owner:` words it did not take, as typed. */
 export interface ExploreRead {
   readonly query: ExploreQuery;
   readonly unknown: readonly string[];
@@ -122,19 +122,23 @@ export function readExploreLine(line: string): ExploreRead {
     const [key, value = ""] = word.split(/:(.*)/s);
     const k = (key ?? "").toLowerCase();
     if (k === "kind" && value !== "") {
-      const known = KINDS[value.toLowerCase()];
+      const known = Object.hasOwn(KINDS, value.toLowerCase()) ? KINDS[value.toLowerCase()] : undefined;
       if (known === undefined) unknown.push(word);
       else kind = known;
     } else if (k === "sort" && value !== "") {
       if ((SORTS as readonly string[]).includes(value.toLowerCase()))
         sort = value.toLowerCase() as ExploreSort;
       else unknown.push(word);
-    } else if (k === "archived" && ["yes", "no"].includes(value.toLowerCase()))
-      archived = value.toLowerCase() === "yes";
-    else if (k === "updated" && value.toLowerCase() in WINDOWS)
-      updated = value.toLowerCase() as ExploreWindow;
-    else if (k === "owner" && isSafeName(value)) owner = value;
-    else if (k === "q" && value !== "") words.push(value);
+    } else if (k === "archived" && value !== "") {
+      if (["yes", "no"].includes(value.toLowerCase())) archived = value.toLowerCase() === "yes";
+      else unknown.push(word);
+    } else if (k === "updated" && value !== "") {
+      if (Object.hasOwn(WINDOWS, value.toLowerCase())) updated = value.toLowerCase() as ExploreWindow;
+      else unknown.push(word);
+    } else if (k === "owner" && value !== "") {
+      if (isSafeName(value)) owner = value;
+      else unknown.push(word);
+    } else if (k === "q" && value !== "") words.push(value);
     else words.push(word);
   }
   return {
@@ -160,11 +164,74 @@ const KIND_WORDS: readonly ExploreKind[] = [...new Set(Object.values(KINDS))];
 export function exploreNote(unknown: readonly string[]): string {
   return unknown
     .map((word) => {
-      const sort = word.toLowerCase().startsWith("sort:");
+      const key = word.slice(0, word.indexOf(":")).toLowerCase();
       const shown = word.length > 40 ? `${word.slice(0, 39)}…` : word;
+      if (key === "owner") return `${shown} is not a name`;
+      if (key === "updated") return `${shown} is not a window — use ${Object.keys(WINDOWS).join(", ")}`;
+      if (key === "archived") return `${shown} is not an answer — use yes, no`;
+      const sort = key === "sort";
       return `${shown} is not a ${sort ? "sort" : "kind"} — use ${(sort ? SORTS : KIND_WORDS).join(", ")}`;
     })
     .join("; ");
+}
+
+/** Edit distance between two short words. */
+function distance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++)
+      next[j] = Math.min(row[j]! + 1, next[j - 1]! + 1, row[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length]!;
+}
+
+/** The words each key takes. */
+function takenBy(key: string): readonly string[] {
+  if (key === "kind") return Object.keys(KINDS);
+  if (key === "sort") return SORTS;
+  if (key === "updated") return Object.keys(WINDOWS);
+  if (key === "archived") return ["yes", "no"];
+  return [];
+}
+
+export interface ExploreSuggestion {
+  /** The unknown word as typed. */
+  readonly word: string;
+  /** The known word it was nearest, `sort:forks`. */
+  readonly fix: string;
+  /** The whole line with that one word mended. */
+  readonly line: string;
+}
+
+/**
+ * One mended line for the first unknown word within edit distance 2 of a
+ * known value of its key; undefined when none is that close. A pure
+ * function of the line: nothing is looked up.
+ */
+export function exploreSuggestion(line: string): ExploreSuggestion | undefined {
+  const { unknown } = readExploreLine(line);
+  for (const word of unknown) {
+    const at = word.indexOf(":");
+    const key = word.slice(0, at).toLowerCase();
+    const value = word.slice(at + 1).toLowerCase();
+    let best: string | undefined;
+    // Within 2, and nearer than the word is long: 1–2 characters of junk match anything.
+    let near = Math.min(3, value.length);
+    for (const known of takenBy(key)) {
+      const d = distance(value, known);
+      if (d < near) {
+        near = d;
+        best = known;
+      }
+    }
+    if (best === undefined) continue;
+    const fix = `${key}:${best}`;
+    const words = line.trim().split(/\s+/);
+    return { word, fix, line: words.map((w) => (w === word ? fix : w)).join(" ") };
+  }
+  return undefined;
 }
 
 /** The line a query reads as, for links and the query box. */
@@ -282,6 +349,9 @@ function writeCursor(row: ExploreRow, query: ExploreQuery): string {
   const place: [ExploreSort, number | string, ExploreKind, string] = [query.sort, sortKey(row, query.sort), row.kind, row.name];
   return Buffer.from(JSON.stringify(place)).toString("base64url");
 }
+
+/** Whether `cursor` is one for this query, answered without reading any rows. */
+export const cursorFits = (cursor: string, query: ExploreQuery): boolean => readCursor(cursor, query) !== null;
 
 /** The place a cursor names, undefined never; null when it is not one for this query. */
 function readCursor(cursor: string, query: ExploreQuery): Place | null {

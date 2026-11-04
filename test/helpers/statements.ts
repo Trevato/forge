@@ -15,6 +15,11 @@
  *    real N+1 costs more in every run, so the minimum still shows it; noise
  *    costs more in some runs, so the minimum drops it.
  *
+ * The waits read `performance.now()`, never `Date.now()`: a test file earlier in
+ * the same process that leaves the wall clock frozen (`setSystemTime`, a spy)
+ * would otherwise stop `quiet` ever seeing time pass and hang the test for its
+ * whole timeout (#9299: 60 s, on three pulls, only beside other files).
+ *
  * `work` must be repeatable: a request for the same page, not a mutation.
  */
 
@@ -50,15 +55,18 @@ async function once(
 export async function quiet(db: Database): Promise<void> {
   const door = db as unknown as Door;
   const original = db.query.bind(db);
-  let last = Date.now();
+  let last = performance.now();
   door.query = (sql: string) => {
-    last = Date.now();
+    last = performance.now();
     return original(sql);
   };
   try {
-    const started = Date.now();
-    while (Date.now() - last < QUIET_MS && Date.now() - started < GIVE_UP_MS)
+    const started = performance.now();
+    for (;;) {
+      const now = performance.now();
+      if (now - last >= QUIET_MS || now - started >= GIVE_UP_MS) break;
       await new Promise((resolve) => setTimeout(resolve, QUIET_MS / 4));
+    }
   } finally {
     door.query = original;
   }

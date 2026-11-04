@@ -10,13 +10,15 @@ import {
   explore,
   exploreLine,
   exploreNote,
+  exploreSuggestion,
   readExploreLine,
   type ExploreQuery,
   type ExploreRow,
 } from "../../actions/explore.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { pageHead } from "../chrome.ts";
+import { edgeLoginUrl } from "../../http/edge.ts";
+import { offersSignup, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, empty, listCard, nameMark, row as rowOf, seg, timeAgo } from "../ui.ts";
@@ -94,7 +96,7 @@ function terms(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
 }
 
 /** Nothing to list: a bare line means nothing is public yet, not a miss. */
-function emptyState(signedIn: boolean, query: ExploreQuery): Html {
+function emptyState(ctx: Ctx, query: ExploreQuery): Html {
   const line = exploreLine(query);
   if (line !== "")
     return empty({
@@ -112,20 +114,23 @@ function emptyState(signedIn: boolean, query: ExploreQuery): Html {
     icon: "search",
     title: "Nothing public yet",
     note: "Make the first app and it shows up here.",
-    action: signedIn
-      ? btn("Make an app", { href: "/apps/new", variant: "primary" })
-      : btn("Sign in to make one", {
-          href: "/signin?next=/apps/new",
-          variant: "primary",
-        }),
+    action:
+      ctx.auth.user !== undefined
+        ? btn("Make an app", { href: "/apps/new", variant: "primary" })
+        : offersSignup(ctx)
+          ? html`${btn("Create an account", { href: "/signup?next=/apps/new", variant: "primary" })}
+            ${btn("Sign in", { href: "/signin?next=/apps/new" })}`
+          : btn("Sign in", { href: edgeLoginUrl("/apps/new"), variant: "primary" }),
   });
 }
 
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const { query, unknown } = readExploreLine(ctx.url.searchParams.get("q") ?? "");
+  const line = ctx.url.searchParams.get("q") ?? "";
+  const { query, unknown } = readExploreLine(line);
   const note = exploreNote(unknown);
+  const suggestion = exploreSuggestion(line);
   const ranking = performance.now();
   const rows = await explore(ctx.app, ctx.auth.user, query);
   notePhase(ctx.request, "rank", performance.now() - ranking);
@@ -169,7 +174,11 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
-    ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}</p>`}
+    ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}${
+          suggestion === undefined
+            ? html``
+            : html` Did you mean <a href="/explore?q=${encodeURIComponent(suggestion.line)}">${suggestion.fix}</a>?`
+        }</p>`}
     <div class="bar mb">
       ${seg(
         kinds.map((k) => ({
@@ -200,7 +209,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       >
     </div>
     ${rows.length === 0
-      ? emptyState(ctx.auth.user !== undefined, query)
+      ? emptyState(ctx, query)
       : listCard(rows.map(rowHtml))}`;
   const response = page({ ctx, title: "Explore", body });
   notePhase(ctx.request, "render", performance.now() - rendering);

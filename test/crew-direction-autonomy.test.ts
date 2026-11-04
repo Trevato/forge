@@ -6,6 +6,7 @@
  * here starts a real agent: an assignment, a queued run or a merge is the
  * observable effect, and each must not happen.
  */
+import { seatAs } from "./helpers/seat.ts";
 import {
   afterAll,
   beforeAll,
@@ -35,7 +36,7 @@ import {
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import { tell } from "../src/actions/tell.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { readyNow, repoGraph } from "../src/core/dependencies.ts";
 import {
   getIssue,
@@ -121,8 +122,8 @@ async function autonomous(): Promise<Repo> {
   );
   for (const name of ["mason", "atlas", "judge"])
     expect(addToCrew(app, alice, repo, name).ok).toBe(true);
-  setCrewRole(app.db, repo.id, atlas.id, "planner");
-  setCrewRole(app.db, repo.id, judge.id, "reviewer");
+  seatAs(app.db, repo.id, atlas.id, "planner");
+  seatAs(app.db, repo.id, judge.id, "reviewer");
   ok(
     await updateRepoSettings(app, alice, repo, {
       autonomy: "autonomous",

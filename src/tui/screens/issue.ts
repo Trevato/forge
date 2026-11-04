@@ -36,6 +36,10 @@ import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
 import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
+import { readPlan } from "../../actions/run_plan.ts";
+import type { IssuePlan } from "../../core/issue_plans.ts";
+import { shownStates } from "../../runs/state.ts";
+import { headline, planLines, planTitle } from "./runplan.ts";
 import { privateRepoForSealed } from "../../actions/repos.ts";
 import { confirmIssue } from "../../actions/dependencies.ts";
 import { isCrew } from "../../core/agents.ts";
@@ -162,6 +166,8 @@ export function issueScreen(
   let doneBy: readonly string[] = [];
   /** Closed-as-dropped-or-split blockers nobody has said may be passed. */
   let held: Issue[] = [];
+  let plan: IssuePlan | undefined;
+  let shown: ReturnType<typeof headline>;
   /** Which issues this one waits for and holds up; a line when any. */
   let waits: Waits = { blockedBy: [], blocks: [] };
   /** What the crew has done here, newest first; a card when there is any. */
@@ -211,6 +217,10 @@ export function issueScreen(
       blocks: deps?.blocks.map((i) => i.number) ?? [],
     };
     crew.set(runs !== undefined && runs.ok ? runs.value : []);
+    plan =
+      repo === undefined || issueRow === undefined ? undefined : readPlan(f.app, repo, f.user, issueRow);
+    const states = shownStates(f.db, runs !== undefined && runs.ok ? runs.value : []);
+    shown = headline(runs !== undefined && runs.ok ? runs.value.map((r) => states.get(r.id)!) : []);
     if (crew.runs.length === 0) focus = "thread";
     width = 0;
     ctx.invalidate();
@@ -576,15 +586,18 @@ export function issueScreen(
       // Then the crew card, only when an agent has worked here.
       const crewH =
         crew.runs.length === 0 ? 0 : Math.min(crew.runs.length, CREW_ROWS) + 2;
+      const planRows = planLines(plan);
+      const planH = planRows.length === 0 ? 0 : Math.min(planRows.length, CREW_ROWS + 2) + 2;
       const waitsLine = waitsParts(waits);
       const headH = waitsLine.length === 0 ? 3 : 4;
-      const [strip, head, waitRow, crewRow, body, box] = split(area, "v", [
+      const [strip, head, waitRow, crewRow, planRow, body, box] = split(area, "v", [
         len(whereRows(src)),
         len(headH),
         len(held.length === 0 ? 0 : 1),
         len(crewH),
+        len(planH),
         fill(1),
-        len(Math.min(foot, Math.max(0, area.h - 4 - headH - crewH - whereRows(src) - (held.length === 0 ? 0 : 1)))),
+        len(Math.min(foot, Math.max(0, area.h - 4 - headH - crewH - planH - whereRows(src) - (held.length === 0 ? 0 : 1)))),
       ]);
       whereStrip(s, strip!, c, f, src);
       const right = head!.x + head!.w;
@@ -673,6 +686,13 @@ export function issueScreen(
         crew.render(s, inner, c, ctx, focus === "crew", (run) => {
           focus = "crew";
           if (repo !== undefined) openRunLog(f, ctx, repo, run);
+        });
+      }
+
+      if (planH > 0 && plan !== undefined) {
+        const inner = card(s, planRow!, c, { title: planTitle(plan, shown) });
+        planRows.slice(0, inner.h).forEach((row, i) => {
+          s.text(inner.x, inner.y + i, truncate(row, inner.w), style(c.fg, c.card), inner.x + inner.w);
         });
       }
 
