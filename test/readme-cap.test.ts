@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** README.md's line count the day the cap was set. Lower it when sections move out; never raise it. */
-export const README_LINE_CAP = 2329;
+export const README_LINE_CAP = 60;
 
 export function lineCount(text: string): number {
   return text === "" ? 0 : text.replace(/\n$/, "").split("\n").length;

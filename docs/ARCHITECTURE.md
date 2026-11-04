@@ -1,7 +1,7 @@
 # forge — architecture
 
 A software forge: git hosting, code review, issues, and automation, built as one
-fast process you can read in an afternoon and mold by hand. Forgejo is the
+fast process that does the whole job. Forgejo is the
 reference point for _what_ a forge should feel like — this is a distillation of
 that feeling onto a foundation sized for one human.
 
