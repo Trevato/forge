@@ -5,8 +5,7 @@
  * `GET /user/repos`; who you are and one repository are read in its own
  * shape, so the rest of its API grows no Gitea fields. Git comes over HTTPS
  * as ever. Issues, pulls and comments are read and written in its own JSON
- * (`forge-work.ts`); labels do not come yet and say "none" rather than
- * failing, and the origin's `carries` note says so.
+ * (`forge-work.ts`).
  */
 
 import type {
@@ -21,6 +20,7 @@ import type {
   RemoteIssue,
   RemoteRepo,
   RemoteReviewState,
+  RepoGroup,
 } from "../types.ts";
 import { ForgejoProvider, nextPage, toRepo } from "./forgejo.ts";
 import { NO_ACCOUNT } from "../words.ts";
@@ -29,9 +29,19 @@ import { asArray, asId, asString, asTime, dig, fail, field, seg, splitFullName, 
 
 const MAX_COMMENT_PAGES = 1000;
 const OLDER_PAGES = 10;
+const MAX_LABEL_PAGES = 100;
 const NONE = { ok: true, value: [] } as const;
 
 export class ForgeProvider extends ForgejoProvider {
+  /**
+   * Always Bearer: a forge takes any of its tokens that way. `token` is a Gitea
+   * client's scheme and only a forge of this release's or later knows it; an
+   * older one answers 401, which would read as a refused token.
+   */
+  protected override authorization(token: string): string {
+    return `Bearer ${token}`;
+  }
+
   /** The account is `username` on a forge, not Gitea's `login`. */
   override async whoami(): Promise<ProviderResult<RemoteIdentity>> {
     const result = await this.api.call({ path: "/user" });
@@ -93,6 +103,62 @@ export class ForgeProvider extends ForgejoProvider {
     return succeed({ items: own, next: after ?? null });
   }
 
+  /**
+   * One group, on any release: `GET /repos` shows all the token may see,
+   * paged by cursor, with no search of its own, so both happen here. A forge's
+   * JSON carries no rights, so "shared" is what a person could only be seeing
+   * by being let in: another account's private repository, or anything in an
+   * organization they belong to. A public repository one person was given
+   * write on reads as public. At most `OLDER_PAGES` are read for one call;
+   * a short page with a `next` is not the end.
+   */
+  override async listRepoGroup(
+    group: RepoGroup,
+    query: { readonly q?: string; readonly cursor?: string },
+  ): Promise<ProviderResult<Page<RemoteRepo>>> {
+    const me = await this.whoami();
+    if (!me.ok) return me;
+    const login = me.value.login.toLowerCase();
+    const orgs = group === "yours" ? new Set<string>() : await this.myOrgs();
+    const limit = await this.pageSize();
+    const wanted = (query.q ?? "").trim().toLowerCase();
+    const items: RemoteRepo[] = [];
+    let after = query.cursor !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(query.cursor) ? query.cursor : undefined;
+    for (let walked = 0; walked < OLDER_PAGES; walked++) {
+      const result = await this.api.call({
+        path: "/repos",
+        query: { limit: 100, ...(after === undefined ? {} : { cursor: after }) },
+      });
+      if (!result.ok) return result;
+      for (const raw of asArray(field(result.value.data, "items"))) {
+        const owner = asString(field(raw, "ownerName")).toLowerCase();
+        const open = asString(field(raw, "visibility")) === "public";
+        const is: RepoGroup = owner === login ? "yours" : orgs.has(owner) || !open ? "shared" : "public";
+        if (is !== group) continue;
+        const text = `${owner}/${asString(field(raw, "name"))} ${asString(field(raw, "description"))}`.toLowerCase();
+        if (wanted !== "" && !text.includes(wanted)) continue;
+        const repo = this.repoFrom(raw, undefined);
+        // Nobody let this account in: a fork is its way to send work back.
+        items.push(is === "public" ? { ...repo, permissions: { push: false, admin: false } } : repo);
+      }
+      const next = field(result.value.data, "next_cursor");
+      after = typeof next === "string" || typeof next === "number" ? String(next) : undefined;
+      if (after === undefined || items.length >= limit) break;
+    }
+    return succeed({ items, next: after ?? null });
+  }
+
+  /** The organizations this account belongs to, in lower case; none when it cannot say. */
+  private async myOrgs(): Promise<Set<string>> {
+    const result = await this.api.call({ path: "/user/orgs", query: { limit: 100 } });
+    if (!result.ok) return new Set();
+    return new Set(
+      asArray(field(result.value.data, "items") ?? result.value.data).map((raw) =>
+        asString(field(raw, "username")).toLowerCase(),
+      ),
+    );
+  }
+
   /** A repository from a forge's own JSON (`ownerName`, `visibility`). */
   private repoFrom(raw: unknown, named: { owner: string; name: string } | undefined): RemoteRepo {
     const owner = asString(field(raw, "ownerName")) || named?.owner || "";
@@ -129,8 +195,60 @@ export class ForgeProvider extends ForgejoProvider {
     return succeed(this.repoFrom(result.value.data, named));
   }
 
-  override listLabels(): Promise<ProviderResult<readonly RemoteLabel[]>> {
-    return Promise.resolve(NONE);
+  /** A fork, answered in a forge's own JSON. */
+  override async forkRepo(fullName: string, name?: string): Promise<ProviderResult<RemoteRepo>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `${base}/forks`,
+      method: "POST",
+      body: name === undefined ? {} : { name },
+    });
+    if (!result.ok) return result;
+    return succeed(this.repoFrom(result.value.data, undefined));
+  }
+
+  /** The forks there, in a forge's own JSON and cursor pages. */
+  override async listForks(fullName: string): Promise<ProviderResult<readonly RemoteRepo[]>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const forks: RemoteRepo[] = [];
+    let cursor: string | null = null;
+    for (let walked = 0; walked < OLDER_PAGES; walked++) {
+      const result = await this.api.call({
+        path: `${base}/forks`,
+        query: { limit: 100, ...(cursor === null ? {} : { cursor }) },
+      });
+      if (!result.ok) return result;
+      for (const raw of asArray(field(result.value.data, "items"))) forks.push(this.repoFrom(raw, undefined));
+      cursor = forgeCursor(result.value.data);
+      if (cursor === null) break;
+    }
+    return succeed(forks);
+  }
+
+  /** The repository's labels, in a forge's own JSON, to the end of its pages. */
+  override async listLabels(fullName: string): Promise<ProviderResult<readonly RemoteLabel[]>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const labels: RemoteLabel[] = [];
+    let cursor: string | null = null;
+    for (let walked = 0; walked < MAX_LABEL_PAGES; walked++) {
+      const result = await this.api.call({
+        path: `${base}/labels`,
+        query: { limit: 100, ...(cursor === null ? {} : { cursor }) },
+      });
+      if (!result.ok) return result;
+      for (const raw of asArray(field(result.value.data, "items")))
+        labels.push({
+          remoteId: asId(field(raw, "id")),
+          name: asString(field(raw, "name")),
+          color: asString(field(raw, "color")).replace(/^#/, ""),
+        });
+      cursor = forgeCursor(result.value.data);
+      if (cursor === null) return succeed(labels);
+    }
+    return fail("invalid_response", "the origin has more labels than one sync reads");
   }
 
   /** Implements the optional `Provider.listMilestones`; Forgejo has none to override. */
@@ -306,7 +424,12 @@ export class ForgeProvider extends ForgejoProvider {
     if (parts.length > 2 || parts.some((p) => p === ""))
       return fail("not_found", `not a branch: ${input.head}`);
     const [owner, branch] = parts.length === 2 ? parts : [undefined, parts[0]];
-    const name = named.name;
+    // The fork may go by a second name, when its owner already has a repository by this one.
+    let name = named.name;
+    if (owner !== undefined) {
+      const forks = await this.listForks(fullName);
+      if (forks.ok) name = forks.value.find((f) => f.owner.toLowerCase() === owner.toLowerCase())?.name ?? name;
+    }
     const result = await this.api.call({
       path: `${path}/pulls`,
       method: "POST",

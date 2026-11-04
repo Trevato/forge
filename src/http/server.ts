@@ -73,7 +73,8 @@ import {
   verifyPasswordThrottled,
 } from "../core/users.ts";
 import { activeEdgeToken, edgeIdentity } from "./edge.ts";
-import { crawlRefused, familyOf, finishedStrangerDeep, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, takeCrawl, wasCrawler, wasDeepStranger } from "./crawl.ts";
+import { shieldState } from "../actions/shield.ts";
+import { crawlRefused, familyOf, finishedStrangerDeep, isCrawler, isDeepPath, isShieldedPath, noteCrawler, noteDeepStranger, noteShielded, shieldRefused, takeCrawl, wasCrawler, wasDeepStranger, wasShielded } from "./crawl.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
@@ -425,7 +426,7 @@ import {
 } from "../web/pages/browse.ts";
 import { bringConnect, bringEnvSubmit, bringJobPage, bringPage, bringRun, bringSubmit } from "../web/pages/bring.ts";
 import { pushThrough } from "../origins/push-through.ts";
-import { CAME_FROM_ELSEWHERE, forbiddenPage, notFoundPage, SENT_FROM_ELSEWHERE } from "../web/chrome.ts";
+import { CAME_FROM_ELSEWHERE, forbiddenPage, notFoundPage, SENT_FROM_ELSEWHERE, signInHref } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { pageParamRefused } from "./cursor_lists.ts";
@@ -2241,7 +2242,7 @@ export async function serve(app: App): Promise<Servers> {
       const family = familyOf(request.headers.get("user-agent") ?? "");
       perfRecord.add(
         tag.pattern,
-        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), internal: wasInternal(request), refused: response.status === 429, phases: parseServerTiming(header) },
+        { at: Date.now(), ms, signedIn: tag.role !== "anon" && tag.role !== "crawler", crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), internal: wasInternal(request), refused: response.status === 429 || wasShielded(request), phases: parseServerTiming(header) },
         {
           address: clientAddress(request),
           family,
@@ -2607,13 +2608,22 @@ async function answerGet(
 
   // A crawler nobody is signed in behind spends from its agent's budget and
   // is refused before any page work (`crawl.ts`); a person or token never is.
-  if (auth.user === undefined && !request.headers.has("authorization")) {
-    const crawl = takeCrawl(app, request, url.pathname);
+  // The Shield (`actions/shield.ts`), a cached value: open spends from no budget,
+  // and sign-in only turns away a deep read before anything is spent. A header
+  // that resolved to no one is still a stranger to the Shield.
+  const shield = auth.user === undefined ? shieldState(app) : undefined;
+  const signInOnly = shield === "signin" && (request.method === "GET" || request.method === "HEAD") && isShieldedPath(url.pathname);
+  if (auth.user === undefined) {
+    const crawl = shield === "open" || signInOnly ? undefined : takeCrawl(app, request, url.pathname);
     if (isCrawler(request)) {
       noteCrawler(request);
       noteUsage(request, { pattern: matched.pattern, role: "crawler" });
     } else if (isDeepPath(url.pathname) && url.searchParams.get("fragment") !== "explorer") noteDeepStranger(request);
     if (crawl !== undefined) return crawlRefused(crawl);
+  }
+  if (signInOnly) {
+    noteShielded(request);
+    return shieldRefused(signInHref({ app, request, url, params: {}, auth, theme: undefined }));
   }
 
   // A cookie's identity never acts for another site: one door for every route.

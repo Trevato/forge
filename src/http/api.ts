@@ -821,6 +821,15 @@ export function contributionJson(ctx: Ctx, result: ContributeResult) {
  * ordinary access and origin codes every other route already speaks.
  */
 export function contributeFailure(error: unknown): Response {
+  // Only a refusal that left nothing behind. A pull refused after its commit
+  // landed is `pull_failed` below, which carries that commit.
+  const landed = typeof error === "object" && error !== null && (error as { kind?: unknown }).kind === "pull_failed";
+  if (!landed && (String(error) === "origin_refused" || JSON.stringify(error).includes("origin_refused")))
+    return apiError(
+      "origin_refused",
+      403,
+      "the origin refused: this connection cannot write there, and a fork there takes a token that can write (rw). Nothing was changed. Connect again with one, or ask its owner.",
+    );
   if (typeof error === "object" && error !== null && "kind" in error) {
     const detail = error as {
       kind: string;

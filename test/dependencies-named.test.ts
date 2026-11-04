@@ -26,7 +26,7 @@ const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
   devDependencies?: Record<string, string>;
 };
 const packages = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})];
-const lines = justified(readFileSync(join(ROOT, "README.md"), "utf8"));
+const lines = justified(readFileSync(join(ROOT, "docs/REFERENCE.md"), "utf8"));
 
 test("every package in package.json has its line of why in the README", () => {
   const missing = packages.filter((name) => !lines.get(name));

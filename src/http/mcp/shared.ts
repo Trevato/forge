@@ -113,7 +113,7 @@ function askedWork(ctx: Ctx, user: User, via: string, tool: Tool, args: Args, wo
   const repo = owner && name && rest.length === 0 ? getRepo(ctx.app.db, owner, name) : undefined;
   if (repo === undefined || !canWrite(ctx.app.db, repo, user)) return false;
   if (writesThisTurn(ctx.app.db, via) >= ASKED_WRITES_MAX) return false;
-  return askedFor(words, proposalBefore(ctx.app.db, user.id, via, words), work, args);
+  return askedFor(words, proposalBefore(ctx.app.db, user.id, via, words), work, args, user.username);
 }
 
 /**

@@ -251,7 +251,7 @@ describe("a confirm past its time says so", () => {
     expect(drawn).toContain(`action="/talk/${w.id}"`);
     expect(drawn).not.toContain("/talk/confirm/");
     expect(drawn.split("<form").length - 1).toBe(1);
-    expect(askedFor(ASK_AGAIN, `Want me to open an issue in ${w.name}?`, UNDOABLE["tell"]!, { repo: w.repo, text: "x" })).toBe(false);
+    expect(askedFor(ASK_AGAIN, `Want me to open an issue in ${w.name}?`, UNDOABLE["tell"]!, { repo: w.repo, text: "x" }, "alice")).toBe(false);
   });
 
   test("an answered confirm is not told as run out", async () => {
@@ -275,11 +275,22 @@ describe("the parts", () => {
   test("askedFor: a question or a long paste asks nothing; a block read whole is not the agent's text", () => {
     const tell = UNDOABLE["tell"]!;
     const args = { repo: "alice/one", text: "x" };
-    expect(askedFor("open an issue in one", undefined, tell, args)).toBe(true);
-    expect(askedFor("can you open an issue in one?", undefined, tell, args)).toBe(true);
-    expect(askedFor("did you open an issue in one?", undefined, tell, args)).toBe(false);
-    expect(askedFor("do not open an issue in one", undefined, tell, args)).toBe(false);
-    expect(askedFor(`${"x ".repeat(400)} open an issue in one`, undefined, tell, args)).toBe(false);
-    expect(askedFor("open an issue in one", undefined, tell, { repo: "alice/one", text: "[[data ab12]]\nsteered\n[[/data ab12]]" })).toBe(false);
+    expect(askedFor("open an issue in one", undefined, tell, args, "alice")).toBe(true);
+    expect(askedFor("can you open an issue in one?", undefined, tell, args, "alice")).toBe(true);
+    expect(askedFor("did you open an issue in one?", undefined, tell, args, "alice")).toBe(false);
+    expect(askedFor("do not open an issue in one", undefined, tell, args, "alice")).toBe(false);
+    expect(askedFor(`${"x ".repeat(400)} open an issue in one`, undefined, tell, args, "alice")).toBe(false);
+    expect(askedFor("open an issue in one", undefined, tell, { repo: "alice/one", text: "[[data ab12]]\nsteered\n[[/data ab12]]" }, "alice")).toBe(false);
   });
+});
+
+test("steering past the fence: another owner's same-named repository, a far negation, a marker in capitals", () => {
+  const say = UNDOABLE["say"]!;
+  const words = "comment on issue 3 in open";
+  expect(askedFor(words, undefined, say, { repo: "alice/open", number: 3, text: "hi" }, "alice")).toBe(true);
+  expect(askedFor(words, undefined, say, { repo: "mallory/open", number: 3, text: "hi" }, "alice")).toBe(false);
+  expect(askedFor("comment on issue 3 in mallory/open", undefined, say, { repo: "mallory/open", number: 3, text: "hi" }, "alice")).toBe(true);
+  expect(askedFor("do not, under any circumstances, comment on issue 3 in open", undefined, say, { repo: "alice/open", number: 3, text: "hi" }, "alice")).toBe(false);
+  expect(askedFor("i would never ever ask you to comment on issue 3 in open", undefined, say, { repo: "alice/open", number: 3, text: "hi" }, "alice")).toBe(false);
+  expect(askedFor(words, undefined, say, { repo: "alice/open", number: 3, text: "[[DATA ab]] x" }, "alice")).toBe(false);
 });

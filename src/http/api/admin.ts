@@ -12,6 +12,7 @@ import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
 import { changeCapacity, listCapacity } from "../../actions/capacity.ts";
+import { changeShield, lastShieldChange, shieldState } from "../../actions/shield.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
 import { setAccountCeilings, setAccountGrant } from "../../actions/model_grant.ts";
@@ -171,6 +172,24 @@ export function adminRoutes(router: Router<Handler>): void {
         ? "no such capacity setting"
         : SETTING_WORDS.outOfRange,
     );
+  });
+
+  // The Shield (`actions/shield.ts`): usable with curl alone (`docs/SECURITY-RUNBOOK.md`).
+  router.add("GET", "/api/v1/admin/shield", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    return json({ state: shieldState(ctx.app), last_change: lastShieldChange(ctx.app.db) });
+  });
+
+  router.add("PUT", "/api/v1/admin/shield", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const changed = changeShield(ctx.app, ctx.auth.user, input.state);
+    if (changed.ok) return json(changed.value);
+    if (changed.error === "not_found") return notFound();
+    return apiError(changed.error, 422, "state must be open, ceiling or signin");
   });
 
   // The forge's limits (`settings/limits.ts`): the same door as capacity.

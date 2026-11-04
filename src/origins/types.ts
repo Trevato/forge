@@ -50,6 +50,13 @@ export interface Origin {
 }
 
 /** A repository as the origin describes it — the import picker's rows. */
+/**
+ * Which of an origin's repositories a person is looking at: their own, ones
+ * someone gave them access to, and what anyone may read there.
+ */
+export const REPO_GROUPS = ["yours", "shared", "public"] as const;
+export type RepoGroup = (typeof REPO_GROUPS)[number];
+
 export interface RemoteRepo {
   /** Stable provider id (GitHub `id`, Forgejo `id`) as a string. */
   readonly remoteId: string;
@@ -394,6 +401,16 @@ export interface Provider {
   getCommitDiff(fullName: string, oid: string): Promise<ProviderResult<Diff>>;
   /** A pull's diff against its base, parsed and capped. */
   getPullDiff(fullName: string, number: number): Promise<ProviderResult<Diff>>;
+
+  /**
+   * One group of the repositories this account can see, searched and paged.
+   * Left out by an origin with no such listing: the action then sorts its own
+   * list into yours and shared, and has no public group to offer.
+   */
+  listRepoGroup?(
+    group: RepoGroup,
+    query: { readonly q?: string; readonly cursor?: string },
+  ): Promise<ProviderResult<Page<RemoteRepo>>>;
 
   listLabels(fullName: string): Promise<ProviderResult<readonly RemoteLabel[]>>;
   /** Every milestone, open and closed. Left out by an origin that is not carried from. */

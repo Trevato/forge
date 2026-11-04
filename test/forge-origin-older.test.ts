@@ -44,7 +44,8 @@ beforeAll(() => {
         return json({ ok: true, version: "0.5.29", commit: "abc1234", draining: false });
       if (url.pathname === "/api/v1/here")
         return json({ here: { kind: "forge", name: "/" }, you: null, actions: [], mcp: {}, docs: [] });
-      const authed = req.headers.get("authorization")?.includes(TOKEN) === true;
+      // A forge before `token <secret>` was taught reads Bearer and Basic only.
+      const authed = req.headers.get("authorization") === `Bearer ${TOKEN}`;
       if (url.pathname === "/api/v1/user")
         return authed ? json({ username: "ben", displayName: "Ben" }) : new Response("{}", { status: 401 });
       if (url.pathname === "/api/v1/repos") {

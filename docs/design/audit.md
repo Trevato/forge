@@ -133,6 +133,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/crew` — `pages/crew.ts` · the named agents and what each may do · `/settings/model`, `/settings/telemetry` · none seen.
 - `/settings/teams` — `pages/teams.ts` · the named crew teams, each with a charter, a dial and members · `/settings/crew` · none seen.
 - `/settings/origins` — `pages/origins.ts` (1,497 lines) · other forges this one reads and mirrors from · `/migrate` · none seen.
+- `/settings/security` — `pages/security.ts` · the Shield and the evidence an admin needs to act with no AI · `/settings/traffic`, `/settings/backups` · none seen.
 - `/settings/traffic` — `pages/traffic.ts` · who used the answering time in the last 15 minutes · `/settings/usage`, `/settings/telemetry` · none seen.
 
 ## Operator views — why each is a page (#2696)

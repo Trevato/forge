@@ -165,7 +165,9 @@ const plain = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim()
 
 // A word at most two before that turns the ask around: "do not close",
 // "never merge", "do not turn on flow only".
-const NEGATED = /(^|[^a-z0-9'])(not|no|never|don't|dont|won't|wont|without|stop)\s+(\S+\s+){0,2}$/;
+const NEGATED = /(^|[^a-z0-9'])(not|no|never|don't|dont|won't|wont|without|stop)\W+(\S+\s+){0,2}$/;
+/** A negating word anywhere in the clause before an ask turns it around: "do not, under any circumstances, comment". */
+const NEGATED_CLAUSE = /(^|[^a-z0-9'])(not|no|never|don't|dont|won't|wont|without|stop)($|[^a-z0-9'])/;
 
 /**
  * Whether these words hold `w` starting at a word boundary ("closing" holds
@@ -274,7 +276,10 @@ function answers(said: string, proposal: string): boolean {
 /** Whether these plain words hold an ask for the work, at least once not negated. */
 const asksWork = (said: string, work: Work): boolean =>
   work.ask.some((re) =>
-    [...said.matchAll(re)].some((m) => !NEGATED.test(said.slice(0, m.index))),
+    [...said.matchAll(re)].some((m) => {
+      const before = said.slice(0, m.index);
+      return !NEGATED_CLAUSE.test(before.slice(Math.max(before.lastIndexOf("."), before.lastIndexOf(";")) + 1));
+    }),
   );
 
 /**
@@ -288,7 +293,7 @@ const asksWork = (said: string, work: Work): boolean =>
  * it misses is a confirm the person answers. `proposal` is what the agent
  * said before the person's newest words, never during the turn they started.
  */
-export function askedFor(words: string, proposal: string | undefined, work: Work, args: Record<string, unknown>): boolean {
+export function askedFor(words: string, proposal: string | undefined, work: Work, args: Record<string, unknown>, self: string): boolean {
   const said = plain(words);
   const offered = proposal === undefined ? undefined : proposalIn(proposal);
   const closing = offered === undefined ? "" : plain(offered);
@@ -299,9 +304,12 @@ export function askedFor(words: string, proposal: string | undefined, work: Work
   for (const [k, v] of Object.entries(args)) {
     for (const leaf of leaves(v)) {
       if (work.composed.has(k)) {
-        if (typeof leaf === "string" && leaf.includes("[[data ")) return false;
+        if (typeof leaf === "string" && leaf.toLowerCase().includes("[[data ")) return false;
       } else if (typeof leaf === "string") {
-        const value = k === "repo" ? (leaf.split("/").pop() ?? "") : leaf;
+        // A repository's short name is enough only under the person's own account: anyone can own another `open`.
+        const owner = k === "repo" && leaf.includes("/") ? leaf.split("/")[0] : undefined;
+        const own = owner !== undefined && owner.toLowerCase() === self.toLowerCase();
+        const value = own ? (leaf.split("/").pop() ?? "") : leaf;
         if (value !== "" && !saysValue(scope, value)) return false;
       } else if (typeof leaf === "number") {
         if (!Number.isInteger(leaf) || !saysNumber(scope, leaf)) return false;

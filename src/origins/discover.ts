@@ -265,9 +265,10 @@ async function viaVersionEndpoint(
 /**
  * A forge too old to answer `/api/v1/version` (0.5.x). It is known by two
  * answers no other software gives together: `/api/v1/health` with a boolean
- * `ok` and a dotted `version`; and either its OAuth metadata naming its own
- * `/oauth/authorize` and `/oauth/register`, or a `commit` beside `/api/v1/here`
- * with the manifest's `here` and `actions`. Its repositories are then listed through
+ * `ok`; and either its OAuth metadata naming its own `/oauth/authorize` and
+ * `/oauth/register` (an unstamped build says `dev`, and no commit), or a dotted
+ * `version` and a `commit` beside `/api/v1/here` with the manifest's `here` and
+ * `actions`. Its repositories are then listed through
  * `GET /api/v1/repos` (`ForgeProvider.listRepos`).
  */
 async function viaOlderForge(
@@ -277,13 +278,13 @@ async function viaOlderForge(
   const health = await getJson(`${web}/api/v1/health`, web, probe);
   if (!health.ok) return undefined;
   const version = asString(field(health.value, "version"));
-  if (
-    typeof field(health.value, "ok") !== "boolean" ||
-    !/^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,40}$/.test(version)
-  )
-    return undefined;
+  if (typeof field(health.value, "ok") !== "boolean") return undefined;
   if (!(await oauthPathsAreForges(web, probe))) {
-    if (asString(field(health.value, "commit")) === "") return undefined;
+    if (
+      !/^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,40}$/.test(version) ||
+      asString(field(health.value, "commit")) === ""
+    )
+      return undefined;
     const here = await getJson(`${web}/api/v1/here`, web, probe);
     if (
       !here.ok ||

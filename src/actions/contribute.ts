@@ -299,18 +299,26 @@ export async function contribute(
   // protects, which is never pushed to from here: always the fork.
   const direct =
     upstream.value.permissions.push && !denied(origin, upstream.value.fullName);
-  return direct
-    ? await contributeDirect(app, user.value, origin, upstream.value, {
-        ...input,
-        branch,
-        base,
-      })
-    : await contributeViaFork(app, user.value, origin, upstream.value, {
-        ...input,
-        branch,
-        base,
-      });
+  if (direct) {
+    const tried = await contributeDirect(app, user.value, origin, upstream.value, {
+      ...input,
+      branch,
+      base,
+    });
+    // A forge's JSON carries no rights, so push is assumed and tried. Its
+    // refusal means this account has none there: the way left is its own fork.
+    if (tried.ok || origin.software !== "forge" || !refusedAtOrigin(tried.error)) return tried;
+  }
+  return await contributeViaFork(app, user.value, origin, upstream.value, {
+    ...input,
+    branch,
+    base,
+  });
 }
+
+/** The origin said no to the branch or commit itself, not to anything here. */
+const refusedAtOrigin = (error: ContributeError): boolean =>
+  typeof error === "object" && error.kind === "edit_failed" && JSON.stringify(error.reason).includes("origin_refused");
 
 type Resolved = ContributeInput & { branch: string; base: string };
 
