@@ -179,3 +179,9 @@ test("a restart keeps the state", async () => {
   expect(shieldState(app)).toBe("signin");
   expect((await get(DEEP, BROWSER)).status).toBe(503);
 });
+
+test("sign-in only covers media and the API's file and history reads, and leaves a clone open", async () => {
+  const { isShieldedPath } = await import("../src/http/crawl.ts");
+  for (const p of ["/a/b/blob/c/f", "/a/b/media/c/f", "/api/v1/repos/a/b/contents/f", "/api/v1/repos/a/b/commits", "/api/v1/repos/a/b/git/trees/c"]) expect(isShieldedPath(p)).toBe(true);
+  for (const p of ["/a/b", "/a/b.git/info/refs", "/api/v1/repos/a/b", "/api/v1/health"]) expect(isShieldedPath(p)).toBe(false);
+});

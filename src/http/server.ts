@@ -74,7 +74,7 @@ import {
 } from "../core/users.ts";
 import { activeEdgeToken, edgeIdentity } from "./edge.ts";
 import { shieldState } from "../actions/shield.ts";
-import { crawlRefused, familyOf, finishedStrangerDeep, isCrawler, isDeepPath, noteCrawler, noteDeepStranger, noteShielded, shieldRefused, takeCrawl, wasCrawler, wasDeepStranger, wasShielded } from "./crawl.ts";
+import { crawlRefused, familyOf, finishedStrangerDeep, isCrawler, isDeepPath, isShieldedPath, noteCrawler, noteDeepStranger, noteShielded, shieldRefused, takeCrawl, wasCrawler, wasDeepStranger, wasShielded } from "./crawl.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
@@ -2556,7 +2556,7 @@ async function answerGet(
   // and sign-in only turns away a deep read before anything is spent. A header
   // that resolved to no one is still a stranger to the Shield.
   const shield = auth.user === undefined ? shieldState(app) : undefined;
-  const signInOnly = shield === "signin" && (request.method === "GET" || request.method === "HEAD") && isDeepPath(url.pathname);
+  const signInOnly = shield === "signin" && (request.method === "GET" || request.method === "HEAD") && isShieldedPath(url.pathname);
   if (auth.user === undefined) {
     const crawl = shield === "open" || signInOnly ? undefined : takeCrawl(app, request, url.pathname);
     if (isCrawler(request)) {

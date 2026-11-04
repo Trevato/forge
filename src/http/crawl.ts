@@ -68,6 +68,16 @@ const DEEP = new RegExp(`^/(?:origins/[^/]+/r/)?[^/]+/[^/]+/(?:${DEEP_SEGMENTS.j
 /** Whether `pathname` is a page that costs a git walk or a diff. */
 export const isDeepPath = (pathname: string): boolean => DEEP.test(pathname);
 
+/**
+ * What Sign-in only turns away: the deep pages, a repository's media, and the
+ * API routes that read the same files and history. A clone (`.git`) stays open:
+ * the Shield protects the pages, and turning clones off would break every mirror.
+ */
+const SHIELDED_API = /^\/api\/v1\/repos\/[^/]+\/[^/]+\/(?:contents|commits|git|raw|archive|media|tree|blob|compare|branches|tags)(?:\/|$)/;
+const SHIELDED_MEDIA = /^\/(?:origins\/[^/]+\/r\/)?[^/]+\/[^/]+\/media(?:\/|$)/;
+export const isShieldedPath = (pathname: string): boolean =>
+  DEEP.test(pathname) || SHIELDED_MEDIA.test(pathname) || SHIELDED_API.test(pathname);
+
 /** What a crawler never spends from: the files it is asked to read, and the probes. */
 const FREE = /^\/(?:robots\.txt|sitemap\.xml|healthz|readyz|assets\/)/;
 
