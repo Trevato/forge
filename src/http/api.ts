@@ -821,6 +821,12 @@ export function contributionJson(ctx: Ctx, result: ContributeResult) {
  * ordinary access and origin codes every other route already speaks.
  */
 export function contributeFailure(error: unknown): Response {
+  if (String(error) === "origin_refused" || (typeof error === "object" && JSON.stringify(error).includes("origin_refused")))
+    return apiError(
+      "origin_refused",
+      403,
+      "the origin refused: this connection cannot write there, and a fork there takes a token that can write (rw). Nothing was changed. Connect again with one, or ask its owner.",
+    );
   if (typeof error === "object" && error !== null && "kind" in error) {
     const detail = error as {
       kind: string;

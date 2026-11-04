@@ -37,3 +37,9 @@ The terminal reaches the same code as the web and the API: `src/tui/screens/issu
 A forge's comments carry no edit time, so `updatedAt` is read when the forge sends one and is the creation time otherwise: an edited comment syncs once the forge reports edits. A thread is paged to its end; one of more than 100,000 comments is a failed sync, never a short one.
 
 The preview of the pull was not exercised: the write-through is proven by `test/forge-origin.test.ts` (two forges in one process, including the origin going down and coming back), not by hand on the preview.
+
+## What you can see there (#8900)
+
+`/settings/origins/:id/repos` and `GET /api/v1/user/origins/:id/repos?group=yours|shared|public&q=&cursor=` show three groups, read live, searched and paged: repositories the account owns, ones it was let into, and what anyone may read on that forge. Owning nothing there is not an empty list. A forge is read by `GET /api/v1/repos` on every release, so "shared" means another account's private repository or anything in an organization the account belongs to; a public repository one person was given write on reads as public, since a forge's JSON carries no rights. Forgejo and Gitea use `/repos/search`. GitHub sorts the account's own list into yours and shared and has no public group.
+
+Any of them can be mirrored here, and a mirror follows the one there. Sending work back from a repository someone else owns takes a token that can write there: `contribute` forks it there and opens a pull, and a read-only connection is refused in words. Test: `test/origin-repo-groups.test.ts`.

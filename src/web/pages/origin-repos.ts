@@ -7,13 +7,19 @@
  * file only lists one account's repositories and starts their mirrors.
  */
 
-import { listRemoteRepos, startMirrorJob } from "../../actions/origins.ts";
-import { getOriginFor } from "../../core/origins.ts";
+import {
+  listOriginRepoGroup,
+  listRemoteRepos,
+  startMirrorJob,
+  type OriginRepoGroup,
+} from "../../actions/origins.ts";
+import { getOriginFor, type Origin, type OriginRepoRow } from "../../core/origins.ts";
+import { REPO_GROUPS, type RepoGroup } from "../../origins/types.ts";
 import { pinnedRepoIds } from "../../core/pins.ts";
 import { getRepo, getReposByIds } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { field, readForm } from "../form.ts";
-import { html, when } from "../html.ts";
+import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { browseBase, isOwnRepo } from "../scope.ts";
 import {
@@ -47,23 +53,24 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
   if (!origin) return shell(ctx, notFoundNote(), 404);
   const refresh = ctx.url.searchParams.get("refresh") === "1";
   const query = (ctx.url.searchParams.get("q") ?? "").trim();
+  const asked = ctx.url.searchParams.get("group") ?? "";
+  const only = (REPO_GROUPS as readonly string[]).includes(asked) ? (asked as RepoGroup) : undefined;
+  const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
 
-  const listed = await listRemoteRepos(
-    ctx.app,
-    ctx.auth.user,
-    origin.id,
-    refresh,
+  // The cached list other doors read follows a refresh; the groups are live.
+  if (refresh) await listRemoteRepos(ctx.app, ctx.auth.user, origin.id, true);
+  const shown = only === undefined ? REPO_GROUPS : [only];
+  const groups = await Promise.all(
+    shown.map(async (group) => ({
+      group,
+      read: await listOriginRepoGroup(ctx.app, ctx.auth.user, origin.id, group, {
+        q: query,
+        ...(group === only && cursor !== undefined ? { cursor } : {}),
+      }),
+    })),
   );
   const base = `/settings/origins/${origin.id}/repos`;
-  const rows = listed.ok
-    ? listed.value.filter(
-        (r) =>
-          query === "" ||
-          `${r.fullName} ${r.description}`
-            .toLowerCase()
-            .includes(query.toLowerCase()),
-      )
-    : [];
+  const rows = groups.flatMap(({ read }) => (read.ok ? read.value.items : []));
 
   const filter = html`<form class="bar mb" method="get" action="${base}">
     <input
@@ -71,10 +78,10 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
       type="search"
       name="q"
       value="${query}"
-      placeholder="Filter repositories"
-      aria-label="Filter repositories"
+      placeholder="Search repositories"
+      aria-label="Search repositories"
     />
-    <button class="btn" data-size="sm" type="submit">Filter</button>
+    <button class="btn" data-size="sm" type="submit">Search</button>
     ${btn("Refresh from origin", {
       href: `${base}?refresh=1${query === "" ? "" : `&q=${encodeURIComponent(query)}`}`,
       size: "sm",
@@ -95,27 +102,7 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
       ? new Set<string>()
       : pinnedRepoIds(ctx.app.db, ctx.auth.user.id);
 
-  const body = !listed.ok
-    ? empty({
-        icon: "alert",
-        title: "The origin could not be reached",
-        note: "Nothing was changed. Try again, or reconnect the origin if it needs re-authorizing.",
-        action: btn("Back to origins", {
-          href: "/settings/origins",
-          variant: "primary",
-        }),
-      })
-    : rows.length === 0
-      ? empty({
-          icon: "repo",
-          title: query === "" ? "No repositories" : "No matches",
-          note:
-            query === ""
-              ? "This account has nothing this token can see."
-              : "Nothing on this origin matches that filter.",
-        })
-      : listCard(
-          rows.map((remote) => {
+  const repoRow = (remote: OriginRepoRow): Html => {
             const mirror =
               remote.mirroredAs === null
                 ? undefined
@@ -241,8 +228,12 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
                 : html`pushed ${time(remote.pushedAt)}`}`,
               trail,
             });
-          }),
-        );
+  };
+
+  const sections = groups.map(({ group, read }) =>
+    groupSection(origin, group, read, repoRow, query, base, only !== undefined),
+  );
+  const body = html`${sections}`;
 
   return page({
     ctx,
@@ -258,12 +249,77 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
       </div>
       <p class="muted small mb">
         Open any of these to read it live, right now — nothing is downloaded.
-        Mirror the ones you actually want: each on its own, because a mirror is
-        a repository you own and a hundred of them you did not choose is not a
-        feature.
+        Mirror the ones you actually want, yours or not: a mirror is a
+        repository here that follows the one there. Sending work back takes
+        write access there, or a fork there; the forge says which.
       </p>
       ${filter} ${body}`,
   });
+}
+
+const GROUP_WORDS: Record<RepoGroup, { title: string; note: string; none: string }> = {
+  yours: {
+    title: "Yours",
+    note: "Repositories this account owns there.",
+    none: "This account owns no repositories there.",
+  },
+  shared: {
+    title: "Shared with you",
+    note: "Someone let this account in: a collaborator, a team or an organization.",
+    none: "Nothing has been shared with this account there.",
+  },
+  public: {
+    title: "Public on this forge",
+    note: "Anyone may read these. To send work back, fork one there and open a pull; a read-only connection cannot, and is told so.",
+    none: "This forge shows no other public repositories.",
+  },
+};
+
+/** One group, labelled, with its rows or its plain reason for having none. */
+function groupSection(
+  origin: Origin,
+  group: RepoGroup,
+  read: Awaited<ReturnType<typeof listOriginRepoGroup>>,
+  repoRow: (remote: OriginRepoRow) => Html,
+  query: string,
+  base: string,
+  alone: boolean,
+): Html {
+  const words = GROUP_WORDS[group];
+  const q = query === "" ? "" : `&q=${encodeURIComponent(query)}`;
+  const found: OriginRepoGroup = read.ok ? read.value : { items: [], next: null };
+  const content = !read.ok
+    ? empty({
+        icon: "alert",
+        title: read.error === "unreachable" ? "The origin could not be reached" : "This group could not be read",
+        note: "Nothing was changed. Try again, or reconnect the origin if it needs re-authorizing.",
+        action: btn("Back to origins", { href: "/settings/origins", variant: "primary" }),
+      })
+    : found.items.length === 0
+      ? empty({
+          icon: "repo",
+          title: query === "" ? "No repositories" : "No matches",
+          note:
+            query === ""
+              ? origin.kind === "github" && group === "public"
+                ? "GitHub is too large to list. Paste a link on the bring page."
+                : words.none
+              : "Nothing in this group matches that search.",
+        })
+      : listCard(found.items.map(repoRow));
+  return html`<section class="mb" aria-label="${words.title}">
+    <h2>${words.title}</h2>
+    <p class="muted small">${words.note}</p>
+    ${content}
+    ${when(found.next, (next) =>
+      btn(found.items.length === 0 ? "Look further" : "More", {
+        href: `${base}?group=${group}${q}&cursor=${encodeURIComponent(next)}`,
+        size: "sm",
+        variant: "outline",
+      }),
+    )}
+    ${when(alone, () => btn("All groups", { href: `${base}${q === "" ? "" : `?${q.slice(1)}`}`, size: "sm", variant: "ghost" }))}
+  </section>`;
 }
 
 /**

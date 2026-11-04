@@ -40,6 +40,7 @@ import type {
   RemoteLabel,
   RemoteReadme,
   RemoteRepo,
+  RepoGroup,
   RemoteReview,
   ArchivedPage,
   ArchivedRepo,
@@ -159,6 +160,43 @@ export class ForgejoProvider implements Provider {
    * with our own uid is the endpoint that sees org and collaborator repos,
    * and it wraps its rows in `{ok, data}`. We prefer it and fall back.
    */
+  /**
+   * One group, from `/repos/search`: `uid` with `exclusive` is what the account
+   * owns, `uid` alone adds what a collaborator, team or organization shares,
+   * and no `uid` is the whole instance.
+   */
+  async listRepoGroup(
+    group: RepoGroup,
+    query: { readonly q?: string; readonly cursor?: string },
+  ): Promise<ProviderResult<Page<RemoteRepo>>> {
+    const me = await this.whoami();
+    if (!me.ok) return me;
+    const page = pageOf(query.cursor);
+    const limit = await this.pageSize();
+    const q = (query.q ?? "").trim();
+    const result = await this.api.call({
+      path: "/repos/search",
+      query: {
+        limit,
+        page,
+        order_by: "recentupdate",
+        ...(q === "" ? {} : { q }),
+        ...(group === "public" ? { private: "false" } : { uid: this.uid ?? "" }),
+        ...(group === "yours" ? { exclusive: "true" } : {}),
+      },
+    });
+    if (!result.ok) return result;
+    const rows = asArray(field(result.value.data, "data"));
+    const mine = me.value.login.toLowerCase();
+    const items = rows.map(toRepo).filter((repo) => {
+      const own = repo.owner.toLowerCase() === mine;
+      if (group === "yours") return own;
+      if (group === "shared") return !own;
+      return !own && !repo.private && !repo.permissions.push;
+    });
+    return succeed({ items, next: nextPage(result.value.headers, rows.length, limit, page) });
+  }
+
   async listRepos(cursor?: string): Promise<ProviderResult<Page<RemoteRepo>>> {
     const page = pageOf(cursor);
     const limit = await this.pageSize();

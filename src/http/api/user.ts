@@ -8,7 +8,7 @@
 import { contribute, forkOrigin } from "../../actions/contribute.ts";
 import { CAPPED_WORDS } from "../../actions/mail.ts";
 import { ORIGIN_UNREACHABLE } from "../../actions/origin_app_words.ts";
-import { connectOrigin, connectRefusal, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
+import { connectOrigin, connectRefusal, listOriginRepoGroup, deleteOriginApp, disconnectOrigin, listOriginApps, listPinned, listRemoteRepos, listUserOrigins, mirrorJobFor, pinRepo, pollOAuthConnect, registerOriginApp, startMirrorJob, startOAuthConnect, syncOriginNow, unpinRepo } from "../../actions/origins.ts";
 import { addSshKey, changePassword, deleteSshKey, updateProfile } from "../../actions/users.ts";
 import { VERIFY_WORDS } from "../../actions/verify_words.ts";
 import { resendVerification } from "../../actions/verify.ts";
@@ -25,6 +25,7 @@ import type { Result } from "../../kernel/result.ts";
 import { subscribe as subscribeJob } from "../../origins/jobs.ts";
 import { sshCloneUrl } from "../../ssh/command.ts";
 import { type RepoSource, type SourceError, sourceFor } from "../../view/source.ts";
+import { REPO_GROUPS, type RepoGroup } from "../../origins/types.ts";
 import { connectMessage, contributeFailure, contributionJson, editFilesFrom, jobJson, keyedPage, keyedWindow, loadRepo, oauthCallbackUri, originFacts, originJson, remoteRepoJson } from "../api.ts";
 import type { Ctx, Handler } from "../context.ts";
 import { holds, weakEtag } from "../etag.ts";
@@ -384,6 +385,26 @@ export function userRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
+    const group = ctx.url.searchParams.get("group");
+    if (group !== null) {
+      if (!(REPO_GROUPS as readonly string[]).includes(group))
+        return apiError("invalid_group", 422, "group is yours, shared or public");
+      const q = ctx.url.searchParams.get("q") ?? "";
+      const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
+      const read = await timePhaseAsync(ctx.request, "origin", () =>
+        listOriginRepoGroup(ctx.app, ctx.auth.user, ctx.params.id!, group as RepoGroup, {
+          q,
+          ...(cursor === undefined ? {} : { cursor }),
+        }),
+      );
+      if (!read.ok)
+        return read.error === "unreachable"
+          ? apiError("origin_unreachable", 502, ORIGIN_UNREACHABLE)
+          : respondAccess(read.error, 404);
+      return timePhase(ctx.request, "render", () =>
+        json({ items: read.value.items.map((row) => remoteRepoJson(ctx, row)), next_cursor: read.value.next }),
+      );
+    }
     const listed = await timePhaseAsync(ctx.request, "origin", () =>
       listRemoteRepos(
         ctx.app,

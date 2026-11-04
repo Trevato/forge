@@ -20,6 +20,7 @@ import type {
   RemoteIssue,
   RemoteRepo,
   RemoteReviewState,
+  RepoGroup,
 } from "../types.ts";
 import { ForgejoProvider, nextPage, toRepo } from "./forgejo.ts";
 import { NO_ACCOUNT } from "../words.ts";
@@ -102,6 +103,62 @@ export class ForgeProvider extends ForgejoProvider {
     return succeed({ items: own, next: after ?? null });
   }
 
+  /**
+   * One group, on any release: `GET /repos` shows all the token may see,
+   * paged by cursor, with no search of its own, so both happen here. A forge's
+   * JSON carries no rights, so "shared" is what a person could only be seeing
+   * by being let in: another account's private repository, or anything in an
+   * organization they belong to. A public repository one person was given
+   * write on reads as public. At most `OLDER_PAGES` are read for one call;
+   * a short page with a `next` is not the end.
+   */
+  override async listRepoGroup(
+    group: RepoGroup,
+    query: { readonly q?: string; readonly cursor?: string },
+  ): Promise<ProviderResult<Page<RemoteRepo>>> {
+    const me = await this.whoami();
+    if (!me.ok) return me;
+    const login = me.value.login.toLowerCase();
+    const orgs = group === "yours" ? new Set<string>() : await this.myOrgs();
+    const limit = await this.pageSize();
+    const wanted = (query.q ?? "").trim().toLowerCase();
+    const items: RemoteRepo[] = [];
+    let after = query.cursor !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(query.cursor) ? query.cursor : undefined;
+    for (let walked = 0; walked < OLDER_PAGES; walked++) {
+      const result = await this.api.call({
+        path: "/repos",
+        query: { limit: 100, ...(after === undefined ? {} : { cursor: after }) },
+      });
+      if (!result.ok) return result;
+      for (const raw of asArray(field(result.value.data, "items"))) {
+        const owner = asString(field(raw, "ownerName")).toLowerCase();
+        const open = asString(field(raw, "visibility")) === "public";
+        const is: RepoGroup = owner === login ? "yours" : orgs.has(owner) || !open ? "shared" : "public";
+        if (is !== group) continue;
+        const text = `${owner}/${asString(field(raw, "name"))} ${asString(field(raw, "description"))}`.toLowerCase();
+        if (wanted !== "" && !text.includes(wanted)) continue;
+        const repo = this.repoFrom(raw, undefined);
+        // Nobody let this account in: a fork is its way to send work back.
+        items.push(is === "public" ? { ...repo, permissions: { push: false, admin: false } } : repo);
+      }
+      const next = field(result.value.data, "next_cursor");
+      after = typeof next === "string" || typeof next === "number" ? String(next) : undefined;
+      if (after === undefined || items.length >= limit) break;
+    }
+    return succeed({ items, next: after ?? null });
+  }
+
+  /** The organizations this account belongs to, in lower case; none when it cannot say. */
+  private async myOrgs(): Promise<Set<string>> {
+    const result = await this.api.call({ path: "/user/orgs", query: { limit: 100 } });
+    if (!result.ok) return new Set();
+    return new Set(
+      asArray(field(result.value.data, "items") ?? result.value.data).map((raw) =>
+        asString(field(raw, "username")).toLowerCase(),
+      ),
+    );
+  }
+
   /** A repository from a forge's own JSON (`ownerName`, `visibility`). */
   private repoFrom(raw: unknown, named: { owner: string; name: string } | undefined): RemoteRepo {
     const owner = asString(field(raw, "ownerName")) || named?.owner || "";
@@ -136,6 +193,38 @@ export class ForgeProvider extends ForgejoProvider {
     });
     if (!result.ok) return result;
     return succeed(this.repoFrom(result.value.data, named));
+  }
+
+  /** A fork, answered in a forge's own JSON. */
+  override async forkRepo(fullName: string, name?: string): Promise<ProviderResult<RemoteRepo>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `${base}/forks`,
+      method: "POST",
+      body: name === undefined ? {} : { name },
+    });
+    if (!result.ok) return result;
+    return succeed(this.repoFrom(result.value.data, undefined));
+  }
+
+  /** The forks there, in a forge's own JSON and cursor pages. */
+  override async listForks(fullName: string): Promise<ProviderResult<readonly RemoteRepo[]>> {
+    const base = this.repoPath(fullName);
+    if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
+    const forks: RemoteRepo[] = [];
+    let cursor: string | null = null;
+    for (let walked = 0; walked < OLDER_PAGES; walked++) {
+      const result = await this.api.call({
+        path: `${base}/forks`,
+        query: { limit: 100, ...(cursor === null ? {} : { cursor }) },
+      });
+      if (!result.ok) return result;
+      for (const raw of asArray(field(result.value.data, "items"))) forks.push(this.repoFrom(raw, undefined));
+      cursor = forgeCursor(result.value.data);
+      if (cursor === null) break;
+    }
+    return succeed(forks);
   }
 
   /** The repository's labels, in a forge's own JSON, to the end of its pages. */

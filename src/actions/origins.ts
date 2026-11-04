@@ -107,6 +107,7 @@ import {
   staticCredential,
   type OriginKind,
   type RemoteRepo,
+  type RepoGroup,
 } from "../origins/types.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -967,6 +968,80 @@ export async function listRemoteRepos(
   }
   cacheOriginRepos(app.db, origin.id, collected);
   return ok(listOriginRepos(app.db, origin.id));
+}
+
+/** One page of a group: `next` is where its next page starts, and null at the end. */
+export interface OriginRepoGroup {
+  readonly items: readonly OriginRepoRow[];
+  readonly next: string | null;
+}
+
+/**
+ * One group of what a person can see on an origin, read live and kept nowhere:
+ * a whole forge's public repositories are not this person's list, and the
+ * cache behind `listRemoteRepos` stays theirs. What they already mirror is
+ * looked up in that cache, so a row says so.
+ */
+export async function listOriginRepoGroup(
+  app: App,
+  actor: User | undefined,
+  originId: string,
+  group: RepoGroup,
+  query: { readonly q?: string; readonly cursor?: string } = {},
+): Promise<Result<OriginRepoGroup, "unauthorized" | "not_found" | "unreachable">> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const origin = getOriginFor(app.db, user.value.id, originId);
+  if (!origin) return err("not_found");
+  const provider = providerForOrigin(app, origin);
+  if (!provider.ok) return err("unreachable");
+
+  if (provider.value.listRepoGroup === undefined) {
+    // No such listing (GitHub): the account's own list, sorted; nothing is "public" here.
+    if (group === "public") return ok({ items: [], next: null });
+    const listed = await listRemoteRepos(app, actor, originId);
+    if (!listed.ok) return listed;
+    const login = origin.login.toLowerCase();
+    const wanted = (query.q ?? "").trim().toLowerCase();
+    return ok({
+      items: listed.value.filter(
+        (row) =>
+          (row.fullName.split("/")[0]!.toLowerCase() === login) === (group === "yours") &&
+          `${row.fullName} ${row.description}`.toLowerCase().includes(wanted),
+      ),
+      next: null,
+    });
+  }
+
+  const read = await provider.value.listRepoGroup(group, query);
+  if (!read.ok) {
+    if (read.error.error === "unauthorized") markNeedsReauth(app.db, origin.id, read.error.message);
+    return err("unreachable");
+  }
+  const known = new Map(listOriginRepos(app.db, origin.id).map((row) => [row.remoteId, row]));
+  return ok({
+    items: read.value.items.map((remote) => ({
+      originId: origin.id,
+      remoteId: remote.remoteId,
+      fullName: remote.fullName,
+      description: remote.description,
+      private: remote.private,
+      fork: remote.fork,
+      defaultBranch: remote.defaultBranch,
+      cloneUrl: remote.cloneUrl,
+      htmlUrl: remote.htmlUrl,
+      pushedAt: remote.pushedAt,
+      canPush: remote.permissions.push,
+      seenAt: new Date().toISOString(),
+      forkOf: remote.parent ?? known.get(remote.remoteId)?.forkOf ?? null,
+      mirroredAs: known.get(remote.remoteId)?.mirroredAs ?? null,
+      openIssues: remote.openIssues,
+      openPulls: remote.openPulls,
+      openIssuesIncludingPulls: remote.openIssuesIncludesPulls,
+      sizeKb: remote.sizeKb,
+    })),
+    next: read.value.next,
+  });
 }
 
 /**
