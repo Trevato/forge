@@ -175,6 +175,8 @@ export interface BtnOptions {
   /** A submit that skips the browser's checks: a structural step (add,
    * remove, go back) must not wait for a field to be filled in. */
   formnovalidate?: boolean;
+  /** Where this submit posts instead of its form's own action. */
+  formaction?: string;
   current?: boolean;
   /** A toggle: emits `aria-pressed` with its state. */
   pressed?: boolean;
@@ -212,6 +214,7 @@ export function btn(content: Html | string, o: BtnOptions = {}): Html {
     ${o.form ? html`form="${o.form}"` : null}
     ${o.disabled ? raw("disabled") : null}
     ${o.formnovalidate ? raw("formnovalidate") : null}
+    ${o.formaction ? html`formaction="${o.formaction}"` : null}
     ${btnAttrs(o)}
   >
     ${inner}

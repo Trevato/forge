@@ -728,15 +728,14 @@ function forgeSection(ctx: Ctx, values: ConnectValues): Html {
         hint: "Read is enough to bring an app; private repositories come with it.",
       })}
       <p class="muted small">Make the token there: ${tokens} (Settings → Access tokens).</p>
-      <div class="form-actions">${btn("Connect that forge", { variant: "primary", icon: "globe" })}</div>
-    </form>
-    ${callbackUri(ctx) === ""
-      ? null
-      : html`<form method="post" action="/settings/origins/oauth" class="bar mt">
-          <input type="hidden" name="host" value="${values.tokenHost}" />
-          ${btn("Or sign in there", { variant: "outline", icon: "external" })}
-          <span class="muted small">One click with the address above; no token to copy.</span>
-        </form>`}`;
+      <div class="form-actions">
+        ${btn("Connect that forge", { variant: "primary", icon: "globe" })}
+        ${callbackUri(ctx) === ""
+          ? null
+          : html`${btn("Or sign in there", { variant: "outline", icon: "external", formaction: "/settings/origins/oauth", formnovalidate: true })}
+              <span class="muted small">With the address above; no token to copy.</span>`}
+      </div>
+    </form>`;
 }
 
 /** The admin's list of hosts an origin may reach inside the network. */
@@ -1115,6 +1114,12 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   const then = thenOf(field(form, "then"));
   const link = linkOf(field(form, "link"));
 
+  if (host === "" && kind !== "github") {
+    const values = blankValues();
+    values.mode = "host";
+    values.hostError = "Type the forge's address first, then sign in there.";
+    return shell(ctx, originsView(ctx, values), 422);
+  }
   const back = callbackUri(ctx);
   if (back === "" && kind !== "github") {
     const values = blankValues();
