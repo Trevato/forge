@@ -220,6 +220,12 @@ function qrScale(modules: number): number {
  * PKCE challenge. An older link that still carries `to` continues only when
  * `to` is exactly that URL.
  */
+/** Forgejo and Gitea authorize at `/login/oauth/authorize`; another forge at `/oauth/authorize`. */
+export const isAuthorizePath = (path: string, base: string): boolean => {
+  const root = base.replace(/\/+$/, "");
+  return path === `${root}/login/oauth/authorize` || path === `${root}/oauth/authorize`;
+};
+
 function authorizeFor(
   ctx: Ctx,
   flow: { id: string; webUrl: string; clientId: string; redirectUri: string },
@@ -232,8 +238,7 @@ function authorizeFor(
   const instance = URL.parse(flow.webUrl);
   if (!url || !instance) return undefined;
   if (url.origin !== instance.origin) return undefined;
-  const at = `${instance.pathname.replace(/\/+$/, "")}/login/oauth/authorize`;
-  if (url.pathname !== at) return undefined;
+  if (!isAuthorizePath(url.pathname, instance.pathname)) return undefined;
   if (url.searchParams.get("client_id") !== flow.clientId) return undefined;
   if (url.searchParams.get("redirect_uri") !== flow.redirectUri) return undefined;
   if (url.searchParams.get("code_challenge") === null) return undefined;

@@ -7,6 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { isAuthorizePath } from "../src/web/pages/origin-flow.ts";
 
 let dataDir: string;
 let app: App;
@@ -50,4 +51,12 @@ test("with no address it asks for one, rather than saying it isn't a forge", asy
   expect(res.status).toBe(422);
   expect(body).toContain("Type the forge&#39;s address first");
   expect(body).not.toContain("does not look like a forge");
+});
+
+test("the link to sign in is kept for Forgejo's path and another forge's, and no other", () => {
+  expect(isAuthorizePath("/login/oauth/authorize", "/")).toBe(true);
+  expect(isAuthorizePath("/oauth/authorize", "/")).toBe(true);
+  expect(isAuthorizePath("/git/oauth/authorize", "/git/")).toBe(true);
+  expect(isAuthorizePath("/oauth/authorize/../evil", "/")).toBe(false);
+  expect(isAuthorizePath("/evil", "/")).toBe(false);
 });
