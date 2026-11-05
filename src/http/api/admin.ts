@@ -21,7 +21,7 @@ import { TARGETS } from "../../cloud/targets.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
 import { setRole } from "../../actions/roles.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
-import { changeSignup, readSignup } from "../../actions/signup.ts";
+import { changeForgeSource, changeSignup, readForgeSource, readSignup } from "../../actions/signup.ts";
 import { SPEND_WORDS } from "../../actions/spend_words.ts";
 import { TEAM_SAYS, changeTeam, readTeams } from "../../actions/teams.ts";
 import { SIGNUP_WORDS } from "../../core/arg_words.ts";
@@ -283,21 +283,30 @@ export function adminRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    const { read, signup } = timePhase(ctx.request, "settings", () => ({
+    const { read, signup, source } = timePhase(ctx.request, "settings", () => ({
       read: readQuotas(ctx.app, ctx.auth.user),
       signup: readSignup(ctx.app, ctx.auth.user),
+      source: readForgeSource(ctx.app, ctx.auth.user),
     }));
     return timePhase(ctx.request, "render", () =>
-      read.ok && signup.ok ? json({ ...read.value, ...signup.value, signupChanges: signup.value.changes, changes: read.value.changes }) : notFound());
+      read.ok && signup.ok && source.ok
+        ? json({ ...read.value, ...signup.value, ...source.value, signupChanges: signup.value.changes, changes: read.value.changes })
+        : notFound());
   });
 
   router.add("PATCH", "/api/v1/admin/settings", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
     const input = await body(ctx.request);
+    const sent = [input.signup, input.quotas, input.forgeRepo].filter((v) => v !== undefined).length;
+    if (sent > 1) return apiError("invalid_body", 422, "send one of signup, quotas or forgeRepo");
+    if (input.forgeRepo !== undefined) {
+      const set = changeForgeSource(ctx.app, ctx.auth.user, input.forgeRepo);
+      if (set.ok) return json({ forgeRepo: set.value });
+      if (set.error === "not_found") return notFound();
+      return apiError(set.error, 422, "forgeRepo is owner/name, or null to clear");
+    }
     if (input.signup !== undefined) {
-      if (input.quotas !== undefined)
-        return apiError("invalid_body", 422, "send signup or quotas, not both");
       const set = changeSignup(ctx.app, ctx.auth.user, input.signup);
       if (set.ok) return json({ signup: set.value });
       if (set.error === "not_found") return notFound();

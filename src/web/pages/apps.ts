@@ -37,7 +37,8 @@ import { envRefusalText, redeployedText, stoppedText } from "../../actions/env_w
 import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { firstPreviews, goldenPath, goldenPathLine } from "../../apps/golden_path.ts";
 import { appHostSuffix } from "../../apps/host.ts";
-import { appsForRepos, type AppRecord } from "../../core/apps.ts";
+import { appsForRepos, getAppByRepo, type AppRecord } from "../../core/apps.ts";
+import { shownProduction } from "../../core/forge_repo.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import type { Pull } from "../../core/pulls.ts";
 import {
@@ -129,7 +130,7 @@ function appsForViewer(ctx: Ctx, archived: boolean): AppEntry[] {
       repo,
       production: envs.find((env) => env.env === "production"),
       previews: envs.filter((env) => env.env !== "production").length,
-      url: runtime?.urlFor(record, "production"),
+      url: shownProduction(ctx.app, repo, runtime?.urlFor(record, "production")).url,
     });
   }
   return out;
@@ -550,6 +551,21 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
 // ---- the repo home's strip ----
 
 /**
+ * The forge's own source runs a test copy of the forge (`shownProduction`):
+ * named plainly as one, and opened through `/apps/open`, which signs the
+ * visitor in to it as any app host does.
+ */
+export function testCopyLink(url: string): Html {
+  const host = new URL(url).host;
+  return html`<span class="muted"
+    >Test copy:
+    <a class="mono" href="/apps/open?host=${encodeURIComponent(host)}" title="A copy of the forge for testing, not production"
+      >${host}</a
+    ></span
+  >`;
+}
+
+/**
  * One line under the repo header, for a repository that runs: production's
  * state, the commit it serves, its URL, how many previews are up, and the
  * way to the app's page in the studio, where its environments are run.
@@ -562,7 +578,7 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
   const base = repoBase(repo);
   const production = environments.find((env) => env.env === "production");
   const previews = environments.length - (production === undefined ? 0 : 1);
-  const url = appsRuntime(ctx.app)?.urlFor(record, "production");
+  const { url, copy } = shownProduction(ctx.app, repo, appsRuntime(ctx.app)?.urlFor(record, "production"));
   const pace = goldenPathLine(goldenPath(ctx.app.db, record));
   return html`<div class="app-strip">
     ${icon("rocket")}
@@ -582,6 +598,7 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
           >${u}</a
         >`,
     )}
+    ${when(copy, (c) => testCopyLink(c))}
     ${when(
       previews > 0,
       () =>
@@ -728,7 +745,13 @@ function appsOpenResponse(ctx: Ctx): Response {
 export function appOpen(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  const link = openEnvUrl(ctx.app, ctx.auth.user, repo, ctx.params.env ?? "");
+  // The forge's own source: its production is the forge, not the test copy.
+  const env = ctx.params.env ?? "";
+  const record = env === "production" ? getAppByRepo(ctx.app.db, repo.id) : undefined;
+  const shown = record === undefined ? undefined : shownProduction(ctx.app, repo, appsRuntime(ctx.app)?.urlFor(record, "production"));
+  if (shown?.copy !== undefined && shown.url !== undefined)
+    return new Response(null, { status: 302, headers: { location: shown.url, "cache-control": "no-store" } });
+  const link = openEnvUrl(ctx.app, ctx.auth.user, repo, env);
   if (!link.ok) {
     if (link.error === "unauthorized") return signInFirst(ctx);
     if (link.error === "no_runtime")

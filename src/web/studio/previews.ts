@@ -43,6 +43,8 @@ import {
   terminalLine,
 } from "../ui.ts";
 import { lookNow } from "../pages/looks.ts";
+import { testCopyLink } from "../pages/apps.ts";
+import { shownProduction } from "../../core/forge_repo.ts";
 import { LOG_TAIL_CAP, logBox, runVoice } from "./log.ts";
 
 /**
@@ -52,8 +54,9 @@ import { LOG_TAIL_CAP, logBox, runVoice } from "./log.ts";
  * disabled, with the reason it is not there in its title: never a link to
  * a host nothing is serving yet.
  */
-function openAppBtn(base: string, env: EnvStatus | undefined): Html {
-  if (env?.state === "running")
+function openAppBtn(base: string, env: EnvStatus | undefined, forge = false): Html {
+  // The forge's own source opens the forge, which is up whatever its test copy is doing.
+  if (forge || env?.state === "running")
     return btn("Open the app", {
       href: `${base}/app/production/open`,
       variant: "primary",
@@ -296,7 +299,8 @@ export function appPanels(
   const checks = latestRunsForIssues(db, openPulls.map((p) => p.id));
   const previews = previewsPanel(base, runtime, record, openPulls, envs, writer, checks);
   const production = envs.find((e) => e.env === "production");
-  const url = runtime?.urlFor(record, "production");
+  // The forge's own source shows the forge as its production; the app is its test copy.
+  const { url, copy } = shownProduction(ctx.app, repo, runtime?.urlFor(record, "production"));
   const tail = productionTail(ctx, repo, production, writer);
   // The state in one word, and under it the facts — why it is not up, and
   // the deploy whose log says the rest.
@@ -320,12 +324,13 @@ export function appPanels(
         ${repo.description || "No description yet."}
         ${url === undefined
           ? null
-          : production?.state === "running"
+          : copy !== undefined || production?.state === "running"
             ? html`·
                 <a href="${base}/app/production/open" class="mono"
                   >${url.replace(/^https?:\/\//, "")}</a
                 >`
             : html`· <span class="mono">${url.replace(/^https?:\/\//, "")}</span>`}
+        ${when(copy, (c) => html`· ${testCopyLink(c)}`)}
       </p>
       <p class="muted small" id="app-audience">${audience}</p>
       ${when(production, (env) => envFacts(base, env))}
@@ -339,7 +344,7 @@ export function appPanels(
     </div>
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}
-    ${openAppBtn(base, production)}
+    ${openAppBtn(base, production, copy !== undefined)}
     ${when(!writer, () =>
       btn(ctx.auth.user !== undefined && lacks(db, ctx.auth.user, "make_it_yours") ? HELP_BUILD : "Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
     )}
