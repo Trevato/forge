@@ -1418,6 +1418,24 @@ const shellCore = /* js */ `
     paint();
   }
 
+  // ---- settings: the section list narrows as you type ----
+  doc.addEventListener('input', function (e) {
+    var f = e.target;
+    if (!f || !f.hasAttribute || !f.hasAttribute('data-settings-filter')) return;
+    var q = f.value.trim().toLowerCase();
+    var nav = f.closest('.settings-nav');
+    Array.prototype.forEach.call(nav.querySelectorAll('.settings-group'), function (g) {
+      var name = (g.getAttribute('aria-label') || '').toLowerCase();
+      var shown = 0;
+      Array.prototype.forEach.call(g.querySelectorAll('a'), function (a) {
+        var hit = q === '' || name.indexOf(q) >= 0 || a.textContent.toLowerCase().indexOf(q) >= 0;
+        a.hidden = !hit;
+        if (hit) shown++;
+      });
+      g.hidden = shown === 0;
+    });
+  });
+
   // ---- keyboard: sequences from the DOM, so the help can never drift ----
   var seq = []; var last = 0;
   function rows() { return Array.prototype.slice.call(doc.querySelectorAll('[data-nav]')); }

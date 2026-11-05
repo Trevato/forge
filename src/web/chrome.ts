@@ -386,10 +386,24 @@ export interface SettingsSection {
   href: string;
   icon?: Parameters<typeof icon>[0];
   current?: boolean;
+  /** The group it is listed under; consecutive sections share one heading. */
+  group?: string;
 }
 
-/** The settings two-pane: a sticky section list beside the content on a
- * desktop, the same scroll strip as the repo tabs on a phone.
+/** Consecutive sections that share a group, in order; ungrouped ones form one unnamed run. */
+function settingsGroups(sections: SettingsSection[]): { name: string | undefined; items: SettingsSection[] }[] {
+  const out: { name: string | undefined; items: SettingsSection[] }[] = [];
+  for (const s of sections) {
+    const last = out[out.length - 1];
+    if (last !== undefined && last.name === s.group) last.items.push(s);
+    else out.push({ name: s.group, items: [s] });
+  }
+  return out;
+}
+
+/** The settings two-pane: a sticky section list, grouped and filterable,
+ * beside the content on a desktop; on a phone, one menu at the top that names
+ * the section you are on and opens onto the same groups.
  *
  * The sections are `data-nav` rows, so `j`/`k` walk them from the one you
  * are on and Enter opens one; the main pane is the page's box, so `c`
@@ -399,17 +413,41 @@ export function settingsLayout(
   body: Html,
   ariaLabel = "Settings sections",
 ): Html {
+  const groups = settingsGroups(sections);
+  const named = groups.some((g) => g.name !== undefined);
+  const here = sections.find((s) => s.current);
+  const list = (nav: boolean) =>
+    groups.map(
+      (g) => html`<div class="settings-group" ${g.name === undefined ? null : html`role="group" aria-label="${g.name}"`}>
+        ${g.name === undefined ? null : html`<p class="settings-group-name">${g.name}</p>`}
+        ${g.items.map(
+          (s) =>
+            html`<a
+              href="${s.href}"
+              ${nav ? raw("data-nav") : null}
+              ${s.current ? raw('aria-current="page"') : null}
+              >${s.label}</a
+            >`,
+        )}
+      </div>`,
+    );
   return html`<div class="settings">
+    <details class="settings-jump">
+      <summary>${here === undefined ? "Sections" : here.label}${icon("chevronDown")}</summary>
+      <div class="settings-jump-list">${list(false)}</div>
+    </details>
     <nav class="settings-nav" aria-label="${ariaLabel}">
-      ${sections.map(
-        (s) =>
-          html`<a
-            href="${s.href}"
-            data-nav
-            ${s.current ? raw('aria-current="page"') : null}
-            >${s.icon ? icon(s.icon) : null}${s.label}</a
-          >`,
-      )}
+      ${named
+        ? html`<input
+            class="input settings-filter js-only"
+            type="search"
+            placeholder="Filter settings"
+            aria-label="Filter settings"
+            autocomplete="off"
+            data-settings-filter
+          />`
+        : null}
+      ${list(true)}
     </nav>
     <div class="settings-main" data-box="Edit the form">${body}</div>
   </div>`;

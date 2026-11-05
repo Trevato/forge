@@ -37,3 +37,19 @@ arguments in a `messageText()` block, with the Yes form beside the row (`after`)
 ## Team card: a seat's number
 
 Each seat row (`row`) holds one child row: its title says how much the seat may do at once ("2 builds at once", "Paused"), its meta says what it is doing and spending, and its trail holds a one-line form: a number `input input-sm` (the same small control as the Crew card's role select, in a `row-fields` form) and a small Set button. No new class. At phone width the row wraps as every row does; the form stays on one line because it is a number and a button.
+
+## The settings shell
+
+`settingsLayout()` in `src/web/chrome.ts` draws §5's settings shell. A section may name a group (`accountSections()` in
+`src/web/pages/origins.ts` names Account, Crew and AI, Connections, Security and This forge; the last two and the admin
+rows show only to a forge admin). Inside `.settings-main` a card loses its frame: its head is a small heading over a
+hairline, and its rows run edge to edge, so a dense page reads as rows rather than boxes. Styled in
+`src/web/style/components.ts`.
+
+- `.settings-group` — one group of sections in the nav: its name, then its links. Hidden when a filter leaves none.
+- `.settings-group-name` — a group's name, small and muted, over its links.
+- `.settings-filter` — the box at the top of the nav that narrows the sections as you type (`data-settings-filter`,
+  handled in `src/web/client.ts`); shown only with script.
+- `.settings-jump` — on a phone, the one menu at the top in place of the nav: it names the section you are on and opens
+  onto the same groups. Hidden from 860px.
+- `.settings-jump-list` — the groups inside that menu, with touch-sized links.

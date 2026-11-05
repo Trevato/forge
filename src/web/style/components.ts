@@ -628,7 +628,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   background: var(--card); border: 1px solid var(--border);
   border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
   animation: pop 140ms var(--ease) both;
-  max-height: min(70vh, 480px); overflow-y: auto; scrollbar-width: thin;
+  max-height: min(70vh, 480px); overflow-y: auto; scrollbar-width: none;
 }
 .menu[data-align="start"] > .menu-panel { right: auto; left: 0; }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
@@ -903,26 +903,51 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .home-panels-slot[data-refresh] { min-height: 240px; margin-bottom: 16px; }
 
 /* ---- settings shell ---- */
-.settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 16px; }
+.settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin-top: 12px; }
 .settings-nav {
-  min-width: 0; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
-  border-bottom: 1px solid var(--border);
+  min-width: 0; display: none; flex-direction: column; gap: 14px;
 }
-.settings-nav::-webkit-scrollbar { display: none; }
-.settings-nav a {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 12px; min-height: 36px; white-space: nowrap;
-  font-size: 14px; color: var(--muted-fg); border-radius: var(--radius-sm);
+.settings-nav a, .settings-jump-list a {
+  display: flex; align-items: center; min-height: 28px; padding: 0 8px;
+  font-size: 13px; color: var(--muted-fg); border-radius: var(--radius-sm);
 }
-.settings-nav a:hover { background: var(--muted); color: var(--fg); }
-.settings-nav a[aria-current="page"] { color: var(--fg); font-weight: 550; background: var(--muted); }
-.settings-main { min-width: 0; }
+.settings-nav a:hover, .settings-jump-list a:hover { background: var(--muted); color: var(--fg); }
+.settings-nav a[aria-current="page"], .settings-jump-list a[aria-current="page"] { color: var(--fg); font-weight: 550; background: var(--muted); }
+.settings-nav a[hidden], .settings-group[hidden] { display: none; }
+.settings-group { display: flex; flex-direction: column; gap: 1px; }
+.settings-group-name { margin: 0 0 2px; padding: 0 8px; font-size: 12.5px; font-weight: 500; color: var(--muted-fg); }
+.settings-filter { width: 100%; font-size: 16px; }
+.settings-jump { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.settings-jump > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 44px; padding: 0 12px; font-weight: 550; cursor: pointer; list-style: none;
+}
+.settings-jump > summary::-webkit-details-marker { display: none; }
+.settings-jump[open] > summary .ico { transform: rotate(180deg); }
+.settings-jump-list { display: grid; gap: 12px; padding: 4px 6px 12px; border-top: 1px solid var(--border); }
+.settings-jump-list .settings-group-name { margin-top: 8px; }
+.settings-jump-list a { min-height: 40px; font-size: 14px; }
+.settings-main { min-width: 0; max-width: 860px; }
+.settings-main > .card, .settings-main > .stack > .card, .settings-main > form > .card {
+  border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible;
+}
+.settings-main > .card + .card, .settings-main > .stack > .card + .card { margin-top: 28px; }
+.settings-main .card > .card-head {
+  padding: 0 0 8px; background: transparent; border-bottom: 1px solid var(--border);
+}
+.settings-main .card > .card-head > .ico { display: none; }
+.settings-main .card > .card-head :is(h2, h3) { font-size: 14px; font-weight: 600; }
+.settings-main .card > .card-body { padding: 12px 0 0; }
+.settings-main .card > .card-foot { padding: 10px 0 0; background: transparent; }
+.settings-main .card > .list > li { padding-left: 0; padding-right: 0; }
 @media (min-width: 860px) {
-  .settings { grid-template-columns: 190px minmax(0, 1fr); gap: 32px; }
+  .settings { grid-template-columns: 184px minmax(0, 1fr); gap: 40px; margin-top: 16px; }
+  .settings-jump { display: none; }
   .settings-nav {
-    flex-direction: column; border-bottom: 0; position: sticky;
-    top: calc(var(--topbar-h) + 16px); align-self: start;
+    display: flex; position: sticky; top: calc(var(--topbar-h) + 16px); align-self: start;
+    max-height: calc(100dvh - var(--topbar-h) - 32px); overflow-y: auto; scrollbar-width: none;
   }
+  .settings-filter { font-size: 13px; min-height: 30px; }
 }
 
 /* ---- sticky primary action (thumb reach on a phone) ---- */

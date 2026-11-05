@@ -123,149 +123,50 @@ export type AccountSection =
  */
 const USAGE: ReadonlySet<AccountSection> = new Set(["usage", "spend", "capacity", "telemetry"]);
 
+/**
+ * The groups a person thinks in, in order; an admin's groups come after their
+ * own. Each row: its group, label, address, icon, the sections it stands for,
+ * and whether only a forge admin sees it.
+ */
+const SECTION_ROWS: readonly (readonly [
+  group: string,
+  label: string,
+  href: string,
+  icon: NonNullable<SettingsSection["icon"]>,
+  is: (current: AccountSection) => boolean,
+  admin: boolean,
+])[] = [
+  ["Account", "Profile", "/settings", "user", (c) => c === "profile", false],
+  ["Account", "Password", "/settings/password", "lock", (c) => c === "password", false],
+  ["Account", "Passkeys", "/settings/passkeys", "key", (c) => c === "passkeys", false],
+  ["Account", "SSH keys", "/settings/keys", "lock", (c) => c === "keys", false],
+  ["Account", "Access tokens", "/settings/tokens", "key", (c) => c === "tokens", false],
+  ["Account", "Confirms", "/settings/confirms", "check", (c) => c === "confirms", false],
+  ["Crew and AI", "Model", "/settings/model", "key", (c) => c === "model", false],
+  ["Crew and AI", "Crew", "/settings/crew", "bot", (c) => c === "crew", true],
+  ["Crew and AI", "Subscriptions", "/settings/subscriptions", "key", (c) => c === "subscriptions", true],
+  ["Crew and AI", "Usage", "/settings/spend", "activity", (c) => USAGE.has(c), true],
+  ["Connections", "Origins", "/settings/origins", "globe", (c) => c === "origins", false],
+  ["Connections", "Cloud accounts", "/settings/cloud", "key", (c) => c === "cloud", true],
+  ["Connections", "Secrets", "/settings/secrets", "lock", (c) => c === "secrets", true],
+  ["Security", "Security", "/settings/security", "lock", (c) => c === "security", true],
+  ["Security", "Traffic", "/settings/traffic", "users", (c) => c === "traffic", true],
+  ["Security", "Trusted sources", "/settings/trusted", "lock", (c) => c === "trusted", true],
+  ["Security", "Access", "/settings/access", "activity", (c) => c === "access", true],
+  ["This forge", "Accounts", "/settings/accounts", "users", (c) => c === "accounts", true],
+  ["This forge", "People", "/settings/people", "users", (c) => c === "people", true],
+  ["This forge", "Limits", "/admin/limits", "activity", (c) => c === "limits", true],
+  ["This forge", "Flags", "/settings/flags", "activity", (c) => c === "flags", true],
+  ["This forge", "Backups", "/settings/backups", "download", (c) => c === "backups", true],
+];
+
 export function accountSections(
   current: AccountSection,
   o: { admin?: boolean } = {},
 ): SettingsSection[] {
-  return [
-    ...(o.admin
-      ? [
-          {
-            label: "Accounts",
-            href: "/settings/accounts",
-            icon: "users" as const,
-            current: current === "accounts",
-          },
-          {
-            label: "People",
-            href: "/settings/people",
-            icon: "users" as const,
-            current: current === "people",
-          },
-          {
-            label: "Crew",
-            href: "/settings/crew",
-            icon: "bot" as const,
-            current: current === "crew",
-          },
-          {
-            label: "Trusted sources",
-            href: "/settings/trusted",
-            icon: "lock" as const,
-            current: current === "trusted",
-          },
-          {
-            label: "Subscriptions",
-            href: "/settings/subscriptions",
-            icon: "key" as const,
-            current: current === "subscriptions",
-          },
-          {
-            label: "Secrets",
-            href: "/settings/secrets",
-            icon: "lock" as const,
-            current: current === "secrets",
-          },
-          {
-            label: "Cloud accounts",
-            href: "/settings/cloud",
-            icon: "key" as const,
-            current: current === "cloud",
-          },
-          {
-            label: "Access",
-            href: "/settings/access",
-            icon: "activity" as const,
-            current: current === "access",
-          },
-          {
-            label: "Limits",
-            href: "/admin/limits",
-            icon: "activity" as const,
-            current: current === "limits",
-          },
-          {
-            label: "Flags",
-            href: "/settings/flags",
-            icon: "activity" as const,
-            current: current === "flags",
-          },
-          {
-            label: "Usage",
-            href: "/settings/spend",
-            icon: "activity" as const,
-            current: USAGE.has(current),
-          },
-          {
-            label: "Security",
-            href: "/settings/security",
-            icon: "lock" as const,
-            current: current === "security",
-          },
-          {
-            label: "Traffic",
-            href: "/settings/traffic",
-            icon: "users" as const,
-            current: current === "traffic",
-          },
-          {
-            label: "Backups",
-            href: "/settings/backups",
-            icon: "download" as const,
-            current: current === "backups",
-          },
-        ]
-      : []),
-    {
-      label: "Profile",
-      href: "/settings",
-      icon: "user",
-      current: current === "profile",
-    },
-    // What the forge's agent asked first and waits for your yes (#7650).
-    {
-      label: "Confirms",
-      href: "/settings/confirms",
-      icon: "check",
-      current: current === "confirms",
-    },
-    {
-      label: "Model",
-      href: "/settings/model",
-      icon: "key",
-      current: current === "model",
-    },
-    {
-      label: "Password",
-      href: "/settings/password",
-      icon: "lock",
-      current: current === "password",
-    },
-    {
-      label: "Access tokens",
-      href: "/settings/tokens",
-      icon: "key",
-      current: current === "tokens",
-    },
-    {
-      label: "SSH keys",
-      href: "/settings/keys",
-      icon: "lock",
-      current: current === "keys",
-    },
-    {
-      label: "Passkeys",
-      href: "/settings/passkeys",
-      icon: "key",
-      current: current === "passkeys",
-    },
-    {
-      label: "Origins",
-      href: "/settings/origins",
-      icon: "globe",
-      current: current === "origins",
-    },
-  ];
+  return SECTION_ROWS.filter((r) => o.admin === true || !r[5]).map(
+    ([group, label, href, icon, is]) => ({ group, label, href, icon, current: is(current) }),
+  );
 }
 
 /** The mark a forge wears wherever it is named. */
