@@ -1,7 +1,8 @@
 /**
  * A guest pull: one whose author lives on another forge — it was brought in
  * from the origin (its issue names an `origin_author`) or its head lives in
- * a fork there (`originHeadRepo`). Its check and preview run without the
+ * a fork there (`originHeadRepo`), or whose head is a guest's contribution
+ * fork on this forge (`core/contribute.ts`). Its check and preview run without the
  * repository's secrets, and the crew does not review it, until a person —
  * never an agent — who can write the repository approves it once. The
  * approval is for the pull, not a head: a later push by the same author
@@ -12,6 +13,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { isContributionFork } from "../core/contribute.ts";
 import { getIssueById } from "../core/issues.ts";
 import type { Pull } from "../core/pulls.ts";
 import { canWrite, type Repo } from "../core/repos.ts";
@@ -19,10 +21,11 @@ import { foldsIn } from "../core/trusted_sources.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
-/** Whether `pull`'s author lives on another forge. */
+/** Whether `pull`'s author lives on another forge, or is a guest of this one sending from a fork. */
 export function isGuestPull(db: Database, pull: Pull): boolean {
   if (pull.originHeadRepo !== null) return true;
-  return (getIssueById(db, pull.id)?.originAuthor ?? null) !== null;
+  if ((getIssueById(db, pull.id)?.originAuthor ?? null) !== null) return true;
+  return pull.crossRepo && isContributionFork(db, pull.headRepoId);
 }
 
 /** Who approved the guest `pull`, and when; undefined until someone has. */

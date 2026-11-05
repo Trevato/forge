@@ -210,7 +210,7 @@ describe("a pull from another forge is a guest until a writer approves it", () =
       tui.start();
       tui.ctx.push(pullScreen(session, tui.ctx, local(session, lib), guest.number));
       const end = Date.now() + 20_000;
-      while (!tui.screen.toText().includes("a guest from another forge")) {
+      while (!tui.screen.toText().includes("a guest: no app variables")) {
         if (Date.now() > end) throw new Error(tui.screen.toText());
         await settleApp(tui);
         await Bun.sleep(20);

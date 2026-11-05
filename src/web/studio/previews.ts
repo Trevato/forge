@@ -7,6 +7,8 @@
  * deploy event refreshes (`appStateFragment`) share.
  */
 
+import { HELP_BUILD } from "../../core/contribute.ts";
+import { lacks } from "../../core/roles.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { audienceFacts, audienceOf } from "../../core/audience.ts";
 import { sealedScope } from "../../core/sealed.ts";
@@ -339,7 +341,7 @@ export function appPanels(
     ${lookNow(ctx, repo, record)}
     ${openAppBtn(base, production)}
     ${when(!writer, () =>
-      btn("Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
+      btn(ctx.auth.user !== undefined && lacks(db, ctx.auth.user, "make_it_yours") ? HELP_BUILD : "Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
     )}
     ${when(production, (env) => envActions(base, env, writer))}
   </div>`;

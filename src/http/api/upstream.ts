@@ -135,6 +135,8 @@ export function upstreamRoutes(router: Router<Handler>): void {
         ? apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!))
         : forked.error === "storage_limit"
         ? apiError("storage_limit", 403, storageLimitMessage(ctx.app, ctx.auth.user!.id))
+        : forked.error === "already_forked"
+        ? apiError("already_forked", 409, "you already have a fork of this repository")
         : forked.error === "limit"
         ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
         : forked.error === "fork_failed"

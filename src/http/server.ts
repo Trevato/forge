@@ -1556,9 +1556,9 @@ async function withGitAccess(
   // The storage limit (#919): refused before git is spawned, as a git error
   // the client prints, and a push that would pass it is capped inside git.
   const user = ctx.auth.user!;
-  const refused = await storageRefusal(ctx.app, user, repo.ownerId);
+  const refused = await storageRefusal(ctx.app, user, repo.ownerId, repo);
   if (refused !== undefined) return gitRefused(ctx, storageRefusedText(refused));
-  const cap = await pushCap(ctx.app, user, repo.ownerId);
+  const cap = await pushCap(ctx.app, user, repo.ownerId, repo);
   const served = await serve(dir, repo.id, cap);
   return ctx.request.method === "POST" && served.body !== null
     ? new Response(afterBody(served.body, () => storageChanged(ctx.app, repo.ownerId)), served)

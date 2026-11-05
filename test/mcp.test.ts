@@ -1624,11 +1624,11 @@ describe("the forge over MCP", () => {
     setMember(app.db, bob.id, false, alice.id, new Date());
     const guest = (await tool(bobRw, "whoami_can")).value;
     expect(guest.role).toBe("guest");
-    expect(guest.can).toEqual({ read: true, comment: true, make_it_yours: false, run_crew: false, administer: false });
+    expect(guest.can).toEqual({ read: true, comment: true, contribute: true, make_it_yours: false, run_crew: false, administer: false });
     setMember(app.db, bob.id, true, alice.id, new Date());
     const member = (await tool(bobRw, "whoami_can")).value;
     expect(member.role).toBe("member");
-    expect(member.can).toEqual({ read: true, comment: true, make_it_yours: true, run_crew: true, administer: false });
+    expect(member.can).toEqual({ read: true, comment: true, contribute: true, make_it_yours: true, run_crew: true, administer: false });
     const admin = (await tool(ro, "whoami_can")).value;
     expect(admin.role).toBe("admin");
     expect(admin.can.administer).toBe(true);

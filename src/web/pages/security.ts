@@ -15,6 +15,7 @@ import { backupOverdue, trafficAttention, TRAFFIC_WORDS } from "../../flow/kpi_w
 import { readBackup } from "../../flow/kpis.ts";
 import type { Ctx } from "../../http/context.ts";
 import { perfRecord } from "../../perf/live.ts";
+import { getSignup } from "../../settings/signup.ts";
 import { trafficHistory } from "../../perf/traffic_store.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
@@ -75,6 +76,33 @@ const SHIELD_WORDS: Record<ShieldState, { name: string; does: string }> = {
 };
 
 /** The form that moves the Shield: one button, one state, so undoing is one click. */
+/** Who came in today, and the one setting that stops more: `/admin/signup`, as on the limits page. */
+function newAccountsCard(db: Database, nowMs: number): Html {
+  const today = new Date(nowMs);
+  today.setUTCHours(0, 0, 0, 0);
+  const count =
+    db
+      .query<{ n: number }, [string]>(
+        "SELECT COUNT(*) AS n FROM user WHERE kind = 'user' AND is_agent = 0 AND removed_at IS NULL AND created_at >= ?1",
+      )
+      .get(today.toISOString())?.n ?? 0;
+  const signup = getSignup(db);
+  return card(
+    html`<p>
+        ${count} new account${count === 1 ? "" : "s"} today. Sign-up is ${signup}.
+        <a href="/settings/people">See who they are</a>.
+        <a href="/admin/limits">Guest limits</a>.
+      </p>
+      ${signup === "closed"
+        ? null
+        : html`<form method="post" action="/admin/signup" class="mt">
+            <input type="hidden" name="signup" value="closed" />
+            ${btn("Close sign-up now", { size: "sm", variant: "outline" })}
+          </form>`}`,
+    { id: "new-accounts", head: html`<h2>New accounts</h2>` },
+  );
+}
+
 const shieldButton = (to: ShieldState, label: string, variant?: "primary"): Html =>
   html`<form method="post" action="/settings/security/shield" class="mt">
     <input type="hidden" name="state" value="${to}" />
@@ -230,6 +258,7 @@ export function securityPage(ctx: Ctx): Response {
       <a href="${RUNBOOK}">the security runbook</a> says what to do without any AI (<span class="mono">docs/SECURITY-RUNBOOK.md</span> in the forge's source).
     </p>
     ${shieldCard(ctx)}
+    ${newAccountsCard(db, nowMs)}
     ${section(
       "Traffic",
       nowIso,

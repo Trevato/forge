@@ -117,7 +117,7 @@ import { specFindings } from "./pull-spec.ts";
 import { pullPreviewFindings } from "../../core/preview_findings.ts";
 import { crewActivityCard } from "./runs.ts";
 import { holdCard } from "../studio/hold.ts";
-import { guestCard } from "./pull-guest.ts";
+import { guestCard, guestWalls } from "./pull-guest.ts";
 import {
   changeHead,
   changeTabs,
@@ -1049,7 +1049,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${await combinedCard(dir, pull, status.headOid, status.baseOid)}
     <div class="split">
       <div>
-        ${guestCard(ctx, repo, pull, `${thread}/approve-guest`)}
+        ${guestCard(ctx, repo, pull, `${thread}/approve-guest`, await guestWalls(ctx, repo, pull, status.baseOid))}
         ${approveHereCard(ctx, repo, pull, status.headOid, `${thread}/approve-here`)}
         ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
       </div>

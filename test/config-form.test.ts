@@ -487,7 +487,7 @@ describe("who commits and who proposes", () => {
 
   test("a guest and an unconfirmed account hear why their proposal could not be made", async () => {
     const guest = await (await save("alice/lamp", cookies.gus!)).text();
-    expect(guest).toContain(proposeEditText({ step: "fork", reason: "not_member" }));
+    expect(guest).toContain(proposeEditText({ step: "fork", reason: "guest_cooldown" }));
     const unconfirmed = await (await save("alice/lamp", cookies.una!)).text();
     expect(unconfirmed).toContain("Confirm your email first");
     expect(getRepo(app.db, "gus", "lamp")).toBeUndefined();

@@ -35,6 +35,7 @@ import { announceRun } from "../actions/runs.ts";
 import { requeueAbandonedChecks } from "../checks/service.ts";
 import { checkInstallCache } from "../checks/install.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
+import { isContributionFork } from "../core/contribute.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
 import { guestWaits } from "../origins/guest.ts";
 import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
@@ -1713,6 +1714,8 @@ export class AppsRuntime {
     env: EnvName,
     commitOid: string,
   ): boolean {
+    // A guest's fork has no app; were one ever to reach here, it starts nothing.
+    if (isContributionFork(this.app.db, repo.id)) return false;
     // Production is the default branch and a build preview a commit a writer asked to see
     // (`actions/build_preview.ts`): each is a writer's choice already.
     if (env === "production" || envBuild(env) !== undefined)

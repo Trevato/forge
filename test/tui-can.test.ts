@@ -64,11 +64,11 @@ describe("what I can do in the terminal", () => {
   test("a guest, a member and an admin each see their own row", async () => {
     const guest = await shown("bob");
     expect(guest).toContain("You are guest here.");
-    expect(guest).toContain("Create a repository, fork one or copy an app: no");
+    expect(guest).toContain("Create a repository or copy an app: no");
     setMember(forge.db, getUserByName(forge.db, "bob")!.id, true, "x", new Date());
     const member = await shown("bob");
     expect(member).toContain("You are member here.");
-    expect(member).toContain("Create a repository, fork one or copy an app: yes");
+    expect(member).toContain("Create a repository or copy an app: yes");
     expect(member).toContain("Administer the forge: no");
     const admin = await shown("alice");
     expect(admin).toContain("You are admin here.");

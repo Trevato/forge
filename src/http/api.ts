@@ -726,7 +726,7 @@ function editFailure(error: { kind: string } & Record<string, unknown>) {
   const status =
     kind === "branch_moved"
       ? 409
-      : kind === "file_too_large" || kind === "commit_too_large"
+      : kind === "file_too_large" || kind === "commit_too_large" || kind === "storage_limit"
         ? 413
         : kind === "protected_branch"
           ? 403

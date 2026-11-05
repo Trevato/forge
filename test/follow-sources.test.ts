@@ -5,6 +5,7 @@
  * first fold waits for the crew's review. Sources are read from a fake
  * Forgejo (a dumb-http `info/refs`), with the tip staged as a fetch leaves it.
  */
+import { promote } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -339,6 +340,8 @@ describe("following several sources", () => {
       expect(foldsIn(app.db, mine.id)).toBe(true);
       expect(pullSourceOf(app.db, mine.id)).toMatchObject({ host: f.host, account: "jmoran" });
       expect(needsCrewReview(app.db, mine.id)).toBe(true);
+      // A reader who is a member: a guest sends only from a fork of their own.
+      promote(app.db, guest);
       const theirs = await openPull(app, guest, r, { title: "Sneak", body: `Closes #${issues[0]!.number}`, baseBranch: r.defaultBranch, headBranch: "guest/resolve" });
       if (!theirs.ok) throw new Error(theirs.error);
       expect(foldsIn(app.db, theirs.value.id)).toBe(false);

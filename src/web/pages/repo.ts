@@ -16,7 +16,9 @@ import { behindLine, followingLine, originAheadLine } from "./upstream-follow.ts
 import { CONFLICT_WORDS, UNREAD_WORDS } from "../../origins/ahead.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
 import { offerUpstream } from "./offer-upstream.ts";
-import { NOT_A_MEMBER } from "../../core/roles.ts";
+import { VERIFY_FIRST } from "../../actions/verify_words.ts";
+import { GUEST_REFUSALS, HELP_BUILD, HELP_BUILD_NEXT, isContributionFork, isGuestRefusal } from "../../core/contribute.ts";
+import { lacks, NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { canRead, canWrite, listForks, type Repo } from "../../core/repos.ts";
 import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "../../actions/repos.ts";
@@ -240,10 +242,32 @@ function forkRanking(
           ${listCard(nothingNew.map((f) => line(f, false)))}`}`;
 }
 
+/** What a guest's own fork is for, on its home: what to do next and how to drop it. */
+function contributionBar(repo: Repo): Html {
+  const base = repoBase(repo);
+  return html`<div class="mt">
+    ${listCard([
+      row({
+        lead: icon("fork"),
+        title: "Your copy, for sending changes back",
+        meta: html`Change it, then send it for review. Nothing here runs: a person reviews your pull request first.`,
+        trail: html`${btn("Send for review", { size: "sm", icon: "merge", href: `${base}/pulls/new` })}
+          <form method="post" action="${base}/settings/delete">
+            <input type="hidden" name="confirm" value="${repo.ownerName}/${repo.name}" />
+            ${btn("Delete this copy", { size: "sm", variant: "outline" })}
+          </form>`,
+      }),
+    ])}
+  </div>`;
+}
+
 /** The "forked from …" lineage line and a Fork button, for the repo home. */
 function forkBar(ctx: Ctx, repo: Repo): Html {
+  const user = ctx.auth.user;
+  // A guest's fork is help on a public repository, and says so; a private one offers none.
+  const guest = user !== undefined && lacks(ctx.app.db, user, "make_it_yours");
   const canFork =
-    ctx.auth.user !== undefined && ctx.auth.user.id !== repo.ownerId;
+    user !== undefined && user.id !== repo.ownerId && (!guest || repo.visibility === "public");
   // Forge it is for any signed-in person, the owner too: it makes a forge, not a copy in this one.
   const canForge = ctx.auth.user?.kind === "user";
   const forkCount = forksFor(ctx, repo).length;
@@ -258,9 +282,10 @@ function forkBar(ctx: Ctx, repo: Repo): Html {
                 >${badge(`${forkCount} fork${forkCount === 1 ? "" : "s"}`)}</a
               >`
             : "Forks",
+        ...(guest && canFork ? { meta: html`${HELP_BUILD_NEXT}` } : {}),
         trail: html`${canFork
           ? html`<form method="post" action="${repoBase(repo)}/fork">
-              ${btn("Fork", { size: "sm", icon: "fork" })}
+              ${btn(guest ? HELP_BUILD : "Fork", { size: "sm", icon: "fork" })}
             </form>`
           : html``}${canForge
           ? html`<form method="post" action="${repoBase(repo)}/forge">
@@ -288,10 +313,16 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
   );
   if (!forked.ok) {
     const reason =
-      forked.error === "name_taken"
+      isGuestRefusal(forked.error)
+        ? GUEST_REFUSALS[forked.error]
+        : forked.error === "already_forked"
+        ? "You already have a fork of this repository."
+        : forked.error === "name_taken"
         ? "You already have a repository by that name."
         : forked.error === "not_member"
         ? `Not made: ${NOT_A_MEMBER}.`
+        : forked.error === "unverified"
+        ? VERIFY_FIRST
         : forked.error === "repository_limit"
         ? `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user)}.`
         : forked.error === "storage_limit"
@@ -302,7 +333,9 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
     return flashTo(ctx, repoBase(repo), { tone: "danger", message: reason });
   }
   return flashTo(ctx, repoBase(forked.value), {
-    message: `Forked to ${forked.value.ownerName}/${forked.value.name}.`,
+    message: isContributionFork(ctx.app.db, forked.value.id)
+      ? `This is your copy of ${repo.ownerName}/${repo.name}. Change it, then send it for review.`
+      : `Forked to ${forked.value.ownerName}/${forked.value.name}.`,
   });
 }
 
@@ -1354,9 +1387,11 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
         <a href="${repoBase(repo)}/waves/${encodeURIComponent(latest.version)}">${latest.version}</a>
         · ${latest.headline} · ${latest.date}</p>`}
   ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo)}
-  ${following === undefined
-    ? html`${archivedParentLine(ctx, repo)}${forkBar(ctx, repo)}`
-    : followingCard(ctx, repo, following)}
+  ${ctx.auth.user?.id === repo.ownerId && isContributionFork(ctx.app.db, repo.id)
+    ? contributionBar(repo)
+    : following === undefined
+      ? html`${archivedParentLine(ctx, repo)}${forkBar(ctx, repo)}`
+      : followingCard(ctx, repo, following)}
   ${await renderCode(scope, {
     refs,
     ref,

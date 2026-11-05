@@ -223,7 +223,7 @@ export function teamLine(v: TeamVerdict): string {
 const CHECK_TICK_MS = 5000;
 
 /** A waiting guest's line on its screen; the page says it in full (`web/pages/pull-guest.ts`). */
-export const GUEST_NOTE = "a guest from another forge: no app variables, no crew, until a writer approves";
+export const GUEST_NOTE = "a guest: no app variables, no crew, until a writer approves";
 
 export function pullScreen(
   f: Session,

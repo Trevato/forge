@@ -13,6 +13,7 @@
  * locally, the origin is asked, and the local ref moves only if it agreed.
  */
 
+import { contributionRefusal } from "../core/storage.ts";
 import type { App } from "../app.ts";
 import { canAdmin, type Repo } from "../core/repos.ts";
 import { trackPullHead, type Pull } from "../core/pulls.ts";
@@ -68,6 +69,7 @@ export interface EditResult {
 }
 
 export type EditFilesError =
+  | { kind: "storage_limit" }
   | AccessError
   | WriteThroughError
   | CommitFilesError
@@ -116,6 +118,8 @@ export async function editFiles(
 ): Promise<Result<EditResult, EditFilesError>> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
+  if ((await contributionRefusal(app, writer.value.id, repo, writer.value)) !== undefined)
+    return err({ kind: "storage_limit" });
 
   if (input.files.length === 0) return err({ kind: "no_files" });
   if (input.files.length > MAX_FILES)

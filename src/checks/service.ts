@@ -22,6 +22,7 @@ import { announceRun } from "../actions/runs.ts";
 import { announceShard } from "./shard_event.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
+import { isContributionFork } from "../core/contribute.ts";
 import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
@@ -481,6 +482,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   ): Promise<Run | undefined> {
     // A suspended or removed owner's code is not run, not even to check it.
     if (stopped || !accountActive(app.db, repo.ownerId)) return undefined;
+    // A guest's fork runs nothing: its code runs only as a pull a person approved.
+    if (isContributionFork(app.db, repo.id)) return undefined;
     // A pull from someone who cannot write runs nothing until a writer
     // approves this exact head (`core/pull_trust.ts`).
     if (!issueMayRun(app.db, repo, issueId, commitOid)) {

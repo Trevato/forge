@@ -61,6 +61,7 @@ import {
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { secureFor } from "../../http/cookie_secure.ts";
+import { SIGNUP_OWN_FORGE, SIGNUP_YOU_GET } from "../../core/contribute.ts";
 import { hasAdmin } from "../../spawn/claim.ts";
 import { getSignup, type SignupMode } from "../../settings/signup.ts";
 import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
@@ -336,7 +337,7 @@ function authForm(
           type: "email",
           value: values.email ?? "",
           autocomplete: "email",
-          hint: "Optional. If you add one, we send a link to confirm it.",
+          hint: "Optional. If you add one, we send a link to confirm it. You need a confirmed email to send changes.",
           // A pinned name is not editable, so the keyboard goes to the email.
           ...(vouched !== undefined ? { autofocus: true } : {}),
           ...(errors.email ? { error: errors.email } : {}),
@@ -420,6 +421,10 @@ function authForm(
     existsSync(join(ctx.app.config.dataDir, "parent.json")) && unowned;
   return html`<div class="narrow">
     ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
+    ${when(
+      kind === "signup",
+      () => html`<p class="mb" id="signup-you-get">${SIGNUP_YOU_GET} <a href="/forges/new">${SIGNUP_OWN_FORGE}</a></p>`,
+    )}
     ${card(body)}
     ${when(
       kind === "signin",

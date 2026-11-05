@@ -5,6 +5,7 @@
  * repo. Deletion inverts the order — row first, directory second.
  */
 
+import { isContributionFork } from "./contribute.ts";
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { isSafeName } from "../git/guard.ts";
@@ -454,6 +455,8 @@ export async function forkRepo(
      * a fork, so not one the daily limit counts.
      */
     sealed?: boolean;
+    /** A guest's contribution fork (`contribute.ts`): marked in the row's own write. */
+    contribution?: boolean;
   } = {},
 ): Promise<Result<Repo, ForkRepoError>> {
   const sealed = options.sealed === true;
@@ -530,6 +533,11 @@ export async function forkRepo(
         if (!sealed)
           db.query(`INSERT INTO fork_made (owner_id, made_at) VALUES (?1, ?2)`).run(
             ownerId,
+            new Date(now).toISOString(),
+          );
+        if (options.contribution === true)
+          db.query(`INSERT INTO contribution_fork (repo_id, made_at) VALUES (?1, ?2)`).run(
+            repoId,
             new Date(now).toISOString(),
           );
       })(),
@@ -1228,7 +1236,9 @@ export function canAdmin(
   repo: Repo,
   user: User | undefined,
 ): boolean {
-  if (personalOrDirect(repo, user)) return true;
+  if (personalOrDirect(repo, user))
+    // A guest's contribution fork is theirs to push to, not to administer.
+    return user?.id !== repo.ownerId || user.isAdmin || !isContributionFork(db, repo.id);
   return accessAllows(orgAccessFor(db, repo, user), "admin");
 }
 

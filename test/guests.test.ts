@@ -24,6 +24,7 @@ import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { createRepo, forkRepo } from "../src/actions/repos.ts";
 import { makeItYours } from "../src/actions/make_it_yours.ts";
+import { GUEST_REFUSALS } from "../src/core/contribute.ts";
 import { NOT_A_MEMBER, setMember } from "../src/core/roles.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
@@ -129,11 +130,11 @@ describe("a guest cannot own, copy or run", () => {
     expect((await form("/new", carol, { name: "hers-too", owner: "" })).status).toBe(303);
   });
 
-  test("a plain fork is the same act", async () => {
-    expect(await forkRepo(app, bob, garden)).toMatchObject({ ok: false, error: "not_member" });
+  test("a fork is a guest's way to help, once the new-account wait has passed", async () => {
+    expect(await forkRepo(app, bob, garden)).toMatchObject({ ok: false, error: "guest_cooldown" });
     const res = await api("/api/v1/repos/alice/garden/forks", bob);
     expect(res.status).toBe(403);
-    expect(((await res.json()) as any).message).toBe(NOT_A_MEMBER);
+    expect(((await res.json()) as any).message).toBe(GUEST_REFUSALS.guest_cooldown);
   });
 
   test("make it yours: refused to a guest, plan and making, by the action, the API and the page; a member may", async () => {

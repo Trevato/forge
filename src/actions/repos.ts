@@ -4,6 +4,10 @@
  * write path — committing files to a branch without a git client.
  */
 
+import { isContributionFork, type GuestRefusal } from "../core/contribute.ts";
+import { contributionRefusal } from "../core/storage.ts";
+import { limitValue } from "../settings/limits.ts";
+import { guestForkRefusal } from "./guests.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
@@ -203,15 +207,20 @@ export async function forkRepo(
   parent: Repo,
   name?: string,
   options: { visibility?: "public" | "private"; now?: number } = {},
-): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified" | "refused" | "not_member" | "repository_limit" | "storage_limit">> {
+): Promise<Result<Repo, ForkRepoError | GuestRefusal | "not_found" | "unauthorized" | "unverified" | "refused" | "not_member" | "repository_limit" | "storage_limit">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
   const proven = requireVerified(app, user.value);
   if (!proven.ok) return proven;
   const guarded = requireNewAccountGuard(app, user.value);
   if (!guarded.ok) return guarded;
-  const member = requireAbility(app, user.value, "make_it_yours");
-  if (!member.ok) return member;
+  // A guest forks to contribute: public parents only, always public, marked in
+  // the row's own write so the fork is never an ordinary one for a moment.
+  const contribution = !requireAbility(app, user.value, "make_it_yours").ok;
+  if (contribution) {
+    const refused = await guestForkRefusal(app, user.value, parent, options.now ?? Date.now());
+    if (refused !== undefined) return err(refused);
+  }
   if (repositoryLimitRefusal(app, user.value) !== undefined) return err("repository_limit");
   if ((await storageRefusal(app, user.value, user.value.id)) !== undefined)
     return err("storage_limit");
@@ -221,14 +230,14 @@ export async function forkRepo(
     parent,
     user.value.id,
     name,
-    {
-      ...options,
-      ...(user.value.kind === "agent" || user.value.isAdmin
-        ? {}
-        : { perDay: FORKS_PER_DAY }),
-    },
+    contribution
+      ? { ...options, visibility: "public", contribution: true, perDay: limitValue(app.db, "guest.forks_per_day") }
+      : {
+          ...options,
+          ...(user.value.kind === "agent" || user.value.isAdmin ? {} : { perDay: FORKS_PER_DAY }),
+        },
   );
-  if (!forked.ok) return forked;
+  if (!forked.ok) return contribution && forked.error === "limit" ? err("guest_forks_today") : forked;
   storageChanged(app, user.value.id);
   app.bus.append({
     kind: "repo.forked",
@@ -536,7 +545,12 @@ export async function deleteRepo(
   actor: User | undefined,
   repo: Repo,
 ): Promise<Result<void, "not_found" | "delete_failed">> {
-  const admin = requireRepoAdmin(app, actor, repo);
+  // A guest administers nothing, but may always delete their own fork: it is
+  // how they make room, and the day's count of forks stands.
+  const admin =
+    actor !== undefined && actor.id === repo.ownerId && isContributionFork(app.db, repo.id)
+      ? ok(actor)
+      : requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
   const deleted = await destroyRepo(app.db, app.reposRoot, repo);
   if (!deleted.ok) return deleted;
@@ -700,7 +714,8 @@ export type CommitToBranchError =
   | CommitFilesError
   | { kind: "protected_branch"; branch: string }
   | { kind: "file_too_large"; path: string; bytes: number }
-  | { kind: "commit_too_large"; bytes: number };
+  | { kind: "commit_too_large"; bytes: number }
+  | { kind: "storage_limit" };
 
 export interface CommitToBranchInput {
   /** @default the repo's default branch */
@@ -727,6 +742,9 @@ export async function commitToBranch(
 ): Promise<Result<CommitResult, CommitToBranchError>> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
+  // A commit through the API adds to a guest's fork as a push does.
+  if ((await contributionRefusal(app, writer.value.id, repo, writer.value)) !== undefined)
+    return err({ kind: "storage_limit" });
   const branch = input.branch || repo.defaultBranch;
   // The same mechanical rules `editFiles` applies: a protected default takes
   // commits from repo admins only, and no file or commit is unbounded.

@@ -14,6 +14,7 @@ import {
   guestWaits,
   mayApproveGuest,
 } from "../../origins/guest.ts";
+import { foldWall } from "../../crew/fold_walls.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -22,16 +23,17 @@ import { pullContext } from "../studio/change.ts";
 import { btn, card, icon } from "../ui.ts";
 
 export const GUEST_WAITS =
-  "This pull comes from another forge, so it is a guest: its preview runs without the app's variables or a forge token, and the crew leaves it alone, until a person who can write here approves it.";
+  "This pull comes from a guest: its preview runs without the app's variables or a forge token, and the crew leaves it alone, until a person who can write here approves it.";
 export const GUEST_APPROVED = "Approved as a guest: its preview starts again with the app's variables, and the crew takes it up.";
 
 /** The guest notice; empty for a pull from this forge, or one already approved. */
-export function guestCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
+export function guestCard(ctx: Ctx, repo: Repo, pull: Pull, action: string, walls: readonly string[] = []): Html {
   if (pull.state !== "open" || pull.mergedAt !== null) return html``;
   if (!guestWaits(ctx.app.db, pull)) return html``;
   const writer = mayApproveGuest(ctx.app.db, repo, ctx.auth.user);
   return card(
     html`<p>${GUEST_WAITS}</p>
+      ${walls.map((wall) => html`<p class="mt" role="alert">Look closely: ${wall}.</p>`)}
       ${writer
         ? html`<form method="post" action="${action}">
             ${btn("Approve this guest", { size: "sm", icon: "check" })}
@@ -43,6 +45,11 @@ export function guestCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Htm
         <h2>A guest</h2>`,
     },
   );
+}
+
+/** What a person should weigh before approving a guest: paths nobody but a person decides on. */
+export async function guestWalls(ctx: Ctx, repo: Repo, pull: Pull, baseOid: string): Promise<string[]> {
+  return guestWaits(ctx.app.db, pull) && baseOid !== "" ? foldWall(ctx.app, repo, pull, baseOid) : [];
 }
 
 /** POST /:owner/:name/pulls/:number/approve-guest — a writer's word, once. */

@@ -334,7 +334,7 @@ export async function serveGitCommand(
   const dir = repoDir(forge.reposRoot, repo.ownerName, repo.name);
   // The storage limit: a git error before anything is written (#919).
   const refused =
-    write && user ? await storageRefusal(forge, user, repo.ownerId) : undefined;
+    write && user ? await storageRefusal(forge, user, repo.ownerId, repo) : undefined;
   if (refused !== undefined) {
     session.writeStderr(
       `forge: ${storageRefusedText(refused)}${CRLF}`,
@@ -350,7 +350,7 @@ export async function serveGitCommand(
           repoId: repo.id,
           actorId: user?.id ?? "",
         }),
-        ...(user ? await pushCap(forge, user, repo.ownerId) : {}),
+        ...(user ? await pushCap(forge, user, repo.ownerId, repo) : {}),
       }
     : {};
   // The client asks for protocol v2 by sending GIT_PROTOCOL through the

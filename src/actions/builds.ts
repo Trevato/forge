@@ -5,6 +5,7 @@
  * is what the feed and webhooks read.
  */
 
+import { isContributionFork } from "../core/contribute.ts";
 import { forget } from "../core/ttl_cache.ts";
 import type { App } from "../app.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
@@ -44,6 +45,8 @@ export function writerOf(app: App, actor: User | undefined, repo: Repo): Result<
   if (!writer.ok) return writer;
   if (writer.value.kind === "agent") return err("forbidden");
   if (isMirror(app, repo)) return err("mirrored");
+  // A guest's fork pins nothing: it is a change on its way to review, not a build.
+  if (isContributionFork(app.db, repo.id)) return err("forbidden");
   return writer;
 }
 

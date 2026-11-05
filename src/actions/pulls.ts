@@ -4,6 +4,9 @@
  * issues — a pull is an issue with a diff.
  */
 
+import { isContributionFork, type GuestRefusal } from "../core/contribute.ts";
+import { takeGuestPull } from "./guests.ts";
+import { requireAbility } from "./roles.ts";
 import { addComment as addIssueComment } from "../core/issues.ts";
 import { landedNote, leftNote, unticked } from "../core/done_on_main.ts";
 import { resolveOpen } from "../core/decisions.ts";
@@ -145,19 +148,48 @@ export async function openPull(
   Result<
     Pull,
     | CreatePullError
+    | GuestRefusal
     | "not_found"
     | "unauthorized"
+    | "unverified"
     | "sealed_in_public"
     | WriteThroughError
   >
 > {
   const user = requireParticipant(app, actor, baseRepo);
   if (!user.ok) return user;
+  // A guest who cannot write here sends from their own contribution fork, and
+  // a low number of pulls a day. Asked first, so a mirror's path never starts.
+  const guest =
+    !requireAbility(app, user.value, "make_it_yours").ok &&
+    (!canWrite(app.db, baseRepo, user.value) || isContributionFork(app.db, baseRepo.id))
+      ? takeGuestPull(app, user.value, baseRepo, input.headRepo, Date.now())
+      : undefined;
+  if (guest !== undefined && !guest.ok) return guest;
+  const opened = await createThePull(app, user.value, baseRepo, input);
+  if (!opened.ok) guest?.value.refund();
+  return opened;
+}
 
+async function createThePull(
+  app: App,
+  user: User,
+  baseRepo: Repo,
+  input: OpenPullInput,
+): Promise<
+  Result<
+    Pull,
+    | CreatePullError
+    | "not_found"
+    | "unauthorized"
+    | "sealed_in_public"
+    | WriteThroughError
+  >
+> {
   // A mirror's pull requests are the origin's. Push the branch (which the
   // pre-receive hook has already forwarded upstream), then ask the origin to
   // open the pull; what comes back is what we store, numbers and all.
-  const through = writeThroughFor(app, user.value, baseRepo);
+  const through = writeThroughFor(app, user, baseRepo);
   if (!through.ok) return through;
   if (through.value !== undefined) {
     const title = input.title.trim();
@@ -173,7 +205,7 @@ export async function openPull(
     let pullHead = input.headBranch;
     if (head !== undefined && head.id !== baseRepo.id) {
       if (
-        !canRead(app.db, head, user.value) ||
+        !canRead(app.db, head, user) ||
         head.forkParentId !== baseRepo.id
       )
         return err("not_found");
@@ -193,7 +225,7 @@ export async function openPull(
           baseRepo,
           head,
           input.headBranch,
-          user.value.id,
+          user.id,
           carriedAs,
         );
         // The origin said no to the push itself: the account cannot write
@@ -240,13 +272,13 @@ export async function openPull(
     );
     if (!created.ok) return err(refusal(created.error.error));
     const imported = importIssue(
-      { db: app.db, repoId: baseRepo.id, actorId: user.value.id },
+      { db: app.db, repoId: baseRepo.id, actorId: user.id },
       created.value,
     );
     app.bus.append({
       kind: "pull.opened",
       repoId: baseRepo.id,
-      actorId: user.value.id,
+      actorId: user.id,
       payload: { number: created.value.number, via: "origin" },
     });
     // Ask the origin to say when this pull's check or reviews move; the sync
@@ -265,7 +297,7 @@ export async function openPull(
     // The fork must be readable and actually descend from this base — or be
     // the private place this base's sealed work is done in (`core/sealed.ts`).
     if (
-      !canRead(app.db, head, user.value) ||
+      !canRead(app.db, head, user) ||
       (head.forkParentId !== baseRepo.id && head.sealedFor !== baseRepo.id)
     )
       return err("not_found");
@@ -280,7 +312,7 @@ export async function openPull(
   if (
     fixesSealed &&
     !apart &&
-    !(input.confirmPublic === true && user.value.kind !== "agent")
+    !(input.confirmPublic === true && user.kind !== "agent")
   )
     return err("sealed_in_public");
   const created = await createPull(
@@ -288,7 +320,7 @@ export async function openPull(
     repoDir(app.reposRoot, baseRepo.ownerName, baseRepo.name),
     {
       repoId: baseRepo.id,
-      authorId: user.value.id,
+      authorId: user.id,
       title: input.title,
       body: input.body ?? "",
       baseBranch: input.baseBranch,
@@ -310,16 +342,16 @@ export async function openPull(
   // to the agent, so "who is on it" is legible without a second step (an
   // agent cannot assign, so this is the one place it happens).
   const assigned =
-    user.value.kind === "agent"
-      ? setAssignee(app.db, created.value.id, user.value.id)
+    user.kind === "agent"
+      ? setAssignee(app.db, created.value.id, user.id)
       : undefined;
   app.bus.append({
     kind: "pull.opened",
     repoId: baseRepo.id,
-    actorId: user.value.id,
+    actorId: user.id,
     payload: {
       number: created.value.number,
-      ...(assigned ? { assignee: user.value.username } : {}),
+      ...(assigned ? { assignee: user.username } : {}),
     },
   });
   return assigned ? ok({ ...created.value, ...assigneeOf(assigned) }) : created;

@@ -36,6 +36,14 @@ export type LimitKey =
   | "signin.per_forge"
   | "signup.per_source"
   | "signup.per_forge"
+  | "signup.per_source_hour"
+  | "signup.per_forge_hour"
+  | "guest.forks_per_day"
+  | "guest.forks_forge_per_day"
+  | "guest.pulls_per_day"
+  | "guest.storage_mb"
+  | "guest.fork_storage_mb"
+  | "guest.cooldown_minutes"
   | "api.anonymous_per_source"
   | "model_review.auto"
   | "model_review.min_landed"
@@ -162,6 +170,70 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 100_000,
     reason: "Spread across many sources, sign-ups still cost hashes and accounts, so the forge as a whole has a ceiling.",
+  },
+  "signup.per_source_hour": {
+    label: "New accounts per source an hour",
+    unit: "accounts",
+    default: 5,
+    min: 1,
+    max: 10_000,
+    reason: "One address has no need of many accounts, and an account is what every other guest limit is counted on. Never less than the per-minute limit.",
+  },
+  "signup.per_forge_hour": {
+    label: "New accounts per forge an hour",
+    unit: "accounts",
+    default: 60,
+    min: 1,
+    max: 100_000,
+    reason: "Many addresses together still make accounts, so the whole forge has a ceiling that holds while an admin looks.",
+  },
+  "guest.forks_per_day": {
+    label: "Forks one guest may make a day",
+    unit: "forks",
+    default: 3,
+    min: 0,
+    max: 1_000,
+    reason: "A guest's fork is for one contribution, and deleting one makes no room in the count.",
+  },
+  "guest.forks_forge_per_day": {
+    label: "Guest forks on the whole forge a day",
+    unit: "forks",
+    default: 50,
+    min: 0,
+    max: 100_000,
+    reason: "Many guests together can fill a disk one fork at a time, so their forks have a ceiling across the forge.",
+  },
+  "guest.pulls_per_day": {
+    label: "Pull requests one guest may send a day",
+    unit: "pulls",
+    default: 5,
+    min: 0,
+    max: 1_000,
+    reason: "Every pull asks a person to read it, so a guest's pulls have a daily count.",
+  },
+  "guest.storage_mb": {
+    label: "Storage one guest may hold in their forks",
+    unit: "MB",
+    default: 100,
+    min: 1,
+    max: 1_000_000,
+    reason: "What a guest pushes stays on this machine's disk until someone deletes it.",
+  },
+  "guest.fork_storage_mb": {
+    label: "Storage one guest fork may hold",
+    unit: "MB",
+    default: 50,
+    min: 1,
+    max: 1_000_000,
+    reason: "A fork borrows its parent's history, so a change that needs more room than this is not a change to review.",
+  },
+  "guest.cooldown_minutes": {
+    label: "Minutes a new guest waits before a first fork or pull",
+    unit: "minutes",
+    default: 10,
+    min: 0,
+    max: 100_000,
+    reason: "An account made only to send something is slowed; reading and commenting start at once.",
   },
   "api.anonymous_per_source": {
     label: "API reads without a token per source a minute",

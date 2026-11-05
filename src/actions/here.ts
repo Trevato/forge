@@ -12,6 +12,7 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { lacks } from "../core/roles.ts";
 import { activeEdgeToken } from "../http/edge.ts";
 import { sshTellCommand } from "../ssh/command.ts";
 import { mcpPointers, TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
@@ -405,6 +406,14 @@ function repoActions(
       mcp: "make_it_yours",
       ...(viewer === undefined ? { account: true } : unproven),
     });
+  // A guest on a public repository they cannot write: help build it.
+  if (
+    viewer !== undefined &&
+    repo.visibility === "public" &&
+    !canWrite(db, repo, viewer) &&
+    lacks(db, viewer, "make_it_yours")
+  )
+    out.push({ do: "help build this", http: `POST ${r}/forks`, ...unproven });
   if (!acts) return out;
   const tellSsh = sshTellCommand(app);
   if (mayDirectCrew(db, repo, viewer))

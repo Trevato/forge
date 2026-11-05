@@ -68,6 +68,7 @@ import {
   type Run,
 } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
+import { isContributionFork } from "../core/contribute.ts";
 import { guestSql, lacks } from "../core/roles.ts";
 import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
@@ -419,7 +420,7 @@ export function queueAgentRun(
   own = false,
 ): Run | undefined {
   // A suspended or removed owner's repositories run nothing, whoever asks.
-  if (!accountActive(app.db, repo.ownerId)) return undefined;
+  if (!accountActive(app.db, repo.ownerId) || isContributionFork(app.db, repo.id)) return undefined;
   // Never a job outside the agent's seat: building is a builder's, reviewing a reviewer's.
   if (outsideSeat(app, repo, issue, agent, reason)) return undefined;
   // An archived repository starts nothing new; a run carrying on (`again`)

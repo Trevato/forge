@@ -7,9 +7,10 @@
 import { deleteRepo } from "../../actions/repos.ts";
 import { notePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { repoBase, repoNotFound } from "../chrome.ts";
+import { isContributionFork } from "../../core/contribute.ts";
+import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
 import { DELETE_REPO } from "../danger_words.ts";
-import { field } from "../form.ts";
+import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo } from "../layout.ts";
@@ -58,12 +59,21 @@ export function dangerPage(ctx: Ctx): Response {
   return response;
 }
 
+/** The admin's form, or a guest's on their own fork: the one thing they may do to it besides push. */
+async function deleteForm(ctx: Ctx): ReturnType<typeof adminForm> {
+  const repo = loadRepo(ctx);
+  if (repo === undefined || repo.ownerId !== ctx.auth.user?.id || !isContributionFork(ctx.app.db, repo.id))
+    return adminForm(ctx);
+  const form = await readForm(ctx, "admin");
+  return form instanceof Response ? form : { repo, form };
+}
+
 /**
  * The typed-name check lives here and nowhere else: the confirm page collects
  * the phrase, this handler is the one that refuses without it.
  */
 export async function repoDelete(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
+  const gate = await deleteForm(ctx);
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
   const full = `${repo.ownerName}/${repo.name}`;
