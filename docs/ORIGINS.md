@@ -1,20 +1,24 @@
-# Origins — one workbench over every forge
+# Origins
 
-The forge is your index of everything you work on, wherever it lives. An
-**origin** is a connected account on another forge (GitHub, Forgejo, Gitea).
-From an origin you **mirror** repositories in; their issues, pulls, comments
-and labels are imported alongside the git objects; and anything you do to
-them here — comment, open, close, label, push a branch, open a pull — is
-**written through** to the origin first and reflected locally after.
+This document describes how a forge connects to other forges. It is for people
+who work across forges and for developers who change the connections.
 
-There is no standard for this above git. Git is the universal layer for
-code; everything else is a thin per-forge adapter behind one `Provider`
-interface (`src/origins/types.ts`). All forges share the same units, so the
-adapters are small and boring, which is the point.
+An **origin** is a connected account on another forge: GitHub, Forgejo, Gitea or
+another forge of this kind. You **mirror** repositories from an origin, and their
+issues, pulls, comments and labels are imported with the git objects. Anything
+you do to a mirror is written to the origin first and reflected locally after.
+See also [A forge is an origin](features/forge-origin.md).
+
+## The provider interface
+
+Git is the common layer for code. No standard exists above git, so each forge has
+an adapter behind one `Provider` interface (`src/origins/types.ts`). Adapters are
+small because forges share the same units: issues, pulls, comments and labels.
 
 ## Truth
 
-- Native repo: **git is truth**, the database is an index (as before).
+- Native repo: **git is truth** for code, and the database indexes it. Issues,
+  pulls and comments are stored in the database.
 - Mirrored repo: **the origin is truth** — for git objects, issue numbers,
   states, labels and comments. Local rows are a cache with provenance
   (`origin_remote_id`, `origin_author`, `origin_html_url`, `synced_at`).

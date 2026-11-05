@@ -483,7 +483,9 @@ Once a minute the forge measures its landing rate, names the one cause binding i
 
 ## Where the rest is
 
-- [`REFERENCE.md`](REFERENCE.md) — this page.
+- [`README.md`](README.md): the documentation index, by what you want to do.
+- [`REFERENCE.md`](REFERENCE.md): this page.
+- [`WRITING.md`](WRITING.md): how to write documentation for the forge.
 - [`docs/DEVELOP.md`](DEVELOP.md) — developing the forge: tests, checks, the gate, lint and types.
 - [`docs/SECURITY-RUNBOOK.md`](SECURITY-RUNBOOK.md) — what to do, with no AI, if the forge is under load, a token leaks or an account looks wrong.
 - [`docs/STATUS.md`](STATUS.md) — what works today, one bullet per feature.

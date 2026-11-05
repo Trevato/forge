@@ -1,6 +1,14 @@
-# Develop
+# Developing the forge
 
-Moved from README.md (its "## Develop" section), unchanged.
+This document is for people and agents who change the forge. It covers the tests,
+the design check, the type check and the gate that every push must pass.
+
+`bun run check` is the gate. It is the same command the forge runs against every
+push, so a green local run predicts the result. Documentation follows
+[`WRITING.md`](WRITING.md). The principles behind the code are in
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+## Commands and the gate
 
 Driving the forge from a shell — every `forge` command, its flags and one example: [docs/CLI.md](CLI.md).
 

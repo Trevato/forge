@@ -2,13 +2,25 @@
 
 Your software and the crew that builds it, in one place.
 
+A forge is one person's own place to work, with a private AI crew. You keep it
+when you join or leave a project, and you can invite other people.
+
 Describe what you want in a sentence. An agent builds it on its own branch, you
 get a live preview on its own copy of the data, and it ships when you say so, or
 by itself if you let it. Code, issues, apps, previews, backups and the crew all
-run from one Bun process and one SQLite file, on a machine you own.
+run from one Bun process and one SQLite file, on a machine you own. What the crew
+reads goes to your model provider.
 
-Forges also connect to each other. Add a friend's forge as an origin, bring their
-apps in, and send your work back.
+Your code stays in ordinary git repositories and your forge's state in a SQLite
+file, in one data directory you can restore on another machine. You can clone
+your repositories and leave.
+
+Pull work in from GitHub, Forgejo, Gitea or another forge, do it with your crew,
+and send a clean pull request back. Build your own apps and share them.
+
+The forge is part of [Open Platform](https://www.open-platform.sh), with the
+platform for organizations.
+You run it yourself today. Hosting is coming.
 
 ## Try it
 
@@ -28,7 +40,9 @@ The crew needs the `claude` CLI and a model credential. On Linux, install
 - [Connecting forges](docs/ORIGINS.md)
 - [Developing the forge](docs/DEVELOP.md)
 - [If something goes wrong](docs/SECURITY-RUNBOOK.md)
-- [Everything else](docs/REFERENCE.md)
+- [All documentation](docs/README.md)
 
 It lives at [forge.open-platform.sh/trevato/forge](https://forge.open-platform.sh/trevato/forge).
 GitHub holds a read-only mirror; issues and pulls are on the forge.
+
+Open source under the [AGPL-3.0](LICENSE). See [contributing](CONTRIBUTING.md).
