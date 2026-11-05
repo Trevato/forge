@@ -1,10 +1,10 @@
-# Absorb: an app becomes a forge feature
+# Absorb: an app becomes one of the forge's features
 
-An app can be taken in as one of the forge's own features without a line of its code moving into the forge. It keeps its repository, its cell, its data and its deploys. What changes is how a person meets it: it has a place in the forge's menu, and the forge keeps its settings, typed by what the app declares.
+This page is for site admins and app authors. An app can declare a `feature` in its `forge.json`. A site admin can then absorb it. The app gets a place in the forge's user menu, and the forge keeps the app's typed settings. None of the app's code runs in the forge. The app keeps its repository, data and deploys, and it runs as an ordinary app with an ordinary app's access.
 
-## Declaring
+## Declare a feature
 
-`forge.json` gains a `feature` block:
+Add a `feature` block to `forge.json`:
 
 ```json
 "feature": {
@@ -19,22 +19,47 @@ An app can be taken in as one of the forge's own features without a line of its 
 }
 ```
 
-The types are `bool`, `int` (with `min`/`max`), `string`, `choice` (with `choices`), `days` (`mon`…`sun`) and `list`. The block is fail-closed, as the rest of `forge.json` is: a wrong one is refused with the field named (`src/apps/feature.ts`).
+- `name` is the menu label, 1 to 40 characters.
+- `page` is a path on the app. It starts with `/`.
+- A setting's type is `bool`, `int` (with `min` and `max`), `string`, `choice` (with `choices`), `days` (`mon` to `sun`) or `list`. A setting has a `label` and may have `help` and a `default`.
+- A block may hold at most 24 settings. A `string` setting holds at most 500 characters.
 
-**Declaring is not absorbing.** A repository can't promote itself.
+The parser rejects a wrong block and names the field (`src/apps/feature.ts`). A declaration does nothing alone: an app cannot absorb itself.
 
-## Absorbing
+## Absorb an app
 
-A site admin absorbs an app from **Settings → Features** (`/settings/features`), `PUT /api/v1/features/:slug`, or the `features` MCP tool. Then:
+Only a site admin absorbs an app, un-absorbs it or changes its settings. A repository's own admin is refused, and an agent account is refused. An admin uses one of three doors:
 
-- **Menu:** the app's name appears in the user menu for everyone who may read its repository, and opens its `page` through the forge's door (`/apps/open`), so a private feature opens without a second sign-in. Absorbing widens no access.
-- **Settings:** `/settings/features/:slug` shows each setting as a form field typed by the declaration (`PATCH /api/v1/features/:slug/settings`). A value that doesn't fit is refused with the setting named, and nothing is kept.
-- **The app:** its process starts with `FORGE_FEATURE=1` and `FORGE_SETTING_<NAME>` for each setting (`runHourUtc` → `FORGE_SETTING_RUN_HOUR_UTC`). A change restarts the app, as an env change does. The declaration is read from the commit being started, so a pull that adds a setting previews with it.
+- **Settings > Features** (`/settings/features`).
+- The API: `PUT /api/v1/features/:slug` to absorb and `DELETE /api/v1/features/:slug` to un-absorb. Both need an `admin`-scope token.
+- The `features` MCP tool. It is on the ask-first list: it shows a plan, and it applies only with `dryRun: false` and an `admin`-scope token.
 
-Un-absorbing (`DELETE /api/v1/features/:slug`) puts it back as an ordinary app. Its settings are kept for the next absorb.
+Each act records an event: `app.absorbed`, `app.unabsorbed` or `app.feature_settings`. The settings event names the keys that changed, never the values.
 
-Each act is an event: `app.absorbed`, `app.unabsorbed`, `app.feature_settings` (which names the keys, never the values).
+Un-absorbing makes the app an ordinary app again. The forge keeps its settings for the next absorb.
 
-## Not yet
+## What an absorbed app gets
 
-The next slices: a schedule the forge fires instead of the app's own timer, feed items, the app's MCP tools inside the forge's `/mcp`, `secret` settings, and a health row on `/system`.
+- **A menu entry.** The app's `name` appears in the user menu of each person who can read its repository. The entry opens `page` through `/apps/open`, which checks access as any app link does. Absorbing grants no one new access.
+- **Settings.** `/settings/features/:slug` shows a form field per setting, and `PATCH /api/v1/features/:slug/settings` takes `{ "settings": { "runHourUtc": 9 } }`. A value that does not fit is refused with the setting named, and no value changes.
+- **Environment variables.** The app's process starts with `FORGE_FEATURE=1` and one `FORGE_SETTING_<NAME>` per setting. For example, `runHourUtc` becomes `FORGE_SETTING_RUN_HOUR_UTC`. The forge passes only names of that form, so a feature cannot set a variable the forge owns. A change to a setting redeploys the app, as a change to an app variable does.
+
+## What previews get
+
+The forge reads the declaration from the commit it starts. A preview of a pull that adds a setting starts with that setting.
+
+- A preview of a guest's pull that no writer has approved gets no `FORGE_SETTING_*` and no `FORGE_FEATURE`, in the same way it gets no secrets.
+- Only a production start updates the menu's name and page. A pull's `forge.json` cannot relabel the forge's menu.
+
+## Settings are not secrets
+
+Settings are stored as plain values. Anyone who can read the app's repository can read them through `GET /api/v1/features/:slug`, and each preview of the app is given them. Put keys and passwords in the app's secrets (`/settings/secrets` or the app's variables), not in a setting.
+
+## Code and tests
+
+- Code: `src/apps/feature.ts` (the declaration), `src/core/features.ts` (storage), `src/actions/features.ts` (the rules), `src/apps/feature_env.ts` (the environment), `src/web/pages/features.ts`, `src/http/api/features.ts`, `src/http/mcp/tools/features.ts`.
+- Tests: `test/features.test.ts` holds the rules. `test/apps-features.test.ts` runs a real app: it absorbs the app, changes a setting and reads the variables back from the running process.
+
+## Not done yet
+
+The forge does not yet fire a feature's schedule, show its feed items, serve its MCP tools inside the forge's `/mcp`, keep `secret` settings or show its health on `/system`.
