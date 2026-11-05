@@ -11,11 +11,16 @@ by itself if you let it. Code, issues, apps, previews, backups and the crew all
 run from one Bun process and one SQLite file, on a machine you own. What the crew
 reads goes to your model provider.
 
+Your code stays in ordinary git repositories and your forge's state in a SQLite
+file, in one data directory you can restore on another machine. You can clone
+your repositories and leave.
+
 Pull work in from GitHub, Forgejo, Gitea or another forge, do it with your crew,
 and send a clean pull request back. Build your own apps and share them.
 
 The forge is part of [Open Platform](https://www.open-platform.sh), with the
 platform for organizations.
+You run it yourself today. Hosting is coming.
 
 ## Try it
 
