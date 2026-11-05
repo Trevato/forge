@@ -51,6 +51,10 @@ The forge reads the declaration from the commit it starts. A preview of a pull t
 - A preview of a guest's pull that no writer has approved gets no `FORGE_SETTING_*` and no `FORGE_FEATURE`, in the same way it gets no secrets.
 - Only a production start updates the menu's name and page. A pull's `forge.json` cannot relabel the forge's menu.
 
+## Without the crew
+
+Absorbing, settings, the menu entry and the page use no model and start no agent run. They work with the crew off and no model credential on the forge. `test/apps-features.test.ts` runs the whole flow that way. The forge never hands an app the crew's credential. A feature's schedule is the app's own: the app reads `FORGE_SETTING_*` and runs its own timer. An app that wants a model's judgment on top, such as an issue written from what it found, must do its work without one and treat the model as optional.
+
 ## Settings are not secrets
 
 Settings are stored as plain values. Anyone who can read the app's repository can read them through `GET /api/v1/features/:slug`, and each preview of the app is given them. Put keys and passwords in the app's secrets (`/settings/secrets` or the app's variables), not in a setting.
