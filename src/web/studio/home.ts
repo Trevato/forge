@@ -726,7 +726,7 @@ export function studioDoor(ctx: Ctx): Response {
           <p class="door-support">Say what you need. An AI crew builds it, for a business or a game studio.</p>
           <div class="bar">
             ${btn("Get your own forge", { href: "#yours", variant: "primary", size: "lg" })}
-            ${when(made.length > 0, () => btn("See what's been built", { href: "#made", size: "lg" }))}
+            ${when(made.length > 0, () => btn("See what it built", { href: "#made", size: "lg" }))}
           </div>
           <div class="door-agent">
             <p>
