@@ -1,4 +1,5 @@
 /** The OAuth connect poll names its phases in Server-Timing. */
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,6 +22,7 @@ beforeAll(async () => {
   state.oauth = newFakeOAuth(CLIENT_ID);
   fake = serveFakeForge(state);
   app = createApp({ dataDir, port: 0 });
+  everyoneIsAMember(app.db);
   servers = await serve(app);
   await fetch(`${servers.url}/api/v1/users`, {
     method: "POST",

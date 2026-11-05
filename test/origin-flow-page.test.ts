@@ -10,6 +10,7 @@
  * Connect, instead of sending anyone to a consent screen for a dead state.
  */
 
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -70,6 +71,7 @@ describe("the connect flow page", () => {
     fake = serveFakeForge(state);
     dir = await mkdtemp(join(tmpdir(), "forge-flow-page-"));
     app = createApp({ dataDir: dir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     const made = await createUser(app.db, {
       username: "ada",

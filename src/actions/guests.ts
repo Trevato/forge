@@ -25,6 +25,13 @@ const DAY_MS = 86_400_000;
 const cooling = (app: App, user: User, now: number): boolean =>
   now - new Date(user.createdAt).getTime() < limitValue(app.db, "guest.cooldown_minutes") * MINUTE_MS;
 
+const forgeForksSpent = (app: App, now: number): boolean =>
+  contributionForksSince(app.db, new Date(now - DAY_MS).toISOString()) >= limitValue(app.db, "guest.forks_forge_per_day");
+
+/** Which count refused a fork in the row's own write. */
+export const forkLimitSpent = (app: App, now: number): GuestRefusal =>
+  forgeForksSpent(app, now) ? "guest_forge_forks_today" : "guest_forks_today";
+
 /** Why this guest may not fork `parent` now; undefined when they may. */
 export async function guestForkRefusal(
   app: App,
@@ -36,9 +43,7 @@ export async function guestForkRefusal(
   if (isMirror(app, parent) || isContributionFork(app.db, parent.id)) return "guest_copy";
   if (parent.archivedAt !== null) return "guest_archived";
   if (cooling(app, user, now)) return "guest_cooldown";
-  const since = new Date(now - DAY_MS).toISOString();
-  if (contributionForksSince(app.db, since) >= limitValue(app.db, "guest.forks_forge_per_day"))
-    return "guest_forge_forks_today";
+  if (forgeForksSpent(app, now)) return "guest_forge_forks_today";
   if ((await contributionRefusal(app, user.id)) !== undefined) return "guest_storage";
   return undefined;
 }

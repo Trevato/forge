@@ -10,6 +10,7 @@
  * their comment did not go upstream, not silently given a local one.
  */
 
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -173,6 +174,7 @@ describe("origins on the web", () => {
     github = serveFakeForge(ghState);
 
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     base = servers.url;
     alice = await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD });

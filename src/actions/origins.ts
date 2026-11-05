@@ -18,6 +18,8 @@
  * not v1.
  */
 
+import { NOT_A_MEMBER } from "../core/roles.ts";
+import { requireAbility } from "./roles.ts";
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
@@ -156,7 +158,8 @@ export type ConnectError =
   | "unreachable"
   | "bad_token"
   | "already_connected"
-  | "rate_limited";
+  | "rate_limited"
+  | "not_member";
 
 export interface ConnectInput {
   /** What the user typed: `github`, `codeberg.org`, `https://git.example`. */
@@ -182,6 +185,8 @@ export async function connectOrigin(
 ): Promise<Result<Connected, ConnectError | GuardRefusal | ScopeRefusal>> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  // A credential held for an account, and a mirror it can make: not for a guest.
+  if (!requireAbility(app, user.value, "make_it_yours").ok) return err("not_member");
   if (tooManyAttempts(app, user.value.id)) return err("rate_limited");
   if (input.token.trim() === "") return err("bad_token");
 
@@ -499,6 +504,7 @@ export async function checkOriginAgain(
 // ---- OAuth ----
 
 export type OAuthStartError =
+  | "not_member"
   | "unauthorized"
   | "unknown_host"
   | "private_host"
@@ -533,6 +539,8 @@ export async function startOAuthConnect(
 ): Promise<Result<OAuthStart, { error: OAuthStartError; message: string; kind?: OriginKind }>> {
   const user = requireUser(actor);
   if (!user.ok) return err({ error: "unauthorized", message: "sign in first" });
+  if (!requireAbility(app, user.value, "make_it_yours").ok)
+    return err({ error: "not_member", message: NOT_A_MEMBER });
   if (tooManyAttempts(app, user.value.id))
     return err({ error: "rate_limited", message: "too many connect attempts" });
 
@@ -1058,11 +1066,13 @@ export function startMirrorJob(
   originId: string,
   fullName: string,
   name?: string,
-): Result<MirrorJob, "unauthorized" | "not_found" | "unverified"> {
+): Result<MirrorJob, "unauthorized" | "not_found" | "unverified" | "not_member"> {
   const user = requireUser(actor);
   if (!user.ok) return user;
   const proven = requireVerified(app, user.value);
   if (!proven.ok) return proven;
+  const member = requireAbility(app, user.value, "make_it_yours");
+  if (!member.ok) return member;
   const origin = getOriginFor(app.db, user.value.id, originId);
   if (!origin) return err("not_found");
   return ok(startMirror(app, user.value, origin, fullName, name));

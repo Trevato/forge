@@ -5,7 +5,7 @@
  * repo. Deletion inverts the order — row first, directory second.
  */
 
-import { isContributionFork } from "./contribute.ts";
+import { contributionForksSince, isContributionFork } from "./contribute.ts";
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { isSafeName } from "../git/guard.ts";
@@ -457,6 +457,8 @@ export async function forkRepo(
     sealed?: boolean;
     /** A guest's contribution fork (`contribute.ts`): marked in the row's own write. */
     contribution?: boolean;
+    /** With `contribution`: guests' forks on the whole forge in the last 24 hours, counted in the same write. */
+    forgePerDay?: number;
   } = {},
 ): Promise<Result<Repo, ForkRepoError>> {
   const sealed = options.sealed === true;
@@ -469,8 +471,8 @@ export async function forkRepo(
   const since = new Date(now - DAY_MS).toISOString();
   const overLimit = (): boolean =>
     !sealed &&
-    options.perDay !== undefined &&
-    forksSince(db, ownerId, since).length >= options.perDay;
+    ((options.perDay !== undefined && forksSince(db, ownerId, since).length >= options.perDay) ||
+      (options.forgePerDay !== undefined && contributionForksSince(db, since) >= options.forgePerDay));
   if (overLimit()) return err("limit");
   if (!isSafeName(forkName)) return err("invalid_name");
   const owner = db
@@ -979,7 +981,19 @@ export async function deleteRepo(
   db: Database,
   reposRoot: string,
   repo: Repo,
-): Promise<Result<void, "delete_failed">> {
+): Promise<Result<void, "delete_failed" | "has_pulls">> {
+  // A pull names its head by this row, and a pull with no head row reads as
+  // one from its base's own branch, which runs without approval. So a fork a
+  // pull was sent from stays; nothing below is touched.
+  if (
+    db
+      .query(
+        `SELECT 1 FROM pull p JOIN issue i ON i.id = p.issue_id
+          WHERE p.head_repo_id = ?1 AND i.repo_id <> ?1 LIMIT 1`,
+      )
+      .get(repo.id) !== null
+  )
+    return err("has_pulls");
   const forks = listForks(db, repo.id);
   for (const fork of forks) {
     const forkDir = repoDir(reposRoot, fork.ownerName, fork.name);

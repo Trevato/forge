@@ -24,14 +24,15 @@ things with it:
 
 - Push to it, or commit to it through the page, the API or MCP.
 - Open a pull from it to its parent. A guest cannot open a pull from anywhere else.
-- Delete it.
+- Delete it, unless a pull was sent from it. A pull needs its head, so that fork stays.
 
 `canAdmin` answers no for the fork, so the guest has no settings, secrets,
 webhooks, app or crew on it. Nothing runs for it: `checks/service.ts`,
 `apps/runtime.ts` and `crew/dispatch.ts` each refuse a contribution fork. A
 guest cannot fork a private repository, a mirror, an archived repository or
 another guest's fork. An admin who promotes the guest makes the fork an
-ordinary one.
+ordinary one. A guest also cannot connect an origin or mirror a
+repository from one, since both hold a credential and make a repository.
 
 A guest's pull is a guest pull (`src/origins/guest.ts`):
 

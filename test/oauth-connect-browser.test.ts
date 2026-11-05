@@ -9,6 +9,7 @@
  * Content-Security-Policy refusal on the way.
  */
 
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -56,6 +57,7 @@ describe.skipIf(chromium === undefined)("connecting an origin in a real browser"
     fake = serveFakeForge(state);
     dir = await mkdtemp(join(tmpdir(), "forge-connect-browser-"));
     app = createApp({ dataDir: dir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
   }, 20_000);
 

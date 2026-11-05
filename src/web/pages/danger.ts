@@ -59,6 +59,8 @@ export function dangerPage(ctx: Ctx): Response {
   return response;
 }
 
+const HAS_PULLS = "This repository stays: a pull request was sent from it, and that pull request needs it. Nothing was deleted.";
+
 /** The admin's form, or a guest's on their own fork: the one thing they may do to it besides push. */
 async function deleteForm(ctx: Ctx): ReturnType<typeof adminForm> {
   const repo = loadRepo(ctx);
@@ -87,7 +89,7 @@ export async function repoDelete(ctx: Ctx): Promise<Response> {
   if (!deleted.ok) {
     return flashTo(ctx, `${repoBase(repo)}/settings/danger`, {
       tone: "danger",
-      message: "The repository could not be deleted.",
+      message: deleted.error === "has_pulls" ? HAS_PULLS : "The repository could not be deleted.",
     });
   }
   return flashTo(ctx, "/", { message: `${full} was deleted.` });

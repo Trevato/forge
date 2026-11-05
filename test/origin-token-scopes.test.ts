@@ -9,6 +9,7 @@
  * origin", and a person could not tell a wrong token from a narrow one.
  */
 
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -63,6 +64,7 @@ describe("connecting with a token that lacks a scope", () => {
     fake = serveFakeForge(newFakeState("forgejo", "octo", TOKEN));
     dir = await mkdtemp(join(tmpdir(), "forge-token-scopes-"));
     app = createApp({ dataDir: dir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     const made = await createUser(app.db, {
       username: "ada",

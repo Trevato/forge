@@ -1660,6 +1660,8 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const deleted = await deleteRepo(ctx.app, ctx.auth.user, repo);
+    if (!deleted.ok && deleted.error === "has_pulls")
+      return apiError("has_pulls", 409, "a pull request was sent from this repository, and that pull request needs it");
     if (!deleted.ok) return respondAccess(deleted.error, 500);
     return json({}, 200);
   });

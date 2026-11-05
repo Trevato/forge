@@ -7,7 +7,7 @@
 import { isContributionFork, type GuestRefusal } from "../core/contribute.ts";
 import { contributionRefusal } from "../core/storage.ts";
 import { limitValue } from "../settings/limits.ts";
-import { guestForkRefusal } from "./guests.ts";
+import { forkLimitSpent, guestForkRefusal } from "./guests.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
@@ -231,13 +231,22 @@ export async function forkRepo(
     user.value.id,
     name,
     contribution
-      ? { ...options, visibility: "public", contribution: true, perDay: limitValue(app.db, "guest.forks_per_day") }
+      ? {
+          ...options,
+          visibility: "public",
+          contribution: true,
+          perDay: limitValue(app.db, "guest.forks_per_day"),
+          forgePerDay: limitValue(app.db, "guest.forks_forge_per_day"),
+        }
       : {
           ...options,
           ...(user.value.kind === "agent" || user.value.isAdmin ? {} : { perDay: FORKS_PER_DAY }),
         },
   );
-  if (!forked.ok) return contribution && forked.error === "limit" ? err("guest_forks_today") : forked;
+  if (!forked.ok) {
+    if (!contribution || forked.error !== "limit") return forked;
+    return err(forkLimitSpent(app, options.now ?? Date.now()));
+  }
   storageChanged(app, user.value.id);
   app.bus.append({
     kind: "repo.forked",
@@ -544,7 +553,7 @@ export async function deleteRepo(
   app: App,
   actor: User | undefined,
   repo: Repo,
-): Promise<Result<void, "not_found" | "delete_failed">> {
+): Promise<Result<void, "not_found" | "delete_failed" | "has_pulls">> {
   // A guest administers nothing, but may always delete their own fork: it is
   // how they make room, and the day's count of forks stands.
   const admin =

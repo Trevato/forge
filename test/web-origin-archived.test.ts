@@ -2,6 +2,7 @@
  * The recovery page for a connected Forgejo's archived repositories, driven
  * over HTTP as a browser would, against a fake Forgejo in this process.
  */
+import { everyoneIsAMember } from "./helpers/members.ts";
 import {
   afterAll,
   beforeAll,
@@ -82,6 +83,7 @@ describe("restoring archived repositories", () => {
       dataDir: await mkdtemp(join(tmpdir(), "forge-archived-")),
       port: 0,
     });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     const made = async (username: string): Promise<User> => {
       const user = await createUser(app.db, {

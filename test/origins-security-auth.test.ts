@@ -1,3 +1,4 @@
+import { everyoneIsAMember } from "./helpers/members.ts";
 import {
   afterAll,
   beforeAll,
@@ -174,6 +175,7 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
     state.oauth = oauth;
     fake = serveFakeForge(state);
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
@@ -479,6 +481,7 @@ describe("OAuth device flow: a flow is private to the user who started it", () =
     state.oauth = oauth;
     fake = serveFakeForge(state);
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     api = callerFor(servers.url);
@@ -592,6 +595,7 @@ describe("refresh serialisation and needs_reauth", () => {
     ]);
     fake = serveFakeForge(state);
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     api = callerFor(servers.url);
@@ -798,6 +802,7 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     fake = serveFakeForge(state);
 
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     base = servers.url;
     api = callerFor(base);

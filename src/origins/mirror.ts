@@ -11,6 +11,7 @@
  * leave a mirror you can retry, not a half-created nothing.
  */
 
+import { lacks, NOT_A_MEMBER } from "../core/roles.ts";
 import type { App } from "../app.ts";
 import {
   getOriginRepo,
@@ -34,6 +35,7 @@ import { syncOrigin } from "./sync.ts";
 import type { RemoteRepo } from "./types.ts";
 
 export type MirrorError =
+  | "not_member"
   | "not_found"
   | "invalid_name"
   | "name_taken"
@@ -93,6 +95,8 @@ export async function mirrorRepo(
   const stage = (patch: Parameters<typeof advance>[1]): void => {
     if (job !== undefined) advance(job, patch);
   };
+  // A mirror is a repository of one's own, made here by the core: a guest has none.
+  if (lacks(app.db, actor, "make_it_yours")) return err("not_member");
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) return err("not_found");
 
@@ -298,6 +302,8 @@ export function startMirror(
 /** A mirror refusal in words a person can act on. */
 export function mirrorMessage(error: MirrorError): string {
   switch (error) {
+    case "not_member":
+      return NOT_A_MEMBER;
     case "not_found":
       return "the origin has no such repository, or this account cannot see it";
     case "invalid_name":

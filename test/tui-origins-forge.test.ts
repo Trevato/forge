@@ -1,5 +1,6 @@
 /** Another forge as an origin, in the terminal: connected by `c`, shown with what it does not carry. */
 
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -41,10 +42,12 @@ beforeAll(async () => {
     return dir;
   };
   friend = createApp({ dataDir: await make(), port: 0 });
+  everyoneIsAMember(friend.db);
   friendServers = await serve(friend);
   await seed(friend, "bob");
   friendToken = createToken(friend.db, getUserByName(friend.db, "bob")!.id, "alice", "ro").token;
   mine = createApp({ dataDir: await make(), port: 0 });
+  everyoneIsAMember(mine.db);
   await seed(mine, "alice");
 });
 

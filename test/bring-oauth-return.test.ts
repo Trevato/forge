@@ -1,3 +1,4 @@
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,6 +31,7 @@ beforeAll(async () => {
   fake = serveFakeForge(state);
   process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
   app = createApp({ dataDir: dir, port: 0 });
+  everyoneIsAMember(app.db);
   servers = await serve(app);
   await fetch(`${servers.url}/api/v1/users`, {
     method: "POST",

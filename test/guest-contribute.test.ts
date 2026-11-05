@@ -14,7 +14,10 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, deleteRepo, forkRepo } from "../src/actions/repos.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { makeItYours } from "../src/actions/make_it_yours.ts";
+import { connectOrigin } from "../src/actions/origins.ts";
 import { createApp, type App } from "../src/app.ts";
+import type { Origin } from "../src/core/origins.ts";
+import { mirrorRepo } from "../src/origins/mirror.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { GUEST_REFUSALS, HELP_BUILD, HELP_BUILD_NEXT, isContributionFork, SIGNUP_YOU_GET } from "../src/core/contribute.ts";
@@ -351,7 +354,7 @@ describe("a guest helps build a public repository", () => {
     expect(page).toContain("Send for review");
     expect(page).toContain("Delete this copy");
     setLimit(app.db, "guest.pulls_per_day", 0, "setup");
-    const form = new URLSearchParams({ title: "From the web", body: "", base: "main", head: "web" });
+    const form = new URLSearchParams({ title: "From the web", body: "", base: "main", head: "web", baseRepo: "parent" });
     const refused = await fetch(`${servers.url}/${user.username}/${mine.name}/pulls/new`, { method: "POST", redirect: "manual", headers, body: form });
     expect(await refused.text()).toContain("pull requests. Come back tomorrow");
     setLimit(app.db, "guest.pulls_per_day", 5, "setup");
@@ -366,8 +369,10 @@ describe("a guest helps build a public repository", () => {
       headers,
       body: new URLSearchParams({ confirm: `${user.username}/${mine.name}` }),
     });
+    // A pull needs its head: the fork stays, whole, and says so.
     expect(dropped.status).toBe(303);
-    expect(getRepoById(app.db, mine.id)).toBeUndefined();
+    expect(getRepoById(app.db, mine.id)).toBeDefined();
+    expect(await (await fetch(`${servers.url}/${user.username}/${mine.name}`, { headers })).text()).toContain("Send for review");
   });
 
   test("a member and an admin keep what they had; promotion lifts the guest's limits", async () => {
@@ -389,6 +394,16 @@ describe("a guest helps build a public repository", () => {
     expect(adminFork.ok).toBe(true);
     const direct = await createRepo(app, owner, { name: "still-mine" });
     expect(direct.ok).toBe(true);
+  });
+
+  test("a guest connects no origin and mirrors nothing", async () => {
+    const { user, token } = await guest();
+    const connected = await connectOrigin(app, user, { host: "github.com", token: "x" });
+    expect(!connected.ok && connected.error).toBe("not_member");
+    const res = await api(token, "/api/v1/user/origins", "POST", { host: "github.com", token: "x" });
+    expect(res.status).toBe(403);
+    const fake = { id: "o", userId: user.id } as unknown as Origin;
+    expect(await mirrorRepo(app, user, fake, "a/b")).toEqual({ ok: false, error: "not_member" });
   });
 
   test("an agent still owns nothing", async () => {

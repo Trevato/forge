@@ -53,7 +53,7 @@ export const GUEST_REFUSALS = {
   guest_forks_today: "You have used today's forks. Work in a fork you already have, or come back tomorrow.",
   guest_forge_forks_today: "This forge has taken all the new guest forks it can today. Come back tomorrow.",
   guest_pulls_today: "You have sent today's pull requests. Come back tomorrow, or add to one you already opened.",
-  guest_storage: "Your forks are using all the space a guest gets. Delete a fork to make room.",
+  guest_storage: "Your forks are using all the space a guest gets. Delete a fork you have not sent a pull request from to make room.",
   guest_pull_shape: "A guest sends a pull request from their own fork to the repository it came from. Use Help build this on that repository first.",
 } as const;
 export type GuestRefusal = keyof typeof GUEST_REFUSALS;
