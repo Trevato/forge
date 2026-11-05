@@ -154,8 +154,8 @@ export type OgKind = "repo" | "app" | "issue" | "pull" | "run" | "map" | "audit"
 /** The card for any page without a card of its own: it says only what the forge is. */
 const SITE_CARD: CardInput = {
   kind: "page",
-  title: "forge",
-  lines: ["Repositories, issues, pulls and the crew that works them."],
+  title: "Software for what you're building.",
+  lines: ["Yours to keep. Your own forge, with a private AI crew. Open source."],
 };
 
 /** The audit page's own bound. */

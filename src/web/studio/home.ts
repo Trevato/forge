@@ -837,7 +837,8 @@ bun run src/main.ts</code></pre>
   </div>`;
   const res = page({
     ctx,
-    title: "forge",
+    title: "forge: software for what you're building, yours to keep",
+    description: "Your own forge, with a private AI crew that builds your apps, games and business tools. Open source, and yours to keep.",
     body,
     ...(visitor
       ? {
