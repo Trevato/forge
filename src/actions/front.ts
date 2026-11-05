@@ -24,6 +24,8 @@ import {
   frontPicks,
   frontScore,
   frontSignals,
+  latestMerges,
+  type LatestMerge,
   frontWeights,
   isWeight,
   rankFront,
@@ -80,12 +82,39 @@ export interface CrewAtWork {
   readonly issues: readonly { number: number; title: string }[];
 }
 
+/** One merged change on a public repository, as the door lists it. */
+export interface DoorChange {
+  readonly repo: string;
+  readonly title: string;
+  readonly href: string;
+  readonly mergedAt: string;
+}
+
+/** What the forge is doing, in public, read with the page and kept with it. */
+export interface FrontPulse {
+  /** Public apps whose production is running right now. */
+  readonly running: number;
+  /** Changes merged on the shown repositories in the last `SIGNAL_DAYS`. */
+  readonly merged: number;
+  /** Agents at work on the shown repositories, and at most three of their issues. */
+  readonly crew: {
+    readonly running: number;
+    readonly issues: readonly { title: string; href: string }[];
+  };
+  /** The newest merged changes, at most `DOOR_CHANGES`. */
+  readonly changes: readonly DoorChange[];
+}
+
 export interface FrontPage {
   readonly featured: (FrontEntry & { readonly crew: CrewAtWork }) | undefined;
   readonly shelf: readonly FrontEntry[];
   /** Every public app a stranger could find on `/apps`. */
   readonly total: number;
+  readonly pulse: FrontPulse;
 }
+
+/** How many merged changes the door lists. */
+const DOOR_CHANGES = 4;
 
 /**
  * Whether a thumb is one taken as a stranger: not one from before thumbs
@@ -151,7 +180,22 @@ function scoresFor(app: App, repoIds: readonly string[], now: number): Scores {
 /** Forget the remembered ranking: the picks changed. */
 export function forgetFrontScores(app: App): void {
   remembered.delete(app);
+  merges.delete(app);
   built.delete(app);
+}
+
+/** The newest merges, kept as long as a ranking: a write must not mean another walk of the merged pulls. */
+const merges = new WeakMap<App, { at: number; rows: readonly LatestMerge[]; ids: ReadonlySet<string> }>();
+
+function newestMerges(app: App, repoIds: readonly string[], now: number): readonly LatestMerge[] {
+  const kept = merges.get(app);
+  const shown = new Set(repoIds);
+  // A repository made private leaves at once; one made public waits its turn.
+  if (kept !== undefined && now - kept.at < SCORES_MS && repoIds.every((id) => kept.ids.has(id)))
+    return kept.rows.filter((r) => shown.has(r.repoId));
+  const rows = latestMerges(app.db, repoIds, DOOR_CHANGES * 4);
+  merges.set(app, { at: now, rows, ids: shown });
+  return rows;
 }
 
 /** How long a built page is kept when nothing in the database changed: an app's state is not in it. */
@@ -304,6 +348,9 @@ function buildFrontPage(app: App, now: number): FrontPage {
     ...(first === undefined ? [] : rest),
     ...(first === undefined ? ranked.slice(1) : ranked),
   ].slice(0, SHELF);
+  const shownRepos = new Map(
+    [...pinned, ...publicApps.map((r) => repos.get(r.repoId)!)].map((r) => [r.id, r]),
+  );
   return {
     featured:
       featuredEntry === undefined
@@ -311,12 +358,56 @@ function buildFrontPage(app: App, now: number): FrontPage {
         : { ...featuredEntry, crew: crewAtWork(app, featuredEntry.repo) },
     shelf,
     total: publicApps.length,
+    pulse: buildPulse(app, shownRepos, publicApps, scores, now),
   };
+}
+
+function buildPulse(
+  app: App,
+  shown: ReadonlyMap<string, Repo>,
+  publicApps: readonly AppRecord[],
+  scores: Scores,
+  now: number,
+): FrontPulse {
+  const runtime = appsRuntime(app);
+  const running =
+    runtime === undefined
+      ? 0
+      : publicApps.filter(
+          (r) =>
+            r.access === "public" &&
+            runtime.status(r).some((env) => env.env === "production" && env.state === "running"),
+        ).length;
+  const ids = [...shown.keys()];
+  const merged = ids.reduce((sum, id) => sum + (scores.get(id)?.s.ships ?? 0), 0);
+  const seen = new Set<string>();
+  const changes: DoorChange[] = [];
+  for (const m of newestMerges(app, ids, now)) {
+    const repo = shown.get(m.repoId);
+    if (repo === undefined || seen.has(m.title) || changes.length === DOOR_CHANGES) continue;
+    seen.add(m.title);
+    changes.push({
+      repo: repo.name,
+      title: m.title,
+      href: `/${repo.ownerName}/${repo.name}/pulls/${m.number}`,
+      mergedAt: m.mergedAt,
+    });
+  }
+  return { running, merged, crew: crewOn(app, shown), changes };
 }
 
 /** The crew's runs on one readable repository right now, and their issues. */
 function crewAtWork(app: App, repo: Repo): CrewAtWork {
-  const running = listActiveRuns(app.db, [repo.id]).filter(
+  const { running, issues } = crewOn(app, new Map([[repo.id, repo]]));
+  return { running, issues: issues.map(({ number, title }) => ({ number, title })) };
+}
+
+/** The crew's runs across readable repositories right now, and the issues they are on. */
+function crewOn(
+  app: App,
+  repos: ReadonlyMap<string, Repo>,
+): { running: number; issues: readonly { number: number; title: string; href: string }[] } {
+  const running = listActiveRuns(app.db, [...repos.keys()]).filter(
     (r) => r.state === "running",
   );
   const issues = getIssuesByIds(
@@ -324,13 +415,19 @@ function crewAtWork(app: App, repo: Repo): CrewAtWork {
     running.flatMap((r) => (r.issueId === null ? [] : [r.issueId])),
   );
   const seen = new Set<string>();
-  const on: { number: number; title: string }[] = [];
+  const on: { number: number; title: string; href: string }[] = [];
   for (const run of running) {
     const issue = run.issueId === null ? undefined : issues.get(run.issueId);
     // The front page is the stranger's view: a sealed report is not on it.
     if (issue === undefined || issue.sealed || seen.has(issue.id)) continue;
+    const repo = repos.get(run.repoId);
+    if (repo === undefined) continue;
     seen.add(issue.id);
-    on.push({ number: issue.number, title: issue.title });
+    on.push({
+      number: issue.number,
+      title: issue.title,
+      href: `/${repo.ownerName}/${repo.name}/issues/${issue.number}`,
+    });
   }
   return { running: running.length, issues: on.slice(0, 3) };
 }

@@ -234,3 +234,31 @@ export function rankFront<
   }
   return [...top, ...waiting];
 }
+
+/** A merged change on a repository the caller may show. */
+export interface LatestMerge {
+  readonly repoId: string;
+  readonly number: number;
+  readonly title: string;
+  readonly mergedAt: string;
+}
+
+/** The newest merged pulls on these repositories; a sealed issue is never among them. */
+export function latestMerges(
+  db: Database,
+  repoIds: readonly string[],
+  limit: number,
+): readonly LatestMerge[] {
+  const ids = [...new Set(repoIds)].slice(0, 400);
+  if (ids.length === 0) return [];
+  return db
+    .query<LatestMerge, (string | number)[]>(
+      `SELECT issue.repo_id AS repoId, issue.number AS number, issue.title AS title,
+         pull.merged_at AS mergedAt
+       FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE pull.merged_at IS NOT NULL AND issue.sealed = 0
+         AND issue.repo_id IN (${ids.map((_, n) => `?${n + 2}`).join(",")})
+       ORDER BY pull.merged_at DESC LIMIT ?1`,
+    )
+    .all(limit, ...ids);
+}

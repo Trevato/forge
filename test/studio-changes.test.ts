@@ -1000,7 +1000,7 @@ describe("the studio, continued", () => {
         headers: { cookie: "forge_mode=studio" },
       })
     ).text();
-    expect(dev).toContain("<h1>Apps, live.</h1>");
+    expect(dev).toContain("Tell your crew what to build,");
     expect(dev).toContain("a lighthouse in the fog");
     expect(dev).not.toContain("<h1>Your code, your machine.</h1>");
     await done();
@@ -1186,7 +1186,7 @@ describe("the studio, continued", () => {
         });
         expect(response.status).toBe(200);
         const body = await response.text();
-        expect(body).toContain("<h1>Apps, live.</h1>");
+        expect(body).toContain("Tell your crew what to build,");
         expect(body).toContain("Nothing public is up yet");
         expect(body).toContain('href="/signup"');
         expect(body).toContain('href="/signin"');

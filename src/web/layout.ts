@@ -158,6 +158,10 @@ export interface PageOptions {
    * (the board). The overlays stay, so the palette is still one chord away.
    */
   bare?: boolean;
+  /** A visitor's page: what the bar holds in place of search and the menu. */
+  tools?: Html;
+  /** A visitor's page: what the foot holds in place of its usual line. */
+  foot?: Html;
   /** The theme when the viewer has chosen none: for a page that is dark by nature. */
   theme?: ThemeName;
 }
@@ -570,6 +574,7 @@ function topbar(
   ctx: Ctx,
   theme: ThemeName | undefined,
   crumbs: PageOptions["crumbs"],
+  tools?: Html,
 ): Html {
   const user = ctx.auth.user;
   return html`<a class="skip" href="#main">Skip to content</a>
@@ -592,7 +597,7 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}
+        ${tools ?? html`${searchBar()}
         ${user
           ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
                 >${icon("comment")}</a
@@ -611,7 +616,7 @@ function topbar(
               )}`
           : html`${guestMenu(ctx, theme)}${btn("Sign in", {
               href: signInHref(ctx),
-            })}`}
+            })}`}`}
       </span>
     </header>`;
 }
@@ -621,7 +626,8 @@ function topbar(
  * build stamped it (`kernel/version.ts`), in place of the line everyone
  * else gets: the one person who is asked "which version is this?".
  */
-function footer(ctx: Ctx): Html {
+function footer(ctx: Ctx, own?: Html): Html {
+  if (own !== undefined) return html`<footer class="foot">${own}</footer>`;
   const reduced =
     ctx.auth.user?.isAdmin === true ? protectionNotice() : undefined;
   return html`<footer class="foot">
@@ -682,7 +688,7 @@ export function page(options: PageOptions, status = 200): Response {
 
   // The body's markup. Every `icon()` left a `<use>` behind; they are aimed
   // at the one hashed sprite file below, so no page carries a drawing.
-  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs)}
+  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs, options.tools)}
     <main
       class="${options.bare
         ? "bare"
@@ -693,7 +699,7 @@ export function page(options: PageOptions, status = 200): Response {
     >
       ${flash ? flashToast(flash) : null}${options.body}
     </main>
-    ${options.bare ? null : footer(ctx)} ${overlays()}
+    ${options.bare ? null : footer(ctx, options.foot)} ${overlays()}
     ${paletteIndex(ctx, options.palette ?? [])}`;
 
   const own = options.scriptJs ? pageScriptAsset(options.scriptJs, ctx.app.config.dataDir) : undefined;
