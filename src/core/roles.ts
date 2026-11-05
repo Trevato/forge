@@ -49,7 +49,7 @@ export function rolesTable(): string {
 
 /** The words a guest is refused with, on every surface: what they cannot do, and what they can. */
 export const NOT_A_MEMBER =
-  "this account is a guest. A guest can read, comment and help build public apps by sending changes for review. To run your own apps and crew, get your own forge";
+  "this account is a guest. A guest can read, comment and help build public apps by sending changes for review. To run your own apps and crew, get your own forge at /forges/new, or with the MCP tool spawn";
 
 /** The words a member (or guest) is refused admin settings and releases with. */
 export const NOT_AN_ADMIN = "only an admin can change the forge's settings or its releases";

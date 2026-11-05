@@ -22,6 +22,7 @@ import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { GUEST_REFUSALS, HELP_BUILD, HELP_BUILD_NEXT, isContributionFork, SIGNUP_YOU_GET } from "../src/core/contribute.ts";
 import { pullMayRun } from "../src/core/pull_trust.ts";
+import { getPull } from "../src/core/pulls.ts";
 import { canAdmin, canWrite, getRepoById, type Repo } from "../src/core/repos.ts";
 import { NOT_A_MEMBER, setMember } from "../src/core/roles.ts";
 import { createSession } from "../src/core/sessions.ts";
@@ -74,6 +75,8 @@ describe("a guest helps build a public repository", () => {
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
     });
+
+  const openPullRow = async (repo: Repo, number: number) => getPull(app.db, repo.id, number);
 
   async function fork(user: User, parent: Repo = lib): Promise<Repo> {
     const made = await forkRepo(app, user, parent);
@@ -458,6 +461,76 @@ describe("a guest helps build a public repository", () => {
     expect(security).toContain("new accounts today");
     expect(security).toContain('href="/settings/people"');
     expect(security).toContain("Close sign-up now");
+  });
+
+  test("a person's own agent attaches by OAuth and walks the guest path through MCP and git", async () => {
+    const { user } = await guest();
+    const cookie = `forge_session=${createSession(app.db, user.id).token}`;
+    const discovery = await fetch(`${servers.url}/.well-known/oauth-authorization-server`);
+    expect(discovery.status).toBe(200);
+    const redirect = "https://agent.example/callback";
+    const registered = await fetch(`${servers.url}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "My agent", redirect_uris: [redirect] }),
+    });
+    const clientId = ((await registered.json()) as { client_id: string }).client_id;
+    const verifier = "v".repeat(64);
+    const challenge = Buffer.from(new Bun.CryptoHasher("sha256").update(verifier).digest()).toString("base64url");
+    const asked = new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirect, code_challenge: challenge, code_challenge_method: "S256", state: "s" });
+    const consent = await fetch(`${servers.url}/oauth/authorize`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, origin: servers.url },
+      body: new URLSearchParams({ ...Object.fromEntries(asked), decision: "allow", grant: "rw", name: "my agent", lifetime: "never" }),
+    });
+    const code = new URL(consent.headers.get("location")!).searchParams.get("code")!;
+    const exchanged = await fetch(`${servers.url}/oauth/token`, {
+      method: "POST",
+      body: new URLSearchParams({ grant_type: "authorization_code", client_id: clientId, redirect_uri: redirect, code_verifier: verifier, code }),
+    });
+    const token = ((await exchanged.json()) as { access_token: string }).access_token;
+    expect(token).toBeTruthy();
+
+    // Exactly the person's role: a guest's refusals, each saying what to do instead.
+    const role = await mcpTool(servers.url, token, "whoami_can");
+    expect(role.value.role).toBe("guest");
+    const copy = await mcpTool(servers.url, token, "new_app", { name: "agent-app", dryRun: false });
+    expect(copy.error).toBeDefined();
+    expect(NOT_A_MEMBER).toContain("spawn");
+    expect(JSON.stringify(await mcpTool(servers.url, token, "fork", { repo: "olive/hidden" }))).toContain("not_found");
+    const brief = JSON.stringify((await mcpTool(servers.url, token, "contribute")).value);
+    expect(brief).toContain("open_pull");
+    expect(brief).toContain("spawn");
+
+    const repo = await publicRepo("agent-lib");
+    const forked = await mcpTool(servers.url, token, "fork", { repo: `olive/${repo.name}` });
+    expect(forked.error).toBeUndefined();
+    const mine = forked.value.repo as string;
+    const wrote = await mcpTool(servers.url, token, "write_file", { repo: mine, branch: "main", path: "AGENT.md", content: "from the agent\n", message: "Agent change" });
+    expect(wrote.error).toBeUndefined();
+
+    // Plain git over HTTPS with the same token.
+    const work = await mkdtemp(join(tmpdir(), "agent-git-"));
+    const auth = `http.extraHeader=Authorization: Basic ${Buffer.from(`${user.username}:${token}`).toString("base64")}`;
+    // The forge answers in this process, so git runs beside it, never blocking it.
+    const run = (cwd: string, ...a: string[]) =>
+      Bun.spawn(["git", "-c", auth, "-c", "user.name=a", "-c", "user.email=a@a", ...a], { cwd, stdout: "ignore", stderr: "ignore" }).exited;
+    expect(await run(work, "clone", `${servers.url}/${mine}.git`, "w")).toBe(0);
+    const tree = join(work, "w");
+    await Bun.write(join(tree, "GIT.md"), "pushed\n");
+    expect(await run(tree, "add", "GIT.md")).toBe(0);
+    expect(await run(tree, "commit", "-m", "By git")).toBe(0);
+    expect(await run(tree, "push", "origin", "HEAD:main")).toBe(0);
+    // Pushing anywhere else is refused.
+    expect(await run(tree, "push", `${servers.url}/olive/${repo.name}.git`, "HEAD:sneak")).not.toBe(0);
+    await rm(work, { recursive: true, force: true });
+
+    const opened = await mcpTool(servers.url, token, "open_pull", { repo: `olive/${repo.name}`, title: "From my agent", head: "main", headRepo: mine });
+    expect(opened.error).toBeUndefined();
+    const pull = (await openPullRow(repo, opened.value.number))!;
+    expect(guestWaits(app.db, pull)).toBe(true);
+    expect(pullMayRun(app.db, repo, pull, pull.headOid)).toBe(false);
   });
 
   test("the whole way: sign up, fork, commit, pull, and a person's review lands it", async () => {
