@@ -16,6 +16,7 @@ import { forgetFrontScores, frontPage } from "../src/actions/front.ts";
 import * as lookService from "../src/looks/service.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
+import { changeSignup } from "../src/actions/signup.ts";
 import {
   AppsRuntime,
   type EnvState,
@@ -538,6 +539,29 @@ describe("the front page", () => {
   });
 
 
+
+  test("the door shows the pins alone, in order, each with its doors, and says what a closed forge offers", async () => {
+    await make(admin, "door-first");
+    await make(admin, "door-second");
+    expect((await put(adminToken, { pinned: ["owner/door-second", "owner/door-first"], hidden: [] })).status).toBe(200);
+    const shelf = (b: string) => b.slice(b.indexOf(" data-shelf"), b.indexOf('id="door-end"') === -1 ? undefined : b.indexOf('id="door-end"'));
+    const open = await door();
+    const tiles = shelf(open);
+    expect(tiles.indexOf("door-second")).toBeLessThan(tiles.indexOf("door-first"));
+    expect(tiles.match(/class="card"/g)?.length).toBe(2);
+    expect(tiles).toContain('href="/owner/door-second/app/production/open"');
+    expect(tiles).toContain(`href="/signup?next=${encodeURIComponent("/owner/door-second")}"`);
+    expect(tiles).toContain(">Help build this<");
+    const set = changeSignup(app, admin, "invite");
+    expect(set.ok).toBe(true);
+    const closed = await door();
+    expect(closed).toContain('href="/owner/door-second/report"');
+    expect(closed).toContain(">Suggest a change<");
+    expect(closed).not.toContain("Help build this");
+    expect(closed).toContain("New accounts on this forge are by invitation.");
+    changeSignup(app, admin, "open");
+    expect((await put(adminToken, { pinned: [], hidden: [] })).status).toBe(200);
+  });
   test("the door lists merges on public repositories only, and never a sealed one", async () => {
     const merged = (repoId: string, title: string, sealed = false) => {
       const issue = createIssue(app.db, { repoId, authorId: admin.id, title, body: "" });

@@ -375,7 +375,7 @@ export function llmsTxt(ctx: Ctx): Response {
   const sent = ctx.request.headers.get("if-none-match");
   if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
     return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache, vary: "Cookie, Authorization" } });
-  const res = text(kept.body, "text/markdown; charset=utf-8");
+  const res = text(kept.body);
   res.headers.set("cache-control", cache);
   res.headers.set("etag", kept.etag);
   res.headers.append("vary", "Cookie, Authorization");
@@ -392,6 +392,15 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       running,
       "",
       `> ${SITE_LINE} A self-hosted forge in one Bun process and one SQLite file that hosts code and runs apps, with AI agents that build. Forges connect to one another. Part of Open Platform (https://www.open-platform.sh). Anyone may read a public repository, and report a problem in it without an account.`,
+      "",
+      "## Start here",
+      "",
+      "If you are an assistant helping a person: say plainly what you can and cannot do from where you are. If you cannot reach this forge or hold an account on it, give the person these steps to do by hand.",
+      "",
+      `- Help build a public app here: each one is a repository at ${o}/{owner}/{name}. A person makes an account at ${o}/signup, then follows "Offer a change" below. If /signup answers 403, new accounts here are by invitation for now: send a suggestion through "Report a problem" below, or work from a forge of your own.`,
+      `- Get your own forge: \`git clone https://github.com/Trevato/forge && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Hosted forges are not available yet.`,
+      "- Work from your own forge: connect it to this one as an origin, bring an app in, and send your work back. How: https://github.com/Trevato/forge/blob/main/docs/ORIGINS.md",
+      `- Connect an assistant that can use tools: add a custom connector with the URL ${mcp.url}. It signs in with OAuth; only the report tool works without an account.`,
       "",
       "## Report a problem (no account)",
       "",
@@ -477,7 +486,7 @@ export interface PageLink {
  */
 export function pageLinks(ctx: Ctx): PageLink[] {
   const links: PageLink[] = [
-    { rel: "service-doc", href: "/llms.txt", type: "text/markdown" },
+    { rel: "service-doc", href: "/llms.txt", type: "text/plain" },
     // What the reader of this page can do here, as who they are
     // (`actions/here.ts`), for an agent that would rather not scrape it.
     {

@@ -17,7 +17,8 @@ import {
   type FrontPage,
   type FrontPicksJson,
 } from "../../actions/front.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
+import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
+import { signupClosed } from "../../actions/users.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
@@ -42,6 +43,7 @@ import {
   row,
   timeAgo,
   terminalLine,
+  copyField,
 } from "../ui.ts";
 import {
   downloadsCard,
@@ -497,27 +499,44 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
   );
 }
 
-/** How many apps the door shows: a taste of what was made, with a link to the rest. */
-const DOOR_TILES = 8;
+/** How many apps the door shows when nothing is pinned: a taste, with a link to the rest. */
+const DOOR_TILES = 6;
 
-/** Where a stranger opens an app, when it is one they may open: its running address, or else its repository. */
+/** The live address of an app a stranger may open, or nothing. */
 function tileHref(entry: FrontEntry): string | undefined {
   return entry.app?.access === "public" && entry.state !== undefined
     ? `${repoBase(entry.repo)}/app/production/open`
     : undefined;
 }
 
+/** How an app is right now, in words anyone can read. */
+const DOOR_STATE: Partial<Record<EnvState, string>> = {
+  running: "Live now",
+  asleep: "Wakes when you open it",
+  deploying: "Updating",
+};
+
+/** What a stranger can do to help with an app: make an account if this forge takes new ones, or send its keepers a note. */
+function helpDoor(repo: FrontEntry["repo"], accounts: boolean): Html {
+  return accounts
+    ? html`<a href="/signup?next=${encodeURIComponent(repoBase(repo))}">Help build this</a>`
+    : html`<a href="${repoBase(repo)}/report">Suggest a change</a>`;
+}
+
 /**
- * One app on the door: its picture opens it, its name leads to its repository,
- * one clamped line says what it is. A featured repository may have no app and
- * no picture (the forge itself), and is then only its words.
+ * One numbered app on the door, with its doors said plainly: use it, read how
+ * it is made, help with it. A pinned app is the owner's pick and reads Play;
+ * a featured repository may have no app and no picture (the forge itself),
+ * and then has only the doors it really has.
  */
-function tile(entry: FrontEntry, attrs?: Html): Html {
-  const { repo, picture } = entry;
+function tile(entry: FrontEntry, at: number, accounts: boolean, attrs?: Html): Html {
+  const { repo, picture, state } = entry;
   const href = repoBase(repo);
   const open = tileHref(entry);
+  const said = state === undefined ? undefined : DOOR_STATE[state];
   return card(
-    html`${when(
+    html`<p class="door-kick"><span>${String(at + 1).padStart(2, "0")}</span>${when(said, (s) => html` / ${s}`)}</p>
+      ${when(
         picture,
         (src) =>
           html`<a
@@ -537,13 +556,19 @@ function tile(entry: FrontEntry, attrs?: Html): Html {
       )}
       <div class="card-body stack stack-tight">
         <a href="${href}"><strong>${repo.name}</strong></a>
-        <span class="muted small truncate" title="${repo.description}"
-          >${repo.description !== "" ? repo.description : repo.ownerName}</span
+        <span class="muted door-line" title="${repo.description}"
+          >${repo.description !== "" ? repo.description : `By ${repo.ownerName}`}</span
         >
-        ${when(
-          open,
-          (to) => html`<a class="small door-open" href="${to}" rel="nofollow" aria-label="Open ${repo.name}">Open</a>`,
-        )}
+        <p class="door-verbs">
+          ${when(
+            open,
+            (to) => html`<a class="door-verb-first" href="${to}" rel="nofollow" aria-label="${entry.pinned ? "Play" : "Open"} ${repo.name}"
+              >${entry.pinned ? "Play" : "Open"}</a
+            >`,
+          )}
+          <a href="${href}" aria-label="Read the code of ${repo.name}">Read the code</a>
+          ${helpDoor(repo, accounts)}
+        </p>
       </div>`,
     { pad: false, ...(attrs === undefined ? {} : { attrs }) },
   );
@@ -560,7 +585,7 @@ function doorFigure(n: number, label: string): Html | null {
 }
 
 /**
- * The hero's live panel: what this forge's crew is doing and has just merged,
+ * The hero's live panel: what this forge's crew is doing and has just finished,
  * on public repositories only, from the front page's cached read. With nothing
  * to say it is absent and the hero stands alone: it never makes a number up.
  */
@@ -589,7 +614,7 @@ function doorLive(front: FrontPage): Html | null {
     )}
     ${when(
       pulse.changes.length > 0,
-      () => html`<p class="door-now">Just merged</p>
+      () => html`<p class="door-now">Just finished</p>
         <ul class="door-ledger">
           ${pulse.changes.map(
             (c) => html`<li>
@@ -604,12 +629,31 @@ function doorLive(front: FrontPage): Html | null {
 
 const FORGE_GITHUB = "https://github.com/Trevato/forge";
 
+/** The maker's other public work, on this project's own forge only: a copy of the forge has its own maker. */
+const FROM_THE_MAKER: readonly (readonly [name: string, line: string])[] = [
+  ["mitosis", "The Platform: shared apps and maintainers for a whole organization"],
+  ["CSGOMLBot", "A bot that teaches itself CS:GO"],
+  ["battleship-cli", "Battleship in your terminal, with friends over ssh"],
+  ["QR-io", "Moving data through QR codes"],
+  ["bible-mcp", "Biblical context for AI apps"],
+];
+
+/**
+ * What a person pastes into any AI assistant. It asks for help and says what
+ * to do when the assistant cannot reach the forge, which a hosted one often
+ * cannot.
+ */
+function agentPrompt(origin: string): string {
+  return `Read ${origin}/llms.txt and tell me in plain words what this forge is. Ask if I want to help build one of its public apps or get my own forge, then walk me through it. If you can't open the link or act on the forge yourself, say so and give me the exact steps.`;
+}
+
 /**
  * The studio's door for a stranger (#686): what this is, what it is doing right
- * now, what it has made, and how to get one. A site's picks decide which apps
- * lead (`actions/front.ts` decides all of it, and the API and MCP answer from
- * the same place). A signed-out reader gets this whatever the mode, with a
- * visitor's top bar and foot.
+ * now, what it has made, and how to get one, each door saying in plain words
+ * what it does. The site's pins are the apps shown, in their order
+ * (`actions/front.ts` decides all of it, and the API and MCP answer from the
+ * same place); with no pins, the best of what is public. A signed-out reader
+ * gets this whatever the mode, with a visitor's top bar and foot.
  *
  * `/front` is the same page for anyone; a site admin there also gets the
  * controls that decide it.
@@ -619,12 +663,14 @@ export function studioDoor(ctx: Ctx): Response {
   let tiles: Html[] = [];
   const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app, Date.now(), ctx.request));
   const featured = front.featured;
-  const shelf = front.shelf.slice(0, DOOR_TILES - (featured === undefined ? 0 : 1));
+  const all = [...(featured === undefined ? [] : [featured]), ...front.shelf];
+  const pinned = all.filter((e) => e.pinned);
+  const made = pinned.length > 0 ? pinned : all.slice(0, DOOR_TILES);
+  const accounts = !signupClosed(ctx.app);
   timePhase(ctx.request, "tiles", () => {
-    // Pictures first: a featured repository with no picture closes the row.
-    const lead = when(featured, (f) => tile(f, html`role="region" aria-label="Featured"`));
-    const rest = shelf.map((e) => tile(e));
-    tiles = featured?.picture === undefined ? [...rest, lead ?? html``] : [lead ?? html``, ...rest];
+    tiles = made.map((e, at) =>
+      tile(e, at, accounts, e === featured ? html`role="region" aria-label="Featured"` : undefined),
+    );
   });
   // Render is what is left of the page once the shelf read is taken out.
   const rendering = performance.now();
@@ -635,34 +681,50 @@ export function studioDoor(ctx: Ctx): Response {
   const back = ctx.url.pathname === "/" ? "/" + ctx.url.search : "/";
   const nextQuery = back === "/" ? "" : `?next=${encodeURIComponent(back)}`;
   const ssh = sshCommand(ctx.app);
-  const signup = offersSignup(ctx);
-  const hasApps = featured !== undefined || shelf.length > 0;
-  const live = doorLive(front);
-  const shown = shelf.length + (featured === undefined ? 0 : 1);
+  const signup = offersSignup(ctx) && accounts;
+  const origin = (ctx.app.config.url ?? ctx.url.origin).replace(/\/$/, "");
+  const prompt = agentPrompt(origin);
+  const asked = encodeURIComponent(prompt);
+  const ours = origin === "https://forge.open-platform.sh";
   const body = html`<div class="door">
     <section class="door-hero">
-      <div class="door-lead">
-        <h1>Tell your crew what to build, <span class="muted">then go play it.</span></h1>
-        <p class="door-support">
-          ${SITE_LINE} An agent builds on a branch with a live preview, and it ships when you say.
-        </p>
-        <div class="bar">
-          ${hasApps
-            ? html`${btn("Play something it built", { href: "#made", variant: "primary", size: "lg" })}
-              ${btn("Get your own forge", { href: "#yours", size: "lg" })}`
-            : btn("Get your own forge", { href: "#yours", variant: "primary", size: "lg" })}
+      <h1>Say what you want.<br /><span class="muted">Watch it get built.</span></h1>
+      <div class="door-under">
+        <div class="door-lead">
+          <p class="door-support">An AI crew builds your apps, games and business tools. They stay yours.</p>
+          <div class="bar">
+            ${made.length > 0
+              ? html`${btn("Play something", { href: "#made", variant: "primary", size: "lg" })}
+                ${btn("Get your own", { href: "#yours", size: "lg" })}`
+              : btn("Get your own", { href: "#yours", variant: "primary", size: "lg" })}
+          </div>
+          <div class="door-agent">
+            <p>
+              Have an AI assistant? Give it this:
+              <a href="https://chatgpt.com/?q=${asked}" rel="noopener">ChatGPT</a>
+              <a href="https://grok.com/?q=${asked}" rel="noopener">Grok</a>
+              <a href="https://claude.ai/new?q=${asked}" rel="noopener">Claude</a>
+              <span class="muted">(sign in first)</span>
+            </p>
+            ${copyField("door-prompt", prompt, "A message for any AI assistant", "Copy the message")}
+          </div>
         </div>
+        ${doorLive(front)}
       </div>
-      ${live}
     </section>
 
     <section class="door-section" id="made">
       <h2>Made here</h2>
-      <p class="door-support">Public apps on this forge. Open one and use it.</p>
-      ${hasApps
+      <p class="door-support">
+        Play runs it in your browser. Read the code shows how it was made.
+        ${accounts
+          ? "Help build this gets you an account, so you can ask for changes."
+          : "Suggest a change sends a note to the people who keep it."}
+      </p>
+      ${made.length > 0
         ? html`<div class="door-shelf" data-shelf>${tiles}</div>
             ${when(
-              front.total > shown,
+              front.total > made.length,
               () => html`<p class="door-more">
                 <a href="/explore?q=kind%3Aapp">All ${front.total} public apps</a>
               </p>`,
@@ -674,6 +736,20 @@ export function studioDoor(ctx: Ctx): Response {
               note: "Apps made public here show up on this shelf once they run.",
             })}
           </div>`}
+      ${when(
+        ours,
+        () => html`<div class="door-maker">
+          <h3>Also from the maker, on GitHub</h3>
+          <ul>
+            ${FROM_THE_MAKER.map(
+              ([name, line]) => html`<li>
+                <a class="mono" href="https://github.com/Trevato/${name}">${name}</a>
+                <span class="muted">${line}</span>
+              </li>`,
+            )}
+          </ul>
+        </div>`,
+      )}
     </section>
 
     <section class="door-section">
@@ -681,46 +757,53 @@ export function studioDoor(ctx: Ctx): Response {
       <ol class="door-steps">
         <li>
           <h3>Describe it</h3>
-          <p>Tell the crew what you want in plain words: a fix, a feature, a whole game.</p>
+          <p>Say what you want in plain words: a fix, a new feature, a whole game, the tool your shop is missing.</p>
         </li>
         <li>
           <h3>Try it</h3>
-          <p>An agent builds it on a branch. You get a live preview to click through while it works.</p>
+          <p>An AI agent builds it on a separate copy. You click around a live preview while nothing else changes.</p>
         </li>
         <li>
           <h3>Ship it</h3>
-          <p>Nothing goes out until you say so. Then it does, and the history stays in git.</p>
+          <p>It goes live when you say so, not before. Every change is kept.</p>
         </li>
       </ol>
     </section>
 
     <section class="door-section door-split">
-      <h2>It stays yours</h2>
+      <div class="stack">
+        <h2>It stays yours</h2>
+        <ul class="door-proof">
+          <li>one Bun process</li>
+          <li>one SQLite file</li>
+          <li>MCP at /mcp</li>
+          <li>AGPL-3.0</li>
+        </ul>
+      </div>
       <dl class="door-points">
         <div>
           <dt>You can move it</dt>
-          <dd>Your code is in git and your state is in one SQLite file. Both go where you go.</dd>
+          <dd>Your code is in git and everything else is in one SQLite file. Copy them to any machine and keep going.</dd>
         </div>
         <div>
           <dt>The crew is private</dt>
-          <dd>The agents work for your forge alone, on your repositories, with your own model credential.</dd>
+          <dd>The agents work for your forge alone, on your projects, with your own AI account.</dd>
         </div>
         <div>
           <dt>Forges connect</dt>
-          <dd>Bring an app in from another forge, and send your work back to where it came from.</dd>
+          <dd>Bring an app in from another forge, do your work, and send it back to where it came from.</dd>
         </div>
       </dl>
     </section>
 
     <section class="door-section door-split" id="yours">
       <div class="stack">
-        <h2>Run your own</h2>
+        <h2>Get your own forge</h2>
         <p class="door-support">
-          Self-hosting works today, and it is open source under AGPL-3.0. Hosting is coming.${signup
-            ? ""
-            : " Signup on this forge is invite-only."}
+          ${SITE_LINE} Free and open source. Run it on your own computer or server today. Hosted forges are
+          coming.${signup ? "" : " New accounts on this forge are by invitation."}
         </p>
-        <div class="bar">${btn("Quickstart on GitHub", { href: `${FORGE_GITHUB}#try-it`, size: "lg" })}</div>
+        <div class="bar">${btn("Read the step-by-step guide", { href: `${FORGE_GITHUB}#try-it`, size: "lg" })}</div>
       </div>
       <div class="stack">
         <pre class="door-code"><code>git clone ${FORGE_GITHUB}
@@ -734,6 +817,9 @@ bun run src/main.ts</code></pre>
             <p class="muted small">Or visit this forge from your terminal: your key is your identity.</p>
           </div>`,
         )}
+        <p class="door-packs">
+          <span class="door-kick">Coming</span> Ready-made forges: one set up for making games, one for running a business.
+        </p>
       </div>
     </section>
     ${when(admin, () => html`<div class="door-section front-admin">${frontControls(ctx, front)}</div>`)}

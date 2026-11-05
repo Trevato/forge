@@ -82,7 +82,7 @@ describe("an outside agent finds the report path unaided", () => {
     expect(security).toContain(`${base}/llms.txt`);
     const llms = await fetch(`${base}/llms.txt`);
     expect(llms.status).toBe(200);
-    expect(llms.headers.get("content-type")).toContain("text/markdown");
+    expect(llms.headers.get("content-type")).toContain("text/plain");
     const text = await llms.text();
     expect(text).toContain(`POST ${base}/api/v1/repos/{owner}/{name}/reports`);
     expect(text).toContain(`[alice/game](${base}/alice/game)`);

@@ -202,55 +202,75 @@ form.inline { display: inline; margin-left: auto; }
 
 /* The studio's front door: the page a visitor reads first. It is a page, not a
    screen, so its type runs past the working scale (docs/design/areas/front.md). */
-.door { --door-gap: clamp(72px, 11vw, 136px); }
-.door h2 { font-size: clamp(1.5rem, 3.2vw, 2.25rem); font-weight: 620; letter-spacing: -0.025em; line-height: 1.15; }
-.door h3 { font-size: 20px; font-weight: 600; letter-spacing: -0.015em; }
-.door-support { max-width: 58ch; font-size: 16px; line-height: 1.55; color: var(--muted-fg); text-wrap: pretty; }
-.door-hero { display: grid; gap: 56px; padding-top: clamp(40px, 8vw, 104px); }
-.door-lead { display: flex; flex-direction: column; align-items: flex-start; gap: 20px; }
-.door-lead h1 { max-width: 15ch; font-size: clamp(2.5rem, 6vw, 4.5rem); font-weight: 640; letter-spacing: -0.03em; line-height: 1.04; }
-.door-lead h1 .muted { color: var(--muted-fg); }
-.door-lead .bar { margin-top: 8px; gap: 8px; flex-wrap: wrap; }
-.door-live { display: flex; flex-direction: column; gap: 14px; min-width: 0; align-self: end; }
-.door-figures { display: flex; flex-wrap: wrap; gap: 12px 32px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.door { --door-gap: clamp(96px, 11vw, 128px); }
+.door h1 { font-size: clamp(2.375rem, 5.4vw, 4.5rem); font-weight: 500; letter-spacing: -0.03em; line-height: 1.04; text-wrap: initial; }
+.door h1 .muted { color: var(--muted-fg); }
+.door h2 { font-size: clamp(1.75rem, 3.2vw, 2.5rem); font-weight: 500; letter-spacing: -0.025em; line-height: 1.1; }
+.door h3 { font-size: 20px; font-weight: 500; letter-spacing: -0.015em; }
+.door-support { max-width: 62ch; font-size: 16px; line-height: 1.55; color: var(--muted-fg); text-wrap: pretty; }
+.door-hero { padding-top: clamp(48px, 8vw, 104px); }
+.door-under { display: grid; gap: 56px; margin-top: 28px; }
+.door-lead { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; min-width: 0; }
+.door-lead .bar { gap: 8px; flex-wrap: wrap; }
+.door-agent { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 520px; font-size: 13px; color: var(--muted-fg); }
+.door-agent a { margin-left: 8px; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+.door-agent .input { color: var(--muted-fg); }
+.door-live { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.door-figures { display: flex; flex-wrap: wrap; gap: 12px 36px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .door-figure { display: flex; flex-direction: column; gap: 2px; }
-.door-figure strong { font-size: clamp(1.5rem, 2.6vw, 2rem); font-weight: 620; letter-spacing: -0.025em; line-height: 1.1; }
-.door-now { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; font-weight: 600; }
+.door-figure strong { font-size: clamp(1.75rem, 2.8vw, 2.25rem); font-weight: 500; letter-spacing: -0.03em; line-height: 1.1; }
+.door-now { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
 .door-ledger { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .door-ledger li { display: flex; flex-direction: column; min-width: 0; }
 .door-ledger a { color: var(--fg); }
 .door-when { display: block; }
 .door-section { margin-top: var(--door-gap); scroll-margin-top: 72px; }
-.door-section > h2 + .door-support { margin-top: 10px; }
-.door-shelf { display: grid; margin-top: 32px; gap: 28px 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.door-shelf > .card { min-width: 0; margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.door-shelf .card-body { padding: 10px 0 0; gap: 2px; }
+.door-section > h2 + .door-support { margin-top: 12px; }
+.door-shelf { display: grid; margin-top: 44px; gap: 44px 28px; grid-template-columns: minmax(0, 1fr); }
+.door-shelf > .card { min-width: 0; margin: 0; padding-top: 14px; border: 0; border-top: 1px solid var(--border-strong); border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+.door-kick { margin: 0 0 14px; font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
+.door-kick span { color: var(--fg); }
 .door-shelf .look { aspect-ratio: 16 / 10; transition: border-color 0.15s ease; }
 .door-shelf .look:hover { border-color: var(--border-strong); }
 .door-shelf .look img { height: 100%; object-fit: cover; object-position: top; }
-.door-open { margin-top: 2px; color: var(--muted-fg); }
-.door-more { margin-top: 28px; }
-.door-steps { display: grid; gap: 32px; margin: 36px 0 0; padding: 0; list-style: none; counter-reset: door-step; }
-.door-steps li { counter-increment: door-step; display: flex; flex-direction: column; gap: 6px; padding-top: 16px; border-top: 1px solid var(--border-strong); }
-.door-steps li::before { content: counter(door-step); font-size: 13px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+.door-shelf .card-body { padding: 14px 0 0; gap: 4px; }
+.door-shelf .card-body strong { font-size: 20px; font-weight: 500; letter-spacing: -0.015em; overflow-wrap: anywhere; }
+.door-line { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; min-height: 3em; line-height: 1.5; }
+.door-verbs { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 0; font-family: var(--mono); font-size: 12.5px; }
+.door-verbs a { min-height: 24px; color: var(--muted-fg); }
+.door-verbs a:hover { color: var(--fg); }
+.door-verbs .door-verb-first { color: var(--fg); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+.door-more { margin-top: 36px; }
+.door-maker { margin-top: 64px; }
+.door-maker h3 { font-family: var(--mono); font-size: 12.5px; font-weight: 400; letter-spacing: 0; color: var(--muted-fg); }
+.door-maker ul { display: grid; gap: 8px 28px; margin: 14px 0 0; padding: 0; list-style: none; }
+.door-maker li { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: baseline; }
+.door-steps { display: grid; gap: 32px; margin: 44px 0 0; padding: 0; list-style: none; counter-reset: door-step; }
+.door-steps li { counter-increment: door-step; display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--border-strong); }
+.door-steps li::before { content: counter(door-step, decimal-leading-zero); margin-bottom: 18px; font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
 .door-steps p, .door-points dd { margin: 0; font-size: 15px; line-height: 1.55; color: var(--muted-fg); text-wrap: pretty; }
-.door-split { display: grid; gap: 28px; }
+.door-split { display: grid; gap: 32px; }
+.door-proof { margin: 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12.5px; line-height: 1.8; color: var(--muted-fg); }
+.door-proof li::before { content: "[*] "; color: var(--fg); }
 .door-points { display: flex; flex-direction: column; margin: 0; }
 .door-points > div { padding: 18px 0; border-top: 1px solid var(--border); }
 .door-points > div:first-child { padding-top: 0; border-top: 0; }
-.door-points dt { margin-bottom: 4px; font-size: 16px; font-weight: 600; }
+.door-points dt { margin-bottom: 4px; font-size: 16px; font-weight: 500; }
 .door-points dd { max-width: 58ch; }
 .door-code { margin: 0; padding: 18px 20px; overflow-x: auto; border-radius: var(--radius); background: var(--muted); font-family: var(--mono); font-size: 13px; line-height: 1.7; }
+.door-packs { margin: 8px 0 0; color: var(--muted-fg); }
+.door-packs .door-kick { display: block; margin-bottom: 4px; }
 @media (max-width: 559px) {
   .door-wide { display: none; }
 }
 @media (min-width: 720px) {
-  .door-shelf { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .door-shelf { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .door-maker ul { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .door-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
   .door-split { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 48px; }
 }
 @media (min-width: 1000px) {
-  .door-hero:has(> .door-live) { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 72px; }
+  .door-under:has(> .door-live) { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 72px; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .door-now .dot { animation: door-pulse 2s ease-in-out infinite; }
