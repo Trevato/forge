@@ -66,3 +66,4 @@ full width, when it has rows. Styled in `src/web/style/components.ts`.
 - `.settings-block` — a titled block of a settings page that is not a card: a small heading and its content.
 - `.segmented` — a few mutually exclusive states side by side, the one on pressed; each other state is a one-button form.
 - `.segmented-on` — the state that is on, in `.segmented`.
+- `.setting-table` — a table of settings rows (Limits): name and reason, value and bounds, the form to change it; each row stacks on a phone.

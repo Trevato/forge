@@ -18,9 +18,9 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, when } from "../html.ts";
+import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, confirmAction, icon, row, time } from "../ui.ts";
+import { btn, confirmAction, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 // GET /admin/limits
@@ -33,46 +33,46 @@ export function limitsPage(ctx: Ctx): Response {
   const invites = timePhase(ctx.request, "invites", () => listInviteLinks(ctx.app, ctx.auth.user));
   const rendering = performance.now();
   const { limits, changes } = listed.value;
-  const rows = limits.map((l) =>
-    row({
-      lead: icon("activity"),
-      title: html`${l.label} <span class="muted small mono">${l.key}</span>`,
-      meta: html`${l.reason} <br />Now <span class="mono">${String(l.value)}</span>. ${l.isSet
-          ? html`Set here; the default is
-              <span class="mono">${String(l.defaultValue)}</span>.`
-          : html`The default.`}
-        Whole number, ${l.unit}, from
-        <span class="mono">${String(l.min)}</span> to
-        <span class="mono">${String(l.max)}</span>.`,
-      trail: html`<form class="row-fields" method="post" action="/admin/limits">
-        <input type="hidden" name="key" value="${l.key}" />
-        <input
-          class="input mono"
-          type="number"
-          name="value"
-          min="${String(l.min)}"
-          max="${String(l.max)}"
-          step="1"
-          value="${String(l.value)}"
-          aria-label="${l.label}"
-        />
-        ${btn("Save", {
-          size: "sm",
-          variant: "primary",
-          label: `Save ${l.label}`,
-        })}
-        ${when(
-          l.isSet,
-          () =>
-            html`${btn("Default", {
-              size: "sm",
-              name: "reset",
-              value: "1",
-              label: `Back to the default for ${l.label}`,
-            })}`,
-        )}
-      </form>`,
-    }),
+  const rows = limits.map(
+    (l) => html`<tr>
+      <td>
+        <strong>${l.label}</strong> <span class="muted small mono">${l.key}</span>
+        <div class="muted small truncate" title="${l.reason}">${l.reason}</div>
+      </td>
+      <td class="nowrap">
+        Now <span class="mono">${String(l.value)}</span>
+        <span class="muted small"
+          >${l.isSet ? html`set here, default <span class="mono">${String(l.defaultValue)}</span>` : "default"} ·
+          <span class="mono">${String(l.min)}</span> to <span class="mono">${String(l.max)}</span> ${l.unit}</span
+        >
+      </td>
+      <td>
+        <form class="row-fields" method="post" action="/admin/limits">
+          <input type="hidden" name="key" value="${l.key}" />
+          <input
+            class="input mono"
+            type="number"
+            name="value"
+            min="${String(l.min)}"
+            max="${String(l.max)}"
+            step="1"
+            value="${String(l.value)}"
+            aria-label="${l.label}"
+          />
+          ${btn("Save", { size: "sm", variant: "primary", label: `Save ${l.label}` })}
+          ${when(
+            l.isSet,
+            () =>
+              html`${btn("Default", {
+                size: "sm",
+                name: "reset",
+                value: "1",
+                label: `Back to the default for ${l.label}`,
+              })}`,
+          )}
+        </form>
+      </td>
+    </tr>`,
   );
   const history = changes.map((c) =>
     row({
@@ -92,14 +92,9 @@ export function limitsPage(ctx: Ctx): Response {
       meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
     }),
   );
-  const quotaCard = card(
-    html`<div class="card-body">
-      <p class="muted small">
-        What one account may own (repositories, apps), have running at
-        once (previews, runs, checks) and store (storage, in megabytes:
-        repositories plus app data). Empty is no limit; a forge admin is
-        never held to any of them.
-      </p>
+  const quotaRow = html`<div class="status-row">
+    <dt>Account quotas</dt>
+    <dd>
       <form class="row-fields" method="post" action="/admin/quotas">
         ${QUOTA_KEYS.map(
           (k) => html`<label class="small">${k === "storage" ? "storage (MB)" : k}
@@ -114,17 +109,10 @@ export function limitsPage(ctx: Ctx): Response {
         )}
         ${btn("Save", { size: "sm", variant: "primary", label: "Save quotas" })}
       </form>
-    </div>
-    ${when(
-      quotaHistory.length > 0,
-      () => html`<ul class="list">${quotaHistory}</ul>`,
-    )}`,
-    {
-      head: html`${icon("activity")}
-        <h2>Account quotas</h2>`,
-      pad: false,
-    },
-  );
+      <span class="muted small">What one account may own, run at once and store. Empty is no limit; an admin is never held to one.</span>
+    </dd>
+    <dd class="status-act"></dd>
+  </div>`;
   const signupHistory = (signup.ok ? signup.value.changes : []).map((c) =>
     row({
       lead: icon("history"),
@@ -133,31 +121,20 @@ export function limitsPage(ctx: Ctx): Response {
       meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
     }),
   );
-  const signupCard = card(
-    html`<div class="card-body">
-      <p class="muted small">
-        Who may sign up: open, invite or closed. Nothing reads this yet.
-      </p>
+  const signupRow = html`<div class="status-row">
+    <dt>Signup</dt>
+    <dd>
       <form class="row-fields" method="post" action="/admin/signup">
-        <label class="small">signup
-          <select class="input mono" name="signup">
-            ${SIGNUP_MODES.map(
-              (m) => html`<option value="${m}" ${signup.ok && signup.value.signup === m ? "selected" : ""}>${m}</option>`,
-            )}
-          </select></label>
+        <select class="input mono" name="signup" aria-label="Who may sign up">
+          ${SIGNUP_MODES.map(
+            (m) => html`<option value="${m}" ${signup.ok && signup.value.signup === m ? "selected" : ""}>${m}</option>`,
+          )}
+        </select>
         ${btn("Save", { size: "sm", variant: "primary", label: "Save signup" })}
       </form>
-    </div>
-    ${when(
-      signupHistory.length > 0,
-      () => html`<ul class="list">${signupHistory}</ul>`,
-    )}`,
-    {
-      head: html`${icon("activity")}
-        <h2>Signup</h2>`,
-      pad: false,
-    },
-  );
+    </dd>
+    <dd class="status-act"></dd>
+  </div>`;
   const inviteRows = (invites.ok ? invites.value : []).map((i) =>
     row({
       lead: icon("activity"),
@@ -175,11 +152,9 @@ export function limitsPage(ctx: Ctx): Response {
           : html``,
     }),
   );
-  const inviteCard = card(
-    html`<div class="card-body">
-      <p class="muted small">
-        A link is shown once, when it is made, and is good for one signup.
-      </p>
+  const inviteRow = html`<div class="status-row">
+    <dt>Invite links</dt>
+    <dd>
       <form class="row-fields" method="post" action="/admin/invites">
         <label class="small">expires in (days)
           <input
@@ -193,47 +168,33 @@ export function limitsPage(ctx: Ctx): Response {
           /></label>
         ${btn("Make a link", { size: "sm", variant: "primary", label: "Make an invite link" })}
       </form>
-    </div>
-    ${when(
-      inviteRows.length > 0,
-      () => html`<ul class="list">${inviteRows}</ul>`,
-    )}`,
-    {
-      head: html`${icon("activity")}
-        <h2>Invite links</h2>`,
-      pad: false,
-    },
-  );
-  const body = html`${signupCard}${inviteCard}${quotaCard}${card(
-      html`<div class="card-body">
-          <p class="muted small">
-            Every limit you can hit, and why it is there. A change governs
-            the next request that meets the limit; nothing needs a restart.
-          </p>
-        </div>
-        <ul class="list setting-list">
-          ${rows}
-        </ul>`,
-      {
-        head: html`${icon("activity")}
-          <h2>Limits</h2>`,
-        pad: false,
-      },
-    )}
-    ${card(
-      history.length === 0
-        ? html`<div class="card-body">
-            <p class="muted small">No change yet.</p>
-          </div>`
-        : html`<ul class="list">
-            ${history}
-          </ul>`,
-      {
-        head: html`${icon("history")}
-          <h2>Changes</h2>`,
-        pad: false,
-      },
-    )}`;
+      <span class="muted small">Shown once, when it is made; good for one signup.</span>
+    </dd>
+    <dd class="status-act"></dd>
+  </div>`;
+  const historyBlock = (title: string, items: Html[]): Html | null =>
+    items.length === 0 ? null : html`<section class="settings-block"><h2>${title}</h2><ul class="list">${items}</ul></section>`;
+  const body = html`<p class="small muted mb">
+      Every limit you can hit, and why. A change applies to the next request that meets it; nothing needs a restart.
+    </p>
+    <dl class="status-rows">${signupRow}${inviteRow}${quotaRow}</dl>
+    ${historyBlock("Invite links made", inviteRows)}
+    <section class="settings-block mt">
+      <h2>Limits</h2>
+      <div class="table-scroll">
+        <table class="table setting-table" data-dense>
+          <caption class="sr-only">Limits, their values and how to change them</caption>
+          <thead><tr><th scope="col">Limit</th><th scope="col">Now</th><th scope="col">Change</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </section>
+    ${historyBlock("Signup changes", signupHistory)}
+    ${historyBlock("Quota changes", quotaHistory)}
+    <section class="settings-block mt">
+      <h2>Changes</h2>
+      ${history.length === 0 ? html`<p class="muted small">No change yet.</p>` : html`<ul class="list">${history}</ul>`}
+    </section>`;
   const response = page({
     ctx,
     title: "Limits",

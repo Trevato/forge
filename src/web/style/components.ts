@@ -970,7 +970,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .status-act { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .status-act:empty { display: none; }
 @media (min-width: 640px) {
-  .status-row { grid-template-columns: 200px minmax(0, 1fr) auto; }
+  .status-row { grid-template-columns: 168px minmax(0, 1fr) auto; }
   .status-act { justify-content: flex-end; }
 }
 .segmented { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--muted); }
@@ -981,6 +981,25 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 .segmented button:hover { color: var(--fg); }
 .segmented-on { color: var(--fg); font-weight: 550; background: var(--card); box-shadow: var(--shadow-1); cursor: default; }
+
+.setting-table td { vertical-align: middle; }
+.setting-table td { padding-top: 6px; padding-bottom: 6px; }
+.setting-table td:first-child { max-width: 0; }
+.setting-table td:first-child > :is(strong, span) { white-space: nowrap; }
+.setting-table td:not(:first-child) { width: 1%; white-space: nowrap; }
+.status-row .row-fields .input[type="number"] { width: 72px; }
+.status-row .row-fields { flex-wrap: wrap; }
+.status-row select.input { width: auto; }
+.setting-table .row-fields { flex-wrap: nowrap; }
+.setting-table .row-fields .input { width: 96px; }
+@media (max-width: 639px) {
+  .setting-table thead { display: none; }
+  .setting-table, .setting-table tbody, .setting-table tr, .setting-table td { display: block; }
+  .setting-table tr { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .setting-table td { padding: 2px 0; border: 0; }
+  .setting-table td:first-child { max-width: none; }
+  .setting-table td:not(:first-child) { width: auto; }
+}
 
 /* ---- sticky primary action (thumb reach on a phone) ---- */
 .sticky-action {

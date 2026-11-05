@@ -54,7 +54,8 @@ const get = async (path: string) =>
   ).text();
 
 // The list item of each setting, from its key to the next row.
-const rowsOf = (page: string) => page.split("<li>").slice(1);
+// A setting row is a list row or, on the denser pages, a table row.
+const rowsOf = (page: string) => page.split(/<li>|<tr>/).slice(1);
 
 test("every limit row shows name, value, default, bounds and a control, hover-free", async () => {
   const page = await get("/admin/limits");
