@@ -1446,7 +1446,7 @@ export class AppsRuntime {
       // Read at start, never cached: a change is a redeploy, and the
       // process that comes up is the one that sees it.
       ...this.secretsFor(repo, state.app.id, state.env, token.token),
-      feature: this.featureFor(state.app.id, dir),
+      feature: this.featureFor(repo, state.app.id, state.env, dir),
       log: write,
       warm,
       cell: this.cellFor(state.app, state.env),
@@ -1680,16 +1680,22 @@ export class AppsRuntime {
 
   /**
    * An absorbed app's settings for a process about to start in `dir`, read
-   * from that checkout's forge.json; nothing for an app not absorbed.
+   * from that checkout's forge.json; nothing for an app not absorbed. A
+   * guest's preview nobody has approved holds none, as it holds no secrets,
+   * and only production renames the menu entry: a pull's forge.json cannot
+   * relabel the forge's menu for every reader.
    */
-  featureFor(appId: string, dir: string): Record<string, string> {
+  featureFor(repo: Repo, appId: string, env: EnvName, dir: string): Record<string, string> {
+    const number = envPull(env);
+    const pull = number === undefined ? undefined : getPull(this.app.db, repo.id, number);
+    if (pull !== undefined && guestWaits(this.app.db, pull)) return {};
     let forgeJson: string | undefined;
     try {
       forgeJson = readFileSync(join(dir, "forge.json"), "utf8");
     } catch {
       forgeJson = undefined;
     }
-    return featureVarsAt(this.app.db, appId, forgeJson);
+    return featureVarsAt(this.app.db, appId, forgeJson, { production: env === "production" });
   }
 
   /**
@@ -1804,7 +1810,7 @@ export class AppsRuntime {
         identityKey: identityKey(this.app.config.dataDir, record.id),
         ssh: this.sshFor(record, env),
         ...this.secretsFor(repo, record.id, env, token.token),
-        feature: this.featureFor(record.id, asleep.dir),
+        feature: this.featureFor(repo, record.id, env, asleep.dir),
         log: write,
         signal: new AbortController().signal,
         warm: true,
