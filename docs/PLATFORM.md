@@ -1,5 +1,8 @@
 # Platform inventory — what the forge still takes from open-platform (#7667)
 
+This inventory covers where this forge's own production runs. The Platform itself stays a
+separate Open Platform project for organizations.
+
 Owner, 2026-11-02: "this does go hand in hand with wanting everything to be
 forge native now and getting off of the platform and the forge to forge
 origin connections."

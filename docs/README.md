@@ -4,6 +4,9 @@ The forge is your software and the crew that builds it, in one place: a
 self-hosted forge in one Bun process and one SQLite file that hosts code and runs
 apps, with AI agents that build. Forges connect to one another.
 
+The forge is part of [Open Platform](https://www.open-platform.sh), with the
+platform for organizations.
+
 ## Use it
 
 - [The studio](STUDIO.md): the web interface and the words it uses.

@@ -2,13 +2,20 @@
 
 Your software and the crew that builds it, in one place.
 
+A forge is one person's own place to work, with a private AI crew. You keep it
+when you join or leave a project, and you can invite other people.
+
 Describe what you want in a sentence. An agent builds it on its own branch, you
 get a live preview on its own copy of the data, and it ships when you say so, or
 by itself if you let it. Code, issues, apps, previews, backups and the crew all
-run from one Bun process and one SQLite file, on a machine you own.
+run from one Bun process and one SQLite file, on a machine you own. What the crew
+reads goes to your model provider.
 
-Forges also connect to each other. Add a friend's forge as an origin, bring their
-apps in, and send your work back.
+Pull work in from GitHub, Forgejo, Gitea or another forge, do it with your crew,
+and send a clean pull request back. Build your own apps and share them.
+
+The forge is part of [Open Platform](https://www.open-platform.sh), with the
+platform for organizations.
 
 ## Try it
 
