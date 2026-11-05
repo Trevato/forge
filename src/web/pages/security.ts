@@ -22,7 +22,7 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, card, time } from "../ui.ts";
+import { badge, btn, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const DAY_MS = 86_400_000;
@@ -77,7 +77,7 @@ const SHIELD_WORDS: Record<ShieldState, { name: string; does: string }> = {
 
 /** The form that moves the Shield: one button, one state, so undoing is one click. */
 /** Who came in today, and the one setting that stops more: `/admin/signup`, as on the limits page. */
-function newAccountsCard(db: Database, nowMs: number): Html {
+function newAccountsRow(db: Database, nowMs: number): Html {
   const today = new Date(nowMs);
   today.setUTCHours(0, 0, 0, 0);
   const count =
@@ -87,60 +87,65 @@ function newAccountsCard(db: Database, nowMs: number): Html {
       )
       .get(today.toISOString())?.n ?? 0;
   const signup = getSignup(db);
-  return card(
-    html`<p>
-        ${count} new account${count === 1 ? "" : "s"} today. Sign-up is ${signup}.
-        <a href="/settings/people">See who they are</a>.
-        <a href="/admin/limits">Guest limits</a>.
-      </p>
+  return statusRow(
+    "New accounts",
+    html`${count} new account${count === 1 ? "" : "s"} today. Sign-up is ${signup}.`,
+    html`<a href="/settings/people">See who</a>
       ${signup === "closed"
         ? null
-        : html`<form method="post" action="/admin/signup" class="mt">
+        : html`<form method="post" action="/admin/signup" class="inline">
             <input type="hidden" name="signup" value="closed" />
             ${btn("Close sign-up now", { size: "sm", variant: "outline" })}
           </form>`}`,
-    { id: "new-accounts", head: html`<h2>New accounts</h2>` },
+    "new-accounts",
   );
 }
 
+/** One line of the page: what it is, how it stands, what you can do. */
+function statusRow(label: string, state: Html, action: Html | null = null, id?: string): Html {
+  return html`<div class="status-row" ${id === undefined ? null : html`id="${id}"`}>
+    <dt>${label}</dt>
+    <dd>${state}</dd>
+    <dd class="status-act">${action}</dd>
+  </div>`;
+}
+
 const shieldButton = (to: ShieldState, label: string, variant?: "primary"): Html =>
-  html`<form method="post" action="/settings/security/shield" class="mt">
+  html`<form method="post" action="/settings/security/shield" class="inline">
     <input type="hidden" name="state" value="${to}" />
-    ${btn(label, { type: "submit", ...(variant === undefined ? {} : { variant }) })}
+    ${btn(label, { type: "submit", size: "sm", ...(variant === undefined ? {} : { variant }) })}
   </form>`;
 
+/** The Shield: three states side by side, the one on pressed, and what it does said once below. */
 function shieldCard(ctx: Ctx): Html {
   const now = shieldState(ctx.app);
   const last = lastShieldChange(ctx.app.db);
   const undo = last !== null && last.to === now ? last.from : null;
-  return card(
-    html`<p>
-        Now: <strong>${SHIELD_WORDS[now].name}</strong>.
-        ${last === null ? "Never changed." : html`Set by ${last.by ?? "someone since removed"} ${time(last.at)}.`}
-      </p>
-      <p class="small muted">Signed-in people and tokens are never affected, in any state.</p>
+  return html`<section class="settings-block" id="shield">
+    <div class="bar">
+      <h2>Shield</h2>
+      <div class="segmented" role="group" aria-label="Shield">
+        ${SHIELD_STATES.map((state) =>
+          state === now
+            ? html`<span class="segmented-on" aria-current="true">${SHIELD_WORDS[state].name}</span>`
+            : html`<form method="post" action="/settings/security/shield">
+                <input type="hidden" name="state" value="${state}" />
+                <button type="submit" aria-label="Switch to ${SHIELD_WORDS[state].name}">${SHIELD_WORDS[state].name}${state === SHIELD_DEFAULT ? html` <span class="muted">(default)</span>` : null}</button>
+              </form>`,
+        )}
+      </div>
       ${undo === null ? null : shieldButton(undo, `Undo: back to ${SHIELD_WORDS[undo].name}`, "primary")}
-      ${SHIELD_STATES.map(
-        (state) =>
-          html`<div class="mt">
-            <strong>${SHIELD_WORDS[state].name}</strong>
-            ${state === now ? badge("On", { tone: "success" }) : null}
-            ${state === SHIELD_DEFAULT ? badge("Default", { variant: "outline" }) : null}
-            <p class="small muted">${SHIELD_WORDS[state].does}</p>
-            ${state === now || state === undo ? null : shieldButton(state, `Switch to ${SHIELD_WORDS[state].name}`)}
-          </div>`,
-      )}`,
-    { id: "shield", head: html`<h2>Shield</h2>` },
-  );
+    </div>
+    <p class="small muted">
+      ${SHIELD_WORDS[now].does} Signed-in people and tokens are never affected.
+      ${last === null ? "Never changed." : html`Set by ${last.by ?? "someone since removed"} ${time(last.at)}.`}
+    </p>
+  </section>`;
 }
 
-/** A section: a head, what it shows, when that was checked. */
-const section = (title: string, checked: string | null, body: Html): Html =>
-  card(
-    html`${body}
-      <p class="small muted mt">${checked === null ? "Not checked yet." : html`Checked ${time(checked)}.`}</p>`,
-    { head: html`<h2>${title}</h2>` },
-  );
+/** A list under the status rows, full width, only when it has rows. */
+const detail = (title: string, body: Html): Html =>
+  html`<section class="settings-block"><h2>${title}</h2>${body}</section>`;
 
 /** A small table, or the words for none, and an honest note when the list was cut. */
 function list(caption: string, heads: readonly string[], rows: readonly (readonly (Html | string)[])[], none: string): Html {
@@ -215,23 +220,20 @@ function deletedRows(db: Database, since: string): (readonly (Html | string)[])[
   });
 }
 
-function reportSection(dataDir: string, nowMs: number): Html {
+function reportRow(dataDir: string, nowMs: number): Html {
   const r = readSecurityReport(dataDir);
   if (r === null)
-    return section(
+    return statusRow(
       "Secret scan and self-test",
-      null,
-      html`<p>${badge("Not run", { tone: "attn" })} No readable report at <span class="mono">security-report.json</span> in the forge's data directory.</p>`,
+      html`${badge("Not run", { tone: "attn" })} No readable <span class="mono">security-report.json</span> in the data directory.`,
     );
   const stale = nowMs - Date.parse(r.at) > REPORT_STALE_DAYS * DAY_MS;
-  return section(
+  return statusRow(
     "Secret scan and self-test",
-    r.at,
-    html`${stale ? html`<p>${badge("Out of date", { tone: "attn" })} The timer has not written a report in over ${REPORT_STALE_DAYS} days.</p>` : null}
-      <p>
-        ${r.secretScan.findings === 0 ? badge("No secrets found", { tone: "success" }) : badge(`${r.secretScan.findings} found`, { tone: "danger" })}
-        ${r.selfTest.failed === 0 ? badge(`${r.selfTest.passed} checks passed`, { tone: "success" }) : badge(`${r.selfTest.failed} checks failed`, { tone: "danger" })}
-      </p>`,
+    html`${stale ? html`${badge("Out of date", { tone: "attn" })} ` : null}
+      ${r.secretScan.findings === 0 ? badge("No secrets found", { tone: "success" }) : badge(`${r.secretScan.findings} found`, { tone: "danger" })}
+      ${r.selfTest.failed === 0 ? badge(`${r.selfTest.passed} checks passed`, { tone: "success" }) : badge(`${r.selfTest.failed} checks failed`, { tone: "danger" })}
+      <span class="muted">${time(r.at)}</span>`,
   );
 }
 
@@ -253,72 +255,67 @@ export function securityPage(ctx: Ctx): Response {
   const drill = lastDrill(db);
   const overdue = backup !== null ? backup.state === "red" : backupOverdue(backupAt, new Date(nowMs));
 
-  const body = html`<p class="mb">
-      Each section shows what the forge knows and when it checked. If something looks wrong,
-      <a href="${RUNBOOK}">the security runbook</a> says what to do without any AI (<span class="mono">docs/SECURITY-RUNBOOK.md</span> in the forge's source).
+  const none = (n: number, what: string) => (n === 0 ? html`<span class="muted">None</span>` : html`${n} ${what}`);
+  const deleted = deletedRows(db, since);
+  const body = html`<p class="small muted mb">
+      Checked ${time(nowIso)}. Something looks wrong? <a href="${RUNBOOK}" title="docs/SECURITY-RUNBOOK.md">The runbook</a> says what to do.
     </p>
     ${shieldCard(ctx)}
-    ${newAccountsCard(db, nowMs)}
-    ${section(
-      "Traffic",
-      nowIso,
-      html`<p>
-        ${wrong === null ? null : html`${badge("Look at this", { tone: "danger" })} ${TRAFFIC_WORDS[wrong]} took over half the answering time. `}
-        ${traffic.requests} requests and ${traffic.refused} refused in the last 15 minutes.
-        <a href="/settings/traffic">See who is using the forge</a>.
-      </p>`,
-    )}
-    ${section(
-      "Admin accounts",
-      nowIso,
-      list(
-        "Accounts with admin rights",
-        ["Account", "Kind", "Standing"],
-        admins.map((a) => [a.username, a.is_agent === 1 ? "Agent" : "Person", a.suspended_at === null ? "Active" : "Suspended"]),
-        "No admin accounts.",
-      ),
-    )}
-    ${section(
-      "Admin-scope tokens",
-      nowIso,
-      list(
-        "Tokens with admin scope and their last use",
-        ["Token name", "Account", "Last used"],
-        adminTokens.map((t) => [t.name, t.username, t.last_used_at === null ? "Never" : time(t.last_used_at)]),
-        "No admin-scope tokens.",
-      ),
-    )}
-    ${section(
-      `Tokens and SSH keys people added, last ${WINDOW_DAYS} days`,
-      nowIso,
-      list(
-        "Tokens and SSH keys added by people",
-        ["What", "Name", "Account", "Added"],
-        added.map((a) => [a.what, a.name, a.username, time(a.created_at)]),
-        `Nothing added in the last ${WINDOW_DAYS} days.`,
-      ),
-    )}
-    ${section(
-      `Deleted repositories, last ${WINDOW_DAYS} days`,
-      nowIso,
-      list("Deleted repositories", ["Repository", "By", "How", "When"], deletedRows(db, since), `None deleted in the last ${WINDOW_DAYS} days.`),
-    )}
-    ${section(
-      "Backup and restore drill",
-      nowIso,
-      html`<p>
-          ${backupAt === null
-            ? html`${badge("None", { tone: "attn" })} No backup off the machine is known yet.`
-            : html`${overdue ? badge("Overdue", { tone: "danger" }) : badge("Recent", { tone: "success" })} The last backup off the machine was ${time(backupAt)}.`}
-        </p>
-        <p>
-          ${drill === undefined
-            ? html`${badge("Not run", { tone: "attn" })} No restore drill has run.`
-            : html`${drill.verdict === "green" ? badge("Passed", { tone: "success" }) : badge("Failed", { tone: "danger" })} The last restore drill ran ${time(drill.at)}.`}
-          <a href="/settings/backups">Backups</a>.
-        </p>`,
-    )}
-    ${reportSection(dataDir, nowMs)}`;
+    <dl class="status-rows">
+      ${newAccountsRow(db, nowMs)}
+      ${statusRow(
+        "Traffic",
+        html`${wrong === null ? null : html`${badge("Look at this", { tone: "danger" })} ${TRAFFIC_WORDS[wrong]} took over half the answering time. `}
+          ${traffic.requests} requests, ${traffic.refused} refused in 15 minutes.`,
+        html`<a href="/settings/traffic">Traffic</a>`,
+      )}
+      ${statusRow(
+        "Backup",
+        backupAt === null
+          ? html`${badge("None", { tone: "attn" })} No backup off the machine is known yet.`
+          : html`${overdue ? badge("Overdue", { tone: "danger" }) : badge("Recent", { tone: "success" })} Last off the machine ${time(backupAt)}.`,
+        html`<a href="/settings/backups">Backups</a>`,
+      )}
+      ${statusRow(
+        "Restore drill",
+        drill === undefined
+          ? html`${badge("Not run", { tone: "attn" })} No restore drill has run.`
+          : html`${drill.verdict === "green" ? badge("Passed", { tone: "success" }) : badge("Failed", { tone: "danger" })} Last ran ${time(drill.at)}.`,
+      )}
+      ${reportRow(dataDir, nowMs)}
+      ${statusRow("Admin accounts", html`${admins.map((a, i) => html`${i > 0 ? ", " : ""}${a.username}${a.is_agent === 1 ? " (agent)" : ""}${a.suspended_at === null ? "" : " (suspended)"}`)}`)}
+      ${statusRow("Admin-scope tokens", none(adminTokens.length, adminTokens.length === 1 ? "token" : "tokens"))}
+      ${statusRow(`Keys and tokens added, ${WINDOW_DAYS} days`, none(added.length, "added"))}
+      ${statusRow(`Deleted repositories, ${WINDOW_DAYS} days`, none(deleted.length, "deleted"))}
+    </dl>
+    ${adminTokens.length === 0
+      ? null
+      : detail(
+          "Admin-scope tokens",
+          list(
+            "Tokens with admin scope and their last use",
+            ["Token name", "Account", "Last used"],
+            adminTokens.map((t) => [t.name, t.username, t.last_used_at === null ? "Never" : time(t.last_used_at)]),
+            "No admin-scope tokens.",
+          ),
+        )}
+    ${added.length === 0
+      ? null
+      : detail(
+          `Tokens and SSH keys people added, last ${WINDOW_DAYS} days`,
+          list(
+            "Tokens and SSH keys added by people",
+            ["What", "Name", "Account", "Added"],
+            added.map((a) => [a.what, a.name, a.username, time(a.created_at)]),
+            `Nothing added in the last ${WINDOW_DAYS} days.`,
+          ),
+        )}
+    ${deleted.length === 0
+      ? null
+      : detail(
+          `Deleted repositories, last ${WINDOW_DAYS} days`,
+          list("Deleted repositories", ["Repository", "By", "How", "When"], deleted, `None deleted in the last ${WINDOW_DAYS} days.`),
+        )}`;
   notePhase(ctx.request, "render", performance.now() - rendering);
   return page({
     ctx,

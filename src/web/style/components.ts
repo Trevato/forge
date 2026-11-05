@@ -931,15 +931,18 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .settings-main > .card, .settings-main > .stack > .card, .settings-main > form > .card {
   border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible;
 }
-.settings-main > .card + .card, .settings-main > .stack > .card + .card { margin-top: 28px; }
+.settings-main > .card + .card, .settings-main > .stack > .card + .card { margin-top: 20px; }
 .settings-main .card > .card-head {
   padding: 0 0 8px; background: transparent; border-bottom: 1px solid var(--border);
 }
 .settings-main .card > .card-head > .ico { display: none; }
 .settings-main .card > .card-head :is(h2, h3) { font-size: 14px; font-weight: 600; }
-.settings-main .card > .card-body { padding: 12px 0 0; }
+.settings-main .card > .card-body { padding: 8px 0 0; }
 .settings-main .card > .card-foot { padding: 10px 0 0; background: transparent; }
 .settings-main .card > .list > li { padding-left: 0; padding-right: 0; }
+.settings-main .card > .list .row { padding: 8px 0; gap: 10px; font-size: 13px; }
+.settings-main .card > .list .row-lead { display: none; }
+.settings-main .card > .card-body > p.muted.small { margin: 0 0 6px; }
 @media (min-width: 860px) {
   .settings { grid-template-columns: 184px minmax(0, 1fr); gap: 40px; margin-top: 16px; }
   .settings-jump { display: none; }
@@ -949,6 +952,35 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   }
   .settings-filter { font-size: 13px; min-height: 30px; }
 }
+
+/* ---- settings content: status rows, blocks, a segmented control ---- */
+.settings-block { margin-top: 24px; }
+.settings-block:first-child { margin-top: 0; }
+.settings-block > h2, .settings-block > .bar > h2 { font-size: 14px; font-weight: 600; margin: 0; }
+.settings-block > h2 { margin-bottom: 8px; }
+.settings-block > .bar { gap: 12px; flex-wrap: wrap; }
+.settings-block > p { margin-top: 8px; }
+.status-rows { margin: 24px 0 0; border-top: 1px solid var(--border); }
+.status-row {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px 16px; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.status-row > dt { font-weight: 550; }
+.status-row > dd { margin: 0; min-width: 0; }
+.status-act { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.status-act:empty { display: none; }
+@media (min-width: 640px) {
+  .status-row { grid-template-columns: 200px minmax(0, 1fr) auto; }
+  .status-act { justify-content: flex-end; }
+}
+.segmented { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--muted); }
+.segmented form { display: contents; }
+.segmented button, .segmented-on {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px;
+  font: inherit; font-size: 13px; color: var(--muted-fg); background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer;
+}
+.segmented button:hover { color: var(--fg); }
+.segmented-on { color: var(--fg); font-weight: 550; background: var(--card); box-shadow: var(--shadow-1); cursor: default; }
 
 /* ---- sticky primary action (thumb reach on a phone) ---- */
 .sticky-action {

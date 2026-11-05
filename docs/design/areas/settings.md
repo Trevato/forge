@@ -53,3 +53,16 @@ hairline, and its rows run edge to edge, so a dense page reads as rows rather th
 - `.settings-jump` — on a phone, the one menu at the top in place of the nav: it names the section you are on and opens
   onto the same groups. Hidden from 860px.
 - `.settings-jump-list` — the groups inside that menu, with touch-sized links.
+
+## Settings content
+
+A dense settings page (Security in `src/web/pages/security.ts` first) says when it checked once at the top, then shows
+each thing it knows as one row: what it is, how it stands with any badge inline, and what you can do. A list only appears,
+full width, when it has rows. Styled in `src/web/style/components.ts`.
+
+- `.status-rows` — the `<dl>` of those rows, ruled by hairlines.
+- `.status-row` — one row: label, state, action; one column on a phone, three from 640px.
+- `.status-act` — a row's actions, at its end; absent when there are none.
+- `.settings-block` — a titled block of a settings page that is not a card: a small heading and its content.
+- `.segmented` — a few mutually exclusive states side by side, the one on pressed; each other state is a one-button form.
+- `.segmented-on` — the state that is on, in `.segmented`.
