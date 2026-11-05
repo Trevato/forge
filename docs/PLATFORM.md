@@ -1,11 +1,9 @@
 # Platform inventory — what the forge still takes from open-platform (#7667)
 
-This inventory covers where this forge's own production runs. The Platform itself stays a
-separate Open Platform project for organizations.
-
-Owner, 2026-11-02: "this does go hand in hand with wanting everything to be
-forge native now and getting off of the platform and the forge to forge
-origin connections."
+This inventory covers where this forge's own production runs. The Platform stays a
+separate Open Platform project for organizations, and it is not being retired. A
+forge does not need the Platform to run. This forge still uses the Platform's
+services and is moving off them, so that each project runs on its own.
 
 This page lists each thing the forge and its apps still take from the
 platform (the Kubernetes cluster, Forgejo at git.open-platform.sh, Flux,
@@ -17,8 +15,8 @@ repository (`trevato-apps/gitops`) cannot be read from here and is marked
 
 **Nothing is turned off or removed by this page or by any step it names
 without the owner present. The forge never goes dark.** Every step has its
-rollback written in its issue, and the platform stays up until the last
-step (#8952).
+rollback written in its issue, and this forge keeps using the platform until
+the last step (#8952).
 
 ## What #1432 retired, and what it did not
 
