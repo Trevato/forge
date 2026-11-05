@@ -58,7 +58,10 @@ const refuse = (status: number, message: string) =>
 function sessionOnly(ctx: Ctx): Response | undefined {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   if (!ctx.auth.user) return refuse(401, "Sign in first.");
-  if (ctx.auth.via !== "session") return refuse(403, "Passkeys are changed from a signed-in browser.");
+  // A browser the platform edge signed in is a signed-in browser too: adding a
+  // passkey there is how an account comes to sign in without the edge (#9432).
+  if (ctx.auth.via !== "session" && ctx.auth.via !== "edge")
+    return refuse(403, "Passkeys are changed from a signed-in browser.");
   return undefined;
 }
 
