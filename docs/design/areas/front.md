@@ -27,7 +27,6 @@ The page a visitor reads first runs past §3's working scale on purpose, in `cla
 - `.door-verbs` — an app's doors in plain monospace words; the first, `.door-verb-first`, is the one that opens it.
 - `.door-verb-first` — the door that opens the app.
 - `.door-more` — the link to the rest of the apps.
-- `.door-maker` — the maker's other public work, on this project's own forge only.
 - `.door-steps` — how it works: three numbered steps, in columns from 720px.
 - `.door-split` — a section as a heading column beside a content column, from 720px.
 - `.door-proof` — plain facts a developer checks first, in monospace.

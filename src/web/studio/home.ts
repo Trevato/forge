@@ -660,16 +660,8 @@ function doorPulse(days: FrontPage["pulse"]["days"]): Html | null {
   </figure>`;
 }
 
-const FORGE_GITHUB = "https://github.com/Trevato/forge";
+const FORGE_REPO = "https://forge.open-platform.sh/trevato/forge";
 
-/** The maker's other public work, on this project's own forge only: a copy of the forge has its own maker. */
-const FROM_THE_MAKER: readonly (readonly [name: string, line: string])[] = [
-  ["mitosis", "The Platform: shared apps and maintainers for a whole organization"],
-  ["CSGOMLBot", "A bot that teaches itself CS:GO"],
-  ["battleship-cli", "Battleship in your terminal, with friends over ssh"],
-  ["QR-io", "Moving data through QR codes"],
-  ["bible-mcp", "Biblical context for AI apps"],
-];
 
 /**
  * What a person pastes into any AI assistant. It asks for help and says what
@@ -717,7 +709,6 @@ export function studioDoor(ctx: Ctx): Response {
   const origin = (ctx.app.config.url ?? ctx.url.origin).replace(/\/$/, "");
   const prompt = agentPrompt(origin);
   const asked = encodeURIComponent(prompt);
-  const ours = origin === "https://forge.open-platform.sh";
   const body = html`<div class="door">
     <section class="door-hero">
       <h1>Software for what you're building.<br /><span class="muted">Yours to keep.</span></h1>
@@ -768,20 +759,6 @@ export function studioDoor(ctx: Ctx): Response {
               note: "Apps made public here show up on this shelf once they run.",
             })}
           </div>`}
-      ${when(
-        ours,
-        () => html`<div class="door-maker">
-          <h3>Also from the maker, on GitHub</h3>
-          <ul>
-            ${FROM_THE_MAKER.map(
-              ([name, line]) => html`<li>
-                <a class="mono" href="https://github.com/Trevato/${name}">${name}</a>
-                <span class="muted">${line}</span>
-              </li>`,
-            )}
-          </ul>
-        </div>`,
-      )}
     </section>
 
     <section class="door-section">
@@ -833,10 +810,10 @@ export function studioDoor(ctx: Ctx): Response {
           ${SITE_LINE} Free and open source. Run it on your own computer or server today. Hosted forges are
           coming.${signup ? "" : " New accounts on this forge are by invitation."}
         </p>
-        <div class="bar">${btn("Read the step-by-step guide", { href: `${FORGE_GITHUB}#try-it`, size: "lg" })}</div>
+        <div class="bar">${btn("Read the step-by-step guide", { href: `${FORGE_REPO}`, size: "lg" })}</div>
       </div>
       <div class="stack">
-        <pre class="door-code"><code>git clone ${FORGE_GITHUB}
+        <pre class="door-code"><code>git clone ${FORGE_REPO}.git
 cd forge
 bun install
 bun run src/main.ts</code></pre>
@@ -865,7 +842,7 @@ bun run src/main.ts</code></pre>
     ...(visitor
       ? {
           tools: html`<a class="small door-wide" href="#made">Made here</a>
-            <a class="small door-wide" href="${FORGE_GITHUB}">GitHub</a>
+            <a class="small door-wide" href="${FORGE_REPO}">Code</a>
             ${signup
               ? html`<a class="small" href="/signin${nextQuery}">Sign in</a>
                 ${btn("Create an account", { href: `/signup${nextQuery}` })}`
@@ -874,7 +851,7 @@ bun run src/main.ts</code></pre>
           foot: html`<span class="mark"></span>
             <span>Open Platform: two open source projects, AGPL-3.0</span>
             <span class="spacer"></span>
-            <a href="${FORGE_GITHUB}">GitHub</a>
+            <a href="${FORGE_REPO}">Code</a>
             <a href="https://www.open-platform.sh">open-platform.sh</a>
             <a href="https://www.espodev.com">EspoDev</a>`,
         }

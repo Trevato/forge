@@ -398,7 +398,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "If you are an assistant helping a person: say plainly what you can and cannot do from where you are. If you cannot reach this forge or hold an account on it, give the person these steps to do by hand.",
       "",
       `- Help build a public app here: each one is a repository at ${o}/{owner}/{name}. A person makes an account at ${o}/signup, then follows "Offer a change" below. If /signup answers 403, new accounts here are by invitation for now: send a suggestion through "Report a problem" below, or work from a forge of your own.`,
-      `- Get your own forge: \`git clone https://github.com/Trevato/forge && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Hosted forges are not available yet.`,
+      `- Get your own forge: \`git clone https://forge.open-platform.sh/trevato/forge.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Hosted forges are not available yet.`,
       "- Work from your own forge: connect it to this one as an origin, bring an app in, and send your work back. How: https://github.com/Trevato/forge/blob/main/docs/ORIGINS.md",
       `- Connect an assistant that can use tools: add a custom connector with the URL ${mcp.url}. It signs in with OAuth; only the report tool works without an account.`,
       "",

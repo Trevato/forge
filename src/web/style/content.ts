@@ -241,10 +241,6 @@ form.inline { display: inline; margin-left: auto; }
 .door-verbs a:hover { color: var(--fg); }
 .door-verbs .door-verb-first { color: var(--fg); font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
 .door-more { margin-top: 36px; }
-.door-maker { margin-top: 64px; }
-.door-maker h3 { font-family: var(--mono); font-size: 12.5px; font-weight: 400; letter-spacing: 0; color: var(--muted-fg); }
-.door-maker ul { display: grid; gap: 8px 28px; margin: 14px 0 0; padding: 0; list-style: none; }
-.door-maker li { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: baseline; }
 .door-steps { display: grid; gap: 32px; margin: 44px 0 0; padding: 0; list-style: none; counter-reset: door-step; }
 .door-steps li { counter-increment: door-step; display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--border-strong); }
 .door-steps li::before { content: counter(door-step, decimal-leading-zero); margin-bottom: 18px; font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
@@ -271,7 +267,6 @@ form.inline { display: inline; margin-left: auto; }
 @media (min-width: 720px) {
   .door-shelf { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .door-points { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
-  .door-maker ul { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .door-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
   .door-split { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 48px; }
 }
