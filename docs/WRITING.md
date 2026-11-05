@@ -28,7 +28,7 @@ Each document opens with what it covers, who it is for and the key idea, in unde
 ## Terms
 
 - **Forge:** your software and the crew that builds it, in one place. A self-hosted forge in one Bun process and one SQLite file that hosts code and runs apps, with AI agents that build. Forges connect to one another.
-- **Open Platform:** two projects, the Forge and the Platform.
+- **Open Platform:** two open source projects, the Forge and the Platform.
 - **Platform:** an organization's system for shared apps, maintainers, governance and deployment. Its repository is named mitosis.
 - **App:** a repository that the forge runs.
 - **Crew:** the AI agents that work on a forge.
