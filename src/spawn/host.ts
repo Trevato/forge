@@ -72,6 +72,29 @@ function cacheOf(parent: App): Map<string, App> {
   return m;
 }
 
+/** Who wants to hear that one of a parent's hosted children is closing. */
+const closeWatchers = new WeakMap<App, Set<(child: App) => void>>();
+
+/**
+ * Call `onClose(child)` for each hosted child of `parent` as it is closed,
+ * before its database closes: what holds something per child (its hook
+ * listener in `http/server.ts`) lets go of it there. Returns the unwatch.
+ */
+export function watchHostedChildClose(parent: App, onClose: (child: App) => void): () => void {
+  let set = closeWatchers.get(parent);
+  if (!set) closeWatchers.set(parent, (set = new Set()));
+  set.add(onClose);
+  return () => {
+    set.delete(onClose);
+  };
+}
+
+/** Whether `child` is the App this parent has open for it now (not one closed since). */
+export function hostedChildOpen(parent: App, child: App): boolean {
+  for (const open of caches.get(parent)?.values() ?? []) if (open === child) return true;
+  return false;
+}
+
 /** Drop every hosted child App this parent has open (call when the parent stops). */
 export function closeHostedChildren(parent: App): void {
   const m = caches.get(parent);
@@ -79,6 +102,16 @@ export function closeHostedChildren(parent: App): void {
   const children = [...m.values()];
   m.clear();
   caches.delete(parent);
+  // What holds something per child lets go first, while its database is open.
+  for (const child of children) {
+    for (const onClose of closeWatchers.get(parent) ?? []) {
+      try {
+        onClose(child);
+      } catch (error) {
+        parent.log.warn("a hosted child's close watcher failed", { error: String(error) });
+      }
+    }
+  }
   // A child's apps and checks use its database: they stop before it closes.
   void stopChildApps(parent).finally(() => {
     for (const child of children) child.close();
