@@ -25,6 +25,7 @@ import {
   frontScore,
   frontSignals,
   latestMerges,
+  mergesByDay,
   type LatestMerge,
   frontWeights,
   isWeight,
@@ -103,6 +104,8 @@ export interface FrontPulse {
   };
   /** The newest merged changes, at most `DOOR_CHANGES`. */
   readonly changes: readonly DoorChange[];
+  /** Changes merged each day, oldest first, `PULSE_DAYS` of them, today last. */
+  readonly days: readonly { readonly day: string; readonly n: number }[];
 }
 
 export interface FrontPage {
@@ -115,6 +118,9 @@ export interface FrontPage {
 
 /** How many merged changes the door lists. */
 const DOOR_CHANGES = 4;
+
+/** How many days the door's picture of the work covers. */
+const PULSE_DAYS = 90;
 
 /**
  * Whether a thumb is one taken as a stranger: not one from before thumbs
@@ -185,17 +191,38 @@ export function forgetFrontScores(app: App): void {
 }
 
 /** The newest merges, kept as long as a ranking: a write must not mean another walk of the merged pulls. */
-const merges = new WeakMap<App, { at: number; rows: readonly LatestMerge[]; ids: ReadonlySet<string> }>();
+const merges = new WeakMap<
+  App,
+  {
+    at: number;
+    rows: readonly LatestMerge[];
+    days: FrontPulse["days"];
+    ids: ReadonlySet<string>;
+  }
+>();
 
-function newestMerges(app: App, repoIds: readonly string[], now: number): readonly LatestMerge[] {
+function newestMerges(
+  app: App,
+  repoIds: readonly string[],
+  now: number,
+): { rows: readonly LatestMerge[]; days: FrontPulse["days"] } {
   const kept = merges.get(app);
   const shown = new Set(repoIds);
-  // A repository made private leaves at once; one made public waits its turn.
+  // A repository made private leaves the list at once; one made public waits its turn.
   if (kept !== undefined && now - kept.at < SCORES_MS && repoIds.every((id) => kept.ids.has(id)))
-    return kept.rows.filter((r) => shown.has(r.repoId));
+    return { rows: kept.rows.filter((r) => shown.has(r.repoId)), days: kept.days };
   const rows = latestMerges(app.db, repoIds, DOOR_CHANGES * 4);
-  merges.set(app, { at: now, rows, ids: shown });
-  return rows;
+  const dayOf = (back: number): string =>
+    new Date(now - back * 86_400_000).toISOString().slice(0, 10);
+  const counted = new Map(
+    mergesByDay(app.db, repoIds, dayOf(PULSE_DAYS - 1)).map((d) => [d.day, d.n]),
+  );
+  const days = Array.from({ length: PULSE_DAYS }, (_, at) => {
+    const day = dayOf(PULSE_DAYS - 1 - at);
+    return { day, n: counted.get(day) ?? 0 };
+  });
+  merges.set(app, { at: now, rows, days, ids: shown });
+  return { rows, days };
 }
 
 /** How long a built page is kept when nothing in the database changed: an app's state is not in it. */
@@ -382,7 +409,8 @@ function buildPulse(
   const merged = ids.reduce((sum, id) => sum + (scores.get(id)?.s.ships ?? 0), 0);
   const seen = new Set<string>();
   const changes: DoorChange[] = [];
-  for (const m of newestMerges(app, ids, now)) {
+  const { rows, days } = newestMerges(app, ids, now);
+  for (const m of rows) {
     const repo = shown.get(m.repoId);
     if (repo === undefined || seen.has(m.title) || changes.length === DOOR_CHANGES) continue;
     seen.add(m.title);
@@ -393,7 +421,7 @@ function buildPulse(
       mergedAt: m.mergedAt,
     });
   }
-  return { running, merged, crew: crewOn(app, shown), changes };
+  return { running, merged, crew: crewOn(app, shown), changes, days };
 }
 
 /** The crew's runs on one readable repository right now, and their issues. */

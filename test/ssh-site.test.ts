@@ -123,7 +123,7 @@ describe("the front page without a terminal", () => {
     const servers = await serve(app);
     try {
       const page = await fetch(`${servers.url}/`).then((r) => r.text());
-      expect(page).toContain("Say what you want.");
+      expect(page).toContain("Software for what you");
       expect(page).toContain('href="/signup"');
       expect(page).not.toContain("terminal-line");
       expect(page).not.toContain("terminal is off");

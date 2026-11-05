@@ -499,8 +499,8 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
   );
 }
 
-/** How many apps the door shows when nothing is pinned: a taste, with a link to the rest. */
-const DOOR_TILES = 6;
+/** How many apps the door shows: the pins, then the best of the rest, with a link to all of them. */
+const DOOR_TILES = 8;
 
 /** The live address of an app a stranger may open, or nothing. */
 function tileHref(entry: FrontEntry): string | undefined {
@@ -519,15 +519,14 @@ const DOOR_STATE: Partial<Record<EnvState, string>> = {
 /** What a stranger can do to help with an app: make an account if this forge takes new ones, or send its keepers a note. */
 function helpDoor(repo: FrontEntry["repo"], accounts: boolean): Html {
   return accounts
-    ? html`<a href="/signup?next=${encodeURIComponent(repoBase(repo))}">Help build this</a>`
+    ? html`<a href="/signup?next=${encodeURIComponent(repoBase(repo))}">Help build</a>`
     : html`<a href="${repoBase(repo)}/report">Suggest a change</a>`;
 }
 
 /**
  * One numbered app on the door, with its doors said plainly: use it, read how
- * it is made, help with it. A pinned app is the owner's pick and reads Play;
- * a featured repository may have no app and no picture (the forge itself),
- * and then has only the doors it really has.
+ * it is made, help with it. A featured repository may have no app and no
+ * picture (the forge itself), and then has only the doors it really has.
  */
 function tile(entry: FrontEntry, at: number, accounts: boolean, attrs?: Html): Html {
   const { repo, picture, state } = entry;
@@ -562,11 +561,9 @@ function tile(entry: FrontEntry, at: number, accounts: boolean, attrs?: Html): H
         <p class="door-verbs">
           ${when(
             open,
-            (to) => html`<a class="door-verb-first" href="${to}" rel="nofollow" aria-label="${entry.pinned ? "Play" : "Open"} ${repo.name}"
-              >${entry.pinned ? "Play" : "Open"}</a
-            >`,
+            (to) => html`<a class="door-verb-first" href="${to}" rel="nofollow" aria-label="Open ${repo.name}">Open</a>`,
           )}
-          <a href="${href}" aria-label="Read the code of ${repo.name}">Read the code</a>
+          <a href="${href}" aria-label="The code of ${repo.name}">Code</a>
           ${helpDoor(repo, accounts)}
         </p>
       </div>`,
@@ -627,6 +624,42 @@ function doorLive(front: FrontPage): Html | null {
   </aside>`;
 }
 
+/**
+ * The work itself as a picture: one bar for each of the last days, as tall as
+ * the changes finished that day. Absent until there is any. Each bar names its
+ * day and count on hover, so nothing needs a script.
+ */
+function doorPulse(days: FrontPage["pulse"]["days"]): Html | null {
+  const total = days.reduce((sum, d) => sum + d.n, 0);
+  if (total === 0) return null;
+  const peak = Math.max(...days.map((d) => d.n));
+  const height = 120;
+  return html`<figure class="door-pulse">
+    <svg
+      viewBox="0 0 ${days.length * 10} ${height}"
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="${total} changes finished in ${days.length} days, at most ${peak} in one day"
+    >
+      ${days.map((d, at) => {
+        // A quiet day still holds its place on the baseline.
+        const h = d.n === 0 ? 1 : Math.max(3, Math.round((d.n / peak) * height));
+        return html`<rect
+          class="${d.n === 0 ? "door-pulse-quiet" : ""}"
+          x="${at * 10 + 1}"
+          y="${height - h}"
+          width="8"
+          height="${h}"
+          ><title>${d.day}: ${d.n}</title></rect
+        >`;
+      })}
+    </svg>
+    <figcaption class="muted small">
+      Every bar is one day of finished work here: ${total.toLocaleString("en-US")} changes in ${days.length} days.
+    </figcaption>
+  </figure>`;
+}
+
 const FORGE_GITHUB = "https://github.com/Trevato/forge";
 
 /** The maker's other public work, on this project's own forge only: a copy of the forge has its own maker. */
@@ -650,10 +683,10 @@ function agentPrompt(origin: string): string {
 /**
  * The studio's door for a stranger (#686): what this is, what it is doing right
  * now, what it has made, and how to get one, each door saying in plain words
- * what it does. The site's pins are the apps shown, in their order
- * (`actions/front.ts` decides all of it, and the API and MCP answer from the
- * same place); with no pins, the best of what is public. A signed-out reader
- * gets this whatever the mode, with a visitor's top bar and foot.
+ * what it does. The site's pins lead the apps, in their order, and the best
+ * of what is public fills the rest (`actions/front.ts` decides all of it, and
+ * the API and MCP answer from the same place). A signed-out reader gets this
+ * whatever the mode, with a visitor's top bar and foot.
  *
  * `/front` is the same page for anyone; a site admin there also gets the
  * controls that decide it.
@@ -664,8 +697,7 @@ export function studioDoor(ctx: Ctx): Response {
   const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app, Date.now(), ctx.request));
   const featured = front.featured;
   const all = [...(featured === undefined ? [] : [featured]), ...front.shelf];
-  const pinned = all.filter((e) => e.pinned);
-  const made = pinned.length > 0 ? pinned : all.slice(0, DOOR_TILES);
+  const made = all.slice(0, Math.max(DOOR_TILES, all.filter((e) => e.pinned).length));
   const accounts = !signupClosed(ctx.app);
   timePhase(ctx.request, "tiles", () => {
     tiles = made.map((e, at) =>
@@ -688,37 +720,37 @@ export function studioDoor(ctx: Ctx): Response {
   const ours = origin === "https://forge.open-platform.sh";
   const body = html`<div class="door">
     <section class="door-hero">
-      <h1>Say what you want.<br /><span class="muted">Watch it get built.</span></h1>
+      <h1>Software for what you're building.<br /><span class="muted">Yours to keep.</span></h1>
       <div class="door-under">
         <div class="door-lead">
-          <p class="door-support">An AI crew builds your apps, games and business tools. They stay yours.</p>
+          <p class="door-support">Say what you need. An AI crew builds it, for a business or a game studio.</p>
           <div class="bar">
-            ${made.length > 0
-              ? html`${btn("Play something", { href: "#made", variant: "primary", size: "lg" })}
-                ${btn("Get your own", { href: "#yours", size: "lg" })}`
-              : btn("Get your own", { href: "#yours", variant: "primary", size: "lg" })}
+            ${btn("Get your own forge", { href: "#yours", variant: "primary", size: "lg" })}
+            ${when(made.length > 0, () => btn("See what's been built", { href: "#made", size: "lg" }))}
           </div>
           <div class="door-agent">
             <p>
               Have an AI assistant? Give it this:
-              <a href="https://chatgpt.com/?q=${asked}" rel="noopener">ChatGPT</a>
-              <a href="https://grok.com/?q=${asked}" rel="noopener">Grok</a>
-              <a href="https://claude.ai/new?q=${asked}" rel="noopener">Claude</a>
-              <span class="muted">(sign in first)</span>
+              <a href="https://chatgpt.com/?q=${asked}" rel="noopener">Open in ChatGPT</a>
+              <a href="https://grok.com/?q=${asked}" rel="noopener">Open in Grok</a>
+              <a href="https://claude.ai/new?q=${asked}" rel="noopener">Open in Claude</a>
+              <span class="muted">(after you sign in)</span>
             </p>
             ${copyField("door-prompt", prompt, "A message for any AI assistant", "Copy the message")}
           </div>
         </div>
         ${doorLive(front)}
       </div>
+      ${doorPulse(front.pulse.days)}
     </section>
 
     <section class="door-section" id="made">
       <h2>Made here</h2>
       <p class="door-support">
-        Play runs it in your browser. Read the code shows how it was made.
+        A tool for your business, a game for your studio. Open runs it in your browser. Code shows how it was
+        made.
         ${accounts
-          ? "Help build this gets you an account, so you can ask for changes."
+          ? "Help build gets you an account, so you can ask for changes."
           : "Suggest a change sends a note to the people who keep it."}
       </p>
       ${made.length > 0
@@ -765,21 +797,13 @@ export function studioDoor(ctx: Ctx): Response {
         </li>
         <li>
           <h3>Ship it</h3>
-          <p>It goes live when you say so, not before. Every change is kept.</p>
+          <p>It goes live when you say so, or set it to ship by itself. Every change is kept.</p>
         </li>
       </ol>
     </section>
 
-    <section class="door-section door-split">
-      <div class="stack">
-        <h2>It stays yours</h2>
-        <ul class="door-proof">
-          <li>one Bun process</li>
-          <li>one SQLite file</li>
-          <li>MCP at /mcp</li>
-          <li>AGPL-3.0</li>
-        </ul>
-      </div>
+    <section class="door-section">
+      <h2>It stays yours</h2>
       <dl class="door-points">
         <div>
           <dt>You can move it</dt>
@@ -794,6 +818,12 @@ export function studioDoor(ctx: Ctx): Response {
           <dd>Bring an app in from another forge, do your work, and send it back to where it came from.</dd>
         </div>
       </dl>
+      <ul class="door-proof">
+        <li>one Bun process</li>
+        <li>one SQLite file</li>
+        <li>MCP at /mcp</li>
+        <li>AGPL-3.0</li>
+      </ul>
     </section>
 
     <section class="door-section door-split" id="yours">
@@ -818,10 +848,14 @@ bun run src/main.ts</code></pre>
           </div>`,
         )}
         <p class="door-packs">
-          <span class="door-kick">Coming</span> Ready-made forges: one set up for making games, one for running a business.
+          <span class="door-kick">Coming</span> Ready-made forges to start from: the software a business or a game studio needs, with more over time.
         </p>
       </div>
     </section>
+    <p class="door-org">
+      Running this for a team? <a href="https://www.open-platform.sh/#platform">The Platform</a> runs on your own cloud, and
+      <a href="https://www.espodev.com">EspoDev</a> delivers enterprise implementations.
+    </p>
     ${when(admin, () => html`<div class="door-section front-admin">${frontControls(ctx, front)}</div>`)}
   </div>`;
   const res = page({
@@ -835,13 +869,14 @@ bun run src/main.ts</code></pre>
             ${signup
               ? html`<a class="small" href="/signin${nextQuery}">Sign in</a>
                 ${btn("Create an account", { href: `/signup${nextQuery}` })}`
-              : btn("Sign in", { href: edgeLoginUrl(back) })}`,
+              : html`<a class="small door-wide" href="/signup">Create an account</a>
+                ${btn("Sign in", { href: edgeLoginUrl(back) })}`}`,
           foot: html`<span class="mark"></span>
             <span>Open Platform: two open source projects, AGPL-3.0</span>
             <span class="spacer"></span>
             <a href="${FORGE_GITHUB}">GitHub</a>
             <a href="https://www.open-platform.sh">open-platform.sh</a>
-            <a href="https://espodev.com">Enterprise implementations: EspoDev</a>`,
+            <a href="https://www.espodev.com">EspoDev</a>`,
         }
       : {}),
   });

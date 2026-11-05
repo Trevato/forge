@@ -21,7 +21,7 @@ The page a visitor reads first runs past §3's working scale on purpose, in `cla
 - `.door-ledger` — a list of one-line links inside the panel.
 - `.door-when` — where a change was made and how long ago.
 - `.door-section` — one section after the hero, with room above it and an offset for anchors.
-- `.door-shelf` — the apps, pinned ones in the owner's order: one column on a phone, as many as fit from 720px, each a §5 card with its frame taken off.
+- `.door-shelf` — the apps, pinned ones first in the owner's order: two columns on a phone, four from 720px, each a §5 card with its frame taken off.
 - `.door-kick` — a small monospace label: an app's number and state, or a note that something is coming.
 - `.door-line` — an app's description, two lines at most, holding its height so the doors line up.
 - `.door-verbs` — an app's doors in plain monospace words; the first, `.door-verb-first`, is the one that opens it.
@@ -31,7 +31,10 @@ The page a visitor reads first runs past §3's working scale on purpose, in `cla
 - `.door-steps` — how it works: three numbered steps, in columns from 720px.
 - `.door-split` — a section as a heading column beside a content column, from 720px.
 - `.door-proof` — plain facts a developer checks first, in monospace.
-- `.door-points` — the content column's definition list, ruled by hairlines.
+- `.door-points` — what makes it yours: a definition list, in columns from 720px.
+- `.door-pulse` — the work as a picture: one bar for each of the last 90 days, as tall as the changes finished that day. A quiet day is a `.door-pulse-quiet` line on the baseline.
+- `.door-pulse-quiet` — a day with no finished work.
+- `.door-org` — one calm line for organizations.
 - `.door-code` — the commands that run a forge.
 - `.door-packs` — ready-made forges, said as coming, with no button until they deploy.
 - `.door-wide` — a visitor's top-bar link that a phone leaves out, so the bar never overflows.

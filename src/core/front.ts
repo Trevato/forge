@@ -262,3 +262,22 @@ export function latestMerges(
     )
     .all(limit, ...ids);
 }
+
+/** How many pulls were merged on these repositories each day since `since`, days with none left out. */
+export function mergesByDay(
+  db: Database,
+  repoIds: readonly string[],
+  since: string,
+): readonly { day: string; n: number }[] {
+  const ids = [...new Set(repoIds)].slice(0, 400);
+  if (ids.length === 0) return [];
+  return db
+    .query<{ day: string; n: number }, string[]>(
+      `SELECT substr(pull.merged_at, 1, 10) AS day, COUNT(*) AS n
+       FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE pull.merged_at >= ?1 AND issue.sealed = 0
+         AND issue.repo_id IN (${ids.map((_, n) => `?${n + 2}`).join(",")})
+       GROUP BY day`,
+    )
+    .all(since, ...ids);
+}

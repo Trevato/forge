@@ -466,7 +466,7 @@ function signupClosedPage(ctx: Ctx): Response {
     {
       ctx,
       title: "Sign up",
-      body: html`<div class="stack"><h1>Sign up</h1><p>${said}</p><p><a href="/signin">Sign in</a></p></div>`,
+      body: html`<div class="stack"><h1>Sign up</h1><p>${said}</p><p>You can still run your own forge, with no account here: <a href="/#yours">see how</a>.</p><p><a href="/signin">Sign in</a></p></div>`,
     },
     403,
   );
