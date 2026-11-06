@@ -508,8 +508,10 @@ describe("what the open web expects", () => {
     const manifest = (await (await fetch(`${base}/manifest.webmanifest`)).json()) as { description: string };
     const html = await (await fetch(`${base}/`)).text();
     expect(manifest.description).toBe(SITE_LINE);
-    expect(html).toContain(`<meta name="description" content="${SITE_LINE}"`);
-    expect(html).toContain(`<meta property="og:description" content="${SITE_LINE}"`);
+    // The front page's share line is its own; the sentence is in its body.
+    const said = /<meta name="description" content="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(said).not.toBe("");
+    expect(html).toContain(`<meta property="og:description" content="${said}"`);
     expect(html).toContain(SITE_LINE);
   });
 });

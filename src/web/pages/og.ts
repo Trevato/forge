@@ -151,12 +151,16 @@ function waiting(ctx: Ctx, repo: Repo, issue: Issue): string {
 
 export type OgKind = "repo" | "app" | "issue" | "pull" | "run" | "map" | "audit" | "site";
 
-/** The card for any page without a card of its own: it says only what the forge is. */
-const SITE_CARD: CardInput = {
-  kind: "page",
-  title: "Software for what you're building.",
-  lines: ["Yours to keep. Your own forge, with a private AI crew. Open source."],
-};
+/** The card for any page without a card of its own: the home page's own words, and where it is. */
+function siteCard(ctx: Ctx): CardInput {
+  return {
+    kind: "page",
+    title: "Software for what you're building.",
+    tagline: "Yours to keep.",
+    lines: ["Say what you need. An AI crew builds it."],
+    stat: `${ctx.url.host} · open source`,
+  };
+}
 
 /** The audit page's own bound. */
 const AUDIT_LIMIT = 200;
@@ -360,7 +364,7 @@ async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput |
   if (kind === "run") return runInput(ctx, ref);
   if (kind === "map") return mapCardInput(ctx, ref);
   if (kind === "audit") return ref === "" ? auditCards(ctx.app).get("", () => auditCardInput(ctx)) : undefined;
-  if (kind === "site") return ref === "" ? SITE_CARD : undefined;
+  if (kind === "site") return ref === "" ? siteCard(ctx) : undefined;
   if (kind === "repo") return repoCard(ctx, ref);
   if (!isSlug(ref)) return undefined;
   const record = getAppBySlug(db, ref);

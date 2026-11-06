@@ -657,7 +657,7 @@ function footer(ctx: Ctx, own?: Html): Html {
       >forge
       ${ctx.auth.user?.isAdmin === true
         ? runningLine()
-        : "— your code, your machine"}</span
+        : "· yours to keep"}</span
     >
     ${reduced === undefined
       ? null
@@ -691,10 +691,14 @@ function pageDescription(options: PageOptions): string {
   return line.length <= 200 ? line : `${line.slice(0, 197).trimEnd()}…`;
 }
 
-/** The tab title: the forge named once, whether or not the page's own title already ends in it. */
+/**
+ * The tab title: the forge named once, whether or not the page's own title
+ * already ends in it, or opens with it ("forge: …" names it already).
+ */
 export function tabTitle(title: string): string {
   const own = title.replace(/(?: · forge)+$/, "");
-  return own === "" || own === "forge" ? "forge" : `${own} · forge`;
+  if (own === "" || own === "forge") return "forge";
+  return own.startsWith("forge: ") ? own : `${own} · forge`;
 }
 
 export function page(options: PageOptions, status = 200): Response {

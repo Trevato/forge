@@ -52,7 +52,9 @@ describe("og card", () => {
     const svg = renderCard({ kind: "nope" as never, title: "a\u0000b\u0001c" });
     wellFormed(svg);
     expect(svg).toContain("abc");
-    expect(svg).toContain("PAGE");
+    // The fallback is the plain page card: no kind badge, no edge strip.
+    expect(svg).not.toContain("PAGE");
+    expect(svg).not.toContain(`width="12"`);
     wellFormed(renderCard({ kind: "app", title: "" }));
   });
 

@@ -24,10 +24,12 @@ afterAll(async () => {
 
 const page = async (path: string) => (await fetch(`${servers.url}${path}`)).text();
 
-test("the front page is titled forge, once", async () => {
+test("the front page names the forge once", async () => {
   const raw = await page("/");
-  expect(raw).toContain("<title>forge</title>");
-  expect(raw).toContain('property="og:title" content="forge"');
+  const title = /<title>([^<]*)<\/title>/.exec(raw)?.[1] ?? "";
+  expect(title).toStartWith("forge");
+  expect(title.match(/forge/g)).toHaveLength(1);
+  expect(raw).toContain(`property="og:title" content="${title}"`);
 });
 
 test("another page keeps its suffix", async () => {
@@ -39,6 +41,9 @@ test("no title ends in the suffix twice", async () => {
   expect(tabTitle("Search · forge")).toBe("Search · forge");
   expect(tabTitle("Issues · forge · forge")).toBe("Issues · forge");
   expect(tabTitle("forge")).toBe("forge");
+  // A title that opens with the forge's name names it already.
+  expect(tabTitle("forge: software for what you're building")).toBe("forge: software for what you're building");
+  expect(tabTitle("forge-x")).toBe("forge-x · forge");
   for (const path of ["/search?q=forge", "/trevato/forge/issues", "/trevato/forge/pulls"])
     expect(await page(path)).not.toContain("· forge · forge");
 });
