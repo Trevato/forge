@@ -28,14 +28,18 @@ const href = (query: ExploreQuery): string => {
   return line === "" ? "/explore" : `/explore?q=${encodeURIComponent(line)}`;
 };
 
-/** A row's numbers as a person reads them; nothing that is zero. */
+/**
+ * A row's numbers as a person reads them; nothing that is zero. Hours awake
+ * are not among them: summed over every copy of an app, previews too, they
+ * read as a figure ("3085.9 h") that says nothing to a visitor. They still
+ * weigh in the ranking (`core/front.ts`).
+ */
 function numbers(row: ExploreRow): { apps: string; rest: string } {
   const n = row.numbers;
   const rest = [
     n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
     n.likes > 0 ? `${n.likes} like${n.likes === 1 ? "" : "s"}` : "",
     n.ships > 0 ? `${n.ships} shipped this month` : "",
-    n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
     row.shippedAt !== null ? `last shipped ${timeAgo(row.shippedAt)}` : "",
   ];
   return {
