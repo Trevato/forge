@@ -17,9 +17,9 @@ export const content = /* css */ `
   font-size: 20px; font-weight: 620; letter-spacing: -0.02em; line-height: 1.3;
 }
 .repo-title .muted, .repo-title .sep { font-weight: 400; }
-/* A phone has no hover: the settings link is a full 44px line. */
+/* A phone has no hover: a link under the title is 44px tall, and stays in its sentence. */
 @media (max-width: 640px) {
-  .repo-head p.muted.small a { display: block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
+  .repo-head p.muted.small a { display: inline-block; padding: 12px 0; min-height: 44px; box-sizing: border-box; }
 }
 .repo-head p.muted.small { margin-top: 4px; text-wrap: pretty; }
 .repo-head .tabs, .repo-head .repo-nav { margin-top: 12px; }

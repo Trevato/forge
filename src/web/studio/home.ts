@@ -19,6 +19,7 @@ import {
 } from "../../actions/front.ts";
 import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
 import { signupClosed } from "../../actions/users.ts";
+import { getSignup } from "../../settings/signup.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
@@ -706,6 +707,8 @@ export function studioDoor(ctx: Ctx): Response {
   const nextQuery = back === "/" ? "" : `?next=${encodeURIComponent(back)}`;
   const ssh = sshCommand(ctx.app);
   const signup = offersSignup(ctx) && accounts;
+  // Closed is a door with nothing behind it; invite still lands an invite link's holder.
+  const mode = getSignup(ctx.app.db);
   const origin = (ctx.app.config.url ?? ctx.url.origin).replace(/\/$/, "");
   const prompt = agentPrompt(origin);
   const asked = encodeURIComponent(prompt);
@@ -808,7 +811,7 @@ export function studioDoor(ctx: Ctx): Response {
         <h2>Get your own forge</h2>
         <p class="door-support">
           ${SITE_LINE} Free and open source. Run it on your own computer or server today. Hosted forges are
-          coming.${signup ? "" : " New accounts on this forge are by invitation."}
+          coming.${accounts ? "" : mode === "invite" ? " New accounts on this forge are by invitation." : " This forge is not taking new accounts."}
         </p>
         <div class="bar">${btn("Read the step-by-step guide", { href: `${FORGE_REPO}`, size: "lg" })}</div>
       </div>
@@ -847,7 +850,7 @@ bun run src/main.ts</code></pre>
             ${signup
               ? html`<a class="small" href="/signin${nextQuery}">Sign in</a>
                 ${btn("Create an account", { href: `/signup${nextQuery}` })}`
-              : html`<a class="small door-wide" href="/signup">Create an account</a>
+              : html`${when(mode !== "closed", () => html`<a class="small door-wide" href="/signup">Create an account</a>`)}
                 ${btn("Sign in", { href: edgeLoginUrl(back) })}`}`,
           foot: html`<span class="mark"></span>
             <span>Open Platform: two open source projects, AGPL-3.0</span>

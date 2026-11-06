@@ -300,13 +300,14 @@ function authForm(
   // The form's Sign in comes in both variants, outline beside the lead and
   // primary everywhere else, so the page always has one primary action. The
   // sentence tells a newcomer before they look for a door that is not there.
+  const mode = kind === "signin" ? timePhase(ctx.request, "settings", () => getSignup(ctx.app.db)) : undefined;
   const passkeyFirst = when(
     kind === "signin",
     () => html`<div class="stack stack-tight mb" data-passkey="on" hidden>
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
       ${passkeyNote("passkey-signin-note")}
     </div>
-    ${when(SIGNUP_SENTENCES[timePhase(ctx.request, "settings", () => getSignup(ctx.app.db))], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
+    ${when(mode === undefined ? undefined : SIGNUP_SENTENCES[mode], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
   );
 
   const body = html`${unknownLink}
@@ -401,7 +402,10 @@ function authForm(
             : btn("Create account", { variant: "primary" })}
         <span class="spacer"></span>
         ${kind === "signin"
-          ? btn("Need an account? Sign up", {
+          ? // A closed forge has no door to point at: the sentence above says so.
+            mode === "closed"
+            ? null
+            : btn("Need an account? Sign up", {
               href: "/signup",
               variant: "link",
               size: "sm",
@@ -471,7 +475,15 @@ function signupClosedPage(ctx: Ctx): Response {
     {
       ctx,
       title: "Sign up",
-      body: html`<div class="stack"><h1>Sign up</h1><p>${said}</p><p>You can still run your own forge, with no account here: <a href="/#yours">see how</a>.</p><p><a href="/signin">Sign in</a></p></div>`,
+      body: html`<div class="stack">
+        <h1>Sign up</h1>
+        <p>${said}</p>
+        <p class="muted">You can still run a forge of your own, with no account here, and suggest a change to any public app here without one.</p>
+        <div class="form-actions">
+          ${btn("Get your own forge", { href: "/#yours", variant: "primary" })}
+          ${btn("Sign in", { href: "/signin", variant: "outline" })}
+        </div>
+      </div>`,
     },
     403,
   );

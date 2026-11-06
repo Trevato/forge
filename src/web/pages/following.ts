@@ -312,10 +312,13 @@ export function followingCard(
           ? writer
             ? null
             : html`A writer can ask the crew to converge it.`
-          : html`Nobody is on the crew to converge it: add someone under
-              <a href="${base}/settings/crew">Settings → Crew</a>, or merge
-              <span class="mono">refs/following/${parent.defaultBranch}</span>
-              by hand.`
+          : // Only a writer can do either; a visitor is not told to.
+            writer
+            ? html`Nobody is on the crew to converge it: add someone under
+                <a href="${base}/settings/crew">Settings → Crew</a>, or merge
+                <span class="mono">refs/following/${parent.defaultBranch}</span>
+                by hand.`
+            : null
         : null
       : converge.kind === "working"
         ? html`${converge.agent === undefined
