@@ -214,7 +214,8 @@ form.inline { display: inline; margin-left: auto; }
 .door-lead .bar { gap: 8px; flex-wrap: wrap; }
 .door-agent { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 520px; font-size: 13px; color: var(--muted-fg); }
 .door-agent a { margin-left: 8px; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
-.door-agent .input { color: var(--muted-fg); }
+/* On the input's own tinted ground the muted color falls short of AA; the words are the thing to copy. */
+.door-agent .input { color: var(--fg); }
 .door-live { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .door-figures { display: flex; flex-wrap: wrap; gap: 12px 36px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .door-figure { display: flex; flex-direction: column; gap: 2px; }

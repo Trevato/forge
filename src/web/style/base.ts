@@ -135,7 +135,8 @@ body { overflow-x: clip; }
   width: 100%; max-width: var(--page); margin: 0 auto;
   padding: 20px 16px 36px;
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  color: var(--faint); font-size: 12.5px;
+  /* Muted, not faint: small text and links must still reach AA (4.5:1) in every theme. */
+  color: var(--muted-fg); font-size: 12.5px;
 }
 .foot .mark {
   width: 7px; height: 7px; border-radius: 2px; opacity: .7;

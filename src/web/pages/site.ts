@@ -475,8 +475,8 @@ function signupClosedPage(ctx: Ctx): Response {
     {
       ctx,
       title: "Sign up",
-      body: html`<div class="stack">
-        <h1>Sign up</h1>
+      body: html`<div class="narrow stack">
+        ${pageHead("Sign up")}
         <p>${said}</p>
         <p class="muted">You can still run a forge of your own, with no account here, and suggest a change to any public app here without one.</p>
         <div class="form-actions">
