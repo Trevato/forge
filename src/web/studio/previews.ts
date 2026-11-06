@@ -126,10 +126,6 @@ function previewRow(
     runtime === undefined
       ? undefined
       : `${base}/app/${previewEnv(pull.number)}/open`;
-  const host =
-    runtime === undefined
-      ? undefined
-      : runtime.urlFor(record, previewEnv(pull.number)).replace(/^https?:\/\//, "");
   const bits: Html[] = [html`#${pull.number} ${pull.title}`];
   if (env !== undefined) bits.push(...envLine(base, env));
   // A serving preview whose deploy finished green says what its tests did.
@@ -147,10 +143,12 @@ function previewRow(
     return row({
       ...(href === undefined ? {} : { nav: true }),
       lead: icon("rocket"),
+      // Named for its pull, not its host: the address is the link, and a
+      // visitor reads "Preview of #N" where an internal name said nothing.
       title:
-        host === undefined || href === undefined
+        href === undefined
           ? `#${pull.number} ${pull.title}`
-          : html`<a href="${href}" class="mono">${host}</a>`,
+          : html`<a href="${href}">Preview of #${pull.number}</a>`,
       meta,
       trail: writer
         ? html`${previewBadge(env)} ${envActions(base, env, writer)}`
@@ -159,10 +157,7 @@ function previewRow(
   return row({
     ...(href === undefined ? {} : { href, nav: true }),
     lead: icon("rocket"),
-    title:
-      host === undefined
-        ? `#${pull.number} ${pull.title}`
-        : html`<span class="mono">${host}</span>`,
+    title: href === undefined ? `#${pull.number} ${pull.title}` : `Preview of #${pull.number}`,
     meta,
     trail: previewBadge(env),
   });
