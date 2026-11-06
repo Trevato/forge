@@ -99,7 +99,7 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     help: "enforce refuses a host an app or check did not declare; report lets it through on 80 and 443 and lists it on the app's page. Takes effect on the next cell started.",
   },
   "children.modelEgress": {
-    label: "Model provider a child forge's cell may reach",
+    label: "Model provider a child forge cell may reach",
     env: "FORGE_CHILDREN_MODEL_EGRESS",
     kind: { type: "choice", values: ["off", "openrouter"] },
     fallback: "off",
