@@ -246,6 +246,7 @@ form.inline { display: inline; margin-left: auto; }
 .door-steps li::before { content: counter(door-step, decimal-leading-zero); margin-bottom: 18px; font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
 .door-steps p, .door-points dd { margin: 0; font-size: 15px; line-height: 1.55; color: var(--muted-fg); text-wrap: pretty; }
 .door-split { display: grid; gap: 32px; }
+.door-split > * { min-width: 0; }
 .door-pulse { margin: 72px 0 0; }
 .door-pulse svg { display: block; width: 100%; height: clamp(72px, 10vw, 120px); fill: var(--fg); }
 .door-pulse-quiet { fill: var(--border-strong); }
