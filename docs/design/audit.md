@@ -71,6 +71,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/changelog` — `pages/changelog.ts` · the last 30 releases with their dates and pulls, public · `/releases` (the signed-in kept releases) · none seen.
 - `/api` — `pages/api.ts` · the forge's OpenAPI operations by area, with search and Try it, public · the footer, the OpenAPI document, the terminal's API screen · none seen. An app's own spec is its `/:owner/:name/api` tab.
 - `/contribute` — `pages/contribute.ts` · what this forge is and where outside work is welcome, open to anyone · `/llms.txt`, MCP `contribute` tool · none seen.
+- `/agents`: `pages/agents.ts` · `/llms.txt` drawn as a page for an assistant whose reader takes only HTML, and for the person beside it, public · the home page's prompt and its Open in ChatGPT, Claude and Grok links · none seen.
 - `/search` — `pages/search.ts` · find across what I can read · the palette (`palette.ts`) · none seen.
 - `/-/confirm` — `pages/search.ts` (`confirmPage`) · the "are you sure" step for a destructive action · none · none seen.
 

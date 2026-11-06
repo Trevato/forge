@@ -670,7 +670,7 @@ const FORGE_REPO = "https://forge.open-platform.sh/trevato/forge";
  * cannot.
  */
 function agentPrompt(origin: string): string {
-  return `Read ${origin}/llms.txt and tell me in plain words what this forge is. Ask if I want to help build one of its public apps or get my own forge, then walk me through it. If you can't open the link or act on the forge yourself, say so and give me the exact steps.`;
+  return `Read ${origin}/agents and tell me in plain words what this forge is. Ask if I want to help build one of its public apps or get my own forge, then walk me through it. If you can't open the link or act on the forge yourself, say so and give me the exact steps.`;
 }
 
 /**

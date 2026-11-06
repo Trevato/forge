@@ -412,6 +412,8 @@ form.inline { display: inline; margin-left: auto; }
 
 /* ---- prose (markdown) ---- */
 .prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
+/* Prose that is the page itself, not a card: it keeps the page's own edge and measure. */
+.prose.prose-page { padding: 0; max-width: 72ch; }
 .prose > * { max-width: var(--measure); }
 .prose h1, .prose h2, .prose h3, .prose h4 { margin: 24px 0 8px; }
 .prose h1 { font-size: 20px; }

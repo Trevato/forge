@@ -216,6 +216,7 @@ export async function sitemapXml(ctx: Ctx): Promise<Response> {
         `<url><loc>${o}/</loc></url>`,
         `<url><loc>${o}/explore</loc></url>`,
         `<url><loc>${o}/changelog</loc>${changed === null ? "" : `<lastmod>${changed}</lastmod>`}</url>`,
+        `<url><loc>${o}/agents</loc></url>`,
         ...repos.map((r) => {
           const mod = r.pushedAt === null ? "" : `<lastmod>${r.pushedAt.slice(0, 10)}</lastmod>`;
           return `<url><loc>${o}${xml(`/${r.path}`)}</loc>${mod}</url>`;
@@ -353,6 +354,21 @@ const llmsBodies = new Map<string, { signedIn: boolean; repos: LlmsListing; runn
  * each with the method and URL that does it.
  */
 export function llmsTxt(ctx: Ctx): Response {
+  const kept = llmsBody(ctx);
+  // The third line names the running commit: a client revalidates (one small 304) rather than keep an old build for an hour.
+  const cache = "private, no-cache";
+  const sent = ctx.request.headers.get("if-none-match");
+  if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
+    return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache, vary: "Cookie, Authorization" } });
+  const res = text(kept.body);
+  res.headers.set("cache-control", cache);
+  res.headers.set("etag", kept.etag);
+  res.headers.append("vary", "Cookie, Authorization");
+  return res;
+}
+
+/** The llms.txt text for this request and its ETag: /llms.txt sends it as is, /agents draws it as a page. */
+export function llmsBody(ctx: Ctx): { body: string; etag: string } {
   const o = ctx.url.origin;
   const tell = sshTellCommand(ctx.app);
   const running = runningSentence();
@@ -370,16 +386,7 @@ export function llmsTxt(ctx: Ctx): Response {
     if (llmsBodies.size >= 16) llmsBodies.clear();
     llmsBodies.set(key, kept);
   }
-  // The third line names the running commit: a client revalidates (one small 304) rather than keep an old build for an hour.
-  const cache = "private, no-cache";
-  const sent = ctx.request.headers.get("if-none-match");
-  if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
-    return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache, vary: "Cookie, Authorization" } });
-  const res = text(kept.body);
-  res.headers.set("cache-control", cache);
-  res.headers.set("etag", kept.etag);
-  res.headers.append("vary", "Cookie, Authorization");
-  return res;
+  return kept;
 }
 
 /** The llms.txt document for one origin. */

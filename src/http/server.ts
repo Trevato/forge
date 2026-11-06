@@ -443,6 +443,7 @@ import type { Database } from "bun:sqlite";
 import { mcpRoutes, REPORT_TOOL } from "./mcp.ts";
 import { TOOLS } from "./mcp/tools.ts";
 import { setMcpTools } from "../web/llms_tools.ts";
+import { agentsPage } from "../web/pages/agents.ts";
 import { openapiRoute } from "../contract/served.ts";
 import { createUsageCounter, type UsageCounter } from "../core/usage_count.ts";
 import {
@@ -678,6 +679,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/.well-known/security.txt", securityTxt);
   router.add("GET", "/.well-known/mcp.json", mcpJson);
   router.add("GET", "/llms.txt", llmsTxt);
+  // The same words as a page, for an assistant whose reader takes only HTML.
+  router.add("GET", "/agents", agentsPage);
   router.add("GET", "/.well-known/change-password", changePassword);
   router.add("GET", "/robots.txt", robotsTxt);
   // The conventional path an agent guesses, answered as /api/v1/openapi.json is.
