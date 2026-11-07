@@ -671,8 +671,10 @@ describe("themes", () => {
     expect(css).toContain("color: var(--tok-keyword)");
   });
 
+  // The front door is a visitor's own page with its own bar (home: a visitor's front page);
+  // the switcher lives in the shared bar every other page carries.
   test("no cookie means system: no data-theme, switcher present", async () => {
-    const text = await (await fetch(base)).text();
+    const text = await (await fetch(`${base}/explore`)).text();
     expect(text).not.toMatch(/<html[^>]*\sdata-theme=/);
     expect(text).toContain('action="/theme"');
     for (const name of THEME_NAMES) {
@@ -717,7 +719,7 @@ describe("themes", () => {
     expect(setCookie).toStartWith("forge_theme=midnight");
 
     const cookie = setCookie.split(";")[0]!;
-    const text = await (await fetch(base, { headers: { cookie } })).text();
+    const text = await (await fetch(`${base}/explore`, { headers: { cookie } })).text();
     expect(text).toContain('data-theme="midnight"');
     // The switcher shows the active choice.
     expect(text).toMatch(/value="midnight"\s+checked/);

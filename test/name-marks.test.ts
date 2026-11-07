@@ -22,6 +22,7 @@ import { createApp as insertApp } from "../src/core/apps.ts";
 import { markOf, marksByName } from "../src/core/marks.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { setMember } from "../src/core/roles.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { claimRun, createRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -155,12 +156,15 @@ describe("a name always says who it is", () => {
         message: branch,
         files: [{ path: `${branch.replace("/", "-")}.md`, content: "x\n" }],
       });
+      // A member who cannot write here sends from a branch; a guest needs a fork.
+      if (who === mallory) setMember(app.db, mallory.id, true, alice.id, new Date());
       const p = await openPull(app, who, repo, {
         title: `Beds by ${who.username}`,
         body: `Closes #${issueNumber}`,
         baseBranch: "main",
         headBranch: branch,
       });
+      if (who === mallory) setMember(app.db, mallory.id, false, alice.id, new Date());
       if (!p.ok) throw new Error(String(p.error));
       if (who === scout) pull = p.value;
       else theirs = p.value;

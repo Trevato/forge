@@ -279,7 +279,7 @@ describe("/flow: the forge shows its own bottleneck", () => {
   });
 
   test("a guest's bar has search, one appearance menu and Sign in; no bare theme button", async () => {
-    const page = await (await get("/", "")).text();
+    const page = await (await get("/explore", "")).text();
     const bar = page.slice(page.indexOf('<header class="topbar"'), page.indexOf("</header>"));
     expect(bar).toContain("Sign in");
     expect(bar).not.toContain("theme-menu");
