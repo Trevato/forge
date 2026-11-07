@@ -18,6 +18,7 @@ import { childDirOf } from "../actions/spawn.ts";
 import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
 import { SIZES, type Size } from "./sizes.ts";
+import { childModelHosts } from "../core/capacity.ts";
 
 export const CELL_PREFIX = "cell-";
 export const ownsBody = (bodyId: string): boolean => bodyId.startsWith(CELL_PREFIX);
@@ -44,6 +45,8 @@ export function cellSpecFor(input: {
   size: Size;
   port: number;
   label: string;
+  /** The model provider hosts an admin let children reach (`children.modelEgress`); none by default. */
+  modelHosts?: readonly string[];
 }): CellSpec {
   return {
     dir: input.dir,
@@ -54,7 +57,10 @@ export function cellSpecFor(input: {
     hide: [input.parentDataDir],
     // The forge's own code may live under the parent's data (a release checkout).
     reveal: [CODE],
-    egress: [],
+    egress: [...(input.modelHosts ?? [])],
+    // A child's cell is held to this list whatever cells.egress says: report
+    // mode is for apps still declaring hosts, not for a whole forge.
+    egressMode: "enforce",
     reach: input.parentPort === undefined ? [input.parentUrl] : [input.parentUrl, parentLocal(input.parentPort)],
     limits: cellLimits(input.size),
     listen: input.port,
@@ -153,6 +159,7 @@ function makeRegistry(parent: App): CellChildren {
       size: input.size,
       port,
       label: `forge:${input.name}`,
+      modelHosts: childModelHosts(parent.db),
     });
     const log = (line: string): void => {
       recent.push(line);

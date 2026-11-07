@@ -13,6 +13,8 @@ import { notePeer } from "../src/http/peer.ts";
 import type { App } from "../src/app.ts";
 import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 import { missing } from "./helpers/tools.ts";
+import { hostAllowed } from "../src/apps/egress.ts";
+import { childModelHosts, setCapacity } from "../src/core/capacity.ts";
 import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
 import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
 
@@ -30,6 +32,36 @@ describe("a child forge's cell", () => {
     expect(spec.hide).toEqual(["/d"]);
     expect(spec.listen).toBe(4100);
     expect(spec.dir).toBe("/d/children/c1");
+  });
+
+  test("reaches no outside host unless an admin names a model provider, and always enforces", () => {
+    const base = { dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" } as const;
+    const shut = cellSpecFor(base);
+    expect(shut.egress).toEqual([]);
+    expect(shut.egressMode).toBe("enforce");
+    const open = cellSpecFor({ ...base, modelHosts: ["openrouter.ai:443"] });
+    expect(open.egress).toEqual(["openrouter.ai:443"]);
+    expect(open.egressMode).toBe("enforce");
+    expect(open.reach).toEqual(["https://f.test"]);
+    expect(hostAllowed(open.egress, "openrouter.ai", 443)).toBe(true);
+    expect(hostAllowed(open.egress, "openrouter.ai", 80)).toBe(false);
+    expect(hostAllowed(open.egress, "evil.openrouter.ai", 443)).toBe(false);
+    expect(hostAllowed(open.egress, "api.anthropic.com", 443)).toBe(false);
+  });
+
+  test("the model provider is the admin's choice, off until set, and ignores report mode", () => {
+    const app = createApp({ dataDir: join(tmp, "model-egress"), url: "https://f.test" });
+    try {
+      expect(childModelHosts(app.db)).toEqual([]);
+      setCapacity(app.db, "cells.egress", "report", "system");
+      expect(childModelHosts(app.db)).toEqual([]);
+      setCapacity(app.db, "children.modelEgress", "openrouter", "system");
+      expect(childModelHosts(app.db)).toEqual(["openrouter.ai:443"]);
+      setCapacity(app.db, "children.modelEgress", "off", "system");
+      expect(childModelHosts(app.db)).toEqual([]);
+    } finally {
+      app.close();
+    }
   });
 
   test("starts from childEnv: the parent's secrets are not handed on", () => {
