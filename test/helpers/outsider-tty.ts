@@ -19,8 +19,8 @@ import { Session } from "../../src/tui/session.ts";
 import { headlessTerminal } from "../../src/tui/term/terminal.ts";
 import { settleApp } from "./tui.ts";
 
-/** What a refused toast reads like on the screen. */
-const REFUSAL = new RegExp(`${NOT_A_MEMBER}|unverified|do not have permission|need write access|not allowed`, "i");
+/** What a refused toast reads like on the screen: the guest words' first sentence, as a long toast is cut at the edge. */
+const REFUSAL = new RegExp(`${NOT_A_MEMBER.split(".")[0]}|unverified|do not have permission|need write access|not allowed`, "i");
 
 export interface Target {
   owner: string;

@@ -25,6 +25,7 @@ import { listEvents } from "../src/core/events.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { openPullsClosing, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { setMember } from "../src/core/roles.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -603,12 +604,15 @@ describe("new words for an issue or a pull", () => {
       message: "tulips",
       files: [{ path: "tulips.md", content: "red\n" }],
     });
+    // A member who cannot write here sends from a branch; a guest needs a fork.
+    setMember(app.db, bob.id, true, alice.id, new Date());
     const opened = await openPull(app, bob, repo, {
       title: "Tulips",
       body: "Red ones.",
       baseBranch: "main",
       headBranch: "bob/tulips",
     });
+    setMember(app.db, bob.id, false, alice.id, new Date());
     if (!opened.ok) throw new Error(String(opened.error));
     const theirs = opened.value;
     const path = `/alice/garden/pulls/${theirs.number}`;
