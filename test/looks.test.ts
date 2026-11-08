@@ -1235,14 +1235,14 @@ describe("the look", () => {
     const map = group("/map");
     expect(map).toContain(`/looks/production/${mainOid}/map-phone.png?v=`);
     expect(map).toContain(`/looks/${env}/${oid}/map-phone.png?v=`);
-    expect(map.indexOf("Before")).toBeLessThan(map.indexOf("After"));
+    expect(map.indexOf(">main<")).toBeLessThan(map.indexOf(">this pull<"));
     expect(map.indexOf(`/looks/production/`)).toBeLessThan(
       map.indexOf(`/looks/${env}/`),
     );
     expect(map).not.toContain("has no look");
     expect(map).toContain(`/commit/${mainOid}`);
     const solo = group("/solo");
-    expect(solo).toContain("Main has no look of /solo yet.");
+    expect(solo).not.toContain(">main<");
     expect(solo).not.toContain("/looks/production/");
   });
 

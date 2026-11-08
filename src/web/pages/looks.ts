@@ -163,7 +163,7 @@ export function lookCard(
   );
   const labelled = pages.length > 1;
   // What main looks like, to set each page beside: only what this viewer may fetch.
-  const mainLooks = looksForEnv(ctx.app.db, record.id, "production").filter(
+  const mainLooks = looksForEnv(ctx.app.db, record.id, "production", "any").filter(
     (l) => !isAttached(l) && mayFetchLook(ctx, repo, record, l),
   );
   const picture = (
@@ -207,14 +207,13 @@ export function lookCard(
         </p>
       </section>`;
     const moved = shown.commitOid !== headOid;
+    // Beside the same page at the same width and theme: a width main lacks is left out.
     const mainOfPage = mainLooks.filter((l) => l.page === page);
-    const beforePhone = pictured(mainOfPage, "phone");
-    const beforeDesktop = pictured(mainOfPage, "desktop");
-    // Beside the same page at the same width: a width main lacks is left out.
-    const beforeShown = [
-      phone === undefined ? undefined : beforePhone,
-      desktop === undefined ? undefined : beforeDesktop,
-    ].filter((l): l is Look => l !== undefined);
+    const beforeOf = (theme: Look["theme"], headKinds: readonly Look["kind"][]): Look[] =>
+      headKinds
+        .map((kind) => pictured(mainOfPage.filter((l) => l.theme === theme), kind))
+        .filter((l): l is Look => l !== undefined);
+    const beforeShown = beforeOf("light", [phone, desktop].filter((l) => l !== undefined).map((l) => l.kind));
     // Only the dark pictures of the commit the caption names: after a push
     // the light pair is retaken first, and an old head's dark pair must not
     // sit under the new head's words.
@@ -223,38 +222,39 @@ export function lookCard(
     );
     const darkPhone = pictured(darkOfPage, "phone");
     const darkDesktop = pictured(darkOfPage, "desktop");
+    // Main's picture beside the head's; where main has none, the head stands alone.
+    const compare = (before: readonly Look[], after: readonly Look[]): Html =>
+      before.length === 0
+        ? html`<div class="looks">
+            ${after.map((l) => picture(l, l.kind, page))}
+          </div>`
+        : html`<div class="looks" data-compare>
+            <div>
+              <p class="muted small">main</p>
+              <div class="looks">
+                ${before.map((l) => picture(l, l.kind, page, "main"))}
+              </div>
+              <p class="muted small">
+                at ${sha(before[0]!.commitOid, `${base}/commit/${before[0]!.commitOid}`)} ·
+                ${time(before[0]!.createdAt)}
+              </p>
+            </div>
+            <div>
+              <p class="muted small">this pull</p>
+              <div class="looks">
+                ${after.map((l) => picture(l, l.kind, page))}
+              </div>
+            </div>
+          </div>`;
+    const lightAfter = [phone, desktop].filter((l): l is Look => l !== undefined);
+    const darkAfter = [darkPhone, darkDesktop].filter((l): l is Look => l !== undefined);
     return html`<section class="stack stack-tight">
       ${label}
-      <div class="looks" data-compare>
-        <div>
-          <p class="muted small">Before · main</p>
-          ${beforeShown.length === 0
-            ? html`<p class="muted small">
-                Main has no look of ${page} yet.
-              </p>`
-            : html`<div class="looks">
-                  ${beforeShown.map((l) => picture(l, l.kind, page, "main"))}
-                </div>
-                <p class="muted small">
-                  at ${sha(beforeShown[0]!.commitOid, `${base}/commit/${beforeShown[0]!.commitOid}`)} ·
-                  ${time(beforeShown[0]!.createdAt)}
-                </p>`}
-        </div>
-        <div>
-          <p class="muted small">After · #${pull.number}</p>
-          <div class="looks">
-            ${when(phone, (l) => picture(l, "phone", page))}
-            ${when(desktop, (l) => picture(l, "desktop", page))}
-          </div>
-        </div>
-      </div>
-      ${when(darkPhone ?? darkDesktop, () =>
+      ${compare(beforeShown, lightAfter)}
+      ${when(darkAfter.length > 0, () =>
         disclosure(
           "In the dark",
-          html`<div class="looks">
-            ${when(darkPhone, (l) => picture(l, "phone", page))}
-            ${when(darkDesktop, (l) => picture(l, "desktop", page))}
-          </div>`,
+          compare(beforeOf("dark", darkAfter.map((l) => l.kind)), darkAfter),
           { small: true },
         ),
       )}
