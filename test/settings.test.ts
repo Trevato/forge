@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
+import { setMirrorTarget } from "../src/core/migrate_mirror.ts";
+import { recordProvenance } from "../src/core/provenance.ts";
 import { listLabels } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { adminCookie } from "./helpers/admin.ts";
@@ -50,6 +52,44 @@ describe("repo settings", () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the General page has no card and each form posts where it did", async () => {
+    const repo = getRepo(app.db, "olive", "proj")!;
+    app.db.run("PRAGMA foreign_keys = OFF");
+    setMirrorTarget(app.db, {
+      repoId: repo.id,
+      originId: "origin-1",
+      fullName: "olive/proj-mirror",
+      cloneUrl: "https://example.test/olive/proj-mirror.git",
+      tips: {},
+    });
+    recordProvenance(app.db, repo.id, { url: "https://github.com/olive/proj", parents: [] });
+    const res = await fetch(`${base}/olive/proj/settings`, { headers: { cookie: ownerCookie } });
+    const page = await res.text();
+    expect(res.status).toBe(200);
+    expect(page).not.toContain('class="card');
+    const posts = (path: string) => `method="post" action="/olive/proj${path}"`;
+    for (const path of [
+      "/settings",
+      "/settings/wave",
+      "/settings/archive",
+      "/settings/provenance",
+    ])
+      expect(page).toContain(posts(path));
+    // Stopping the mirror asks first: the page links to the confirm, which posts.
+    expect(page).toContain(`/-/confirm?to=${encodeURIComponent("/olive/proj/settings/mirror/stop")}`);
+    for (const h of [
+      "About",
+      "Branch and gates",
+      "Cut a wave",
+      "Archive",
+      "Mirror",
+      "Show where this came from",
+      "Follow upstream",
+      "Followed sources",
+    ])
+      expect(page).toMatch(new RegExp(`<section class="settings-block"[^>]*>\\s*<h2>${h}</h2>`));
   });
 
   test("only the owner can reach settings", async () => {

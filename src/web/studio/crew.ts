@@ -49,7 +49,6 @@ import {
   badge,
   btn,
   type Tone,
-  card,
   field,
   row,
   selectField,
@@ -70,8 +69,9 @@ function aboutCard(
 ): Html | null {
   if (!admin) return null;
   const noun = isApp ? "app" : "repository";
-  return card(
-    html`<form method="post" action="${base}/settings">
+  return html`<section class="settings-block">
+    <h2>About</h2>
+    <form method="post" action="${base}/settings">
       ${field({
         label: "Description",
         name: "description",
@@ -100,9 +100,8 @@ function aboutCard(
       })}
       <input type="hidden" name="card" value="about" />
       <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
-    </form>`,
-    { head: html`${icon("pencil")}<h2>About</h2>` },
-  );
+    </form>
+  </section>`;
 }
 
 const SEAT_LEAD: Record<Seat["state"], "check" | "alert" | "plus"> = {
@@ -220,20 +219,16 @@ function teamCard(
       ? `Auto mode is on (${team.mode}): the team works on its own.`
       : "Auto mode is off: the team works when asked. Turn it on under On its own. A list's number is how many work at once; 0 pauses it.";
   const nobody = crew.length > 0 ? null : nobodyLine(everyone.length > 0, ctx.auth.user?.isAdmin === true);
-  return card(
-    html`<p class="small" id="auto-mode" data-auto="${team.auto ? "on" : "off"}">
+  return html`<section class="settings-block" id="team">
+    <h2>Your team</h2>
+    <p class="small" id="auto-mode" data-auto="${team.auto ? "on" : "off"}">
         ${intro}
       </p>
       ${nobody}
       <ul class="list setting-list">
         ${rows}
-      </ul>`,
-    {
-      id: "team",
-      head: html`${icon("users")}
-        <h2>Your team</h2>`,
-    },
-  );
+      </ul>
+  </section>`;
 }
 
 /**
@@ -391,11 +386,10 @@ ${repo.autonomyDirection}</textarea
         })}
         <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
       </form>`;
-  return card(html`${state}${form}`, {
-    id: "autonomy",
-    head: html`${icon("play")}
-      <h2>On its own</h2>`,
-  });
+  return html`<section class="settings-block" id="autonomy">
+    <h2>On its own</h2>
+    ${state}${form}
+  </section>`;
 }
 
 /**
@@ -410,12 +404,12 @@ export function settingsLead(ctx: Ctx, repo: Repo): Html {
   const admin = ownerFacts && canAdmin(ctx.app.db, repo, ctx.auth.user);
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
   if (!ownerFacts)
-    return html`<div class="card">
+    return html`<section class="settings-block">
       <p class="muted small">
         The crew and how this ${isApp ? "app" : "repository"} runs itself are
         visible to people who can write here.
       </p>
-    </div>`;
+    </section>`;
   return html`<div class="stack">
     ${aboutCard(repo, base, admin, isApp)}
     ${crewCard(ctx, repo, base, admin)}

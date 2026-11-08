@@ -269,8 +269,12 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
 
   // The lead's About card owns the description and visibility; this form
   // sends them back unchanged, as that one does the gates below.
-  const body = card(
-    html`<form method="post" action="${base}/settings">
+  const body = html`<section class="settings-block">
+    <h2>Branch and gates</h2>
+    <p class="muted">
+      Where the repository opens, and what must hold before a change lands on it.
+    </p>
+    <form method="post" action="${base}/settings">
       <input type="hidden" name="card" value="gates" />
       ${selectField({
         label: "Default branch",
@@ -372,14 +376,14 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
       <div class="form-actions">
         ${btn("Save changes", { variant: "primary" })}
       </div>
-    </form>`,
-    { head: html`${icon("branch")}<h2>Branch and gates</h2>` },
-  );
+    </form>
+  </section>`;
   const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
   const upstream = followUpstreamCard(ctx, repo);
   const sources = followSourcesCard(ctx, repo);
-  const wave = card(
-    html`<form method="post" action="${base}/settings/wave">
+  const wave = html`<section class="settings-block">
+    <h2>Cut a wave</h2>
+    <form method="post" action="${base}/settings/wave">
       <p class="muted">
         Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>,
         listing every pull merged since the last wave. The headline and
@@ -387,13 +391,13 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
         <a href="${base}/waves">See the waves so far</a>.
       </p>
       <div class="form-actions">${btn("Cut a wave", { variant: "primary" })}</div>
-    </form>`,
-    { head: html`${icon("rocket")}<h2>Cut a wave</h2>` },
-  );
+    </form>
+  </section>`;
   const proposals = proposalTokensSection(ctx, repo);
   const trail = provenanceCard(ctx, repo);
-  const archive = card(
-    html`<form method="post" action="${base}/settings/archive">
+  const archive = html`<section class="settings-block">
+    <h2>Archive</h2>
+    <form method="post" action="${base}/settings/archive">
       <input type="hidden" name="archived" value="${repo.archivedAt === null ? "1" : "0"}" />
       <p class="muted">
         ${repo.archivedAt === null
@@ -405,17 +409,17 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           variant: "primary",
         })}
       </div>
-    </form>`,
-    { head: html`${icon("folder")}<h2>Archive</h2>` },
-  );
+    </form>
+  </section>`;
   renderMs += performance.now() - since;
   const held = timePhase(ctx.request, "mirror", () => getMirrorTarget(ctx.app.db, repo.id));
   since = performance.now();
   const mirror =
     held === undefined
       ? null
-      : card(
-          html`<p class="muted" data-mirror-line>${mirrorLine(held)}</p>
+      : html`<section class="settings-block">
+          <h2>Mirror</h2>
+          <p class="muted" data-mirror-line>${mirrorLine(held)}</p>
             <p class="muted small">
               Stopping leaves ${held.fullName} as it is; nothing more is pushed.
             </p>
@@ -424,9 +428,8 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
                 action: `${base}/settings/mirror/stop`,
                 verb: "Stop mirroring",
               })}
-            </div>`,
-          { head: html`${icon("branch")}<h2>Mirror</h2>` },
-        );
+            </div>
+        </section>`;
   const response = settingsPageResponse(
     ctx,
     repo,
@@ -550,8 +553,9 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
   const trail = getProvenance(ctx.app.db, repo.id);
   if (trail === undefined) return null;
   const base = repoBase(repo);
-  return card(
-    html`<form method="post" action="${base}/settings/provenance">
+  return html`<section class="settings-block">
+    <h2>Show where this came from</h2>
+    <form method="post" action="${base}/settings/provenance">
       <input type="hidden" name="shown" value="${trail.shown ? "0" : "1"}" />
       <p class="muted">
         Migrated from
@@ -574,9 +578,8 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
           variant: "outline",
         })}
       </div>
-    </form>`,
-    { head: html`${icon("fork")}<h2>Show where this came from</h2>` },
-  );
+    </form>
+  </section>`;
 }
 
 /** POST /:owner/:name/settings/provenance — show or hide the trail. */

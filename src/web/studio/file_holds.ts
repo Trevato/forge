@@ -11,8 +11,7 @@ import { heldNow } from "../../crew/held.ts";
 import { MAX_HOLD_PATH } from "../../crew/file_holds.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
-import { icon } from "../icons.ts";
-import { btn, card, field, row, time } from "../ui.ts";
+import { btn, field, row, time } from "../ui.ts";
 
 /** Null unless the viewer is an admin of `repo`: the holds are the owner's book-keeping. */
 export function fileHoldsCard(ctx: Ctx, repo: Repo, base: string): Html | null {
@@ -24,8 +23,9 @@ export function fileHoldsCard(ctx: Ctx, repo: Repo, base: string): Html | null {
       .filter(([, h]) => h.path === path)
       .map(([n]) => `#${n}`)
       .join(" ");
-  return card(
-    html`<p class="muted small">
+  return html`<section class="settings-block" id="file-holds">
+    <h2>Held files</h2>
+    <p class="muted small">
         No build starts on an issue that names a held path. Nothing already
         running is cut.
       </p>
@@ -58,11 +58,6 @@ export function fileHoldsCard(ctx: Ctx, repo: Repo, base: string): Html | null {
           hint: `A path in the repository, relative, at most ${MAX_HOLD_PATH} characters.`,
         })}
         <div class="form-actions">${btn("Hold file", { variant: "primary" })}</div>
-      </form>`,
-    {
-      id: "file-holds",
-      head: html`${icon("alert")}
-        <h2>Held files</h2>`,
-    },
-  );
+      </form>
+  </section>`;
 }
