@@ -15,11 +15,13 @@ Media (`/media/…`, the route a PDF or image is drawn from) is **not covered**:
 
 The bypasses are tested (`test/anonymous-deep.test.ts`): a signed-in reader, a repository made private, `?fragment=1` and a branch-name ref never get a page kept for a stranger. `--compare` exiting 1 is tested (`test/load-bench.test.ts`).
 
+**Release step:** `bun scripts/release-load.ts <version> --url <copy> --repo <owner/name>` writes `bench/results/<version>.json` and compares with the newest older kept file (`src/perf/baseline.ts`); exit 1 is the gate. With no older file it only writes the first; commit it. `scripts/cut-release.ts` prints this command as its last step; it does not run it (it needs a copy with data), and no baseline is kept yet — the first release run writes it.
+
 No baseline is kept in `bench/results/` yet: the pull's preview holds no repository to read, and the load must not be aimed at production. The first file is written by the first run against a copy with data.
 
-Follow-ups: profile #9503, baseline and release wiring #9504, media #9505.
+Follow-ups: profile #9503, baseline #9504 (the file itself, still to be written from a copy with data), media #9505.
 
-Not done here: the profile of tree/blob/raw/media under production's shape, the p95 targets at 500/s, and wiring the comparison into the release check. Those need a machine and data this run does not have.
+Not done here: the profile of tree/blob/raw/media under production's shape, the p95 targets at 500/s. Those need a machine and data this run does not have.
 
 ## The per-phase profile (#9503)
 
