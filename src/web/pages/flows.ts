@@ -8,7 +8,7 @@
  */
 
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
-import { readRadar } from "../../flows/radar.ts";
+import { depState, readRadar } from "../../flows/radar.ts";
 import { pinsOf } from "../../flows/run.ts";
 import { probeLinks } from "../../flows/probe.ts";
 import { mayStartRadar, startRadar } from "../../flows/start.ts";
@@ -55,10 +55,8 @@ export async function flowsPage(ctx: Ctx): Promise<Response> {
   const depRows = deps.map((d) =>
     row({
       title: html`${d.name}`,
-      meta: html`${d.pinned === "" ? d.range : `pinned ${d.pinned}`}${d.latest === "" ? "" : ` · newest ${d.latest}`}${d.checkedAt === null ? "" : html` · read ${time(d.checkedAt)}`}`,
-      trail: badge(d.error !== "" ? "not read" : d.gap === "none" ? (d.checkedAt === null ? "not read yet" : "current") : `${d.gap} update`, {
-        tone: d.error !== "" || d.gap === "major" ? "danger" : d.gap === "none" ? "default" : "attn",
-      }),
+      meta: html`${d.pinned === "" ? d.range : `pinned ${d.pinned}`}${d.latest === "" ? "" : ` · newest ${d.latest}`}${d.checkedAt === null ? "" : html` · read ${time(d.checkedAt)}`}${d.advisory === "" ? "" : html` · advisory: ${d.advisory}`}`,
+      trail: badge(depState(d).label, { tone: depState(d).tone }),
     }),
   );
   const body = html`${repoHeader(ctx, repo, "flows")}
@@ -69,7 +67,7 @@ export async function flowsPage(ctx: Ctx): Promise<Response> {
         ${actions}
         ${side("Packages", depRows, "No pinned packages.")}
       </div>
-      <div>${side("Flows out", flows.outbound.map(lineRow), "Nothing flows out: no forks and no mirror.")}</div>
+      <div>${side("Flows out", flows.outbound.map(lineRow), "Nothing flows out: no forks, no mirror and no forge follows.")}</div>
     </div>
     ${admin
       ? html`<form method="post" action="${repoBase(repo)}/flows/probe" class="mt">${btn("Compare heads now", { variant: "secondary" })}</form>

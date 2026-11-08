@@ -7,7 +7,8 @@
 
 import type { Database } from "bun:sqlite";
 import { getCursor } from "../core/origins.ts";
-import { canRead, canWrite, getRepoById, visibleForks, type Repo } from "../core/repos.ts";
+import { forkFollowMode } from "../core/fork_follow.ts";
+import { canRead, canWrite, getRepoById, repoDatesFor, visibleForks, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { aheadWords, parseAhead } from "../origins/ahead.ts";
 
@@ -25,7 +26,7 @@ export interface FlowAction {
 }
 
 export interface FlowLine {
-  readonly kind: "origin" | "source" | "upstream" | "fork" | "mirror";
+  readonly kind: "origin" | "source" | "upstream" | "fork" | "mirror" | "forge";
   readonly label: string;
   /** In-forge link, when the line is a repository here. */
   readonly href: string;
@@ -123,8 +124,15 @@ export function readFlows(db: Database, repo: Repo, viewer: User | undefined, no
       ...(writer && health === "behind" ? { action: { label: "Pull in what's new", href: `${base(repo)}/sync/take`, post: true } } : {}),
     });
   }
-  for (const f of visibleForks(db, repo.id, viewer)) {
-    outbound.push({ kind: "fork", label: `${f.ownerName}/${f.name}`, href: base(f), state: "fork", at: null, problem: false, health: "none" });
+  const forks = visibleForks(db, repo.id, viewer);
+  const dates = repoDatesFor(db, forks.map((f) => f.id));
+  for (const f of forks) {
+    const d = dates.get(f.id);
+    const mode = forkFollowMode(db, f.id);
+    outbound.push({
+      kind: "fork", label: `${f.ownerName}/${f.name}`, href: base(f), at: d?.pushedAt ?? d?.createdAt ?? null, problem: false, health: "none",
+      state: mode === "take-updates" ? "fork, takes updates" : "fork, told of updates",
+    });
   }
   const mirror = db
     .query<{ full_name: string; pushed_at: string | null; last_error: string }, [string]>(
@@ -137,6 +145,21 @@ export function readFlows(db: Database, repo: Repo, viewer: User | undefined, no
       state: mirror.last_error !== "" ? "last push failed" : "mirrored",
       health: mirror.last_error !== "" ? "unread" : "ok",
     });
+  }
+  // Forges that follow this one: a child forge holds a proposal token for it. Their names are for those who write here.
+  if (writer) {
+    for (const c of db
+      .query<{ child: string; origin: string; created_at: string; last_used_at: string | null; expires_at: string | null }, [string]>(
+        `SELECT p.child, p.origin, t.created_at, t.last_used_at, t.expires_at
+           FROM proposal_token p JOIN token t ON t.id = p.token_id WHERE p.repo_id = ?1 ORDER BY t.created_at LIMIT 50`,
+      )
+      .all(repo.id)) {
+      const ended = c.expires_at !== null && Date.parse(c.expires_at) <= now;
+      outbound.push({
+        kind: "forge", label: `${c.child} (${plainUrl(c.origin)})`, href: "", at: c.last_used_at ?? c.created_at, problem: false,
+        health: ended ? "stale" : "none", state: ended ? "forge follows, token ended" : "forge follows",
+      });
+    }
   }
   return { inbound, outbound };
 }

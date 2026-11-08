@@ -7,7 +7,7 @@
 
 import { takeFromOrigin } from "../../actions/origins.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
-import { readRadar, type DepLine } from "../../flows/radar.ts";
+import { depState, readRadar, type DepLine } from "../../flows/radar.ts";
 import { pinsOf } from "../../flows/run.ts";
 import { probeLinks } from "../../flows/probe.ts";
 import { mayStartRadar, startRadar } from "../../flows/start.ts";
@@ -28,9 +28,9 @@ const flowRow = (side: string) => (l: FlowLine): ListRow => ({
 
 const depRow = (d: DepLine): ListRow => ({
   title: `pkg ${d.name}`,
-  secondary: d.error !== "" ? "not read" : d.gap === "none" ? (d.checkedAt === null ? "not read yet" : "current") : `${d.gap} update`,
-  ...(d.error !== "" || d.gap === "major" ? { tone: "danger" as const } : {}),
-  meta: `${d.pinned === "" ? d.range : `pinned ${d.pinned}`}${d.latest === "" ? "" : ` · newest ${d.latest}`}`,
+  secondary: depState(d).label,
+  ...(depState(d).tone === "default" ? {} : { tone: depState(d).tone }),
+  meta: `${d.pinned === "" ? d.range : `pinned ${d.pinned}`}${d.latest === "" ? "" : ` · newest ${d.latest}`}${d.advisory === "" ? "" : ` · advisory: ${d.advisory}`}`,
 });
 
 export function flowsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
