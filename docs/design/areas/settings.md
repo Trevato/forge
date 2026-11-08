@@ -126,4 +126,6 @@ title, each with a glyph (Trusted with a check, Ends soon with a clock, Lapsed w
 `.row-fields` forms. With no entry, one plain sentence: no one is trusted, so every pull waits for review. The forms post to the same routes as
 before. `test/trusted-sources.test.ts` holds the shape.
 
+Settings › Prompts (`promptsView()` in `src/web/pages/prompts.ts`, #9825) adds no class: two `<section class="settings-block">` blocks, Instagram (the connected account as a `row()` in a `.setting-list` with its Fetch now and Remove forms, or one plain sentence and the add form) and Getting a token. Pinned by `test/prompts-language.test.ts`.
+
 Settings › Hooks (`hooksPage()` in `src/web/pages/hooks.ts`, #9762) adds no component class and has no card or table: Webhooks and Add a webhook are each a `<section class="settings-block">` with an `<h2>`. Each hook is a `row()` in `<ul class="list setting-list">` (URL as title; events, state, added date and "unsigned" as meta; Send ping and a confirmed Delete in the trail), with its recent deliveries as nested child rows, Redeliver in the trail of a failed one. With no hook, one plain sentence. The secret is never drawn. Pinned by `test/hooks-rows.test.ts`.
