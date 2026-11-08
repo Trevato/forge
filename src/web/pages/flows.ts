@@ -21,7 +21,7 @@ import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, repoHeader, repo
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, type Tone, card, listCard, row, time } from "../ui.ts";
+import { badge, btn, type Tone, row, time } from "../ui.ts";
 
 export const lineRow = (l: FlowLine): Html =>
   row({
@@ -43,7 +43,7 @@ const actionForm = (a: FlowAction): Html =>
     : html`${btn(a.label, { size: "sm", variant: "secondary", href: a.href })}`;
 
 function side(title: string, lines: readonly Html[], empty: string): Html {
-  return card(lines.length === 0 ? html`<p class="muted">${empty}</p>` : listCard([...lines]), { head: html`${title}`, pad: lines.length === 0 });
+  return html`<section class="settings-block"><h2>${title}</h2>${lines.length === 0 ? html`<p class="muted">${empty}</p>` : html`<ul class="list setting-list">${[...lines]}</ul>`}</section>`;
 }
 
 /**
@@ -82,7 +82,7 @@ export async function flowsPage(ctx: Ctx): Promise<Response> {
         : {}),
     }),
   );
-  const body = html`${repoHeader(ctx, repo, "flows")}
+  const body = html`${repoHeader(ctx, repo, "flows", { compact: true, ownTitle: true })}
     ${pageHead("Flows", { sub: "What comes in on the left, what goes out on the right." })}
     ${flowMap(repo.name, flows.inbound.map(lineRow), depRows, flows.outbound.map(lineRow))}
     ${admin
