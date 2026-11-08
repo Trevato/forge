@@ -21,7 +21,7 @@
 
 import { THEMES } from "../../design/themes.ts";
 import { graphSvg, type GraphFigure } from "./graph.ts";
-import { clean, escapeXml, fit } from "./xml.ts";
+import { advance, clean, escapeXml, fit } from "./xml.ts";
 import { scoreSvg, type ScoreFigure } from "./score.ts";
 
 export const CARD_WIDTH = 1200;
@@ -73,37 +73,22 @@ const TITLE_LINES = 2;
 const EM_BOLD = 0.68;
 const EM_MONO = 0.62;
 
-/** Break a title into at most `n` lines of `max` chars; the last is clamped. */
+/** Break a title into at most `n` rows that fit `width`; what does not fit ends the last row in an ellipsis. */
 function wrap(text: string, size: number, n: number, em: number, width = INNER): string[] {
-  const max = Math.max(1, Math.floor(width / (size * em)));
+  const limit = width / (size * em);
   const words = clean(text).split(" ").filter(Boolean);
   const rows: string[] = [];
-  let cur = "";
   let i = 0;
-  for (; i < words.length && rows.length < n; i++) {
-    const w = words[i]!;
-    const next = cur ? `${cur} ${w}` : w;
-    if (Array.from(next).length <= max) {
-      cur = next;
-      continue;
+  while (i < words.length && rows.length < n) {
+    if (rows.length === n - 1) {
+      rows.push(fit(words.slice(i).join(" "), size, width, em));
+      break;
     }
-    if (cur) {
-      rows.push(cur);
-      cur = "";
-      i--;
-      continue;
-    }
-    rows.push(Array.from(w).slice(0, max).join("")); // one word wider than a row
-    if (rows.length === n) break;
+    let row = words[i++]!;
+    while (i < words.length && advance(`${row} ${words[i]}`) <= limit) row += ` ${words[i++]}`;
+    rows.push(fit(row, size, width, em));
   }
-  if (cur && rows.length < n) rows.push(cur);
-  const rest = i < words.length || rows.join(" ").length < clean(text).length;
-  if (rest && rows.length) {
-    const last = rows.length - 1;
-    rows[last] = fit(rows[last]! + "…", size, width, em);
-    if (!rows[last]!.endsWith("…")) rows[last] += "…";
-  }
-  return rows.map((r) => fit(r, size, width, em));
+  return rows;
 }
 
 function text(
@@ -206,14 +191,16 @@ export function renderCard(input: CardInput): string {
     y += lsize + 14;
   }
 
-  // Footer rule and stat.
+  // Footer rule and stat; the stat stays in the words' column beside a figure or
+  // picture, set smaller (down to 20px) before anything is cut.
   out.push(
     `<rect x="${PAD}" y="${CARD_HEIGHT - 110}" width="${INNER}" height="2" fill="${T.border}"/>`,
   );
   const stat = clean(input?.stat);
   if (stat) {
+    const ssize = Math.max(20, Math.min(32, Math.floor(column / (advance(stat) * EM_MONO))));
     out.push(
-      text(PAD, CARD_HEIGHT - 52, 32, T["muted-fg"], fit(stat, 32, INNER, EM_MONO), ` font-family="${MONO}" font-weight="600"`),
+      text(PAD, CARD_HEIGHT - 52, ssize, T["muted-fg"], fit(stat, ssize, column, EM_MONO), ` font-family="${MONO}" font-weight="600"`),
     );
   }
   out.push(`</svg>`);
