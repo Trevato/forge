@@ -178,12 +178,14 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
       `${servers.url}/${repo.ownerName}/${repo.name}/pulls/${pull.number}/resolve`,
       { headers: { authorization: `Bearer ${token}` } },
     ).then((r) => r.text());
-    expect(page).toContain("Have the crew propose");
+    expect(page).toContain("Ask the crew to fix it");
+    expect(page).toMatch(/id="crew-proposal"[^>]*>\s*<div\s+class="card bare"/);
+    expect(page).toContain("<h2>The crew</h2>");
     expect(page).toContain(`pulls/${pull.number}/resolve/propose`);
     const stranger = await fetch(
       `${servers.url}/${repo.ownerName}/${repo.name}/pulls/${pull.number}/resolve`,
     );
-    expect(await stranger.text()).not.toContain("Have the crew propose");
+    expect(await stranger.text()).not.toContain("Ask the crew to fix it");
   });
 
   test("a reader's tap, and a cross-origin one, start nothing", async () => {
@@ -372,7 +374,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
     if (!moved.ok) throw new Error(JSON.stringify(moved.error));
     const page = await resolvePage();
     expect(page).toContain("The last proposal did not land (failed): it gave up");
-    expect(page).toContain("Have the crew propose");
+    expect(page).toContain("Ask the crew to fix it");
 
     const screen = await terminal(alice, [], (t) => t.includes("did not land"));
     expect(screen).toContain("The last proposal did not land (failed): it gave up");
@@ -397,7 +399,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
     expect(agentRuns()).toBe(before);
     const page = await resolvePage();
     expect(page).toContain("The crew is already working on this pull.");
-    expect(page).not.toContain("Have the crew propose");
+    expect(page).not.toContain("Ask the crew to fix it");
     app.db.query("UPDATE run SET state = 'cancelled' WHERE id = ?1").run(run.id);
   });
 
@@ -409,7 +411,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
       expect(refused.ok).toBe(false);
       if (!refused.ok) expect(refused.error).toBe("no_agent");
       expect(agentRuns()).toBe(before);
-      expect(await resolvePage()).not.toContain("Have the crew propose");
+      expect(await resolvePage()).not.toContain("Ask the crew to fix it");
     } finally {
       app.db.query("UPDATE issue SET assignee_id = NULL WHERE id = ?1").run(pull.id);
     }

@@ -1,10 +1,10 @@
 /**
  * GET /:owner/:name/pulls/:number/resolve — a conflicted pull, one file at a
- * time. Each conflict block is a card: the two sides named by their branch,
- * three taps (ours, theirs, both) and a text box for your own words. The
- * choices travel in the query string, so the page keeps no state and writes
- * nothing to git; it shows the running count and the merged file beneath.
- * Writers only.
+ * time. Each conflict block is a heading over rows, no box: the two sides
+ * named by their branch, four taps (keep one side, keep both, write your
+ * own) and a text box for your own words. The choices travel in the query
+ * string, so the page keeps no state and writes nothing to git; it shows the
+ * running count and the merged file beneath. Writers only.
  */
 
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
@@ -103,7 +103,7 @@ async function proposalCard(
   const seen = await proposalOf(app, repo, pull, dir);
   const parts: Html[] = [];
   if (seen.kind === "working")
-    parts.push(html`<p>The crew is working on a proposal (${seen.state}). This card updates by itself.</p>`);
+    parts.push(html`<p>The crew is working on a fix (${seen.state}). This card updates by itself.</p>`);
   else if (seen.kind === "landed") {
     const head = getRepoById(app.db, pull.headRepoId) ?? repo;
     parts.push(html`<p><strong>The crew proposed a resolution</strong>, committed as
@@ -121,20 +121,21 @@ async function proposalCard(
     parts.push(html`<p class="muted">${PROPOSE_WHY.busy}</p>`);
   if (conflicted && agent !== undefined && !working)
     parts.push(html`<form method="post" action="${here}/propose">
-      <p>${btn("Have the crew propose", { icon: "check" })}
-      <span class="muted small">${"@" + agent} merges the base into this branch and commits a resolution.</span></p>
+      <p>${btn("Ask the crew to fix it", { icon: "check" })}
+      <span class="muted small">${"@" + agent} merges the base into this branch and commits a fix.</span></p>
     </form>`);
   if (parts.length === 0) return html``;
   // A live region: the run's events re-read the card, so nobody reloads.
-  return html`<div id="crew-proposal" data-live="run.queued,run.started,run.finished,pull.*,comment.*">${card(html`${parts}`, { head: html`<h2>The crew</h2>` })}</div>`;
+  return html`<div id="crew-proposal" data-live="run.queued,run.started,run.finished,pull.*,comment.*">${card(html`${parts}`, { extra: "bare", head: html`<h2>The crew</h2>` })}</div>`;
 }
 
 const CSS = `
 .rs-list { display: grid; gap: 12px; margin-top: 12px; }
 .rs-card { content-visibility: auto; contain-intrinsic-size: auto 260px; }
-.rs-sides { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+.rs-sides { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
 .rs-side { min-width: 0; }
-.rs-side pre, .rs-merged { margin: 4px 0 0; padding: 8px; overflow: auto; max-height: 12em; font-size: 12.5px; white-space: pre; background: var(--muted-bg, transparent); border: 1px solid var(--border, #8884); border-radius: 6px; }
+.rs-side .rs-label { display: block; color: var(--muted, inherit); opacity: .75; }
+.rs-side pre, .rs-merged { margin: 2px 0 0; padding: 4px 0 8px; overflow: auto; max-height: 12em; font-size: 12.5px; white-space: pre; background: none; border: 0; border-bottom: 1px solid var(--border, #8884); border-radius: 0; }
 .rs-merged { max-height: 32em; }
 .rs-taps { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
 .rs-taps label { flex: 1 1 0; text-align: center; padding: 8px 6px; min-height: 40px; border: 1px solid var(--border, #8884); border-radius: 6px; cursor: pointer; }
@@ -174,9 +175,10 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
         ${changeHead(ctx, repo, pull)}${changeTabs(repo, pull, "files")}
         ${card(
           html`<p>${unknown && pull.state === "open"
-              ? "Nothing to resolve there: that file is not one of the conflicted files."
-              : "Nothing to resolve: this pull has no conflicts."}
+              ? "No conflict in that file."
+              : "This pull has no conflicts."}
             <a href="${back}">Back to the files</a>.</p>`,
+          { extra: "bare" },
         )}
         ${crew}`,
     });
@@ -207,24 +209,24 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
     return card(
       html`<div class="rs-sides">
           <div class="rs-side">
-            <strong class="small mono">${pull.baseBranch}</strong>
+            <span class="rs-label small mono">${pull.baseBranch}</span>
             <pre>${block.ours}</pre>
           </div>
           <div class="rs-side">
-            <strong class="small mono">${pull.headBranch}</strong>
+            <span class="rs-label small mono">${pull.headBranch}</span>
             <pre>${block.theirs}</pre>
           </div>
         </div>
         ${block.base === ""
           ? ""
-          : html`<details><summary class="small muted">Before either changed it</summary><pre class="rs-merged">${block.base}</pre></details>`}
+          : html`<details><summary class="small muted">The original</summary><pre class="rs-merged">${block.base}</pre></details>`}
         <div class="rs-taps">
-          ${tap("ours", `Ours`)}${tap("theirs", `Theirs`)}${tap("both", "Both")}${tap("text", "Mine")}
+          ${tap("ours", `Keep ${pull.baseBranch}`)}${tap("theirs", `Keep ${pull.headBranch}`)}${tap("both", "Keep both")}${tap("text", "Write my own")}
         </div>
         <textarea class="rs-text" name="t${i}" rows="3" maxlength="${MAX_TEXT}"
-          aria-label="Your own text for block ${i + 1}">${own?.kind === "text" ? own.text : ""}</textarea>`,
+          aria-label="Your own words for block ${i + 1}">${own?.kind === "text" ? own.text : ""}</textarea>`,
       {
-        extra: "rs-card",
+        extra: "bare rs-card",
         head: html`<h2>Block ${i + 1} of ${total}</h2>`,
       },
     );
@@ -235,7 +237,7 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
     <p class="muted small mt">
       <a href="${back}">← Files</a> · <span class="mono">${file}</span> ·
       <strong id="rs-count">${done} of ${total} resolved</strong>
-      · nothing is written until you finish
+      · nothing is saved until you finish
     </p>
     ${files.length > 1
       ? html`<p class="small">
@@ -249,18 +251,18 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
     ${crew}
     ${total === 0
       ? card(
-          html`<p>This file has no text blocks to choose between (it may be
-            deleted on one side). Resolve it in your own checkout.</p>`,
+          html`<p>This file has no text to choose between. It may be deleted on
+            one side. Fix it in your own checkout.</p>`,
         )
       : html`<form method="get" action="${here}">
           <input type="hidden" name="file" value="${file}" />
           <input type="hidden" name="head" value="${status.headOid}" />
           <input type="hidden" name="base" value="${status.baseOid}" />
           <div class="rs-list">${cards}</div>
-          <p class="mt">${btn("Update the merged file", { icon: "check", variant: "ghost" })}
+          <p class="mt">${btn("Show the result", { icon: "check", variant: "ghost" })}
             ${files.length === 1
-              ? html`<button type="submit" formmethod="post" class="btn" data-variant="primary">Finish: commit this to ${pull.headBranch}</button>`
-              : html`<span class="muted small">Finish needs every conflicted file on this page; this pull has ${files.length}. Resolve it in your own checkout.</span>`}</p>
+              ? html`<button type="submit" formmethod="post" class="btn" data-variant="primary">Save to ${pull.headBranch}</button>`
+              : html`<span class="muted small">This pull has ${files.length} conflicted files. Fix them in your own checkout.</span>`}</p>
         </form>`}
     <h2 class="mt">Merged file</h2>
     <pre class="rs-merged" aria-label="Merged ${file}">${merged}</pre>`;
