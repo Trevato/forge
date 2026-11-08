@@ -117,7 +117,7 @@ const ranOutOf = (ctx: Ctx, userId: string, turns: readonly Turn[]): Set<string>
 const meta = (who: string, at: string): Html =>
   html`<p class="talk-meta small muted">${who} · ${time(at)}</p>`;
 
-/** A tool call or its outcome as a quiet card: closed, the name alone; open, the whole line. */
+/** A tool call or its outcome as a quiet line: closed, the name alone; open, the whole line. */
 const toolCard = (id: string, says: string, name: string, at: string, set = ""): Html =>
   html`<li class="talk-turn talk-tool${set}" id="${id}"><details><summary>${name.slice(0, 60)} <span class="talk-when">${time(at)}</span></summary><p>${says}</p></details></li>`;
 
@@ -298,7 +298,7 @@ function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefi
   const acts = !paged ? exchangeActs(ctx.app.db, user.id, conversation.id, running, here) : new Map<string, Html>();
   // Edit shows the composer holding the last message, posting to Edit instead of Send.
   const editing = edit ? lastExchange(ctx.app.db, user.id, conversation.id).person : undefined;
-  const body = html`<div class="page-head"><h1>Talk</h1></div>
+  const body = html`<h1 class="sr-only">Talk</h1>
     ${chats(ctx, conversation, showArchived, typed)}
     <div class="talk" data-talk data-user="${user.id}" data-c="${conversation.id}" data-here="${here}" data-paged="${paged ? "1" : "0"}" data-running="${running && !paged ? "1" : "0"}">
       <div>

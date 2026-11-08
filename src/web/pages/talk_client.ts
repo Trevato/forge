@@ -16,10 +16,10 @@ export const talkCss = /* css */ `
 .talk-body.prose table { display: block; max-width: 100%; overflow-x: auto; }
 .talk-body.prose :is(p, ul, ol, pre, table, blockquote) { margin: 0 0 8px; }
 .talk-body.prose > :last-child { margin-bottom: 0; }
-.talk-person { justify-self: end; max-width: 85%; background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 0.5rem 0.75rem; white-space: pre-wrap; }
+.talk-person { justify-self: end; max-width: 85%; padding: 4px 0; white-space: pre-wrap; }
 .talk-agent { justify-self: start; max-width: 100%; padding: 4px 0; }
 .talk-tool { color: var(--muted); font-size: var(--fs-min); padding: 0 4px; }
-.talk-confirm { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 0.75rem; background: var(--card); }
+.talk-confirm { padding: 8px 0; }
 .talk-confirm .bar { margin-top: 8px; gap: 8px; }
 .talk-confirm .btn { min-height: 2.75rem; flex: 1 1 8rem; }
 .talk-compose { position: sticky; bottom: 0; background: var(--bg); padding: 0.5rem 0 max(0.5rem, env(safe-area-inset-bottom)); border-top: 1px solid var(--border); z-index: 8; }
@@ -32,7 +32,6 @@ export const talkCss = /* css */ `
 .talk-copy { margin-left: auto; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 6px 8px; min-height: 2rem; opacity: 0.7; }
 .talk-copy:hover { opacity: 1; text-decoration: underline; }
 .talk-plain { white-space: pre-wrap; }
-.talk-tool details { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 2px 10px; }
 .talk-tool summary { cursor: pointer; padding: 6px 0; min-height: 1.5rem; }
 .talk-tool details p { margin: 0 0 8px; white-space: pre-wrap; }
 .talk-steps { margin: 4px 0 0; }
@@ -52,7 +51,7 @@ export const talkCss = /* css */ `
 .talk-replaced { opacity: 0.55; }
 .talk-failed form { margin-top: 6px; }
 .talk-failed .btn, .talk-act { min-height: 2.75rem; }
-.talk-queued { opacity: 0.7; border-style: dashed; }
+.talk-queued { opacity: 0.7; }
 .talk-acts { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
 .talk-agent .talk-acts { justify-content: flex-start; }
 `;

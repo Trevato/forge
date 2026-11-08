@@ -5,10 +5,10 @@
 - `.talk` — the page's column: at most 760px, centred, `min-width: 0` so nothing pushes the page sideways at 375px.
 - `.talk-log` — the ordered list of turns; its `data-last` is the last turn id the stream resumes from.
 - `.talk-turn` — one turn; wraps anywhere, so a long word or URL never scrolls the page.
-- `.talk-person` — the person's words: a right-aligned bubble, pre-wrapped.
+- `.talk-person` — the person's words: right-aligned, no box, pre-wrapped.
 - `.talk-agent` — the agent's reply, markdown, full width, no bubble.
 - `.talk-tool` — what the agent did, one muted small line.
-- `.talk-confirm` — a held action's card: the sentence, then Confirm and Cancel at 44px high.
+- `.talk-confirm` — a held action: the sentence, then Confirm and Cancel at 44px high.
 - `.talk-compose` — the composer, sticky to the bottom of the viewport (padded for the phone's safe area), so it stays reachable; its textarea is 16px so iOS does not zoom.
 - `.talk-status` — one polite line (sending, answering, an error); it always takes its line, so nothing shifts.
 - `.talk-more` — the "Earlier" link above the log.
@@ -33,6 +33,8 @@
   - `.talk-attach` — the "Attach" file-picker label in the composer bar, a `.btn` that stays hidden until the script runs (the picker needs it).
 
 Under a reply, `.talk-cost` is one quiet line with the turn's dollars; above the log, `.talk-context` says how full the context is and, from 80 %, suggests a new conversation. Both are `small muted` text, no new colour.
-- `.talk-queued` — a message waiting for the running turn: the person bubble, dimmed with a dashed border, its "Queued" line and Cancel under it.
+- `.talk-queued` — a message waiting for the running turn: the person's words, dimmed, its "Queued" line and Cancel under it.
 
 Search (#8823) adds no component class: the form is a `.bar` with `.input` and `.btn`, and the results and the conversations list are `.list` of `row()`s (an "archived" `badge` as the trail, the match as the row's meta). The turn a result opens at is marked by a muted hairline on its left edge, `.talk-turn:target`, the one new rule, which replaces the two `.talk-chats li a` rules the rows made unnecessary.
+
+#9690: the page speaks the home page's language: an `sr-only` h1, the conversations as a `.list` of rows, and no box round a turn, a tool call or a held action; the only hairline is above the composer. No new classes.

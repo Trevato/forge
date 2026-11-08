@@ -78,6 +78,25 @@ afterAll(async () => {
 });
 
 describe("the page", () => {
+  test("the conversations are rows and no turn sits in a box (#9690)", async () => {
+    say(alice, "person", "hi");
+    const html = await (await get("/talk", alice)).text();
+    expect(html).toContain('<h1 class="sr-only">Talk</h1>');
+    expect(html).not.toContain('class="page-head"');
+    const nav = html.slice(html.indexOf('<nav class="talk-chats"'), html.indexOf("</nav>"));
+    expect(nav).toContain('<ul class="list">');
+    const { talkCss } = await import("../src/web/pages/talk_client.ts");
+    const rule = (sel: string) => talkCss.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`))?.[1];
+    expect(rule(".talk-person")).toBeDefined();
+    expect(rule(".talk-person")).not.toMatch(/border|background/);
+    expect(rule(".talk-confirm")).toBeDefined();
+    expect(rule(".talk-confirm")).not.toMatch(/border|background/);
+    expect(rule(".talk-queued")).toBeDefined();
+    expect(rule(".talk-queued")).not.toContain("border-style");
+    expect(talkCss).not.toMatch(/\.talk-tool details\s*\{[^}]*border/);
+    expect(talkCss).not.toMatch(/\.talk-chats ul\s*\{/);
+  });
+
   test("signed out goes to /signin and comes back", async () => {
     const res = await get("/talk");
     expect(res.status).toBe(303);
