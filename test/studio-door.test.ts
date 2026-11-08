@@ -780,7 +780,7 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).toContain('action="/alice/notes/app/production/redeploy"');
     expect(mine).not.toContain('href="/-/confirm?to=%2Falice%2Fnotes%2Fapp%2Fproduction%2Fstop"');
     expect(mine).not.toContain('href="/alice/notes/app/production/open"');
-    expect(mine).toContain('title="Not running"');
+    expect(mine).toContain('title="Nothing is running yet. The app starts when it is deployed."');
     expect(await shelfBadge(writer)).toBe("not running");
   });
 

@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
+import { getUserByName } from "../src/core/users.ts";
+import type { Ctx } from "../src/http/context.ts";
+import { studioApp } from "../src/web/studio/app.ts";
 import { getRepo } from "../src/core/repos.ts";
+import { ownerLooksFor } from "../src/spawn/preview-looks.ts";
 import { PREVIEW_ADMIN, PREVIEW_APP, PREVIEW_APP_PAGE, PREVIEW_OWNER_LOOKS, seedPreview } from "../src/spawn/preview-seed.ts";
 
 let dir: string;
@@ -31,4 +35,27 @@ test("the seed made one app, as a record only", () => {
   const repo = getRepo(app.db, PREVIEW_ADMIN, PREVIEW_APP)!;
   expect(getAppByRepo(app.db, repo.id)?.slug).toBe(PREVIEW_APP);
   expect(app.db.query<{ n: number }, []>("SELECT count(*) AS n FROM app").get()!.n).toBe(1);
+});
+
+test("a forge preview takes the app's page at both widths, whatever its diff touches (#9797)", () => {
+  const looks = ownerLooksFor("trevato/forge", { ownerName: "trevato", name: "forge" }, "pull-1");
+  for (const kind of ["desktop", "phone"] as const)
+    expect(looks).toContainEqual({ page: PREVIEW_APP_PAGE, kind });
+  // Another repository's preview, and production, take none of them.
+  expect(ownerLooksFor("trevato/forge", { ownerName: "x", name: "y" }, "pull-1")).toEqual([]);
+  expect(ownerLooksFor("trevato/forge", { ownerName: "trevato", name: "forge" }, "production")).toEqual([]);
+});
+
+test("the app's page says in plain words why Open the app is off when nothing runs (#9797)", async () => {
+  const repo = getRepo(app.db, PREVIEW_ADMIN, PREVIEW_APP)!;
+  const record = getAppByRepo(app.db, repo.id)!;
+  const admin = getUserByName(app.db, PREVIEW_ADMIN)!;
+  const url = new URL(`https://preview.invalid${PREVIEW_APP_PAGE}`);
+  const answer = await studioApp(
+    { app, request: new Request(url.href), url, params: {}, auth: { user: admin }, theme: undefined } as Ctx,
+    repo,
+    record,
+  );
+  expect(answer.status).toBe(200);
+  expect(await answer.text()).toContain('title="Nothing is running yet. The app starts when it is deployed."');
 });

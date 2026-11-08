@@ -63,7 +63,7 @@ function openAppBtn(base: string, env: EnvStatus | undefined, forge = false): Ht
     });
   const reason =
     env === undefined || env.state === "stopped"
-      ? "Not running"
+      ? "Nothing is running yet. The app starts when it is deployed."
       : env.state === "deploying"
         ? "Still deploying"
         : "The last deploy failed";
