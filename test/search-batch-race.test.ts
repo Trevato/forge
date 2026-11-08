@@ -6,7 +6,7 @@
  */
 import { expect, test } from "bun:test";
 import { createGrepSlots } from "../src/search/grep_slots.ts";
-import { grepRepos, type BudgetTimer } from "../src/core/search.ts";
+import { BUDGETED_GREP_MS, grepRepos, type BudgetTimer } from "../src/core/search.ts";
 import type { Repo } from "../src/core/repos.ts";
 
 type Raw = { path: string; line: number; text: string }[] | null;
@@ -39,12 +39,14 @@ function handTimer() {
   let fire!: () => void;
   let asked = 0;
   let cleared = 0;
-  const timer = (_ms: number): BudgetTimer => {
+  let ms = -1;
+  const timer = (wait: number): BudgetTimer => {
     asked++;
+    ms = wait;
     const done = new Promise<void>((r) => (fire = r));
     return { done, clear: () => void cleared++ };
   };
-  return { timer, fire: () => fire(), asked: () => asked, cleared: () => cleared };
+  return { timer, fire: () => fire(), asked: () => asked, cleared: () => cleared, ms: () => ms };
 }
 
 test("a spent budget still waits for batch 0 and keeps its hits", async () => {
@@ -185,4 +187,53 @@ test("a search with no budget never asks for a timer and waits for every batch",
   expect(out.more).toBe(false);
   expect(out.hits.length).toBe(5);
   expect(clock.asked()).toBe(0);
+});
+
+test("batch 0 stuck behind git's gate is cut at BUDGETED_GREP_MS: what answered is kept, the rest is more (#9402)", async () => {
+  const g = deferredGreps();
+  const slots = createGrepSlots();
+  const first = handTimer();
+  const later = handTimer();
+  const search = grepRepos("/nowhere", [0, 1, 2, 3, 4, 5].map(repo), "q", 200, 30, {
+    slots,
+    grep: g.grep,
+    now: () => 0,
+    timer: later.timer,
+    firstTimer: first.timer,
+  });
+  for (const n of ["r0", "r1", "r2", "r3"]) await g.started(n);
+  g.answer("r0");
+  g.answer("r1");
+  // Their answers reach the batch in microtasks; a real timer fires after them.
+  await new Promise<void>((r) => setTimeout(r, 0));
+  // r2 and r3 are still waiting on git; the ceiling passes.
+  first.fire();
+  const out = await search;
+  expect(first.ms()).toBe(BUDGETED_GREP_MS);
+  expect(first.cleared()).toBe(1);
+  expect(out.more).toBe(true);
+  expect(out.hits.map((h) => h.repo.name)).toEqual(["r0", "r1"]);
+  // No later batch started, and its budget timer was never asked for.
+  expect(later.asked()).toBe(0);
+  expect(g.running().sort()).toEqual(["r2", "r3"]);
+  // The abandoned greps keep their slots until git exits.
+  expect(slots.held()).toEqual({ total: 2, strangers: 2 });
+  g.answer("r2");
+  g.answer("r3");
+  for (let k = 0; k < 10 && slots.held().total > 0; k++) await Promise.resolve();
+  expect(slots.held()).toEqual({ total: 0, strangers: 0 });
+});
+
+test("a search with no budget never takes the first batch's ceiling", async () => {
+  const g = deferredGreps();
+  const first = handTimer();
+  const search = grepRepos("/nowhere", [0, 1].map(repo), "q", 200, Infinity, {
+    slots: createGrepSlots(),
+    grep: g.grep,
+    firstTimer: first.timer,
+  });
+  for (const n of ["r0", "r1"]) await g.started(n);
+  for (const n of ["r0", "r1"]) g.answer(n);
+  expect((await search).hits.length).toBe(2);
+  expect(first.asked()).toBe(0);
 });
