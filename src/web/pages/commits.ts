@@ -30,10 +30,7 @@ import { localScope, type RepoScope } from "../scope.ts";
 import {
   avatar,
   badge,
-  card,
   empty,
-  icon,
-  listCard,
   messageText,
   originTag,
   pager,
@@ -59,8 +56,7 @@ const PER_PAGE = 30;
  */
 export const COMMITS_CSS = `[data-commits] { overflow-wrap: anywhere; }
 [data-commits] .row-title, [data-commits] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
-[data-commits] .row { align-items: flex-start; }
-[data-commits] .card-head h2 { min-width: 0; }`;
+[data-commits] .row { align-items: flex-start; }`;
 
 /** Infinity, 1e300 and NaN all collapse to page 1 — never a bogus skip. */
 function pageNumber(raw: string | null): number {
@@ -82,58 +78,38 @@ export function commitRows(
   commits: readonly Commit[],
   verdicts: ReadonlyMap<string, CommitCheck> = new Map(),
 ): Html {
-  const glyph = scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe";
-  const lead = (commit: Commit): Html =>
-    html`<span class="row-lead"
-      >${scope.kind === "origin" && commit.login
-        ? icon(glyph)
-        : avatar(commit.author)}</span
-    >`;
-  const text = (commit: Commit): Html =>
-    html`<span class="row-title" title="${commit.subject}">${commit.subject}</span>
-      <span class="row-meta"
-        >${commit.author} committed
-        ${time(commit.date)}${when(
-          commit.parents.length > 1,
-          () => html` · ${badge("merge", { variant: "secondary" })}`,
-        )}</span
-      >`;
-  return html`<div data-commits>${listCard(
+  return html`<div data-commits><ul class="list">${
     commits.map((commit) => {
       const verdict = verdicts.get(commit.oid);
-      const step = verdict?.summary.split("\n")[0]?.trim() ?? "";
-      // A link cannot sit inside a link: a row with a verdict is a row whose
-      // title links to the commit and whose badge links to the check.
-      if (verdict === undefined || verdict.runId === null)
-        return html`<li>
-          <a
-            class="row"
-            data-nav
-            tabindex="-1"
-            href="${scope.base}/commit/${commit.oid}"
-          >
-            ${lead(commit)}<span class="row-main">${text(commit)}</span>
-            <span class="row-trail">${sha(commit.oid)}</span>
-          </a>
-        </li>`;
+      // The message is the row's one link; the check is a plain badge here and
+      // its run is reachable from the commit page.
       return html`<li>
-        <div class="row" data-nav tabindex="-1">
-          ${lead(commit)}
-          <a class="row-main" href="${scope.base}/commit/${commit.oid}"
-            >${text(commit)}</a
+        <a
+          class="row"
+          data-nav
+          tabindex="-1"
+          href="${scope.base}/commit/${commit.oid}"
+          ><span class="row-main"
+            ><span class="row-title" title="${commit.subject}">${commit.subject}</span>
+            <span class="row-meta"
+              >${commit.author} committed
+              ${time(commit.date)}${when(
+                commit.parents.length > 1,
+                () => html` · ${badge("merge", { variant: "secondary" })}`,
+              )}</span
+            ></span
           >
           <span class="row-trail"
-            ><a
-              href="${scope.base}/runs/${verdict.runId}"
-              title="${step}"
-              aria-label="Check ${verdict.state === "ok" ? "passed" : "failed"} for ${commit.oid.slice(0, 7)}${step === "" ? "" : `: ${step}`}"
-              >${runStateBadge(verdict.state === "ok" ? "ok" : "failed", "check")}</a
-            >${sha(commit.oid)}</span
+            >${when(
+              verdict !== undefined && verdict.runId !== null,
+              () =>
+                html`${runStateBadge(verdict!.state === "ok" ? "ok" : "failed", "check")} `,
+            )}${sha(commit.oid)}</span
           >
-        </div>
+        </a>
       </li>`;
-    }),
-  )}</div>`;
+    })
+  }</ul></div>`;
 }
 
 /** A commit's check in a sentence; on red, the first failing step as the check named it. */
@@ -174,38 +150,31 @@ export function renderCommit(
 ): Html {
   const verdict: Html =
     check !== null && check.state !== "none"
-      ? html`<div class="card-body small">${checkSentence(scope, check)}</div>`
+      ? html`<p class="small">${checkSentence(scope, check)}</p>`
       : html``;
-  const head: Html = card(
-    html`${verdict}${when(
-        commit.body.trim() !== "",
-        () => html`<div class="card-body">${messageText(commit.body)}</div>`,
+  const head: Html = html`<h2>${commit.subject}</h2>
+    ${verdict}
+    ${when(
+      commit.body.trim() !== "",
+      () => messageText(commit.body),
+    )}
+    <p class="bar small muted">
+      ${commit.login
+        ? originTag(
+            commit.login,
+            scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe",
+          )
+        : avatar(commit.author)}
+      <span>${commit.author} committed ${time(commit.date)}</span>
+      ${sha(commit.oid)}
+      ${when(
+        commit.parents.length > 1,
+        () => html`${badge("merge", { icon: "merge" })}`,
       )}
-      <div class="card-body bar small muted">
-        ${commit.login
-          ? originTag(
-              commit.login,
-              scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe",
-            )
-          : avatar(commit.author)}
-        <span>${commit.author} committed ${time(commit.date)}</span>
-        ${sha(commit.oid)}
-        ${when(
-          commit.parents.length > 1,
-          () => html`${badge("merge", { icon: "merge" })}`,
-        )}
-        <span class="spacer"></span>
-        <a
-          class="btn"
-          data-size="sm"
-          data-variant="outline"
-          href="${scope.base}/tree/${commit.oid}"
-          >${icon("repo")}Browse files</a
-        >
-      </div>`,
-    { head: html`<h2>${commit.subject}</h2>`, pad: false },
-  );
-  return html`<div data-commits><div class="mt">${head}</div></div>
+      <span class="spacer"></span>
+      <a href="${scope.base}/tree/${commit.oid}">Browse files</a>
+    </p>`;
+  return html`<div data-commits>${head}</div>
     <div class="mt">
       ${renderDiff(diff, {
         syntax,
