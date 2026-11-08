@@ -31,7 +31,7 @@ import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { pickList } from "../pick.ts";
-import { btn, card, field as formField, row, selectField } from "../ui.ts";
+import { btn, field as formField, row, selectField } from "../ui.ts";
 
 interface Values {
   readonly name: string;
@@ -144,12 +144,13 @@ function formView(
   if (full)
     return html`<div class="narrow-wide" data-forges>
       ${pageHead("New forge")}
-      ${card(
-        html`<p role="status">This forge cannot hold another child: ${full}.</p>
-          ${ctx.auth.user?.isAdmin
-            ? html`<p><a href="/settings/capacity">Raise the room in settings</a></p>`
-            : null}`,
-      )}
+      <section class="settings-block">
+        <h2>No room</h2>
+        <p role="status">This forge cannot hold another child: ${full}.</p>
+        ${ctx.auth.user?.isAdmin
+          ? html`<p><a href="/settings/capacity">Raise the room in settings</a></p>`
+          : null}
+      </section>
     </div>`;
   const anon = user === undefined;
   return html`<div class="narrow-wide" data-forges>
@@ -165,8 +166,9 @@ function formView(
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
       : null}
     ${plan}
-    ${card(
-      html`<form method="post" action="/forges/new" class="stack" id="new-forge">
+    <section class="settings-block">
+      <h2>Its name and apps</h2>
+      <form method="post" action="/forges/new" class="stack" id="new-forge">
         ${formField({
           label: "Name",
           name: "name",
@@ -322,8 +324,8 @@ function formView(
           </button>
           ${btn("Spawn", { variant: "primary" })}
         </div>
-      </form>`,
-    )}
+      </form>
+    </section>
   </div>`;
 }
 
@@ -339,8 +341,9 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
   const plan = body["plan"] as { budgetUsd?: number | null; template?: string } | undefined;
   const budget = plan?.budgetUsd ?? null;
   const address = childUrlOf(ctx.app, values.name);
-  return card(
-    html`<ul class="mb">
+  return html`<section class="settings-block" id="plan">
+      <h2>The plan</h2>
+      <ul class="mb">
         <li>A forge at <b>${address}</b>.</li>
         <li>Whoever opens the link becomes its admin.</li>
         ${user === undefined
@@ -366,9 +369,8 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
         you press Spawn.
       </p>
       ${typeof note === "string" ? html`<p class="small mt">${note}</p>` : null}
-      <p class="mt">${btn("Spawn", { variant: "primary", form: "new-forge" })}</p>`,
-    { id: "plan", head: html`<h2>The plan</h2>` },
-  );
+      <p class="mt">${btn("Spawn", { variant: "primary", form: "new-forge" })}</p>
+    </section>`;
 }
 
 /** The answer to a spawn: the link, once. */
@@ -399,14 +401,15 @@ function madeView(body: Record<string, unknown>): Html {
     ${pageHead(
       body["existed"] === true ? `${name} already exists` : `${name} is ready`,
     )}
-    ${card(
-      typeof link === "string"
+    <section class="settings-block">
+      <h2>${typeof link === "string" ? "The link to send" : "Its link"}</h2>
+      ${typeof link === "string"
         ? claimLinkBody(link, typeof note === "string" ? note : undefined)
         : html`<p>
             It was made before, so its link is not shown again. Ask for a new
             one if it was lost.
-          </p>`,
-    )}
+          </p>`}
+    </section>
   </div>`;
 }
 
