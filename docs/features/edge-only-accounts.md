@@ -11,3 +11,7 @@ An account the platform edge made (or one linked to an edge login) with no passw
 1. Wait until the card and the terminal screen are empty.
 2. Turn `signin.edge` off on a preview first, with the owner present.
 3. Roll back by setting it on again in Settings → Capacity.
+
+## Dry run
+
+Settings → Capacity → "Dry run" on the `signin.edge` row (or `dry_run: true` on the capacity PUT) lists who would be locked out and refuses while the admin themselves would be. Settings → Accounts shows how many accounts sign in without the edge. A passkey added from a browser the edge signed in links that login to the account (`edge_link`).

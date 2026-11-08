@@ -17,6 +17,8 @@ import {
   passkeyRoom,
   PASSKEY_NAME_MAX,
 } from "../../core/passkeys.ts";
+import { linkEdgeLogin } from "../../core/edge_links.ts";
+import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { createSession } from "../../core/sessions.ts";
 import { LAST_WAY_IN, removeOwnPasskey } from "../../actions/passkeys.ts";
@@ -75,6 +77,11 @@ export function passkeysPage(ctx: Ctx): Response {
   const body = html`<p class="muted small mb">
       A passkey signs you in with a fingerprint, face or device PIN instead of
       a password. Add one per device; each can be removed on its own.
+    </p>
+    <p class="muted small mb" id="passkey-why">
+      Why: the forge signs you in itself, so your account does not depend on
+      another service being up or trusted. With a passkey, you can sign in here
+      even if the platform sign-in is switched off.
     </p>
     ${keys.length === 0
       ? empty({ icon: "key", title: "No passkeys yet", note: "Your password still works; add a passkey now, as every new account starts with one." })
@@ -152,6 +159,14 @@ export async function passkeyAdd(ctx: Ctx): Promise<Response> {
       409,
       added.error === "too_many" ? "That is as many passkeys as an account keeps." : PASSKEY_TAKEN,
     );
+  // A browser the edge signed in carries the login it vouched for: link it to
+  // this account, so the edge still reaches it by that login and no second
+  // account is made. A refused link (taken, malformed) leaves the passkey added.
+  if (ctx.auth.via === "edge") {
+    const login = edgeIdentity(ctx.request, activeEdgeToken(ctx.app));
+    if (login !== undefined)
+      linkEdgeLogin(ctx.app.db, ctx.auth.user!, login);
+  }
   return json({ ok: true });
 }
 

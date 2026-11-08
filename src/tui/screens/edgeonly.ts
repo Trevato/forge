@@ -1,11 +1,12 @@
 /**
- * Edge-only accounts in the terminal, a forge admin's: the people the card at
- * the top of Settings → Accounts names, from the same `edgeOnlyAccounts`.
- * Each can sign in only through the platform edge, so switching
- * `signin.edge` off would lock them out until they add a passkey.
+ * Edge-only accounts in the terminal, a forge admin's: the same dry run the
+ * Capacity page and the API run (`edgeOffDryRun`): how many sign in without
+ * the platform edge, who would be locked out if `signin.edge` went off, and
+ * whether that includes the admin looking. Names the people the Accounts card
+ * names, from the same `signinReach`. Changes nothing.
  */
 
-import { edgeOnlyAccounts } from "../../core/accounts.ts";
+import { edgeOffDryRun } from "../../actions/capacity.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { fill, len, split } from "../ui/layout.ts";
@@ -20,7 +21,11 @@ const isAdmin = (f: Session): boolean => f.user?.isAdmin === true && f.user.kind
 
 export function edgeOnlyScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
-  const accounts = isAdmin(f) ? edgeOnlyAccounts(f.db) : [];
+  const dry = edgeOffDryRun(f.db, f.user);
+  const accounts = dry.ok ? dry.value.lockedOut : [];
+  const summary = dry.ok
+    ? `${dry.value.own} of ${dry.value.total} can sign in without the edge${dry.value.youLockedOut ? "; you would be locked out too, so the switch is refused" : ""}`
+    : "";
   return {
     title: "Edge-only accounts",
     keys: [binding(["j", "k"], "move cursor")],
@@ -28,14 +33,14 @@ export function edgeOnlyScreen(f: Session, ctx: Ctx): Screen {
       const c = ctx.theme.c;
       const [head, body] = split(area, "v", [len(1), fill(1)]);
       if (accounts.length === 0) {
-        emptyState(s, body!, c, { title: "No one is edge-only.", body: "Everyone has a password, a passkey or a parent link." });
+        emptyState(s, body!, c, { title: "Nobody would be locked out.", body: summary });
         return;
       }
-      const line = "sign in only through the edge; ask each to add a passkey";
+      const line = `${summary}; ask each to add a passkey`;
       s.text(head!.x, head!.y, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       const rows: ListRow[] = accounts.map((a) => ({
         title: a.username,
-        secondary: a.createdAt.slice(0, 10),
+        secondary: "",
         meta: a.isAdmin ? "admin" : "",
       }));
       drawList(s, body!, c, state, rows);

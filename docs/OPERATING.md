@@ -48,6 +48,15 @@ token (`POST /api/v1/tokens` with the password still mints one while it is
 off). A stored value outranks `FORGE_SIGNIN_EDGE`, so changing the environment
 alone does not roll back. Switching production off is the owner's to do, with
 the owner present. `test/signin-edge-off.test.ts` walks this round trip.
+**Dry run first.** Settings → Capacity has a "Dry run" button on that row (and
+`PUT /api/v1/admin/capacity/signin.edge` with `{"dry_run":true}`): it changes
+nothing, says how many accounts sign in without the edge, names each one that
+would be locked out, and says so when that includes you, in which case the switch
+is refused until you add a passkey. Settings → Accounts shows the same count.
+With the edge off, `/_plat/login` is not linked from the sign-in page and
+`X-Plat-User` is ignored; `--first-admin` is untouched, so the operator's link
+still works as a break-glass. Locked out: see `docs/SECURITY-RUNBOOK.md`,
+"Locked out after the edge went off".
 Account settings show "open-platform.sh: linked as <login>" or "not linked": Link
 records the login the request carries against the signed-in account, Unlink removes
 it (same-origin POSTs). An edge sign-in finds the account by its link first, then by

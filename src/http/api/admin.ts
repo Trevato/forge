@@ -11,7 +11,7 @@ import { kpiProbe } from "../../web/studio/kpi_probe.ts";
 import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
-import { changeCapacity, listCapacity } from "../../actions/capacity.ts";
+import { changeCapacity, edgeOffDryRun, listCapacity } from "../../actions/capacity.ts";
 import { changeShield, lastShieldChange, shieldState } from "../../actions/shield.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
@@ -161,6 +161,12 @@ export function adminRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
     const input = await body(ctx.request);
+    // A dry run changes nothing, whatever the key: only signin.edge has one.
+    if (input.dry_run !== undefined && input.dry_run !== false) {
+      if (input.dry_run !== true || ctx.params.key !== "signin.edge") return notFound();
+      const dry = edgeOffDryRun(ctx.app.db, ctx.auth.user);
+      return dry.ok ? json({ dry_run: true, ...dry.value }) : notFound();
+    }
     const value = input.value === null ? null : str(input.value);
     const changed = changeCapacity(ctx.app, ctx.auth.user, ctx.params.key!, value);
     if (changed.ok) return json(changed.value);

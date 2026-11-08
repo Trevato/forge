@@ -144,6 +144,28 @@ Use this when the forge is too busy to answer, or the Shield isn't enough. Cloud
 
 Under Attack mode also breaks anything that isn't a browser: `git` over HTTPS, API tokens, curl, and webhooks all stop working through Cloudflare. **Undo:** turn it off in the same place, as soon as the traffic has passed.
 
+## Switching the forge's own sign-in on, and the edge off
+
+The forge signs people in itself (password, passkey, recovery link); the platform
+edge's sign-in (`signin.edge`) is optional.
+
+- **Switch:** each person adds a passkey at Settings → Passkeys (a browser the
+  edge signed in can; the edge login is linked to the account, no new account).
+  Settings → Accounts shows how many accounts sign in without the edge. Then
+  Settings → Capacity → "Sign in through the platform edge" → **Dry run**: it
+  lists who would be locked out and refuses while you would be. Set it to `off`
+  once the list is empty or accepted.
+- **Undo:** set the same row to `on` (Put back), or
+  `curl -X PUT -H "authorization: Bearer $TOKEN" -d '{"value":"on"}' $FORGE_URL/api/v1/admin/capacity/signin.edge`.
+  A stored value outranks `FORGE_SIGNIN_EDGE`.
+- **Locked out (everyone, edge off):** sign in with a password or passkey; if
+  you have neither, use the recovery link (`/recover`) if mail is set up, else
+  run the forge with `--first-admin` for a one-time link; it works whatever
+  `signin.edge` says. Then turn the edge back on from Settings → Capacity.
+- **Locked out (one person):** an admin tells them to use `/recover`, or
+  puts the edge back on (Settings → Capacity) while the person adds a passkey,
+  then runs the dry run again.
+
 ## After any of these
 
 Write down what happened, when and what you changed, in an issue on the forge once it's calm. Then check Settings → Security again. Each section shows when it was last checked.

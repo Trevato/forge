@@ -6,7 +6,7 @@
  * and each one is listed below the settings: who, when, from what to what.
  */
 
-import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
+import { changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { CAPACITY, belowCeiling, type CapacityKey } from "../../core/capacity.ts";
 import { bytes } from "../../system/format.ts";
 import { egressSnapshot } from "../../apps/egress.ts";
@@ -111,6 +111,10 @@ export function capacityPage(ctx: Ctx): Response {
           variant: "primary",
           label: `Save ${s.label}`,
         })}
+        ${when(
+          s.key === "signin.edge",
+          () => html`${btn("Dry run", { size: "sm", name: "dry", value: "1", label: "List who switching the edge off would lock out" })}`,
+        )}
         ${when(
           s.source === "setting",
           () =>
@@ -278,6 +282,18 @@ export async function capacitySet(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const key = field(form, "key");
+  if (field(form, "dry") === "1") {
+    const dry = edgeOffDryRun(ctx.app.db, ctx.auth.user);
+    if (!dry.ok) return notFoundPage(ctx);
+    const d = dry.value;
+    const names = d.lockedOut.map((a) => a.username + (a.isAdmin ? " (admin)" : "")).join(", ");
+    return flashTo(ctx, "/settings/capacity", {
+      tone: d.lockedOut.length === 0 && d.allowed ? "success" : "danger",
+      message: `${d.own} of ${d.total} accounts sign in without the edge. ${
+        d.lockedOut.length === 0 ? "Nobody would be locked out." : `Would be locked out: ${names}.`
+      }${d.youLockedOut ? " You would be too, so the switch is refused until you add a passkey." : ""}`,
+    });
+  }
   const reset = field(form, "reset") === "1";
   const changed = changeCapacity(
     ctx.app,

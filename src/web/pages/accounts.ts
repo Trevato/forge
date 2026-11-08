@@ -20,7 +20,7 @@ import {
   revokeAccountToken,
 } from "../../actions/signins.ts";
 import { mailConfigured } from "../../actions/verify.ts";
-import { edgeOnlyAccounts, originOf, type AccountRow } from "../../core/accounts.ts";
+import { originOf, signinReach, type AccountRow } from "../../core/accounts.ts";
 import {
   OWNERS_TEAM,
   ownerlessOrgs,
@@ -181,14 +181,16 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
           </p>`,
           { tone: "attn" },
         );
-  const stranded = timePhase(ctx.request, "edge-only", () =>
-    edgeOnlyAccounts(ctx.app.db),
-  );
+  const reach = timePhase(ctx.request, "edge-only", () => signinReach(ctx.app.db));
+  const stranded = reach.stranded;
   const edgeOnly =
     stranded.length === 0
-      ? null
+      ? card(
+          html`<p id="signin-reach">All ${reach.total} accounts can sign in without the platform edge.</p>`,
+        )
       : card(
-          html`<p>
+          html`<p id="signin-reach">${reach.own} of ${reach.total} accounts can sign in without the platform edge.</p>
+          <p>
             ${stranded.length === 1 ? "This account signs" : "These accounts sign"}
             in only through the platform edge, so switching
             <code>signin.edge</code> off would lock
