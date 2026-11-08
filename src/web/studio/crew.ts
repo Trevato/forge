@@ -52,7 +52,6 @@ import {
   card,
   empty,
   field,
-  listCard,
   row,
   selectField,
   userLink,
@@ -273,8 +272,7 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
                   note: "No agents exist on this forge yet. An admin can add one.",
                 },
         )
-      : listCard(
-          crew.map((c) =>
+      : html`<ul class="list setting-list">${crew.map((c) =>
             row({
               lead: icon("bot"),
               title: html`${userLink(c.agent.user.username, {
@@ -299,8 +297,7 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
                   }
                 : {}),
             }),
-          ),
-        );
+          )}</ul>`;
 
   // Whose money the crew spends here is the forge admin's to say.
   const grants =
@@ -315,7 +312,7 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
           });
         })()
       : null;
-  return html`<div id="crew">
+  return html`<div id="crew" data-crew-settings>
     ${teamCard(ctx, repo, base, admin, allListed.ok ? allListed.value : [])}
     ${admin ? crewReadiness(ctx) : null}
     ${card(html`${rows}`, {

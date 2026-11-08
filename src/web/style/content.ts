@@ -609,6 +609,8 @@ form.inline { display: inline; margin-left: auto; }
 .reviews-chip .bad { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); }
 
 /* ---- apps, runs, and the crew ---- */
+/* Settings › Crew on a phone (#9373): a long name or brief breaks, never widens the page. */
+[data-crew-settings] { overflow-wrap: anywhere; min-width: 0; }
 /* The strip a repo home wears when it runs: state, commit, URL, previews,
    and the way to the App page — one line, in the repo header's own voice. */
 .app-strip {
