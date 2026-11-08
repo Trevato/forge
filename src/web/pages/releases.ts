@@ -31,6 +31,13 @@ export function liveLine(ctx: Ctx): Html | undefined {
   </p>`;
 }
 
+/**
+ * An owner's hold reason and a keeper's reason are free text: inside
+ * `[data-releases]` they break anywhere, so the page never scrolls sideways at 390 px. No new class.
+ */
+export const RELEASES_CSS = `[data-releases] { overflow-wrap: anywhere; }
+[data-releases] input[name="reason"] { max-width: 100%; }`;
+
 export async function releasesPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
@@ -73,7 +80,8 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
   const response = page({
     ctx,
     title: "Releases",
-    body: html`<div class="page-head"><h1>Releases</h1></div>${keeperPanel(ctx.app.db, writer)}${body}`,
+    body: html`<div data-releases><div class="page-head"><h1>Releases</h1></div>${keeperPanel(ctx.app.db, writer)}${body}</div>`,
+    styleCss: RELEASES_CSS,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
