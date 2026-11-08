@@ -71,12 +71,12 @@ describe("the family page at 390 px", () => {
   });
 
   test("the tree wraps its long names instead of truncating them", () => {
-    expect(page).toContain('class="list setting-list"');
+    expect(page).toContain('class="list bare-tree"');
     const rule = content.match(/(?:^|\n)([^\n{]*\[data-family\][^\n{]*)\{([^}]*)\}/);
     expect(rule).not.toBeNull();
     expect(rule![1]).toMatch(/(?:^|,)\s*\[data-family\]\s*(?:,|$)/);
     expect(rule![2]).toMatch(/overflow-wrap:\s*(?:anywhere|break-word)/);
-    expect(components).toMatch(/\.setting-list \.row-title[^{]*\{[^}]*overflow-wrap:\s*anywhere/);
+    expect(components).toMatch(/\.bare-tree \.row-title[^{]*\{[^}]*overflow-wrap:\s*anywhere/);
   });
 });
 

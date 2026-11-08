@@ -16,7 +16,7 @@ import { MAX_DEPTH } from "../../spawn/heartbeat.ts";
 import { pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { badge, card, row, time } from "../ui.ts";
+import { badge, row } from "../ui.ts";
 
 interface Node {
   readonly label: string;
@@ -31,25 +31,16 @@ const plural = (n: number, one: string, many = `${one}s`) =>
   `${n} ${n === 1 ? one : many}`;
 
 function standingNode(c: FamilyChild): Node {
+  // One plain line: how it follows and how far behind. The rest is on /forges.
   const meta: Html[] = [];
   if (c.state === "unheard") meta.push(html`has not reported yet`);
   else {
-    if (c.lastSeen !== null)
-      meta.push(html`last seen ${time(new Date(c.lastSeen).toISOString())}`);
-    if (c.version !== null) meta.push(html`version ${c.version}`);
-    if (c.behind !== null)
+    const follow = followLine(c);
+    if (follow !== null) meta.push(html`<span data-follow>${follow}</span>`);
+    else if (c.behind !== null)
       meta.push(html`${c.behind === 0 ? "up to date" : `${plural(c.behind, "release")} behind`}`);
-    if (c.openProposals !== null)
-      meta.push(html`${plural(c.openProposals, "open proposal")}`);
-    if (c.severedAt !== null) meta.push(html`follows nothing since ${c.severedAt.slice(0, 10)}`);
-    else if (c.forgeTip !== null) meta.push(html`code at <span class="mono">${c.forgeTip.slice(0, 7)}</span>`);
-    if (c.ownChildren !== null && c.ownChildren > 0)
-      meta.push(html`${plural(c.ownChildren, "forge")} of its own`);
   }
-  const follow = followLine(c);
-  if (follow !== null) meta.push(html`<span data-follow>${follow}</span>`);
   if (c.apps !== null) meta.push(html`<span data-apps>${c.apps}</span>`);
-  if (c.placement !== null) meta.push(html`<span data-placement>${c.placement}</span>`);
   return {
     label: c.name,
     href: c.url,
@@ -99,7 +90,7 @@ export async function familyPage(
   const here: Node = {
     label: view.here.host ?? "this forge",
     href: null,
-    meta: [html`version ${view.here.version}`],
+    meta: [],
     badge: null,
     here: true,
     children: kids.items.map(standingNode),
@@ -126,22 +117,11 @@ export async function familyPage(
       ${pageHead("Family", {
         sub: "The forge this one came from, and the forges it sent. Children report in; nothing here reaches into one.",
       })}
-      ${card(
-        html`<ul class="list setting-list" aria-label="Forges, by who sent whom">
-            ${treeRow(root, 0)}
-          </ul>
-          ${kids.more > 0
-            ? html`<p class="muted small card-body">
-                ${plural(kids.more, "more forge")} not shown.
-              </p>`
-            : null}
-          ${alone
-            ? html`<p class="muted small card-body">
-                This forge has no parent and has sent none${owns ? "" : " that you can see"}.
-              </p>`
-            : null}`,
-        { pad: false },
-      )}
+      <ul class="list bare-tree" aria-label="Forges, by who sent whom">
+        ${treeRow(root, 0)}
+      </ul>
+      ${kids.more > 0 ? html`<p class="muted small">${plural(kids.more, "more forge")} not shown.</p>` : null}
+      ${alone ? html`<p class="muted small">No parent, and none sent.</p>` : null}
     </div>`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);

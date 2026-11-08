@@ -441,6 +441,11 @@ a.row:hover, .row[data-nav]:hover { background: var(--muted); color: inherit; }
 .row-children { list-style: none; margin: 0 0 0 22px; padding: 0; border-left: 1px solid var(--border); }
 .row-children > li { border-top: 1px solid var(--border); }
 @media (max-width: 719px) { .row-children { margin-left: 12px; } }
+/* A bare tree (/family, docs/design/areas/family.md): names and a line each; indentation is the only structure. */
+.list.bare-tree > li, .list.bare-tree .row-children > li { border: 0; }
+.list.bare-tree .row-children { border-left: 0; margin-left: var(--tree-indent, 20px); }
+.list.bare-tree .row { padding-top: 10px; padding-bottom: 10px; }
+.list.bare-tree .row-title, .list.bare-tree .row-meta { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 /* A row's look thumbs (/review): inset like a row, side by side at any width; the link's hit area grows to 44px. */
 .row-children > [data-look] { padding: 8px 14px; }
 [data-look] .looks { flex-wrap: nowrap; gap: 10px; align-items: center; }
