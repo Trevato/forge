@@ -56,6 +56,7 @@ import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
 import { childPublicUrl, parentOrigin, type Placement, type PlacementKind } from "../spawn/placement.ts";
 import { quotaRefusal } from "../spawn/quota.ts";
+import { personRefusal } from "../spawn/sleep.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { DEFAULT_SIZE, isSize, type Size } from "../spawn/sizes.ts";
 import { chainForChild, DEFAULT_MODE, forgeLinkOf, type FollowMode, type Hop } from "../spawn/chain.ts";
@@ -114,6 +115,8 @@ interface Ledger {
   readonly forWhom?: string;
   readonly apps?: readonly string[];
   readonly createdAt?: string;
+  /** The person who made it, counted against their forges (`spawn/sleep.ts`); absent for a stranger's. */
+  readonly ownerId?: string;
   /** Absent on a ledger written before sizes; reads as small. */
   readonly size?: Size;
   /** The template chosen (`spawn/templates.ts`); absent means `blank`. */
@@ -255,6 +258,10 @@ async function make(
     // A retry of an unfinished child is a new attempt: its failure has a start.
     app.bus.append({ kind: "forge.spawn.started", payload: { ...(deps.drill === true ? { drill: 1 } : {}) } });
   } else {
+    if (owner !== undefined) {
+      const many = personRefusal(app.config.dataDir, owner);
+      if (many !== undefined) return err({ kind: "refused", reason: "quota", message: many });
+    }
     const over = quotaRefusal(app.config.dataDir, plan.size ?? DEFAULT_SIZE);
     if (over !== undefined) return err({ kind: "refused", reason: "quota", message: over });
     const placed = await deps.placement.place(plan);
@@ -272,6 +279,7 @@ async function make(
       ...(plan.forWhom === undefined ? {} : { forWhom: plan.forWhom }),
       apps: plan.apps.map((a) => a.ref),
       createdAt: new Date().toISOString(),
+      ...(owner === undefined ? {} : { ownerId: owner.id }),
       size: plan.size ?? DEFAULT_SIZE,
       ...(plan.template === undefined ? {} : { template: plan.template }),
       placement: placed.value.kind ?? "hosted",

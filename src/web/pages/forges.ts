@@ -17,6 +17,8 @@ import { readForm } from "../form.ts";
 import { badge, btn, card, empty, row, time } from "../ui.ts";
 import { noRoom } from "../../spawn/door.ts";
 import { sizeWords, useWords } from "../../spawn/usage.ts";
+import { listChildren } from "../../actions/spawn.ts";
+import { removeForge, stopForge, type Managed } from "../../spawn/manage.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
 
@@ -43,6 +45,8 @@ function forgeRow(r: ClientRow): Html {
   const state = claimState(r);
   const meta = [
     state === "unknown" ? html`it did not answer just now` : null,
+    r.made ? badge(r.awake === true ? "awake" : "asleep", r.awake === true ? { tone: "success" } : { variant: "outline" }) : null,
+    r.made ? html`${sizeWords(r.size)}` : null,
     r.for === null ? null : html`for ${r.for}`,
     r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
     runningNote(r),
@@ -80,6 +84,9 @@ function forgeRow(r: ClientRow): Html {
         ? html`<form method="post" action="/forges/${r.name}/claim-link">
             ${btn("Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
           </form>`
+        : null}${r.made
+        ? html`<form method="post" action="/forges/${r.name}/stop" class="inline">${btn("Stop", { size: "sm", title: "Put it to sleep now; its next visitor wakes it" })}</form>
+          ${btn("Remove", { href: `/forges/${r.name}/remove`, size: "sm", title: "Asks first, then deletes this forge and its data for good" })}`
         : null}`,
   });
 }
@@ -189,6 +196,55 @@ export async function forgeLinkSubmit(ctx: Ctx): Promise<Response> {
     },
     door.status,
   );
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
+// POST /forges/:name/stop and /remove — the owner's hands on a hosted forge.
+function manageSubmit(act: (app: Ctx["app"], name: string) => Promise<Managed>, title: string) {
+  return async (ctx: Ctx): Promise<Response> => {
+    const user = ctx.auth.user;
+    if (!user?.isAdmin) return notFoundPage(ctx);
+    const form = await readForm(ctx, "admin");
+    if (form instanceof Response) return form;
+    const done = await act(ctx.app, ctx.params["name"] ?? "");
+    const response = page(
+      {
+        ctx,
+        title,
+        body: html`<div class="narrow-wide">
+          ${pageHead(title)}
+          ${card(html`<p role="status">${done.says}</p><p class="mt">${btn("Back to your forges", { href: "/forges", size: "sm" })}</p>`)}
+        </div>`,
+      },
+      done.ok ? 200 : 404,
+    );
+    response.headers.set("cache-control", "no-store");
+    return response;
+  };
+}
+export const forgeStopSubmit = manageSubmit(stopForge, "Forge stopped");
+export const forgeRemoveSubmit = manageSubmit(removeForge, "Forge removed");
+
+// GET /forges/:name/remove — what removing would delete, and the one button that does it.
+export async function forgeRemoveConfirm(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (!user?.isAdmin) return notFoundPage(ctx);
+  const name = ctx.params["name"] ?? "";
+  const child = (await listChildren(ctx.app)).find((c) => c.name === name);
+  if (child === undefined) return notFoundPage(ctx);
+  const response = page({
+    ctx,
+    title: `Remove ${name}?`,
+    body: html`<div class="narrow-wide">
+      ${pageHead(`Remove ${name}?`)}
+      ${card(html`<p>This deletes the forge <strong>${name}</strong> at ${child.url.replace(/^https?:\/\//, "")} with everything in it: its repositories, issues, accounts and settings. It cannot be undone.</p>
+        <form method="post" action="/forges/${name}/remove" class="mt">
+          ${btn("Remove it for good", { variant: "primary" })}
+          ${btn("Keep it", { href: "/forges" })}
+        </form>`)}
+    </div>`,
+  });
   response.headers.set("cache-control", "no-store");
   return response;
 }

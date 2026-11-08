@@ -82,6 +82,16 @@ export async function stopChildApps(parent: App): Promise<void> {
   }
 }
 
+/** Stop one child's apps and checks (it is going to sleep). */
+export async function stopChildAppsOf(parent: App, name: string): Promise<void> {
+  const held = running.get(parent);
+  const entry = held?.get(name);
+  if (!held || !entry) return;
+  held.delete(name);
+  await entry.checks?.stop();
+  await entry.runtime.stop();
+}
+
 export interface ChildAppsSummary {
   readonly total: number;
   readonly running: number;

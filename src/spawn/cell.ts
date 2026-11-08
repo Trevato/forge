@@ -107,6 +107,12 @@ export interface CellChildren {
   /** Why the last start failed, in a sentence a person can read; undefined when it did not. */
   failure(bodyId: string): string | undefined;
   list(): readonly CellChild[];
+  /** Mark a request under way for this child; the returned function ends it. A child with one is not put to sleep. */
+  hold(bodyId: string): () => void;
+  /** Note that a request just reached this child, so it is not idle. */
+  touch(bodyId: string, now?: number): void;
+  /** Stop every running child quiet for `idleMs`; the names of those stopped (their data stays on disk). */
+  sleepIdle(idleMs: number, now?: number): Promise<string[]>;
 }
 
 const registries = new WeakMap<App, CellChildren>();
@@ -137,6 +143,10 @@ function makeRegistry(parent: App): CellChildren {
   /** When a start last failed: a broken child is not relaunched on every request. */
   const failed = new Map<string, { at: number; why: string }>();
   /** Held once it answers, never before: a start in flight is in `starting`. */
+  /** When a request last reached each running child, ms. */
+  const seen = new Map<string, number>();
+  /** Requests under way, by body id. */
+  const busy = new Map<string, number>();
 
   const launch = async (input: { bodyId: string; name: string; size: Size }): Promise<CellChild | undefined> => {
     const cells = await cellsAvailable();
@@ -202,6 +212,7 @@ function makeRegistry(parent: App): CellChildren {
       return undefined;
     }
     held.set(input.bodyId, child);
+    seen.set(input.bodyId, Date.now());
     return child;
   };
 
@@ -239,6 +250,30 @@ function makeRegistry(parent: App): CellChildren {
     get: (bodyId) => held.get(bodyId),
     failure: (bodyId) => failed.get(bodyId)?.why,
     list: () => [...held.values()],
+    hold(bodyId) {
+      busy.set(bodyId, (busy.get(bodyId) ?? 0) + 1);
+      let ended = false;
+      return () => {
+        if (ended) return;
+        ended = true;
+        const left = (busy.get(bodyId) ?? 1) - 1;
+        if (left <= 0) busy.delete(bodyId);
+        else busy.set(bodyId, left);
+      };
+    },
+    touch(bodyId, now = Date.now()) {
+      if (held.has(bodyId)) seen.set(bodyId, now);
+    },
+    async sleepIdle(idleMs, now = Date.now()) {
+      const asleep: string[] = [];
+      for (const child of [...held.values()]) {
+        if (now - (seen.get(child.bodyId) ?? now) < idleMs || (busy.get(child.bodyId) ?? 0) > 0) continue;
+        asleep.push(child.name);
+        seen.delete(child.bodyId);
+        await this.stop(child.bodyId);
+      }
+      return asleep;
+    },
   };
 }
 

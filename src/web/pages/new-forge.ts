@@ -156,6 +156,7 @@ function formView(
         : "Your own forge, or one for someone else: the apps you choose, a crew, and one link to claim.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
+    <p class="muted small" id="hosting-terms">Free within limits while hosting is not sold: a few forges per person, and a forge sleeps when idle and wakes on its next visit. Its crew stays off until you bring your own model credential.</p>
     ${quota ? html`<p role="status" id="quota-full">This forge cannot hold another child: ${quota}.</p>` : null}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
@@ -416,7 +417,7 @@ export function newForgePage(ctx: Ctx): Response {
   const response = page({
     ctx,
     title: "New forge",
-    body: formView(ctx, user, EMPTY, {}, null, reads),
+    body: formView(ctx, user, { ...EMPTY, name: (ctx.url.searchParams.get("name") ?? "").slice(0, 38) }, {}, null, reads),
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

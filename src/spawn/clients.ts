@@ -14,7 +14,7 @@ import { childDirOf, listChildren, statusTokenOf, type Child } from "../actions/
 import { timingSafeEqual } from "node:crypto";
 import { sha256 } from "../kernel/hash.ts";
 import type { ChildAppsSummary } from "./child-apps.ts";
-import { hostedChildApps } from "./host.ts";
+import { childAwake, hostedChildApps } from "./host.ts";
 import { hasAdmin, spawnedOrg } from "./claim.ts";
 import { lastHeard, type Beat } from "./heartbeat.ts";
 import { reachOf, reachWords, type ChildReach } from "./reach.ts";
@@ -38,6 +38,8 @@ export interface ClientRow {
   readonly made: boolean;
   readonly claimed: boolean | null;
   readonly lastActivityAt: string | null;
+  /** Whether its process is running now; a sleeping forge costs nothing and wakes on its next request. */
+  readonly awake?: boolean;
   /** The apps this parent runs for the child; null when it runs none here. */
   readonly running: ChildAppsSummary | null;
   /** What a visitor got from its public addresses when last asked (`spawn/reach.ts`); null before it was. */
@@ -204,6 +206,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       made: c.done,
       claimed: states[i]?.claimed ?? null,
       lastActivityAt: states[i]?.lastActivityAt ?? null,
+      awake: childAwake(app, c.name),
       running: hostedChildApps(app, c.name) ?? null,
       reach: reachOf(app, c.name) ?? null,
       spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,

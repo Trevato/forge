@@ -245,7 +245,7 @@ import {
 import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
 import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
-import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
+import { forgeLinkSubmit, forgeRemoveConfirm, forgeRemoveSubmit, forgeStopSubmit, forgesPage } from "../web/pages/forges.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
@@ -534,10 +534,12 @@ import { portInsteadOfSocket, tcpAddress } from "../git/hook-address.ts";
 import {
   answerFromCell,
   closeHostedChildren,
+  holdChild,
   hostedChildOpen,
   resolveHostedChild,
   resolveHostedChildApp,
   socketToCell,
+  wakeGate,
   watchHostedChildClose,
 } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
@@ -771,6 +773,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/forges", forgesPage);
   router.add("GET", "/family", familyPage);
   router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
+  router.add("POST", "/forges/:name/stop", forgeStopSubmit);
+  router.add("GET", "/forges/:name/remove", forgeRemoveConfirm);
+  router.add("POST", "/forges/:name/remove", forgeRemoveSubmit);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
@@ -2445,6 +2450,8 @@ export async function serve(app: App): Promise<Servers> {
       // child's own App before the parent's pages. Ingress routes the label
       // here; forge terminates Host routing in-process.
       {
+        const gated = wakeGate(app, request);
+        if (gated !== undefined) return securityFloor(gated);
         const child = await resolveHostedChild(app, request);
         if (child === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
@@ -2469,7 +2476,13 @@ export async function serve(app: App): Promise<Servers> {
           }
           notePeer(request, server.requestIP(request)?.address, trust);
           armClose(request, () => server.timeout(request, 1));
-          const response = await answered(child, request, () => http.handle(request));
+          const release = holdChild(app, child);
+          let response: Response;
+          try {
+            response = await answered(child, request, () => http.handle(request));
+          } finally {
+            release();
+          }
           counted(child, request, response, started);
           logged(key, request, response, started);
           await settleBody(request);
