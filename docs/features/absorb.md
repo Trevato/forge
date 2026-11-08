@@ -59,6 +59,10 @@ Absorbing, settings, the menu entry and the page use no model and start no agent
 
 Settings are stored as plain values. Anyone who can read the app's repository can read them through `GET /api/v1/features/:slug`, and each preview of the app is given them. Put keys and passwords in the app's secrets (`/settings/secrets` or the app's variables), not in a setting.
 
+## Review
+
+See `docs/features/absorb-review.md` for the findings of #9441.
+
 ## Code and tests
 
 - Code: `src/apps/feature.ts` (the declaration), `src/core/features.ts` (storage), `src/actions/features.ts` (the rules), `src/apps/feature_env.ts` (the environment), `src/web/pages/features.ts`, `src/http/api/features.ts`, `src/http/mcp/tools/features.ts`.
