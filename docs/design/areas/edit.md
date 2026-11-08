@@ -6,3 +6,7 @@ branch input live outside `field()` (the path sits in the editor's head row, wit
 row is written by hand to the same shape. An error that belongs to no input (not allowed, branch moved, origin
 unreachable) is the page's one flash, `tone=danger`, passed to `page()` as `flash` because the form re-renders in place
 instead of redirecting.
+
+The commit section of the editor and the delete page add no component class. As on the home page they are a heading, plain
+sentences, the fields and the one button, no box: each is a `<section class="settings-block">` with an `<h2>` (the commit
+section keeps `.editor-commit` for its spacing). Field names and the `data-preview`/`data-path` hooks are unchanged.

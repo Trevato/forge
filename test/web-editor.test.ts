@@ -536,6 +536,20 @@ describe("editing files on the web", () => {
     expect(await res.text()).toContain("path this repository can hold");
   });
 
+  test("the commit section and the delete page are not boxed in cards", async () => {
+    const edit = await text("/alice/beacon/edit/main/src/lamp.ts", alice);
+    const del = await text("/alice/beacon/delete/main/src/spare.ts", alice);
+    for (const html of [edit, del]) {
+      expect(html).not.toContain('class="card');
+      expect(html).toContain('class="settings-block');
+    }
+    expect(edit).toContain('action="/alice/beacon/edit"');
+    expect(edit).toContain('name="message"');
+    expect(edit).toContain("data-preview=");
+    expect(del).toContain('action="/alice/beacon/delete"');
+    expect(del).toContain('name="message"');
+  });
+
   // ---- deleting ----
 
   test("deleting a file goes through its own confirm page", async () => {
@@ -547,6 +561,8 @@ describe("editing files on the web", () => {
     expect(html).toContain('action="/alice/beacon/delete"');
     // The confirm page is where the deletion is described, not the button.
     expect(html).toContain("a deletion in history, not from it");
+    // The page head says it is a deletion; no second heading repeats it.
+    expect(html).not.toContain("Delete a file");
 
     const res = await post(
       "/alice/beacon/delete",

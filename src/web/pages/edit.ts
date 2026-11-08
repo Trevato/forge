@@ -41,7 +41,7 @@ import {
   type ProposeTarget,
   type RepoScope,
 } from "../scope.ts";
-import { btn, card, field, icon, sizeWithTokens } from "../ui.ts";
+import { btn, field, icon, sizeWithTokens } from "../ui.ts";
 import { pathCrumbs, refSetFrom } from "./refs.ts";
 
 /** What the form is holding, so a refusal can hand every word back. */
@@ -294,8 +294,9 @@ ${draft.content}</textarea
       hidden
     ></div>
 
-    ${card(
-      html`${field({
+    <section class="settings-block editor-commit">
+      <h2>${draft.creating ? "Create the file" : "Commit the change"}</h2>
+      ${field({
           label: "Commit message",
           name: "message",
           value: draft.subject,
@@ -341,9 +342,8 @@ ${draft.content}</textarea
               icon: "trash",
             }),
           )}
-        </div>`,
-      { extra: "editor-commit" },
-    )}
+        </div>
+    </section>
   </form>`;
 }
 
@@ -955,53 +955,48 @@ export async function deleteFilePage(ctx: Ctx): Promise<Response> {
     palette: scope.palette,
     body: html`<div class="narrow-wide">
       ${pageHead(html`Delete <span class="mono">${path}</span>?`)}
-      ${card(
-        html`<p>
-            It is removed from
-            <span class="mono">${mustBranch ? "a new branch" : ref}</span> in
-            one commit. Every other branch keeps it, and so does every commit
-            that already exists — this is a deletion in history, not from it.
-          </p>
-          <form method="post" action="${scope.base}/delete" class="mt">
-            <input type="hidden" name="ref" value="${ref}" />
-            <input type="hidden" name="path" value="${path}" />
-            <input
-              type="hidden"
-              name="target"
-              value="${mustBranch ? "new" : "current"}"
-            />
-            ${when(
-              mustBranch,
-              () =>
-                html`<input
-                  type="hidden"
-                  name="branch"
-                  value="${suggestBranch(
-                    ctx.auth.user?.username ?? "edit",
-                    path,
-                  )}"
-                />`,
-            )}
-            ${field({
-              label: "Commit message",
-              name: "message",
-              value: `Delete ${path}`,
-              required: true,
+      <section class="settings-block" id="delete-file">
+        <p>
+          It is removed from
+          <span class="mono">${mustBranch ? "a new branch" : ref}</span> in one
+          commit. Every other branch keeps it, and so does every commit that
+          already exists — this is a deletion in history, not from it.
+        </p>
+        <form method="post" action="${scope.base}/delete" class="mt">
+          <input type="hidden" name="ref" value="${ref}" />
+          <input type="hidden" name="path" value="${path}" />
+          <input
+            type="hidden"
+            name="target"
+            value="${mustBranch ? "new" : "current"}"
+          />
+          ${when(
+            mustBranch,
+            () =>
+              html`<input
+                type="hidden"
+                name="branch"
+                value="${suggestBranch(
+                  ctx.auth.user?.username ?? "edit",
+                  path,
+                )}"
+              />`,
+          )}
+          ${field({
+            label: "Commit message",
+            name: "message",
+            value: `Delete ${path}`,
+            required: true,
+          })}
+          <div class="form-actions">
+            ${btn("Delete this file", { variant: "danger" })}
+            ${btn("Cancel", {
+              href: `${scope.base}/blob/${encoded}/${path}`,
+              variant: "ghost",
             })}
-            <div class="form-actions">
-              ${btn("Delete this file", { variant: "danger" })}
-              ${btn("Cancel", {
-                href: `${scope.base}/blob/${encoded}/${path}`,
-                variant: "ghost",
-              })}
-            </div>
-          </form>`,
-        {
-          tone: "danger",
-          head: html`${icon("alert")}
-            <h2>Delete a file</h2>`,
-        },
-      )}
+          </div>
+        </form>
+      </section>
     </div>`,
   });
 }
