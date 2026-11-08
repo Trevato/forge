@@ -761,13 +761,12 @@ function ownersFor(ctx: Ctx, user: User): string[] {
 }
 
 function newRepoForm(ctx: Ctx, values: RepoValues, owners: string[], error?: string): Html {
-
   return html`<div class="narrow-wide">
     ${pageHead("New repository", {
       sub: "A repository is a bare git repo plus its issues, pulls and settings.",
     })}
-    ${card(
-      html`<form method="post" action="/new">
+    <form method="post" action="/new">
+      ${error ? html`<p class="error" role="alert">${error}</p>` : null}
         ${selectField({
           label: "Owner",
           name: "owner",
@@ -785,7 +784,6 @@ function newRepoForm(ctx: Ctx, values: RepoValues, owners: string[], error?: str
           autofocus: true,
           pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
           hint: "Letters, digits, dots, dashes and underscores.",
-          ...(error ? { error } : {}),
         })}
         ${formField({
           label: "Description",
@@ -814,8 +812,7 @@ function newRepoForm(ctx: Ctx, values: RepoValues, owners: string[], error?: str
           ${btn("Create repository", { variant: "primary" })}
           ${btn("Cancel", { href: "/", variant: "ghost" })}
         </div>
-      </form>`,
-    )}
+    </form>
   </div>`;
 }
 
