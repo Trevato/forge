@@ -27,7 +27,7 @@ import { backTo, field as formValue, readForm } from "../form.ts";
 import { isLocalPath } from "../flash.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, field, icon, selectField, sha, time } from "../ui.ts";
+import { btn, field, row, selectField, time } from "../ui.ts";
 
 /**
  * The label a new pin is offered. An iteration branch (`iter-3`) pinned
@@ -53,7 +53,6 @@ export function nextLabel(pins: readonly BuildPin[]): string {
   return `${last}-2`;
 }
 
-/** The lineage as a card: one line per pin, indented under its parent. */
 const hidden = (error: string): boolean => error === "unauthorized" || error === "not_found" || error === "forbidden";
 
 // GET /:owner/:name/builds — the pins as a lineage, each under the one it grew from.
@@ -66,7 +65,7 @@ export async function buildsPage(ctx: Ctx): Promise<Response> {
   const writer = ctx.auth.user !== undefined && canWrite(ctx.app.db, repo, ctx.auth.user);
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
   const body = html`${repoHeader(ctx, repo, "branches", { compact: true })}
-    <div class="mt">${buildsCard(base, nodes, writer, writer && isApp, writer)}</div>`;
+    ${buildsList(base, nodes, writer, writer && isApp, writer)}`;
   return timePhase(ctx.request, "render", () =>
     page({ ctx, title: `Builds · ${repo.name}`, crumbs: crumbsFor(repo), palette: repoPalette(ctx, repo), body, styleCss: BUILDS_CSS }),
   );
@@ -85,7 +84,7 @@ export async function deletePinSubmit(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, to, gone.ok ? { message: `Deleted pin ${gone.value.label}.` } : { tone: "danger", message: "Delete failed." });
 }
 
-export function buildsCard(
+export function buildsList(
   base: string,
   nodes: readonly BuildNode[],
   canPin: boolean,
@@ -94,78 +93,57 @@ export function buildsCard(
   /** Whether each pin of this repository offers Delete: a writer. */
   canDelete = false,
 ): Html {
-  return card(
-    nodes.length === 0
-      ? html`<p class="muted small builds-none">No pinned builds</p>`
-      : html`<ol class="builds">
-          ${nodes.map(
-            (n) => html`<li data-depth="${String(Math.min(n.depth, 8))}" class="build-row">
-              ${when(n.edge === "concept", () => html`<span class="build-concept" title="Concept edge: parent set by hand, not by commit history">┄</span>`)}
-              <span class="build-label mono">${n.from === undefined ? null : html`<span class="muted">${n.from}:</span>`}${n.pin.label}</span>
-              ${sha(n.pin.oid, `${n.from === undefined ? base : `/${n.from}`}/commit/${n.pin.oid}`)}
-              <span class="build-note truncate" title="${n.pin.note}">${n.pin.note === n.pin.label ? "" : n.pin.note}</span>
-              <span class="muted small build-meta"
-                >${n.pin.source} · ${n.pin.pinnedBy} · ${time(n.pin.pinnedAt)}</span
-              >
-              ${when(
-                n.from === undefined && n.pin.demo?.launch === "file",
-                () => html`<a class="build-cart small" href="${base}/builds/${encodeURIComponent(n.pin.label)}/cart" title="Play the captured page of ${n.pin.demo?.name ?? ""}"
-                  >▶ ${n.pin.demo?.name ?? ""} ${n.pin.demo?.version ?? ""}</a
-                >`,
-              )}
-              ${when(
-                n.from === undefined,
-                () => html`<a class="build-shots small" href="${base}/builds/${encodeURIComponent(n.pin.label)}/shots">Screenshots</a>`,
-              )}
-              ${when(
-                canPreview && n.from === undefined,
-                () => html`<form method="post" action="${base}/builds/preview" class="build-preview">
-                  <input type="hidden" name="sha" value="${n.pin.oid}" />
-                  ${btn("Preview now", { size: "sm", variant: "ghost", icon: "eye" })}
-                </form>`,
-              )}
-              ${when(
-                canDelete && n.from === undefined,
-                () => btn("Delete", {
-                  href: `/-/confirm?to=${encodeURIComponent(`${base}/builds/${encodeURIComponent(n.pin.label)}/delete`)}`,
-                  size: "sm",
-                  variant: "danger",
-                  label: `Delete pin ${n.pin.label}`,
-                }),
-              )}
-            </li>`,
-          )}
-        </ol>`,
-    {
-      head: html`${icon("pin")}
-        <h2>Builds</h2>
-        <span class="spacer"></span>
-        ${when(nodes.length > 0, () => btn("Iterations", { href: `${base}/iterations?layout=tree`, size: "sm", variant: "ghost", icon: "map" }))}
-        ${when(canPin, () =>
-          html`${btn("Pin a build", {
-            href: `${base}/builds/new`,
-            size: "sm",
-            icon: "plus",
-          })}`,
-        )}`,
-      extra: "builds-card",
-    },
-  );
+  return html`<h2 class="mt">Builds</h2>
+    <p class="small builds-links">
+      ${when(canPin, () => html`<a href="${base}/builds/new">Pin a build</a>`)}
+      ${when(nodes.length > 0, () => html`<a href="${base}/iterations?layout=tree">Iterations</a>`)}
+    </p>
+    ${nodes.length === 0
+      ? html`<p class="muted">No builds yet.${canPin ? html` Pin one from <a href="${base}/branches">a branch</a> to make it.` : null}</p>`
+      : html`<ul class="list builds">${nodes.map((n) => buildRow(base, n, canPreview, canDelete))}</ul>`}`;
+}
+
+/** One pin: its label is the one accent link; the rest is quiet, in the trail. */
+function buildRow(base: string, n: BuildNode, canPreview: boolean, canDelete: boolean): Html {
+  const own = n.from === undefined;
+  const label = encodeURIComponent(n.pin.label);
+  const note = n.pin.note === n.pin.label ? "" : `${n.pin.note} · `;
+  return row({
+    title: html`${when(n.edge === "concept", () => html`<span class="build-concept" title="Concept edge: parent set by hand, not by commit history">┄ </span>`)}<a class="mono" href="${own ? base : `/${n.from}`}/commit/${n.pin.oid}">${n.from === undefined ? null : html`<span class="muted">${n.from}:</span>`}${n.pin.label}</a>`,
+    meta: html`${note}${n.pin.source} · ${n.pin.pinnedBy} · ${time(n.pin.pinnedAt)}`,
+    data: { depth: String(Math.min(n.depth, 8)) },
+    trail: html`${when(
+        own && n.pin.demo?.launch === "file",
+        () => html`<a class="small" href="${base}/builds/${label}/cart" title="Play the captured page of ${n.pin.demo?.name ?? ""}">▶ ${n.pin.demo?.name ?? ""} ${n.pin.demo?.version ?? ""}</a>`,
+      )}
+      ${when(own, () => html`<a class="small" href="${base}/builds/${label}/shots">Screenshots</a>`)}
+      ${when(
+        canPreview && own,
+        () => html`<form method="post" action="${base}/builds/preview" class="build-preview">
+          <input type="hidden" name="sha" value="${n.pin.oid}" />
+          ${btn("Preview", { size: "sm", variant: "link", label: `Preview build ${n.pin.label}` })}
+        </form>`,
+      )}
+      ${when(
+        canDelete && own,
+        () => html`<a class="small build-del" href="/-/confirm?to=${encodeURIComponent(`${base}/builds/${label}/delete`)}" aria-label="Delete pin ${n.pin.label}">Delete</a>`,
+      )}`,
+  });
 }
 
 export const BUILDS_CSS = `
-.builds{list-style:none;margin:0;padding:6px 12px}
-.build-row{display:flex;align-items:center;gap:8px;min-height:30px;min-width:0}
-${[1, 2, 3, 4, 5, 6, 7, 8].map((d) => `.build-row[data-depth="${d}"]{padding-left:${d * 20}px}`).join("\n")}
-.build-row + .build-row{border-top:1px solid var(--border)}
-.build-label{font-weight:600;flex:none}
-.build-concept{color:var(--muted-fg);flex:none}
-.build-note{min-width:0;flex:1}
-.build-meta{flex:none;margin-left:auto}
-.build-preview{flex:none;margin:0}
-.build-shots{flex:none}
-.builds-none{padding:10px 14px;margin:0}
-@media (max-width:640px){.build-meta{display:none}}
+${[1, 2, 3, 4, 5, 6, 7, 8].map((d) => `.builds > li[data-depth="${d}"]{padding-left:${d * 20}px}`).join("\n")}
+.builds .row-meta{white-space:normal;overflow-wrap:anywhere}
+.builds .row-trail{flex:0 1 auto;flex-wrap:wrap;gap:4px 12px;align-items:center}
+.build-concept{color:var(--muted-fg)}
+.build-preview{margin:0}
+.build-preview .btn{color:var(--muted-fg);font-size:inherit}
+.build-preview .btn:hover,.build-preview .btn:focus-visible{color:var(--accent)}
+.builds .row-trail a,.builds-links a{color:var(--muted-fg)}
+.builds .row-trail a:hover,.builds .row-trail a:focus-visible,.builds-links a:hover,.builds-links a:focus-visible{color:var(--accent)}
+.builds .row-trail a.build-del:hover,.builds .row-trail a.build-del:focus-visible{color:var(--danger)}
+.builds-links{display:flex;gap:12px;margin:0 0 8px}
+@media (max-width:719px){.builds .row{flex-wrap:wrap}.builds .row-trail{flex:1 1 100%;justify-content:flex-start}}
 `;
 
 // GET /:owner/:name/builds/new?sha=&source= — the pin form.
@@ -190,38 +168,33 @@ export async function newBuildPage(ctx: Ctx): Promise<Response> {
   const askedBack = ctx.url.searchParams.get("back") ?? "";
   const back = isLocalPath(askedBack) ? askedBack : undefined;
   const body = html`${repoHeader(ctx, repo, "branches", { compact: true })}
-    <div class="mt">
-      ${card(
-        html`<form method="post" action="${base}/builds" class="stack">
-          ${field({ label: "Commit", name: "sha", value: isSafeOid(want) ? want : "", required: true, mono: true, hint: "Full commit SHA." })}
-          <input type="hidden" name="source" value="${source}" />
-          ${when(back, (b) => html`<input type="hidden" name="back" value="${b}" />`)}
-          ${field({ label: "Label", name: "label", value: suggestLabel(pins, repo.forkParentId !== null, source), required: true, mono: true, hint: "Letters, digits, dot, dash or underscore. Example: iter-3, v3." })}
-          ${field({ label: "Note", name: "note", rows: 3, hint: "Optional." })}
-          ${selectField({
-            label: "Parent",
-            name: "parent",
-            hint: "Automatic: the nearest pin in the commit history. A pin in another repository creates a concept edge.",
-            options: [
-              { value: "", label: "Automatic", selected: true },
-              // Any pin of the family: one in another repository is a
-              // concept edge, an idea shared without history.
-              ...family.map((n) => {
-                const value = n.from === undefined ? n.pin.label : `${n.from}:${n.pin.label}`;
-                return { value, label: value };
-              }),
-            ],
-          })}
-          <div class="bar">
-            ${btn("Pin build", { variant: "primary", icon: "pin" })}
-            ${btn("Cancel", { href: back ?? `${base}/branches`, variant: "ghost" })}
-          </div>
-        </form>`,
-        {
-          head: html`${icon("pin")}
-            <h2>Pin a build</h2>`,
-        },
-      )}
+    <h1 class="mt">Pin a build</h1>
+    <div class="narrow-wide mt">
+      <form method="post" action="${base}/builds">
+        ${field({ label: "Commit", name: "sha", value: isSafeOid(want) ? want : "", required: true, mono: true, hint: "Full commit SHA." })}
+        <input type="hidden" name="source" value="${source}" />
+        ${when(back, (b) => html`<input type="hidden" name="back" value="${b}" />`)}
+        ${field({ label: "Label", name: "label", value: suggestLabel(pins, repo.forkParentId !== null, source), required: true, mono: true, hint: "Letters, digits, dot, dash or underscore. Example: iter-3, v3." })}
+        ${field({ label: "Note", name: "note", type: "textarea", rows: 3, hint: "Optional." })}
+        ${selectField({
+          label: "Parent",
+          name: "parent",
+          hint: "Automatic: the nearest pin in the commit history. A pin in another repository creates a concept edge.",
+          options: [
+            { value: "", label: "Automatic", selected: true },
+            // Any pin of the family: one in another repository is a
+            // concept edge, an idea shared without history.
+            ...family.map((n) => {
+              const value = n.from === undefined ? n.pin.label : `${n.from}:${n.pin.label}`;
+              return { value, label: value };
+            }),
+          ],
+        })}
+        <div class="form-actions">
+          ${btn("Pin build", { variant: "primary", icon: "pin" })}
+          ${btn("Cancel", { href: back ?? `${base}/branches`, variant: "link" })}
+        </div>
+      </form>
     </div>`;
   return timePhase(ctx.request, "render", () =>
     page({
@@ -314,12 +287,8 @@ export async function previewBuildSubmit(ctx: Ctx): Promise<Response> {
     title: `Opening ${short} · ${repo.name}`,
     crumbs: crumbsFor(repo),
     scriptJs: `location.replace(${JSON.stringify(url).replace(/</g, "\\u003c")});`,
-    body: html`<div class="mt">
-      ${card(
-        html`<p>Starting build <span class="mono">${short}</span>.</p>
-          <p><a class="btn" data-variant="primary" href="${url}">Open ${url}</a></p>`,
-        { head: html`${icon("eye")}<h2>Opening preview</h2>` },
-      )}
-    </div>`,
+    body: html`<h2 class="mt">Opening preview</h2>
+      <p>Starting build <span class="mono">${short}</span>.</p>
+      <p><a class="btn" data-variant="primary" href="${url}">Open ${url}</a></p>`,
   });
 }

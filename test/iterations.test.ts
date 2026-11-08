@@ -350,8 +350,8 @@ describe("iterations page", () => {
 
   test("Builds draws the family's pins as a lineage, each under its parent, and the pin form offers them as Parent", async () => {
     const list = await (await get("/alice/game/builds")).text();
-    expect(list).toMatch(/data-depth="0"[^>]*class="build-row">[\s\S]*?>v1</);
-    expect(list).toMatch(/data-depth="1"[^>]*class="build-row">[\s\S]*?>v2</);
+    expect(list).toMatch(/data-depth="0"[^>]*>[\s\S]*?>v1</);
+    expect(list).toMatch(/data-depth="1"[^>]*>[\s\S]*?>v2</);
     expect(list).toMatch(/<span class="muted">bob\/game:<\/span>b1/);
     const cookie = await signIn("alice");
     const form = await (await get("/alice/game/builds/new", cookie)).text();
