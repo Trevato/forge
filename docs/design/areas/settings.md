@@ -82,3 +82,10 @@ Settings › Capacity (`capacityPage()` in `src/web/pages/capacity.ts`, #9709) h
 the egress note when cells only report, then `.settings-block` sections — Capacity (the `.setting-list` of settings
 rows), Changes, Errors and refused calls, Egress connections, Self-swap. No new class. Pinned by
 `test/capacity-rows.test.ts`.
+
+## Account (#9706)
+
+Settings › Account (`src/web/pages/account.ts`: profile, password, tokens, SSH keys) has no card and no table. Each part
+is a `block()` — a `.settings-block` with an `<h2>` — and the lists (tokens, SSH keys, signed-in browsers) are
+`.setting-list` rows: name and badge as the title, dates and fingerprint as the meta, Revoke/Remove/Sign out in the trail.
+An empty list is one muted sentence. No new class. Pinned by `test/account-rows.test.ts`.

@@ -62,10 +62,9 @@ import { readFlash } from "../flash.ts";
 import {
   badge,
   btn,
-  card,
   confirmAction,
   copyField,
-  empty,
+  row,
   selectField,
   terminalCommand,
   time,
@@ -74,6 +73,14 @@ import {
 } from "../ui.ts";
 import { everydayLine } from "./everyday.ts";
 import { passkeyJs } from "../passkey-client.ts";
+
+/** A titled block of a settings page: a heading over its content, no box. */
+const block = (title: string, body: Html, intro?: string): Html =>
+  html`<section class="settings-block">
+    <h2>${title}</h2>
+    ${intro === undefined ? null : html`<p class="muted small">${intro}</p>`}
+    ${body}
+  </section>`;
 
 type Section = "profile" | "password" | "tokens" | "keys" | "passkeys";
 
@@ -135,7 +142,8 @@ const refusal = (message: string | undefined): Html =>
 
 function notifyView(ctx: Ctx, error?: string): Html {
   const host = notifyHost(notifyUrlOf(ctx.app.db, ctx.auth.user!.id));
-  return card(
+  return block(
+    "Phone notifications",
     html`<form method="post" action="/settings/notify">
       ${uiField({
         label: "Notify URL",
@@ -153,7 +161,6 @@ function notifyView(ctx: Ctx, error?: string): Html {
       </div>
       ${refusal(error)}
     </form>`,
-    { head: html`<h3>Phone notifications</h3>` },
   );
 }
 
@@ -163,7 +170,8 @@ function edgeLinkView(ctx: Ctx): Html {
   if (token === undefined) return html``;
   const linked = linkedLogin(ctx.app.db, ctx.auth.user!.id);
   const carried = edgeIdentity(ctx.request, token);
-  return card(
+  return block(
+    "open-platform.sh",
     linked !== undefined
       ? html`<p>open-platform.sh: linked as <strong>${linked}</strong></p>
           ${confirmAction({ action: "/settings/edge/unlink", verb: "Unlink" })}`
@@ -173,7 +181,6 @@ function edgeLinkView(ctx: Ctx): Html {
             : html`<form method="post" action="/settings/edge/link">
                 ${btn(`Link ${carried}`, { type: "submit" })}
               </form>`}`,
-    { head: html`<h3>open-platform.sh</h3>` },
   );
 }
 
@@ -183,7 +190,8 @@ function parentLinkView(ctx: Ctx): Html {
   if (issuer === undefined) return html``;
   const host = new URL(issuer).host;
   const linked = linkedParent(ctx.app.db, ctx.auth.user!.id, issuer) !== undefined;
-  return card(
+  return block(
+    host,
     linked
       ? html`<p>${host}: linked</p>
           ${confirmAction({ action: "/settings/parent/unlink", verb: "Unlink" })}`
@@ -191,7 +199,6 @@ function parentLinkView(ctx: Ctx): Html {
           <form method="post" action="/settings/parent/link">
             ${btn(`Link ${host}`, { type: "submit" })}
           </form>`,
-    { head: html`<h3>${host}</h3>` },
   );
 }
 
@@ -246,21 +253,21 @@ export async function edgeUnlink(ctx: Ctx): Promise<Response> {
 function unverifiedNotice(ctx: Ctx): Html {
   const user = ctx.auth.user!;
   if (emailVerified(ctx.app.db, user.id)) return html``;
-  return card(
-    html`<p>
-        Your email is not verified yet. Until it is, you can read and talk,
-        but not make repositories, apps or runs.
-        ${isStandInEmail(user.email)
-          ? html`Add your email below and follow the link we send to it.`
-          : html`Follow the link we sent to <strong>${user.email}</strong>, or ask for another.`}
-      </p>
-      ${isStandInEmail(user.email)
-        ? html``
-        : html`<form method="post" action="/settings/email/verify">
-        ${btn("Send another link", { type: "submit" })}
-      </form>`}`,
-    { tone: "attn" },
-  );
+  const standIn = isStandInEmail(user.email);
+  return html`<section class="settings-block">
+    <p>
+      Your email is not verified yet. Until it is, you can read and talk,
+      but not make repositories, apps or runs.
+      ${standIn
+        ? html`Add your email below and follow the link we send to it.`
+        : html`Follow the link we sent to <strong>${user.email}</strong>, or ask for another.`}
+    </p>
+    ${standIn
+      ? html``
+      : html`<form method="post" action="/settings/email/verify">
+          ${btn("Send another link", { type: "submit" })}
+        </form>`}
+  </section>`;
 }
 
 // POST /settings/email/verify
@@ -287,20 +294,21 @@ export async function resendVerifyLink(ctx: Ctx): Promise<Response> {
 function roleView(ctx: Ctx): Html {
   const role = roleOf(ctx.app.db, ctx.auth.user!);
   const row = rowOf(role);
-  return card(
+  return block(
+    "What you can do here",
     html`<p>You are ${badge(role)} here.</p>
       <ul class="role-can">
         ${(Object.keys(ABILITIES) as Ability[]).map(
           (a) => html`<li>${ABILITIES[a]}: <strong>${row[a] ? "yes" : "no"}</strong></li>`,
         )}
       </ul>`,
-    { head: html`<h3>What you can do here</h3>` },
   );
 }
 
 function profileView(ctx: Ctx, values: ProfileForm): Html {
   const user = ctx.auth.user!;
-  return html`${unverifiedNotice(ctx)}${roleView(ctx)}${card(
+  return html`${unverifiedNotice(ctx)}${roleView(ctx)}${block(
+    "Public profile",
     html`<form method="post" action="/settings">
       <div class="field">
         <label for="f-username">Username</label>
@@ -356,7 +364,6 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
       </div>
       ${refusal(values.errors?.form)}
     </form>`,
-    { head: html`<h3>Public profile</h3>` },
   )}`;
 }
 
@@ -457,7 +464,8 @@ function passwordView(error?: {
   field: "current" | "next";
   text: string;
 }): Html {
-  return card(
+  return block(
+    "Change password",
     html`<form method="post" action="/settings/password">
       ${uiField({
         label: "Current password",
@@ -488,7 +496,6 @@ function passwordView(error?: {
         ${btn("Change password", { variant: "primary" })}
       </div>
     </form>`,
-    { head: html`<h3>Change password</h3>` },
   );
 }
 
@@ -548,42 +555,23 @@ export function sessionsCard(
   sessions: readonly SessionInfo[],
   base: string,
 ): Html {
-  return card(
+  return block(
+    "Signed-in browsers",
     sessions.length === 0
       ? html`<p class="muted">Not signed in on any browser.</p>`
-      : html`<div class="table-scroll">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Signed in</th>
-                <th>Last seen</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${sessions.map(
-                (s) =>
-                  html`<tr>
-                    <td class="muted">
-                      ${time(s.createdAt)}
-                      ${s.current ? badge("This browser") : null}
-                    </td>
-                    <td class="muted">
-                      ${s.lastSeenAt ? time(s.lastSeenAt) : "not since"}
-                    </td>
-                    <td>
-                      ${confirmAction({
-                        action: `${base}/sessions/${s.id}/delete`,
-                        verb: "Sign out",
-                        size: "sm",
-                      })}
-                    </td>
-                  </tr>`,
-              )}
-            </tbody>
-          </table>
-        </div>`,
-    { pad: false, head: html`<h3>Signed-in browsers</h3>` },
+      : html`<ul class="list setting-list">
+          ${sessions.map((x) =>
+            row({
+              title: html`${time(x.createdAt)} ${x.current ? badge("This browser") : null}`,
+              meta: html`last seen ${x.lastSeenAt ? time(x.lastSeenAt) : "not since"}`,
+              trail: html`${confirmAction({
+                action: `${base}/sessions/${x.id}/delete`,
+                verb: "Sign out",
+                size: "sm",
+              })}`,
+            }),
+          )}
+        </ul>`,
   );
 }
 
@@ -594,7 +582,8 @@ export function sessionsCard(
 export function connectCard(ctx: Ctx, token: string | undefined): Html {
   const url = (ctx.app.config.url ?? ctx.url.origin).replace(/\/+$/, "");
   const env = `FORGE_URL=${url} FORGE_TOKEN=${token ?? "<token>"}`;
-  return card(
+  return block(
+    "Connect your harness",
     html`<p class="muted small mb">
         ${token ? "Your new token is filled in." : "Make a token below, then replace <token>."}
         See plugins/claude-code and plugins/opencode.
@@ -609,7 +598,6 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
         "OpenCode command",
         "Copy command",
       )}`,
-    { head: html`<h3>Connect your harness</h3>` },
   );
 }
 
@@ -618,63 +606,29 @@ function tokensView(ctx: Ctx): Html {
   const sessions = timePhase(ctx.request, "sessions", () =>
     listSessions(ctx.app.db, ctx.auth.user!.id, cookieValue(ctx.request, "forge_session")),
   );
+  const list = tokens.length === 0
+    ? html`<p class="muted">No tokens yet. Mint one when a script, a CI job, or another machine needs to act as you.</p>`
+    : html`<ul class="list setting-list">
+        ${tokens.map((t) =>
+          row({
+            title: html`<strong>${t.name}</strong> ${badge(t.scope)}`,
+            meta: html`created ${time(t.createdAt)} · last used ${t.lastUsedAt ? time(t.lastUsedAt) : "never"}${when(
+              t.oauthClient,
+              (client) => html`<span data-oauth-client> · ${client} · Signed in through OAuth; renews itself until you delete it</span>`,
+            )}`,
+            trail: confirmAction({ action: `/settings/tokens/${t.id}/delete`, verb: "Revoke", size: "sm" }),
+          }),
+        )}
+      </ul>`;
   return html`<p class="muted small mb">
       Use a token as the password when pushing over HTTPS, or as a
       <span class="mono">Bearer</span> token for the API. Your account password
       works for git too — tokens are for scoped or automated access.
     </p>
     ${connectCard(ctx, readFlash(ctx.request)?.code)}
-    ${tokens.length === 0
-      ? empty({
-          icon: "key",
-          title: "No tokens yet",
-          note: "Mint one when a script, a CI job, or another machine needs to act as you.",
-        })
-      : card(
-          html`<div class="table-scroll">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Scope</th>
-                  <th>Created</th>
-                  <th>Last used</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${tokens.map(
-                  (t) =>
-                    html`<tr>
-                      <td>
-                        <strong>${t.name}</strong>
-                        ${when(
-                          t.oauthClient,
-                          (client) => html`<div class="muted small" data-oauth-client>
-                            ${client} · Signed in through OAuth; renews itself until you delete it
-                          </div>`,
-                        )}
-                      </td>
-                      <td>${badge(t.scope)}</td>
-                      <td class="muted">${time(t.createdAt)}</td>
-                      <td class="muted">
-                        ${t.lastUsedAt ? time(t.lastUsedAt) : "never"}
-                      </td>
-                      <td>
-                        ${confirmAction({
-                          action: `/settings/tokens/${t.id}/delete`,
-                          verb: "Revoke",
-                          size: "sm",
-                        })}
-                      </td>
-                    </tr>`,
-                )}
-              </tbody>
-            </table>
-          </div>`,
-          { pad: false },
-        )}
-    ${card(
+    ${block("Tokens", list)}
+    ${block(
+      "New token",
       html`<form method="post" action="/settings/tokens">
         ${uiField({
           label: "Token name",
@@ -709,7 +663,6 @@ function tokensView(ctx: Ctx): Html {
           ${btn("Generate token", { variant: "primary" })}
         </div>
       </form>`,
-      { head: html`<h3>New token</h3>` },
     )}
     ${sessionsCard(sessions, "/settings")}`;
 }
@@ -809,53 +762,22 @@ function keysView(
         >~/.ssh/id_ed25519.pub</span
       >) — ed25519, ecdsa, or rsa (2048 bits or more).
     </p>
-    ${keys.length === 0
-      ? empty({
-          icon: "lock",
-          title: "No keys yet",
-          note: "Add one and git over SSH stops asking for a password.",
-        })
-      : card(
-          html`<div class="table-scroll">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Fingerprint</th>
-                  <th>Added</th>
-                  <th>Last used</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${keys.map(
-                  (k) =>
-                    html`<tr>
-                      <td>
-                        <strong>${k.name}</strong> ${badge(k.algo, {
-                          variant: "secondary",
-                        })}
-                      </td>
-                      <td class="mono small">${k.fingerprint}</td>
-                      <td class="muted">${time(k.createdAt)}</td>
-                      <td class="muted">
-                        ${k.lastUsedAt ? time(k.lastUsedAt) : "never"}
-                      </td>
-                      <td>
-                        ${confirmAction({
-                          action: `/settings/keys/${k.id}/delete`,
-                          verb: "Remove",
-                          size: "sm",
-                        })}
-                      </td>
-                    </tr>`,
-                )}
-              </tbody>
-            </table>
-          </div>`,
-          { pad: false },
-        )}
-    ${card(
+    ${block(
+      "SSH keys",
+      keys.length === 0
+        ? html`<p class="muted">No keys yet. Add one and git over SSH stops asking for a password.</p>`
+        : html`<ul class="list setting-list">
+            ${keys.map((k) =>
+              row({
+                title: html`<strong>${k.name}</strong> ${badge(k.algo, { variant: "secondary" })}`,
+                meta: html`<span class="mono">${k.fingerprint}</span> · added ${time(k.createdAt)} · last used ${k.lastUsedAt ? time(k.lastUsedAt) : "never"}`,
+                trail: confirmAction({ action: `/settings/keys/${k.id}/delete`, verb: "Remove", size: "sm" }),
+              }),
+            )}
+          </ul>`,
+    )}
+    ${block(
+      "New SSH key",
       html`<form method="post" action="/settings/keys">
         ${uiField({
           label: "Name",
@@ -878,7 +800,6 @@ function keysView(
         </div>
         ${refusal(values.error)}
       </form>`,
-      { head: html`<h3>New SSH key</h3>` },
     )}`;
 }
 
