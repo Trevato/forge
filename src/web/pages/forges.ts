@@ -142,7 +142,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
   const response = page({
     ctx,
     title: "Forges you sent",
-    body: html`<div class="narrow-wide">
+    body: html`<div class="narrow-wide" data-forges>
       ${pageHead("Forges you sent", {
         sub: "For whom each is, what it was given, and whether its person has claimed it.",
         actions: action,
@@ -184,7 +184,7 @@ export async function forgeLinkSubmit(ctx: Ctx): Promise<Response> {
     {
       ctx,
       title: "A fresh link",
-      body: html`<div class="narrow-wide">
+      body: html`<div class="narrow-wide" data-forges>
         ${pageHead(typeof link === "string" ? `A fresh link for ${name}` : `No fresh link for ${name}`)}
         ${card(
           typeof link === "string"
@@ -212,7 +212,7 @@ function manageSubmit(act: (app: Ctx["app"], name: string) => Promise<Managed>, 
       {
         ctx,
         title,
-        body: html`<div class="narrow-wide">
+        body: html`<div class="narrow-wide" data-forges>
           ${pageHead(title)}
           ${card(html`<p role="status">${done.says}</p><p class="mt">${btn("Back to your forges", { href: "/forges", size: "sm" })}</p>`)}
         </div>`,
@@ -236,7 +236,7 @@ export async function forgeRemoveConfirm(ctx: Ctx): Promise<Response> {
   const response = page({
     ctx,
     title: `Remove ${name}?`,
-    body: html`<div class="narrow-wide">
+    body: html`<div class="narrow-wide" data-forges>
       ${pageHead(`Remove ${name}?`)}
       ${card(html`<p>This deletes the forge <strong>${name}</strong> at ${child.url.replace(/^https?:\/\//, "")} with everything in it: its repositories, issues, accounts and settings. It cannot be undone.</p>
         <form method="post" action="/forges/${name}/remove" class="mt">

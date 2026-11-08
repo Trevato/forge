@@ -139,7 +139,7 @@ function formView(
 ): Html {
   const { full, quota, repos, crew } = reads;
   if (full)
-    return html`<div class="narrow-wide">
+    return html`<div class="narrow-wide" data-forges>
       ${pageHead("New forge")}
       ${card(
         html`<p role="status">This forge cannot hold another child: ${full}.</p>
@@ -149,7 +149,7 @@ function formView(
       )}
     </div>`;
   const anon = user === undefined;
-  return html`<div class="narrow-wide">
+  return html`<div class="narrow-wide" data-forges>
     ${pageHead("New forge", {
       sub: anon
         ? "Your own forge: pick a name, and the public apps to start from. Whoever opens the claim link becomes its admin."
@@ -389,7 +389,7 @@ function madeView(body: Record<string, unknown>): Html {
   const link = body["claimUrl"];
   const note = body["keyNote"];
   const name = String(body["name"] ?? "");
-  return html`<div class="narrow-wide">
+  return html`<div class="narrow-wide" data-forges>
     ${pageHead(
       body["existed"] === true ? `${name} already exists` : `${name} is ready`,
     )}
