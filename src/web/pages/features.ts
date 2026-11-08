@@ -23,7 +23,7 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { readForm, type Form } from "../form.ts";
 import { html, raw, when } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, card, empty, icon, row } from "../ui.ts";
+import { badge, btn, empty, row } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -54,7 +54,6 @@ export function switchNote(f: Pick<FeatureView, "name" | "absorbed">): string {
 function featureRow(f: FeatureView) {
   const base = `/settings/features/${encodeURIComponent(f.slug)}`;
   return row({
-    lead: icon("rocket"),
     title: html`${f.name} <span class="muted small mono">${f.repo}</span>
       ${f.absorbed ? badge("absorbed", { tone: "success" }) : null}
       ${f.pending !== null ? badge("declaration changed: review", { tone: "attn" }) : null}`,
@@ -89,25 +88,19 @@ export async function featuresPage(ctx: Ctx): Promise<Response> {
   const listed = await timePhase(ctx.request, "features", () => listFeatures(ctx.app, ctx.auth.user));
   if (!listed.ok) return notFoundPage(ctx);
   const rendering = performance.now();
-  const body = html`${card(
-    listed.value.length === 0
-      ? html`<div class="card-body">
-          ${empty({
+  const body = html`<section class="settings-block">
+      <h2>Features</h2>
+      ${listed.value.length === 0
+        ? empty({
             icon: "rocket",
             title: "No app declares a feature yet",
             note: 'An app declares one with a "feature" block in its forge.json: a name, a page and typed settings. Absorbing it puts it in the forge\'s nav and keeps its settings here.',
             action: html`<p><a href="${DOCS}">How an app declares a feature</a></p>`,
-          })}
-        </div>`
-      : html`<ul class="list setting-list">
-          ${listed.value.map(featureRow)}
-        </ul>`,
-    {
-      head: html`${icon("rocket")}
-        <h2>Features</h2>`,
-      pad: false,
-    },
-  )}`;
+          })
+        : html`<ul class="list setting-list">
+            ${listed.value.map(featureRow)}
+          </ul>`}
+    </section>`;
   const response = shell(ctx, "Features", body);
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -177,31 +170,28 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused): Response {
     const bad = refused?.key === shown.key;
     const s = refused !== undefined && shown.key in refused.typed ? { ...shown, value: typedValue(shown, refused.typed[shown.key]) } : shown;
     return row({
-      lead: icon("settings"),
       title: html`${s.label} <span class="muted small mono">${s.env}</span>`,
       meta: html`${bad ? html`<span class="danger" role="alert">${refused.message}</span><br />` : null}${s.help ?? ""}${when(s.help !== null, () => html`<br />`)}Default
         <span class="mono">${s.default === "" ? "empty" : s.default}</span>${s.set ? "" : " · not changed"}`,
       trail: input(s, bad),
     });
   });
-  const body = html`${card(
-      f.settings.length === 0
-        ? html`<div class="card-body"><p class="muted small">${f.problem ?? "This feature declares no settings."}</p></div>`
+  const body = html`<section class="settings-block">
+      <div class="bar">
+        <h2>${f.name}</h2>
+        ${f.absorbed ? badge("absorbed", { tone: "success" }) : badge("not absorbed", { variant: "outline" })}
+      </div>
+      ${f.settings.length === 0
+        ? html`<p class="muted small">${f.problem ?? "This feature declares no settings."}</p>`
         : html`<form method="post" action="${base}">
             <ul class="list setting-list">${settings}</ul>
-            <div class="card-body">
+            <p>
               ${f.absorbed
                 ? btn("Save", { variant: "primary", label: `Save ${f.name}'s settings` })
-                : html`<p class="muted small">Absorb ${f.name} to change its settings.</p>`}
-            </div>
-          </form>`,
-      {
-        head: html`${icon("rocket")}
-          <h2>${f.name}</h2>
-          ${f.absorbed ? badge("absorbed", { tone: "success" }) : badge("not absorbed", { variant: "outline" })}`,
-        pad: false,
-      },
-    )}
+                : html`<span class="muted small">Absorb ${f.name} to change its settings.</span>`}
+            </p>
+          </form>`}
+    </section>
     <p class="muted small">
       Saving restarts ${f.name}: its process reads each setting as an environment variable, named on the right.
       <a href="/settings/features">All features</a>
