@@ -17,7 +17,7 @@ import { assignPicker } from "../../src/tui/screens/assign.ts";
 import type { Screen } from "../../src/tui/app/app.ts";
 import { Session } from "../../src/tui/session.ts";
 import { headlessTerminal } from "../../src/tui/term/terminal.ts";
-import { settleApp } from "./tui.ts";
+import { settleApp, settlePalette } from "./tui.ts";
 
 /** What a refused toast reads like on the screen: the guest words' first sentence, as a long toast is cut at the edge. */
 const REFUSAL = new RegExp(`${NOT_A_MEMBER.split(".")[0]}|unverified|do not have permission|need write access|not allowed`, "i");
@@ -56,6 +56,7 @@ export async function outsiderTty(forge: Forge, stranger: User, targets: readonl
     const mine = `${stranger.username}-tty`;
     await ctrl("k");
     await type("New repository");
+    await settlePalette(app);
     await press("enter");
     await type(mine);
     await ctrl("d");
@@ -75,6 +76,7 @@ export async function outsiderTty(forge: Forge, stranger: User, targets: readonl
         // A private repository is not on offer: the palette's search never names it.
         await ctrl("k");
         await type(t.name);
+        await settlePalette(app);
         if (seen().includes(label)) bad.push({ check: `no read of private ${label} (terminal)`, why: "the palette names it for a stranger" });
         await press("esc");
         continue;
