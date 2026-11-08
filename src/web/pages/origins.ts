@@ -76,11 +76,9 @@ import { flashTo, page, redirect } from "../layout.ts";
 import {
   badge,
   btn,
-  card,
   confirmAction,
   empty,
   icon,
-  listCard,
   row,
   time,
   field as uiField,
@@ -275,28 +273,22 @@ function pausedNote(origin: Origin): Html {
 
 function originCard(origin: Origin, mirrors: number, paused = false): Html {
   const base = `/settings/origins/${origin.id}`;
-  return card(
-    html`<ul class="list setting-list">
-        ${row({
-          lead: icon(originIcon(origin.kind)),
-          title: html`${origin.login}<span class="muted"> @ </span>${hostLabel(
-              origin.webUrl,
-            )}`,
-          meta: html`${origin.authKind === "oauth"
-              ? "OAuth"
-              : "personal access token"}
-            ·
-            ${origin.lastSyncAt === null
-              ? html`never synced`
-              : html`synced ${time(origin.lastSyncAt)}`}
-            ${when(
-              isTrustedHost(URL.parse(origin.webUrl)?.hostname ?? ""),
-              () => html` · trusted internal host`,
-            )}`,
-          trail: healthBadge(origin),
-        })}
-      </ul>
+  return row({
+    lead: icon(originIcon(origin.kind)),
+    title: html`${origin.login}<span class="muted"> @ </span>${hostLabel(
+      origin.webUrl,
+    )}`,
+    meta: html`${origin.authKind === "oauth" ? "OAuth" : "personal access token"}
+      ·
+      ${origin.lastSyncAt === null
+        ? html`never synced`
+        : html`synced ${time(origin.lastSyncAt)}`}
       ${when(
+        isTrustedHost(URL.parse(origin.webUrl)?.hostname ?? ""),
+        () => html` · trusted internal host`,
+      )}`,
+    trail: healthBadge(origin),
+    after: html`${when(
         origin.lastError !== "",
         () => html`<div class="field mt" data-invalid>
           <span class="error" role="alert" id="origin-${origin.id}-err"
@@ -335,7 +327,7 @@ function originCard(origin: Origin, mirrors: number, paused = false): Html {
           size: "sm",
         })}
       </div>`,
-  );
+  });
 }
 
 // ---- the connect card ----
@@ -685,8 +677,8 @@ function forgeSection(ctx: Ctx, values: ConnectValues): Html {
 /** The admin's list of hosts an origin may reach inside the network. */
 function trustedHostsCard(text: string, error?: string): Html {
   const fixed = envHosts();
-  return card(
-    html`<h3>${icon("lock")}Trusted internal hosts</h3>
+  return html`<section class="settings-block">
+      <h2>Trusted internal hosts</h2>
       <p class="muted small">
         Origins on these exact host names may resolve to a private address
         (your own Forgejo, reached inside the cluster). Webhooks never do.
@@ -713,8 +705,8 @@ function trustedHostsCard(text: string, error?: string): Html {
           ...(error ? { error } : {}),
         })}
         <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
-      </form>`,
-  );
+      </form>
+    </section>`;
 }
 
 /**
@@ -778,20 +770,25 @@ function originsView(
       written through to the origin first.
     </p>
     ${origins.length === 0
-      ? empty({
-          icon: "globe",
-          title: "No origins connected",
-          note: "Connect another forge, GitHub, a Forgejo instance or a Gitea instance and its repositories become mirrorable here.",
-        })
-      : html`<div class="stack">
-          ${origins.map((o) =>
-            originCard(
-              o,
-              mirrors.get(o.id)?.count ?? 0,
-              writesPaused(ctx.app, o.id) !== undefined,
-            ),
-          )}
-        </div>`}
+      ? html`<section class="settings-block">
+          <h2>Connected origins</h2>
+          <p class="small">
+            No origins connected: connect another forge, GitHub, a Forgejo
+            instance or a Gitea instance below.
+          </p>
+        </section>`
+      : html`<section class="settings-block">
+          <h2>Connected origins</h2>
+          <ul class="list setting-list" data-origins>
+            ${origins.map((o) =>
+              originCard(
+                o,
+                mirrors.get(o.id)?.count ?? 0,
+                writesPaused(ctx.app, o.id) !== undefined,
+              ),
+            )}
+          </ul>
+        </section>`}
     ${frozenCard(frozen)}
     ${mayEditTrustedHosts(user)
       ? trustedHostsCard(
@@ -799,8 +796,9 @@ function originsView(
           values.trustedError,
         )
       : null}
-    ${card(
-      html`<ul class="list">
+    <section class="settings-block" id="connect">
+      <h2>Connect an origin</h2>
+      <ul class="list">
         ${connectPath(
           "connect-forge",
           "globe",
@@ -839,19 +837,14 @@ function originsView(
                 },
           ),
         )}
-      </ul>`,
-      {
-        id: "connect",
-        pad: false,
-        head: html`${icon("plus")}
-          <h2>Connect an origin</h2>`,
-        foot: html`<span class="muted small"
-          ><strong>One-click sign-in.</strong> Another forge needs nothing set up.
-          GitHub, Forgejo and Gitea need somebody to register an application
-          once: for GitHub, per forge; for Forgejo and Gitea, per instance.</span
-        >`,
-      },
-    )}`;
+      </ul>
+      <p class="muted small">
+        <strong>One-click sign-in.</strong> Another forge needs nothing set
+        up. GitHub, Forgejo and Gitea need somebody to register an
+        application once: for GitHub, per forge; for Forgejo and Gitea, per
+        instance.
+      </p>
+    </section>`;
 }
 
 /**
@@ -875,32 +868,28 @@ function readFrozen(ctx: Ctx) {
 
 function frozenCard({ frozen, repos }: ReturnType<typeof readFrozen>): Html | null {
   if (frozen.length === 0) return null;
-  return listCard(
-    frozen.flatMap((m) => {
-      const repo = repos.get(m.repoId);
-      if (repo === undefined) return [];
-      const host = hostLabel(m.htmlUrl);
-      return [
-        row({
-          href: `/${repo.ownerName}/${repo.name}#frozen`,
-          lead: icon("repo"),
-          title: `${repo.ownerName}/${repo.name}`,
-          meta: html`mirrors <span class="mono">${m.fullName}</span>${host ===
-            ""
-              ? null
-              : html` at ${host}`}`,
-        }),
-      ];
-    }),
-    {
-      head: html`${icon("alert")}
-        <h2>Frozen mirrors</h2>
-        <span class="spacer"></span>
-        <span class="muted small"
-          >Connect an account where they came from to bring them back.</span
-        >`,
-    },
-  );
+  const rows = frozen.flatMap((m) => {
+    const repo = repos.get(m.repoId);
+    if (repo === undefined) return [];
+    const host = hostLabel(m.htmlUrl);
+    return [
+      row({
+        href: `/${repo.ownerName}/${repo.name}#frozen`,
+        lead: icon("repo"),
+        title: `${repo.ownerName}/${repo.name}`,
+        meta: html`mirrors <span class="mono">${m.fullName}</span>${host === ""
+          ? null
+          : html` at ${host}`}`,
+      }),
+    ];
+  });
+  return html`<section class="settings-block">
+    <h2>Frozen mirrors</h2>
+    <p class="muted small">Connect an account where they came from to bring them back.</p>
+    <ul class="list setting-list">
+      ${rows}
+    </ul>
+  </section>`;
 }
 
 export function shell(

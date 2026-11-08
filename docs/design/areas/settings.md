@@ -94,6 +94,13 @@ accounts are `row()`s in `<ul class="list setting-list" id="accounts-list">` und
 (Sign-ins, Verify, Suspend, Remove) in the row's `after` slot; the mail, ownerless-organization, sign-in reach and
 confirm/refusal notices are plain `<section class="settings-block">` blocks with an `<h2>`. `test/accounts-rows.test.ts` holds the shape.
 
+Settings › Origins (`src/web/pages/origins.ts`) adds no component class. As on the home page it is headings over rows: Connected
+origins, Frozen mirrors, Trusted internal hosts (admin) and Connect an origin are each a `<section class="settings-block">`
+with an `<h2>`; each origin and each frozen mirror is a `row()` in a `.list`; with no origins, one plain sentence says how to
+connect one. An origin's error, notes (re-authorize, another forge, writes paused) and acts sit in the row's `after`
+slot; the list carries the attribute `data-origins` (not a class), which stacks that slot as a full-width block under
+the row at every width, so nothing squeezes beside the title on a 390 px phone. `test/origins-page-shape.test.ts` holds the shape.
+
 `/oauth/authorize` (`src/web/pages/oauth.ts`) adds no component class. The consent, sign-in and can't-connect parts are each a `<section class="settings-block">` with an `<h2>` (What it gets, What it learns; the can't-connect part is the message alone) under the `pageHead`, no `.card`. The client's name, the return host, the token kind, name and lifetime fields are as they were. `test/oauth-page-shape.test.ts` holds the shape.
 
 Settings › Cloud (`src/web/pages/cloud.ts`) adds no component class. As on the home page it is headings over rows: Cloud accounts,
