@@ -78,7 +78,9 @@ import { appStrip } from "./apps.ts";
 import { studioApp } from "../studio/app.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
+import { type CodeRows, rowsMarkup } from "../code_rows.ts";
+import { rowsOffThread } from "../code_rows_pool.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
@@ -694,6 +696,7 @@ export function blobBody(
   blob: Blob,
   highlighted?: (ms: number) => void,
   all = false,
+  ready?: CodeRows,
 ): { content: Html; lines: number } {
   const encoded = encodeURIComponent(ref);
   if (blob.kind === "binary") {
@@ -726,30 +729,35 @@ export function blobBody(
       }),
     };
   }
-  const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
   const limit = all ? MAX_RENDER_LINES : FIRST_LINES;
   // Highlighting runs left to right, so the first N lines highlight the same
   // alone as inside the whole file; only that prefix is read and painted.
-  const began = performance.now();
-  const total = countLines(text);
-  const lines = highlightPrefix(text, path, limit);
-  highlighted?.(performance.now() - began);
-  const truncated = total > lines.length;
+  let total: number;
+  let shown: number;
+  let rows: string;
+  if (ready !== undefined) ({ total, shown, rows } = ready);
+  else {
+    const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
+    const began = performance.now();
+    total = countLines(text);
+    const lines = highlightPrefix(text, path, limit);
+    highlighted?.(performance.now() - began);
+    shown = lines.length;
+    rows = rowsMarkup(lines);
+  }
+  const truncated = total > shown;
   const fileHref = `${base}/blob/${encoded}/${path}`;
   return {
     lines: total,
     content: html`<div class="card code">
         <table>
-          ${lines.map(
-            (line, i) =>
-              html`<tr id="L${i + 1}"><td class="ln"><a href="#L${i + 1}">${i + 1}</a></td><td><pre>${line}</pre></td></tr>`,
-          )}
+          ${raw(rows)}
         </table>
       </div>
       ${when(truncated, () =>
         empty({
           icon: "file",
-          title: `${(total - lines.length).toLocaleString("en-US")} more lines`,
+          title: `${(total - shown).toLocaleString("en-US")} more lines`,
           note: all
             ? "The rest is in the raw file."
             : "The page draws the first lines so it opens at once. A link to a later line (#L…) lands once you show all lines.",
@@ -1111,6 +1119,8 @@ export function renderBlob(
     highlighted?: (ms: number) => void;
     /** Draw every line instead of the first 1,500. */
     all?: boolean;
+    /** Rows a worker already built for this file. */
+    rows?: CodeRows;
   },
 ): Html {
   const base = scope.base;
@@ -1133,7 +1143,7 @@ export function renderBlob(
   const { content, lines, summary } =
     drawn !== undefined && fellBack === undefined
       ? drawn
-      : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all), summary: undefined };
+      : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all, o.rows), summary: undefined };
   const sizeText =
     blob.kind === "too_large" ? "" : sizeWithTokens(blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
@@ -1615,7 +1625,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     git.done();
     return immutableWhenAddressed(ctx.request, true, repo, ref, finished);
   }
-  const keepFinished = (response: Response) => (keptKey === undefined ? response : keepPage(keptKey, response));
+  const keepFinished = (response: Response) => (keptKey === undefined ? response : keepPage(keptKey, response, true));
   if (kept) {
     const hit = cachedBlobPage(repo.id, ref, path, String(view), all);
     if (hit !== undefined) {
@@ -1644,7 +1654,15 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   let highlightMs: number | undefined;
   const renderStart = performance.now();
   const shown = capped(blob.value);
+  // A cold page for a stranger highlights and lays out its rows on a worker (#9630).
+  let rows: CodeRows | undefined;
+  if (kept && shown.kind === "text" && (view === "source" || !blobRenderer(scope, path, shown))) {
+    const began = performance.now();
+    rows = await rowsOffThread(shown.body, path, all ? MAX_RENDER_LINES : FIRST_LINES);
+    if (rows !== undefined) notePhase(ctx.request, "highlight", performance.now() - began);
+  }
   const pane = renderBlob(scope, {
+    ...(rows !== undefined ? { rows } : {}),
     refs,
     ref,
     path,

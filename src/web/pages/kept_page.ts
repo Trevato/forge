@@ -25,6 +25,7 @@
 import { encodeRecent, negotiate, type Encoding } from "../../http/compress.ts";
 import type { Ctx } from "../../http/context.ts";
 import { ViewCache } from "../../view/cache.ts";
+import { encodeOffThread } from "../code_rows_pool.ts";
 import { readFlash } from "../flash.ts";
 import { signInHref } from "../layout.ts";
 
@@ -85,11 +86,14 @@ export function keptPage(key: string): Response | undefined {
   return new Response(hit.body, { status: 200, headers: new Headers([...hit.headers]) });
 }
 
-/** Keep `response`'s bytes, encoded, under `key`, and answer with them. Anything but a plain 200 goes out as it came. */
-export async function keepPage(key: string, response: Response): Promise<Response> {
+/** Keep `response`'s bytes, encoded, under `key`, and answer with them. `offThread` encodes on a worker. Anything but a plain 200 goes out as it came. */
+export async function keepPage(key: string, response: Response, offThread = false): Promise<Response> {
   if (response.status !== 200 || response.headers.getSetCookie().length > 0 || response.headers.has("content-encoding")) return response;
   const encoding = encodingOf(key);
-  const body = encodeRecent(new Uint8Array(await response.arrayBuffer()), encoding);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  // A code page's encode is its biggest main-thread cost; a worker does it when one is free (#9630).
+  // Only the code page asks: other pages are small and keep the inline encode.
+  const body = (offThread ? await encodeOffThread(bytes, encoding) : undefined) ?? encodeRecent(bytes, encoding);
   const headers: [string, string][] = [...response.headers].filter(([name]) => KEPT_HEADERS.has(name));
   headers.push(["content-encoding", encoding]);
   store.set(key, { body, headers }, TTL_MS, body.length + 1024);
