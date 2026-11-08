@@ -30,7 +30,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, empty, icon, field as formField } from "../ui.ts";
+import { btn, empty, field as formField } from "../ui.ts";
 import { refSet } from "./refs.ts";
 
 /** open | closed | merged — the one place the third state is derived. */
@@ -70,53 +70,42 @@ function composeForm(
   const cross = parent !== undefined;
   return html`<form method="post" action="${repoBase(repo)}/pulls/new">
     <input type="hidden" name="baseRepo" value="${cross ? "parent" : "self"}" />
-    ${card(
-      html`<div class="field-row">
-        <div class="field">
-          <label for="f-base"
-            >Base${when(
-              parent,
-              (p) =>
-                html` <span class="muted mono">${p.ownerName}/${p.name}</span>`,
-            )}</label
-          >
-          <select class="input" id="f-base" name="base">
-            ${branchOptions(baseBranches, values.base)}
-          </select>
-        </div>
-        <span class="muted">${icon("merge")}</span>
-        <div class="field">
-          <label for="f-head">Compare</label>
-          <select class="input" id="f-head" name="head">
-            ${branchOptions(headBranches, values.head)}
-          </select>
-        </div>
-      </div>`,
-      {
-        head: html`${icon("branch")}
-          <h2>Branches</h2>`,
-      },
-    )}
-    <div class="mt">
-      ${formField({
-        label: "Title",
-        name: "title",
-        value: values.title,
-        required: true,
-        autofocus: true,
-        ...(error ? { error } : {}),
-      })}
-      ${formField({
-        label: "Description",
-        name: "body",
-        type: "textarea",
-        rows: 8,
-        value: values.body,
-        hint: "Markdown is supported.",
-      })}
+    <div class="field">
+      <label for="f-base"
+        >Base${when(
+          parent,
+          (p) =>
+            html` <span class="muted mono">${p.ownerName}/${p.name}</span>`,
+        )}</label
+      >
+      <select class="input" id="f-base" name="base">
+        ${branchOptions(baseBranches, values.base)}
+      </select>
     </div>
+    <div class="field">
+      <label for="f-head">Compare</label>
+      <select class="input" id="f-head" name="head">
+        ${branchOptions(headBranches, values.head)}
+      </select>
+    </div>
+    ${formField({
+      label: "Title",
+      name: "title",
+      value: values.title,
+      required: true,
+      autofocus: true,
+      ...(error ? { error } : {}),
+    })}
+    ${formField({
+      label: "Description",
+      name: "body",
+      type: "textarea",
+      rows: 8,
+      value: values.body,
+      hint: "Markdown is supported.",
+    })}
     ${confirmPublic
-      ? html`<label class="field mt">
+      ? html`<label class="field">
           <input type="checkbox" name="confirm_public" value="1" />
           Publish this branch anyway: everyone who can read
           ${repo.ownerName}/${repo.name} sees the fix, and with it where the
@@ -125,7 +114,7 @@ function composeForm(
       : null}
     <div class="form-actions">
       ${btn("Create pull request", { variant: "primary", icon: "pull" })}
-      ${btn("Cancel", { href: `${repoBase(repo)}/pulls`, variant: "ghost" })}
+      ${btn("Cancel", { href: `${repoBase(repo)}/pulls`, variant: "link" })}
     </div>
   </form>`;
 }

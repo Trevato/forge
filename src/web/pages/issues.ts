@@ -127,7 +127,7 @@ function newIssueForm(
       </div>
       <div class="form-actions">
         ${btn(submit, { variant: "primary", icon: "issue" })}
-        ${btn("Cancel", { href: cancelHref, variant: "ghost" })}
+        ${btn("Cancel", { href: cancelHref, variant: "link" })}
       </div>
     </form>
   </div>`;
