@@ -152,6 +152,12 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   font-variant-numeric: tabular-nums; letter-spacing: 0.14em;
   text-align: center; user-select: all; word-break: break-all;
 }
+/* An issue's page (#9384): other people's words wrap, the columns shrink, code scrolls in its box. */
+[data-tell] { overflow-wrap: anywhere; }
+[data-tell] .split > * { min-width: 0; }
+[data-tell] .page-head-sub { flex-wrap: wrap; }
+[data-tell] .comment-body img { max-width: 100%; height: auto; }
+[data-tell] pre { max-width: 100%; overflow-x: auto; }
 [data-apps], [data-apps-page], [data-bet-card], [data-milestone], [data-now], [data-people] { overflow-wrap: anywhere; }
 [data-bet-card] h2, [data-bet-card] ul, [data-bet-card] p { margin-block: 8px; }
 [data-bet-card] ul { padding-inline-start: 16px; }

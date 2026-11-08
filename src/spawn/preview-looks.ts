@@ -69,6 +69,9 @@ export const PREVIEW_CHANGELOG_PAGE = "/changelog";
 /** The next-up page, whose long titles and action buttons must fit a 390 px phone (#9324). */
 export const PREVIEW_NEXT_PAGE = `${PREVIEW_REPO_HOME}/next`;
 
+/** The sample's first issue, whose long title and comments must wrap at a 390 px phone (#9384). */
+export const PREVIEW_ISSUE_PAGE = `${PREVIEW_REPO_HOME}/issues/1`;
+
 /** The commits list, whose long messages must wrap at a 390 px phone (#9348). */
 export const PREVIEW_COMMITS_PAGE = `${PREVIEW_REPO_HOME}/commits`;
 
@@ -112,6 +115,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_NEXT_PAGE,
   PREVIEW_COMMITS_PAGE,
   PREVIEW_ISSUES_PAGE,
+  PREVIEW_ISSUE_PAGE,
   PREVIEW_RESILIENCE_PAGE,
   PREVIEW_SEARCH_PAGE,
 ].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));

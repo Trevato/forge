@@ -560,7 +560,7 @@ async function studioTell(
     { extra: "mt" },
   );
 
-  const body = html`${repoHeader(ctx, repo, "issues", {
+  const body = html`<div data-tell>${repoHeader(ctx, repo, "issues", {
       compact: true,
       ownTitle: true,
     })}
@@ -600,7 +600,7 @@ async function studioTell(
       thread: "issue",
       number: issue.number,
       lastCommentId: talk.lastCommentId,
-    })}`;
+    })}</div>`;
 
   const response = page({
     ctx,
