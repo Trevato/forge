@@ -498,6 +498,9 @@ a.row:hover .row-title { color: var(--accent); }
 summary.row { cursor: pointer; list-style: none; }
 summary.row:hover { background: var(--muted); }
 details[open] > summary.row > .row-lead { transform: rotate(90deg); }
+/* A report's open body: block children in reading order, never one flex line. */
+.report-body { padding: 0 14px 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+.report-body form { margin: 0; }
 /* A count with its glyph: comments on a row, members on a team. */
 .count {
   display: inline-flex; align-items: center; gap: 4px;

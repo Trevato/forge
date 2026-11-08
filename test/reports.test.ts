@@ -418,9 +418,9 @@ describe("reports from outside", () => {
     expect(page).toContain(
       '<div class="prose" data-text="message"><pre>Menu &lt;b&gt;breaks&lt;/b&gt;\n  on phones</pre></div>',
     );
-    // The card of the bodiless report, from its opening to its accept form.
+    // The row of the bodiless report, from its opening to its accept form.
     const end = page.indexOf(`id="accept-${without}"`);
-    const card = page.slice(page.lastIndexOf('class="card', end), end);
+    const card = page.slice(page.lastIndexOf('<li', end), end);
     expect(card).toContain("silent bug");
     expect(card).not.toContain('data-text="message"');
     expect(page.indexOf(`id="accept-${withBody}"`)).toBeGreaterThan(-1);
@@ -431,7 +431,10 @@ describe("reports from outside", () => {
     const id = (await waiting("menu bad"))!;
     const page = await (await as(aliceToken, "/alice/game/reports")).text();
     expect(page).toContain(`id="accept-${id}"`);
-    expect(page).toContain(`form="accept-${id}"`);
+    // The Accept button sits inside its own form, not beside it.
+    const acceptForm = page.match(new RegExp(`<form id="accept-${id}"[^>]*>([\\s\\S]*?)</form>`));
+    expect(acceptForm).not.toBeNull();
+    expect(acceptForm![1]).toMatch(/<button[^>]*>[\s\S]*Accept as an issue[\s\S]*<\/button>/);
     expect(page).toMatch(
       new RegExp(`id="title-${id}"[^>]*name="title"[^>]*value="menu bad"`),
     );
