@@ -877,13 +877,16 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   min-height: 32px;
 }
 .tl-earlier { margin: 0; padding-left: 36px; color: var(--muted-fg); font-size: 13px; }
-.tl-item[data-kind="comment"] .card { margin: 0; }
+.tl-item[data-kind="comment"] { padding-bottom: 16px; }
 .tl-item[data-kind="event"] > .card { flex-basis: 100%; margin: 4px 0 0; color: var(--fg); font-size: 14px; }
 .tl-item[data-kind="event"] > .card .comment-body { padding: 8px 12px; }
 
 /* ---- comment card ---- */
 .comment .card-head { background: var(--muted); font-size: 13px; }
 .comment .comment-body { padding: 2px 16px 8px; }
+.comment-row { min-width: 0; }
+.comment-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; min-height: 28px; }
+.comment-row .comment-body { padding: 4px 0 0; }
 .comment-form { margin-top: 16px; padding: 12px; overflow: visible; }
 .comment-form textarea { margin-bottom: 10px; }
 
