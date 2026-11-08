@@ -94,3 +94,11 @@ Settings › Accounts (`src/web/pages/accounts.ts`) adds no component class. As 
 accounts are `row()`s in `<ul class="list setting-list" id="accounts-list">` under `<h2>Who is on this forge</h2>`, the acts
 (Sign-ins, Verify, Suspend, Remove) in the row's `after` slot; the mail, ownerless-organization, sign-in reach and
 confirm/refusal notices are plain `<section class="settings-block">` blocks with an `<h2>`. `test/accounts-rows.test.ts` holds the shape.
+
+Settings › Trusted (`trustedPage()` in `src/web/pages/trusted.ts`, #9792) adds no component class. As on the home page it is
+headings over rows: Fold-in, Trusted sources and Trust a source are each a `<section class="settings-block">` with an
+`<h2>`. Each trusted entry is a `row()` in `<ul class="list setting-list" id="trusted-list">`; its state is a badge in the
+title, each with a glyph (Trusted with a check, Ends soon with a clock, Lapsed with a ban), never colour alone; the row's
+`data-state` is `open`, or `draft` once lapsed, and Remove and Revert landings sit in its trail as
+`.row-fields` forms. With no entry, one plain sentence: no one is trusted, so every pull waits for review. The forms post to the same routes as
+before. `test/trusted-sources.test.ts` holds the shape.

@@ -17,7 +17,7 @@ import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, card, icon, row, time } from "../ui.ts";
+import { badge, btn, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 function owner(ctx: Ctx): Response | undefined {
@@ -42,8 +42,9 @@ export function trustedPage(ctx: Ctx): Response {
   const now = new Date();
   const stopped = foldInStopped(ctx.app.db);
   const entries = listTrusted(ctx.app.db);
-  const body = html`${card(
-      html`<div class="card-body"><p class="muted small">
+  const body = html`<section class="settings-block">
+      <h2>Fold-in</h2>
+      <p class="muted small">
         Work from a trusted source flows in as it appears and lands by true merge when its checks pass,
         with no person's review. It never skips the check, the boot proof or the walls: a pull touching
         secrets, credentials, permissions, the contract or release machinery still waits for you. Anyone
@@ -53,25 +54,32 @@ export function trustedPage(ctx: Ctx): Response {
       <form method="post" action="/settings/trusted/stop" class="row-fields">
         <input type="hidden" name="stop" value="${stopped ? "0" : "1"}" />
         ${stopped
-          ? html`${badge("Folding in is stopped", { variant: "outline" })}
+          ? html`${badge("Folding in is stopped", { variant: "outline", icon: "lock" })}
               <span class="muted small">by ${stopped.by}, ${time(stopped.at, { date: true })}</span>
               ${btn("Resume folding in", { size: "sm" })}`
           : btn("Stop all folding in", { size: "sm", variant: "outline" })}
-      </form></div>`,
-      { head: html`${icon("lock")}<h2>Fold-in</h2>` },
-    )}
-    ${card(
-      html`<ul class="list setting-list">
-        ${entries.length === 0
-          ? html`<li class="muted small">No one is trusted. Everyone waits for review.</li>`
-          : entries.map((s) => {
+      </form>
+    </section>
+    <section class="settings-block">
+      <h2>Trusted sources</h2>
+      ${entries.length === 0
+        ? html`<p class="muted small">No one is trusted, so every pull waits for review.</p>`
+        : html`<ul class="list setting-list" id="trusted-list">
+            ${entries.map((s) => {
               const lapsed = s.until <= now.toISOString();
+              const soon = !lapsed && endsSoon(s, now);
               return row({
                 lead: icon("user"),
-                title: html`${s.account} <span class="muted small mono">${s.host}</span>`,
-                meta: html`${lapsed ? "Lapsed, waits for review, since" : "Until"}
+                state: lapsed ? "draft" : "open",
+                title: html`${s.account} <span class="muted small mono">${s.host}</span>
+                  ${lapsed
+                    ? badge("Lapsed", { variant: "outline", icon: "ban" })
+                    : soon
+                      ? badge("Ends soon", { tone: "attn", icon: "clock" })
+                      : badge("Trusted", { variant: "secondary", icon: "check" })}`,
+                meta: html`${lapsed ? "Waits for review since" : "Until"}
                   ${time(s.until, { date: true })}
-                  (${leftWords(s.until, now)})${!lapsed && endsSoon(s, now) ? ", ends soon" : ""} · set by ${s.setBy}`,
+                  (${leftWords(s.until, now)}) · set by ${s.setBy}`,
                 trail: html`<form class="row-fields" method="post" action="/settings/trusted/${s.id}/remove">
                     ${btn("Remove", { size: "sm", variant: "outline", label: `Remove ${s.account} on ${s.host}` })}
                   </form>
@@ -83,19 +91,18 @@ export function trustedPage(ctx: Ctx): Response {
                   </form>`,
               });
             })}
-      </ul>`,
-      { head: html`${icon("users")}<h2>Trusted sources</h2>`, pad: false },
-    )}
-    ${card(
-      html`<form method="post" action="/settings/trusted" class="stack">
+          </ul>`}
+    </section>
+    <section class="settings-block">
+      <h2>Trust a source</h2>
+      <form method="post" action="/settings/trusted" class="stack">
         <label>Account <input class="input" name="account" required maxlength="64" autocomplete="off" aria-describedby="acct-hint" /></label>
         <p id="acct-hint" class="muted small">For a downstream forge's proposals write <code>child:name</code>, the name its proposal token was minted for.</p>
         <label>Forge <input class="input" name="host" required maxlength="260" placeholder="git.open-platform.sh" autocomplete="off" /></label>
         <label>Until <input class="input" name="until" type="date" required /></label>
         ${btn("Trust", { icon: "check" })}
-      </form>`,
-      { head: html`${icon("plus")}<h2>Trust a source</h2>` },
-    )}`;
+      </form>
+    </section>`;
   notePhase(ctx.request, "render", performance.now() - rendering);
   return page({
     ctx,

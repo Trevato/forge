@@ -239,4 +239,106 @@ describe("the settings page", () => {
       servers.stop();
     }
   });
+
+  test("is headings over rows, each entry's state a badge, and no card (#9792)", async () => {
+    const { serve } = await import("../src/http/server.ts");
+    const { createSession } = await import("../src/core/sessions.ts");
+    const servers = await serve(app);
+    try {
+      const res = await fetch(`${servers.url}/settings/trusted`, {
+        headers: { cookie: `forge_session=${createSession(app.db, alice.id).token}` },
+      });
+      const page = await res.text();
+      const main = page.slice(page.indexOf("<main"), page.indexOf("</main>"));
+      for (const h of ["Fold-in", "Trusted sources", "Trust a source"]) {
+        const at = main.indexOf(`<h2>${h}</h2>`);
+        expect(at).toBeGreaterThan(-1);
+        expect(main.lastIndexOf('<section class="settings-block">', at)).toBeGreaterThan(-1);
+      }
+      for (const boxed of ['class="card', "card-head", "card-body"]) expect(main).not.toContain(boxed);
+      const list = main.slice(main.indexOf('<ul class="list setting-list" id="trusted-list">'));
+      expect(list.length).toBeLessThan(main.length);
+      const first = list.slice(0, list.indexOf("</li>"));
+      expect(first).toContain('class="row-title"');
+      expect(first).toContain('class="badge"');
+      expect(first).toContain("Trusted");
+      // Same routes, same forms.
+      expect(main).toContain('action="/settings/trusted/stop"');
+      expect(main).toContain('action="/settings/trusted/revert"');
+      expect(main).toMatch(/action="\/settings\/trusted\/[^"]+\/remove"/);
+      expect(main).toContain('action="/settings/trusted"');
+    } finally {
+      servers.stop();
+    }
+  });
+
+  /** The page's `<main>` as `who` sees it on `on`. */
+  async function mainOf(on: App, who: User): Promise<string> {
+    const { serve } = await import("../src/http/server.ts");
+    const { createSession } = await import("../src/core/sessions.ts");
+    const servers = await serve(on);
+    try {
+      const res = await fetch(`${servers.url}/settings/trusted`, {
+        headers: { cookie: `forge_session=${createSession(on.db, who.id).token}` },
+      });
+      const page = await res.text();
+      return page.slice(page.indexOf("<main"), page.indexOf("</main>"));
+    } finally {
+      servers.stop();
+    }
+  }
+
+  /** The `<li>` of the row whose title names `account`. */
+  const rowOf = (main: string, account: string): string => {
+    const at = main.indexOf(`${account} <span`);
+    expect(at).toBeGreaterThan(-1);
+    return main.slice(main.lastIndexOf("<li", at), main.indexOf("</li>", at));
+  };
+
+  test("a lapsed entry and one ending soon each say so with a badge and a glyph (#9792)", async () => {
+    // Written straight to the table: the action refuses a date already past, and a lapse is what time does.
+    const put = app.db.query(
+      "INSERT INTO trusted_source (id, host, account, until, set_by, created_at) VALUES (?1, ?2, ?3, ?4, 'alice', ?5)",
+    );
+    const now = Date.now();
+    put.run("t-lapsed", HOST, "gone-by", new Date(now - 86_400_000).toISOString(), new Date(now).toISOString());
+    put.run("t-soon", HOST, "nearly-out", new Date(now + 86_400_000).toISOString(), new Date(now).toISOString());
+    try {
+      const main = await mainOf(app, alice);
+      const lapsed = rowOf(main, "gone-by");
+      expect(lapsed).toContain('data-state="draft"');
+      expect(lapsed).toMatch(/class="badge"[^>]*>\s*<svg[^]*?Lapsed/);
+      expect(lapsed).toContain("Waits for review since");
+      expect(lapsed).not.toContain("Ends soon");
+      const soon = rowOf(main, "nearly-out");
+      expect(soon).toContain('data-state="open"');
+      expect(soon).toMatch(/class="badge"[^>]*>\s*<svg[^]*?Ends soon/);
+      expect(soon).not.toContain("Lapsed");
+      const steady = rowOf(main, "tdobbertin-espo");
+      expect(steady).toContain('data-state="open"');
+      expect(steady).toMatch(/class="badge"[^>]*>\s*<svg[^]*?Trusted/);
+      expect(steady).not.toContain("Ends soon");
+    } finally {
+      app.db.query("DELETE FROM trusted_source WHERE id IN ('t-lapsed', 't-soon')").run();
+    }
+  });
+
+  test("with no one trusted, one plain sentence and no list (#9792)", async () => {
+    const bare = await mkdtemp(join(tmpdir(), "forge-trusted-empty-"));
+    const other = createApp({ dataDir: bare, port: 0, host: "forge.test" });
+    try {
+      const made = await seedAdmin(other, { username: "bob", email: "b@forge.local", password: "correct-horse-battery" });
+      if (!made.ok) throw new Error(made.error);
+      const main = await mainOf(other, made.value);
+      const from = main.indexOf("<h2>Trusted sources</h2>");
+      expect(from).toBeGreaterThan(-1);
+      const block = main.slice(from, main.indexOf("</section>", from));
+      expect(block).toContain("No one is trusted, so every pull waits for review.</p>");
+      expect(block).not.toContain('id="trusted-list"');
+      expect(block).not.toContain("<li");
+    } finally {
+      other.close();
+      await rm(bare, { recursive: true, force: true });
+    }
+  });
 });
