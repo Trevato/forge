@@ -582,11 +582,14 @@ async function studioTell(
         ${privateWorkCard(ctx, repo, issue, `${thread}/private`)}
         ${hasPicture(db, repo.id, issue.number)
           ? card(
-              html`<h2>Picture of the page</h2>
-                <a href="${thread}/picture"
+              html`<a href="${thread}/picture"
                   ><img src="${thread}/picture" alt="The page the sender was looking at" loading="lazy" class="tell-picture"
                 /></a>`,
-              { extra: "mt" },
+              {
+                extra: "mt",
+                head: html`${icon("eye")}
+                  <h2>Picture of the page</h2>`,
+              },
             )
           : null}
         ${runsCard}
