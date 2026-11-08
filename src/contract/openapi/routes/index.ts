@@ -40,6 +40,7 @@ export { route as getApiV1AdminDrills } from "./getApiV1AdminDrills.ts";
 export { route as getApiV1AdminInvites } from "./getApiV1AdminInvites.ts";
 export { route as getApiV1AdminKpisProbe } from "./getApiV1AdminKpisProbe.ts";
 export { route as getApiV1AdminLimits } from "./getApiV1AdminLimits.ts";
+export { route as getApiV1AdminMaintenance } from "./getApiV1AdminMaintenance.ts";
 export { route as getApiV1AdminPeople } from "./getApiV1AdminPeople.ts";
 export { route as getApiV1AdminPinned } from "./getApiV1AdminPinned.ts";
 export { route as getApiV1AdminProfile } from "./getApiV1AdminProfile.ts";
@@ -218,6 +219,8 @@ export { route as postApiV1AdminAccountsUsernameSuspend } from "./postApiV1Admin
 export { route as postApiV1AdminAccountsUsernameUnsuspend } from "./postApiV1AdminAccountsUsernameUnsuspend.ts";
 export { route as postApiV1AdminAccountsUsernameVerify } from "./postApiV1AdminAccountsUsernameVerify.ts";
 export { route as postApiV1AdminInvites } from "./postApiV1AdminInvites.ts";
+export { route as postApiV1AdminMaintenancePrepare } from "./postApiV1AdminMaintenancePrepare.ts";
+export { route as postApiV1AdminMaintenanceResume } from "./postApiV1AdminMaintenanceResume.ts";
 export { route as postApiV1AdminPinned } from "./postApiV1AdminPinned.ts";
 export { route as postApiV1AdminPinnedNameCheck } from "./postApiV1AdminPinnedNameCheck.ts";
 export { route as postApiV1AdminPinnedNameRollback } from "./postApiV1AdminPinnedNameRollback.ts";

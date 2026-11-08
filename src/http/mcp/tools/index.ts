@@ -86,6 +86,7 @@ export { tool as land_past_gate } from "./land_past_gate.ts";
 export { tool as lift } from "./lift.ts";
 export { tool as limb } from "./limb.ts";
 export { tool as limits } from "./limits.ts";
+export { tool as maintenance } from "./maintenance.ts";
 export { tool as make_it_yours } from "./make_it_yours.ts";
 export { tool as map } from "./map.ts";
 export { tool as merge } from "./merge.ts";

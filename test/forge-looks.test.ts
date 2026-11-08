@@ -37,6 +37,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/opensearch.xml": "the browser search description, XML",
   "/sw.js": "the service worker script",
   "/audit.csv": "a CSV download of /audit",
+  "/maintenance": "no picture: the cap of 24 looks is spent; an admin's page, covered by test/maintenance.test.ts",
   "/claim": "answers 404 to an admin: it exists only for a link-holder",
   "/first-admin": "the setup form for a forge with no admin yet",
   "/signin": "a sign-in form, not a page of the forge",

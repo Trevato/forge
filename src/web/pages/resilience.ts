@@ -108,6 +108,7 @@ export function resiliencePage(ctx: Ctx): Response {
       </p>
     </div>
     ${backupsLineHtml(ctx)}
+    <p><a href="/maintenance">Maintenance</a> prepares the forge for a planned power-off.</p>
     ${nightlyHtml(ctx)}
     <p id="tally">
       ${String(count("green"))} green · ${String(count("red"))} red ·

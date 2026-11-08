@@ -318,6 +318,7 @@ describe("the forge over MCP", () => {
       "feed",
       "feed_chips",
       "feed_dismiss",
+      "maintenance",
       "make_it_yours",
       "origin_apps",
       "front_page",

@@ -72,6 +72,7 @@ import { peopleOnCrews } from "./core/agents.ts";
 import { startNotifier } from "./crew/notify.ts";
 import { expireCrewHolds } from "./actions/holds.ts";
 import { startClogTick } from "./flow/clog_tick.ts";
+import { resumeAtBoot } from "./maintenance/service.ts";
 import { startKeeper } from "./flow/keeper.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
@@ -673,6 +674,8 @@ const processTick = (): void => {
 const stopClogTick = startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }), 60_000);
 // The throughput keeper (#7645) names what binds landings each minute and lifts what is its to lift.
 const stopKeeper = startKeeper(app, () => sweepAssigned(app));
+// A forge that went down prepared for maintenance comes back by itself.
+resumeAtBoot(app);
 // An agent's hold that has stood 24 h is released each minute (#6918).
 const holdTimer = setInterval(() => {
   try {

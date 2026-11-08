@@ -99,6 +99,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 
 - `/system` — `pages/system.ts` · the machine as it is now: cores, load, memory, processes · `/flow`, `/` · none seen; updates in place over `/system/stream`, no reload script.
 - `/resilience` — `pages/resilience.ts` · each protection in `docs/THREATS.md` against the last gate's tests · `/settings/resilience` (similar name, different content) · none seen.
+- `/maintenance` — `pages/maintenance.ts` · prepare the forge for a power-off and end it · `/resilience`, `/settings/backups` · none seen.
 - `/admin/limits` — `pages/admin-limits.ts` · every limit with value, default and reason · `/settings/capacity` (also a numbers-you-can-change page) · none seen.
 - `/settings/capacity` — `pages/capacity.ts` · how many runs and checks go at once · `/admin/limits`, `/settings/usage` · none seen.
 - `/settings/usage` — `pages/usage.ts` · route patterns by use, unused first · `/settings/telemetry`, `/board/returns` · none seen. Not about cost, despite the name.

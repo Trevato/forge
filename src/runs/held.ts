@@ -17,13 +17,14 @@ import type { Database } from "bun:sqlite";
 export const HELD_FRESH_MS = 2 * 60_000;
 
 /** Why the dispatcher held a run. */
-export type HoldCause = "valve" | "pace" | "limit";
+export type HoldCause = "valve" | "pace" | "limit" | "maintenance";
 
 /** How vitals names each cause: "2 by a shut valve". */
 export const HOLD_WORDS: Readonly<Record<HoldCause, string>> = {
   valve: "a shut valve",
   pace: "the week's pace",
   limit: "an account limit",
+  maintenance: "planned maintenance",
 };
 
 interface Pass {

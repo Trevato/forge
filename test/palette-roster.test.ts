@@ -99,6 +99,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["telemetry", "Telemetry", "which agents may read flow and system; enter flips the grant"],
     ["capacity", "Capacity", "concurrency and guards, live; e changes a settable one"],
     ["resilience", "Resilience", "where snapshots go and the mirror; each protection green, red or untested"],
+    ["maintenance", "Maintenance", "prepare the forge for a power-off, check the drain, or end maintenance"],
     ["crawlers", "Crawlers", "their share of answering time, and who was refused"],
     ["scrapes", "Scrapes", "what was read by repository, and groups in a running capture"],
     ["api", "API", "the forge's endpoints; run a GET"],

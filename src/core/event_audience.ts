@@ -192,6 +192,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("drill.") ||
     // A snapshot moving is the forge owner's too, and has no repository.
     kind.startsWith("backup.") ||
+    // Preparing for a power-off and ending it are the forge owner's (`maintenance/service.ts`).
+    kind.startsWith("maintenance.") ||
     // The weekly model review's changes and results are the owner's (`actions/model_review.ts`).
     kind.startsWith("crew.model_") ||
     // A child forge answering no one at its public address is the owner's to hear (`spawn/reach.ts`).

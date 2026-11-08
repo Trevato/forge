@@ -349,6 +349,7 @@ import { labelsRoutes } from "./api/labels.ts";
 import { visionRoutes } from "./api/vision.ts";
 import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
+import { maintenanceRoutes } from "./api/maintenance.ts";
 import { flagsRoutes } from "./api/flags.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
 import { FORGE_NOT_CARRIED } from "../origins/words.ts";
@@ -1226,6 +1227,7 @@ export function apiRoutes(router: Router<Handler>): void {
   userRoutes(router);
   forgeOriginRoutes(router);
   adminRoutes(router);
+  maintenanceRoutes(router);
   flagsRoutes(router);
 
   // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.

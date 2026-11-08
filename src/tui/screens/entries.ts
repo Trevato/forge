@@ -33,6 +33,7 @@ import { entry as homePins } from "./home_pins.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as limits } from "./limits.ts";
 import { entry as loopStalls } from "./loopstalls.ts";
+import { entry as maintenance } from "./maintenance.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
 import { entry as orgGrants } from "./orggrants.ts";
 import { entry as orgTeams } from "./orgteams.ts";
@@ -82,6 +83,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   loopStalls,
   telemetry,
   resilience,
+  maintenance,
   valves,
   access,
   edgeOnly,

@@ -48,6 +48,7 @@ import { noteHeld, type HoldCause } from "../runs/held.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { bugsFirst } from "../flow/bugs.ts";
 import { byDials } from "./team_share.ts";
+import { inMaintenance } from "../maintenance/state.ts";
 import { gateQueue } from "../flow/valve_gate.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
@@ -1527,6 +1528,13 @@ function pump(
   const gated = startOrder(app);
   // What this pass holds by policy, for vitals (`runs/held.ts`, #9403).
   const held = new Map<string, HoldCause>();
+  // Planned maintenance (`maintenance/service.ts`): nothing new starts, and
+  // a queued run waits as it does behind a shut valve.
+  if (inMaintenance(app.config.dataDir)) {
+    for (const q of [...gated.order, ...gated.held]) held.set(q.id, "maintenance");
+    noteHeld(app.db, held);
+    return;
+  }
   for (const shut of gated.held) {
     held.set(shut.id, "valve");
     if (noted.has(shut.id)) continue;
