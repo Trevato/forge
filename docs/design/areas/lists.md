@@ -39,8 +39,9 @@ one-line ellipsis. No fixed width; the page does not scroll sideways. No new cla
 
 `/audit` (`auditPage` in `src/web/pages/audit.ts`) has no boxed card. Each app's standing (its policy table with the
 last probe under it, an unsound contract's problems, the Unread rows) and each "What changed" part (pulls at the wall,
-contract changes, doors over time) is a `.card.bare`: an `<h3>` over its rows on the page's one background, with no
-frame, no tone and no icon before the heading. The state is a badge's word ("contract unsound", "1 door disobeys",
+contract changes, doors over time) is a `<section class="settings-block">` (#9863), no `card` at all: an `<h2>` (an
+`<h3>` under "What changed") on a `.bar` line over its rows on the page's one background, with no frame, no tone and no
+icon before the heading. The state is a badge's word ("contract unsound", "1 door disobeys",
 "at the wall"), so dropping the tone loses nothing. The table, the `id` each app section is linked by
 (`/audit#owner-name`) and the probe form do not change. No new class. Pinned by `test/audit.test.ts`.
 

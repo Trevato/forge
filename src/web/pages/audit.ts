@@ -46,7 +46,6 @@ import { flashTo, page } from "../layout.ts";
 import {
   badge,
   btn,
-  card,
   empty,
   icon,
   row,
@@ -138,7 +137,7 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
             title: "No apps to audit",
             note: "An app's policy shows here once it has a contract.",
           })
-        : html`<h2 class="mb">
+        : html`<p class="mb">
               ${summary(sound.length, open, unsound.length, unread.length)}
               ${when(disobeying.length > 0, () =>
                 badge(
@@ -146,7 +145,7 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
                   { tone: "danger", icon: "alert" },
                 ),
               )}
-            </h2>
+            </p>
             ${unsound.map(unsoundSection)}
             ${sound.map((a) =>
               policySection(
@@ -187,11 +186,17 @@ const name = (repo: Repo): string => `${repo.ownerName}/${repo.name}`;
 
 /**
  * A part of the page as a heading over its rows, never a box: the shared
- * `.card.bare` (docs/design/areas/code.md) keeps the card's markup and hooks
- * and takes its frame off. Its state is a badge's word, so it carries no tone.
+ * `.settings-block` `<section>`, its `<h2>` on a `.bar` line (so a badge and
+ * a commit sit beside the name), its rows under it on the page's one
+ * background, its foot a second `.bar`. Its state is a badge's word, so it
+ * carries no tone.
  */
-const section = (body: Html, o: { head: Html; foot?: Html; id?: string }) =>
-  card(body, { ...o, pad: false, extra: "bare" });
+const part = (body: Html, o: { head: Html; foot?: Html; id?: string }) =>
+  html`<section class="settings-block" ${o.id ? html`id="${o.id}"` : null}>
+    <div class="bar mb">${o.head}</div>
+    ${body}
+    ${o.foot ? html`<div class="bar mt">${o.foot}</div>` : null}
+  </section>`;
 
 /**
  * One app's policy as a table — resources × verbs, a column per identity —
@@ -211,7 +216,7 @@ function policySection(
     cells.find(
       (c) => c.resource === resource && c.verb === verb && c.as === as,
     );
-  return section(
+  return part(
     html`<div class="table-scroll">
       <table class="table" data-dense>
         <caption class="sr-only">
@@ -426,13 +431,13 @@ function answer(a: Cell["answer"]): Html {
 
 /** A section's head names the app it is about, linked. */
 function appHead(repo: Repo): Html {
-  return html`<h3><a href="/${repo.ownerName}/${repo.name}">${name(repo)}</a></h3>
+  return html`<h2><a href="/${repo.ownerName}/${repo.name}">${name(repo)}</a></h2>
     <span class="spacer"></span>`;
 }
 
 /** Whole sentences — what is wrong, what a door said — as §5 prose. */
 function sentences(lines: readonly string[]): Html {
-  return html`<div class="prose">
+  return html`<div class="prose prose-page">
     <ul>
       ${lines.map((s) => html`<li>${s}</li>`)}
     </ul>
@@ -441,7 +446,7 @@ function sentences(lines: readonly string[]): Html {
 
 function unsoundSection(a: Audited): Html {
   if (a.standing.kind !== "unsound") return html``;
-  return section(sentences(a.standing.problems), {
+  return part(sentences(a.standing.problems), {
     id: `${a.repo.ownerName}-${a.repo.name}`,
     head: html`${appHead(a.repo)}
     ${badge("contract unsound", { tone: "danger" })}`,
@@ -449,7 +454,7 @@ function unsoundSection(a: Audited): Html {
 }
 
 function unreadSection(unread: readonly Audited[]): Html {
-  return section(
+  return part(
     html`<ul class="list">
       ${unread.map((a) =>
       row({
@@ -461,7 +466,7 @@ function unreadSection(unread: readonly Audited[]): Html {
       )}
     </ul>`,
     {
-      head: html`<h3>Unread</h3>`,
+      head: html`<h2>Unread</h2>`,
       foot: html`<span class="muted small">
         These apps have no <code>contract.json</code>: their doors are written
         by hand, and this page cannot say what they allow.
@@ -479,15 +484,17 @@ function changesSection(
 ): Html {
   if (crossings.length === 0 && changes.length === 0 && verdicts.length === 0)
     return html``;
-  return html`<h2 class="mt mb">What changed</h2>
+  return html`<section class="settings-block">
+    <h2>What changed</h2>
     ${when(crossings.length > 0, () => crossingsSection(crossings))}
     ${when(changes.length > 0, () => contractChangesSection(changes))}
-    ${when(verdicts.length > 0, () => verdictsSection(verdicts))}`;
+    ${when(verdicts.length > 0, () => verdictsSection(verdicts))}
+  </section>`;
 }
 
 /** Pulls the crew left at the wall: each is a person's decision, waiting. */
 function crossingsSection(crossings: readonly Crossing[]): Html {
-  return section(
+  return part(
     html`<ul class="list">
       ${crossings.map(
         (c) =>
@@ -524,7 +531,7 @@ function crossingsSection(crossings: readonly Crossing[]): Html {
 
 /** Contract commits, newest first, each with what it did to the cells. */
 function contractChangesSection(changes: readonly ContractChange[]): Html {
-  return section(
+  return part(
     html`<ul class="list">
       ${changes.map((c) => {
         const what = c.removed
@@ -594,7 +601,7 @@ function verdictsSection(verdicts: readonly VerdictChange[]): Html {
         : v === "down"
           ? "was not running"
           : "had no door to knock on";
-  return section(
+  return part(
     html`<ul class="list">
       ${verdicts.map(
         (v) =>

@@ -982,7 +982,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 /* ---- settings content: status rows, blocks, a segmented control ---- */
 .settings-block { margin-top: 24px; }
 .settings-block:first-child { margin-top: 0; }
-.settings-block > h2, .settings-block > .bar > h2 { font-size: 14px; font-weight: 600; margin: 0; }
+.settings-block > h2, .settings-block > .bar > :is(h2, h3) { font-size: 14px; font-weight: 600; margin: 0; }
 .settings-block > h2 { margin-bottom: 8px; }
 .settings-block > .bar { gap: 12px; flex-wrap: wrap; }
 .settings-block > p { margin-top: 8px; }
