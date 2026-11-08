@@ -21,7 +21,7 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { readForm, type Form } from "../form.ts";
-import { html, when } from "../html.ts";
+import { html, raw, when } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { badge, btn, card, empty, icon, row } from "../ui.ts";
 import { accountSections } from "./origins.ts";
@@ -31,6 +31,9 @@ function requireAdmin(ctx: Ctx): Response | undefined {
   if (!ctx.auth.user.isAdmin || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
   return undefined;
 }
+
+/** The guide for app authors and admins. */
+const DOCS = "/trevato/forge/blob/main/docs/features/absorb.md";
 
 const DAY_LABEL: Record<string, string> = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
 
@@ -43,6 +46,11 @@ function shell(ctx: Ctx, title: string, body: ReturnType<typeof html>): Response
   });
 }
 
+/** What the switch does, in one sentence. */
+export function switchNote(f: Pick<FeatureView, "name" | "absorbed">): string {
+  return f.absorbed ? `Un-absorbing takes ${f.name} off every menu; its settings are kept.` : `Absorbing restarts ${f.name} and adds it to the menu.`;
+}
+
 function featureRow(f: FeatureView) {
   const base = `/settings/features/${encodeURIComponent(f.slug)}`;
   return row({
@@ -50,19 +58,19 @@ function featureRow(f: FeatureView) {
     title: html`${f.name} <span class="muted small mono">${f.repo}</span>
       ${f.absorbed ? badge("absorbed", { tone: "success" }) : null}
       ${f.pending !== null ? badge("declaration changed: review", { tone: "attn" }) : null}`,
-    meta: f.pending !== null
+    meta: html`${f.pending !== null
       ? html`Menu: <strong>${f.name}</strong> at <span class="mono">${f.page}</span> → app: <strong>${f.pending.name}</strong> at
           <span class="mono">${f.pending.page}</span>`
       : f.problem !== null
       ? html`<span class="danger">${f.problem}</span>`
       : html`${f.summary ?? ""}${when(f.summary !== null, () => html`<br />`)}${f.settings.length} setting${f.settings.length === 1 ? "" : "s"}${f.absorbed
           ? html` · absorbed by ${f.absorbedBy ?? "someone"}`
-          : html` · not absorbed: the app runs as an ordinary app`}`,
+          : null}`}<br /><span id="sw-${f.slug}">${switchNote(f)}</span>`,
     trail: html`${when(f.pending !== null, () => html`<form class="row-fields" method="post" action="${base}/accept">
         <input type="hidden" name="name" value="${f.pending?.name ?? ""}" />
         <input type="hidden" name="page" value="${f.pending?.page ?? ""}" />
         ${btn("Accept", { size: "sm", label: `Accept ${f.pending?.name ?? ""} as ${f.name}'s menu entry` })}
-      </form>`)}<form class="row-fields" method="post" action="${base}/${f.absorbed ? "unabsorb" : "absorb"}">
+      </form>`)}<form class="row-fields" method="post" action="${base}/${f.absorbed ? "unabsorb" : "absorb"}" aria-describedby="sw-${f.slug}">
       ${when(f.absorbed, () => btn("Settings", { size: "sm", href: base }))}
       ${btn(f.absorbed ? "Un-absorb" : "Absorb", {
         size: "sm",
@@ -81,7 +89,7 @@ export async function featuresPage(ctx: Ctx): Promise<Response> {
   const listed = await timePhase(ctx.request, "features", () => listFeatures(ctx.app, ctx.auth.user));
   if (!listed.ok) return notFoundPage(ctx);
   const rendering = performance.now();
-  const body = card(
+  const body = html`${card(
     listed.value.length === 0
       ? html`<div class="card-body">
           ${empty({
@@ -98,14 +106,15 @@ export async function featuresPage(ctx: Ctx): Promise<Response> {
         <h2>Features</h2>`,
       pad: false,
     },
-  );
+  )}${when(listed.value.length === 0, () => html`<p class="muted small"><a href="${DOCS}">How an app declares a feature</a></p>`)}`;
   const response = shell(ctx, "Features", body);
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
 
-function input(s: SettingView) {
+function input(s: SettingView, invalid = false) {
   const name = `s.${s.key}`;
+  const bad = invalid ? raw('aria-invalid="true"') : null;
   switch (s.type) {
     case "bool":
       return html`<input type="hidden" name="${name}" value="off" /><label class="check"
@@ -114,9 +123,9 @@ function input(s: SettingView) {
     case "int":
       return html`<input class="input mono" type="number" name="${name}" value="${s.value}"
         ${s.min === null ? "" : html`min="${String(s.min)}"`} ${s.max === null ? "" : html`max="${String(s.max)}"`}
-        aria-label="${s.label}" />`;
+        aria-label="${s.label}" ${bad} />`;
     case "choice":
-      return html`<select class="input" name="${name}" aria-label="${s.label}">
+      return html`<select class="input" name="${name}" aria-label="${s.label}" ${bad}>
         ${(s.choices ?? []).map((c) => html`<option value="${c}" ${c === s.value ? "selected" : ""}>${c}</option>`)}
       </select>`;
     case "days": {
@@ -126,9 +135,9 @@ function input(s: SettingView) {
       )}`;
     }
     case "list":
-      return html`<textarea class="input mono" name="${name}" rows="3" aria-label="${s.label}">${s.value.split(",").filter(Boolean).join("\n")}</textarea>`;
+      return html`<textarea class="input mono" name="${name}" rows="3" aria-label="${s.label}" ${bad}>${s.value.split(",").filter(Boolean).join("\n")}</textarea>`;
     default:
-      return html`<input class="input" name="${name}" value="${s.value}" aria-label="${s.label}" />`;
+      return html`<input class="input" name="${name}" value="${s.value}" aria-label="${s.label}" ${bad} />`;
   }
 }
 
@@ -139,18 +148,41 @@ export async function featurePage(ctx: Ctx): Promise<Response> {
   if (no) return no;
   const found = await timePhase(ctx.request, "feature", () => getFeature(ctx.app, ctx.auth.user, ctx.params["slug"] ?? ""));
   if (!found.ok) return notFoundPage(ctx);
-  const f = found.value;
   const rendering = performance.now();
+  const response = featureView(ctx, found.value);
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
+}
+
+/** What a refused save hands back: the values as typed, and the one that was refused. */
+interface Refused {
+  readonly typed: Readonly<Record<string, unknown>>;
+  readonly key: string | undefined;
+  readonly message: string;
+}
+
+/** A setting's value as the form sent it, in the shape `input` draws. */
+function typedValue(s: SettingView, raw: unknown): string {
+  if (Array.isArray(raw)) return raw.map(String).join(",");
+  const text = String(raw ?? "");
+  if (s.type === "bool") return text === "on" ? "true" : "false";
+  if (s.type === "list") return text.split(/[\n,]/).map((t) => t.trim()).filter(Boolean).join(",");
+  return text;
+}
+
+function featureView(ctx: Ctx, f: FeatureView, refused?: Refused): Response {
   const base = `/settings/features/${encodeURIComponent(f.slug)}`;
-  const settings = f.settings.map((s) =>
-    row({
+  const settings = f.settings.map((shown) => {
+    const bad = refused?.key === shown.key;
+    const s = refused !== undefined && shown.key in refused.typed ? { ...shown, value: typedValue(shown, refused.typed[shown.key]) } : shown;
+    return row({
       lead: icon("settings"),
       title: html`${s.label} <span class="muted small mono">${s.env}</span>`,
-      meta: html`${s.help ?? ""}${when(s.help !== null, () => html`<br />`)}Default
+      meta: html`${bad ? html`<span class="danger" role="alert">${refused.message}</span><br />` : null}${s.help ?? ""}${when(s.help !== null, () => html`<br />`)}Default
         <span class="mono">${s.default === "" ? "empty" : s.default}</span>${s.set ? "" : " · not changed"}`,
-      trail: input(s),
-    }),
-  );
+      trail: input(s, bad),
+    });
+  });
   const body = html`${card(
       f.settings.length === 0
         ? html`<div class="card-body"><p class="muted small">${f.problem ?? "This feature declares no settings."}</p></div>`
@@ -173,9 +205,8 @@ export async function featurePage(ctx: Ctx): Promise<Response> {
       Saving restarts ${f.name}: its process reads each setting as an environment variable, named on the right.
       <a href="/settings/features">All features</a>
     </p>`;
-  const response = shell(ctx, f.name, body);
-  notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
+  const answered = shell(ctx, f.name, html`${refused !== undefined && refused.key === undefined ? html`<p class="danger" role="alert">${refused.message}</p>` : null}${body}`);
+  return refused === undefined ? answered : new Response(answered.body, { status: 422, headers: answered.headers });
 }
 
 /** The form's settings, as the action takes them: `days` from its checkboxes, the rest as sent. */
@@ -201,16 +232,14 @@ export async function featureSave(ctx: Ctx): Promise<Response> {
   const slug = ctx.params["slug"] ?? "";
   const found = await getFeature(ctx.app, ctx.auth.user, slug);
   if (!found.ok) return notFoundPage(ctx);
-  const changed = await changeFeatureSettings(ctx.app, ctx.auth.user, slug, settingsFromForm(form, found.value.settings));
+  const typed = settingsFromForm(form, found.value.settings);
+  const changed = await changeFeatureSettings(ctx.app, ctx.auth.user, slug, typed);
   const back = `/settings/features/${encodeURIComponent(slug)}`;
   if (!changed.ok && changed.error.error === "not_found") return notFoundPage(ctx);
-  return flashTo(
-    ctx,
-    back,
-    changed.ok
-      ? { message: `${changed.value.name}: saved. It restarts with the new settings.` }
-      : { tone: "danger", message: changed.error.message },
-  );
+  if (changed.ok) return flashTo(ctx, back, { message: `${changed.value.name}: saved. It restarts with the new settings.` });
+  if (changed.error.error === "invalid_setting")
+    return featureView(ctx, found.value, { typed, key: changed.error.key, message: changed.error.message });
+  return flashTo(ctx, back, { tone: "danger", message: changed.error.message });
 }
 
 // POST /settings/features/:slug/absorb and /unabsorb

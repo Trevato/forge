@@ -84,6 +84,10 @@ Absorb was built by Ben (benjivers). The review of #9441 found:
 
 This section is ready for the owner to share with Ben.
 
+## Finding it, and what the switch does
+
+A site admin sees a "Features" link on the app strip of an absorbed app (an app not yet absorbed is reached from Settings → Features: finding one that merely declares a feature would cost a git read on every app page). The same list, switch and settings are in the terminal: the "Features" palette entry. Beside Absorb or Un-absorb, a line says what restarts and whose menu gains or loses the entry. A refused settings save re-draws the form with what was typed and marks the refused field.
+
 ## The menu entry is the admin's, not the deploy's
 
 The name and page in the menu are the ones the admin saw when absorbing. If the production

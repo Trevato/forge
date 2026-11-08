@@ -370,6 +370,25 @@ describe("absorbing an app", () => {
     expect(!byOwner.ok && byOwner.error.error).toBe("forbidden");
   });
 
+  test("a refused save keeps what was typed and marks the field; the menu and strip say more", async () => {
+    const form = new URLSearchParams([
+      ["s.runDays", "tue"],
+      ["s.runHourUtc", "99"],
+      ["s.claudeCode", "stable"],
+    ]);
+    const refused = await web(adaCookie, "/settings/features/radar", form);
+    expect(refused.status).toBe(422);
+    const page = await refused.text();
+    expect(page).toContain('value="99"');
+    expect(page).toContain("Hour (UTC) is at most 23");
+    expect(page).toContain('aria-invalid="true"');
+    // The switch says what it does before it is pressed.
+    const list = await (await web(adaCookie, "/settings/features")).text();
+    expect(list).toContain("Un-absorbing takes Radar off every menu");
+    // The app's own page links to Features for an admin.
+    expect(await (await web(adaCookie, "/cy/radar/files")).text()).toContain('href="/settings/features/radar"');
+  });
+
   test("good values are kept and reach the app as FORGE_SETTING_*", async () => {
     const res = await api("PATCH", adaToken, "/radar/settings", { settings: { runDays: ["wed", "mon", "fri"], runHourUtc: 9 } });
     expect(res.status).toBe(200);

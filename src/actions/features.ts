@@ -290,8 +290,8 @@ export async function changeFeatureSettings(
   actor: User | undefined,
   slug: string,
   values: Readonly<Record<string, unknown>>,
-): Promise<Result<FeatureView, { error: FeatureError; message: string }>> {
-  const refuse = (error: FeatureError, message: string) => err({ error, message });
+): Promise<Result<FeatureView, { error: FeatureError; message: string; key?: string }>> {
+  const refuse = (error: FeatureError, message: string, key?: string) => err(key === undefined ? { error, message } : { error, message, key });
   const found = readable(app, actor, slug);
   if (found === undefined) return refuse("not_found", "No such app.");
   if (!siteAdmin(actor)) return refuse("forbidden", "Only a site admin changes a feature's settings.");
@@ -303,7 +303,7 @@ export async function changeFeatureSettings(
     const spec = declared.value.settings.find((s) => s.key === key);
     if (spec === undefined) return refuse("invalid_setting", `${key} is not one of this feature's settings.`);
     const checked = checkSetting(spec, raw);
-    if (!checked.ok) return refuse("invalid_setting", `${spec.label} ${checked.error}.`);
+    if (!checked.ok) return refuse("invalid_setting", `${spec.label} ${checked.error}.`, key);
     changes.set(key, checked.value);
   }
   const before = featureSettings(app.db, found.record.id);

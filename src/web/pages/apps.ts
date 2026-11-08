@@ -12,6 +12,7 @@
  * 404 for everyone.
  */
 
+import { getAbsorbed } from "../../core/features.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
@@ -607,6 +608,10 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
         >`,
     )}
     ${when(pace, (line) => html`<span class="muted">${line}</span>`)}
+    ${when(
+      ctx.auth.user?.isAdmin === true && ctx.auth.user.kind !== "agent" && getAbsorbed(ctx.app.db, record.id) !== undefined,
+      () => html`<a href="/settings/features/${encodeURIComponent(record.slug)}" title="This app is one of the forge's features">Features</a>`,
+    )}
   </div>`;
 }
 
