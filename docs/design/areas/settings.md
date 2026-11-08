@@ -126,6 +126,13 @@ title, each with a glyph (Trusted with a check, Ends soon with a clock, Lapsed w
 `.row-fields` forms. With no entry, one plain sentence: no one is trusted, so every pull waits for review. The forms post to the same routes as
 before. `test/trusted-sources.test.ts` holds the shape.
 
+Settings › Crew (`crewPage()` and `crewReadiness()` in `src/web/pages/crew.ts`, #9826) adds no class and has no card. The
+readiness words come first: a danger notice (no runner, runner cannot run, unsandboxed) is an existing
+`.toast[data-tone="danger"]` with `role="alert"`. Spending, Agents, Scorecard, Model review, the per-model, per-prompt and
+per-day tables, Handed to the planner and Restore drill are each a `<section class="settings-block">` with an `<h2>` (an
+optional muted note under it) and keep their `.table-scroll` tables. With no agent, one plain sentence under "No agents yet".
+New agent is the last block, its form posting to `/settings/crew`. Pinned by `test/crew-language.test.ts`.
+
 Settings › Prompts (`promptsView()` in `src/web/pages/prompts.ts`, #9825) adds no class: two `<section class="settings-block">` blocks, Instagram (the connected account as a `row()` in a `.setting-list` with its Fetch now and Remove forms, or one plain sentence and the add form) and Getting a token. Pinned by `test/prompts-language.test.ts`.
 
 Settings › Hooks (`hooksPage()` in `src/web/pages/hooks.ts`, #9762) adds no component class and has no card or table: Webhooks and Add a webhook are each a `<section class="settings-block">` with an `<h2>`. Each hook is a `row()` in `<ul class="list setting-list">` (URL as title; events, state, added date and "unsigned" as meta; Send ping and a confirmed Delete in the trail), with its recent deliveries as nested child rows, Redeliver in the trail of a failed one. With no hook, one plain sentence. The secret is never drawn. Pinned by `test/hooks-rows.test.ts`.
