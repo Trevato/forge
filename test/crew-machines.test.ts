@@ -80,16 +80,41 @@ describe("machines", () => {
     expect(reachableApps(closed, urls)).toEqual([]);
   });
 
+  const everyTool = (name: string) => `/usr/bin/${name}`;
+  const gitleaksOnly = (name: string) => (name === "gitleaks" ? "/usr/bin/gitleaks" : null);
+  const noTool = () => null;
+
   test("a machine's environment carries names, never a secret", () => {
-    expect(machineEnv(SECURITY).FORGE_MACHINE).toBe("security");
-    expect(machineEnv(SECURITY).FORGE_MACHINE_TOOLS).toContain("gitleaks");
-    expect(Object.keys(machineEnv(SECURITY)).sort()).toEqual(["FORGE_MACHINE", "FORGE_MACHINE_TOOLS"]);
+    expect(machineEnv(SECURITY, everyTool).FORGE_MACHINE).toBe("security");
+    expect(machineEnv(SECURITY, everyTool).FORGE_MACHINE_TOOLS).toContain("gitleaks");
+    expect(Object.keys(machineEnv(SECURITY, everyTool)).sort()).toEqual(["FORGE_MACHINE", "FORGE_MACHINE_TOOLS"]);
   });
 
   test("the brief names the tools a machine carries, and says nothing for the standard one", () => {
-    expect(machineNote(STANDARD)).toBeUndefined();
-    expect(machineNote(SECURITY)).toContain("gitleaks");
-    expect(machineNote(SECURITY)).toContain("forge's own copies");
+    expect(machineNote(STANDARD, everyTool)).toBeUndefined();
+    expect(machineNote(SECURITY, everyTool)).toContain("gitleaks");
+    expect(machineNote(SECURITY, everyTool)).toContain("forge's own copies");
+    expect(machineNote(SECURITY, everyTool)).not.toContain("Not installed");
+  });
+
+  test("only the tools on PATH are claimed: the rest are named as not installed (#9506)", () => {
+    expect(machineEnv(SECURITY, gitleaksOnly).FORGE_MACHINE_TOOLS).toBe("gitleaks");
+    const note = machineNote(SECURITY, gitleaksOnly)!;
+    const [present, absent] = note.split("Not installed on this forge:");
+    expect(present).toContain(`gitleaks (${TOOLS["gitleaks"]})`);
+    expect(present).not.toContain("trivy");
+    expect(absent).toContain("trivy");
+    expect(absent).not.toContain("gitleaks");
+    expect(machineNote(STANDARD, gitleaksOnly)).toBeUndefined();
+    expect(machineEnv(STANDARD, gitleaksOnly).FORGE_MACHINE_TOOLS).toBe("");
+  });
+
+  test("a machine with none of its tools on PATH says so in one line, claiming none (#9506)", () => {
+    expect(machineEnv(SECURITY, noTool).FORGE_MACHINE_TOOLS).toBe("");
+    const note = machineNote(SECURITY, noTool)!;
+    expect(note.split("\n")).toHaveLength(1);
+    expect(note).toContain("none of its tools is installed on this forge");
+    expect(note).not.toContain(TOOLS["gitleaks"]!);
   });
 });
 

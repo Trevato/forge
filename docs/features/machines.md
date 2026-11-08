@@ -42,7 +42,12 @@ cannot widen its own machine by editing the file on its branch):
 ## What a run gets
 
 `FORGE_MACHINE` and `FORGE_MACHINE_TOOLS` (names only) in its environment, a
-line in its brief naming the tools its machine carries, and its `apps` reach.
+line in its brief, and its `apps` reach. Both report what is **installed**, not
+what is declared (#9506): `FORGE_MACHINE_TOOLS` lists only the machine's tools
+found on the forge's PATH (`Bun.which`, PATH only: nothing is downloaded or
+run), and the brief names those with what each is for, then lists the rest as
+"not installed on this forge". A machine with none of its tools on PATH gets
+one line saying so. Installing the tools is a separate step, not done yet.
 
 ## A shell into a machine (#9471)
 
@@ -88,6 +93,6 @@ repository's machines:
 ## Not done yet (split from #9418)
 
 Disk ceilings are not declared (#9460); the tools are declared, not yet
-installed in an image; the browser terminal (ghostty-web) that speaks to the
+installed in an image (the brief reports which are on PATH); the browser terminal (ghostty-web) that speaks to the
 shell socket is not built; the shell's cell does not reach the repository's
 apps even when its machine says `apps`.

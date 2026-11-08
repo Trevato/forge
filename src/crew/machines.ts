@@ -205,20 +205,54 @@ export function machineLimits(machine: Machine): { memoryMiB?: number; cpus?: nu
   };
 }
 
-/** The run's environment for its machine: names only, nothing secret. */
-export function machineEnv(machine: Machine): Record<string, string> {
+/**
+ * Whether a tool is on PATH: its path, or null. `Bun.which` reads PATH only;
+ * nothing is downloaded or run. Injected in tests.
+ */
+export type ToolLookup = (name: string) => string | null;
+
+const onPath: ToolLookup = (name) => Bun.which(name);
+
+/** A machine's tools split into those on PATH and those this forge lacks. */
+export function installedTools(
+  machine: Machine,
+  lookup: ToolLookup = onPath,
+): { found: string[]; missing: string[] } {
+  const found: string[] = [];
+  const missing: string[] = [];
+  for (const tool of machine.tools) (lookup(tool) === null ? missing : found).push(tool);
+  return { found, missing };
+}
+
+/** The run's environment for its machine: names only, nothing secret, and only tools on PATH. */
+export function machineEnv(
+  machine: Machine,
+  lookup: ToolLookup = onPath,
+): Record<string, string> {
   return {
     FORGE_MACHINE: machine.name,
-    FORGE_MACHINE_TOOLS: machine.tools.join(","),
+    FORGE_MACHINE_TOOLS: installedTools(machine, lookup).found.join(","),
   };
 }
 
-/** One line for the brief: where the shell runs and what it was given. */
-export function machineNote(machine: Machine): string | undefined {
+/**
+ * One line for the brief: where the shell runs and which of its tools are
+ * on PATH. It never claims a tool that is absent; none for a machine
+ * without tools.
+ */
+export function machineNote(
+  machine: Machine,
+  lookup: ToolLookup = onPath,
+): string | undefined {
   if (machine.tools.length === 0) return undefined;
+  const { found, missing } = installedTools(machine, lookup);
+  const where = `Your shell runs in the \`${machine.name}\` machine`;
+  if (found.length === 0)
+    return `${where}; none of its tools is installed on this forge (${missing.join(", ")}).`;
   return (
-    `Your shell runs in the \`${machine.name}\` machine. Tools it is meant to carry (use those on PATH; none is installed for you, and each may be aimed only at the forge's own copies): ` +
-    machine.tools.map((t) => `${t} (${TOOLS[t]})`).join("; ") +
-    "."
+    `${where}. Tools on PATH (aim each only at the forge's own copies): ` +
+    found.map((t) => `${t} (${TOOLS[t]})`).join("; ") +
+    "." +
+    (missing.length === 0 ? "" : ` Not installed on this forge: ${missing.join(", ")}.`)
   );
 }
