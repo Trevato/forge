@@ -207,13 +207,26 @@ describe("the audit reads every app's policy from git", () => {
       expect(body).toContain("Unread");
       // The table's cells, as the scaffold's contract says.
       expect(body).toMatch(/data-answer="own"/);
-      // …each answer a §5 badge, in a §5 table, under a §5 card head.
+      // …each answer a §5 badge, in a §5 table, under the app's heading.
       expect(body).toMatch(
         /<td data-answer="own">\s*<span\s+class="badge"\s+data-variant="secondary"\s*>own<\/span/,
       );
       expect(body).toContain('<table class="table" data-dense>');
       expect(body).toMatch(
-        /<div class="card-head">[\s\S]*?<h3><a href="\/alice\/notes">alice\/notes<\/a><\/h3>/,
+        /<div class="card-head"><h3><a href="\/alice\/notes">alice\/notes<\/a><\/h3>/,
+      );
+      // Rows, not boxes (#9710): each app's standing is a heading over its
+      // rows on the page's one background — a bare card, no frame, no tone,
+      // no icon before the name — and nothing on the page is a boxed card.
+      for (const app of ["alice-notes", "alice-broken", "alice-secret"])
+        expect(body).toMatch(
+          new RegExp(`<div\\s+class="card bare"\\s+id="${app}"\\s*>`),
+        );
+      const main = body.slice(body.indexOf("<h1>Audit</h1>"));
+      expect(main).not.toMatch(/class="card"/);
+      expect(main).not.toMatch(/class="card[^"]*"[^>]*data-tone=/);
+      expect(main).toMatch(
+        /<div class="card-head"><h3>Unread<\/h3><\/div>\s*<ul class="list">/,
       );
       // The unread apps are §5 rows.
       expect(body).toMatch(/<a href="\/alice\/bare"\s+class="row"/);

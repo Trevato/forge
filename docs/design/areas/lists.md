@@ -26,3 +26,12 @@ The proofs under a forge on `/forges` (#7959) are `row()` `children`, one per pu
 one-line ellipsis. No fixed width; the page does not scroll sideways. No new class. The owner's phone look of
 `/preview-admin/sample/pulls` is attached to the pull from its preview.
 - `.archived-list` — the rows of an origin's archived repositories: long names wrap, and on a phone each row's buttons drop below it.
+
+## The audit as headings over rows (#9710)
+
+`/audit` (`auditPage` in `src/web/pages/audit.ts`) has no boxed card. Each app's standing (its policy table with the
+last probe under it, an unsound contract's problems, the Unread rows) and each "What changed" part (pulls at the wall,
+contract changes, doors over time) is a `.card.bare`: an `<h3>` over its rows on the page's one background, with no
+frame, no tone and no icon before the heading. The state is a badge's word ("contract unsound", "1 door disobeys",
+"at the wall"), so dropping the tone loses nothing. The table, the `id` each app section is linked by
+(`/audit#owner-name`) and the probe form do not change. No new class. Pinned by `test/audit.test.ts`.

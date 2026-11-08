@@ -49,7 +49,6 @@ import {
   card,
   empty,
   icon,
-  listCard,
   row,
   sha,
   time,
@@ -148,16 +147,16 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
                 ),
               )}
             </h2>
-            ${unsound.map(unsoundCard)}
+            ${unsound.map(unsoundSection)}
             ${sound.map((a) =>
-              policyCard(
+              policySection(
                 a,
                 probed.get(records.get(a.repo.id)!.id),
                 ctx.auth.user !== undefined &&
                   canWrite(ctx.app.db, a.repo, ctx.auth.user),
               ),
             )}
-            ${when(unread.length > 0, () => unreadCard(unread))}
+            ${when(unread.length > 0, () => unreadSection(unread))}
             ${changesSection(crossings, changes, verdicts)}`}`,
   });
   notePhase(req, "render", performance.now() - rendering);
@@ -187,11 +186,19 @@ function summary(
 const name = (repo: Repo): string => `${repo.ownerName}/${repo.name}`;
 
 /**
+ * A part of the page as a heading over its rows, never a box: the shared
+ * `.card.bare` (docs/design/areas/code.md) keeps the card's markup and hooks
+ * and takes its frame off. Its state is a badge's word, so it carries no tone.
+ */
+const section = (body: Html, o: { head: Html; foot?: Html; id?: string }) =>
+  card(body, { ...o, pad: false, extra: "bare" });
+
+/**
  * One app's policy as a table — resources × verbs, a column per identity —
  * with what the running app said last time the forge knocked, and, for
  * whoever can write it, a way to knock now.
  */
-function policyCard(
+function policySection(
   a: Audited,
   last: ProbeRow | undefined,
   writer: boolean,
@@ -204,7 +211,7 @@ function policyCard(
     cells.find(
       (c) => c.resource === resource && c.verb === verb && c.as === as,
     );
-  return card(
+  return section(
     html`<div class="table-scroll">
       <table class="table" data-dense>
         <caption class="sr-only">
@@ -242,11 +249,9 @@ function policyCard(
     </div>
     ${when(last?.verdict === "mismatch", () => sentences(last!.said))}`,
     {
-      pad: false,
       id: `${a.repo.ownerName}-${a.repo.name}`,
-      ...(last?.verdict === "mismatch" ? { tone: "danger" as const } : {}),
       foot: probeFoot(a, last, writer),
-      head: html`${appHead(a.repo, "repo")}
+      head: html`${appHead(a.repo)}
         ${a.standing.open.length === 0
           ? badge("closed to strangers", { tone: "success" })
           : badge(
@@ -419,10 +424,9 @@ function answer(a: Cell["answer"]): Html {
   });
 }
 
-/** A card's head names the app it is about, linked, as a §5 card head. */
-function appHead(repo: Repo, mark: "repo" | "alert"): Html {
-  return html`${icon(mark)}
-    <h3><a href="/${repo.ownerName}/${repo.name}">${name(repo)}</a></h3>
+/** A section's head names the app it is about, linked. */
+function appHead(repo: Repo): Html {
+  return html`<h3><a href="/${repo.ownerName}/${repo.name}">${name(repo)}</a></h3>
     <span class="spacer"></span>`;
 }
 
@@ -435,30 +439,29 @@ function sentences(lines: readonly string[]): Html {
   </div>`;
 }
 
-function unsoundCard(a: Audited): Html {
+function unsoundSection(a: Audited): Html {
   if (a.standing.kind !== "unsound") return html``;
-  return card(sentences(a.standing.problems), {
-    pad: false,
-    tone: "danger",
+  return section(sentences(a.standing.problems), {
     id: `${a.repo.ownerName}-${a.repo.name}`,
-    head: html`${appHead(a.repo, "alert")}
+    head: html`${appHead(a.repo)}
     ${badge("contract unsound", { tone: "danger" })}`,
   });
 }
 
-function unreadCard(unread: readonly Audited[]): Html {
-  return listCard(
-    unread.map((a) =>
+function unreadSection(unread: readonly Audited[]): Html {
+  return section(
+    html`<ul class="list">
+      ${unread.map((a) =>
       row({
         href: `/${a.repo.ownerName}/${a.repo.name}`,
         title: name(a.repo),
         lead: icon("repo"),
         nav: true,
       }),
-    ),
+      )}
+    </ul>`,
     {
-      head: html`${icon("eye")}
-        <h3>Unread</h3>`,
+      head: html`<h3>Unread</h3>`,
       foot: html`<span class="muted small">
         These apps have no <code>contract.json</code>: their doors are written
         by hand, and this page cannot say what they allow.
@@ -477,14 +480,14 @@ function changesSection(
   if (crossings.length === 0 && changes.length === 0 && verdicts.length === 0)
     return html``;
   return html`<h2 class="mt mb">What changed</h2>
-    ${when(crossings.length > 0, () => crossingsCard(crossings))}
-    ${when(changes.length > 0, () => changesCard(changes))}
-    ${when(verdicts.length > 0, () => verdictsCard(verdicts))}`;
+    ${when(crossings.length > 0, () => crossingsSection(crossings))}
+    ${when(changes.length > 0, () => contractChangesSection(changes))}
+    ${when(verdicts.length > 0, () => verdictsSection(verdicts))}`;
 }
 
 /** Pulls the crew left at the wall: each is a person's decision, waiting. */
-function crossingsCard(crossings: readonly Crossing[]): Html {
-  return card(
+function crossingsSection(crossings: readonly Crossing[]): Html {
+  return section(
     html`<ul class="list">
       ${crossings.map(
         (c) =>
@@ -512,10 +515,7 @@ function crossingsCard(crossings: readonly Crossing[]): Html {
       )}
     </ul>`,
     {
-      pad: false,
-      tone: "attn",
-      head: html`${icon("shield")}
-        <h3>
+      head: html`<h3>
           ${count(crossings.length, "pull waits", "pulls wait")} at the wall
         </h3>`,
     },
@@ -523,8 +523,8 @@ function crossingsCard(crossings: readonly Crossing[]): Html {
 }
 
 /** Contract commits, newest first, each with what it did to the cells. */
-function changesCard(changes: readonly ContractChange[]): Html {
-  return card(
+function contractChangesSection(changes: readonly ContractChange[]): Html {
+  return section(
     html`<ul class="list">
       ${changes.map((c) => {
         const what = c.removed
@@ -577,9 +577,7 @@ function changesCard(changes: readonly ContractChange[]): Html {
       })}
     </ul>`,
     {
-      pad: false,
-      head: html`${icon("history")}
-        <h3>
+      head: html`<h3>
           ${count(changes.length, "contract change", "contract changes")}
         </h3>`,
     },
@@ -587,7 +585,7 @@ function changesCard(changes: readonly ContractChange[]): Html {
 }
 
 /** Where an app's doors started or stopped agreeing with its table. */
-function verdictsCard(verdicts: readonly VerdictChange[]): Html {
+function verdictsSection(verdicts: readonly VerdictChange[]): Html {
   const word = (v: VerdictChange["to"]): string =>
     v === "ok"
       ? "obeys its table"
@@ -596,7 +594,7 @@ function verdictsCard(verdicts: readonly VerdictChange[]): Html {
         : v === "down"
           ? "was not running"
           : "had no door to knock on";
-  return card(
+  return section(
     html`<ul class="list">
       ${verdicts.map(
         (v) =>
@@ -627,9 +625,7 @@ function verdictsCard(verdicts: readonly VerdictChange[]): Html {
       )}
     </ul>`,
     {
-      pad: false,
-      head: html`${icon("activity")}
-        <h3>Doors, over time</h3>`,
+      head: html`<h3>Doors, over time</h3>`,
     },
   );
 }
