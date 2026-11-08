@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { statements } from "./helpers/statements.ts";
 import { expectWork } from "./helpers/work.ts";
 import { createApp, type App } from "../src/app.ts";
-import { absorbApp, acceptDeclaration, declaresFeature, absorbedForNav, declaredFeature, changeFeatureSettings, getFeature, lastChange, provenanceFacts, unabsorbApp } from "../src/actions/features.ts";
+import { absorbApp, acceptDeclaration, declaresFeature, absorbedForNav, declaredFeature, changeFeatureSettings, featureFeed, getFeature, lastChange, provenanceFacts, unabsorbApp } from "../src/actions/features.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { forkRepo } from "../src/core/repos.ts";
 import { resolveOid } from "../src/git/merge.ts";
@@ -26,6 +26,8 @@ import { featureVarsAt } from "../src/apps/feature_env.ts";
 import { appEnv } from "../src/apps/process.ts";
 import { createApp as insertApp, deleteApp } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
+import { muteRepo } from "../src/core/interactions.ts";
+import { readFeedPage } from "../src/feed/feed.ts";
 import { absorb, featureSettings, getAbsorbed } from "../src/core/features.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -582,6 +584,74 @@ describe("absorbing an app", () => {
     expect(featureSettings(app.db, appId).get("runHourUtc")).toBe("14");
     const stranger = await mcpTool(servers.url, bobToken, "features", { slug: "radar" });
     expect(stranger.error).toBeDefined();
+  });
+
+  const post = (summary: string, repoId = repo.id) =>
+    app.bus.append({ kind: "run.finished", repoId, actorId: cy.id, payload: { kind: "agent", state: "ok", summary, runId: summary } });
+  const feedOfApi = async (token: string, slug = "radar") =>
+    ((await (await api("GET", token, `/${slug}/feed`)).json()) as { items: { what: string; app: string }[] }).items;
+
+  test("its feed items are the repository's own, not another's, through the API and MCP", async () => {
+    post("Radar misses Tuesday");
+    const other = await createRepo(app, cy, { name: "elsewhere", visibility: "private", description: "" });
+    if (!other.ok) throw new Error(String(other.error));
+    post("Not about radar", other.value.id);
+    const items = await feedOfApi(adaToken);
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((i) => i.app === `${repo.ownerName}/${repo.name}`)).toBe(true);
+    expect(JSON.stringify(items)).toContain("Radar misses Tuesday");
+    expect(JSON.stringify(items)).not.toContain("Not about radar");
+    const viaMcp = await mcpTool(servers.url, adaToken, "features", { slug: "radar", feed: true });
+    expect(JSON.stringify(viaMcp.value)).toContain("Radar misses Tuesday");
+  });
+
+  test("a muted app's items still show in its own feed, though the home feed hides them", async () => {
+    post("Radar after the mute");
+    muteRepo(app.db, ada.id, repo.id);
+    expect(JSON.stringify(readFeedPage(app.db, ada, { limit: 50 }).items)).not.toContain("Radar after the mute");
+    expect(JSON.stringify(await feedOfApi(adaToken))).toContain("Radar after the mute");
+  });
+
+  test("the page shows them, and a stranger gets no page and no items", async () => {
+    post("Radar on the page");
+    const page = await (await web(adaCookie, "/settings/features/radar")).text();
+    expect(page).toContain("In the feed");
+    expect(page).toContain("Radar on the page");
+    expect((await api("GET", bobToken, "/radar/feed")).status).toBe(404);
+    expect((await fetch(`${servers.url}/api/v1/features/radar/feed`)).status).toBe(404);
+  });
+
+  test("a guest reading a public feature has no feed, so gets []", async () => {
+    const pub = await createRepo(app, cy, { name: "pubradar", visibility: "public", description: "" });
+    if (!pub.ok) throw new Error(String(pub.error));
+    const done = await commitToBranch(app, cy, pub.value, { message: "feature", files: [{ path: "forge.json", content: FORGE_JSON }] });
+    if (!done.ok) throw new Error(JSON.stringify(done.error));
+    const row = insertApp(app.db, { repoId: pub.value.id, slug: "pubradar", access: "public" });
+    if (!row.ok) throw new Error(row.error);
+    post("Public news", pub.value.id);
+    const guest = await featureFeed(app, undefined, "pubradar");
+    expect(guest).toEqual({ ok: true, value: [] });
+    const viaHttp = await fetch(`${servers.url}/api/v1/features/pubradar/feed`);
+    expect(await viaHttp.json()).toEqual({ items: [], next_cursor: null });
+  });
+
+  test("an app that declares no feature has no feed: 422 not_a_feature", async () => {
+    const plain = await createRepo(app, cy, { name: "plainapp", visibility: "private", description: "" });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const done = await commitToBranch(app, cy, plain.value, { message: "app", files: [{ path: "forge.json", content: JSON.stringify({ app: { run: "bun run src/server.ts" } }) }] });
+    if (!done.ok) throw new Error(JSON.stringify(done.error));
+    const row = insertApp(app.db, { repoId: plain.value.id, slug: "plainapp", access: "private" });
+    if (!row.ok) throw new Error(row.error);
+    const res = await api("GET", adaToken, "/plainapp/feed");
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { error: string }).error).toBe("not_a_feature");
+  });
+
+  test("MCP refuses feed together with a write rather than dropping the write", async () => {
+    const before = getAbsorbed(app.db, appId) !== undefined;
+    const mixed = await mcpTool(servers.url, adaToken, "features", { slug: "radar", feed: true, absorb: !before, dryRun: false });
+    expect(JSON.stringify(mixed)).toContain("send them apart");
+    expect(getAbsorbed(app.db, appId) !== undefined).toBe(before);
   });
 
   test("the MCP tool lists the app's tools, plans a write, and refuses what is not declared or not running", async () => {

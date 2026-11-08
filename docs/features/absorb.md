@@ -51,6 +51,10 @@ The forge reads the declaration from the commit it starts. A preview of a pull t
 - A preview of a guest's pull that no writer has approved gets no `FORGE_SETTING_*` and no `FORGE_FEATURE`, in the same way it gets no secrets.
 - Only a production start updates the menu's name and page. A pull's `forge.json` cannot relabel the forge's menu.
 
+## Its feed items
+
+What the feed holds about an app's repository (runs, pulls, issues, looks) shows on its page, Settings › Features › the app, under "In the feed". The same items are `GET /api/v1/features/:slug/feed` and the `features` MCP tool with `slug` and `feed: true`. They are the viewer's own feed items for that repository, so nobody sees an item they could not see in the feed; a muted app still shows its items here. In the terminal, "Feature feeds" in the palette lists the absorbed apps you may read; `enter` opens one's items. Nothing is added to the feed: an app does not post items of its own.
+
 ## Without the crew
 
 Absorbing, settings, the menu entry and the page use no model and start no agent run. They work with the crew off and no model credential on the forge. `test/apps-features.test.ts` runs the whole flow that way. The forge never hands an app the crew's credential. A feature's schedule is the app's own: the app reads `FORGE_SETTING_*` and runs its own timer. An app that wants a model's judgment on top, such as an issue written from what it found, must do its work without one and treat the model as optional.
@@ -76,7 +80,7 @@ Settings stay behind on a fork. A fork of another forge's app carries its `featu
 
 ## Not done yet
 
-Until then an absorbed app is a menu link with kept settings (Settings › Features says so). The forge does not yet fire a feature's schedule (#9883), show its feed items (#9884) or keep `secret` settings (#9886).
+Until then an absorbed app is a menu link with kept settings (Settings › Features says so). The forge does not yet fire a feature's schedule (#9883) or keep `secret` settings (#9886).
 
 ## MCP tools
 

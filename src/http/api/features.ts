@@ -4,6 +4,7 @@
  *
  *   GET    /api/v1/features                 every app that declares one (admin)
  *   GET    /api/v1/features/:slug           one, with its settings (its readers)
+ *   GET    /api/v1/features/:slug/feed      its feed items: what the feed holds about the app (its readers)
  *   PUT    /api/v1/features/:slug           absorb it (admin scope)
  *   DELETE /api/v1/features/:slug           un-absorb it; settings are kept (admin scope)
  *   PATCH  /api/v1/features/:slug/settings  `{ settings: { key: value } }` (admin scope)
@@ -12,6 +13,7 @@
 import {
   absorbApp,
   changeFeatureSettings,
+  featureFeed,
   getFeature,
   listFeatures,
   unabsorbApp,
@@ -47,6 +49,13 @@ export function featureRoutes(router: Router<Handler>): void {
     const found = await timePhase(ctx.request, "feature", () => getFeature(ctx.app, ctx.auth.user, ctx.params.slug ?? ""));
     if (!found.ok) return refused(found.error);
     return json(found.value);
+  });
+
+  router.add("GET", "/api/v1/features/:slug/feed", async (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const items = await timePhase(ctx.request, "feature", () => featureFeed(ctx.app, ctx.auth.user, ctx.params.slug ?? ""));
+    if (!items.ok) return refused(items.error);
+    return json({ items: items.value, next_cursor: null });
   });
 
   router.add("PUT", "/api/v1/features/:slug", async (ctx) => {

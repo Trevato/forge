@@ -32,8 +32,10 @@ import {
   setFeatureSettings as keepSettings,
   unabsorb,
 } from "../core/features.ts";
-import { canRead, getRepoById, type Repo } from "../core/repos.ts";
+import { canRead, getRepo, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import { readFeedPage } from "../feed/feed.ts";
+import type { FeedItem } from "../feed/rank.ts";
 import { resolveOid } from "../git/merge.ts";
 import { commitLog } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -319,6 +321,24 @@ export async function getFeature(app: App, actor: User | undefined, slug: string
   const spec = declared.ok ? declared.value : undefined;
   const provenance = await provenanceOf(app, actor, found.repo);
   return ok(viewOf(found.record, found.repo, app, spec, declared.ok ? null : declared.error, provenance));
+}
+
+/**
+ * An app's own feed items, for a feature `getFeature` already returned (so
+ * its reader was checked there, once): what the viewer's feed holds about its
+ * repository, ranked as the feed ranks them. A guest has no feed, so none.
+ */
+export function feedOf(app: App, actor: User | undefined, view: FeatureView, limit = 20): FeedItem[] {
+  if (actor === undefined) return [];
+  const [owner = "", name = ""] = view.repo.split("/");
+  const repo = getRepo(app.db, owner, name);
+  return repo === undefined ? [] : readFeedPage(app.db, actor, { limit, repoId: repo.id }).items;
+}
+
+/** The same, from a slug, for the door that has not read the feature yet. */
+export async function featureFeed(app: App, actor: User | undefined, slug: string, limit = 20): Promise<Result<readonly FeedItem[], FeatureError>> {
+  const found = await getFeature(app, actor, slug);
+  return found.ok ? ok(feedOf(app, actor, found.value, limit)) : found;
 }
 
 async function redeployAll(app: App, record: AppRecord, repo: Repo): Promise<void> {

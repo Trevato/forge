@@ -72,6 +72,7 @@ export { route as getApiV1Explore } from "./getApiV1Explore.ts";
 export { route as getApiV1Family } from "./getApiV1Family.ts";
 export { route as getApiV1Features } from "./getApiV1Features.ts";
 export { route as getApiV1FeaturesSlug } from "./getApiV1FeaturesSlug.ts";
+export { route as getApiV1FeaturesSlugFeed } from "./getApiV1FeaturesSlugFeed.ts";
 export { route as getApiV1Feed } from "./getApiV1Feed.ts";
 export { route as getApiV1FeedChips } from "./getApiV1FeedChips.ts";
 export { route as getApiV1Flags } from "./getApiV1Flags.ts";

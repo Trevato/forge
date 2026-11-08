@@ -10,6 +10,7 @@ import {
   absorbApp,
   acceptDeclaration,
   changeFeatureSettings,
+  feedOf,
   getFeature,
   listFeatures,
   unabsorbApp,
@@ -18,13 +19,14 @@ import {
   provenanceFacts,
 } from "../../actions/features.ts";
 import { DAYS } from "../../apps/feature.ts";
+import type { FeedItem } from "../../feed/rank.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { readForm, type Form } from "../form.ts";
 import { html, raw, when } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, empty, row } from "../ui.ts";
+import { badge, btn, empty, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -155,7 +157,7 @@ export async function featurePage(ctx: Ctx): Promise<Response> {
   const found = await timePhase(ctx.request, "feature", () => getFeature(ctx.app, ctx.auth.user, ctx.params["slug"] ?? ""));
   if (!found.ok) return notFoundPage(ctx);
   const rendering = performance.now();
-  const response = featureView(ctx, found.value);
+  const response = featureView(ctx, found.value, undefined, feedOf(ctx.app, ctx.auth.user, found.value, 10));
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
@@ -176,7 +178,7 @@ function typedValue(s: SettingView, raw: unknown): string {
   return text;
 }
 
-function featureView(ctx: Ctx, f: FeatureView, refused?: Refused): Response {
+function featureView(ctx: Ctx, f: FeatureView, refused?: Refused, items: readonly FeedItem[] = []): Response {
   const base = `/settings/features/${encodeURIComponent(f.slug)}`;
   const settings = f.settings.map((shown) => {
     const bad = refused?.key === shown.key;
@@ -204,6 +206,16 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused): Response {
                 : html`<span class="muted small">Absorb ${f.name} to change its settings.</span>`}
             </p>
           </form>`}
+    </section>
+    <section class="settings-block">
+      <h3>In the feed</h3>
+      ${items.length === 0
+        ? html`<p class="muted small">Nothing yet.</p>`
+        : html`<ul class="list">${items.map((i) => row({
+            ...(i.link.startsWith("/") && !i.link.startsWith("//") ? { href: i.link } : {}),
+            title: i.what,
+            meta: html`${i.actor ?? i.app} · ${time(i.at)}`,
+          }))}</ul>`}
     </section>
     <p class="muted small">
       Saving restarts ${f.name}: its process reads each setting as an environment variable, named on the right.

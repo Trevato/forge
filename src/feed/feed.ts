@@ -138,6 +138,8 @@ type FeedOptions = {
     chips?: Chips;
     /** The home pins asks above the feed: they must not fill its page. */
     withoutAsks?: boolean;
+    /** Only this repository's items (an app's own feed); its mute does not hide them. */
+    repoId?: string;
     /** Told how long the settled-state read took, for Server-Timing. */
     phase?: (name: string, ms: number) => void;
 };
@@ -166,6 +168,7 @@ export function readFeedPage(
     ...shared,
   ]
     // The chips: the one filter. An ask was filtered by it in `askLinesFor`.
+    .filter((c) => options.repoId === undefined || c.repoId === options.repoId)
     .filter((c) => c.kind === "ask" || !chipHides(chips, c))
     .filter((c) =>
     // An ask is never muted away. Its own dismissal was already read by
@@ -177,6 +180,7 @@ export function readFeedPage(
         (c.kind === "ask" ||
           c.kind === "milestone" ||
           c.kind === "choose" ||
+          options.repoId !== undefined ||
           !muted.has(c.repoId)),
   );
   // After every filter, so a burst folds only what the viewer would see.

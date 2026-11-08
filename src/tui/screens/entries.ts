@@ -27,6 +27,7 @@ import { entry as edgeOnly } from "./edgeonly.ts";
 import { entry as traffic } from "./trafficview.ts";
 import { entry as featureReview } from "./features.ts";
 import { entry as feed } from "./feed.ts";
+import { entry as featureFeed } from "./featurefeed.ts";
 import { entry as features } from "./featureswitch.ts";
 import { entry as forgeView } from "./forgeview.ts";
 import { entry as flowsAll } from "./flowsall.ts";
@@ -120,6 +121,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   domains,
   feed,
   featureReview,
+  featureFeed,
   features,
   front,
   owner,

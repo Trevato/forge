@@ -1,16 +1,17 @@
-import { absorbApp, changeFeatureSettings, getFeature, listFeatures, unabsorbApp } from "../../../actions/features.ts";
+import { absorbApp, changeFeatureSettings, feedOf, getFeature, listFeatures, unabsorbApp } from "../../../actions/features.ts";
 import { callFeatureTool } from "../../../actions/feature_tools.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "features",
-  doc: "`{ slug?, absorb?, settings?, tool?, args?, dryRun? }`: apps absorbed as the forge's own features. With nothing, every app whose forge.json declares a `feature`, absorbed or not (forge admin); with `slug`, that one and its typed settings (its readers); `absorb: true|false` absorbs or un-absorbs it, `settings: { name: value }` changes an absorbed one's settings (each checked against its declaration, the app restarts with them as `FORGE_SETTING_*`); `tool` calls one of the absorbed app's declared tools (listed as `tools` with `slug`) with `args`: a read tool answers at once, one that writes is for a repo writer and planned first; absorbing and settings changes are planned first (`dryRun` is true unless `false`) and need an admin-scope token",
+  doc: "`{ slug?, feed?, absorb?, settings?, tool?, args?, dryRun? }`: apps absorbed as the forge's own features. With nothing, every app whose forge.json declares a `feature`, absorbed or not (forge admin); with `slug`, that one and its typed settings (its readers), or with `feed: true` its feed items; `absorb: true|false` absorbs or un-absorbs it, `settings: { name: value }` changes an absorbed one's settings (each checked against its declaration, the app restarts with them as `FORGE_SETTING_*`); `tool` calls one of the absorbed app's declared tools (listed as `tools` with `slug`) with `args`: a read tool answers at once, one that writes is for a repo writer and planned first; absorbing and settings changes are planned first (`dryRun` is true unless `false`) and need an admin-scope token",
   description: "Apps absorbed as forge features: list, read, absorb or un-absorb, change typed settings.",
   inputSchema: {
     type: "object",
     properties: {
       slug: { type: "string", maxLength: 100 },
+      feed: { type: "boolean" },
       absorb: { type: "boolean" },
       settings: { type: "object" },
       tool: { type: "string", maxLength: 40 },
@@ -30,6 +31,7 @@ export const tool: Tool = {
     if (!found.ok) return bad(found.error, found.error === "not_a_feature" ? "that app declares no feature" : "no such app");
     const tool = typeof args["tool"] === "string" ? args["tool"] : undefined;
     if (tool !== undefined) {
+      if (args["feed"] === true) return bad("invalid", "feed reads; a tool call acts: send them apart");
       const spec = found.value.tools.find((t) => t.name === tool);
       const given = typeof args["args"] === "object" && args["args"] !== null && !Array.isArray(args["args"]) ? (args["args"] as Record<string, unknown>) : {};
       if (spec?.writes === true && !scopeAllows(ctx.auth.scope ?? "ro", "rw")) return bad("forbidden", "a tool that writes needs an rw token");
@@ -41,6 +43,10 @@ export const tool: Tool = {
     const settings = typeof args["settings"] === "object" && args["settings"] !== null && !Array.isArray(args["settings"])
       ? (args["settings"] as Record<string, unknown>)
       : undefined;
+    if (args["feed"] === true) {
+      if (absorb !== undefined || settings !== undefined) return bad("invalid", "feed reads; absorb and settings write: send them apart");
+      return good({ items: feedOf(ctx.app, user, found.value) });
+    }
     if (absorb === undefined && settings === undefined) return good(found.value);
     if (args["dryRun"] !== false) {
       const would = [
