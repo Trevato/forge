@@ -6,3 +6,5 @@ A form's fields and its buttons sit in two rows, one for what you fill in and on
 - `.form-actions` — the row of a form's buttons under its fields: 16px above, 8px apart, wrapping. Styled in `style/components.ts`, and in `style/content.ts` for a thread's close reason and "close into" input and for `.comment-form` on a narrow screen; written by nearly every form in `src/web/pages/` (`account.ts`, `settings.ts`, `crew.ts`, `edit.ts`, `issues.ts`, `pulls.ts`, `oauth.ts`, `teams.ts`, `chain.ts`, `everyday.ts`) and by the review comment form in `diff-view.ts`; `client.ts` finds its `.muted` note to report a save.
 
 - The gate break-glass (#7790) on the pull's Files step is a plain `field()` with a hint and a `.form-actions` row holding one `btn` in the `danger` variant; no new class. It sits under the disabled primary Merge button, so the page keeps one accent.
+
+- `/signin` and `/signup` (#9812) speak the home page's language and add no class: `authForm` in `pages/site.ts` draws the page's one `<h1>` (`pageHead`), then the passkey door, the form and its `.form-actions` row straight on the page, no `.card`. `test/auth-language.test.ts` holds the shape.

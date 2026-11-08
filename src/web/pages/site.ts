@@ -429,7 +429,7 @@ function authForm(
       kind === "signup",
       () => html`<p class="mb" id="signup-you-get">${SIGNUP_YOU_GET} <a href="/forges/new">${SIGNUP_OWN_FORGE}</a></p>`,
     )}
-    ${card(body)}
+    ${body}
     ${when(
       kind === "signin",
       () => html`<p class="mt"><a class="small" href="/recover">Lost your device?</a></p>`,
