@@ -105,8 +105,8 @@ the row at every width, so nothing squeezes beside the title on a 390 px phone. 
 
 Settings › Cloud (`src/web/pages/cloud.ts`) adds no component class. As on the home page it is headings over rows: Cloud accounts,
 Add an account and Every read are each a `<section class="settings-block">` with an `<h2>`; each account is a `row()` in
-`<ul class="list setting-list">`; with none, one plain sentence says how to add one. `/settings/cloud/audit` is unchanged.
-`test/cloud-page-shape.test.ts` holds the shape.
+`<ul class="list setting-list">`; with none, one plain sentence says how to add one. `/settings/cloud/audit` is one `settings-block`, Today's vendor calls,
+its rows in a `.list` or one plain sentence when there are none (#9878). `test/cloud-page-shape.test.ts` holds the shape.
 
 Settings › Telemetry (`telemetryPage()` in `src/web/pages/telemetry.ts`, #9806) adds no class: two `<section class="settings-block">` blocks, Telemetry grants (one plain paragraph, then each agent a `row()` with its Grant/Revoke form in a `.setting-list`) and Reads; an empty list is one plain sentence. Pinned by `test/telemetry-blocks.test.ts`.
 
