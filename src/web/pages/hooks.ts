@@ -15,11 +15,10 @@ import { html, when } from "../html.ts";
 import { flashTo } from "../layout.ts";
 import {
   btn,
-  card,
   confirmAction,
   dot,
-  empty,
   field as formField,
+  row,
   time,
 } from "../ui.ts";
 import { adminForm, settingsPageResponse, timedAdminRepo } from "./settings.ts";
@@ -36,127 +35,82 @@ export function hooksPage(ctx: Ctx): Response {
   const rendering = performance.now();
   const base = repoBase(repo);
 
+  const deliveryRow = (hookId: string, d: ReturnType<typeof recentDeliveries>[number]) =>
+    row({
+      title: html`<span class="mono">${d.kind}</span>`,
+      meta: html`${dot(d.state === "ok" ? "success" : d.state === "failed" ? "danger" : "attn")}
+        ${d.state} · ${d.attempts} ${d.attempts === 1 ? "attempt" : "attempts"} · ${d.lastError ?? d.lastStatus ?? "—"}`,
+      trail: when(
+        d.state === "failed",
+        () => html`<form method="post" action="${base}/settings/hooks/${hookId}/deliveries/${d.id}/redeliver">
+          ${btn("Redeliver", { size: "sm" })}
+        </form>`,
+      ),
+    });
+
   const list =
     hooks.length === 0
-      ? empty({
-          icon: "webhook",
-          title: "No webhooks yet",
-          note: "Every event this repository produces can be POSTed to a URL you control, signed and retried.",
-        })
-      : html`${hooks.map((hook) => {
-          const deliveries = recent.get(hook.id) ?? [];
-          return card(
-            deliveries.length === 0
-              ? html`<p class="muted small">No deliveries yet.</p>`
-              : html`<div class="table-scroll">
-                  <table class="table" data-dense>
-                    <thead>
-                      <tr>
-                        <th>Event</th>
-                        <th>State</th>
-                        <th>Attempts</th>
-                        <th>Last status</th>
-                        <th><span class="sr-only">Actions</span></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${deliveries.map(
-                        (d) =>
-                          html`<tr>
-                            <td class="mono">${d.kind}</td>
-                            <td>
-                              ${dot(
-                                d.state === "ok"
-                                  ? "success"
-                                  : d.state === "failed"
-                                    ? "danger"
-                                    : "attn",
-                              )}
-                              ${d.state}
-                            </td>
-                            <td>${d.attempts}</td>
-                            <td>${d.lastError ?? d.lastStatus ?? "—"}</td>
-                            <td>
-                              ${when(
-                                d.state === "failed",
-                                () =>
-                                  html`<form
-                                    method="post"
-                                    action="${base}/settings/hooks/${hook.id}/deliveries/${d.id}/redeliver"
-                                  >
-                                    ${btn("Redeliver", { size: "sm" })}
-                                  </form>`,
-                              )}
-                            </td>
-                          </tr>`,
-                      )}
-                    </tbody>
-                  </table>
-                </div>`,
-            {
-              pad: deliveries.length === 0,
-              head: html`<span class="grow truncate mono" title="${hook.url}"
-                  >${hook.url}</span
-                >
-                <form method="post" action="${base}/settings/hooks/${hook.id}/ping">
+      ? html`<p class="small">
+          No webhooks yet. Every event this repository produces can be POSTed to a URL you control, signed and retried.
+        </p>`
+      : html`<ul class="list setting-list">
+          ${hooks.map((hook) => {
+            const deliveries = recent.get(hook.id) ?? [];
+            return row({
+              title: html`<span class="mono">${hook.url}</span>`,
+              titleAttr: hook.url,
+              meta: html`<span class="mono">${hook.kinds}</span> · ${dot(hook.active ? "success" : "attn")}${hook.active
+                ? "active"
+                : "paused"} · added ${time(hook.createdAt)}${when(!hook.hasSecret, () => html` · unsigned`)}${when(
+                deliveries.length === 0,
+                () => html` · No deliveries yet.`,
+              )}`,
+              trail: html`<form method="post" action="${base}/settings/hooks/${hook.id}/ping">
                   ${btn("Send ping", { size: "sm" })}
                 </form>
-                <span class="badge" data-variant="secondary"
-                  >${hook.kinds}</span
-                >
-                <span class="badge"
-                  >${dot(hook.active ? "success" : "attn")}${hook.active
-                    ? "active"
-                    : "paused"}</span
-                >
                 ${confirmAction({
                   action: `${base}/settings/hooks/${hook.id}/delete`,
                   verb: "Delete webhook",
                   size: "sm",
                 })}`,
-              foot: html`<span class="muted small"
-                >Added
-                ${time(hook.createdAt)}${when(
-                  !hook.hasSecret,
-                  () => html` · unsigned`,
-                )}</span
-              >`,
-            },
-          );
-        })}`;
+              children: deliveries.map((d) => deliveryRow(hook.id, d)),
+            });
+          })}
+        </ul>`;
 
-  const create = card(
-    html`<form method="post" action="${base}/settings/hooks">
-      ${formField({
-        label: "Payload URL",
-        name: "url",
-        type: "url",
-        required: true,
-        placeholder: "https://example.com/hook",
-        hint: "Every delivery is a POST with a JSON body.",
-      })}
-      ${formField({
-        label: "Events",
-        name: "kinds",
-        value: "*",
-        mono: true,
-        hint: "A space-separated list of kinds; * means everything. e.g. push issue.* pull.merged",
-      })}
-      ${formField({
-        label: "Signing secret",
-        name: "secret",
-        mono: true,
-        hint: "Optional — one is generated for you. Deliveries carry HMAC-SHA256 in X-Forge-Signature-256.",
-      })}
-      <div class="form-actions">
-        ${btn("Add webhook", { variant: "primary" })}
-      </div>
-    </form>`,
-    { head: html`<h2>New webhook</h2>` },
-  );
+  const create = html`<form method="post" action="${base}/settings/hooks">
+    ${formField({
+      label: "Payload URL",
+      name: "url",
+      type: "url",
+      required: true,
+      placeholder: "https://example.com/hook",
+      hint: "Every delivery is a POST with a JSON body.",
+    })}
+    ${formField({
+      label: "Events",
+      name: "kinds",
+      value: "*",
+      mono: true,
+      hint: "A space-separated list of kinds; * means everything. e.g. push issue.* pull.merged",
+    })}
+    ${formField({
+      label: "Signing secret",
+      name: "secret",
+      mono: true,
+      hint: "Optional — one is generated for you. Deliveries carry HMAC-SHA256 in X-Forge-Signature-256.",
+    })}
+    <div class="form-actions">${btn("Add webhook", { variant: "primary" })}</div>
+  </form>`;
 
-  const body = html`${list}
-    <div class="mt">${create}</div>`;
+  const body = html`<section class="settings-block">
+      <h2>Webhooks</h2>
+      ${list}
+    </section>
+    <section class="settings-block">
+      <h2>Add a webhook</h2>
+      ${create}
+    </section>`;
   const response = settingsPageResponse(ctx, repo, "hooks", "Webhooks", body);
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
