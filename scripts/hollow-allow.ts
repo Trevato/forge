@@ -18,15 +18,4 @@ export type Allowed = {
   issue: number;
 };
 
-export const ALLOWED: readonly Allowed[] = [
-  {
-    orphan: "src/actions/pin_demos.ts#demoDefaults",
-    reason: "read by src/display/items.ts, which no page serves until the display route lands",
-    issue: 9208,
-  },
-  {
-    orphan: "src/actions/pin_demos.ts#demoFactsAt",
-    reason: "read by src/display/items.ts, which no page serves until the display route lands",
-    issue: 9208,
-  },
-];
+export const ALLOWED: readonly Allowed[] = [];

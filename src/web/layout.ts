@@ -367,6 +367,7 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Forge packs", h: "/packs", c: "Go to" },
+  { t: "Displays", h: "/displays", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "Front page", h: "/front", c: "Go to" },
