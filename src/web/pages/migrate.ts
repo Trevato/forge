@@ -13,7 +13,7 @@
  * commits and selects the one the app most likely lives on — the person's
  * newest (`origins/work-branch.ts`); the Migrate button carries the choice.
  *
- * An account whose token sees public repositories only says so on its card
+ * An account whose token sees public repositories only says so under its account
  * (`origins/token-reach.ts`), with GitHub's new-token page one click away
  * and a field that replaces the token in place.
  *
@@ -55,7 +55,6 @@ import { flashTo, page, redirect } from "../layout.ts";
 import {
   badge,
   btn,
-  card,
   icon,
   row,
   selectField,
@@ -295,8 +294,9 @@ function accounts(ctx: Ctx, origins: readonly OriginChoices[]): Html {
           <a href="/settings/origins">Settings → Origins</a>; a token pasted
           there works until then.
         </p>`;
-  return card(
-    html`${origins.length === 0
+  return html`<section class="mb" id="migrate-accounts-section">
+    <h2 class="mb">Your accounts</h2>
+    ${origins.length === 0
       ? null
       : html`<ul class="list" id="migrate-accounts">
           ${origins.map((origin) =>
@@ -315,12 +315,8 @@ function accounts(ctx: Ctx, origins: readonly OriginChoices[]): Html {
           )}
         </ul>`}
     ${origins.filter((o) => o.reach === "public").map(publicOnly)}
-    ${connect}`,
-    {
-      head: html`${icon("globe")}
-        <h2>Your accounts</h2>`,
-    },
-  );
+    ${connect}
+  </section>`;
 }
 
 /**
@@ -457,9 +453,8 @@ function migrateForm(
         </p>`}
     ${accounts(ctx, origins)}
     <form method="get" action="/migrate" id="migrate-search"></form>
-    ${card(
-      html`<form method="post" action="/migrate">
-        <h3 class="mb">Source</h3>
+    <form method="post" action="/migrate">
+        <h2 class="mb">Source</h2>
         ${picker(origins, values, crew.length > 0, branches)}
         ${formField({
           label: origins.every((o) => o.repos.length === 0)
@@ -473,7 +468,7 @@ function migrateForm(
           autofocus: origins.every((o) => o.repos.length === 0),
           hint: "Any public repository over https, http or git. It is cloned anonymously.",
         })}
-        <h3 class="mb mt">Destination</h3>
+        <h2 class="mb mt">Destination</h2>
         ${selectField({
           label: "Owner",
           name: "owner",
@@ -507,7 +502,7 @@ function migrateForm(
             },
           ],
         })}
-        <h3 class="mb mt">Put a crew on it</h3>
+        <h2 class="mb mt">Put a crew on it</h2>
         ${crew.length === 0
           ? html`<p class="muted small mb">
               ${icon("bot")} No agents on this forge yet, so there is no crew to
@@ -550,7 +545,7 @@ function migrateForm(
                   >
                 </label>
               </div>`}
-        <h3 class="mb mt">What happens to the GitHub repository</h3>
+        <h2 class="mb mt">What happens to the GitHub repository</h2>
         ${selectField({
           label: "Afterwards",
           name: "after",
@@ -577,8 +572,7 @@ function migrateForm(
           ${btn("Migrate", { variant: "primary", icon: "download" })}
           ${btn("Cancel", { href: "/", variant: "ghost" })}
         </div>
-      </form>`,
-    )}
+      </form>
   </div>`;
 }
 
@@ -851,10 +845,8 @@ export function migrationJobPage(ctx: Ctx): Response {
     ...(failed ? {} : { scriptJs: migrateJobJs }),
     body: html`${pageHead(`Migrating ${job.fullName}`)}
       <div class="narrow-wide" id="migrate-job" data-job="${job.id}">
-        ${card(stageRows(job), {
-          head: html`${icon("download")}
-            <h2>${job.fullName}</h2>`,
-        })}
+        <h2 class="mb">${job.fullName}</h2>
+        ${stageRows(job)}
         ${failed
           ? html`<div class="field" data-invalid>
                 <span class="error" role="alert" id="migrate-job-err"
