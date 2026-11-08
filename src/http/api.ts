@@ -342,6 +342,7 @@ import { keeperRoutes } from "./api/keeper.ts";
 import { agentRoutes } from "./api/agents.ts";
 import { subscriptionRoutes } from "./api/subscriptions.ts";
 import { boardRoutes } from "./api/boards.ts";
+import { displayRoutes } from "./api/displays.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { visionRoutes } from "./api/vision.ts";
@@ -1271,6 +1272,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   boardRoutes(router);
+  displayRoutes(router);
 
   // A domain drill and its verdict (`kernel/domain_drill.ts`): an admin
   // person's, kept whether green or red.

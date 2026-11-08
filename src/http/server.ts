@@ -35,7 +35,7 @@ import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit
 import { boardsHoldPost } from "../web/pages/boards-holds.ts";
 import { nowPage } from "../web/pages/now.ts";
 import { myReposPage } from "../web/pages/my-repos.ts";
-import { displayPage } from "../web/pages/display.ts";
+import { displayChoose, displayPage } from "../web/pages/display.ts";
 import { displaysPage } from "../web/pages/displays.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
 import { actingVia } from "../core/acting_via.ts";
@@ -846,6 +846,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/displays", displaysPage);
   // A repository's display, read only (`display.ts`): 404 without a display.json or without read access.
   router.add("GET", "/:owner/:name/display", displayPage);
+  router.add("POST", "/:owner/:name/display", displayChoose);
   router.add("GET", "/now/:stage", nowPage);
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);

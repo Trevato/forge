@@ -344,6 +344,7 @@ export { route as putApiV1Front } from "./putApiV1Front.ts";
 export { route as putApiV1ReposOwnerNameAppEnvVar } from "./putApiV1ReposOwnerNameAppEnvVar.ts";
 export { route as putApiV1ReposOwnerNameAppMembers } from "./putApiV1ReposOwnerNameAppMembers.ts";
 export { route as putApiV1ReposOwnerNameCrewUsername } from "./putApiV1ReposOwnerNameCrewUsername.ts";
+export { route as putApiV1ReposOwnerNameDisplayBuilds } from "./putApiV1ReposOwnerNameDisplayBuilds.ts";
 export { route as putApiV1ReposOwnerNameIssuesNumberAssignee } from "./putApiV1ReposOwnerNameIssuesNumberAssignee.ts";
 export { route as putApiV1ReposOwnerNameIssuesNumberLabels } from "./putApiV1ReposOwnerNameIssuesNumberLabels.ts";
 export { route as putApiV1ReposOwnerNameIssuesNumberPlan } from "./putApiV1ReposOwnerNameIssuesNumberPlan.ts";

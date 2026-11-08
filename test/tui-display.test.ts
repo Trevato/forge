@@ -7,6 +7,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { readDisplay } from "../src/display/config.ts";
 import { pinBuild } from "../src/git/builds.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -94,4 +95,49 @@ test("the command is offered for a readable repository only", () => {
   const { app: tui, session } = createForgeApp(app, guest, { terminal, exitHooks: false });
   expect(displayCommands(session, tui.ctx, repo("vault"))).toEqual([]);
   expect(displayCommands(session, tui.ctx, repo("karts")).map((c) => c.id)).toEqual(["display"]);
+});
+
+test("a writer ticks a build with space and saves it with s; a reader cannot", async () => {
+  const made = await createRepo(app, alice, { name: "pick", visibility: "public" });
+  if (!made.ok) throw new Error(String(made.error));
+  const c = await commitToBranch(app, alice, repo("pick"), { message: "x", files: [{ path: "x.txt", content: "x" }] });
+  if (!c.ok) throw new Error(JSON.stringify(c.error));
+  for (const label of ["one", "two"]) {
+    const p = await pinBuild(repoDir(app.reposRoot, "alice", "pick"), {
+      label, oid: c.value.commitOid, note: "", source: "commit", tagger: { name: "alice", email: "alice@forge.local" }, at: 1_800_000_000,
+      demo: { name: `${label}-game`, version: "1.0", page: "/", showcase: true, launch: "shots" },
+    });
+    if (!p.ok) throw new Error(p.error);
+  }
+  const d = await commitToBranch(app, alice, repo("pick"), { message: "d", files: [{ path: "display.json", content: JSON.stringify({ title: "Pick", layout: "grid", sources: ["alice/pick"], builds: ["alice/pick:one"] }) }] });
+  if (!d.ok) throw new Error(JSON.stringify(d.error));
+
+  const open = async (user: User) => {
+    const terminal = headlessTerminal(100, 30);
+    const { app: tui, session } = createForgeApp(app, { ...guest, user }, { terminal, exitHooks: false });
+    tui.start();
+    const screen = displayScreen(session, tui.ctx, repo("pick"));
+    tui.ctx.push(screen);
+    await settleApp(tui);
+    return { tui, screen };
+  };
+  const press = (screen: ReturnType<typeof displayScreen>, key: string) => screen.key?.({ key } as never);
+
+  const reader = await open(bob);
+  expect(reader.tui.screen.toText()).not.toContain("[x]");
+  expect(press(reader.screen, " ")).toBe(false);
+  expect(press(reader.screen, "s")).toBe(false);
+  reader.tui.stop?.();
+
+  const writer = await open(alice);
+  expect(writer.tui.screen.toText()).toContain("[x] one-game");
+  expect(writer.tui.screen.toText()).toContain("[ ] alice/pick:two");
+  press(writer.screen, "j");
+  press(writer.screen, " ");
+  press(writer.screen, "s");
+  await settleApp(writer.tui);
+  expect(writer.tui.screen.toText()).toContain("Saved.");
+  const read = await readDisplay(app, repo("pick"));
+  expect(read?.ok && read.value.builds).toEqual(["alice/pick:one", "alice/pick:two"]);
+  writer.tui.stop?.();
 });
