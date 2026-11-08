@@ -16,6 +16,7 @@ import { getRepo } from "../core/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
 import { JOBS, type Job } from "./jobs.ts";
+import { radarNight, RADAR_NAME, RADAR_SLOT } from "./radar.ts";
 import { proposeQuarantine } from "./propose.ts";
 import { type Ran, runJob } from "./run.ts";
 import { lastSlot, owed, untilNext } from "./slots.ts";
@@ -33,6 +34,8 @@ export interface Doing {
 export interface NightlyHandle {
   /** Run one job now, as its slot would. */
   readonly run: (name: Job["name"]) => Promise<void>;
+  /** Run the radar's night now, as its slot would. */
+  readonly radar: () => Promise<void>;
   readonly stop: () => Promise<void>;
 }
 
@@ -68,6 +71,8 @@ export function startNightly(
     readonly forgeUrl: string;
     readonly token: string | undefined;
     readonly doing?: Doing;
+    /** The radar's night: a test replaces it. */
+    readonly radar?: (signal: AbortSignal) => Promise<string>;
     readonly now?: () => number;
   },
 ): NightlyHandle | undefined {
@@ -110,6 +115,30 @@ export function startNightly(
     return going as Promise<void>;
   };
 
+  // The radar is in-process, so it needs no job of steps; it keeps a slot and a record like the others.
+  const radar = options.radar ?? ((signal: AbortSignal) => radarNight(app, undefined, signal));
+  const runRadarNight = (): Promise<void> => {
+    const slot = lastSlot(RADAR_SLOT, now());
+    const turn = going.then(async () => {
+      if (abort.signal.aborted) return;
+      const startedAt = now();
+      writeLast(app.config.dataDir, RADAR_NAME, { slot, startedAt, says: "began" });
+      const said = await radar(abort.signal);
+      writeLast(app.config.dataDir, RADAR_NAME, { slot, startedAt, finishedAt: now(), says: said });
+    });
+    going = turn.catch((error) => log.error("failed", { job: RADAR_NAME, error: String(error) }));
+    return going as Promise<void>;
+  };
+  const waitRadar = (): void => {
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      void runRadarNight().finally(() => !abort.signal.aborted && waitRadar());
+    }, untilNext(RADAR_SLOT, now()) + 1_000);
+    timers.add(timer);
+  };
+  if (owed(RADAR_SLOT, readLast(app.config.dataDir, RADAR_NAME)?.slot, now())) void runRadarNight();
+  waitRadar();
+
   const wait = (job: Job): void => {
     const timer = setTimeout(() => {
       timers.delete(timer);
@@ -125,6 +154,7 @@ export function startNightly(
   }
   return {
     run,
+    radar: runRadarNight,
     stop: async () => {
       abort.abort();
       for (const t of timers) clearTimeout(t);

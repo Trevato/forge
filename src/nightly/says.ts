@@ -5,6 +5,7 @@
  */
 
 import { JOBS } from "./jobs.ts";
+import { RADAR_NAME, RADAR_SLOT } from "./radar.ts";
 import { type Last, readLast } from "./stamps.ts";
 
 const when = (ms: number): string => `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
@@ -17,5 +18,8 @@ export function nightlyLine(name: string, slot: { hour: number; minute: number }
 }
 
 export function nightlyLines(dataDir: string): string[] {
-  return JOBS.map((job) => nightlyLine(job.name, job.slot, readLast(dataDir, job.name)));
+  return [
+    ...JOBS.map((job) => nightlyLine(job.name, job.slot, readLast(dataDir, job.name))),
+    nightlyLine(RADAR_NAME, RADAR_SLOT, readLast(dataDir, RADAR_NAME)),
+  ];
 }
