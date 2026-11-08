@@ -23,6 +23,7 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
+import { parseTools, type ToolSpec } from "./feature_tools.ts";
 
 export type SettingType = "bool" | "int" | "string" | "choice" | "days" | "list";
 
@@ -65,6 +66,8 @@ export interface FeatureSpec {
   /** The app path the forge's nav opens. */
   readonly page: string;
   readonly settings: readonly SettingSpec[];
+  /** MCP tools the app serves through the forge's `features` tool (`feature_tools.ts`). */
+  readonly tools: readonly ToolSpec[];
 }
 
 const KEY = /^[a-z][a-zA-Z0-9]{0,39}$/;
@@ -114,8 +117,10 @@ export function parseFeature(forgeJson: Raw): Result<FeatureSpec | undefined, st
   const envs = new Set(settings.map((s) => settingEnvName(s.key)));
   if (envs.size !== settings.length) return bad("two settings would share one FORGE_SETTING_ name");
   for (const extra of Object.keys(block))
-    if (!["name", "summary", "page", "settings"].includes(extra)) return bad(`unknown field ${extra}`);
-  return ok({ name: name.trim(), summary: typeof summary === "string" && summary.trim() !== "" ? summary.trim() : null, page, settings });
+    if (!["name", "summary", "page", "settings", "tools"].includes(extra)) return bad(`unknown field ${extra}`);
+  const tools = parseTools(block["tools"]);
+  if (!tools.ok) return tools;
+  return ok({ tools: tools.value, name: name.trim(), summary: typeof summary === "string" && summary.trim() !== "" ? summary.trim() : null, page, settings });
 }
 
 function parseSetting(key: string, raw: unknown): Result<SettingSpec, string> {

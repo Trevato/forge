@@ -20,6 +20,7 @@
 import type { App } from "../app.ts";
 import { readFileAt } from "../apps/checkout.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName, type FeatureSpec } from "../apps/feature.ts";
+import type { ToolSpec } from "../apps/feature_tools.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getAppByRepo, getAppById, getAppBySlug, listApps, type AppRecord } from "../core/apps.ts";
 import {
@@ -81,6 +82,8 @@ export interface FeatureView {
   /** Why the declaration is not usable, when it is not; `settings` is then empty. */
   readonly problem: string | null;
   readonly settings: readonly SettingView[];
+  /** The MCP tools the app declares; the `features` tool calls them while it is absorbed. */
+  readonly tools: readonly ToolSpec[];
   /** Where the app comes from: the upstream only when the reader may read it. */
   readonly provenance: Provenance;
 }
@@ -230,6 +233,7 @@ function viewOf(
     absorbedAt: absorbed?.absorbedAt ?? null,
     problem,
     provenance,
+    tools: spec?.tools ?? [],
     settings: (spec?.settings ?? []).map((s) => {
       const name = settingEnvName(s.key);
       return {
@@ -250,7 +254,7 @@ function viewOf(
 }
 
 /** The app behind a slug, if the actor may read its repository. */
-function readable(app: App, actor: User | undefined, slug: string): { record: AppRecord; repo: Repo } | undefined {
+export function readable(app: App, actor: User | undefined, slug: string): { record: AppRecord; repo: Repo } | undefined {
   const record = getAppBySlug(app.db, slug);
   if (record === undefined) return undefined;
   const repo = getRepoById(app.db, record.repoId);

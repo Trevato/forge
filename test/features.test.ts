@@ -29,6 +29,7 @@ import { listEvents } from "../src/core/events.ts";
 import { absorb, featureSettings, getAbsorbed } from "../src/core/features.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { AppsRuntime } from "../src/apps/runtime.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { eventVerb } from "../src/design/activity.ts";
 import { provenanceRows } from "../src/web/pages/features.ts";
@@ -49,6 +50,7 @@ const FEATURE = {
     claudeCode: { type: "choice", choices: ["stable", "latest"], default: "latest", label: "Claude Code follows" },
     scout: { type: "bool", default: true, label: "Search the web for ideas" },
   },
+  tools: { scan: { description: "Run a scan now" }, latest: { description: "The last findings", writes: false } },
 };
 const FORGE_JSON = JSON.stringify({ app: { run: "bun run src/server.ts" }, feature: FEATURE });
 
@@ -582,6 +584,17 @@ describe("absorbing an app", () => {
     expect(stranger.error).toBeDefined();
   });
 
+  test("the MCP tool lists the app's tools, plans a write, and refuses what is not declared or not running", async () => {
+    const listed = await mcpTool(servers.url, adaToken, "features", { slug: "radar" });
+    expect(listed.value?.tools.map((t: { name: string }) => t.name)).toEqual(["scan", "latest"]);
+    const missing = await mcpTool(servers.url, adaToken, "features", { slug: "radar", tool: "nope" });
+    expect(missing.error).toContain("no_such_tool");
+    const asleep = await mcpTool(servers.url, adaToken, "features", { slug: "radar", tool: "latest" });
+    expect(asleep.error).toContain("not_running");
+    const stranger = await mcpTool(servers.url, bobToken, "features", { slug: "radar", tool: "latest" });
+    expect(stranger.error).toBeDefined();
+  });
+
   test("the declaration is cached by tip: the same tip is one read, a moved tip reads again", async () => {
     const first = await declaredFeature(app, repo);
     expect(await declaredFeature(app, repo)).toBe(first); // the very same parsed result
@@ -634,6 +647,70 @@ describe("absorbing an app", () => {
     const long = /title="([^"]*)"/.exec(entry("long-sum"))?.[1] ?? "";
     expect(long.length).toBeLessThanOrEqual(200);
     expect(long.endsWith("word…")).toBe(true);
+  });
+
+  test("a declared tool is refused to who may not call it, planned only when it could run, and reaches the app", async () => {
+    const hits: string[] = [];
+    const stub = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: async (req) => {
+        hits.push(`${new URL(req.url).pathname} ${await req.text()}`);
+        return Response.json({ found: 3 });
+      },
+    });
+    const runtime = new AppsRuntime(app, { domain: "apps.test", scheme: "http", publicPort: servers.port, forgeUrl: servers.url });
+    const serving = (on: boolean) => {
+      runtime.envStatus = (() => (on ? { port: stub.port } : undefined)) as never;
+    };
+    const cyRw = createToken(app.db, cy.id, "rw", "rw").token;
+    const cyRo = createToken(app.db, cy.id, "ro", "ro").token;
+    try {
+      serving(true);
+      // A reader (no write access, rw token) is refused a writing tool, with or without a plan.
+      app.db.run("UPDATE repo SET visibility = 'public' WHERE id = ?1", [repo.id]);
+      const bobRw = createToken(app.db, bob.id, "rw", "rw").token;
+      for (const dryRun of [true, false]) {
+        const reader = await mcpTool(servers.url, bobRw, "features", { slug: "radar", tool: "scan", dryRun });
+        expect(reader.error).toContain("forbidden");
+        expect(reader.value).toBeUndefined();
+      }
+      // A read-only token is refused a writing tool even for a writer.
+      const ro = await mcpTool(servers.url, cyRo, "features", { slug: "radar", tool: "scan", dryRun: false });
+      expect(ro.error).toBeDefined();
+      // The forge lets a read-only token ask for any plan; a tool's plan is still not told to it.
+      const roPlan = await mcpTool(servers.url, cyRo, "features", { slug: "radar", tool: "scan" });
+      expect(roPlan.error).toContain("forbidden");
+      expect(hits).toEqual([]);
+      // A writer's plan comes back without reaching the app; dryRun:false reaches it.
+      const plan = await mcpTool(servers.url, cyRw, "features", { slug: "radar", tool: "scan" });
+      expect(plan.value?.says).toContain("Would call scan");
+      expect(hits).toEqual([]);
+      const done = await mcpTool(servers.url, cyRw, "features", { slug: "radar", tool: "scan", args: { depth: 2 }, dryRun: false });
+      expect(done.value).toEqual({ tool: "scan", result: { found: 3 } });
+      expect(hits).toEqual(['/forge/tools/scan {"args":{"depth":2}}']);
+      // A reader still reads with a read tool.
+      const read = await mcpTool(servers.url, bobRw, "features", { slug: "radar", tool: "latest" });
+      expect(read.value).toEqual({ tool: "latest", result: { found: 3 } });
+      // A stopped app is told nothing of a plan.
+      serving(false);
+      const stopped = await mcpTool(servers.url, cyRw, "features", { slug: "radar", tool: "scan" });
+      expect(stopped.error).toContain("not_running");
+      expect(stopped.value).toBeUndefined();
+      // An app not absorbed is not called, and no plan is told.
+      serving(true);
+      await unabsorbApp(app, ada, "radar");
+      const out = await mcpTool(servers.url, cyRw, "features", { slug: "radar", tool: "scan" });
+      expect(out.error).toContain("not_absorbed");
+      expect(out.value).toBeUndefined();
+      const outRead = await mcpTool(servers.url, cyRw, "features", { slug: "radar", tool: "latest" });
+      expect(outRead.error).toContain("not_absorbed");
+      await absorbApp(app, ada, "radar");
+      expect(hits).toHaveLength(2);
+    } finally {
+      app.db.run("UPDATE repo SET visibility = 'private' WHERE id = ?1", [repo.id]);
+      stub.stop(true);
+    }
   });
 
   test("deleting the app takes its feature row and settings with it", () => {

@@ -32,7 +32,7 @@ Only a site admin absorbs an app, un-absorbs it or changes its settings. A repos
 
 - **Settings > Features** (`/settings/features`).
 - The API: `PUT /api/v1/features/:slug` to absorb and `DELETE /api/v1/features/:slug` to un-absorb. Both need an `admin`-scope token.
-- The `features` MCP tool. It is on the ask-first list: it shows a plan, and it applies only with `dryRun: false` and an `admin`-scope token.
+- The `features` MCP tool. It is on the ask-first list: it shows a plan, and absorbing and settings apply only with `dryRun: false` and an `admin`-scope token; calling a declared tool is described under MCP tools below.
 
 Each act records an event: `app.absorbed`, `app.unabsorbed` or `app.feature_settings`. The settings event names the keys that changed, never the values.
 
@@ -76,7 +76,11 @@ Settings stay behind on a fork. A fork of another forge's app carries its `featu
 
 ## Not done yet
 
-Until then an absorbed app is a menu link with kept settings (Settings › Features says so). The forge does not yet fire a feature's schedule (#9883), show its feed items (#9884), serve its MCP tools inside `/mcp` (#9885), keep `secret` settings (#9886) or show its health on `/system` (#9887).
+Until then an absorbed app is a menu link with kept settings (Settings › Features says so). The forge does not yet fire a feature's schedule (#9883), show its feed items (#9884), keep `secret` settings (#9886) or show its health on `/system` (#9887).
+
+## MCP tools
+
+A feature may declare `"tools": { "scan": { "description": "Run a scan now", "writes": true } }` (at most 12; `writes` is true unless it says `false`). The forge adds no tool to `/mcp` for them: the `features` tool lists them as `tools` with a `slug`, and `{ slug, tool, args }` calls one of an absorbed app. The forge POSTs `{ "args": … }` to the app's `/forge/tools/<name>` over loopback and returns its JSON (at most 64 KB, 10 seconds). A read tool answers at once for anyone who can read the app; a write tool is for someone who can write it, needs an `rw` token and plans first (`dryRun: false` does it). The plan of a write is told only once the call could be made (allowed, absorbed, running). These tools are MCP-only on purpose: they are an agent's door to the app, and the app's own page is the person's, so the terminal has no entry for them (a person reaches the app itself there). Code: `src/apps/feature_tools.ts`, `src/actions/feature_tools.ts`; tests: `test/feature-tools.test.ts`, `test/features.test.ts`.
 
 ## Findings
 
