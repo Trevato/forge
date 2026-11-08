@@ -11,7 +11,7 @@ import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
-import { card, empty, row, timeAgo } from "../ui.ts";
+import { row, timeAgo } from "../ui.ts";
 
 /** Where a word of the Now line goes. */
 export const nowHref = (stage: NowStage): string => `/now/${stage}`;
@@ -27,21 +27,18 @@ export function nowPage(ctx: Ctx): Response {
   const { total, rows } = readNowRows(ctx.app.db, stage);
   const body =
     total === 0
-      ? empty({ icon: "activity", title: `Nothing in ${NOW_WORDS[stage].toLowerCase()} right now`, note: NOW_HOLDS[stage] })
-      : card(
-          html`<ul class="list setting-list">
-            ${rows.map((r) =>
-              row({
-                href: r.href,
-                nav: true,
-                title: html`${r.title}`,
-                meta: html`${r.repo} · ${r.note}`,
-                trail: html`<span class="muted small">${timeAgo(r.at)}</span>`,
-              }),
-            )}
-          </ul>`,
-          { pad: false },
-        );
+      ? html`<p class="muted">Nothing in ${NOW_WORDS[stage].toLowerCase()} right now.</p>`
+      : html`<ul class="list setting-list">
+          ${rows.map((r) =>
+            row({
+              href: r.href,
+              nav: true,
+              title: html`${r.title}`,
+              meta: html`${r.repo} · ${r.note}`,
+              trail: html`<span class="muted small">${timeAgo(r.at)}</span>`,
+            }),
+          )}
+        </ul>`;
   notePhase(ctx.request, "render", performance.now() - reading);
   return page({
     ctx,
