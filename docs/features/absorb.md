@@ -76,7 +76,7 @@ Settings stay behind on a fork. A fork of another forge's app carries its `featu
 
 ## Not done yet
 
-The forge does not yet fire a feature's schedule, show its feed items, serve its MCP tools inside the forge's `/mcp`, keep `secret` settings or show its health on `/system`.
+Until then an absorbed app is a menu link with kept settings (Settings › Features says so). The forge does not yet fire a feature's schedule (#9883), show its feed items (#9884), serve its MCP tools inside `/mcp` (#9885), keep `secret` settings (#9886) or show its health on `/system` (#9887).
 
 ## Findings
 

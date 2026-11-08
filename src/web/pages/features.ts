@@ -101,11 +101,12 @@ export async function featuresPage(ctx: Ctx): Promise<Response> {
   const rendering = performance.now();
   const body = html`<section class="settings-block">
       <h2>Features</h2>
+      <p class="muted">An absorbed app is a menu link with its settings kept here.</p>
       ${listed.value.length === 0
         ? empty({
             icon: "rocket",
             title: "No app declares a feature yet",
-            note: 'An app declares one with a "feature" block in its forge.json: a name, a page and typed settings. Absorbing it puts it in the forge\'s nav and keeps its settings here.',
+            note: 'An app declares one with a "feature" block in its forge.json: a name, a page and typed settings.',
             action: html`<p><a href="${DOCS}">How an app declares a feature</a></p>`,
           })
         : html`<ul class="list setting-list">
