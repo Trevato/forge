@@ -796,7 +796,8 @@ export function appVisitorsView(v: AppVitals): Html {
       : `p75 load each day over the last 30 days, latest ${ms(latest ?? undefined)}, range ${ms(Math.min(...known))} to ${ms(Math.max(...known))}`,
   );
   return card(
-    html`<p class="muted small mb">
+    html`<p class="small mb"><a href="app/traffic">Where visitors come from and where they go</a></p>
+      <p class="muted small mb">
         Counted by the beacon the template ships, through the forge: no
         address is kept, and a visitor is the same only within a day, so the
         7 day figure adds the days up.

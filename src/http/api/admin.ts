@@ -7,6 +7,8 @@
 
 
 import { crawlReport } from "../../perf/crawlers.ts";
+import { getAppById } from "../../core/apps.ts";
+import { probeViews } from "../../perf/views_probe.ts";
 import { kpiProbe } from "../../web/studio/kpi_probe.ts";
 import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
@@ -145,6 +147,24 @@ export function adminRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
     return json(kpiProbe(ctx.app));
+  });
+
+  // The traffic view's numbers, each counted again another way (`perf/views_probe.ts`).
+  // `scope` is `forge` or an app's id; `number`, `dimension`+`key` and `steps` pick what to show.
+  router.add("GET", "/api/v1/admin/traffic/probe", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const q = ctx.url.searchParams;
+    const scope = q.get("scope") ?? "forge";
+    if (scope !== "forge" && getAppById(ctx.app.db, scope) === undefined) return notFound();
+    const probed = probeViews(ctx.app.db, scope, q.get("window"), q.get("who") === "scrapers" ? "scrapers" : "people", Date.now(), {
+      dimension: q.get("dimension"),
+      key: q.get("key"),
+      steps: q.get("steps"),
+    });
+    const only = q.get("number");
+    return json(only === null ? probed : { ...probed, numbers: probed.numbers.filter((n) => n.id === only) });
   });
 
   // The forge's capacity (`core/capacity.ts`): read and changed live by an

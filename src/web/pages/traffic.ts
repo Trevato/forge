@@ -172,6 +172,9 @@ export function trafficPage(ctx: Ctx): Response {
           ${top("Country", tops.countries, t)}
           ${top("Request signature", tops.signatures, t)}
           <p class="mt">
+            <a href="/settings/traffic/sources">Where people come from and where they go: sources, campaigns, a path to a goal</a>
+          </p>
+          <p class="mt">
             <a href="/settings/traffic/scrapes">What was scraped, and who: reads, networks, captures</a>
           </p>
           <p class="small muted mt">

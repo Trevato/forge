@@ -462,6 +462,9 @@ import {
 import { captureStore, loopWatch, perfRecord, readLedger } from "../perf/live.ts";
 import { classOf, countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
 import { createTrafficWriter } from "../perf/traffic_store.ts";
+import { startGithubPull } from "../perf/github_traffic.ts";
+import { appSourcesPage } from "../web/pages/sources.ts";
+import { createViewWriter } from "../perf/views_store.ts";
 import { createReadWriter, readOf } from "../perf/reads.ts";
 import { parseServerTiming } from "../perf/record.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
@@ -1381,6 +1384,7 @@ export function buildRouter(): Router<Handler> {
     proposalTokenRevoke,
   );
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
+  router.add("GET", "/:owner/:name/settings/app/traffic", appSourcesPage);
   router.add("GET", "/:owner/:name/settings/machines", machinesSettingsPage);
   // The shell page; an upgrade at the same path is the socket (`machines/shell.ts`).
   router.add("GET", "/:owner/:name/machines/:machine/shell", machineShellPage);
@@ -2261,6 +2265,9 @@ export async function serve(app: App): Promise<Servers> {
   const timings = new Map<Database, RouteTiming>();
   // The minute ledger's history: one write a minute, never on a request.
   const trafficWriter = createTrafficWriter(app.db, perfRecord.ledger, app.log);
+  // Page views are buffered by the beacon doors and written here; GitHub's traffic is pulled daily when a token is set.
+  const viewWriter = createViewWriter(app.db, app.log);
+  const githubPull = startGithubPull(app.db, app.log);
   const readWriter = createReadWriter(app.db, readLedger, app.log);
   const counted = (
     owner: App,
@@ -2564,6 +2571,8 @@ export async function serve(app: App): Promise<Servers> {
       }
       timings.clear();
       trafficWriter.stop();
+      viewWriter.stop();
+      githubPull?.stop();
       readWriter.stop();
       // A child's hooks stop answering before its database closes.
       for (const key of [...new Set([...childHttps.keys(), ...childInternals.keys()])]) letGo(key);

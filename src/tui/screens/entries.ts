@@ -23,6 +23,7 @@ import { entry as crewSplits } from "./crewsplits.ts";
 import { entry as displays } from "./displays.ts";
 import { entry as domains } from "./domains.ts";
 import { entry as edgeOnly } from "./edgeonly.ts";
+import { entry as traffic } from "./trafficview.ts";
 import { entry as feed } from "./feed.ts";
 import { entry as forgeView } from "./forgeview.ts";
 import { entry as front } from "./front.ts";
@@ -82,6 +83,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   valves,
   access,
   edgeOnly,
+  traffic,
   audit,
   secrets,
   crewSplits,
