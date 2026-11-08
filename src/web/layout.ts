@@ -295,6 +295,7 @@ function userMenu(
     { label: "Talk", href: "/talk", icon: "comment" },
     { label: "Explore", href: "/explore", icon: "search" },
     { label: "Packs", href: "/packs", icon: "rocket" },
+    { label: "Displays", href: "/displays", icon: "monitor" },
     { label: "Map", href: "/map", icon: "map" },
     ...featureItems(ctx, user),
     { separator: true, label: "" },

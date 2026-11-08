@@ -66,8 +66,8 @@ afterAll(async () => {
 const get = async (path: string) => (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
 const bytes = (t: string) => new TextEncoder().encode(t).length;
 
-// Measured 30,889 and 24,540 (before: 31,622 on main with #8800, 31,968 before #8773 and 24,738). The margin covers the port digits and times in the page (up to ~160 B seen), so it holds the page from growing, not a tighter squeeze.
-const BUDGET = { pull: 31_100, list: 24_900 };
+// Measured 31,084 (pull) and 25,064 (list) with the Displays entry in the account menu and palette. Each budget is that plus ~160 B, the spread the port digits and times in the page showed, so it holds the page from growing and is not a tighter squeeze.
+const BUDGET = { pull: 31_250, list: 25_230 };
 
 test("the pull page's check is a line with a dot and its word, not a card around a badge", async () => {
   const text = await get(`/alice/r/pulls/${number}`);

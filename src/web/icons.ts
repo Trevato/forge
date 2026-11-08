@@ -103,6 +103,7 @@ const PATHS = {
   ban: `<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>`,
   circleX: `<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>`,
   terminal: `<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>`,
+  monitor: `<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>`,
 } as const;
 
 export type IconName = keyof typeof PATHS;
