@@ -763,7 +763,7 @@ function appSettingsView(
     <div class="mt">
       ${appDomainsView(base, domains.ok ? domains.value : undefined)}
     </div>
-    ${when(egress !== undefined && egress.rows.length > 0, () => html`<div class="mt">${appEgressView(base, egress!)}</div>`)}
+    ${when(egress !== undefined, () => html`<div class="mt">${appEgressView(base, egress!)}</div>`)}
     <div class="mt">
       ${card(
         html`<p>
@@ -1371,30 +1371,26 @@ function appEgressView(base: string, egress: EgressView): Html {
         >`,
       }),
   );
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
-          Each is an exact address and port forge.json asks for. A grant opens
-          that one destination for the app's cells and nothing else.${egress.canChange
-            ? null
-            : " Only a site admin grants or revokes."}
-        </p>
-      </div>
-      <ul class="list setting-list">
-        ${rows}
-      </ul>
-      ${when(
-        changes.length > 0,
-        () =>
-          html`<div class="card-body">
-            <div class="timeline">${changes}</div>
-          </div>`,
-      )}`,
-    {
-      head: html`${icon("globe")}
-        <h2>Private destinations asked for</h2>`,
-    },
-  );
+  return html`<section class="settings-block" id="egress">
+    <h2>Private destinations asked for</h2>
+    ${rows.length === 0
+      ? html`<p class="muted small">
+          This app reaches only the forge; every other host is refused.
+        </p>`
+      : html`<p class="muted small">
+            Each is an exact address and port forge.json asks for; every other
+            host is refused.${egress.canChange
+              ? null
+              : " Only a site admin grants or revokes."}
+          </p>
+          <ul class="list setting-list">
+            ${rows}
+          </ul>`}
+    ${when(
+      changes.length > 0,
+      () => html`<div class="timeline">${changes}</div>`,
+    )}
+  </section>`;
 }
 
 const EGRESS_ERRORS: Record<string, string> = {

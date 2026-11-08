@@ -137,6 +137,8 @@ Settings › Prompts (`promptsView()` in `src/web/pages/prompts.ts`, #9825) adds
 
 Settings › Hooks (`hooksPage()` in `src/web/pages/hooks.ts`, #9762) adds no component class and has no card or table: Webhooks and Add a webhook are each a `<section class="settings-block">` with an `<h2>`. Each hook is a `row()` in `<ul class="list setting-list">` (URL as title; events, state, added date and "unsigned" as meta; Send ping and a confirmed Delete in the trail), with its recent deliveries as nested child rows, Redeliver in the trail of a failed one. With no hook, one plain sentence. The secret is never drawn. Pinned by `test/hooks-rows.test.ts`.
 
+Settings › App › Private destinations asked for (`appEgressView()` in `src/web/pages/settings.ts`, #9856) adds no class and has no card: a `<section class="settings-block" id="egress">` with its `<h2>`, one sentence that every other host is refused, each destination a `row()` in `<ul class="list setting-list">` with Grant or a confirmed Revoke in the trail, and the recent changes as a timeline. With nothing asked for, one plain line: the app reaches only the forge. Pinned by `test/app-egress-grants.test.ts`.
+
 Settings › Model (`modelPage()` in `src/web/pages/model.ts`, #9800) adds no class and has no card: Your model budget is one `<section class="settings-block">` with an `<h2>`. A grant an admin gave is one `row()` in `<ul class="list setting-list" id="model-budget">`; with nothing (or an own subscription, or an admin) one plain sentence says what the account may spend and how to add a subscription. The token form sits straight in the block, typed once and never shown again. `ceilingCard` and `grantCard` stay cards on the account's page. Pinned by `test/model-page-shape.test.ts`.
 
 ## Organizations
