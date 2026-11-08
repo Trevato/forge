@@ -19,7 +19,7 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, card, empty, seg } from "../ui.ts";
+import { badge, btn, seg } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const DAYS = [1, 3, 7] as const;
@@ -51,9 +51,9 @@ function whose(n: Network | null): Html {
 
 function readsCard(r: RepoReads, from: number): Html {
   const commits = r.commits.filter((c) => isCommit(c.ref));
-  return card(
-    html`<p class="small">
-        <strong class="break">${r.repo}</strong>: ${r.requests} reads, ${r.anonymous} anonymous,
+  return html`<h3 class="break">${r.repo}</h3>
+      <p class="small">
+        ${r.requests} reads, ${r.anonymous} anonymous,
         ${r.paths} distinct paths.
         ${r.coverage === undefined || r.coverage === null
           ? html`<span class="muted">Coverage unknown.</span>`
@@ -76,29 +76,24 @@ function readsCard(r: RepoReads, from: number): Html {
       ${commits.length === 0
         ? null
         : html`<p class="small muted">Commits read:
-            ${commits.map((c) => html`<code>${c.ref.slice(0, 12)}</code> ${c.requests} `)}</p>`}`,
-  );
+            ${commits.map((c) => html`<code>${c.ref.slice(0, 12)}</code> ${c.requests} `)}</p>`}`;
 }
 
 function captureCard(now: number): Html {
   const c = captureStore.current(now);
   if (c === null)
-    return card(
-      html`<p class="small">
+    return html`<p class="small">
           A capture keeps full addresses and the shape of requests so one actor can be told across addresses.
           It lasts ${CAPTURE_MS / 60_000} minutes or ${CAPTURE_MAX} requests, keeps no cookies, tokens or
           query strings, skips signed-in people, and is deleted when it ends.
         </p>
-        <form method="post" action="${BASE}/capture" class="inline">${btn("Start a capture", { variant: "primary" })}</form>`,
-    );
-  return card(
-    html`<p class="small">
+      <form method="post" action="${BASE}/capture" class="inline">${btn("Start a capture", { variant: "primary" })}</form>`;
+  return html`<p class="small">
         Capture <code>${c.id}</code> is running: ${c.entries.length} requests kept${c.full ? " (full: later requests are not kept)" : ""},
         ends in ${Math.max(0, Math.ceil((c.expiresAt - now) / 60_000))} min and is then deleted.
         <a href="${BASE}">Refresh</a>
       </p>
-      <form method="post" action="${BASE}/stop" class="inline">${btn("Stop and delete it", { size: "sm" })}</form>`,
-  );
+      <form method="post" action="${BASE}/stop" class="inline">${btn("Stop and delete it", { size: "sm" })}</form>`;
 }
 
 function groupRow(g: Group, net: NetworkTable): Html {
@@ -114,8 +109,7 @@ function groupRow(g: Group, net: NetworkTable): Html {
 }
 
 function groupDetail(g: Group, net: NetworkTable): Html {
-  return card(
-    html`<h2 id="group">Group ${g.id}</h2>
+  return html`<h3 id="group">Group ${g.id}</h3>
       <p class="small">${g.size} requests from ${g.addresses.length} addresses, confidence ${g.confidence}.</p>
       <ul class="small">${g.reasons.map((r) => html`<li>${r}</li>`)}</ul>
       <p class="small muted">${LIMITS}</p>
@@ -136,8 +130,7 @@ function groupDetail(g: Group, net: NetworkTable): Html {
           </tbody>
         </table>
       </div>
-      ${g.size > SHOWN_REQUESTS ? html`<p class="small muted">First ${SHOWN_REQUESTS} of ${g.size} shown.</p>` : null}`,
-  );
+      ${g.size > SHOWN_REQUESTS ? html`<p class="small muted">First ${SHOWN_REQUESTS} of ${g.size} shown.</p>` : null}`;
 }
 
 export async function scrapesPage(ctx: Ctx): Promise<Response> {
@@ -168,41 +161,47 @@ export async function scrapesPage(ctx: Ctx): Promise<Response> {
   const body = html`<div class="mb">
       ${seg(DAYS.map((n) => ({ label: n === 1 ? "1 day" : `${n} days`, href: `${BASE}?days=${n}`, current: n === d })))}
     </div>
-    <h2>What was read</h2>
-    ${reports.length === 0
-      ? empty({ icon: "users", title: "No file reads recorded in this window", note: `Reads are kept up to ${READ_DAYS_MAX} days.` })
-      : reports.map((r) => readsCard(r, d))}
-    <h2>Who it is</h2>
-    ${card(
-      prefixes.length === 0
-        ? html`<p class="small muted">No address prefixes in the last 24 hours.</p>`
+    <section class="settings-block">
+      <h2>What was read</h2>
+      ${reports.length === 0
+        ? html`<p class="small">No file reads recorded in this window; reads are kept up to ${READ_DAYS_MAX} days.</p>`
+        : reports.map((r) => readsCard(r, d))}
+    </section>
+    <section class="settings-block">
+      <h2>Who it is</h2>
+      ${prefixes.length === 0
+        ? html`<p class="small">No address prefixes in the last 24 hours.</p>`
         : html`<div class="table-scroll"><table class="table" data-dense>
             <caption class="sr-only">Address prefixes and their networks</caption>
             <thead><tr><th scope="col">Prefix</th><th scope="col" class="num">Requests</th><th scope="col">Network (from the forge's own table)</th><th scope="col">Abuse contact</th></tr></thead>
             <tbody>${prefixes.map((p) => {
               const n = net.find(p.key);
               return html`<tr><td class="break">${p.key}</td><td class="num">${p.requests}</td><td class="small">${whose(n)}</td><td class="break small">${n?.abuse || "—"}</td></tr>`;
-            })}</tbody></table></div>`,
-    )}
-    <h2>One actor across addresses</h2>
-    ${captureCard(now)}
-    ${cap === null
-      ? null
-      : groups.length === 0
-        ? html`<p class="small muted">No group of three or more similar requests yet.</p>`
-        : card(html`<div class="table-scroll"><table class="table" data-dense>
-            <caption class="sr-only">Groups of requests that look alike</caption>
-            <thead><tr><th scope="col">User agent</th><th scope="col" class="num">Requests</th><th scope="col" class="num">Rate</th><th scope="col" class="num">Addresses</th><th scope="col">Confidence</th><th scope="col">Networks</th><th scope="col"></th></tr></thead>
-            <tbody>${groups.slice(0, 20).map((g) => groupRow(g, net))}</tbody></table></div>
-            <p class="small muted">Groups share a user agent and the names and order of their headers. ${LIMITS}</p>`)}
-    ${picked === undefined ? null : groupDetail(picked, net)}
-    <h2>Networks on file</h2>
-    ${card(html`<p class="small">${net.size} ranges. Lookups are local: no visitor address is sent to anyone. Paste lines of
+            })}</tbody></table></div>`}
+    </section>
+    <section class="settings-block">
+      <h2>One actor across addresses</h2>
+      ${captureCard(now)}
+      ${cap === null
+        ? null
+        : groups.length === 0
+          ? html`<p class="small">No group of three or more similar requests yet.</p>`
+          : html`<div class="table-scroll"><table class="table" data-dense>
+              <caption class="sr-only">Groups of requests that look alike</caption>
+              <thead><tr><th scope="col">User agent</th><th scope="col" class="num">Requests</th><th scope="col" class="num">Rate</th><th scope="col" class="num">Addresses</th><th scope="col">Confidence</th><th scope="col">Networks</th><th scope="col"></th></tr></thead>
+              <tbody>${groups.slice(0, 20).map((g) => groupRow(g, net))}</tbody></table></div>
+              <p class="small muted">Groups share a user agent and the names and order of their headers. ${LIMITS}</p>`}
+      ${picked === undefined ? null : groupDetail(picked, net)}
+    </section>
+    <section class="settings-block">
+      <h2>Networks on file</h2>
+      <p class="small">${net.size} ranges. Lookups are local: no visitor address is sent to anyone. Paste lines of
         <code>range, name, operator, country, abuse contact</code> from a registry you looked up yourself.</p>
       <form method="post" action="${BASE}/networks">
         <textarea name="lines" rows="4" maxlength="200000" aria-label="Network ranges" placeholder="203.0.0.0/16, Example Hosting, Example Ltd, NL, abuse@example.net"></textarea>
         ${btn("Save networks", { size: "sm" })}
-      </form>`)}`;
+      </form>
+    </section>`;
   notePhase(ctx.request, "render", performance.now() - rendering);
   return page({
     ctx,

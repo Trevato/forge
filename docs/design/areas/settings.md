@@ -101,6 +101,14 @@ Add an account and Every read are each a `<section class="settings-block">` with
 
 Settings › Telemetry (`telemetryPage()` in `src/web/pages/telemetry.ts`, #9806) adds no class: two `<section class="settings-block">` blocks, Telemetry grants (one plain paragraph, then each agent a `row()` with its Grant/Revoke form in a `.setting-list`) and Reads; an empty list is one plain sentence. Pinned by `test/telemetry-blocks.test.ts`.
 
+Settings › Traffic › Scrapes (`scrapesPage()` in `src/web/pages/scrapes.ts`, #9807) adds no class and has no card: under
+the day switch, What was read, Who it is, One actor across addresses and Networks on file are each a
+`<section class="settings-block">` with an `<h2>`. Each repository read is an `<h3>` over its counts and path lists; a
+picked capture group is an `<h3 id="group">` over its reasons, export button and requests table, inside the One actor
+block. The prefix, group and request tables keep their `.table-scroll` box, `sr-only` caption and `data-dense`; the
+capture and networks forms sit straight in their blocks. An empty part (no reads in the window, no prefixes, no groups
+yet) is one plain sentence. Pinned by `test/scrapes-blocks.test.ts`.
+
 Settings › Trusted (`trustedPage()` in `src/web/pages/trusted.ts`, #9792) adds no component class. As on the home page it is
 headings over rows: Fold-in, Trusted sources and Trust a source are each a `<section class="settings-block">` with an
 `<h2>`. Each trusted entry is a `row()` in `<ul class="list setting-list" id="trusted-list">`; its state is a badge in the
