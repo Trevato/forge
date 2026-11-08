@@ -27,6 +27,7 @@ export type RepoTab =
   | "app"
   | "runs"
   | "events"
+  | "flows"
   | "api"
   | "settings"
   /** A page that belongs to no tab (waves): nothing is marked current. */
@@ -114,6 +115,8 @@ function work(ctx: Ctx, base: string, repo: Repo | undefined): Steps {
       });
     }
     steps.push({ key: "events", label: "Events", href: `${base}/events` });
+    // What flows in and out: origin, sources, pins, forks (#9434). The page gates itself like the repo.
+    steps.push({ key: "flows", label: "Flows", href: `${base}/flows` });
     // An app that serves /openapi.json gets its API reference. The spec is
     // read in the background and remembered, so a header never waits.
     if (record !== undefined && canEnterApp(ctx.app.db, repo, record, ctx.auth.user)) {

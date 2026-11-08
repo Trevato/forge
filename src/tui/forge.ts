@@ -81,6 +81,7 @@ import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { nextScreen } from "./screens/next.ts";
+import { flowsScreen } from "./screens/flows.ts";
 import { weekScreen } from "./screens/week.ts";
 import { machinesScreen } from "./screens/machines.ts";
 import { newPullScreen } from "./screens/newpull.ts";
@@ -144,6 +145,12 @@ const REPO_VERBS: readonly {
     id: "week",
     title: "The week in a repository",
     open: (f, ctx, repo) => weekScreen(f, ctx, repo),
+  },
+  {
+    // What flows in and out of a repository, and the radar's key for its admin (#9434).
+    id: "flows",
+    title: "Flows of a repository",
+    open: (f, ctx, repo) => flowsScreen(f, ctx, repo),
   },
   {
     // Settings → Machines' other door: the machines and last shell sessions, writers only (#9471).
