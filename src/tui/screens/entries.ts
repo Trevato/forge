@@ -10,6 +10,7 @@ import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { entry as access } from "./access.ts";
 import { entry as agents } from "./agents.ts";
+import { entry as askData } from "./ask_data.ts";
 import { entry as archived } from "./archived.ts";
 import { entry as audit } from "./audit.ts";
 import { entry as bets } from "./bets.ts";
@@ -74,6 +75,7 @@ export interface PaletteEntry {
 export const ENTRIES: readonly PaletteEntry[] = [
   sentinel,
   boards,
+  askData,
   bugs,
   homePins,
   system,

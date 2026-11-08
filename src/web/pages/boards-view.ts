@@ -25,7 +25,8 @@ import { forgeCeiling } from "../../flow/ceiling.ts";
 import { alarmLines, cachedAlarms } from "../studio/alarm_lines.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { panelData, runFor } from "../../boards/panel_data.ts";
-import { cellsOf, paramsOf, queryFields, readParams } from "./boards.ts";
+import { readParams } from "../../boards/params.ts";
+import { cellsOf, paramsOf, queryFields } from "./boards.ts";
 
 /** The events the panels' queries read (runs, pulls, checks, issues, usage): any of them may change a chart. */
 const READS = "run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*";

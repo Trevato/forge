@@ -84,6 +84,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["signins", "Signed in", "your browsers and tokens; d signs a browser out"],
     ["sentinel", "Sentinel", "the forge's open faults"],
     ["boards", "Boards", "the forge's boards and their panels"],
+    ["ask-data", "Data explorer", "start from a question about the forge's data"],
     ["bugs", "Bugs", "open bugs and the bug clock"],
     ["home-pins", "Pinned panels", "the panels pinned to home: reorder and unpin"],
     ["now", "Now", "what check, review, land and live count, with the rows"],

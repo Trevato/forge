@@ -9,9 +9,11 @@
  */
 import { CHART_NAMES, CHARTS, type Cell, type Chart } from "../../boards/chart.ts";
 import { runFor } from "../../boards/panel_data.ts";
-import { runQuery, type Query, type Row } from "../../boards/query.ts";
+import { runQuery, type Row } from "../../boards/query.ts";
 import { gaps, SYSTEM } from "../../boards/sampler.ts";
 import { SOURCES } from "../../boards/sources.ts";
+import { BUCKET_MS, isBucket, MAX_PARAM, readParams, toQuery, type Bucket, type Params } from "../../boards/params.ts";
+import { aggregateOption, ask, columnNote, columnOption, unitOf, GUIDE, parseSentence, QUESTIONS, sentence } from "../../boards/guide.ts";
 import { listAllBoards } from "../../actions/boards.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
@@ -20,58 +22,11 @@ import { html, when } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
 
-const BUCKET_MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
 const AGGREGATES = ["count", "sum", "avg", "max"] as const;
 const OPS = ["eq", "ne", "lt", "lte", "gt", "gte", "starts"] as const;
-const MAX_PARAM = 256;
+const OP_LABEL = { eq: "eq — is", ne: "ne — is not", lt: "lt — below", lte: "lte — at most", gt: "gt — above", gte: "gte — at least", starts: "starts — begins with" } as const;
 /** The fields a panel is made from: its chart and its query. */
 export const PANEL_FIELDS = ["chart", "source", "aggregate", "column", "by", "series", "from", "to", "fcolumn", "fop", "fvalue"] as const;
-
-type Bucket = keyof typeof BUCKET_MS;
-const isBucket = (s: string): s is Bucket => Object.hasOwn(BUCKET_MS, s);
-const isChart = (s: string): s is Chart => (CHARTS as readonly string[]).includes(s);
-
-/** What the URL asks for: plain strings, bounded; `runQuery` judges them. */
-export function readParams(search: URLSearchParams) {
-  const get = (k: string, d = "") => (search.get(k) ?? d).slice(0, MAX_PARAM);
-  const chart = get("chart", "line");
-  return {
-    chart: isChart(chart) ? chart : "line",
-    source: get("source", "runs"),
-    aggregate: get("aggregate", "count"),
-    column: get("column"),
-    by: get("by", "day"),
-    series: get("series"),
-    from: get("from"),
-    to: get("to"),
-    fcolumn: get("fcolumn"),
-    fop: get("fop", "eq"),
-    fvalue: get("fvalue"),
-    gcolumn: get("gcolumn"),
-    gvalue: get("gvalue"),
-    rows: get("rows") === "1" ? "1" : "",
-  };
-}
-export type Params = ReturnType<typeof readParams>;
-
-export function toQuery(p: Params): Query {
-  const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
-  const q: Query = { source: p.source, aggregate: p.aggregate };
-  if (p.column !== "") q.column = p.column;
-  if (p.from !== "") q.from = p.from;
-  if (p.to !== "") q.to = p.to;
-  q.groupBy = isBucket(p.by) ? { bucket: p.by } : p.by;
-  if (p.series !== "") q.series = p.series;
-  const filter: NonNullable<Query["filter"]> = [];
-  const add = (column: string, op: string, value: string) => {
-    const numeric = src?.columns[column] === "number";
-    filter.push({ column, op, value: numeric ? Number(value) : value });
-  };
-  if (p.fcolumn !== "") add(p.fcolumn, p.fop, p.fvalue);
-  if (p.gcolumn !== "") add(p.gcolumn, "eq", p.gvalue);
-  if (filter.length > 0) q.filter = filter;
-  return q;
-}
 
 /** Rows as the cells a chart draws: a null group or series reads "all"/"none". */
 export const cellsOf = (rows: readonly Row[], hrefs: readonly (string | null)[] = []): Cell[] =>
@@ -151,15 +106,15 @@ export function queryFields(p: Params) {
   ];
   return html`
     ${sel("chart", "Chart", CHARTS.map((c) => [c, CHART_NAMES[c]]), p.chart)}
-    ${sel("source", "Source", Object.keys(SOURCES).map((s) => [s, s]), p.source)}
-    ${sel("aggregate", "Aggregate", AGGREGATES.map((a) => [a, a]), p.aggregate)}
-    ${sel("column", "Column", colOpts([["", "(rows)"]], (c) => c, (c) => src!.columns[c] === "number"), p.column, "Column to aggregate")}
-    ${sel("by", "Group by", [...(Object.keys(BUCKET_MS) as Bucket[]).map((b): [string, string] => [b, `per ${b}`]), ...colOpts([], (c) => `by ${c}`)], p.by)}
+    ${sel("source", "Source", Object.keys(SOURCES).map((s) => [s, GUIDE[s]?.name ?? s]), p.source)}
+    ${sel("aggregate", "Aggregate", AGGREGATES.map((a) => aggregateOption(p.source, a, p.column)), p.aggregate)}
+    ${sel("column", "Column", colOpts([["", "(rows)"]], (c) => columnOption(p.source, c), (c) => src!.columns[c] === "number"), p.column, "Column to aggregate")}
+    ${sel("by", "Group by", [...(Object.keys(BUCKET_MS) as Bucket[]).map((b): [string, string] => [b, `per ${b}`]), ...colOpts([], (c) => `by ${columnOption(p.source, c)}`)], p.by)}
     ${sel("series", "Series", colOpts([["", "(one series)"]], (c) => `split by ${c}`), p.series, "Stacked area, heat strip, table")}
     ${text("from", "From", p.from, "from 2026-10-01")}
     ${text("to", "To", p.to, "to 2026-10-08")}
-    ${sel("fcolumn", "Filter column", colOpts([["", "(no filter)"]], (c) => c), p.fcolumn)}
-    ${sel("fop", "Filter operator", OPS.map((o) => [o, o]), p.fop)}
+    ${sel("fcolumn", "Filter column", colOpts([["", "(no filter)"]], (c) => columnOption(p.source, c)), p.fcolumn)}
+    ${sel("fop", "Filter operator", OPS.map((o) => [o, OP_LABEL[o]]), p.fop)}
     ${text("fvalue", "Filter value", p.fvalue, "value")}
   `;
 }
@@ -189,6 +144,9 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user?.isAdmin !== true || user.kind === "agent") return notFoundPage(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const asked = ctx.url.searchParams.get("ask");
+  const fill = asked ? parseSentence(asked, Date.now()) : null;
+  if (fill) return new Response(null, { status: 303, headers: { location: link({ ...readParams(new URLSearchParams(fill)), ...fill } as Params) } });
   const p = readParams(ctx.url.searchParams);
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
   const answer = timePhase(ctx.request, "query", () =>
@@ -202,15 +160,32 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
     html`<ul class="list">
       ${Object.entries(SOURCES).map(
         ([name, s]) => html`<li class="row">
-          <a href="${link({ ...p, source: name, by: "day", column: "", series: "", fcolumn: "", fvalue: "", gcolumn: "", gvalue: "", rows: "" })}"><strong>${name}</strong></a>
-          <span class="muted small mono">${Object.entries(s.columns).map(([c, t]) => `${c}:${t}`).join(" ")}</span>
-          ${s.docs && name === p.source
-            ? html`<dl class="small">${Object.entries(s.docs).map(([c, d]) => html`<dt class="mono">${c}</dt><dd class="muted">${d}</dd>`)}</dl>`
+          <a href="${link({ ...p, source: name, aggregate: "", by: "", column: "", series: "", fcolumn: "", fop: "", fvalue: "", gcolumn: "", gvalue: "", rows: "" })}"><strong>${GUIDE[name]?.name ?? name}</strong></a>
+          <span class="muted small mono">${name}</span>
+          ${name === p.source
+            ? html`<dl class="small">${Object.entries(s.columns).map(([c, t]) => html`<dt class="mono">${c} <span class="muted">(${t})</span></dt><dd class="muted">${columnNote(name, c)}${unitOf(name, c) === "" ? "" : ` (${unitOf(name, c)})`}</dd>`)}</dl>`
             : null}
         </li>`,
       )}
     </ul>`,
     { head: html`<h2>Sources</h2>`, pad: false },
+  );
+
+  const now = Date.now();
+  const askLink = (fill: Record<string, string>) => link({ ...readParams(new URLSearchParams(fill)), ...fill } as Params);
+  // A blank box (Show pressed with nothing typed) is no sentence, not an unreadable one.
+  const unread = asked !== null && asked.trim() !== "";
+  const questions = card(
+    html`<form method="get" action="/boards/data" class="bar">
+      ${field({ label: "Ask in a sentence", name: "ask", id: "f-ask", placeholder: "memory over the last 3 days", maxlength: 200, ...(unread ? { error: "I could not read that. Try a topic (cpu, memory, spend, deploys, slowest pages) and a window (last 3 days)." } : {}) })}
+      ${btn("Show", { variant: "ghost" })}
+    </form>
+    <ul class="list">
+      ${QUESTIONS.filter((q) => q.featured === true || q.source === p.source).map(
+        (q) => html`<li class="row"><a href="${askLink(ask(q, now))}"><strong>${q.label}</strong></a> <span class="muted small">${GUIDE[q.source]?.name ?? q.source}</span></li>`,
+      )}
+    </ul>`,
+    { head: html`<h2>Start from a question</h2>` },
   );
 
   const form = card(
@@ -232,7 +207,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
     const split = answer.rows[0]?.series !== undefined;
     const chart =
       p.rows === ""
-        ? chartBox(p.chart, points, `${p.aggregate} of ${p.source}`)
+        ? chartBox(p.chart, points, GUIDE[p.source]?.name ?? p.source)
         : html`<p class="muted small">The rows behind a point, as the values of ${cols[0] ?? ""} with how many rows have each. <a href="${link({ ...p, rows: "" })}">Back to the chart</a>.</p>`;
     result = html`${chart}
       ${when(p.rows !== "" || p.chart !== "table", () => html`<table class="table mt">
@@ -263,7 +238,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
             )}
             <input type="hidden" name="w" value="1" /><input type="hidden" name="h" value="1" />
             ${selectField({ label: "Board", name: "slug", id: "f-pin-slug", options: boards.map((b) => ({ value: b.slug, label: b.board.title })) })}
-            ${field({ label: "Panel title", name: "title", id: "f-pin-title", required: true, maxlength: 80, value: `${p.aggregate} of ${p.source}` })}
+            ${field({ label: "Panel title", name: "title", id: "f-pin-title", required: true, maxlength: 80, value: sentence(p).slice(0, 80) })}
             ${btn("Pin to board")}
           </form>`,
           { head: html`<h2>Pin this query</h2>` },
@@ -287,7 +262,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Data</h1>${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
-      ${form} ${absent} ${card(result, { head: html`<h2>${p.source}</h2>` })} ${pin} ${sources}`,
+      ${questions} ${card(result, { head: html`<h2>${GUIDE[p.source]?.name ?? p.source}</h2>`, foot: html`${sentence(p)}`, id: "says" })} ${form} ${absent} ${pin} ${sources}`,
   });
   notePhase(ctx.request, "render", Math.max(0, performance.now() - rendering - boardsMs));
   return response;
