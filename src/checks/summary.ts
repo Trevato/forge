@@ -13,6 +13,8 @@ import { fullShard, OUT_OF_ROOM, TEMP_FULL } from "./disk_full.ts";
 import { oneLine } from "./words.ts";
 import { clip } from "../text/clip.ts";
 import { webvitals, type Entries } from "../release/webvitals.ts";
+import type { PageSize } from "../looks/capture.ts";
+export type { PageSize };
 
 /**
  * The first line of the block a timed full gate ends its log with
@@ -220,7 +222,7 @@ export function stepsWords(steps: readonly CheckStep[]): string {
 
 /** One look's recorded entries, or why it has none; plain data from the caller. */
 export type LookVitals =
-  | { readonly look: string; readonly entries: Entries }
+  | { readonly look: string; readonly entries: Entries; readonly size?: PageSize }
   | { readonly look: string; readonly skipped: string };
 
 /** One cell row of a look's table: words only, escaped where they are rendered. */
@@ -237,6 +239,20 @@ export interface LookRows {
   /** Why the look has no numbers (`no browser`); empty when it has rows. */
   readonly skipped: string;
   readonly rows: readonly VitalsRow[];
+  /** Screens tall (scrollHeight / innerHeight, one decimal); empty without a size. */
+  readonly screens: string;
+  /** A phone look whose page is wider than its window; false without a size. */
+  readonly sideways: boolean;
+}
+
+const isPhone = (look: string): boolean => look === "phone" || look.startsWith("phone ");
+
+/** `phone /x scrolls sideways` for each phone look wider than its window; empty when none. */
+export function sidewaysLine(groups: readonly LookRows[]): string {
+  return groups
+    .filter((g) => g.sideways)
+    .map((g) => `${g.look} scrolls sideways`)
+    .join("; ");
 }
 
 const VITAL_ROWS = [
@@ -253,7 +269,7 @@ const shown = (n: number, unit: string): string => `${n}${unit === "" ? "" : ` $
  */
 export function vitalsRows(looks: readonly LookVitals[]): readonly LookRows[] {
   return looks.map((l) => {
-    if ("skipped" in l) return { look: l.look, skipped: l.skipped, rows: [] };
+    if ("skipped" in l) return { look: l.look, skipped: l.skipped, rows: [], screens: "", sideways: false };
     const v = webvitals(l.entries);
     const rows = VITAL_ROWS.map(([vital, key]): VitalsRow => {
       const x = v[key];
@@ -264,6 +280,10 @@ export function vitalsRows(looks: readonly LookVitals[]): readonly LookRows[] {
         grade: x.grade ?? "n/a",
       };
     });
-    return { look: l.look, skipped: "", rows };
+    const z = l.size;
+    const tall = z === undefined || z.innerHeight <= 0 ? null : z.scrollHeight / z.innerHeight;
+    const screens = tall === null ? "" : (Math.round(tall * 10) / 10).toFixed(1);
+    const sideways = z !== undefined && isPhone(l.look) && z.scrollWidth > z.innerWidth;
+    return { look: l.look, skipped: "", rows, screens, sideways };
   });
 }

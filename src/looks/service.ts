@@ -432,7 +432,10 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       // The thumb is the desktop page again, as a stranger: it adds no row.
       if (kind !== "thumb" && theme === "light") {
         const look = page === "/" ? kind : `${kind} ${page}`;
-        if (shot.ok) vitals.push({ look, entries: shot.value.entries });
+        if (shot.ok) {
+          const size = shot.value.size === undefined ? {} : { size: shot.value.size };
+          vitals.push({ look, entries: shot.value.entries, ...size });
+        }
         else if (isNoBrowser(shot.error))
           vitals.push({ look, skipped: "no browser" });
       }

@@ -92,6 +92,9 @@ describe("the look", () => {
     writeFileSync(input.out, input.width === 1280 ? DESKTOP_PNG : PNG);
     // What the page recorded: a slow paint for the phone, a shift for the desktop.
     return ok({
+      ...(input.width === 390
+        ? { size: { scrollWidth: 390, scrollHeight: 1600, innerWidth: 390, innerHeight: 800 } }
+        : {}),
       entries:
         input.width === 390
           ? { lcp: [{ startTime: 3100, size: 10 }] }
@@ -294,6 +297,8 @@ describe("the look", () => {
     expect(recorded).toHaveLength(2);
     expect(recorded.map((l) => l.look).sort()).toEqual(["desktop", "phone"]);
     const graded = vitalsRows(recorded);
+    // The phone's recorded size is stored beside its entries: two screens tall.
+    expect(graded.find((g) => g.look === "phone")!.screens).toBe("2.0");
     expect(graded.find((g) => g.look === "phone")!.rows[0]).toMatchObject({
       vital: "LCP",
       value: "3100 ms",
