@@ -101,3 +101,22 @@ describe.skipIf(chromium === undefined)("Settings › Crew, measured at 390x844"
     expect(m.scrollWidth).toBeLessThanOrEqual(m.viewportWidth);
   }, 30_000);
 });
+
+/**
+ * The admin's own Settings › Crew (/settings/crew, #9624), seeded with the
+ * same agents: the 39-character name and the 250-character unbroken brief.
+ * Its agent table sits in a scroller by design, so the page itself must not
+ * scroll sideways.
+ */
+const CREW_PATH = "/settings/crew";
+describe.skipIf(chromium === undefined)("Settings › Crew (admin page), measured at 390x844", () => {
+  test("the page does not scroll sideways", async () => {
+    const html = await (await fetch(`${servers.url}${CREW_PATH}`, { headers: { cookie: `${session.name}=${session.value}` } })).text();
+    expect(html).toContain("a".repeat(39));
+    expect(html).toContain(WORD);
+    const measure = `JSON.stringify({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth })`;
+    const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}${CREW_PATH}`, { width: 390, height: 844 }, [session], measure)) as { scrollWidth: number; innerWidth: number };
+    console.log(`crew settings page ${CREW_PATH} 390x844: ${JSON.stringify(m)}`);
+    expect(m.scrollWidth).toBeLessThanOrEqual(m.innerWidth);
+  }, 30_000);
+});
