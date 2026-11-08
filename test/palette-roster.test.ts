@@ -102,6 +102,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["maintenance", "Maintenance", "prepare the forge for a power-off, check the drain, or end maintenance"],
     ["crawlers", "Crawlers", "their share of answering time, and who was refused"],
     ["scrapes", "Scrapes", "what was read by repository, and groups in a running capture"],
+    ["traffic", "Traffic", "who is using the forge's answering time, and the top readers"],
     ["api", "API", "the forge's endpoints; run a GET"],
     ["changelog", "Changelog", "the last 30 releases and their pulls"],
     ["releases", "Releases", "the live release and the kept ones"],

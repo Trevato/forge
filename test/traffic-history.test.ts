@@ -178,9 +178,26 @@ test("the page offers the three windows, for an admin alone, and a loopback requ
   const text = await page.text();
   for (const w of ["15m", "24h", "7d"]) expect(text).toContain(`/settings/traffic?window=${w}`);
   expect(text).toContain("the forge itself");
+  // speaks the home page's language: blocks under headings, no cards
+  expect(text).not.toContain('class="card');
+  expect(text).toContain('<section class="settings-block"><h2>Who asked</h2>');
+  expect(text).toContain("Who is using the forge's answering time");
+  for (const h of ["Repository read", "User agent", "Address prefix", "Country", "Request signature"])
+    expect(text).toContain(`<section class="settings-block"><h2>${h}</h2>`);
+  expect(text).not.toContain("<table class=\"table\" data-dense>\n            <caption class=\"sr-only\">\n              User agent");
   expect(windowOf("nonsense")).toBe("15m");
   const notAdmin = `forge_session=${createSession(app.db, bob.id).token}`;
   expect((await fetch(`${servers.url}/settings/traffic?window=7d`, { headers: { cookie: notAdmin } })).status).toBe(404);
+});
+
+test("an empty window is one sentence, not a card", async () => {
+  const cookie = `forge_session=${createSession(app.db, admin.id).token}`;
+  const text = await (await fetch(`${servers.url}/settings/traffic?window=15m`, { headers: { cookie } })).text();
+  if (text.includes("data-empty")) {
+    expect(text).toContain("No requests in the last 15 minutes");
+    expect(text).not.toContain("empty-title");
+  }
+  expect(text).not.toContain('class="card empty"');
 });
 
 test("a deleted repository is named, with how; a private one only to who answers for it", async () => {

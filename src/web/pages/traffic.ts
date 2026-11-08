@@ -30,7 +30,7 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { TRAFFIC_TONES, trafficColumns } from "../studio/kpi_row.ts";
-import { card, empty, seg } from "../ui.ts";
+import { row, seg } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const CHART_W = 600;
@@ -72,36 +72,24 @@ function classes(t: TrafficHistory): Html {
   </div>`;
 }
 
+function block(title: string, content: Html): Html {
+  return html`<section class="settings-block"><h2>${title}</h2>${content}</section>`;
+}
+
 function top(title: string, rows: readonly TopRow[], t: TrafficTotals): Html {
-  return card(
+  return block(
+    title,
     rows.length === 0
       ? html`<p class="muted small">None in the window.</p>`
-      : html`<div class="table-scroll">
-          <table class="table" data-dense>
-            <caption class="sr-only">
-              ${title}
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">${title}</th>
-                <th scope="col" class="num">Share of time</th>
-                <th scope="col" class="num">Requests</th>
-                <th scope="col" class="num">Anonymous</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.map(
-                (r) =>
-                  html`<tr>
-                    <td class="break">${r.key}</td>
-                    <td class="num">${trafficShare(t, r.ms)}</td>
-                    <td class="num">${r.requests}</td>
-                    <td class="num">${r.anonymous}</td>
-                  </tr>`,
-              )}
-            </tbody>
-          </table>
-        </div>`,
+      : html`<ul class="list setting-list">
+          ${rows.map((r) =>
+            row({
+              title: html`<span class="break">${r.key}</span>`,
+              meta: html`${r.requests} requests, ${r.anonymous} anonymous`,
+              trail: html`${trafficShare(t, r.ms)} of time`,
+            }),
+          )}
+        </ul>`,
   );
 }
 
@@ -135,28 +123,28 @@ export function trafficPage(ctx: Ctx): Response {
   const span = TRAFFIC_WINDOWS[chosen].words;
   const body =
     t.requests === 0
-      ? empty({
-          icon: "users",
-          title: `No requests in the last ${span}`,
-          note: "Each finished minute is written down; this one is still counting.",
-        })
+      ? html`<p class="muted" data-empty>
+          No requests in the last ${span}. Each finished minute is written
+          down; this one is still counting.
+        </p>`
       : html`${wrong === null
             ? null
-            : html`<p class="mb">
+            : html`<p>
                 <strong
                   >Something is wrong: ${TRAFFIC_WORDS[wrong]} took
                   ${trafficShare(t, t.classes[wrong].ms)} of the answering
                   time.</strong
                 >
               </p>`}
-          ${card(
-            html`<p class="small muted mb">
-                ${t.requests} requests, ${seconds(t.ms)} of answering time,
-                ${t.refused} refused, about ${t.addresses} client
-                ${t.addresses === 1 ? "address" : "addresses"}
-                ${chosen === "15m" ? null : `in its busiest ${t.grain}`}.
-              </p>
-              <div class="table-scroll muted">
+          <p class="small muted">
+            ${t.requests} requests, ${seconds(t.ms)} of answering time,
+            ${t.refused} refused, about ${t.addresses} client
+            ${t.addresses === 1 ? "address" : "addresses"}
+            ${chosen === "15m" ? null : `in its busiest ${t.grain}`}.
+          </p>
+          ${block(
+            "Who asked",
+            html`<div class="table-scroll muted">
                 ${trafficColumns(
                   t.minutes,
                   CHART_W,
@@ -171,13 +159,13 @@ export function trafficPage(ctx: Ctx): Response {
           ${top("Address prefix", tops.prefixes, t)}
           ${top("Country", tops.countries, t)}
           ${top("Request signature", tops.signatures, t)}
-          <p class="mt">
+          <p>
             <a href="/settings/traffic/sources">Where people come from and where they go: sources, campaigns, a path to a goal</a>
           </p>
-          <p class="mt">
+          <p>
             <a href="/settings/traffic/scrapes">What was scraped, and who: reads, networks, captures</a>
           </p>
-          <p class="small muted mt">
+          <p class="small muted">
             ${chosen === "15m"
               ? KPI_COUNTS.traffic
               : "Share of summed time to answer. Refused means answered 429."}
@@ -192,9 +180,10 @@ export function trafficPage(ctx: Ctx): Response {
     ctx,
     title: "Traffic",
     body: html`<div class="page-head"><h1>Traffic</h1></div>
+      <p class="muted">Who is using the forge's answering time, and from where.</p>
       ${settingsLayout(
         accountSections("traffic", { admin: true }),
-        html`<div class="mb">
+        html`<div>
             ${seg(
               Object.entries(TRAFFIC_WINDOWS).map(([key, w]) => ({
                 label: w.words,

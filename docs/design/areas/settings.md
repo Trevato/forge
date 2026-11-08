@@ -126,6 +126,11 @@ title, each with a glyph (Trusted with a check, Ends soon with a clock, Lapsed w
 `.row-fields` forms. With no entry, one plain sentence: no one is trusted, so every pull waits for review. The forms post to the same routes as
 before. `test/trusted-sources.test.ts` holds the shape.
 
+Settings › Traffic (`trafficPage()` in `src/web/pages/traffic.ts`, #9775) adds no class and has no card: one sentence of purpose, the window switch, one
+line of numbers (requests, answering time, refused, addresses), then `<section class="settings-block">` blocks — Who asked
+(chart, legend, table) and one per top list (Repository read, User agent, Address prefix, Country, Request signature), each
+with an `<h2>` over `row()`s in a `.setting-list`: the key as title, requests and anonymous as meta, its share of time in the trail. Its terminal door is the admin palette entry `traffic` (`src/tui/screens/traffic.ts`); the how-to is `docs/features/traffic.md`. An empty top list or window is one plain sentence. Every stranger's string stays escaped by `html`.
+
 Settings › Crew (`crewPage()` and `crewReadiness()` in `src/web/pages/crew.ts`, #9826) adds no class and has no card. The
 readiness words come first: a danger notice (no runner, runner cannot run, unsandboxed) is an existing
 `.toast[data-tone="danger"]` with `role="alert"`. Spending, Agents, Scorecard, Model review, the per-model, per-prompt and
