@@ -22,6 +22,19 @@ const PASS_COUNT = /^\s*(\d+) pass$/;
 const FAIL_COUNT = /^\s*(\d+) fail$/;
 
 const HEADER = /^(\S+\.test\.[cm]?[jt]sx?):$/;
+
+/**
+ * Bun's closing summary (#9523): `N tests skipped:` and `N tests failed:`
+ * each repeat their lines after the last file, then the counts and `Ran N
+ * tests across M files.`. A reader that gives each `(fail)` line to the last
+ * `file.test.ts:` header it saw stops at the first of these, or every
+ * repeated failure lands on the last file printed; the next header (another
+ * shard's report) starts a file again.
+ */
+const SUMMARY = /^(?:\d+ tests? (?:failed|skipped|todo):|\s*\d+ (?:pass|fail|skip|todo)|Ran \d+ tests? across .*)\s*$/;
+
+/** Whether a log line opens or belongs to bun's closing summary, outside any file's block. */
+export const isSummaryLine = (line: string): boolean => SUMMARY.test(line);
 const UNNAMED_FAIL = /^\(fail\) ((?:.* > )?)\(unnamed\)/;
 /** bun's own caret line under a hook that timed out, printed right after its `(fail)`. */
 const HOOK_TIMEOUT = /^\s*\^ a (\S+) hook timed out/;
@@ -29,8 +42,6 @@ const HOOK_TIMEOUT = /^\s*\^ a (\S+) hook timed out/;
 const THROWN = /^(?:[A-Za-z]*Error|error): .+/;
 const RESULT_LINE = /^\((?:fail|pass)\) /;
 const MAX_THROWN = 120;
-/** The tail that ends a file's report; bun's recap of `(fail)` lines can follow, headerless. */
-const SUMMARY = /^\s*\d+ pass$|^\d+ tests? failed:$/;
 
 /**
  * The first error bun printed since the previous result line, printable only,

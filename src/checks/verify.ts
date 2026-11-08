@@ -15,6 +15,8 @@
  * next, which files a log says failed. The service runs them.
  */
 
+import { isSummaryLine } from "./bun-test.ts";
+
 /** The environment a scheduled verification of the default branch runs in. */
 export const VERIFY_ENV = "verify";
 /** The environment a bisection step runs in. */
@@ -114,6 +116,7 @@ export function failedFiles(lines: readonly string[]): string[] {
   for (const line of lines) {
     const header = HEADER.exec(line);
     if (header) current = header[1]!.replace(/^\.\//, "");
+    else if (isSummaryLine(line)) current = undefined;
     else if (FAILED.test(line) && current !== undefined && safeFile(current) && !flaky.has(current) && !found.includes(current)) {
       found.push(current);
       if (found.length >= MAX_FILES) break;

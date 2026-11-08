@@ -7,7 +7,7 @@
  * is disjoint and covering, and that one red shard makes the run red.
  */
 
-import { nameUnnamed } from "../src/checks/bun-test.ts";
+import { isSummaryLine, nameUnnamed } from "../src/checks/bun-test.ts";
 
 /**
  * No more than this many `bun test` processes at once, whatever the host:
@@ -564,6 +564,7 @@ export function failingFiles(output: string): string[] {
   for (const line of output.split("\n")) {
     const header = HEADER.exec(line);
     if (header) current = header[1]!;
+    else if (isSummaryLine(line)) current = undefined;
     else if (FAILED.test(line) && current !== undefined && !found.includes(current))
       found.push(current);
   }

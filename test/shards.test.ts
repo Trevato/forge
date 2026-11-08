@@ -708,6 +708,21 @@ describe("failingFiles", () => {
     expect(failingFiles(report)).toEqual(["test/b.test.ts"]);
   });
 
+  test("bun's closing summary names no file: the green file printed last is not run again", () => {
+    const report = [
+      "test/b.test.ts:",
+      "(fail) one [0.1ms]",
+      "test/c.test.ts:",
+      "(pass) fine",
+      "1 tests failed:",
+      "(fail) one [0.1ms]",
+      " 1 pass",
+      " 1 fail",
+      "Ran 2 tests across 2 files. [9.00ms]",
+    ].join("\n");
+    expect(failingFiles(report)).toEqual(["test/b.test.ts"]);
+  });
+
   test("a report that names no failing test names no file", () => {
     expect(failingFiles("test/a.test.ts:\nerror: cannot load\n")).toEqual([]);
     expect(failingFiles("(fail) before any header")).toEqual([]);
