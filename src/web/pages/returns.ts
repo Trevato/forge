@@ -14,7 +14,7 @@ import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { card, listCard, row } from "../ui.ts";
+import { row } from "../ui.ts";
 import { usd } from "../../core/money.ts";
 
 const runs = (m: Money): string => `${m.runs} ${m.runs === 1 ? "run" : "runs"}`;
@@ -25,6 +25,16 @@ const line = (title: string, m: Money, note?: string): Html =>
     meta: html`${runs(m)}${note === undefined ? "" : ` · ${note}`}`,
     trail: html`<b>${usd(m.usd)}</b>`,
   });
+
+/** A plain section under its own h2, rows in a list; no card (#9896). */
+const section = (id: string, heading: string, rows: Html[], note?: string): Html =>
+  html`<section class="stack" aria-labelledby="${id}">
+    <h2 id="${id}">${heading}</h2>
+    ${note === undefined ? null : html`<p class="muted small">${note}</p>`}
+    <ul class="list">
+      ${rows}
+    </ul>
+  </section>`;
 
 /** GET /board/returns */
 export function returnsPage(ctx: Ctx): Response {
@@ -80,7 +90,9 @@ export function returnsPage(ctx: Ctx): Response {
       ${usd(nothing.closed.usd)} closed with nothing · ${usd(nothing.open.usd)} still open
     </p>
     <div class="stack">
-      ${listCard(
+      ${section(
+        "returns-where",
+        "Where it went",
         [
           line(
             "On work that landed",
@@ -90,20 +102,22 @@ export function returnsPage(ctx: Ctx): Response {
           line("On work closed without a merge", nothing.closed),
           line("On work still open, nothing merged yet", nothing.open),
         ],
-        { head: html`<h2>Where it went</h2>` },
       )}
-      ${listCard(
+      ${section(
+        "returns-not-landed",
+        "What did not land, and why",
         [
           line("Runs that failed", nothing.failed),
           // Reasons are a part of "Runs that failed", not beside it: said so.
           ...nothing.topFailures.map((f) => line(`of which: ${f.reason}`, f)),
           line("Runs cancelled", nothing.cancelled),
         ],
-        { head: html`<h2>What did not land, and why</h2>` },
       )}
       ${r.byPillar.length === 0
         ? null
-        : listCard(
+        : section(
+            "returns-by-pillar",
+            "By pillar",
             r.byPillar.map((b) =>
               row({
                 title: b.pillar,
@@ -115,9 +129,10 @@ export function returnsPage(ctx: Ctx): Response {
                 trail: html`<b>${usd(b.usd)}</b>`,
               }),
             ),
-            { head: html`<h2 id="returns-by-pillar">By pillar</h2>` },
           )}
-      ${listCard(
+      ${section(
+        "returns-costliest",
+        "What cost the most",
         r.costliest.map((c) => {
           const repo = repos.get(c.repoId);
           const slug = repo ? `${repo.ownerName}/${repo.name}` : "";
@@ -133,11 +148,12 @@ export function returnsPage(ctx: Ctx): Response {
             trail: html`<b>${usd(c.usd)}</b>`,
           });
         }),
-        { head: html`<h2>What cost the most</h2>` },
       )}
       ${r.outside.length === 0
         ? null
-        : listCard(
+        : section(
+            "returns-outside",
+            "Reported from outside",
             r.outside.map((o) =>
               row({
                 title: o.who,
@@ -146,19 +162,16 @@ export function returnsPage(ctx: Ctx): Response {
                 trail: html`<b>${usd(o.usd)}</b>`,
               }),
             ),
-            {
-              head: html`<h2>Reported from outside</h2>
-                <span class="muted small">what sessions the forge did not run say they spent; not in the figures above</span>`,
-            },
+            "what sessions the forge did not run say they spent; not in the figures above",
           )}
-      ${card(
-        html`<p>
+      <section class="stack" aria-labelledby="returns-run">
+        <h2 id="returns-run">A run</h2>
+        <p>
           A run that finished well costs ${usd(r.okRun.usd.median)} and takes
           ${r.okRun.minutes.median} minutes (median); one in ten costs over
           ${usd(r.okRun.usd.p90)} or runs over ${r.okRun.minutes.p90} minutes.
-        </p>`,
-        { head: html`<h2>A run</h2>` },
-      )}
+        </p>
+      </section>
     </div>`;
   const response = page({ ctx, title: "What the tokens bought", body });
   notePhase(ctx.request, "render", performance.now() - rendering);
