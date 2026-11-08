@@ -157,7 +157,7 @@ describe("pages", () => {
     app.close();
     await rm(dataDir, { recursive: true, force: true });
   });
-  test("a stranger reads the list and a pack's page, with the deploy command and what happens to a pull", async () => {
+  test("a stranger reads the list and a pack's page, with the deploy command and what does not come with it", async () => {
     const list = await fetch(`${servers.url}/packs`);
     expect(list.status).toBe(200);
     const text = await list.text();
@@ -167,7 +167,8 @@ describe("pages", () => {
     expect(one.status).toBe(200);
     const body = await one.text();
     expect(body).toContain("scripts/pack.ts deploy games");
-    expect(body).toContain("waits for a person");
+    expect(body).toContain("No data, secrets or variables come with it.");
+    expect(body).not.toContain("Help build these apps</h2>");
     expect(body).toContain("gabrielecirulli/2048");
     expect((await fetch(`${servers.url}/packs/nothing`)).status).toBe(404);
   });
@@ -196,5 +197,15 @@ describe("pages", () => {
       expect(copy).not.toBeNull();
       expect(copy!.className).toContain("js-only");
     }
+  });
+  test("a pack's page puts the deploy command before what it brings; the list is plain rows", async () => {
+    const page = await (await fetch(`${servers.url}/packs/games`)).text();
+    const cmd = page.indexOf('id="pack-command"');
+    expect(cmd).toBeGreaterThan(-1);
+    expect(cmd).toBeLessThan(page.indexOf("What it brings"));
+    const list = await (await fetch(`${servers.url}/packs`)).text();
+    expect(list).toContain('class="list"');
+    expect(list).not.toMatch(/class="card[" ]/);
+    expect(list).toContain('class="row"');
   });
 });
