@@ -15,9 +15,11 @@ import { createRepo } from "../src/actions/repos.ts";
 import { MAX_SOURCES, probeLinks, type Reads } from "../src/flows/probe.ts";
 import { startRadar } from "../src/flows/start.ts";
 import { followHealth, plainUrl, readFlows } from "../src/flows/view.ts";
+import { flowMap, lineRow } from "../src/web/pages/flows.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { PREVIEW_ADMIN, PREVIEW_REPO } from "../src/spawn/preview-looks.ts";
 import { seedPreview } from "../src/spawn/preview-seed.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 
 const v = (s: string) => parseSemver(s)!;
 
@@ -52,6 +54,10 @@ let dir: string;
 let app: App;
 let servers: Servers;
 const KEY = "flows-test-key";
+const sign = (id: string, name: string, role: string) => {
+  const said = `${id}|${name}|${role}|${Date.now() + 60_000}`;
+    return { "x-forge-identity": said, "x-forge-signature": createHmac("sha256", KEY).update(said).digest("base64url") };
+};
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-flows-"));
   app = createApp({ dataDir: dir, port: 0, previewIdentityKey: KEY });
@@ -148,10 +154,6 @@ describe("starting the radar", () => {
 });
 
 describe("the page", () => {
-  const sign = (id: string, name: string, role: string) => {
-    const said = `${id}|${name}|${role}|${Date.now() + 60_000}`;
-    return { "x-forge-identity": said, "x-forge-signature": createHmac("sha256", KEY).update(said).digest("base64url") };
-  };
   const url = () => `${servers.url}/${PREVIEW_ADMIN}/${PREVIEW_REPO}/flows`;
 
   test("answers for an admin with the action and a tab in the header; a cross-origin POST is refused and changes nothing", async () => {
@@ -340,5 +342,41 @@ describe("link health and actions (#9561)", () => {
       expect(post.status).toBe(303);
       expect(post.headers.get("location")).toBe(`/${PREVIEW_ADMIN}/${PREVIEW_REPO}/flows`);
     });
+  });
+});
+
+describe("the flows picture (#9595)", () => {
+  const page = () => `${servers.url}/${PREVIEW_ADMIN}/${PREVIEW_REPO}/flows`;
+
+  test("sources on the left, the repository between, followers on the right, no script", async () => {
+    const text = await (await fetch(page(), { headers: sign("u1", "trevato", "admin") })).text();
+    const at = (s: string) => text.indexOf(s);
+    expect(at('class="flow-in"')).toBeGreaterThan(-1);
+    expect(at('class="flow-in"')).toBeLessThan(at('class="flow-hub"'));
+    expect(at('class="flow-hub"')).toBeLessThan(at('class="flow-out"'));
+    // Stacked order for a reader: Flows in, Packages, Flows out.
+    expect(at("Flows in")).toBeLessThan(at("Packages"));
+    expect(at("Packages")).toBeLessThan(at("Flows out"));
+  });
+
+  test("200 lines cost the page no more queries than none: no N+1, no script", async () => {
+    const init = { headers: sign("u1", "trevato", "admin") };
+    const repo = getRepo(app.db, PREVIEW_ADMIN, PREVIEW_REPO)!;
+    const before = await requestStatements(app.db, page(), init);
+    for (let i = 0; i < 200; i++)
+      app.db.query("INSERT OR IGNORE INTO repo_source (id, repo_id, url, branch, by_id, enabled, created_at) VALUES (?1, ?2, ?3, 'main', 'u1', 1, '2026-11-03T00:00:00Z')").run(`w${i}`, repo.id, `https://example.com/w${i}.git`);
+    expectWork(await requestStatements(app.db, page(), init), { max: before });
+    const text = await (await fetch(page(), init)).text();
+    const map = text.slice(text.indexOf('class="flow-map"'));
+    expect(map.slice(0, map.indexOf("</main>") < 0 ? undefined : map.indexOf("</main>"))).not.toContain("<script");
+    expect(text).toContain("example.com/w199.git");
+    app.db.query("DELETE FROM repo_source WHERE id LIKE 'w%'").run();
+  });
+
+  test("a line is a row with its state and no script", () => {
+    const line = { kind: "fork", label: "o/r", href: "/o/r", state: "up to date", at: null, problem: false, health: "ok" } as const;
+    const out = flowMap("demo", [lineRow(line)], [], []).toString();
+    expect(out).toContain("o/r");
+    expect(out).toContain("never moved");
   });
 });

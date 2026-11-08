@@ -2,7 +2,8 @@
  * Flows (#9434): `/:owner/:name/flows` is one picture per repository — what
  * flows in (origin, followed sources, pinned packages with their newest
  * release) on one side and what flows out (forks, mirrors) on the other,
- * each with its state and when it last moved. An admin can ask the radar to
+ * each with its state and when it last moved, drawn left to right around
+ * the repository (`flowMap`). An admin can ask the radar to
  * read upstream now. Server-rendered, no script; the read is from state the
  * forge keeps, so it answers without the network or a model.
  */
@@ -22,7 +23,7 @@ import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { badge, btn, type Tone, card, listCard, row, time } from "../ui.ts";
 
-const lineRow = (l: FlowLine): Html =>
+export const lineRow = (l: FlowLine): Html =>
   row({
     ...(l.action ? { after: actionForm(l.action) } : {}),
     ...(l.href === "" ? {} : { href: l.href }),
@@ -43,6 +44,22 @@ const actionForm = (a: FlowAction): Html =>
 
 function side(title: string, lines: readonly Html[], empty: string): Html {
   return card(lines.length === 0 ? html`<p class="muted">${empty}</p>` : listCard([...lines]), { head: html`${title}`, pad: lines.length === 0 });
+}
+
+/**
+ * The picture: sources on the left, the repository in the middle, followers
+ * on the right, in the page's own rows. Plain HTML and CSS, no script; below
+ * 900 px the three stack in reading order. `inbound` rows are already built.
+ */
+export function flowMap(name: string, inbound: readonly Html[], packages: readonly Html[], outbound: readonly Html[]): Html {
+  return html`<div class="flow-map">
+    <div class="flow-in">
+      ${side("Flows in", inbound, "Nothing flows in: no origin and no followed source.")}
+      ${side("Packages", packages, "No pinned packages.")}
+    </div>
+    <div class="flow-hub" aria-hidden="true"><span class="flow-arrow">→</span><strong class="flow-name">${name}</strong><span class="flow-arrow">→</span></div>
+    <div class="flow-out">${side("Flows out", outbound, "Nothing flows out: no forks, no mirror and no forge follows.")}</div>
+  </div>`;
 }
 
 // GET /:owner/:name/flows
@@ -67,13 +84,7 @@ export async function flowsPage(ctx: Ctx): Promise<Response> {
   );
   const body = html`${repoHeader(ctx, repo, "flows")}
     ${pageHead("Flows", { sub: "What comes in on the left, what goes out on the right." })}
-    <div class="split">
-      <div>
-        ${side("Flows in", flows.inbound.map(lineRow), "Nothing flows in: no origin and no followed source.")}
-        ${side("Packages", depRows, "No pinned packages.")}
-      </div>
-      <div>${side("Flows out", flows.outbound.map(lineRow), "Nothing flows out: no forks, no mirror and no forge follows.")}</div>
-    </div>
+    ${flowMap(repo.name, flows.inbound.map(lineRow), depRows, flows.outbound.map(lineRow))}
     ${admin
       ? html`<form method="post" action="${repoBase(repo)}/flows/probe" class="mt">${btn("Compare heads now", { variant: "secondary" })}</form>
         <form method="post" action="${repoBase(repo)}/flows/check" class="mt">${btn("Read upstream releases now", { variant: "secondary" })}</form>`

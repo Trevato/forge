@@ -1,6 +1,6 @@
 # Flows
 
-`/<owner>/<repo>/flows` is one picture per repository (#9434): on the left what flows in — the origin it was forked from, the upstream and sources it follows, the npm packages its `package.json` pins with the newest release upstream — and on the right what flows out: its forks and the mirror it pushes to. Each line has its state and when it last moved.
+`/<owner>/<repo>/flows` is one picture per repository (#9434): on the left what flows in — the origin it was forked from, the upstream and sources it follows, the npm packages its `package.json` pins with the newest release upstream — and on the right what flows out: its forks and the mirror it pushes to. Each line has its state and when it last moved. The page draws it as that picture (#9595): sources left, the repository's name between, followers right, stacked below 900 px as *Flows in*, *Packages*, *Flows out*; no script, and the arrows are decoration only.
 
 - **No crew, no model.** Reading pins, comparing versions (`src/flows/semver.ts`), the gap (patch, minor, major), and the page are deterministic. Test: `test/flows.test.ts`, no credential.
 - **Read upstream.** An admin of the repository taps *Read upstream releases now* (same-origin POST); the radar asks the npm registry for each exact pin and stores the answer in `dep_latest`. The page itself never touches the network.

@@ -344,6 +344,21 @@ form.inline { display: inline; margin-left: auto; }
   .split > aside { position: sticky; top: calc(var(--topbar-h) + 16px); }
 }
 
+/* Flows: sources left, the repository between, followers right (#9595). The
+   hub is a name and two text arrows, decoration only and hidden from reading order;
+   stacked on a phone, the arrows turn down. The name wraps and its column is
+   capped so a long one cannot squeeze the two sides. */
+.flow-map { display: grid; gap: 16px; margin-top: 16px; grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+.flow-map > * { min-width: 0; }
+.flow-hub { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--muted); }
+.flow-hub .flow-arrow { display: inline-block; transform: rotate(90deg); }
+.flow-hub .flow-name { color: var(--fg); max-width: 100%; text-align: center; }
+@media (min-width: 900px) {
+  .flow-map { grid-template-columns: minmax(0, 1fr) minmax(0, max-content) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .flow-hub { flex-direction: row; align-self: center; max-width: 24ch; gap: 12px; }
+  .flow-hub .flow-arrow { transform: none; }
+}
+
 /* The studio's wide rail (home, an app): a column of cards that runs taller
    than a screen, so it scrolls with the page instead of sticking, sits flush
    under the tabs or header, and takes its two columns from 900px. */
