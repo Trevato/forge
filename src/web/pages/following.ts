@@ -47,7 +47,7 @@ import { proposesViaFork } from "../../origins/fork-route.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
-import { badge, btn, card, icon, row, type Tone } from "../ui.ts";
+import { badge, btn, icon, row, type Tone } from "../ui.ts";
 import { disconnectedOn } from "./frozen.ts";
 
 /**
@@ -74,20 +74,19 @@ export function lineageCard(lineage: Lineage, hereId: string): Html {
       children: n.children.map((c) => node(c, depth + 1)),
     });
   };
-  return card(
-    html`<ul class="list" aria-label="Forks, by who follows whom">
-        ${node(lineage.root, 0)}
-      </ul>
-      ${when(
-        lineage.truncated,
-        () =>
-          html`<p class="muted small card-body">
-            A large family: the newest and deepest forks are left out here; each
-            fork's own page shows where it stands.
-          </p>`,
-      )}`,
-    { pad: false },
-  );
+  return html`<section class="settings-block">
+    <ul class="list" aria-label="Forks, by who follows whom">
+      ${node(lineage.root, 0)}
+    </ul>
+    ${when(
+      lineage.truncated,
+      () =>
+        html`<p class="muted small">
+          A large family: the newest and deepest forks are left out here; each
+          fork's own page shows where it stands.
+        </p>`,
+    )}
+  </section>`;
 }
 
 export interface Following {
@@ -381,21 +380,23 @@ export function followingCard(
         title: `${followers === 1 ? "One fork follows" : `${followers} forks follow`} this one.`,
       }),
     );
-  return card(
-    html`<div class="card-body stack">${prose}</div>${when(
-        rows.length > 0,
-        () => html`<ul class="list">
-          ${rows}
-        </ul>`,
-      )}`,
-    {
-      id: "following",
-      ...(o.bare === true ? { extra: "bare" } : {}),
-      head,
-      ...(actions.length > 0 ? { foot: html`${actions}` } : {}),
-      pad: false,
-    },
-  );
+  return html`<section
+    class="settings-block${o.bare === true ? " bare" : " mt"}"
+    id="following"
+  >
+    <div class="bar"><h2>${head}</h2></div>
+    <div class="stack">${prose}</div>
+    ${when(
+      rows.length > 0,
+      () => html`<ul class="list">
+        ${rows}
+      </ul>`,
+    )}
+    ${when(
+      actions.length > 0,
+      () => html`<div class="bar mt">${actions}</div>`,
+    )}
+  </section>`;
 }
 
 /**
