@@ -600,6 +600,17 @@ function tokenSection(values: ConnectValues): Html {
     </form>`;
 }
 
+const OLDER_FORGE_DOC = "/trevato/forge/blob/main/docs/features/forge-origin-older.md#connecting-from-an-older-forge";
+
+/** The one line for a forge older than 0.7.346 (#9626): it cannot start a connection, this side can. */
+function olderForgeLine(): Html {
+  return html`<p class="muted small" id="older-forge-line">
+    A forge older than 0.7.346 cannot connect outward: connect it from here, and
+    upgrade it to connect both ways.
+    <a href="${OLDER_FORGE_DOC}">Connecting from an older forge</a>
+  </p>`;
+}
+
 /**
  * The path a friend's forge needs, first on the page: its address and one
  * button. Only a forge that cannot name its own callback asks for a token here,
@@ -624,7 +635,8 @@ function forgeSection(ctx: Ctx, values: ConnectValues): Html {
           ...(values.hostError ? { error: values.hostError } : {}),
         })}
         <div class="form-actions">${btn("Sign in there", { variant: "primary", icon: "external" })}</div>
-      </form>`;
+      </form>
+      ${olderForgeLine()}`;
   const site =
     values.tokenHost === ""
       ? null
@@ -664,7 +676,8 @@ function forgeSection(ctx: Ctx, values: ConnectValues): Html {
       <div class="form-actions">
         ${btn("Connect that forge", { variant: "primary", icon: "globe" })}
       </div>
-    </form>`;
+    </form>
+    ${olderForgeLine()}`;
 }
 
 /** The admin's list of hosts an origin may reach inside the network. */

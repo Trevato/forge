@@ -8,7 +8,7 @@ Written by `scripts/forge-compat-lab.sh`; run it on any docker host to get this 
 
 **Absent, and what this cannot show.** `absent` is a thing not built, or not checkable here, said plainly.
 
-- An old forge cannot connect another forge at all: it has no forge provider, so that direction asks for an upgrade, not a fix here.
+- An old forge cannot connect another forge at all: it has no forge provider, so that direction asks for an upgrade, not a fix here. By release: a forge older than 0.7.346 connects outward never (connect it from the newer side, see [Connecting from an older forge](forge-origin-older.md#connecting-from-an-older-forge)); 0.7.346 or later connects outward.
 - A webhook needs `admin` scope at the origin, so a `ro` or `rw` token and every sign-in register none; issues and pulls come back on a sync or the sweep. With an admin token the hook registers, but the lab's source refuses to deliver to a private address, as its SSRF guard should, so a delivery end to end is unproven here.
 - The live 0.5.29 was read anonymously only: its OAuth metadata, health, OpenAPI and 401s. Nothing was signed in to it.
 - Not carried by design or not built: how the app runs, and its data and secrets.

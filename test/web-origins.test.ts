@@ -203,6 +203,28 @@ describe("origins on the web", () => {
     expect(response.headers.get("location")).toStartWith("/signin?next=");
   });
 
+  test("under Another forge, one line says an older forge is connected from here, linking the docs (#9626)", async () => {
+    const html = await (await asUser(alice, "/settings/origins")).text();
+    expect(html).toContain("A forge older than 0.7.346 cannot connect outward");
+    expect(html).toContain("upgrade it to connect both ways");
+    expect(html).toContain(
+      'href="/trevato/forge/blob/main/docs/features/forge-origin-older.md#connecting-from-an-older-forge"',
+    );
+    expect(html.indexOf("older-forge-line")).toBeGreaterThan(html.indexOf("Another forge"));
+    expect(html.split("older-forge-line").length - 1).toBe(1);
+  });
+
+  test("the line also shows where the forge cannot name its callback and asks for a token (#9626)", async () => {
+    const html = await (
+      await asUser(alice, "/settings/origins", { headers: { host: "unvouched.example.test" } })
+    ).text();
+    expect(html).toContain("Connect that forge");
+    expect(html).not.toContain("Sign in there");
+    expect(html).toContain("A forge older than 0.7.346 cannot connect outward");
+    expect(html).toContain("#connecting-from-an-older-forge");
+    expect(html.split("older-forge-line").length - 1).toBe(1);
+  });
+
   test("the origins page starts empty and offers the three ways in", async () => {
     const html = await (await asUser(alice, "/settings/origins")).text();
     expect(html).toContain("No origins connected");

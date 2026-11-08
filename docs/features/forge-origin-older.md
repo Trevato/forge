@@ -10,6 +10,10 @@ A forge from before `/api/v1/version` (0.5.x) is recognised by two answers no ot
 
 Measured against real old code in containers, and compared with the live forge-apps.benjivers.com by anonymous reads only: [the compatibility matrix](forge-origin-compat.md). There is no "needs a newer release" error either: a forge that matches neither fingerprint is refused as unrecognised.
 
+## Connecting from an older forge
+
+A forge older than 0.7.346 has no forge provider, so it cannot start a connection to another forge. Connect it from the newer forge instead: that forge's `/settings/origins` → **Another forge** reaches the older one today. Upgrading the older forge to 0.7.346 or later lets it connect outward too. `/settings/origins` says the same in one line under Another forge (`test/web-origins.test.ts`).
+
 ## Tokens and plain http
 
 A token is sent to the forge named by the link, so `http:` links are refused for it (page and terminal) unless `FORGE_DEV=1`; the one-click sign-in still works. `connectSite` in `src/origins/bring.ts` decides.
