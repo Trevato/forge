@@ -35,7 +35,7 @@ import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { chooseModel, modelFacts } from "./model_choice.ts";
 import { ownApp, ownAppUrls } from "./app_hosts.ts";
-import { machineEnv, machineFor, reachableApps } from "./machines.ts";
+import { machineEnv, machineFor, machineLimits, reachableApps } from "./machines.ts";
 import { repoMachines } from "./machines_read.ts";
 import { authorsInRepoPull } from "./authors_pull.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
@@ -1402,6 +1402,7 @@ async function work(
           resume,
           env,
           sandbox: shellPolicy(),
+          limits: machineLimits(machine),
           label: `crew:${agent.user.username}`,
           timeoutMs: Math.max(deadline - Date.now(), 0),
           log: write,

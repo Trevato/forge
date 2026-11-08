@@ -13,9 +13,9 @@
  */
 
 import { measureOf, type Measure } from "../core/measure.ts";
-import { BACKGROUND_CPU_WEIGHT, backgroundArgv, crewCpus } from "../apps/background.ts";
-import { cgroupHost, openCellCgroup, tryEnterArgv } from "../apps/cgroup.ts";
-import { join } from "node:path";
+import { backgroundArgv, crewCpus } from "../apps/background.ts";
+import { cgroupHost } from "../apps/cgroup.ts";
+import { openRunCell, type RunLimits } from "./run-cell.ts";
 import { watchLabelled } from "../apps/contain.ts";
 import { childEnv, pump } from "../apps/process.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
@@ -32,6 +32,8 @@ export interface ClaudeInput {
   readonly resume?: string | undefined;
   readonly env: Record<string, string>;
   readonly sandbox: SandboxPolicy;
+  /** The run's machine's memory and CPU ceilings (`crew/run-cell.ts`); none is today's cell. */
+  readonly limits?: RunLimits | undefined;
   /** What `/system` calls this run's process tree (`crew:<name>`); unlabelled when absent. */
   readonly label?: string | undefined;
   readonly timeoutMs: number;
@@ -213,13 +215,13 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   // there is spawned bare, so it fails as itself (ENOENT, caught by the
   // caller as a failed run) and not as `nice`'s exit 127. Where the forge
   // holds a cgroup, the run gets a cell of its own, weighed and held to
-  // `FORGE_CREW_CPUS` cores, so it no longer shares the forge's leaf.
+  // `FORGE_CREW_CPUS` cores, so it no longer shares the forge's leaf; its
+  // machine may narrow that cell with a memory cap and fewer cores.
   const argv = [input.binary, ...claudeArgs(input)];
   const present = Bun.which(input.binary) !== null;
-  const cgroup = present
-    ? openCellCgroup(undefined, cgroupHost(), { weight: BACKGROUND_CPU_WEIGHT, cpus: crewCpus() })
-    : undefined;
-  const contained = cgroup === undefined ? argv : tryEnterArgv(join(cgroup.dir, "cgroup.procs"), argv);
+  const cell = present ? openRunCell(input.limits ?? {}, cgroupHost(), crewCpus(), input.log) : undefined;
+  const cgroup = cell?.cgroup;
+  const contained = cell === undefined ? argv : cell.wrap(argv);
   const spawn = (): ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">> =>
     Bun.spawn(present ? backgroundArgv(contained) : argv, {
     cwd: input.cwd,

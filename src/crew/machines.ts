@@ -11,7 +11,7 @@
  * the default branch's tip, never from the agent's own branch (an agent
  * cannot hand itself a bigger machine):
  *
- *   "machines": { "audit": { "tools": ["gitleaks"], "reach": [] } },
+ *   "machines": { "audit": { "tools": ["gitleaks"], "reach": [], "memory": 2048, "cpus": 2 } },
  *   "machineFor": { "reviewer": "audit" }
  *
  * `standard` (today's sandbox) and `security` ship built in. Pure: text in,
@@ -49,7 +49,15 @@ export interface Machine {
   readonly label: string;
   readonly tools: readonly string[];
   readonly reach: readonly Reach[];
+  /** The run's memory ceiling, MiB (`forge.json` `memory`); none is today's uncapped run. */
+  readonly memoryMiB?: number | undefined;
+  /** The run's CPU ceiling, cores (`forge.json` `cpus`); never above the forge's own `FORGE_CREW_CPUS`. */
+  readonly cpus?: number | undefined;
 }
+
+/** Bounds on a machine's ceilings: enough to run `bun test`, and no more than a pod holds. */
+export const MEMORY_MIB = { min: 256, max: 65536 } as const;
+export const CPUS = { min: 0.25, max: 64 } as const;
 
 /** Today's sandbox, unchanged: the forge and the repository's own app. */
 export const STANDARD: Machine = {
@@ -150,6 +158,18 @@ function parseMachine(name: string, value: unknown): Result<Machine, string> {
     reach.some((r) => !(REACHES as readonly unknown[]).includes(r))
   )
     return invalid(`machines.${name}.reach: pick from ${REACHES.join(", ")} (a machine cannot name a host)`);
+  const memory = value["memory"];
+  if (
+    memory !== undefined &&
+    (typeof memory !== "number" || !Number.isInteger(memory) || memory < MEMORY_MIB.min || memory > MEMORY_MIB.max)
+  )
+    return invalid(`machines.${name}.memory is whole MiB from ${MEMORY_MIB.min} to ${MEMORY_MIB.max}`);
+  const cpus = value["cpus"];
+  if (
+    cpus !== undefined &&
+    (typeof cpus !== "number" || !Number.isFinite(cpus) || cpus < CPUS.min || cpus > CPUS.max)
+  )
+    return invalid(`machines.${name}.cpus is a number of cores from ${CPUS.min} to ${CPUS.max}`);
   const label = value["label"];
   if (label !== undefined && (typeof label !== "string" || label.length > 80))
     return invalid(`machines.${name}.label must be short text`);
@@ -158,6 +178,8 @@ function parseMachine(name: string, value: unknown): Result<Machine, string> {
     label: typeof label === "string" && label !== "" ? label : name,
     tools: [...new Set(tools as string[])],
     reach: [...new Set(reach as Reach[])],
+    ...(memory === undefined ? {} : { memoryMiB: memory }),
+    ...(cpus === undefined ? {} : { cpus }),
   });
 }
 
@@ -173,6 +195,14 @@ export function machineFor(config: MachineConfig, role: CrewRole | undefined): M
  */
 export function reachableApps(machine: Machine, appUrls: readonly string[]): string[] {
   return machine.reach.includes("apps") ? [...appUrls] : [];
+}
+
+/** The ceilings a machine asks of its run; none for `standard`. */
+export function machineLimits(machine: Machine): { memoryMiB?: number; cpus?: number } {
+  return {
+    ...(machine.memoryMiB === undefined ? {} : { memoryMiB: machine.memoryMiB }),
+    ...(machine.cpus === undefined ? {} : { cpus: machine.cpus }),
+  };
 }
 
 /** The run's environment for its machine: names only, nothing secret. */
