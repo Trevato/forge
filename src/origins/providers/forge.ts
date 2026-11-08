@@ -23,7 +23,7 @@ import type {
   RepoGroup,
 } from "../types.ts";
 import { ForgejoProvider, nextPage, toRepo } from "./forgejo.ts";
-import { NO_ACCOUNT } from "../words.ts";
+import { FORGE_PULL_CHECK_NEEDS, NO_ACCOUNT } from "../words.ts";
 import { forgeCursor, toForgeComment, toForgeWork } from "./forge-work.ts";
 import { asArray, asId, asString, asTime, dig, fail, field, seg, splitFullName, succeed } from "./http.ts";
 
@@ -304,6 +304,8 @@ export class ForgeProvider extends ForgejoProvider {
     if (base === undefined) return fail("not_found", `not a repository name: ${fullName}`);
     const result = await this.api.call({ path: `${base}/pulls/${number}`, query: { diff: 0 } });
     if (!result.ok) return result;
+    // Before 0.7.355 a pull carries no `check`: say so, not "no checks".
+    if (field(result.value.data, "check") === undefined) return fail("invalid_response", FORGE_PULL_CHECK_NEEDS);
     const word = asString(field(result.value.data, "check"));
     return succeed({
       word: word === "green" || word === "red" || word === "running" ? word : "none",

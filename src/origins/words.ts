@@ -33,3 +33,7 @@ export const FORGE_NOT_CARRIED =
  */
 export const FORGE_SIGN_IN_ON_PAGE =
   "Another forge signs in with one click on the web page; here, with a token.";
+
+/** A forge older than 0.7.355 reports no check on a pull; said so, with the release that does. */
+export const FORGE_PULL_CHECK_NEEDS =
+  "this forge is older than 0.7.355 and does not report a pull's check; it needs 0.7.355 or later";
