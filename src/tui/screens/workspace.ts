@@ -133,9 +133,13 @@ import { makeItYoursScreen, yoursCommands } from "./yours.ts";
 import { deleteRepoCommands } from "./deleterepo.ts";
 import { grantsCommands } from "./grants.ts";
 import { visionCommands } from "./vision.ts";
+import { buildsCommands } from "./builds.ts";
+import { displayCommands } from "./display.ts";
+import { iterationsCommands } from "./iterations.ts";
 import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
 import { autonomyCommands } from "./autonomy.ts";
+import { trafficCommands } from "./trafficview.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
 import { issuesScreen } from "./issues.ts";
@@ -1450,8 +1454,12 @@ export function workspaceScreen(
       ...hooksCommands(f, ctx, repo),
       ...visionCommands(f, ctx, repo),
       ...labelsCommands(f, ctx, repo),
+      ...buildsCommands(f, ctx, repo),
+      ...iterationsCommands(f, ctx, repo),
+      ...displayCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
       ...autonomyCommands(f, ctx, repo),
+      ...trafficCommands(f, ctx, repo),
     ],
     get title() {
       return sourceName(src);

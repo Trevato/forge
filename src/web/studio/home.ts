@@ -6,6 +6,7 @@
  * best of what is public (`actions/front.ts`).
  */
 
+import { foundryHref } from "../../actions/foundry_door.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { liveLine } from "../pages/releases.ts";
 import {
@@ -16,20 +17,25 @@ import {
   type FrontPage,
   type FrontPicksJson,
 } from "../../actions/front.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
+import { catalog } from "../../packs/catalog.ts";
+import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
+import { signupClosed } from "../../actions/users.ts";
+import { getSignup } from "../../settings/signup.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
+import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { repoBase, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
+import { repoBase, offersSignup, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page, redirect } from "../layout.ts";
+import { siteStructuredData } from "../structured_data.ts";
+import { running } from "../../kernel/version.ts";
 import { liveClientJs } from "../live.ts";
 import {
   btn,
@@ -38,10 +44,10 @@ import {
   empty,
   envStateBadge,
   icon,
-  listCard,
   row,
   timeAgo,
   terminalLine,
+  copyField,
 } from "../ui.ts";
 import {
   downloadsCard,
@@ -52,9 +58,11 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion, registerWorkerJs } from "./feed.ts";
+import { heldLine } from "./held.ts";
 import { appChips, movingRegion, tellBox } from "./living.ts";
 import { alarmLines, cachedAlarms } from "./alarm_lines.ts";
 import { kpiRow, waitingLine } from "./kpi_row.ts";
+import { homeWeek } from "./week_line.ts";
 import { feedCandidateCache } from "../../feed/feed.ts";
 import { notePhase, notePhaseRest, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { idleReason } from "../../crew/idle_reason.ts";
@@ -63,7 +71,7 @@ import { accessFingerprint } from "../../core/access_fingerprint.ts";
 import { homeFresh, homeRegion, homeVariant, refreshJs, type HomeRegion } from "./home_last.ts";
 import type { KpiTimer } from "../../flow/kpis.ts";
 import { archivedAppCount } from "../pages/apps.ts";
-import { pinnedPanels } from "./pinned.ts";
+import { pinnedPanels, pinnedSlot } from "./pinned.ts";
 import { isNavigation, lastVisit, noteVisit } from "../../core/home_visit.ts";
 import { sinceYouWere } from "./since.ts";
 import { homeTabs, unshippedAsks } from "./home_tabs.ts";
@@ -117,6 +125,7 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
     });
   });
   const archived = archivedAppCount(ctx);
+  const foundry = foundryHref(ctx.app, ctx.auth.user);
   const list = html`${rows.length === 0
         ? html`<p class="muted small">No apps yet.</p>`
         : html`<ul class="list">
@@ -133,6 +142,7 @@ function yourApps(ctx: Ctx, user: User, apps = writableAppsOf(ctx, user)): Html 
         ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
         ${btn("Audit", { href: "/audit", size: "sm", icon: "shield" })}
         ${btn("Board", { href: "/board", size: "sm", icon: "activity" })}
+        ${foundry === undefined ? "" : btn("Foundry", { href: foundry, size: "sm", icon: "eye" })}
         ${when(user.isAdmin, () =>
           btn("Front page", { href: "/front", size: "sm", icon: "globe" }),
         )}
@@ -237,6 +247,7 @@ export function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html |
       const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
       const kpiOpts = { idle: () => idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
       return html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
+        ${homeWeek(ctx.app, user)}
         ${alarmLines(cachedAlarms(db, new Date(), ceilingUsd))}`;
     },
     waiting: () => timePhase(request, "waiting", () => waitingLine(db, user), () => waitingCache(db)),
@@ -297,7 +308,7 @@ export async function studioHome(
   ) {
     const apps = await clientApps(ctx, user);
     const lean = html`<h1 class="sr-only">Home</h1>
-      ${firstSteps} ${address} ${crewKeyNote(ctx)} ${apps}
+      ${firstSteps} ${address} ${crewKeyNote(ctx)} ${heldLine(ctx, user)} ${apps}
       <div class="stack">
         ${composer(ctx, user)}
         <p class="small muted">
@@ -325,7 +336,9 @@ export async function studioHome(
   const body = html`<h1 class="sr-only">Home</h1>
     ${tellBox(ctx, user)}
     ${ask} ${address}
+    ${timePhase(ctx.request, "held", () => heldLine(ctx, user))}
     <section class="stack" aria-label="The forge">${kpis}</section>
+    ${pinnedSlot(ctx.app.db, user)}
     ${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}
     ${appChips(ctx, user)}
     ${when(
@@ -390,92 +403,6 @@ export async function feedPage(ctx: Ctx): Promise<Response> {
   });
   notePhaseRest(ctx.request, "render", rendering, ["waiting", "feed", "asked", "visit", "since", "access", "repos"]);
   return res;
-}
-
-/**
- * A shelf tile: picture, name, one clamped line, how it is. The shelf
- * holds only apps with a picture (`frontPage`), so there is no tile
- * without one.
- */
-function tile(entry: FrontEntry): Html {
-  const { repo, state, picture } = entry;
-  if (picture === undefined) return html``;
-  const href = repoBase(repo);
-  return card(
-    html`<a class="look" href="${href}" tabindex="-1" aria-hidden="true"
-        ><img
-          src="${picture}"
-          width="${LOOK_SIZES.thumb.width}"
-          height="${LOOK_SIZES.thumb.height}"
-          alt=""
-          loading="lazy"
-      /></a>
-      <div class="card-body stack stack-tight">
-        <a href="${href}"><strong>${repo.name}</strong></a>
-        <span class="muted small truncate" title="${repo.description}"
-          >${repo.description !== "" ? repo.description : repo.ownerName}</span
-        >
-        ${state !== undefined ? envStateBadge(state) : null}
-      </div>`,
-    { pad: false },
-  );
-}
-
-/**
- * The featured repository: its picture, and what makes a forge different —
- * the crew at work on it right now, by issue; or, when nobody is, when it
- * last shipped.
- */
-function featuredCard(featured: NonNullable<FrontPage["featured"]>): Html {
-  const { repo, picture, crew, signals } = featured;
-  const base = repoBase(repo);
-  const agents = `${crew.running} agent${crew.running === 1 ? "" : "s"}`;
-  const work =
-    crew.running > 0
-      ? listCard([
-          row({
-            lead: dot("success"),
-            title: `The crew is at work: ${agents} right now`,
-          }),
-          ...crew.issues.map((i) =>
-            row({
-              href: `${base}/issues/${i.number}`,
-              lead: html`<span class="muted">#${i.number}</span>`,
-              title: i.title,
-            }),
-          ),
-        ])
-      : signals.shippedAt !== null
-        ? listCard([
-            row({
-              title: `Shipped ${timeAgo(signals.shippedAt)}${
-                signals.ships > 0
-                  ? ` · ${signals.ships} change${signals.ships === 1 ? "" : "s"} merged this month`
-                  : ""
-              }`,
-            }),
-          ])
-        : null;
-  return card(
-    html`${when(
-        picture,
-        (src) =>
-          html`<a class="look" href="${base}"
-            ><img
-              src="${src}"
-              width="${LOOK_SIZES.thumb.width}"
-              height="${LOOK_SIZES.thumb.height}"
-              alt="${repo.name} as it looks now"
-          /></a>`,
-      )}
-      <div class="card-body stack stack-tight">
-        <span class="small muted">Featured</span>
-        <h2><a href="${base}">${repo.ownerName}/${repo.name}</a></h2>
-        ${when(repo.description, (d) => html`<p class="muted">${d}</p>`)} ${work}
-        <div class="bar">${btn("Open", { href: base, variant: "primary" })}</div>
-      </div>`,
-    { pad: false, attrs: html`role="region" aria-label="Featured"` },
-  );
 }
 
 /** A weight's name as the controls say it. */
@@ -576,13 +503,216 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
   );
 }
 
+/** How many apps the door shows: the pins, then the best of the rest, with a link to all of them. */
+const DOOR_TILES = 8;
+
+/** The live address of an app a stranger may open, or nothing. */
+function tileHref(entry: FrontEntry): string | undefined {
+  return entry.app?.access === "public" && entry.state !== undefined
+    ? `${repoBase(entry.repo)}/app/production/open`
+    : undefined;
+}
+
+/** How an app is right now, in words anyone can read. */
+const DOOR_STATE: Partial<Record<EnvState, string>> = {
+  running: "Live now",
+  asleep: "Wakes when you open it",
+  deploying: "Updating",
+};
+
+/** What a stranger can do to help with an app: make an account if this forge takes new ones, or send its keepers a note. */
+function helpDoor(repo: FrontEntry["repo"], accounts: boolean): Html {
+  return accounts
+    ? html`<a href="/signup?next=${encodeURIComponent(repoBase(repo))}">Help build</a>`
+    : html`<a href="${repoBase(repo)}/report">Suggest a change</a>`;
+}
+
 /**
- * The studio's door for a stranger (#686): one path — the forge, a few
- * live apps, open one or sign in. A featured repository the owner picks,
- * shown with its crew at work; then the best of what is public, ranked by
- * real signals with at most two per owner near the top (`actions/front.ts`
- * decides all of it, and the API and MCP answer from the same place); then
- * one link to the rest. A signed-out reader gets this whatever the mode.
+ * One numbered app on the door, with its doors said plainly: use it, read how
+ * it is made, help with it. A featured repository may have no app and no
+ * picture (the forge itself), and then has only the doors it really has.
+ */
+function tile(entry: FrontEntry, at: number, accounts: boolean, attrs?: Html): Html {
+  const { repo, picture, state } = entry;
+  const href = repoBase(repo);
+  const open = tileHref(entry);
+  const said = state === undefined ? undefined : DOOR_STATE[state];
+  return card(
+    html`<p class="door-kick"><span>${String(at + 1).padStart(2, "0")}</span>${when(said, (s) => html` / ${s}`)}</p>
+      ${when(
+        picture,
+        (src) =>
+          html`<a
+            class="look"
+            href="${open ?? href}"
+            tabindex="-1"
+            aria-hidden="true"
+            ${open === undefined ? null : html`rel="nofollow"`}
+            ><img
+              src="${src}"
+              width="${LOOK_SIZES.thumb.width}"
+              height="${LOOK_SIZES.thumb.height}"
+              alt=""
+              loading="lazy"
+              decoding="async"
+          /></a>`,
+      )}
+      <div class="card-body stack stack-tight">
+        <a href="${href}"><strong>${repo.name}</strong></a>
+        <span class="muted door-line" title="${repo.description}"
+          >${repo.description !== "" ? repo.description : `By ${repo.ownerName}`}</span
+        >
+        <p class="door-verbs">
+          ${when(
+            open,
+            (to) => html`<a class="door-verb-first" href="${to}" rel="nofollow" aria-label="Open ${repo.name}">Open</a>`,
+          )}
+          <a href="${href}" aria-label="The code of ${repo.name}">Code</a>
+          ${helpDoor(repo, accounts)}
+        </p>
+      </div>`,
+    { pad: false, ...(attrs === undefined ? {} : { attrs }) },
+  );
+}
+
+/** A figure in the hero's live panel, left out when it is zero. */
+function doorFigure(n: number, label: string): Html | null {
+  return n === 0
+    ? null
+    : html`<div class="door-figure">
+        <strong class="num">${n.toLocaleString("en-US")}</strong>
+        <span class="muted small">${label}</span>
+      </div>`;
+}
+
+/**
+ * The hero's live panel: what this forge's crew is doing and has just finished,
+ * on public repositories only, from the front page's cached read. With nothing
+ * to say it is absent and the hero stands alone: it never makes a number up.
+ */
+function doorLive(front: FrontPage): Html | null {
+  const { pulse, total } = front;
+  const figures = [
+    doorFigure(total, total === 1 ? "public app" : "public apps"),
+    doorFigure(pulse.running, "running now"),
+    doorFigure(pulse.merged, pulse.merged === 1 ? "change in 30 days" : "changes in 30 days"),
+  ].filter((f) => f !== null);
+  if (figures.length === 0 && pulse.crew.running === 0 && pulse.changes.length === 0) return null;
+  const agents = `${pulse.crew.running} agent${pulse.crew.running === 1 ? "" : "s"}`;
+  return html`<aside class="door-live" aria-label="Right now on this forge">
+    ${when(figures.length > 0, () => html`<div class="door-figures">${figures}</div>`)}
+    ${when(
+      pulse.crew.running > 0,
+      () => html`<p class="door-now">${dot("success")}The crew is at work: ${agents} right now</p>
+        ${when(
+          pulse.crew.issues.length > 0,
+          () => html`<ul class="door-ledger">
+            ${pulse.crew.issues.map(
+              (i) => html`<li><a class="truncate" href="${i.href}" title="${i.title}">${i.title}</a></li>`,
+            )}
+          </ul>`,
+        )}`,
+    )}
+    ${when(
+      pulse.changes.length > 0,
+      () => html`<p class="door-now">Just finished</p>
+        <ul class="door-ledger">
+          ${pulse.changes.map(
+            (c) => html`<li>
+              <a class="truncate" href="${c.href}" title="${c.title}">${c.title}</a>
+              <span class="muted small door-when">${c.repo} · ${timeAgo(c.mergedAt)}</span>
+            </li>`,
+          )}
+        </ul>`,
+    )}
+  </aside>`;
+}
+
+/**
+ * The work itself as a picture: one bar for each of the last days, as tall as
+ * the changes finished that day. Absent until there is any. Each bar names its
+ * day and count on hover, so nothing needs a script.
+ */
+function doorPulse(days: FrontPage["pulse"]["days"]): Html | null {
+  const total = days.reduce((sum, d) => sum + d.n, 0);
+  if (total === 0) return null;
+  const peak = Math.max(...days.map((d) => d.n));
+  const height = 120;
+  return html`<figure class="door-pulse">
+    <svg
+      viewBox="0 0 ${days.length * 10} ${height}"
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="${total} changes finished in ${days.length} days, at most ${peak} in one day"
+    >
+      ${days.map((d, at) => {
+        // A quiet day still holds its place on the baseline.
+        const h = d.n === 0 ? 1 : Math.max(3, Math.round((d.n / peak) * height));
+        return html`<rect
+          class="${d.n === 0 ? "door-pulse-quiet" : ""}"
+          x="${at * 10 + 1}"
+          y="${height - h}"
+          width="8"
+          height="${h}"
+          ><title>${d.day}: ${d.n}</title></rect
+        >`;
+      })}
+    </svg>
+    <figcaption class="muted small">
+      Every bar is one day of finished work here: ${total.toLocaleString("en-US")} changes in ${days.length} days.
+    </figcaption>
+  </figure>`;
+}
+
+const FORGE_REPO = "https://forge.open-platform.sh/trevato/forge";
+
+/**
+ * One press for each shipped pack (#9572): what it is, and the way to its page,
+ * where the command is. The `data-slot="host"` element is the named place a
+ * later "host it for me" action sits beside "See what it brings"; it is empty
+ * today, so there is no dead button.
+ */
+function packPresses(): Html | null {
+  const { packs } = catalog();
+  if (packs.length === 0) return null;
+  const count = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
+  return html`<div class="door-packs" aria-label="Ready-made forges">
+    <p class="door-kick">Start from a ready-made forge</p>
+    <div class="door-press-row">
+      ${packs.map(
+        (p) => html`<article class="door-press">
+          <h3><a href="/packs/${p.name}">${p.title}</a></h3>
+          <p class="muted small">${p.description}</p>
+          <p class="muted small">${count(p.apps.length, "app")}, ${count(p.crew.length, "crew member")}</p>
+          <div class="door-press-actions">
+            ${btn("See what it brings", { href: `/packs/${p.name}`, size: "sm" })}
+            <span data-slot="host"></span>
+          </div>
+        </article>`,
+      )}
+    </div>
+  </div>`;
+}
+
+/** The page the prompt and the Open in ChatGPT, Claude and Grok links send an assistant to. */
+const AGENTS = "/agents";
+
+/**
+ * What a person pastes into any AI assistant. It asks for help and says what
+ * to do when the assistant cannot reach the forge, which a hosted one often
+ * cannot.
+ */
+function agentPrompt(origin: string): string {
+  return `Read ${origin}${AGENTS} and tell me in plain words what this forge is. Ask if I want to help build one of its public apps or get my own forge, then walk me through it. If you can't open the link or act on the forge yourself, say so and give me the exact steps.`;
+}
+
+/**
+ * The studio's door for a stranger (#686): what this is, what it is doing right
+ * now, what it has made, and how to get one, each door saying in plain words
+ * what it does. The site's pins lead the apps, in their order, and the best
+ * of what is public fills the rest (`actions/front.ts` decides all of it, and
+ * the API and MCP answer from the same place). A signed-out reader gets this
+ * whatever the mode, with a visitor's top bar and foot.
  *
  * `/front` is the same page for anyone; a site admin there also gets the
  * controls that decide it.
@@ -591,72 +721,178 @@ export function studioDoor(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   let tiles: Html[] = [];
   const front = timePhase(ctx.request, "shelf", () => frontPage(ctx.app, Date.now(), ctx.request));
+  const featured = front.featured;
+  const all = [...(featured === undefined ? [] : [featured]), ...front.shelf];
+  const made = all.slice(0, Math.max(DOOR_TILES, all.filter((e) => e.pinned).length));
+  const accounts = !signupClosed(ctx.app);
   timePhase(ctx.request, "tiles", () => {
-    tiles = front.shelf.map(tile);
+    tiles = made.map((e, at) =>
+      tile(e, at, accounts, e === featured ? html`role="region" aria-label="Featured"` : undefined),
+    );
   });
   // Render is what is left of the page once the shelf read is taken out.
   const rendering = performance.now();
+  const visitor = ctx.auth.user === undefined;
   const admin = ctx.auth.user?.isAdmin === true && ctx.url.pathname === "/front";
   // A share sheet lands here with the shared words in the query; signing in
   // comes back to them rather than to a bare home, so they are not lost.
   const back = ctx.url.pathname === "/" ? "/" + ctx.url.search : "/";
   const nextQuery = back === "/" ? "" : `?next=${encodeURIComponent(back)}`;
   const ssh = sshCommand(ctx.app);
-  const body = html`<section class="narrow narrow-wide stack">
-      <h1>Apps, live.</h1>
-      <p class="muted">${SITE_LINE}</p>
-      <div class="bar">
-        ${ctx.auth.user !== undefined
-          ? null
-          : activeEdgeToken(ctx.app) === undefined || edgeStrangerLogin(ctx.request, activeEdgeToken(ctx.app), ctx.auth.user) !== undefined
-            ? html`${btn("Create an account", {
-                href: `/signup${nextQuery}`,
-                variant: "primary",
-                size: "lg",
-              })}
-              ${btn("Sign in", { href: `/signin${nextQuery}`, size: "lg" })}`
-            : btn("Sign in", {
-                href: edgeLoginUrl(back),
-                variant: "primary",
-                size: "lg",
-              })}
+  const signup = offersSignup(ctx) && accounts;
+  // Closed is a door with nothing behind it; invite still lands an invite link's holder.
+  const mode = getSignup(ctx.app.db);
+  const origin = (ctx.app.config.url ?? ctx.url.origin).replace(/\/$/, "");
+  const prompt = agentPrompt(origin);
+  const asked = encodeURIComponent(prompt);
+  const body = html`<div class="door">
+    <section class="door-hero">
+      <h1>Software for what you're building.<br /><span class="muted">Yours to keep.</span></h1>
+      <div class="door-under">
+        <div class="door-lead">
+          <p class="door-support">Say what you need. An AI crew builds it, for a business or a game studio.</p>
+          <div class="bar">
+            ${btn("Get your own forge", { href: "#yours", variant: "primary", size: "lg" })}
+            ${when(made.length > 0, () => btn("See what it built", { href: "#made", size: "lg" }))}
+          </div>
+          <div class="door-agent">
+            <p>
+              Have an AI assistant? Give it this:
+              <a href="https://chatgpt.com/?q=${asked}" rel="noopener">Open in ChatGPT</a>
+              <a href="https://grok.com/?q=${asked}" rel="noopener">Open in Grok</a>
+              <a href="https://claude.ai/new?q=${asked}" rel="noopener">Open in Claude</a>
+              <span class="muted">(after you sign in)</span>
+            </p>
+            ${copyField("door-prompt", prompt, "A message for any AI assistant", "Copy the message")}
+          </div>
+        </div>
+        ${doorLive(front)}
       </div>
-      ${when(
-        ssh,
-        (command) => html`<div class="stack-tight">
-          ${terminalLine({ command })}
-          <p class="muted small">
-            The whole forge in your terminal — your key is your identity.
-          </p>
-        </div>`,
-      )}
+      ${doorPulse(front.pulse.days)}
     </section>
-    ${when(front.featured, (f) => html`<div class="mt">${featuredCard(f)}</div>`)}
-    ${tiles.length > 0
-      ? html`<div class="mt stack" data-shelf>${tiles}</div>
-          ${when(
-            front.total > tiles.length + (front.featured === undefined ? 0 : 1),
-            () =>
-              html`<div class="mt">
-                ${listCard([
-                  row({
-                    href: "/explore?q=kind%3Aapp",
-                    title: `All ${front.total} public apps`,
-                  }),
-                ])}
-              </div>`,
-          )}`
-      : front.featured === undefined
-        ? html`<div class="mt">
+
+    <section class="door-section" id="made">
+      <h2>Made here</h2>
+      <p class="door-support">
+        A tool for your business, a game for your studio. Open runs it in your browser. Code shows how it was
+        made.
+        ${accounts
+          ? "Help build gets you an account, so you can ask for changes."
+          : "Suggest a change sends a note to the people who keep it."}
+      </p>
+      ${made.length > 0
+        ? html`<div class="door-shelf" data-shelf>${tiles}</div>
+            ${when(
+              front.total > made.length,
+              () => html`<p class="door-more">
+                <a href="/explore?q=kind%3Aapp">All ${front.total} public apps</a>
+              </p>`,
+            )}`
+        : html`<div class="mt">
             ${empty({
               icon: "rocket",
               title: "Nothing public is up yet",
               note: "Apps made public here show up on this shelf once they run.",
             })}
-          </div>`
-        : null}
-    ${when(admin, () => html`<div class="mt front-admin">${frontControls(ctx, front)}</div>`)}`;
-  const res = page({ ctx, title: "forge", body });
+          </div>`}
+    </section>
+
+    <section class="door-section">
+      <h2>From a sentence to something you can use</h2>
+      <ol class="door-steps">
+        <li>
+          <h3>Describe it</h3>
+          <p>Say what you want in plain words: a fix, a new feature, a whole game, the tool your shop is missing.</p>
+        </li>
+        <li>
+          <h3>Try it</h3>
+          <p>An AI agent builds it on a separate copy. You click around a live preview while nothing else changes.</p>
+        </li>
+        <li>
+          <h3>Ship it</h3>
+          <p>It goes live when you say so, or set it to ship by itself. Every change is kept.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="door-section">
+      <h2>It stays yours</h2>
+      <dl class="door-points">
+        <div>
+          <dt>You can move it</dt>
+          <dd>Your code is in git and everything else is in one SQLite file. Copy them to any machine and keep going.</dd>
+        </div>
+        <div>
+          <dt>The crew is private</dt>
+          <dd>The agents work for your forge alone, on your projects, with your own AI account.</dd>
+        </div>
+        <div>
+          <dt>Forges connect</dt>
+          <dd>Bring an app in from another forge, do your work, and send it back to where it came from.</dd>
+        </div>
+      </dl>
+      <ul class="door-proof">
+        <li>one Bun process</li>
+        <li>one SQLite file</li>
+        <li>MCP at /mcp</li>
+        <li>AGPL-3.0</li>
+      </ul>
+    </section>
+
+    <section class="door-section door-split" id="yours">
+      <div class="stack">
+        <h2>Get your own forge</h2>
+        <p class="door-support">
+          ${SITE_LINE} Free and open source. Run it on your own computer or server today. Hosted forges are
+          coming.${accounts ? "" : mode === "invite" ? " New accounts on this forge are by invitation." : " This forge is not taking new accounts."}
+        </p>
+        <div class="bar">${btn("Read the step-by-step guide", { href: `${FORGE_REPO}`, size: "lg" })}</div>
+      </div>
+      <div class="stack">
+        <pre class="door-code"><code>git clone ${FORGE_REPO}.git
+cd forge
+bun install
+bun run src/main.ts</code></pre>
+        ${when(
+          ssh,
+          (command) => html`<div class="stack-tight">
+            ${terminalLine({ command })}
+            <p class="muted small">Or visit this forge from your terminal: your key is your identity.</p>
+          </div>`,
+        )}
+        ${packPresses()}
+      </div>
+    </section>
+    <p class="door-org">
+      Running this for a team? <a href="https://www.open-platform.sh/#platform">The Platform</a> runs on your own cloud, and
+      <a href="https://www.espodev.com">EspoDev</a> delivers enterprise implementations.
+    </p>
+    ${when(admin, () => html`<div class="door-section front-admin">${frontControls(ctx, front)}</div>`)}
+  </div>`;
+  const res = page({
+    ctx,
+    title: "forge: software for what you're building, yours to keep",
+    description: "Your own forge, with a private AI crew that builds your apps, games and business tools. Open source, and yours to keep.",
+    body,
+    jsonLd: siteStructuredData(origin, running().version),
+    ...(visitor
+      ? {
+          tools: html`<a class="small door-wide" href="#made">Made here</a>
+            <a class="small door-wide" href="${FORGE_REPO}">Code</a>
+            ${signup
+              ? html`<a class="small" href="/signin${nextQuery}">Sign in</a>
+                ${btn("Create an account", { href: `/signup${nextQuery}` })}`
+              : html`${when(mode !== "closed", () => html`<a class="small door-wide" href="/signup">Create an account</a>`)}
+                ${btn("Sign in", { href: edgeLoginUrl(back) })}`}`,
+          foot: html`<span class="mark"></span>
+            <span>Open Platform: two open source projects, AGPL-3.0</span>
+            <span class="spacer"></span>
+            <a href="${FORGE_REPO}">Code</a>
+            <a href="https://www.open-platform.sh">open-platform.sh</a>
+            <a href="https://www.espodev.com">EspoDev</a>`,
+        }
+      : {}),
+  });
   notePhaseRest(ctx.request, "render", rendering, []);
   return res;
 }

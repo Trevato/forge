@@ -6,6 +6,7 @@
  * idle lanes folded. A lane is exactly the repository's own map, so what
  * the per-repo page says and what `/map` says never disagree.
  */
+import { parseLane } from "../src/web/pages/global-map.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -484,15 +485,27 @@ describe("the map, per app and across the forge", () => {
     expect(page).toMatch(/<details[^>]*id="lane-alice-engine"[^>]*>\s*<summary\s+class="row"/);
     for (const gone of ["map-lane", "map-lane-caret", "map-lane-crew", "map-lane-head", "map-lane-name", "map-lane-word", "map-lanes"])
       expect(page).not.toContain(gone);
-    // Every lane is drawn at the widest lane's width: one scale, one grid.
-    const widths = [
-      ...page.matchAll(/class="map-canvas"[^>]*data-w="(\d+)"/g),
-    ].map((m) => m[1]);
+    // The first screen draws no graph; a lane's comes when asked for, at one
+    // scale: every lane drawn is the widest lane's width.
+    expect(page).not.toContain('class="map-canvas"');
+    expect(page).toContain('href="/map?lane=alice/engine#lane-alice-engine"');
+    const widths = [] as (string | undefined)[];
+    for (const lane of ["alice/engine", "alice/dormant", "bob/secret"]) {
+      const drawn = await (
+        await fetch(`${base}/map?lane=${lane}`, { headers: { cookie } })
+      ).text();
+      widths.push(
+        ...[...drawn.matchAll(/class="map-canvas"[^>]*data-w="(\d+)"/g)].map((m) => m[1]),
+      );
+    }
     expect(widths.length).toBeGreaterThanOrEqual(3);
     expect(new Set(widths).size).toBe(1);
     // The same card words as the repository's own map.
-    expect(page).toContain('data-state="working"');
-    expect(page).toContain('data-run="running"');
+    const engine = await (
+      await fetch(`${base}/map?lane=alice/engine`, { headers: { cookie } })
+    ).text();
+    expect(engine).toContain('data-state="working"');
+    expect(engine).toContain('data-run="running"');
     // A repository with nothing to draw is not a lane.
     expect(page).not.toContain('href="/alice/bare/map"');
     // The forge's admin reads every repository, so bob's is a lane here,
@@ -510,6 +523,48 @@ describe("the map, per app and across the forge", () => {
     expect(bobs).toContain("Rotate the keys");
     expect(bobs).not.toContain("alice/engine");
     expect(bobs).not.toContain("Extract renderer");
+  });
+
+  test("the first screen is small and fast, names the next things, and leaves the graphs to ask for (#8693)", async () => {
+    const cookie = await signIn("alice");
+    const res = await fetch(`${base}/map`, { headers: { cookie } });
+    const page = await res.text();
+    expect(new TextEncoder().encode(page).length).toBeLessThan(50_000);
+    expect(page).not.toContain('class="map-canvas"');
+    const next = page.slice(page.indexOf("<h2>Next</h2>"), page.indexOf('id="lanes"'));
+    expect(next).toContain("Extract renderer");
+    expect((next.match(/<li/g) ?? []).length).toBeLessThanOrEqual(5);
+    // Asking for a lane draws it, and only it.
+    const one = await (
+      await fetch(`${base}/map?lane=alice/engine`, { headers: { cookie } })
+    ).text();
+    expect((one.match(/class="map-canvas"/g) ?? []).length).toBe(1);
+    // The row says how to draw it, or how to go back; the lane's own map is linked.
+    expect(page).toContain(">Draw ");
+    expect(one).toContain(">Show fewer</a>");
+    expect(page).toContain('href="/alice/engine/map"');
+    // The lane names are checked at the boundary: unknown, odd and long ones draw nothing.
+    for (const bad of ["nobody/nothing", "alice", "../etc/passwd", "a/b/c", `${"x".repeat(300)}/y`, "alice/engine%00"]) {
+      const res = await fetch(`${base}/map?lane=${encodeURIComponent(bad)}`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      expect(await res.text()).not.toContain('class="map-canvas"');
+    }
+    expect(parseLane("alice/engine")).toBe("alice/engine");
+    expect(parseLane("alice")).toBeUndefined();
+    expect(parseLane(null)).toBeUndefined();
+  });
+
+  test("a stranger's first screen and lane asks never name or draw a private lane (#8693)", async () => {
+    const carol = await signIn("carol");
+    for (const path of ["/map", "/map?lane=bob/secret", "/map?lane=alice/engine"]) {
+      const text = await (await fetch(`${base}${path}`, { headers: { cookie: carol } })).text();
+      expect(text).not.toContain("Rotate the keys");
+      expect(text).not.toContain("bob/secret");
+      expect(text).not.toContain('class="map-canvas"');
+    }
+    const bob = await signIn("bob");
+    const text = await (await fetch(`${base}/map?lane=alice/engine`, { headers: { cookie: bob } })).text();
+    expect(text).not.toContain("Extract renderer");
   });
 
   test("an empty map is §5's empty state, with the words and the way on", async () => {

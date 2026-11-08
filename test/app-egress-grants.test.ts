@@ -235,3 +235,32 @@ describe("private destinations asked for", () => {
     expect(verbs).toContain(`revoked the app's grant on ${ARM}`);
   });
 });
+
+describe("the egress section speaks the home page's language", () => {
+  const section = async (cookie: string, path: string) => {
+    const page = await (await web(cookie, path)).text();
+    const from = page.indexOf('<section class="settings-block" id="egress">');
+    expect(from).toBeGreaterThan(-1);
+    return words(page.slice(from, page.indexOf("</section>", from)));
+  };
+
+  test("with destinations: a heading, the refusal sentence and rows, no card", async () => {
+    const s = await section(adaCookie, "/cy/arm/settings/app");
+    expect(s).toContain("<h2>Private destinations asked for</h2>");
+    expect(s).toContain("every other host is refused");
+    expect(s).not.toContain('class="card');
+    expect(s).toContain(`/settings/app/egress/${encodeURIComponent(ARM)}/grant`);
+  });
+
+  test("with none asked for: one plain line, no list, no card", async () => {
+    const made = await createRepo(app, cy, { name: "plain", visibility: "public", description: "" });
+    if (!made.ok) throw new Error(String(made.error));
+    const row = insertApp(app.db, { repoId: made.value.id, slug: "plain", access: "public" });
+    if (!row.ok) throw new Error(row.error);
+    const s = await section(adaCookie, "/cy/plain/settings/app");
+    expect(s).toContain("This app reaches only the forge; every other host is refused.");
+    expect(s).not.toContain('class="card');
+    expect(s).not.toContain("setting-list");
+    expect(s).not.toContain('data-tone="danger"');
+  });
+});

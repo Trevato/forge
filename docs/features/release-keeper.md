@@ -13,6 +13,8 @@ keyboard. It does what the steward's `release.sh`, `verify-after.sh` and
    - no keeper release is rolling or verifying;
    - the newest tag is live, or the keeper rolled it back;
    - no merge-queue gate is running;
+   - no snapshot is being taken, unless it has run two hours and is stuck
+     (a release drains the process the snapshot runs in; #9653);
    - 30 minutes have passed since the last cut;
    - no hold stands.
 
@@ -142,3 +144,20 @@ gitops change above, a reconcile can set it back after the keeper says
 verified; with it, nothing does. While a release is rolling the keeper sets
 the image again each tick, and if it never takes, the 3 h deadline rolls it
 back and holds.
+
+## The first five minutes (#8848)
+
+A release is judged on how it behaves right after boot, when every sweep whose
+"last time" lives in memory runs once. The process keeps its worst event-loop
+stall inside its first 5 minutes (`src/perf/boot_stall.ts`, fed by the loop lag
+watch); the keeper writes it to the release row when the verify passes. `/releases`
+and the terminal show it beside the release before it. Over 5 s the release stays
+live (it answers) and a `failed` hold stands with the reason — the stall, the
+limit, the last release's — until a pull saying `release hold N` lands and a
+release verifies, as for any failed hold.
+
+Cause of 0.7.339's 46 s: the review-repeat sweep (`flow/repeats.ts`, #8716) ran on
+the first tick and grouped a week of findings against every group so far,
+quadratically (51 s on the production-sized fixture of `test/boot-no-stall.test.ts`).
+It now finds groups through a word index and hands the thread back between slices
+(`kernel/breathe.ts`); the tick breathes between its passes.

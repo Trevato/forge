@@ -20,6 +20,7 @@ import { badge, empty, listCard, row, runStateBadge, time } from "../ui.ts";
 import { lookThumb, lookThumbPlain, thumbLook } from "../pages/looks.ts";
 import { stepOfStored } from "../../flow/path.ts";
 import { stepLink } from "./step_link.ts";
+import { isTrusted, pullSourceOf } from "../../core/trusted_sources.ts";
 import { actRow, rowId } from "./review_act.ts";
 import { reviewSet } from "./review_set.ts";
 import { staleArchive } from "./review_stale.ts";
@@ -121,7 +122,9 @@ export function reviewPage(ctx: Ctx): Response {
         : stat === "failed"
         ? " · Diff size unavailable — open the pull to see it"
         : "";
-    const act = actRow(a);
+    const from = a.pull === undefined ? undefined : pullSourceOf(ctx.app.db, a.pull.id);
+    // A guest's pull from another forge says Approve and Decline; a trusted source's (here for a wall) is a person's plain Merge.
+    const act = actRow(a, from !== undefined && !isTrusted(ctx.app.db, from.host, from.account));
     const step = a.pull === undefined ? null : stepOfStored(ctx.app.db, a.repo, a.pull);
     return row({
       href,

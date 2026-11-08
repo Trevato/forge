@@ -15,7 +15,8 @@ import type { Ctx } from "../../http/context.ts";
 import { notFoundPage } from "../chrome.ts";
 import { backTo, field, readForm, type Form } from "../form.ts";
 import { flashTo } from "../layout.ts";
-import { PANEL_FIELDS, readParams, toQuery } from "./boards.ts";
+import { readParams, toQuery } from "../../boards/params.ts";
+import { PANEL_FIELDS } from "./boards.ts";
 
 const num = (v: string) => (/^-?\d{1,4}$/.test(v) ? Number(v) : NaN);
 

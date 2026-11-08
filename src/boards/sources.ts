@@ -367,6 +367,18 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       at: "when the new process began serving, UTC",
     },
   },
+  // Red batches the merge queue named (#7639): a pull handed back, or a load red no pull is blamed for.
+  queueVerdicts: {
+    table: "queue_verdict",
+    owner: "repo_id",
+    time: "at",
+    columns: { repo_id: "text", kind: "text", why: "text", pull_number: "number", action: "text", at: "time" },
+    docs: {
+      kind: "real (one pull named and returned to its builder) or load (the machine's red, no pull blamed)",
+      why: "tests, typecheck, check, install, setup, timeout or flake",
+      action: "what was done about it, in a fixed phrase",
+    },
+  },
   // Items entering each stage from issue to live, one row per entry, read
   // from issue, run and pull as `flow/throughput.ts` reads them: an issue
   // opens, a builder first starts on it (a retry is not a second item), its

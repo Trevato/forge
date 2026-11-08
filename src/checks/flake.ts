@@ -16,6 +16,7 @@ import type { EventBus } from "../core/events.ts";
 import { id } from "../kernel/id.ts";
 import type { CheckDetail } from "../core/runs.ts";
 import { importsOf } from "./tiers.ts";
+import { isSummaryLine } from "./bun-test.ts";
 
 /** The most failures that are re-run; more is a broken main, not a flake. */
 export const MAX_RERUN = 2;
@@ -282,7 +283,12 @@ export function fileIssueOnce(
   return { number: made.value.number, opened: true };
 }
 
-/** Every failing test of a `bun test` log with the file whose report printed it, once each, in order. */
+/**
+ * Every failing test of a `bun test` log with the file whose report printed
+ * it, once each, in order. Bun's closing summary repeats the failures after
+ * the last file; from its first line until the next header a `(fail)` line
+ * has no file, and is dropped rather than given to the last one printed.
+ */
 export function failedTests(lines: readonly string[]): Flaky[] {
   const out: Flaky[] = [];
   const seen = new Set<string>();
@@ -291,6 +297,10 @@ export function failedTests(lines: readonly string[]): Flaky[] {
     const header = HEADER.exec(line);
     if (header) {
       file = header[1]!.replace(/^\.\//, "");
+      continue;
+    }
+    if (isSummaryLine(line)) {
+      file = undefined;
       continue;
     }
     const name = FAIL.exec(line)?.[1];

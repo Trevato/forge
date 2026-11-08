@@ -47,6 +47,11 @@ test("the second render of one blob does no markdown work", async () => {
   expect(String(second)).toBe(String(first));
 });
 
+test("the README is a bare card, not a box", async () => {
+  const out = String(await readmeFor(sourceOf("# hi"), "main", [entry(OID_A)], ""));
+  expect(out).toContain('class="card bare"');
+});
+
 test("a changed README renders anew", async () => {
   await readmeFor(sourceOf(BIG), "main", [entry(OID_A)], "");
   const before = markdownWorkDone();

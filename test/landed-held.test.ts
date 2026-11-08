@@ -4,6 +4,7 @@
  * holds it under `landed`, and a person's comment or edit since the merge
  * makes it pickable again; an agent's word does not.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,13 +14,15 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, editIssue, openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { landedNote } from "../src/core/done_on_main.ts";
-import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
+import type { ForgeEvent } from "../src/core/events.ts";
+import { getIssueById, listComments, setAssignee, type Issue } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { driveRepo } from "../src/crew/autonomy.ts";
+import { route } from "../src/crew/dispatch.ts";
 import { heldNow, heldWords } from "../src/crew/held.ts";
 import { landedUnanswered } from "../src/crew/landed.ts";
 
@@ -77,7 +80,7 @@ describe("a landing with boxes unticked waits for a person", () => {
       if (!created.ok) throw new Error(String(created.error));
       expect(addToCrew(app, alice, made.value, agent).ok).toBe(true);
     }
-    setCrewRole(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
+    seatAs(app.db, made.value.id, getUserByName(app.db, "atlas")!.id, "planner");
     mason = getUserByName(app.db, "mason")!;
     const set = await updateRepoSettings(app, alice, made.value, {
       autonomy: "autonomous",
@@ -107,7 +110,7 @@ describe("a landing with boxes unticked waits for a person", () => {
     const notes = listComments(app.db, partial.id).map((c) => c.body);
     expect(notes).toEqual([landedNote(pull.number, ["two"])]);
     expect(notes[0]).toBe(
-      `Left open after pull #${pull.number} landed: 1 unticked item remains (two). Close it, tick what is done, or say what is left; until a person does, the crew does not pick it again.`,
+      `Left open after pull #${pull.number} landed: 1 unticked item remains (two). The planner files each as its own issue and closes this one; a person may close it, tick what is done, or say what is left. Until then the crew does not pick it again.`,
     );
     // The landing's own note, though alice wrote it, is not an answer.
     expect(landedUnanswered(app.db, fresh(), now(partial))?.number).toBe(pull.number);
@@ -117,6 +120,30 @@ describe("a landing with boxes unticked waits for a person", () => {
     expect(heldWords(sorted)).toContain("landed=1");
     await driveRepo(app, fresh());
     expect(now(partial).assigneeId).toBeNull();
+  });
+
+  test("the landing's note wakes no builder; a person's word still does", async () => {
+    const partial = issue("Quiet", "- [ ] left");
+    setAssignee(app.db, partial.id, mason.id);
+    const say = (body: string) => {
+      expect(addComment(app, alice, fresh(), now(partial), body).ok).toBe(true);
+      route(app, {
+        kind: "issue.commented",
+        repoId: repo.id,
+        actorId: alice.id,
+        payload: { number: partial.number, body },
+      } as unknown as ForgeEvent);
+    };
+    const woken = () =>
+      app.db
+        .query<{ n: number }, [string]>(
+          "SELECT count(*) AS n FROM run WHERE issue_id = ?1 AND reason = 'feedback'",
+        )
+        .get(partial.id)?.n;
+    say(landedNote(7, ["left"]));
+    expect(woken()).toBe(0);
+    say("Please finish the last box.");
+    expect(woken()).toBe(1);
   });
 
   test("an agent's comment does not lift it; a person's does, and the picker hands it out", async () => {

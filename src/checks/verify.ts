@@ -15,6 +15,8 @@
  * next, which files a log says failed. The service runs them.
  */
 
+import { isSummaryLine } from "./bun-test.ts";
+
 /** The environment a scheduled verification of the default branch runs in. */
 export const VERIFY_ENV = "verify";
 /** The environment a bisection step runs in. */
@@ -114,12 +116,45 @@ export function failedFiles(lines: readonly string[]): string[] {
   for (const line of lines) {
     const header = HEADER.exec(line);
     if (header) current = header[1]!.replace(/^\.\//, "");
+    else if (isSummaryLine(line)) current = undefined;
     else if (FAILED.test(line) && current !== undefined && safeFile(current) && !flaky.has(current) && !found.includes(current)) {
       found.push(current);
       if (found.length >= MAX_FILES) break;
     }
   }
   return found;
+}
+
+const PASSED = /^\(pass\) /;
+
+/**
+ * The test files a `bun test` log ran to the end with every test passing
+ * (#9524), once each, in order. A file counts only when bun printed its
+ * header, at least one `(pass)` and no `(fail)` under it anywhere in the
+ * log, and its block was closed by the next header or bun's closing
+ * summary: a shard killed mid-file leaves that file out. A file the log
+ * never printed (a shard that did not run) is not in it.
+ */
+export function passedFiles(lines: readonly string[]): string[] {
+  const passed = new Set<string>();
+  const failed = new Set<string>();
+  const finished: string[] = [];
+  let current: string | undefined;
+  const close = (): void => {
+    if (current !== undefined && !finished.includes(current)) finished.push(current);
+    current = undefined;
+  };
+  for (const line of lines) {
+    const header = HEADER.exec(line);
+    if (header) {
+      close();
+      current = header[1]!.replace(/^\.\//, "");
+    } else if (isSummaryLine(line)) close();
+    else if (current === undefined) continue;
+    else if (FAILED.test(line)) failed.add(current);
+    else if (PASSED.test(line)) passed.add(current);
+  }
+  return finished.filter((file) => safeFile(file) && passed.has(file) && !failed.has(file));
 }
 
 /** A test file path the forge hands a check to run alone. */

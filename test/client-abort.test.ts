@@ -74,6 +74,7 @@ test("a body that arrives after the client left is cancelled", async () => {
     controller.abort();
     expect(await pending).toBe("aborted");
     for (let i = 0; i < 100 && servers.inFlight > 0; i++) await Bun.sleep(10);
+    if (servers.inFlight > 0) throw new Error(`never came: still waiting while servers.inFlight > 0`);
     release(
       new Response(
         new ReadableStream({

@@ -53,7 +53,7 @@ test("every query selector has a visible label and sits outside .row-actions", a
   const res = await fetch(`${servers.url}/boards/data`, { headers: { authorization: `Bearer ${token}` } });
   expect(res.status).toBe(200);
   const html = await res.text();
-  const form = html.match(/<form method="get" action="\/boards\/data"[^>]*>([\s\S]*?)<\/form>/);
+  const form = [...html.matchAll(/<form method="get" action="\/boards\/data"[^>]*>([\s\S]*?)<\/form>/g)].find((m) => m[0].includes('name="chart"'));
   expect(form).not.toBeNull();
   expect(form![0]).not.toContain("row-actions");
   expect(form![0]).toContain('class="bar"');

@@ -121,4 +121,18 @@ describe("API errors are distinguishable and self-describing", () => {
     expect(res.headers.get("referrer-policy")).toBe("same-origin");
     expect(res.headers.get("content-security-policy")).toBeTruthy();
   });
+
+  test("a known API path under the wrong method is 405 with Allow, an unknown one stays no_route", async () => {
+    const res = await fetch(`${base}/api/v1/repos`, { method: "PUT" });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("GET, HEAD, POST");
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("method_not_allowed");
+    expect(body.message).toBe("PUT is not taken here; use GET, POST");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBeTruthy();
+    const nope = await err("/api/v1/nope", { method: "PUT" });
+    expect(nope.status).toBe(404);
+    expect(nope.error).toBe("no_route");
+  });
 });

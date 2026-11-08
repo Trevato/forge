@@ -17,6 +17,7 @@ import { createLog } from "../kernel/log.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
 import { KEEPER_CAUSES, pickCause, readKeeperFacts, type KeeperCause, type KeeperMove } from "./keeper_cause.ts";
 import { isLow, landedBetween, readRate, type Rate } from "./keeper_rate.ts";
+import { oldestWaiting } from "./pile.ts";
 
 const log = createLog("keeper");
 const HOUR_MS = 3_600_000;
@@ -110,16 +111,18 @@ function settle(app: App, now: number): void {
   }
 }
 
-/** Files one issue for a cause the keeper cannot act on, in the forge's own repository. */
-function fileOnce(app: App, found: { cause: KeeperCause; says: string }, rate: Rate, now: number): void {
+/** Files one issue for a cause the keeper cannot act on, in the forge's own repository; private repositories are named in it only when that repository is private too. */
+export function fileOnce(app: App, found: { cause: KeeperCause; says: string }, rate: Rate, now: number): void {
   const [owner, name] = ownRepoPath().split("/");
   const repo = owner && name ? getRepo(app.db, owner, name) : undefined;
   if (!repo) return log.warn("keeper cannot file: the forge's own repository is missing", { path: ownRepoPath() });
+  const oldest = found.cause === "stale_pile" ? oldestWaiting(app.db, 10, repo.visibility !== "private") : [];
+  const list = oldest.length === 0 ? "" : `\n\nOldest waiting, start here:\n${oldest.map((s) => `- ${s}`).join("\n")}`;
   const made = createIssue(app.db, {
     repoId: repo.id,
     authorId: repo.ownerId,
     title: `Throughput: ${found.says}`.slice(0, 200),
-    body: `The throughput keeper found this binding landings (${rate.recent.toFixed(1)} an hour against a best of ${rate.best.toFixed(1)}) and cannot act on it itself.\n\n${found.says}\n\nFiles: docs/features/keeper.md`,
+    body: `The throughput keeper found this binding landings (${rate.recent.toFixed(1)} an hour against a best of ${rate.best.toFixed(1)}) and cannot act on it itself.\n\n${found.says}${list}\n\nFiles: docs/features/keeper.md`,
   });
   if (!made.ok) return;
   app.bus.append({ kind: "issue.opened", repoId: repo.id, payload: { number: made.value.number } });

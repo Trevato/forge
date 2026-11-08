@@ -4,6 +4,7 @@
  * reviewer's task (#1237). A review that ends with no verdict is sent again,
  * to the other reviewer when the crew has one.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -99,7 +100,7 @@ describe("a review that comes back with no verdict", () => {
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
     for (const name of ["juniper", "sentinel"])
-      setCrewRole(app.db, repo.id, getUserByName(app.db, name)!.id, "reviewer");
+      seatAs(app.db, repo.id, getUserByName(app.db, name)!.id, "reviewer");
   });
 
   afterAll(async () => {

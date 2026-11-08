@@ -6,20 +6,25 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { clearAccountCeiling, daySpent, setAccountCeiling } from "../src/core/account_ceiling.ts";
 import { claimDone, completeWrite, recordWrite } from "../src/core/conversation_writes.ts";
-import { listTurns, openConversation } from "../src/core/conversations.ts";
+import { listTurns, newConversation, openConversation } from "../src/core/conversations.ts";
 import { monthSpent } from "../src/core/model_grant.ts";
 import { addSubscription, getSubscription, PLATFORM, setGrants, wakeSubscription } from "../src/core/subscriptions.ts";
 import { verifyToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { serve } from "../src/http/server.ts";
 import { TOOLS } from "../src/crew/claude.ts";
-import { MCP_SERVER, mcpConfig, RESUMED_LINE, resumeInterrupted, say, unendedLine, TURNS_LIVE_MAX, type ConversationOptions } from "../src/crew/conversation.ts";
+import { answerHeld, hold, waitingFor } from "../src/core/fence.ts";
+import { flowFor } from "../src/system/telemetry.ts";
+import { readTalkTurns, talkTurnsWords } from "../src/flow/talk_turns.ts";
+import { MCP_SERVER, mcpConfig, RESUMED_LINE, resumeInterrupted, say, STOPPED_LINE, stopTurn, turnRunning, unendedLine, TURNS_LIVE_MAX, type ConversationOptions } from "../src/crew/conversation.ts";
 
 let dir: string;
 let app: App;
@@ -34,7 +39,7 @@ const options = (binary: string, signal = new AbortController().signal): Convers
 });
 
 /** A stand-in `claude`: records what it was given, answers, and holds while told to. */
-function stub(name: string, sid: string, mode: "answer" | "hang" | "steer" | "fail", gone = false): string {
+function stub(name: string, sid: string, mode: "answer" | "hang" | "steer" | "fail" | "gate", gone = false): string {
   const path = join(dir, name);
   writeFileSync(
     path,
@@ -50,6 +55,7 @@ echo '{"type":"system","subtype":"init","session_id":"${sid}","model":"fake"}'
 ${mode === "fail" ? "exit 1" : ""}
 echo '{"type":"assistant","session_id":"${sid}","message":{"id":"m1","content":[{"type":"tool_use","name":"mcp__forge__now","input":{}}],"usage":{"input_tokens":10,"output_tokens":5}}}'
 ${mode === "hang" ? "sleep 30" : ""}
+${mode === "gate" ? `while [ ! -f "${dir}/${name}.gate" ]; do sleep 0.05; done` : ""}
 ${mode === "steer" ? `IFS= read -r second; printf '%s' "$second" > "${dir}/${name}.second"` : ""}
 echo '{"type":"assistant","session_id":"${sid}","message":{"id":"m2","content":[{"type":"text","text":"All quiet."}],"usage":{"input_tokens":20,"output_tokens":9}}}'
 RESULT='{"type":"result","subtype":"success","is_error":false,"result":"All quiet.","total_cost_usd":0.5,"num_turns":2,"session_id":"${sid}","terminal_reason":"completed","usage":{"input_tokens":20,"output_tokens":9}}'
@@ -135,6 +141,38 @@ describe("a conversation turn", () => {
     expect(openConversation(app.db, alice.id).claudeSessionId).toBe("sess-new");
   });
 
+  test("a lost session is never shown: named first, refused after, the turn starts fresh with the stored turns (#8751)", async () => {
+    const path = join(dir, "lost");
+    writeFileSync(
+      path,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+printf '%s' "$first" >> "${dir}/lost.first"
+printf '%s\\n' "$CLAUDE_CONFIG_DIR" > "${dir}/lost.config"
+echo '{"type":"system","subtype":"init","session_id":"sess-lost","model":"fake"}'
+case " $* " in *" --resume "*)
+  echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","errors":["No conversation found with session ID: sess-lost"],"total_cost_usd":0,"num_turns":0,"session_id":"sess-lost"}'
+  exit 1 ;; esac
+echo '{"type":"assistant","session_id":"sess-lost","message":{"id":"m2","content":[{"type":"text","text":"Back."}],"usage":{"input_tokens":1,"output_tokens":1}}}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Back.","total_cost_usd":0.1,"num_turns":1,"session_id":"sess-lost","terminal_reason":"completed","usage":{"input_tokens":1,"output_tokens":1}}'
+`,
+    );
+    chmodSync(path, 0o755);
+    const before = turns(alice).length;
+    const said = say(app, options(path), alice.id, "do you remember me?");
+    if (said.ok) await said.value.done;
+    const added = turns(alice).slice(before);
+    expect(added).toEqual(["person:do you remember me?", "agent:Back."]);
+    expect(added.join()).not.toContain("No conversation found");
+    const sent = readFileSync(join(dir, "lost.first"), "utf8");
+    // The fresh attempt carries what was said before, and the message.
+    expect(sent).toContain("still there?");
+    expect(sent).toContain("do you remember me?");
+    expect(readFileSync(join(dir, "lost.config"), "utf8").trim()).toBe(join(dir, "claude-config"));
+    expect(statSync(join(dir, "claude-config")).mode & 0o077).toBe(0);
+  });
+
   test("a message while a turn runs is steered into it, not started beside it", async () => {
     const bin = stub("steered", "sess-a", "steer");
     const a = say(app, options(bin), alice.id, "one");
@@ -142,6 +180,64 @@ describe("a conversation turn", () => {
     expect(b.ok && b.value.how).toBe("steered");
     if (a.ok) await a.value.done;
     expect(JSON.parse(readFileSync(join(dir, "steered.second"), "utf8")).message.content[0].text).toBe("two");
+  });
+
+  test("a reply in progress is read from the stream, dropped halfway, and resumed from the last event id (#8815)", async () => {
+    const bin = stub("gated", "sess-g", "gate");
+    const servers = await serve(app);
+    const cookie = `forge_session=${createSession(app.db, alice.id).token}`;
+    const conversation = openConversation(app.db, alice.id);
+    const base = listTurns(app.db, alice.id, conversation.id, { limit: 1 });
+    const from = base.ok && base.value.length > 0 ? base.value.at(-1)!.id : "";
+    const parse = (text: string) =>
+      text.split("\n\n").flatMap((f) => {
+        const event = /^event: (.*)$/m.exec(f)?.[1];
+        return event === undefined ? [] : [{ event, id: /^id: (.*)$/m.exec(f)?.[1] }];
+      });
+    const turnIds = (text: string) => parse(text).filter((f) => f.event === "turn").map((f) => f.id);
+    let started: Promise<void> | undefined;
+    try {
+      const a = say(app, options(bin), alice.id, "stream me");
+      if (!a.ok || a.value.how !== "started") throw new Error("not started");
+      started = a.value.done;
+      // First connection: read until the tool call has streamed (the person's message, then the call), then drop.
+      const drop = new AbortController();
+      const first = await fetch(`${servers.url}/talk/stream?after=${from}`, { headers: { cookie }, signal: drop.signal });
+      const reader = first.body!.getReader();
+      let seen = "";
+      while (turnIds(seen).length < 2) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        seen += new TextDecoder().decode(chunk.value);
+      }
+      drop.abort();
+      const before = turnIds(seen);
+      expect(before.length).toBe(2);
+      // Another device opening mid-turn sees the same so far.
+      const second = new AbortController();
+      const other = await fetch(`${servers.url}/talk/stream`, { headers: { cookie, "last-event-id": from }, signal: second.signal });
+      const otherReader = other.body!.getReader();
+      let otherSeen = "";
+      while (turnIds(otherSeen).length < 2) {
+        const chunk = await otherReader.read();
+        if (chunk.done) break;
+        otherSeen += new TextDecoder().decode(chunk.value);
+      }
+      second.abort();
+      expect(turnIds(otherSeen)).toEqual(before);
+      writeFileSync(join(dir, "gated.gate"), "");
+      await started;
+      const rest = parse(await (await fetch(`${servers.url}/talk/stream`, { headers: { cookie, "last-event-id": before[1]! } })).text());
+      const all = turnIds(await (await fetch(`${servers.url}/talk/stream?after=${from}`, { headers: { cookie } })).text());
+      expect(all.slice(0, 2)).toEqual(before);
+      expect(rest.filter((f) => f.event === "turn").map((f) => f.id)).toEqual(all.slice(2));
+      expect(all.length).toBe(3);
+      expect(rest.at(-1)!.event).toBe("done");
+    } finally {
+      writeFileSync(join(dir, "gated.gate"), "");
+      await started;
+      servers.stop();
+    }
   });
 
   test("a restart mid-turn: found at boot and resumed once from the same session", async () => {
@@ -379,5 +475,82 @@ echo '{"type":"result","subtype":"success","is_error":true,"result":"You have hi
     const next = say(app, options(stub("platform-next", "s", "answer")), alice.id, "again?");
     expect(next.ok).toBe(true);
     if (next.ok) await next.value.done;
+  });
+});
+
+describe("stopping a turn (#8818)", () => {
+  test("a stopped turn leaves no process, keeps what was said, marked stopped, and cancels a pending confirm", async () => {
+    const u = { value: alice };
+    const pidFile = join(dir, "stop.pid");
+    const path = join(dir, "stop-claude");
+    writeFileSync(
+      path,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+sleep 300 &
+echo $! > "${pidFile}"
+echo '{"type":"system","subtype":"init","session_id":"sess-stop","model":"fake"}'
+echo '{"type":"assistant","session_id":"sess-stop","message":{"id":"m1","content":[{"type":"text","text":"Looking into it."}],"usage":{"input_tokens":1,"output_tokens":1}}}'
+sleep 300
+`,
+    );
+    chmodSync(path, 0o755);
+    const said = say(app, options(path), u.value.id, "do a slow thing");
+    if (!said.ok || said.value.done === undefined) throw new Error("not started");
+    for (let i = 0; i < 100 && !turns(u.value).some((t) => t === "agent:Looking into it."); i++) await Bun.sleep(50);
+    expect(turns(u.value)).toContain("agent:Looking into it.");
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const via = `conversation:${openConversation(app.db, u.value.id).id}`;
+    const held = hold(app.db, via, u.value.id, "create_issue", { title: "x" });
+    expect(held).not.toBeNull();
+    const failedBefore = readTalkTurns(app.db).failed;
+    expect(stopTurn(app, u.value.id)).toBe(true);
+    await said.value.done;
+    expect(turnRunning(app, u.value.id)).toBe(false);
+    expect(turns(u.value).slice(-3)).toEqual(["person:do a slow thing", "agent:Looking into it.", `agent:${STOPPED_LINE}`]);
+    expect(waitingFor(app.db, u.value.id)).toEqual([]);
+    expect(answerHeld(app.db, held!, u.value.id).ok).toBe(false);
+    // Stored as stopped, and not a failure (#8860).
+    expect(app.db.query("SELECT state FROM conversation_run WHERE user_id = ?1 ORDER BY started_at DESC LIMIT 1").get(u.value.id)).toEqual({ state: "stopped" });
+    expect(app.db.query("SELECT stopped FROM conversation_run WHERE user_id = ?1 ORDER BY started_at DESC LIMIT 1").get(u.value.id)).toEqual({ stopped: 1 });
+    const turnsNow = readTalkTurns(app.db);
+    expect(turnsNow.stopped).toBeGreaterThanOrEqual(1);
+    expect(turnsNow.failed).toBe(failedBefore);
+    let alive = true;
+    for (let i = 0; i < 60 && alive; i++) {
+      try { process.kill(pid, 0); await Bun.sleep(50); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+    expect(stopTurn(app, u.value.id)).toBe(false);
+  }, 20_000);
+
+  test("Stop ends the replies running in two conversations, the older one included", async () => {
+    const older = newConversation(app.db, alice.id);
+    const newer = newConversation(app.db, alice.id);
+    const one = say(app, options(stub("two-a", "sess-two-a", "hang")), alice.id, "first", [], "inject", older.id);
+    const two = say(app, options(stub("two-b", "sess-two-b", "hang")), alice.id, "second", [], "inject", newer.id);
+    if (!one.ok || !two.ok || one.value.done === undefined || two.value.done === undefined) throw new Error("not started");
+    expect(turnRunning(app, alice.id, older.id)).toBe(true);
+    expect(turnRunning(app, alice.id, newer.id)).toBe(true);
+    expect(stopTurn(app, alice.id)).toBe(true);
+    await Promise.all([one.value.done, two.value.done]);
+    expect(turnRunning(app, alice.id, older.id)).toBe(false);
+    expect(turnRunning(app, alice.id, newer.id)).toBe(false);
+    expect(stopTurn(app, alice.id)).toBe(false);
+  }, 20_000);
+});
+
+describe("talk turn counts (#8860)", () => {
+  test("stopped turns are counted apart and leave the failure rate alone", () => {
+    const base = readTalkTurns(app.db);
+    const c = openConversation(app.db, alice.id);
+    for (const [state, stopped] of [["ok", 0], ["failed", 0], ["stopped", 1], ["stopped", 1]] as const)
+      app.db.query("INSERT INTO conversation_run (id, conversation_id, user_id, state, stopped, prompt, started_at) VALUES (?1,?2,?3,?4,?5,'x','2026-11-03')").run(crypto.randomUUID(), c.id, alice.id, state, stopped);
+    const now = readTalkTurns(app.db);
+    expect([now.ok - base.ok, now.failed - base.failed, now.stopped - base.stopped]).toEqual([1, 1, 2]);
+    expect(talkTurnsWords({ ok: 0, failed: 0, stopped: 0, failureRate: 0 })).toBe("");
+    expect(talkTurnsWords({ ok: 1, failed: 1, stopped: 2, failureRate: 0.5 })).toBe("Talk: 1 turn failed, 2 stopped by the person");
+    expect(flowFor(app, { kind: "owner" }).vitals.says).toContain(`Talk: ${now.failed} ${now.failed === 1 ? "turn" : "turns"} failed, ${now.stopped} stopped by the person`);
   });
 });

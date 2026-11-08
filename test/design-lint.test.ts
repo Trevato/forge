@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { areaFiles, classesIn, compare, countFile, designText, documentedClasses, locate, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
+import { areaFiles, classesIn, compare, compareQuiet, quiet, scanQuiet, countFile, designText, documentedClasses, locate, registeredClasses, scan, sectionLinks, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -205,4 +205,55 @@ describe("search inputs (#4750)", () => {
     expect(readFileSync("src/web/style/content.ts", "utf8")).not.toContain(".bar .search");
     expect(readFileSync("src/web/style/components.ts", "utf8")).toContain(".bar .input[type=search]");
   });
+});
+
+describe("design check: the quiet-page rules (#8775)", () => {
+  const rules = (t: string) => quiet(t).map((f) => f.rule);
+  const css = (c: string) => "x = /* css */ `" + c + "`";
+
+  test("label: Status: before a status word, not a sentence", () => {
+    expect(rules("h = `<p>Status: Open</p>`")).toEqual(["label"]);
+    expect(rules("h = `<dt>State:</dt><dd>${s}</dd>`")).toEqual(["label"]);
+    expect(rules("h = `<p>Status: ${s}</p>`")).toEqual(["label"]);
+    expect(rules("h = `<p>The status: what a pull is doing now.</p>`")).toEqual([]);
+    expect(rules('h = `<span class="dot" title="Open"></span>`')).toEqual([]);
+  });
+
+  test("caps: uppercase in a stylesheet, with its line", () => {
+    const f = quiet(css(".k{\n text-transform: uppercase}"));
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ rule: "caps", line: 2 });
+    expect(rules(css(".k{font-weight:600}"))).toEqual([]);
+    expect(rules("p = `Write it in uppercase`")).toEqual([]);
+  });
+
+  test("echo: an icon's aria-label equal to its visible text", () => {
+    expect(rules('h = `<button aria-label="Merge"><svg><use href="#m"/></svg> Merge</button>`')).toEqual(["echo"]);
+    expect(rules('h = `<button aria-label="Merge"><svg><use href="#m"/></svg></button>`')).toEqual([]);
+    expect(rules('h = `<button aria-label="Merge"><svg></svg> Merge pull</button>`')).toEqual([]);
+    expect(rules('h = `<button aria-label="Merge">Merge</button>`')).toEqual([]);
+  });
+
+  test("accent: a second accent token is a finding; --accent and --accent-fg are not", () => {
+    expect(rules("c = /* css */ `a{color:var(--accent);background:var(--accent-fg)}`")).toEqual([]);
+    expect(rules("c = /* css */ `a{color:var(--accent-2)} b{--accent-alt:#fff}`")).toEqual(["accent", "accent"]);
+  });
+
+  test("inline-colour: a colour name in style, not a token", () => {
+    expect(rules('h = `<i style="color: red"></i>`')).toEqual(["inline-colour"]);
+    expect(rules('h = `<i style="color: var(--danger)"></i>`')).toEqual([]);
+    expect(countFile('h = `<i style="color:#f00"></i>`').colour).toBe(1);
+  });
+
+  test("a pull may not add to the debt, and a paid debt must be struck", () => {
+    const f = { "src/web/a.ts": quiet(css("a{text-transform:uppercase}")) };
+    expect(compareQuiet({ "src/web/a.ts": { caps: 1 } }, f)).toEqual([]);
+    expect(compareQuiet({}, f)[0]).toContain("src/web/a.ts:1");
+    expect(compareQuiet({ "src/web/a.ts": { caps: 2 } }, f)[0]).toContain("lower it");
+  });
+
+  test("the tree breaks no rule beyond its debt", () => {
+    const debt = JSON.parse(readFileSync("docs/design/quiet-debt.json", "utf8"));
+    expect(compareQuiet(debt, scanQuiet("."))).toEqual([]);
+  }, 60_000);
 });

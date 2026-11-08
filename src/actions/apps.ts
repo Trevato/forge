@@ -24,6 +24,7 @@ import { grantUrl, originFor, sideForViewer, sideReader } from "../apps/proxy.ts
 import { plainLine } from "../apps/side.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
 import {
+  envBuild,
   isEnvName,
   previewEnv,
   type EnvName,
@@ -59,6 +60,7 @@ import { canAdmin, canEnterApp, canWrite, getRepo, type Repo } from "../core/rep
 import type { Run } from "../core/runs.ts";
 import { type User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
+import { previewCommit } from "../git/combined.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -284,6 +286,7 @@ export type NewAppError =
   | CreateAppError
   | "scaffold_failed"
   | "no_such_agent"
+  | "not_a_builder"
   | "app_limit";
 
 /**
@@ -307,6 +310,7 @@ export async function newApp(
       ? undefined
       : getAgentByName(app.db, input.agent);
   if (input.agent && !agent) return err("no_such_agent");
+  if (agent && !agent.roles.includes("builder")) return err("not_a_builder");
 
   // Refuse at the limit before a repository exists to take back.
   // The owner is resolved with the actor's rights, as createRepo does, so
@@ -371,7 +375,7 @@ export async function newApp(
     const binary = process.env["FORGE_CLAUDE"] ?? "claude";
     if (planningAvailable(binary)) {
       const roster = listAllAgents(app, user.value);
-      const agents = roster.ok ? roster.value : [];
+      const agents = roster.ok ? roster.value.filter((a) => a.roles.includes("builder")) : [];
       if (agents.length > 0) {
         const result = await plan(
           {
@@ -401,7 +405,7 @@ export async function newApp(
 
   let issue: Issue | undefined;
   if (chosen) {
-    addCrew(app.db, repo.value.id, chosen.user.id, user.value.id);
+    addCrew(app.db, repo.value.id, chosen.user.id, user.value.id, "builder");
     app.bus.append({
       kind: "crew.added",
       repoId: repo.value.id,
@@ -459,6 +463,7 @@ export const NEW_APP_ERRORS: Record<string, string> = {
   already_app: "That repository is already an app.",
   scaffold_failed: "The starter app could not be committed.",
   no_such_agent: NO_SUCH_AGENT,
+  not_a_builder: "That agent is not a builder, so it cannot be handed a new app. Pick a builder.",
 };
 
 export interface NewAppFromSentenceInput extends Omit<NewAppInput, "name"> {
@@ -716,7 +721,7 @@ export async function redeployEnv(
   if (!isEnvName(env)) return err("no_such_env");
   const runtime = appsRuntime(app);
   if (runtime === undefined) return err("no_runtime");
-  const commit = await commitFor(app, repo, env);
+  const commit = await commitFor(app, repo, record, env);
   if (commit === undefined) return err("nothing_to_deploy");
   return ok(
     runtime.requestDeploy(
@@ -757,18 +762,21 @@ export async function stopEnv(
 async function commitFor(
   app: App,
   repo: Repo,
+  record: AppRecord,
   env: EnvName,
 ): Promise<string | undefined> {
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   if (env === "production")
     return resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+  // A build preview names its commit only by its short sha: the commit it
+  // serves is the one the runtime holds for it, while it is held.
+  if (envBuild(env) !== undefined)
+    return appsRuntime(app)?.envStatus(record, env)?.commitOid || undefined;
   const pull = getPull(app.db, repo.id, Number(env.slice(5)));
   if (!pull || pull.state !== "open") return undefined;
-  const ref = pull.crossRepo
-    ? `refs/pull/${pull.number}/head`
-    : `refs/heads/${pull.headBranch}`;
   const at = await pullDir(app.db, app.reposRoot, repo, pull);
-  return (await resolveOid(at, ref)) ?? (pull.headOid || undefined);
+  // A fork's pull combined on our side previews the combined build (#9012).
+  return previewCommit(at, pull);
 }
 
 export { previewEnv };

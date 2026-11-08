@@ -25,6 +25,12 @@ const ME = "me";
 const OWNER = "octo";
 const PASSWORD = "refusals-account-pass";
 
+/**
+ * This is the one test that really forks, mirrors and commits through git;
+ * on a loaded full-suite machine that outruns bun's 5 s default (#9425).
+ */
+const SLOW = 30_000;
+
 const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
 
@@ -172,7 +178,7 @@ describe("contribute refusals", () => {
     );
     expect(job?.stage).toBe("done");
     mirrorPath = `${job!.repo!.ownerName}/${job!.repo!.name}`;
-  });
+  }, SLOW);
 
   afterAll(async () => {
     fake.stop();
@@ -251,5 +257,5 @@ describe("contribute refusals", () => {
     expect(branches.items.find((b) => b.name === "fix-typo")?.oid).toBe(
       failed.commit.commitOid,
     );
-  });
+  }, SLOW);
 });

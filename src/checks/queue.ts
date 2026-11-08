@@ -68,6 +68,7 @@ import { runGit } from "../git/env.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
+import type { QueueVerdict } from "../flow/culprits.ts";
 import { conflictWords, reasonWords, redWords, searched } from "./gate_reason.ts";
 import type { GateResult } from "./gate_result.ts";
 import type { LandVerdict } from "./tiers.ts";
@@ -180,6 +181,8 @@ export interface QueueOptions {
    * kept beyond this process (#6427).
    */
   readonly onBatch?: (repoId: string, red: boolean) => void;
+  /** A red batch was named: a pull handed back, or a load red no pull is blamed for (#7639). */
+  readonly onVerdict?: (repoId: string, verdict: QueueVerdict) => void;
   /**
    * A shorter prefix was red and a longer one holding it green: the red was
    * a flake, and its verdicts are handed here to be recorded.
@@ -782,7 +785,13 @@ export function gateRuns(repoId: string): number {
  * line's own `red (check)` — no test named, no type error — is gated once
  * more too (#6722), and red again it is searched; a `search` gate is not.
  */
-function counted(line: Line, gate: GateCandidate, adopt: QueueOptions["adopt"], search: boolean): Gated {
+function counted(
+  line: Line,
+  gate: GateCandidate,
+  adopt: QueueOptions["adopt"],
+  search: boolean,
+  onVerdict?: QueueOptions["onVerdict"],
+): Gated {
   const once = attempt(line, gate, adopt);
   return async (candidate, signal, resumed) => {
     const first = await once(candidate, signal, resumed);
@@ -804,8 +813,18 @@ function counted(line: Line, gate: GateCandidate, adopt: QueueOptions["adopt"], 
       repo: line.repoId,
       pulls: candidate.steps.map((s) => `#${s.entry.pull.number}`).join(","),
     });
+    told(onVerdict, line.repoId, { kind: "load", why: again.reason?.kind ?? "check", tests: [] });
     return UNDECIDED;
   };
+}
+
+/** Hand a verdict to its keeper; a keeper that fails never stops the queue. */
+function told(keep: QueueOptions["onVerdict"], repoId: string, verdict: QueueVerdict): void {
+  try {
+    keep?.(repoId, verdict);
+  } catch (error) {
+    log.warn("verdict not kept", { repo: repoId, error: String(error) });
+  }
 }
 
 /**
@@ -930,8 +949,8 @@ const ARRIVED = Symbol("arrived");
  */
 async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Promise<void> {
   line.draining = true;
-  const gated = counted(line, gate, options.adopt, false);
-  const searching = counted(line, gate, options.adopt, true);
+  const gated = counted(line, gate, options.adopt, false, options.onVerdict);
+  const searching = counted(line, gate, options.adopt, true, options.onVerdict);
   const depth = Math.max(1, Math.floor(options.depth ?? DEFAULT_DEPTH));
   const room: Room = options.room ?? (() => 0);
   const ahead: Flight[] = [];
@@ -981,7 +1000,7 @@ async function drain(line: Line, gate: GateCandidate, options: QueueOptions): Pr
       let left: Waiting[];
       try {
         left = await settleHead(
-          { line, gated: searching, room, onBatch: options.onBatch, onFlake: options.onFlake },
+          { line, gated: searching, room, onBatch: options.onBatch, onFlake: options.onFlake, onVerdict: options.onVerdict },
           head,
           verdict,
           ahead,
@@ -1304,6 +1323,7 @@ interface Search {
   readonly room: Room;
   readonly onBatch: ((repoId: string, red: boolean) => void) | undefined;
   readonly onFlake: ((repoId: string, reds: readonly Red[], tip: string) => void) | undefined;
+  readonly onVerdict: QueueOptions["onVerdict"];
 }
 
 /**
@@ -1389,6 +1409,12 @@ async function judged(
       ...(together.length === 0 ? {} : { with: together.map((n) => `#${n}`).join(",") }),
     });
     culprit.handBack(red, candidate.baseOid, together);
+    told(search.onVerdict, search.line.repoId, {
+      kind: "real",
+      why: red.reason?.kind ?? "check",
+      pull: culprit.pull.number,
+      tests: (red.tests?.failing ?? []).map((t) => t.name),
+    });
     steps[0]!.settle(false);
     return [];
   }
@@ -1417,6 +1443,11 @@ async function judged(
     } catch (error) {
       log.warn("flake not kept", { repo: search.line.repoId, error: String(error) });
     }
+    told(search.onVerdict, search.line.repoId, {
+      kind: "load",
+      why: "flake",
+      tests: flaked.flatMap((f) => (f.tests?.failing ?? []).map((t) => t.name)),
+    });
   }
   const known =
     bad < prefixes.length

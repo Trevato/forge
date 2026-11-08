@@ -10,7 +10,7 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, icon, row, time } from "../ui.ts";
+import { btn, icon, row, time } from "../ui.ts";
 import { usageShell } from "./usage-tabs.ts";
 
 function owner(ctx: Ctx): Response | undefined {
@@ -26,17 +26,18 @@ export function telemetryPage(ctx: Ctx): Response {
   const agents = timePhase(ctx.request, "agents", () => grantable(ctx.app.db));
   const reads = timePhase(ctx.request, "reads", () => recentReads(ctx.app.db));
   const rendering = performance.now();
-  const body = html`${card(
-      html`<div class="card-body"><p class="muted small">
+  const body = html`<section class="settings-block">
+      <h2>Telemetry grants</h2>
+      <p class="muted small">
         A granted agent reads <a href="/boards">Boards</a>, <a href="/system">System</a> and the
         boards' sources through the API and MCP — counts and rates, with
         private repositories and sealed values cut out. Revoke at any time;
         every read is listed below.
-      </p></div>
-      <ul class="list setting-list">
-        ${agents.length === 0
-          ? html`<li class="muted small">No agent accounts yet.</li>`
-          : agents.map((a) =>
+      </p>
+      ${agents.length === 0
+        ? html`<p class="small">No agent accounts yet.</p>`
+        : html`<ul class="list setting-list">
+            ${agents.map((a) =>
               row({
                 lead: icon("bot"),
                 title: html`${a.username} <span class="muted small mono">telemetry:read</span>`,
@@ -52,17 +53,16 @@ export function telemetryPage(ctx: Ctx): Response {
                 </form>`,
               }),
             )}
-      </ul>`,
-      { head: html`${icon("activity")}<h2>Telemetry grants</h2>`, pad: false },
-    )}
-    ${card(
-      reads.length === 0
-        ? html`<div class="card-body"><p class="muted small">No agent has read anything yet.</p></div>`
+          </ul>`}
+    </section>
+    <section class="settings-block">
+      <h2>Reads</h2>
+      ${reads.length === 0
+        ? html`<p class="small">No agent has read anything yet.</p>`
         : html`<ul class="list">${reads.map((r) =>
             row({ lead: icon("history"), title: html`${r.username} <span class="mono">${r.what}</span>`, meta: time(r.at) }),
-          )}</ul>`,
-      { head: html`${icon("history")}<h2>Reads</h2>`, pad: false },
-    )}`;
+          )}</ul>`}
+    </section>`;
   const response = usageShell(ctx, "telemetry", body);
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

@@ -12,6 +12,7 @@ import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { setRole } from "../src/actions/roles.ts";
 import { createSession } from "../src/core/sessions.ts";
+import { getUserByName } from "../src/core/users.ts";
 import { getRepo, updateRepoSettings } from "../src/core/repos.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/core/orgs.ts";
@@ -25,7 +26,7 @@ import { localSource } from "../src/view/local.ts";
 import { applyOp, configFields, opValue, readValues } from "../src/web/render/config-form.ts";
 import { detectStyle, parseJson, sameDoc, stringify, type Json } from "../src/web/render/json-doc.ts";
 import { findSchema, globMatches, validate } from "../src/web/render/json-schema.ts";
-import { digestOf } from "../src/web/pages/config.ts";
+import { digestOf, MAX_FORM_BYTES } from "../src/web/pages/config.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { signUpProven } from "./helpers/verified.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
@@ -173,6 +174,13 @@ describe("the config form on the web", () => {
   let origin = "";
   let alice = "";
   let kim = "";
+  const DEPLOY = "# how it runs\nname: lamp # the app\nbase: &b\n  port: 80\nreplicas: 2\n";
+  // Hostile shapes a form must refuse, not expand: never past MAX_FORM_BYTES, so read only after the size check.
+  const HOSTILE: Record<string, string> = {
+    "flow.yml": `a: ${"[".repeat(10_000)}${"]".repeat(10_000)}\n`,
+    "merge.yml": `a0: &a0 {x: 1}\n${Array.from({ length: 11 }, (_, i) => `a${i + 1}: &a${i + 1}\n  <<: [${Array(9).fill(`*a${i}`).join(", ")}]`).join("\n")}\n`,
+    "deep.toml": `a = ${"[".repeat(70)}${"]".repeat(70)}\n`,
+  };
   const SETTINGS = '{\n    "name": "lamp",\n    "port": 8080,\n    "tags": [\n        "a"\n    ]\n}\n';
 
   const get = (path: string, cookie = ""): Promise<Response> =>
@@ -228,6 +236,8 @@ describe("the config form on the web", () => {
         files: [
           { path: "settings.json", content: SETTINGS },
           { path: "broken.json", content: '{\n  "a": 1,\n  oops\n}\n' },
+          { path: "deploy.yml", content: DEPLOY },
+          ...Object.entries(HOSTILE).map(([path, content]) => ({ path, content })),
         ],
       });
     }
@@ -299,6 +309,63 @@ describe("the config form on the web", () => {
     expect(pulls[0]!.headRepoId).toBe(getRepo(app.db, "kim", "lamp")!.id);
     // Nothing landed on the branch the reader cannot push to.
     expect(await fileAt("alice", "lamp", "main", "settings.json")).toBe(current);
+  });
+
+  test("a YAML file opens as a form and a save keeps its comments and anchors", async () => {
+    const page = await (await get("/alice/lamp/blob/main/deploy.yml")).text();
+    expect(page).toContain('class="card config-form"');
+    expect(page).toContain('href="/alice/lamp/config/main/deploy.yml"');
+    const form = await (await get("/alice/lamp/config/main/deploy.yml", alice)).text();
+    expect(form).toContain('name="v/replicas"');
+    // A plain form post: nothing here needs a script.
+    expect(form).toContain('<form method="post" action="/alice/lamp/config" class="card config-form">');
+    const before = await commitCount("alice", "lamp");
+    const res = await post("/alice/lamp/config", {
+      ref: "main",
+      path: "deploy.yml",
+      base: digestOf(DEPLOY),
+      doc: '{"name":"lamp","base":{"port":80},"replicas":3}',
+      step: "save",
+      message: "Three replicas",
+    }, alice);
+    expect(res.status).toBe(303);
+    expect(await commitCount("alice", "lamp")).toBe(before + 1);
+    expect(await fileAt("alice", "lamp", "main", "deploy.yml")).toBe(DEPLOY.replace("replicas: 2", "replicas: 3"));
+  });
+
+  test("hostile YAML and TOML fall back to the source on the page and are refused on submit", async () => {
+    for (const [path, content] of Object.entries(HOSTILE)) {
+      const res = await get(`/alice/lamp/config/main/${path}`, alice);
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toContain(`/alice/lamp/blob/main/${path}?view=source`);
+      const before = await commitCount("alice", "lamp");
+      const sub = await post("/alice/lamp/config", {
+        ref: "main",
+        path,
+        base: digestOf(content),
+        doc: '{"a":1}',
+        step: "save",
+        message: "Nope",
+      }, alice);
+      expect(sub.status).toBe(303);
+      expect(sub.headers.get("location")).toContain(`?view=source`);
+      expect(await commitCount("alice", "lamp")).toBe(before);
+    }
+  });
+
+  test("a file over MAX_FORM_BYTES is refused before it is parsed, on the page and on submit", async () => {
+    const big = `# ${"x".repeat(MAX_FORM_BYTES)}\na: 1\n`;
+    const made = await commitToBranch(app, getUserByName(app.db, "alice")!, getRepo(app.db, "alice", "lamp")!, {
+      message: "big",
+      files: [{ path: "big.yml", content: big }],
+    });
+    expect(made.ok).toBe(true);
+    const page = await get("/alice/lamp/config/main/big.yml", alice);
+    expect(page.status).toBe(303);
+    expect(page.headers.get("location")).toContain("?view=source");
+    const sub = await post("/alice/lamp/config", { ref: "main", path: "big.yml", base: digestOf(big), doc: '{"a":2}', step: "save", message: "x" }, alice);
+    expect(sub.status).not.toBe(200);
+    expect(await fileAt("alice", "lamp", "main", "big.yml")).toBe(big);
   });
 
   test("invalid JSON falls back to the source with the error and its line", async () => {
@@ -420,7 +487,7 @@ describe("who commits and who proposes", () => {
 
   test("a guest and an unconfirmed account hear why their proposal could not be made", async () => {
     const guest = await (await save("alice/lamp", cookies.gus!)).text();
-    expect(guest).toContain(proposeEditText({ step: "fork", reason: "not_member" }));
+    expect(guest).toContain(proposeEditText({ step: "fork", reason: "guest_cooldown" }));
     const unconfirmed = await (await save("alice/lamp", cookies.una!)).text();
     expect(unconfirmed).toContain("Confirm your email first");
     expect(getRepo(app.db, "gus", "lamp")).toBeUndefined();

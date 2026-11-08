@@ -96,6 +96,7 @@ describe("snapshot and mirror from the terminal's Resilience dialog", () => {
       await Bun.sleep(20);
       await h.press();
     }
+    if (!h.text().includes(" taken: ")) throw new Error(`never came: still waiting while !h.text().includes(" taken: ")`);
     const kept = await svc.list();
     expect(kept.length).toBe(1);
     const lines = h.text().split("\n");
@@ -152,6 +153,7 @@ describe("snapshot and mirror from the terminal's Resilience dialog", () => {
       await Bun.sleep(20);
       await h.press();
     }
+    if (!h.text().includes(" taken: ")) throw new Error(`never came: still waiting while !h.text().includes(" taken: ")`);
     (svc as { now: SnapshotsHandle["now"] }).now = take;
     expect(asked).toBe(1);
     expect(h.text()).toContain("n  take a snapshot now");

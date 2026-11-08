@@ -3,7 +3,8 @@
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { subscriptionRows } from "../../core/subscriptions.ts";
 import type { Handler } from "../context.ts";
-import { json, requireScope, unauthorized } from "../respond.ts";
+import { holds, weakEtag } from "../etag.ts";
+import { requireScope, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
 
 export function subscriptionRoutes(router: Router<Handler>): void {
@@ -12,6 +13,11 @@ export function subscriptionRoutes(router: Router<Handler>): void {
     if (!ctx.auth.user) return unauthorized();
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
-    return json({ items: subscriptionRows(ctx.app.db) });
+    // The tag is of the exact bytes sent, so a change moves it; reached only past the access checks.
+    const text = JSON.stringify({ items: subscriptionRows(ctx.app.db) });
+    const etag = weakEtag(text);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
 }

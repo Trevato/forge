@@ -32,7 +32,7 @@ describe("vitalsRows", () => {
 
   test("a look without a browser carries its reason and no rows", () => {
     expect(vitalsRows([{ look: "mobile", skipped: "no browser" }])).toEqual([
-      { look: "mobile", skipped: "no browser", rows: [] },
+      { look: "mobile", skipped: "no browser", rows: [], screens: "", sideways: false },
     ]);
   });
 });

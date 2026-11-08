@@ -61,6 +61,7 @@ import {
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { secureFor } from "../../http/cookie_secure.ts";
+import { SIGNUP_OWN_FORGE, SIGNUP_YOU_GET } from "../../core/contribute.ts";
 import { hasAdmin } from "../../spawn/claim.ts";
 import { getSignup, type SignupMode } from "../../settings/signup.ts";
 import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
@@ -299,13 +300,14 @@ function authForm(
   // The form's Sign in comes in both variants, outline beside the lead and
   // primary everywhere else, so the page always has one primary action. The
   // sentence tells a newcomer before they look for a door that is not there.
+  const mode = kind === "signin" ? timePhase(ctx.request, "settings", () => getSignup(ctx.app.db)) : undefined;
   const passkeyFirst = when(
     kind === "signin",
     () => html`<div class="stack stack-tight mb" data-passkey="on" hidden>
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
       ${passkeyNote("passkey-signin-note")}
     </div>
-    ${when(SIGNUP_SENTENCES[timePhase(ctx.request, "settings", () => getSignup(ctx.app.db))], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
+    ${when(mode === undefined ? undefined : SIGNUP_SENTENCES[mode], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
   );
 
   const body = html`${unknownLink}
@@ -336,7 +338,7 @@ function authForm(
           type: "email",
           value: values.email ?? "",
           autocomplete: "email",
-          hint: "Optional. Given, we send a link to prove it.",
+          hint: "Optional. If you add one, we send a link to confirm it. You need a confirmed email to send changes.",
           // A pinned name is not editable, so the keyboard goes to the email.
           ...(vouched !== undefined ? { autofocus: true } : {}),
           ...(errors.email ? { error: errors.email } : {}),
@@ -373,8 +375,8 @@ function authForm(
         kind === "signup" && !byPasskey,
         () => html`<div data-passkey="on" hidden>
           <p class="muted small mb">
-            Or skip the password: a passkey signs you in with a fingerprint,
-            face or device PIN. An email address above is optional.
+            Or skip the password and use a passkey: your fingerprint, face or
+            device PIN.
           </p>
           ${passkeyNote("passkey-signup-note")}
           <button type="button" id="passkey-signup" class="btn" data-variant="outline">Create account with a passkey</button>
@@ -400,7 +402,10 @@ function authForm(
             : btn("Create account", { variant: "primary" })}
         <span class="spacer"></span>
         ${kind === "signin"
-          ? btn("Need an account? Sign up", {
+          ? // A closed forge has no door to point at: the sentence above says so.
+            mode === "closed"
+            ? null
+            : btn("Need an account? Sign up", {
               href: "/signup",
               variant: "link",
               size: "sm",
@@ -420,7 +425,11 @@ function authForm(
     existsSync(join(ctx.app.config.dataDir, "parent.json")) && unowned;
   return html`<div class="narrow">
     ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
-    ${card(body)}
+    ${when(
+      kind === "signup",
+      () => html`<p class="mb" id="signup-you-get">${SIGNUP_YOU_GET} <a href="/forges/new">${SIGNUP_OWN_FORGE}</a></p>`,
+    )}
+    ${body}
     ${when(
       kind === "signin",
       () => html`<p class="mt"><a class="small" href="/recover">Lost your device?</a></p>`,
@@ -466,7 +475,15 @@ function signupClosedPage(ctx: Ctx): Response {
     {
       ctx,
       title: "Sign up",
-      body: html`<div class="stack"><h1>Sign up</h1><p>${said}</p><p><a href="/signin">Sign in</a></p></div>`,
+      body: html`<div class="narrow stack">
+        ${pageHead("Sign up")}
+        <p>${said}</p>
+        <p class="muted">You can still run a forge of your own, with no account here, and suggest a change to any public app here without one.</p>
+        <div class="form-actions">
+          ${btn("Get your own forge", { href: "/#yours", variant: "primary" })}
+          ${btn("Sign in", { href: "/signin", variant: "outline" })}
+        </div>
+      </div>`,
     },
     403,
   );
@@ -744,13 +761,12 @@ function ownersFor(ctx: Ctx, user: User): string[] {
 }
 
 function newRepoForm(ctx: Ctx, values: RepoValues, owners: string[], error?: string): Html {
-
-  return html`<div class="narrow-wide">
+  return html`<div class="narrow-wide" data-new-repo>
     ${pageHead("New repository", {
       sub: "A repository is a bare git repo plus its issues, pulls and settings.",
     })}
-    ${card(
-      html`<form method="post" action="/new">
+    <form method="post" action="/new">
+      ${error ? html`<p class="error" role="alert">${error}</p>` : null}
         ${selectField({
           label: "Owner",
           name: "owner",
@@ -768,7 +784,6 @@ function newRepoForm(ctx: Ctx, values: RepoValues, owners: string[], error?: str
           autofocus: true,
           pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
           hint: "Letters, digits, dots, dashes and underscores.",
-          ...(error ? { error } : {}),
         })}
         ${formField({
           label: "Description",
@@ -797,8 +812,7 @@ function newRepoForm(ctx: Ctx, values: RepoValues, owners: string[], error?: str
           ${btn("Create repository", { variant: "primary" })}
           ${btn("Cancel", { href: "/", variant: "ghost" })}
         </div>
-      </form>`,
-    )}
+    </form>
   </div>`;
 }
 

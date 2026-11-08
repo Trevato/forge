@@ -33,11 +33,25 @@ export const SHARED_BUDGET = { page: 240, deep: 24 } as const;
  * Deep pages per minute, per address, for a reader whose User-Agent looks like
  * a browser (#8199): anyone can write that header, so what it may spend on the
  * pages that cost a git walk is bound too. Far looser than a crawler's, since
- * people click. There is deliberately no bucket for all such readers
+ * people click. On time, there is deliberately no bucket for all such readers
  * together: a few addresses could spend it and shut every other person out.
- * The aggregate is held by the tree cache and by the loop-lag divisor.
+ * Behind, there is: on 2026-11-03 browser-looking strangers on too many
+ * addresses for any one to reach its budget sent 31 deep pages a second, took
+ * 91% of the forge's answering time and left it stalling for everyone.
+ * `behindAll` is what they may spend together, per minute, only while the loop
+ * is late. A signed-in person or a token is never counted.
+ *
+ * Late isn't only the loop: a test at 100 pages a second (#9405) left the loop
+ * on time while pages queued on git for seconds and people waited behind them.
+ * So `inFlight` of these pages unanswered at once counts as behind too, once
+ * the oldest of them has waited `queuedMs`: a count alone is a rate times a
+ * latency (Little's law), and at 500 pages a second 32 in flight is 64 ms
+ * each, which is healthy; a 70 ms collector pause then throttled every
+ * stranger to `behindAll` (#9514). Waiting a quarter second is queuing.
  */
-export const STRANGER_BUDGET = { address: 30 } as const;
+export const STRANGER_BUDGET = { address: 30, behindAll: 60, inFlight: 32, queuedMs: 250 } as const;
+/** A page unanswered this long no longer counts, so a lost finish can't hold the forge "behind" for good. */
+const IN_FLIGHT_MAX_MS = 60_000;
 /** The budgets divide by this while the event loop runs late. */
 export const BEHIND_DIVISOR = 4;
 /** An average wake later than this (ms) is "behind". */
@@ -58,6 +72,16 @@ const DEEP = new RegExp(`^/(?:origins/[^/]+/r/)?[^/]+/[^/]+/(?:${DEEP_SEGMENTS.j
 /** Whether `pathname` is a page that costs a git walk or a diff. */
 export const isDeepPath = (pathname: string): boolean => DEEP.test(pathname);
 
+/**
+ * What Sign-in only turns away: the deep pages, a repository's media, and the
+ * API routes that read the same files and history. A clone (`.git`) stays open:
+ * the Shield protects the pages, and turning clones off would break every mirror.
+ */
+const SHIELDED_API = /^\/api\/v1\/repos\/[^/]+\/[^/]+\/(?:contents|commits|git|raw|archive|media|tree|blob|compare|branches|tags)(?:\/|$)/;
+const SHIELDED_MEDIA = /^\/(?:origins\/[^/]+\/r\/)?[^/]+\/[^/]+\/media(?:\/|$)/;
+export const isShieldedPath = (pathname: string): boolean =>
+  DEEP.test(pathname) || SHIELDED_MEDIA.test(pathname) || SHIELDED_API.test(pathname);
+
 /** What a crawler never spends from: the files it is asked to read, and the probes. */
 const FREE = /^\/(?:robots\.txt|sitemap\.xml|healthz|readyz|assets\/)/;
 
@@ -66,6 +90,23 @@ export function agentOf(userAgent: string): string {
   const named = /([a-z][a-z0-9._-]{1,38}bot|[a-z][a-z0-9._-]{0,38}(?:crawler|spider|slurp|archiver))/i.exec(userAgent);
   const token = named?.[1] ?? /^\s*([a-z][a-z0-9._-]{0,39})/i.exec(userAgent)?.[1] ?? "unknown";
   return token.toLowerCase();
+}
+
+/**
+ * A User-Agent as a family for the traffic board, from a short fixed set for
+ * browsers (the header is the client's word) and the product token otherwise.
+ */
+export function familyOf(userAgent: string): string {
+  const ua = userAgent.slice(0, 300);
+  if (ua === "") return "none";
+  if (!CRAWLER.test(ua) && /^Mozilla\//.test(ua)) {
+    if (/\bEdg(?:e|A|iOS)?\//.test(ua)) return "edge";
+    if (/\b(?:Chrome|Chromium|CriOS)\//.test(ua)) return "chrome";
+    if (/\b(?:Firefox|FxiOS)\//.test(ua)) return "firefox";
+    if (/\bSafari\//.test(ua)) return "safari";
+    return "other browser";
+  }
+  return agentOf(ua);
 }
 
 /** Whether this request says it is a crawler and is one the budget counts. */
@@ -87,6 +128,10 @@ interface State {
   readonly shared: Pair;
   /** Deep pages read by browser-looking strangers, per address. */
   readonly strangerAddress: RateLimiter;
+  /** The same, all of them together; counted only while the loop is behind. */
+  readonly strangerAll: RateLimiter;
+  /** Deep pages being answered for strangers, by when they started. */
+  readonly strangersInFlight: Map<Request, number>;
   readonly refused: Map<string, number>;
   readonly refusedBy: Record<Scope, number>;
   readonly clock: { now: () => number; behind: boolean };
@@ -123,6 +168,8 @@ function stateOf(app: App): State {
       agent: pair(AGENT_BUDGET),
       shared: pair(SHARED_BUDGET),
       strangerAddress: new RateLimiter(limits(STRANGER_BUDGET.address), () => clock.now()),
+      strangerAll: new RateLimiter(limits(STRANGER_BUDGET.behindAll), () => clock.now()),
+      strangersInFlight: new Map(),
       refused: new Map(),
       refusedBy: { address: 0, agent: 0, shared: 0, stranger: 0 },
       clock,
@@ -201,13 +248,44 @@ function takeStrangerDeep(app: App, request: Request, pathname: string): CrawlVe
   if (new URL(request.url).searchParams.get("fragment") === "explorer") return undefined;
   watchLag();
   const state = stateOf(app);
-  const scale = state.clock.behind || mainThreadBehind() ? BEHIND_DIVISOR : 1;
+  const behind = state.clock.behind || mainThreadBehind() || strangersQueued(state);
+  const scale = behind ? BEHIND_DIVISOR : 1;
   state.strangerAddress.setLimits(limits(Math.max(1, Math.floor(STRANGER_BUDGET.address / scale))));
-  const own = state.strangerAddress.take(bucketOf(clientAddress(request)), "ro");
-  if (own.allowed) return undefined;
+  const key = bucketOf(clientAddress(request));
+  const own = state.strangerAddress.take(key, "ro");
+  const all = own.allowed && behind ? state.strangerAll.take("all", "ro") : own;
+  if (all.allowed) {
+    state.strangersInFlight.set(request, state.clock.now());
+    return undefined;
+  }
+  if (own.allowed) state.strangerAddress.refund(key);
   state.refusedBy.stranger++;
-  return { retryAfter: own.retryAfter, agent: "browser", scope: "stranger" };
+  return { retryAfter: all.retryAfter, agent: "browser", scope: "stranger" };
 }
+
+/**
+ * Whether strangers' deep pages are queued past their share: at least
+ * `inFlight` unanswered and the oldest waiting `queuedMs`. Any too old to be
+ * real are forgotten first. The map keeps arrival order, so the first entry
+ * is the oldest.
+ */
+function strangersQueued(state: State): boolean {
+  const open = state.strangersInFlight;
+  if (open.size < STRANGER_BUDGET.inFlight) return false;
+  const now = state.clock.now();
+  for (const [request, at] of open) {
+    if (at >= now - IN_FLIGHT_MAX_MS) break;
+    open.delete(request);
+  }
+  if (open.size < STRANGER_BUDGET.inFlight) return false;
+  const first = open.values().next();
+  return !first.done && now - first.value >= STRANGER_BUDGET.queuedMs;
+}
+
+/** The server has answered this request: if it was a stranger's deep page, it no longer counts as queued. */
+export const finishedStrangerDeep = (app: App, request: Request): void => {
+  stateOf(app).strangersInFlight.delete(request);
+};
 
 /** Requests refused so far in this process, by agent, most first. */
 export const crawlRefusals = (app: App): { agent: string; refused: number }[] =>
@@ -223,7 +301,11 @@ export const crawlRefusalScopes = (app: App): Record<Scope, number> => ({ ...sta
 
 /** The refusal: small, plain, and not worth caching past the wait. */
 export function crawlRefused(verdict: CrawlVerdict): Response {
-  return new Response("Too many requests from this crawler: see /robots.txt for what to skip.\n", {
+  const words =
+    verdict.scope === "stranger"
+      ? "The forge is busy. Try again in a moment, or sign in to go straight through.\n"
+      : "Too many requests from this crawler: see /robots.txt for what to skip.\n";
+  return new Response(words, {
     status: 429,
     headers: {
       "retry-after": String(verdict.retryAfter),
@@ -232,6 +314,27 @@ export function crawlRefused(verdict: CrawlVerdict): Response {
     },
   });
 }
+
+/** The Shield's answer to an anonymous deep read: small, plain, and no page work. */
+export function shieldRefused(signIn: string): Response {
+  const words = `<!doctype html><meta charset="utf-8"><title>Sign in to read this</title>
+<h1>Sign in to read this page</h1>
+<p>The forge is asking visitors to sign in for now. <a href="${Bun.escapeHTML(signIn)}">Sign in</a> to go straight through.</p>
+`;
+  return new Response(words, {
+    status: 503,
+    headers: {
+      "retry-after": "300",
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+const shielded = new WeakSet<Request>();
+/** The Shield turned this request away: a refusal on the traffic board, though it answers 503. */
+export const noteShielded = (request: Request): void => void shielded.add(request);
+export const wasShielded = (request: Request): boolean => shielded.has(request);
 
 const noted = new WeakSet<Request>();
 /** The server says this request was a crawler's, for the usage count and the performance record. */

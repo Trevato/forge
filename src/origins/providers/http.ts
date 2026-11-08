@@ -36,6 +36,47 @@ export const fail = (
   error: { error, message, ...(retryAt === undefined ? {} : { retryAt }) },
 });
 
+/**
+ * The scopes in a Forgejo or Gitea refusal — `token does not have at least
+ * one of required scope(s): [read:user]` — or none. Only scope-shaped words
+ * are kept, so nothing else the body says can ride along into a message.
+ */
+export function missingScopes(body: string): string[] {
+  const listed = /required scope\(s\): \[([^\]]{0,200})\]/.exec(body);
+  if (!listed) return [];
+  return (listed[1] ?? "")
+    .split(/[\s,]+/)
+    .filter((s) => /^(read|write):[a-z]{1,20}$/.test(s));
+}
+
+const CATEGORY: Record<string, string> = {
+  activitypub: "ActivityPub",
+  admin: "Admin",
+  issue: "Issue",
+  misc: "Misc",
+  notification: "Notification",
+  organization: "Organization",
+  package: "Package",
+  repository: "Repository",
+  user: "User",
+};
+
+/**
+ * Scopes as the token page names them: `read:user` is "User: Read" and
+ * `write:issue` "Issue: Read and write" (write includes read there).
+ */
+export function scopeWords(scopes: readonly string[]): string {
+  const words = scopes.map((scope) => {
+    const [level, category = ""] = scope.split(":");
+    const name =
+      CATEGORY[category] ?? category.charAt(0).toUpperCase() + category.slice(1);
+    return `${name}: ${level === "write" ? "Read and write" : "Read"}`;
+  });
+  return words.length <= 1
+    ? (words[0] ?? "")
+    : `${words.slice(0, -1).join(", ")} or ${words.at(-1)}`;
+}
+
 export const succeed = <T>(value: T): ProviderResult<T> => ({
   ok: true,
   value,
@@ -175,6 +216,14 @@ export class ApiClient {
     const method = request.method ?? "GET";
     const maxBytes = options.maxBytes ?? this.maxBytes;
 
+    // Anything that is not a read asks the credential first: an origin whose
+    // account could not be verified (the operator guard) reads but does not
+    // write, and this is the one door every write through an adapter takes.
+    if (method !== "GET" && method !== "HEAD" && this.credential.writable) {
+      const may = this.credential.writable();
+      if (!may.ok) return may;
+    }
+
     // Resolved per call: an OAuth token may have been refreshed since the
     // last one, and a token that cannot be resolved must not become a
     // credential-less request that reads as "not found".
@@ -252,8 +301,28 @@ export class ApiClient {
 
     if (response.status === 401)
       return fail("unauthorized", "the origin rejected this token");
-    if (response.status === 403)
-      return fail("forbidden", "the token may not do that on the origin");
+    if (response.status === 403) {
+      // Forgejo and Gitea say which scope a token lacks; that sentence is
+      // worth one small read, because "may not" alone sends a person to
+      // guess between a wrong token, an expired one and a narrow one.
+      let said = "";
+      try {
+        said = (await readCapped(response, 4096, signal)) ?? "";
+      } catch {
+        said = "";
+      }
+      const missing = missingScopes(said);
+      return missing.length === 0
+        ? fail("forbidden", "the token may not do that on the origin")
+        : {
+            ok: false,
+            error: {
+              error: "forbidden",
+              message: `the token is missing ${scopeWords(missing)}`,
+              missingScopes: missing,
+            },
+          };
+    }
     if (response.status === 404)
       return fail("not_found", "the origin has no such thing");
     if (response.status >= 500)

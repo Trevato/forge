@@ -4,6 +4,14 @@
  * uses lives in that route's file.
  */
 
+import { LIST_LIMIT_MAX } from "../../core/issues.ts";
+
+/** A plain type name, or an integer with the bounds its handler refuses outside of (`min`/`max` become `minimum`/`maximum`). */
+export type QueryType = string | { readonly type: "integer"; readonly min?: number; readonly max?: number };
+
+/** A `limit` from 1 to `max`, the constant its handler uses; no `max` when the handler has no upper bound. */
+export const limitTo = (max?: number): QueryType => (max === undefined ? { type: "integer", min: 1 } : { type: "integer", min: 1, max });
+
 export interface Route {
   readonly method: "get" | "post" | "put" | "patch" | "delete";
   readonly path: string;
@@ -12,8 +20,8 @@ export interface Route {
   readonly auth: boolean;
   /** A JSON body's fields, when it takes one. */
   readonly body?: Readonly<Record<string, string>>;
-  /** The query parameters its handler reads, by name and type. */
-  readonly query?: Readonly<Record<string, string>>;
+  /** The query parameters its handler reads, by name and type; an integer may carry the bounds its handler enforces. */
+  readonly query?: Readonly<Record<string, QueryType>>;
   /** The success status, when it is not 200. */
   readonly status?: number;
   /** Other success statuses it answers, when a flag in the request changes it. */
@@ -25,7 +33,7 @@ export interface Route {
 }
 
 /** What `listQuery` in `http/api.ts` reads from a list of issues or pulls. */
-export const LIST_QUERY = { state: "string", limit: "integer", cursor: "integer", label: "string", author: "string" };
+export const LIST_QUERY = { state: "string", limit: limitTo(LIST_LIMIT_MAX), cursor: "integer", label: "string", author: "string" };
 
 /** What the label routes for issues and pulls refuse by stable `error` code. */
 export const LABEL_REFUSALS = {
@@ -56,3 +64,6 @@ export const BROWSE_CODE_REFUSALS = {
   ...BROWSE_REFUSALS,
   not_found: "404: no such origin of yours, or the origin has no such repository, ref or path",
 };
+
+/** The refusals every write to a pin's screenshots answers (`actions/build_shots.ts`). */
+export const SHOT_REFUSALS = { forbidden: "403: not a person who writes the repository (an agent is refused)", not_found: "404: no such repository or pin, or the caller cannot read it", mirrored: "409: the repository mirrors an origin", moved: "409: the screenshots changed since `at` was read", git_failed: "422: git refused the change" };

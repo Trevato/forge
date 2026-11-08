@@ -23,9 +23,9 @@ import { flashTo } from "../layout.ts";
 import {
   badge,
   btn,
-  card,
   confirmAction,
   field as formField,
+  row,
   time,
   timeAgo,
 } from "../ui.ts";
@@ -50,7 +50,7 @@ function refreshDay(iso: string): string {
 }
 
 /**
- * The Instagram card: the account and what the last run said when one is
+ * The Instagram section: the account and what the last run said when one is
  * connected, the form when none is. Beneath it, the one-time steps at Meta,
  * because the forge cannot take them for anyone. The token is a password
  * field on the way in and nowhere on the way out.
@@ -59,82 +59,70 @@ function promptsView(base: string, sources: PromptSourceView[]): Html {
   const source = sources.find((s) => s.kind === "instagram");
   const at = (id: string) =>
     `${base}/settings/prompts/${encodeURIComponent(id)}`;
-  const body =
+  const list =
     source === undefined
-      ? html`<div class="card-body">
-            <p class="muted small">
-              Once a day, the top comment on your latest Reel becomes the crew's
-              next tell.
-            </p>
-          </div>
-          <form
-            class="card-body"
-            method="post"
-            action="${base}/settings/prompts"
-          >
-            ${formField({
-              label: "Token",
-              name: "token",
-              type: "password",
-              hint: "A long-lived Instagram token. The forge seals it, refreshes it before it expires, and never shows it again.",
-              required: true,
-              autocomplete: "off",
-              mono: true,
-            })}
-            ${formField({
-              label: "Every day at … UTC",
-              name: "at",
-              type: "time",
-              value: "15:00",
-              required: true,
-            })}
-            <div class="form-actions">
-              ${btn("Add", { variant: "primary", icon: "plus" })}
-            </div>
-          </form>`
-      : html`<ul class="list">
-          <li>
-            <div class="row">
-              <span class="row-lead">${icon("comment")}</span>
-              <span class="row-main">
-                <span class="row-title"
-                  >${source.account === ""
-                    ? html`<span class="muted">not read yet</span>`
-                    : `@${source.account}`}
-                  ${badge(`every day at ${source.atUtc} UTC`)}</span
-                >
-                <span class="row-meta"
-                  >${source.lastRanAt === null
-                    ? "Has not run yet."
-                    : html`Last ran ${time(source.lastRanAt)}.
-                      ${source.lastSaid}`}</span
-                >
-                <span class="row-meta"
-                  >Token refreshed ${timeAgo(source.tokenRefreshedAt)}; the
-                  forge refreshes it again around
-                  ${refreshDay(source.tokenRefreshedAt)}.</span
-                >
-              </span>
-              <span class="row-trail">
-                <form method="post" action="${at(source.id)}/run">
-                  ${btn("Fetch now", { size: "sm", icon: "sync" })}
-                </form>
-                ${confirmAction({
-                  action: `${at(source.id)}/delete`,
-                  verb: "Remove",
-                  size: "sm",
-                })}
-              </span>
-            </div>
-          </li>
+      ? html`<p class="muted small">
+          Once a day, the top comment on your latest Reel becomes the crew's
+          next tell. No account is connected yet.
+        </p>`
+      : html`<ul class="list setting-list">
+          ${row({
+            id: `prompt-${source.id}`,
+            lead: icon("comment"),
+            title: html`${source.account === ""
+                ? html`<span class="muted">not read yet</span>`
+                : `@${source.account}`}
+              ${badge(`every day at ${source.atUtc} UTC`)}`,
+            meta: html`${source.lastRanAt === null
+                ? "Has not run yet."
+                : html`Last ran ${time(source.lastRanAt)}. ${source.lastSaid}`}
+              Token refreshed ${timeAgo(source.tokenRefreshedAt)}; the forge
+              refreshes it again around ${refreshDay(source.tokenRefreshedAt)}.`,
+            trail: html`<form method="post" action="${at(source.id)}/run">
+                ${btn("Fetch now", { size: "sm", icon: "sync" })}
+              </form>
+              ${confirmAction({
+                action: `${at(source.id)}/delete`,
+                verb: "Remove",
+                size: "sm",
+              })}`,
+          })}
         </ul>`;
-  return html`${card(body, {
-    head: html`${icon("comment")}
-      <h2>Instagram</h2>`,
-    pad: false,
-  })}
-  ${card(
-    html`<p class="muted small">
+  const add =
+    source !== undefined
+      ? null
+      : html`<form
+          class="mt"
+          method="post"
+          action="${base}/settings/prompts"
+        >
+          ${formField({
+            label: "Token",
+            name: "token",
+            type: "password",
+            hint: "A long-lived Instagram token. The forge seals it, refreshes it before it expires, and never shows it again.",
+            required: true,
+            autocomplete: "off",
+            mono: true,
+          })}
+          ${formField({
+            label: "Every day at … UTC",
+            name: "at",
+            type: "time",
+            value: "15:00",
+            required: true,
+          })}
+          <div class="form-actions">
+            ${btn("Add", { variant: "primary", icon: "plus" })}
+          </div>
+        </form>`;
+  return html`<section class="settings-block">
+      <h2>Instagram</h2>
+      ${list}${add}
+    </section>
+    <section class="settings-block">
+      <h2>Getting a token</h2>
+      <p class="muted small">
         The one-time steps at Meta, for a professional account of your own. None
         of them needs App Review.
       </p>
@@ -161,9 +149,8 @@ function promptsView(base: string, sources: PromptSourceView[]): Html {
           Paste the long-lived token above. The forge refreshes it before it
           expires, and the paste is never shown again.
         </li>
-      </ol>`,
-    { head: html`<h2>Getting a token</h2>` },
-  )}`;
+      </ol>
+    </section>`;
 }
 
 // GET /:owner/:name/settings/prompts

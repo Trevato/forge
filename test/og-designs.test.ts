@@ -106,7 +106,7 @@ describe("the map's thumbnail", () => {
     const figure = svg.slice(svg.indexOf("<g>"), svg.indexOf("</g>"));
     expect(figure.match(/<rect /g)?.length).toBe(4);
     expect(figure.match(new RegExp(`<path [^>]*stroke="${T.accent}"`, "g"))?.length).toBe(2);
-    expect(svg).toContain(">MAP<");
+    expect(svg).not.toContain(">MAP<");
   });
 
   test("with nothing linked, the loose issues are drawn, four rows at most", () => {
@@ -237,7 +237,7 @@ describe("the audit's findings", () => {
     const svg = renderCard(card);
     wellFormed(svg);
     expect(svg).toContain(">50%<");
-    expect(svg).toContain(">AUDIT<");
+    expect(svg).not.toContain(">AUDIT<");
   });
 
   test("every app holding says so; no apps draws no ring", () => {

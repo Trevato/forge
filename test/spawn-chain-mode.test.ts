@@ -129,6 +129,10 @@ describe("choosing how a forge follows its parent", () => {
     expect(html).toContain('action="/kid/forge/following/mode"');
     expect(html).toMatch(/value="tell-me" checked/);
     expect(html).not.toContain("<script>");
+    // Rows and headings, not boxes.
+    expect(html).not.toContain('class="card');
+    expect(html).toContain('<ul class="list" aria-label="Forges, root first">');
+    expect(html).toContain("<h2");
 
     expect((await form(cookie, "take-updates")).status).toBe(303);
     expect((await forgeLinkOf(child))?.mode).toBe("take-updates");

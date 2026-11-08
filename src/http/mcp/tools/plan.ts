@@ -3,7 +3,7 @@ import { good, bad, type Tool, APP_ARG, planRepo, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "plan",
-  doc: "`{ app, issues }`: open up to 12 linked issues, all or none (see below)",
+  doc: "`{ app, issues, title?, why? }`: open up to 12 linked issues, all or none (see below)",
   description: `Open linked issues, all or none (max ${PLAN_MAX}); each: \`pillar\` or \`later\`+\`why\`.`,
   inputSchema: {
     type: "object",

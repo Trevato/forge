@@ -14,9 +14,11 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { reissueDoor } from "../../spawn/door.ts";
 import { readForm } from "../form.ts";
-import { badge, btn, card, empty, row, time } from "../ui.ts";
+import { badge, btn, row, time } from "../ui.ts";
 import { noRoom } from "../../spawn/door.ts";
 import { sizeWords, useWords } from "../../spawn/usage.ts";
+import { listChildren } from "../../actions/spawn.ts";
+import { removeForge, stopForge, type Managed } from "../../spawn/manage.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
 
@@ -42,9 +44,11 @@ function spendNote(r: ClientRow): Html | null {
 function forgeRow(r: ClientRow): Html {
   const state = claimState(r);
   const meta = [
-    state === "unknown" ? html`it did not answer just now` : null,
     r.for === null ? null : html`for ${r.for}`,
     r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
+    state === "unknown" ? html`it did not answer just now` : null,
+    r.made ? badge(r.awake === true ? "awake" : "asleep", r.awake === true ? { tone: "success" } : { variant: "outline" }) : null,
+    r.made ? html`${sizeWords(r.size)}` : null,
     runningNote(r),
     spendNote(r),
     r.sentAt === null ? null : html`sent ${time(r.sentAt)}`,
@@ -80,6 +84,9 @@ function forgeRow(r: ClientRow): Html {
         ? html`<form method="post" action="/forges/${r.name}/claim-link">
             ${btn("Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
           </form>`
+        : null}${r.made
+        ? html`<form method="post" action="/forges/${r.name}/stop" class="inline">${btn("Stop", { size: "sm", title: "Put it to sleep now; its next visitor wakes it" })}</form>
+          ${btn("Remove", { href: `/forges/${r.name}/remove`, size: "sm", title: "Asks first, then deletes this forge and its data for good" })}`
         : null}`,
   });
 }
@@ -135,27 +142,27 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
   const response = page({
     ctx,
     title: "Forges you sent",
-    body: html`<div class="narrow-wide">
+    body: html`<div class="narrow-wide" data-forges>
       ${pageHead("Forges you sent", {
-        sub: "For whom each is, what it was given, and whether its person has claimed it.",
+        sub: "Each forge you sent: who it is for and what runs there.",
         actions: action,
       })}
       ${rows.length === 0
-        ? empty({
-            icon: "fork",
-            title: "No forges sent yet",
-            note: "A whole forge for someone: the apps you choose, a crew, and one link to send.",
-            action,
-          })
-        : card(sideBySide(rows), { pad: false, id: "forges-compare" })}
-      ${rows.length === 0
-        ? null
-        : card(
-            html`<ul class="list setting-list">
-              ${rows.map(forgeRow)}
-            </ul>`,
-            { pad: false },
-          )}
+        ? html`<section class="settings-block">
+            <h2>No forges sent yet</h2>
+            <p class="muted">A whole forge for someone: the apps you choose, a crew, and one link to send.</p>
+            <p>${action}</p>
+          </section>`
+        : html`<section class="settings-block" id="forges-compare">
+              <h2>Side by side</h2>
+              ${sideBySide(rows)}
+            </section>
+            <section class="settings-block">
+              <h2>Forges</h2>
+              <ul class="list setting-list">
+                ${rows.map(forgeRow)}
+              </ul>
+            </section>`}
       <p class="mt"><a href="/fleet/graph">Fleet graph</a></p>
     </div>`,
   });
@@ -177,18 +184,73 @@ export async function forgeLinkSubmit(ctx: Ctx): Promise<Response> {
     {
       ctx,
       title: "A fresh link",
-      body: html`<div class="narrow-wide">
+      body: html`<div class="narrow-wide" data-forges>
         ${pageHead(typeof link === "string" ? `A fresh link for ${name}` : `No fresh link for ${name}`)}
-        ${card(
-          typeof link === "string"
+        <section class="settings-block">
+          ${typeof link === "string"
             ? claimLinkBody(link)
             : html`<p>${String(door.body["message"] ?? "")}</p>
-                <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>`,
-        )}
+                <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>`}
+        </section>
       </div>`,
     },
     door.status,
   );
+  response.headers.set("cache-control", "no-store");
+  return response;
+}
+
+// POST /forges/:name/stop and /remove — the owner's hands on a hosted forge.
+function manageSubmit(act: (app: Ctx["app"], name: string) => Promise<Managed>, title: string) {
+  return async (ctx: Ctx): Promise<Response> => {
+    const user = ctx.auth.user;
+    if (!user?.isAdmin) return notFoundPage(ctx);
+    const form = await readForm(ctx, "admin");
+    if (form instanceof Response) return form;
+    const done = await act(ctx.app, ctx.params["name"] ?? "");
+    const response = page(
+      {
+        ctx,
+        title,
+        body: html`<div class="narrow-wide" data-forges>
+          ${pageHead(title)}
+          <section class="settings-block">
+            <p role="status">${done.says}</p>
+            <p class="mt">${btn("Back to your forges", { href: "/forges", size: "sm" })}</p>
+          </section>
+        </div>`,
+      },
+      done.ok ? 200 : 404,
+    );
+    response.headers.set("cache-control", "no-store");
+    return response;
+  };
+}
+export const forgeStopSubmit = manageSubmit(stopForge, "Forge stopped");
+export const forgeRemoveSubmit = manageSubmit(removeForge, "Forge removed");
+
+// GET /forges/:name/remove — what removing would delete, and the one button that does it.
+export async function forgeRemoveConfirm(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (!user?.isAdmin) return notFoundPage(ctx);
+  const name = ctx.params["name"] ?? "";
+  const child = (await listChildren(ctx.app)).find((c) => c.name === name);
+  if (child === undefined) return notFoundPage(ctx);
+  const response = page({
+    ctx,
+    title: `Remove ${name}?`,
+    body: html`<div class="narrow-wide" data-forges>
+      ${pageHead(`Remove ${name}?`)}
+      <section class="settings-block">
+        <h2>What removing deletes</h2>
+        <p>This deletes the forge <strong>${name}</strong> at ${child.url.replace(/^https?:\/\//, "")} with everything in it: its repositories, issues, accounts and settings. It cannot be undone.</p>
+        <form method="post" action="/forges/${name}/remove" class="mt">
+          ${btn("Remove it for good", { variant: "primary" })}
+          ${btn("Keep it", { href: "/forges" })}
+        </form>
+      </section>
+    </div>`,
+  });
   response.headers.set("cache-control", "no-store");
   return response;
 }

@@ -18,7 +18,7 @@ export const tool: Tool = {
     required: ["action"],
   },
   doc:
-    "`{ action, items, reason?, dryRun? }`: decide asks in bulk (up to 100): `dismiss`, `decline`, `mute`, `ship`, `close` (with `reason`) or `replan`; planned first (`dryRun` is true unless `false`), as `POST /api/v1/asks/bulk`",
+    "`{ action, items?, repo?, reason?, dryRun? }`: decide asks in bulk (up to 100): `dismiss`, `decline`, `mute`, `ship`, `close` (with `reason`) or `replan`, or `listen` with `repo` to unmute one; planned first (`dryRun` is true unless `false`), as `POST /api/v1/asks/bulk`",
   writes: true,
   dryByDefault: true,
   async run(ctx, user, args) {

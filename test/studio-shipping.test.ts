@@ -468,7 +468,12 @@ describe("a stranger sees the app, not the owner's books", () => {
     const after = await (
       await get("/alice/beacon/settings", ownerCookie)
     ).text();
-    expect(after).toContain("reviews");
+    // Keeper declares only "builder", so the repository cannot widen it to
+    // reviewer: it is drawn once, under the seat it holds — the team lists
+    // are the crew, there is no second Crew card listing it again.
+    const keeperRows = after.match(/<li[^>]*data-member="keeper"[^>]*>/g) ?? [];
+    expect(keeperRows).toEqual(['<li data-member="keeper" data-seat="builder">']);
+    expect(after).not.toContain("<h2>Crew</h2>");
   });
 
   test("?mode=dev on the settings route is the same one page; dev's Crew and Autonomy addresses land on its cards", async () => {
@@ -621,13 +626,13 @@ describe("a person's own change ships from its own studio page", () => {
       await get(`/alice/garden/pulls/${pull.number}`, readerCookie)
     ).text();
     expect(readerPage).toContain('data-word="look"');
-    expect(readerPage).not.toContain("<h2>Decide</h2>");
+    expect(readerPage).not.toContain(`id="decide"`);
     expect(readerPage).not.toContain("Ship");
 
     const ownerPage = await (
       await get(`/alice/garden/pulls/${pull.number}`, ownerCookie)
     ).text();
-    expect(ownerPage).toContain("<h2>Decide</h2>");
+    expect(ownerPage).toContain(`id="decide"`);
     expect(ownerPage).toContain("Ship");
     // The words a person's own green change is offered in are `asks.ts`'s
     // (#224: a green change asks to be looked at whoever opened it, and the
@@ -692,7 +697,7 @@ describe("a person's own change ships from its own studio page", () => {
     const studio = await (
       await get(`/alice/garden/pulls/${pull.number}`, ownerCookie)
     ).text();
-    expect(studio).toContain("<h2>Decide</h2>");
+    expect(studio).toContain(`id="decide"`);
     expect(studio).toContain("conflicts with main");
     expect(studio).toContain("bring the branch up to date");
     expect(studio).toContain("Bring up to date");

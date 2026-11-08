@@ -11,11 +11,18 @@
  * must answer 200 within `SLOW_MS`, then polls `/healthz` once a second for
  * `WATCH_MS`, rotating through those pages, and fails naming the page that
  * was slow or failed (#6898: `/readyz` never touches the database, 0.7.277 hung).
+ * An empty 200 body or a hang is asked again once, like a slow answer: one
+ * lost answer in a release's proof says little, two in a row fail it (#9334, #9482).
+ * An answer slow on the probe's clock whose `Server-Timing` says the forge
+ * itself spent `SLOW_MS` or less is the road to the public edge, not the
+ * release, and passes (#9022); a hang still fails.
  *
  * The running forge proves each new version with it (`release/prove.ts`), so
  * it lives here: the image ships src/ and nothing else (#2652).
  * `bun scripts/smoke.ts <url>` is the same checks from a shell.
  */
+
+import { parseServerTiming } from "../perf/record.ts";
 
 export const AGENTS: Record<string, string> = {
   phone:
@@ -32,6 +39,29 @@ export const SLOW_MS = 1_000;
 export const REPO_HOME = "/trevato/forge";
 /** The heaviest pages; `/boards` is fetched with the token. */
 export const HEAVY_PAGES: readonly string[] = ["/boards", "/", "/explore", "/search?q=a", REPO_HOME];
+
+/**
+ * How long the forge says it spent on `res`: the `app` entry of its
+ * `Server-Timing` (`http/server.ts`), or undefined when there is none.
+ */
+export function forgeMs(res: Response): number | undefined {
+  const app = parseServerTiming(res.headers.get("server-timing") ?? "").find((p) => p.name === "app");
+  return app && Number.isFinite(app.ms) ? app.ms : undefined;
+}
+
+/**
+ * What an empty 200 says about which layer lost the body (#9343): the forge
+ * writes `Server-Timing` and `X-Forge-Version` and never an empty page, so
+ * their absence points at the edge or the wire; a declared length with no
+ * bytes points at a body cut short.
+ */
+export function emptyEvidence(res: Response): string {
+  const seen = ["content-length", "content-encoding", "cf-cache-status", "age", "server-timing", "x-forge-version"]
+    .map((name) => [name, res.headers.get(name)] as const)
+    .filter((pair): pair is readonly [string, string] => pair[1] !== null)
+    .map(([name, value]) => `${name}: ${value.slice(0, 80)}`);
+  return seen.length === 0 ? " (no forge or edge headers)" : ` (${seen.join("; ")})`;
+}
 
 export interface Heavy {
   watchMs?: number;
@@ -51,6 +81,12 @@ export interface Failure {
   status: number | string;
   contentType: string;
   why: string;
+  /** The check failed only because the answer was slower than allowed. */
+  slow?: boolean;
+  /** The check failed only because a 200 answered with no body: a lost answer, retried like a slow one (#9358). */
+  empty?: boolean;
+  /** The check failed only because no answer came within twice the slowest allowed: retried like a slow one (#9482). */
+  hung?: boolean;
 }
 
 /** The first stylesheet href in a page, or null. */
@@ -141,7 +177,7 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
   const headers: Record<string, string> = { "user-agent": AGENTS["desktop"]! };
   const pages = HEAVY_PAGES.map((p) => (p === REPO_HOME && heavy.repo ? heavy.repo : p));
   // An answer between `slowMs` and twice it is slow; none by then is a hang.
-  const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean; hung?: boolean }> => {
+  const once = async (path: string): Promise<{ failure: Failure | null; slow: boolean; hung?: boolean; empty?: boolean }> => {
     const url = new URL(path, root).href;
     const started = performance.now();
     const failureFor = (why: string, status: number | string = "error"): Failure => ({ url, agent: "desktop", status, contentType: "", why });
@@ -151,26 +187,36 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
       const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(slowMs * 2), headers: { ...headers, ...(path === "/healthz" ? heavy.probe : {}), ...auth } });
       const body = await res.text();
       const took = Math.round(performance.now() - started);
-      if (took > slowMs) return { failure: failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true };
+      if (took > slowMs) {
+        // The forge's own time says whether the release was slow or the way to it was (#9022).
+        const own = forgeMs(res);
+        if (own === undefined || own > slowMs) return { failure: { ...failureFor(`${path} took ${took} ms, over ${slowMs} ms`, res.status), slow: true }, slow: true };
+        console.warn(`smoke: ${path} took ${took} ms, the forge ${Math.round(own)} ms of it; the rest was the network`);
+      }
       if (path === REPO_HOME && !heavy.repo && res.status === 404) return { failure: null, slow: false };
       if (path === "/healthz" && heavy.version && res.headers.get("x-forge-version") !== heavy.version)
         return gone(`/healthz reported X-Forge-Version ${res.headers.get("x-forge-version") ?? "none"}, wanted ${heavy.version}`, res.status);
       if (path === "/boards" && anonymousBoard && !token && isSignInRedirect(url, res)) return { failure: null, slow: false };
       if (res.status !== 200) return gone(`${path} expected 200`, res.status);
-      if (!body.trim()) return gone(`${path} answered with an empty body`, res.status);
+      if (!body.trim()) {
+        const lost = gone(`${path} answered with an empty body${emptyEvidence(res)}`, res.status);
+        return { failure: { ...lost.failure, empty: true }, slow: false, empty: true };
+      }
       return { failure: null, slow: false };
     } catch (error) {
-      return { ...gone(`${path} did not answer within ${slowMs * 2} ms (${error})`), hung: true };
+      const lost = gone(`${path} did not answer within ${slowMs * 2} ms (${error})`);
+      return { failure: { ...lost.failure, hung: true }, slow: false, hung: true };
     }
   };
   // The cause of 0.7.279's 1098 ms /boards is unconfirmed; a cold cache after
   // the boot is the guess (#7198). So each page's first load, and only that,
-  // is asked again after a slow answer (never a hang or an error), and the
-  // first slow answer is printed. The watch below calls `once`: a degradation
-  // there is seen on the first slow answer.
+  // is asked again after a slow, empty or hung answer (never an error), and
+  // the first is printed: 0.7.415's first `/` hung once right after its boot
+  // and cost the release 12 minutes (#9482). The watch below asks again once
+  // as well, so one slow answer there no longer fails the proof (#8917).
   const timed = async (path: string): Promise<Failure | null> => {
     const first = await once(path);
-    if (!first.slow) return first.failure;
+    if (!first.slow && !first.empty && !first.hung) return first.failure;
     console.warn(`smoke: ${first.failure?.why}; asking again`);
     return (await once(path)).failure;
   };
@@ -178,14 +224,22 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
     const failed = await timed(path);
     if (failed) return failed;
   }
+  // In the watch one lost or slow answer in a minute of polling (#7724, #8917)
+  // is asked again at once; two in a row is a hang or a real slowness and
+  // fails the proof. Unlike `timed`, a hung answer is asked again too: the
+  // first load is judged once, but the watch polls for a minute and one lost
+  // answer among dozens says little. The first slow answer is printed.
+  const again = async (path: string) => {
+    const first = await once(path);
+    if (!first.hung && !first.slow && !first.empty) return first;
+    console.warn(`smoke: ${first.failure?.why}; asking again`);
+    return once(path);
+  };
   const deadline = Date.now() + (heavy.watchMs ?? WATCH_MS);
   const pollMs = heavy.pollMs ?? WATCH_POLL_MS;
   for (let tick = 0; Date.now() < deadline; tick++) {
-    // One lost answer in a minute of polling (#7724) is asked again at once;
-    // two in a row is a hang and fails the proof.
-    let health = await once("/healthz");
-    if (health.hung) health = await once("/healthz");
-    const failed = health.failure ?? (await once(pages[tick % pages.length]!)).failure;
+    const health = await again("/healthz");
+    const failed = health.failure ?? (await again(pages[tick % pages.length]!)).failure;
     if (failed) return failed;
     await Bun.sleep(pollMs);
   }

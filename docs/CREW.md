@@ -1,5 +1,16 @@
 # The crew
 
+The crew is the set of AI agents that build on the forge. This document covers
+agents, runs, review, the merge queue, spend limits, roles and the sandbox. It is
+for people who direct the crew and for admins who set its limits.
+
+When you assign an issue to an agent, the forge clones the repository, puts the
+agent on a branch named after the issue, and runs Claude Code. Claude Code is the
+only supported runner. The agent's work arrives as a pull, which passes checks
+and review before it lands. Budgets limit what the crew spends.
+
+## Previews, scorecards and everyday controls
+
 In a preview (`FORGE_APP_ENV=preview`, which the platform sets) the crew is
 off: no autonomy tick, no dispatch, no spend; checks still run and everything
 can still be read. The boot log and the studio's crew card say so. Set
@@ -12,9 +23,9 @@ share a version and editing the brief starts a new one). Settings → Crew shows
 the scorecard cut both ways ("Per model", "Per prompt version": runs, landed,
 failed, spent, per run), and the terminal's `Crew scorecard` command shows the
 same to an admin. The scorecard of pulls landed, review rounds and red checks
-is cut the same way as sub-rows under each agent (see the README's opening); a team's pooled
+is cut the same way as sub-rows under each agent (see [`REFERENCE.md`](REFERENCE.md)); a team's pooled
 row is not cut by model, and is under the agents on the page and in the
-terminal's "Crew scorecard per agent" (see the README's opening). Runs from before this was recorded show as *default* /
+terminal's "Crew scorecard per agent" (see [`REFERENCE.md`](REFERENCE.md)). Runs from before this was recorded show as *default* /
 *not recorded*; they are not backfilled.
 
 **Tell the crew from any page.** In a repository you may direct, the web palette
@@ -282,17 +293,16 @@ the planner's, found done on main and waiting for a person to close it
 unticked and waiting for a person to answer (`landed`, `crew/landed.ts`), stalled, at its run cap, parked twice, covered by a red-main
 fix, or a setting's finding. The flow panel on `/boards` draws the same per autonomous app as one
 bar, and the terminal's Flow command prints it as a line per app
-(`flow/held.ts`, kept 5 s). Of the startable, what the owner raised again
-stays on top, then the roadmap is picked
-(#7571, `crew/small_share.ts`): an issue under an open epic or a P0/P1 pillar,
-then other work, then small issues — a title like "A test pins …" or
-"Tests: …", or a label `test`, `tests`, `tests-only` or `small` — and small issues hold
+(`flow/held.ts`, kept 5 s). Of the startable, the picker takes the order Next up shows
+(#8826, `pickOrder` in `core/next_up.ts`): the owner's ranked issues by place,
+then the ready order, what the owner raised again first. Small issues — a title like "A test pins …" or
+"Tests: …", or a label `test`, `tests`, `tests-only` or `small` (#7571, `crew/small_share.ts`) — hold
 at most `slots.smallShare` percent of the builder slots (default 30, rounded up:
 2 of 5; an admin sets it on `/settings/capacity`). At the cap a small issue is
-skipped, not waited on, raised or not. The tick line's `small: 1/2`, the
+skipped, not waited on, unless the owner ranked it. The tick line's `small: 1/2`, the
 Flow command's `small 1/2`, the app's row in Today on `/boards` (`small
 issues: 1 of 2 slots`) and the studio's crew panel show small issues in
-flight of what they may hold. When nothing is startable while builder slots are free and some of the
+flight of what they may hold. An issue labelled `polish` is a small issue too, and its run is stopped past `polish.capMinutes` (default 60) with one comment saying what is left (`crew/polish_cap.ts`, `docs/features/polish-cap.md`). When nothing is startable while builder slots are free and some of the
 held are stalled, capped or parked twice, the planner is owed one pass with
 that breakdown in its brief, to re-plan them into smaller, fresh issues; a
 full plate and its own unanswered decline do not hold that pass, and the
@@ -317,7 +327,7 @@ the work repositories and nothing else. Two on one grant take turns, and
 one the provider rests hands its runs to the other until the reset.
 **Model budget.** A new account has none: its repositories' crew does not run, spends nothing, and says "This repository has no model account". A person adds their own subscription at Settings → Model (or the terminal's **Model budget** command, `a`); it is sealed, granted to their own repositories only, and one per account. A forge admin who is a person gives an account a capped grant, in dollars a month spent on the forge's own credential, from the account's page, the terminal's **Model grant** command, `POST /api/v1/admin/accounts/:name/model-grant` (`{"usdPerMonth": 20}`, `null` takes it back) or the MCP `model_grant` tool; each change is in the audit. The cap is the UTC month's spend in the usage ledger, checked when a run starts and on every spend tick: a run past it stops, and its page says the grant is spent. Two runs that start together each begin with the whole remainder; the tick check ends both once the sum crosses the cap, so the overshoot is at most what they spend between ticks.
 
-**Roles.** An account is a guest, a member or an admin (`docs/ROLES.md` has the table of what each can do; `src/core/roles.ts` holds it). Admin is the admin flag, a member is promoted, everyone else is a guest. A guest is refused creating or forking a repository, making an app their own and starting a crew run, in the words "the owner has not made this account a member" (after the older refusals: unverified, suspended, agent, private); nothing switches it off. A forge admin who is a person lists everyone with their role at Settings → People (`/settings/people`) and promotes a guest to member with one button, with an optional starter model allowance in dollars a month (none by default, given as a model grant and audited as one), or demotes a member (the allowance stays until taken back on the account's page). In the terminal it is the **People** command (`r` changes a role: `member 5`, or `guest`; `v` marks the email of the person under the cursor verified after a `y/n`, as the `account_verify` tool does over MCP, and unverified people are marked so; `s` suspends an account by name, or lifts the suspension, after a confirm saying their sessions and tokens stop at once, with the rules of `account_suspend`: not yourself, another admin or an agent, not the only owner of an organization; a suspended row says since when); over the API, `GET /api/v1/admin/people` (`{ items, next_cursor }`, as `/admin/accounts` and `/admin/invites` answer, with `limit` 1-200, 50 by default, and `cursor`) and `POST /api/v1/admin/accounts/:name/role` (`{"role": "member", "usdPerMonth": 5}`); over MCP, the `account_role` tool (a plan unless `dryRun: false`, with an admin token). Anyone signed in sees their own role and its row of the table: the account page (`/settings`) shows "What you can do here"; over MCP, `whoami_can` returns `{username, role, can, abilities}` with any token (with `{"kind": "passkeys"}` it lists your own passkeys instead, `{ items }` of id, name, created, lastUsed, people only; the page is Settings → Passkeys, and the terminal's **Passkeys** command lists them read only); in the terminal it is the **What I can do** command (agents included). When your email is unverified that screen says so, and `v` sends a new verification email, as the account page and MCP `email_verify` do; an account with no real address is told to add one from account settings in a browser instead.
+**Roles.** An account is a guest, a member or an admin (`docs/ROLES.md` has the table of what each can do; `src/core/roles.ts` holds it). Admin is the admin flag, a member is promoted, everyone else is a guest. A guest is refused creating a repository, making an app their own and starting a crew run, in words that say what a guest can do instead (after the older refusals: unverified, suspended, agent, private); nothing switches it off. A forge admin who is a person lists everyone with their role at Settings → People (`/settings/people`) and promotes a guest to member with one button, with an optional starter model allowance in dollars a month (none by default, given as a model grant and audited as one), or demotes a member (the allowance stays until taken back on the account's page). In the terminal it is the **People** command (`r` changes a role: `member 5`, or `guest`; `v` marks the email of the person under the cursor verified after a `y/n`, as the `account_verify` tool does over MCP, and unverified people are marked so; `s` suspends an account by name, or lifts the suspension, after a confirm saying their sessions and tokens stop at once, with the rules of `account_suspend`: not yourself, another admin or an agent, not the only owner of an organization; a suspended row says since when); over the API, `GET /api/v1/admin/people` (`{ items, next_cursor }`, as `/admin/accounts` and `/admin/invites` answer, with `limit` 1-200, 50 by default, and `cursor`) and `POST /api/v1/admin/accounts/:name/role` (`{"role": "member", "usdPerMonth": 5}`); over MCP, the `account_role` tool (a plan unless `dryRun: false`, with an admin token). Anyone signed in sees their own role and its row of the table: the account page (`/settings`) shows "What you can do here"; over MCP, `whoami_can` returns `{username, role, can, abilities}` with any token (with `{"kind": "passkeys"}` it lists your own passkeys instead, `{ items }` of id, name, created, lastUsed, people only; the page is Settings → Passkeys, and the terminal's **Passkeys** command lists them read only); in the terminal it is the **What I can do** command (agents included). When your email is unverified that screen says so, and `v` sends a new verification email, as the account page and MCP `email_verify` do; an account with no real address is told to add one from account settings in a browser instead.
 
 **Crew subscriptions in the terminal.** A forge admin presses Ctrl+K and picks **Crew subscriptions**: each Claude account with its kind, what it pays for, budget, spend and whether it rests (never a token). `w` wakes the selected resting one (an awake one is left alone and said so), `b` asks for dollars, or `none`, and sets its whole-life budget. `a` adds an account: a name, then the token typed masked (drawn as dots, handed to the core once, never shown or logged), then an optional API base; a refusal is MCP `subscription_add`'s sentence, word for word. `D` shows that the subscription and its grants go and that past runs keep it in their history, and removes it only after a confirm that defaults to Cancel. Only a forge admin who is a person is offered either key; an agent sees neither and changes nothing. Granting an added account to a repository or organization stays on the web page and in MCP. The rules are MCP `subscriptions`, `subscription_wake` and `subscription_budget`'s, from `core/subscriptions.ts`; a budget set by whoever made the forge can be lowered, never raised or cleared.
 **Where you are signed in.** Anyone signed in sees their own browsers and tokens, never a secret, at `/settings`, over the API (`GET /api/v1/users/:username/signins`), over MCP (`sessions`), and in the terminal as the **Signed in** command (`src/tui/screens/signins.ts`; a guest has no such command). The terminal lists this terminal's SSH key first, marked "this one", then each browser (`web browser` and the tail of its session id, so two read apart) and each token (name and scope), with when it was last seen and since when. `d` on a browser asks to confirm (Keep is the default) and signs it out through the same `endAccountSession` as Settings and MCP, so its cookie reads as signed out at once. `d` on a token asks `Revoke <name> (<scope>)?` (Keep is the default) and revokes it through the same `deleteToken` action as Settings and the API, so it stops working at once and open pages hear `token.deleted`. `d` does not end this terminal (disconnect, or remove its key in Settings → SSH keys); it says so. No browser row is marked as the current one there: the terminal holds no browser cookie.
@@ -465,3 +475,38 @@ something only a passport may reach.
 An open vision pull's page shows, to an admin of the repository, "Direction after the merge": today's direction beside the one an admin's merge will write, computed by the same `nextDirection` the merge uses (`src/crew/vision.ts`), so the two cannot differ. Repository settings (Crew) marks the direction's fenced block `follows docs/VISION.md` and the words around it `the owner's`. Today and After the merge stack vertically at every width.
 
 The same read is a second door: the MCP `vision` tool takes an optional `number`, and for an admin returns `preview` (`{ today, after }`, or `{ why }` the direction would stay) for that open vision pull, plus `directionParts` (the direction cut into `vision` and `owner` parts). The terminal (TUI) has no such view; it is not touched by this change.
+
+## The weekly pace reads the provider's measure (#8960)
+
+The pacer decides from the percent of the week the provider reports as used
+(`subscription_measure`, noted from the session's `rate_limit_event`) against
+the share of the week's time gone. No dollar cap is inferred. Its burn per
+hour is the fall of that percent between successive readings, so a meter that
+has not moved reads 0% an hour. With no measure (never reported, or its week
+has reset) the sentence says the pace is unknown and the crew holds at a
+modest level; it is never off. `crew.concurrency` is not lowered in the
+repository (the chart and `capacity.ts` defaults are the ceiling); pacing is
+what slows the crew now.
+
+An admin sees the measure in `usage` (the MCP tool and the usage page): each
+subscription's `headroom` lists the window's percent free and its reset, taken
+from the provider's measure while its window is open, else inferred from the
+ledger. The terminal reads the same `readForgeUsage`: the Usage screen prints
+each subscription's `week 38%, 5h 80%` line, and the forge usage block
+`week 38% free`; home and the dashboard print the pace sentence.
+
+## What the pace limits (#8962)
+
+The week's pace (`src/crew/week.ts`) limits only the crew's own picks: the
+builds the tick assigns under the operator's name (marked `pick` on the
+`issue.assigned` event). Reviews and issues a person assigned are not slowed
+by it: while the pace allows any slots at all, up to `pace.floor` of them (a
+capacity setting, env `FORGE_PACE_FLOOR`, default 2, 1 to 16, read on every
+pump) run at once, apart from the picks; it is also the fewest slots a fast burn
+slows a repository to. At the reserve's wall (no slots) everything waits for the
+reset. Not covered: feedback, check and conflict runs still count with the picks.
+
+A person's assignment is marked `person` on its `issue.assigned` event. An
+assignment event with neither mark was written before the marks existed and is
+held as a pick: an `assigned` run queued before this deployed uses the pace
+like a pick until it starts, then the cutover is over (no migration).

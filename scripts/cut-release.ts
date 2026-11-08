@@ -5,10 +5,12 @@
  * reads. With `--tag` it also makes the annotated tag `v<version>` on HEAD
  * with that record as its message; pushing the tag (`git push origin
  * v<version>`) is the release. Nothing is committed: a release cut never
- * moves main, so it voids no gate in flight (#6640).
+ * moves main, so it voids no gate in flight (#6640). It ends by printing, on
+ * stderr, the load check to run before the tag is pushed (`release-load.ts`, #9504).
  */
 
 import { migrationFiles, NUMBERED } from "../src/core/schema.ts";
+import { loadCheckHint } from "../src/perf/baseline.ts";
 import { compareVersions, mergeShipped, readTagged, recordFor, shippedReleases } from "../src/release/shipped.ts";
 
 const VERSION = /^\d+\.\d+\.\d+$/;
@@ -37,3 +39,4 @@ if (flag === "--tag") {
 }
 // CLI answer for the person at the terminal.
 console.log(record);
+console.error(loadCheckHint(version));

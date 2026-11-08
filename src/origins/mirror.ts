@@ -11,6 +11,7 @@
  * leave a mirror you can retry, not a half-created nothing.
  */
 
+import { lacks, NOT_A_MEMBER } from "../core/roles.ts";
 import type { App } from "../app.ts";
 import {
   getOriginRepo,
@@ -34,6 +35,7 @@ import { syncOrigin } from "./sync.ts";
 import type { RemoteRepo } from "./types.ts";
 
 export type MirrorError =
+  | "not_member"
   | "not_found"
   | "invalid_name"
   | "name_taken"
@@ -93,6 +95,8 @@ export async function mirrorRepo(
   const stage = (patch: Parameters<typeof advance>[1]): void => {
     if (job !== undefined) advance(job, patch);
   };
+  // A mirror is a repository of one's own, made here by the core: a guest has none.
+  if (lacks(app.db, actor, "make_it_yours")) return err("not_member");
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) return err("not_found");
 
@@ -117,7 +121,19 @@ export async function mirrorRepo(
   // sync pass reads it back from there.
   rememberOriginRepo(app.db, origin.id, remote);
   const already = getOriginRepo(app.db, origin.id, remote.fullName);
-  if (already?.mirroredAs != null) return err("already_mirrored");
+  if (already?.mirroredAs != null) {
+    // Its first fetch failed (the origin went down part way): the repository
+    // is there with nothing in it yet, and asking again is the retry.
+    const failed = getRepoById(app.db, already.mirroredAs);
+    if (!failed?.origin?.fetchError) return err("already_mirrored");
+    const again = await syncOrigin(app, origin, {
+      initial: true,
+      onlyRepoId: failed.id,
+      ...(job === undefined ? {} : { onProgress: (stageName, detail) => stage({ stage: stageName, detail }) }),
+    });
+    await adoptDefaultBranch(repoDir(app.reposRoot, failed.ownerName, failed.name), defaultBranch);
+    return ok({ repo: getRepoById(app.db, failed.id)!, remote, error: again.error });
+  }
 
   const wanted = name ?? remote.name;
   const chosen = availableName(app, actor.id, wanted, origin);
@@ -286,6 +302,8 @@ export function startMirror(
 /** A mirror refusal in words a person can act on. */
 export function mirrorMessage(error: MirrorError): string {
   switch (error) {
+    case "not_member":
+      return NOT_A_MEMBER;
     case "not_found":
       return "the origin has no such repository, or this account cannot see it";
     case "invalid_name":

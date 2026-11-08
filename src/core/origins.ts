@@ -35,6 +35,7 @@ interface OriginRow {
   refresh_token_enc: string;
   expires_at: string | null;
   needs_reauth: number;
+  software: string;
 }
 
 function toOrigin(row: OriginRow): Origin {
@@ -51,6 +52,7 @@ function toOrigin(row: OriginRow): Origin {
     authKind: row.auth_kind,
     expiresAt: row.expires_at,
     needsReauth: row.needs_reauth === 1,
+    software: row.software,
   };
 }
 
@@ -68,6 +70,8 @@ export interface CreateOriginInput {
   refreshToken?: string;
   /** OAuth only: when the access token stops working. */
   expiresAt?: string | null;
+  /** `forge` for another forge; see `Origin.software`. */
+  software?: string;
 }
 
 export type CreateOriginError = "already_connected";
@@ -93,8 +97,8 @@ export function createOrigin(
   const originId = id();
   db.query(
     `INSERT INTO origin (id, user_id, kind, api_url, web_url, login, token_enc,
-                         auth_kind, refresh_token_enc, expires_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+                         auth_kind, refresh_token_enc, expires_at, software)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
   ).run(
     originId,
     input.userId,
@@ -108,6 +112,7 @@ export function createOrigin(
       ? ""
       : seal(dataDir, input.refreshToken, originId),
     input.expiresAt ?? null,
+    input.software ?? "",
   );
   return ok(getOriginById(db, originId)!);
 }
@@ -214,10 +219,14 @@ export function storeRefreshed(
   originId: string,
   next: { token: string; refresh?: string; expiresAt?: string | null },
 ): void {
+  // A refresh never clears `needs_reauth`: one that races a refusal (the
+  // operator guard's sweep, a dead grant) must not undo it. Only connecting
+  // again — `renewOrigin`, after the guard passed — brings an origin back.
   db.query(
     `UPDATE origin SET token_enc = ?1,
        refresh_token_enc = CASE WHEN ?2 = '' THEN refresh_token_enc ELSE ?2 END,
-       expires_at = ?3, needs_reauth = 0, last_error = ''
+       expires_at = ?3,
+       last_error = CASE WHEN needs_reauth = 1 THEN last_error ELSE '' END
      WHERE id = ?4`,
   ).run(
     seal(dataDir, next.token, originId),
@@ -536,6 +545,22 @@ export function clearCursor(db: Database, originId: string, key: string): void {
   );
 }
 
+/**
+ * A repository's own cursors on every origin (`repo:<id>:…`): what its sync
+ * and its upstream readings left. Cleared when the repository goes, and on
+ * every origin but `keep` when it is linked afresh, so a reading never
+ * outlives the link it was taken over. (Disconnecting an origin drops its
+ * cursors with it, by the schema.)
+ */
+export function forgetRepoCursors(db: Database, repoId: string, keep = ""): void {
+  const prefix = `repo:${repoId}:`;
+  db.query("DELETE FROM origin_cursor WHERE substr(key, 1, ?2) = ?1 AND origin_id != ?3").run(
+    prefix,
+    prefix.length,
+    keep,
+  );
+}
+
 // ---- the mirror link on a repo ----
 
 export interface MirrorLink {
@@ -597,6 +622,7 @@ export function linkRepoToOrigin(
     htmlUrl: string;
   },
 ): void {
+  forgetRepoCursors(db, repoId, input.originId);
   db.query(
     `UPDATE repo SET origin_id = ?1, origin_full_name = ?2,
        origin_remote_id = ?3, origin_html_url = ?4,

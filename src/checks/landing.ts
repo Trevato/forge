@@ -22,6 +22,7 @@ import {
 import { beginSwap, endSwap, handover, startRelease } from "../release/swap.ts";
 import { running } from "../kernel/version.ts";
 import { recordRelease, type Release } from "../release/record.ts";
+import { scanHold } from "../release/scan_hold.ts";
 import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { failuresOf } from "./failures.ts";
@@ -185,7 +186,13 @@ async function cut(
       `The landed tree ${sha.slice(0, 12)} failed its preflight, so it will not be released: ${verdict.line}`,
     );
   }
-  if (verdict.ok && out.ok) await swapIn(app, by, repo, pull, sha, out.value);
+  // A new high finding holds the release until a person accepts it (#9593).
+  const hold = verdict.ok && out.ok ? await scanHold(app, repo, sha) : { held: false as const };
+  if (hold.held) {
+    app.log.warn("release held by code scanning", { sha: sha.slice(0, 12), pull: pull.number, findings: hold.count });
+    addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, `The landed tree ${sha.slice(0, 12)} is not released: ${hold.line}.`);
+  }
+  if (verdict.ok && out.ok && !hold.held) await swapIn(app, by, repo, pull, sha, out.value);
   return release;
 }
 

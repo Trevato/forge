@@ -1,0 +1,3 @@
+# Builds
+
+The builds page (`src/web/pages/builds.ts`) is an `<h2>` and a plain `.list` of rows, indented by `data-depth` under the pin each grew from. The label is the row's one accent link (to its commit); Screenshots, the cart and Preview are quiet links in the trail, and `.build-del` is the Delete link, muted until hover or focus turns it `--danger`. With no builds, one sentence says how to make one. The pin form is the new issue form's markup: `<h1>`, `.narrow-wide`, `.form-actions`, Cancel a link. On a phone the trail drops under the row's text and wraps. The shots and cart pages under `/builds/:label` are separate.

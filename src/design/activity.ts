@@ -59,6 +59,21 @@ export function eventVerb(event: ForgeEvent): string {
       ? `set ${which} in the app's environment`
       : `removed ${which} from the app's environment`;
   }
+  // An app taken in as one of the forge's features.
+  if (kind === "app.absorbed") {
+    const name = payload["name"];
+    return `absorbed ${typeof name === "string" ? name : "the app"} as a forge feature`;
+  }
+  if (kind === "app.feature_declared") {
+    const name = payload["name"];
+    return `accepted the feature's declared name ${typeof name === "string" ? name : "and page"}`;
+  }
+  if (kind === "app.unabsorbed") return "put the app back as an ordinary app";
+  if (kind === "app.feature_settings") {
+    const keys = payload["keys"];
+    const which = Array.isArray(keys) && keys.every((k) => typeof k === "string") ? keys.join(", ") : "settings";
+    return `changed the feature's ${which}`;
+  }
   if (kind === "app.egress.granted" || kind === "app.egress.revoked") {
     const destination = payload["destination"];
     const which = typeof destination === "string" ? destination : "a destination";
@@ -72,6 +87,17 @@ export function eventVerb(event: ForgeEvent): string {
     if (kind === "app.domain.added") return `gave the app the domain ${which}`;
     if (kind === "app.domain.verified") return `verified the domain ${which}`;
     return `removed the domain ${which}`;
+  }
+  if (kind === "build.shots") {
+    const label = payload["label"];
+    const pin = typeof label === "string" && label !== "" ? `the pin ${label}` : "a pin";
+    const change = payload["change"];
+    if (change === "added") return `added a screenshot to ${pin}`;
+    if (change === "picked") return `picked screenshots from the deploy for ${pin}`;
+    if (change === "moved") return `reordered the screenshots of ${pin}`;
+    if (change === "captioned") return `captioned a screenshot of ${pin}`;
+    if (change === "removed") return `removed a screenshot from ${pin}`;
+    return `changed the screenshots of ${pin}`;
   }
   if (kind === "prompt.told") {
     const issue = payload["issue"];
@@ -135,6 +161,7 @@ const WORDS: Record<string, string> = {
   "pull.commented": "commented on a pull request",
   "pull.reviewed": "reviewed a pull request",
   "pull.run_granted": "let a pull request's head run",
+  "pull.guest_approved": "approved a guest pull request",
   "pull.labeled": "labelled a pull request",
   "pull.held": "held a pull request",
   "pull.released": "released a pull request",
@@ -144,12 +171,15 @@ const WORDS: Record<string, string> = {
   "repo.detached": "detached a fork from its parent",
   "repo.settings_updated": "changed repository settings",
   "repo.upstream_follow": "changed which upstream the repository follows",
+  "repo.source_added": "followed another source",
+  "repo.source_removed": "stopped following a source",
   "repo.following": "turned following an upstream on or off",
   "repo.crew_outsiders": "changed who may trigger the crew",
   "repo.mirrored": "mirrored a repository",
   "repo.imported": "imported issues and pulls",
   "repo.pinned": "pinned a repository",
   "repo.unpinned": "unpinned a repository",
+  "board.pins": "changed their pinned panels",
   "branch.created": "created a branch",
   "branch.deleted": "deleted a branch",
   "label.created": "added a label",
@@ -163,6 +193,9 @@ const WORDS: Record<string, string> = {
   "origin.disconnected": "disconnected an origin",
   "origin.needs_reauth": "needs to reconnect an origin",
   "origin.mirror_reattached": "reconnected a frozen mirror to its origin",
+  "build.pinned": "pinned a build",
+  "build.deleted": "removed a build pin",
+  "build.noted": "noted a pinned build",
   "run.queued": "queued a run",
   "run.started": "started a run",
   "app.created": "made it an app",

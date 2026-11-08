@@ -455,6 +455,8 @@ describe("checking an upstream (layer 2)", () => {
         expect(issue.length).toBe(1);
         expect(issue[0]!.title).toBe(`Upstream: conflict at ${t.up.slice(0, 7)}`);
         expect(issue[0]!.body).toContain("f.txt");
+        expect(issue[0]!.body).toContain("Bring the work in.");
+        expect(issue[0]!.body).toContain("is not a resolution");
         ok(await checkUpstream(app, t.r));
         ok(await checkUpstream(app, t.r));
         expect(t.runs().length).toBe(1);
@@ -479,6 +481,7 @@ describe("checking an upstream (layer 2)", () => {
         expect(prompt).toContain(t.srv.url);
         expect(prompt).toContain("git fetch origin refs/upstream-follow/main && git merge FETCH_HEAD");
         expect(prompt).toContain("never rebase, squash or cherry-pick");
+        expect(prompt).toContain("Bring the work in: never `-s ours`");
         expect(prompt).toContain('"f.txt"');
       } finally {
         t.srv.server.stop(true);

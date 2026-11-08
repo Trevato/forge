@@ -28,6 +28,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { running } from "../kernel/version.ts";
 import { probeHeaders } from "../kernel/probe.ts";
+import { lostPort, onFreshPort } from "../kernel/port.ts";
 
 export const BOOT_BUDGET_MS = 120_000;
 const POLL_MS = 250;
@@ -47,13 +48,6 @@ export interface BootInput {
   readonly budgetMs?: number;
   /** Where PATH, HOME and TMPDIR come from; the process's own unless a test says. */
   readonly env?: Readonly<Record<string, string | undefined>>;
-}
-
-async function freePort(): Promise<number> {
-  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });
-  const port = probe.port ?? 0;
-  await probe.stop(true);
-  return port;
 }
 
 /** The line of what the child printed that says why: the first error, else the last line. */
@@ -82,12 +76,19 @@ async function versionAt(port: number, probe: Record<string, string>): Promise<s
   }
 }
 
-/** Start the tree on `dataDir` and wait for it to answer health as `version`. */
+/** Start the tree on `dataDir` and wait for it to answer health as `version`; on a fresh port if another process took the first. */
 export async function bootProof(input: BootInput): Promise<BootProof> {
   const entry = join(input.tree, "src", "main.ts");
   if (!existsSync(entry)) return { ok: false, line: `${input.tree} has no src/main.ts` };
+  return onFreshPort((port) => bootOnPort(input, entry, port));
+}
+
+async function bootOnPort(
+  input: BootInput,
+  entry: string,
+  port: number,
+): Promise<{ result: BootProof; portLost: boolean }> {
   const host = input.env ?? process.env;
-  const port = await freePort();
   const env: Record<string, string> = {
     PATH: host["PATH"] ?? "/usr/local/bin:/usr/bin:/bin",
     FORGE_DATA: input.dataDir,
@@ -121,17 +122,23 @@ export async function bootProof(input: BootInput): Promise<BootProof> {
       if (child.exitCode !== null) {
         await reading;
         const said = why(stderr);
-        return { ok: false, line: `exited with ${child.exitCode} before it answered health${said ? `: ${said}` : ""}` };
+        return {
+          result: { ok: false, line: `exited with ${child.exitCode} before it answered health${said ? `: ${said}` : ""}` },
+          portLost: lostPort(stderr),
+        };
       }
       const seen = await versionAt(port, probeHeaders(input.dataDir));
-      if (seen === input.version) return { ok: true, ms: Math.round(performance.now() - started) };
+      if (seen === input.version) return { result: { ok: true, ms: Math.round(performance.now() - started) }, portLost: false };
       if (seen !== undefined) last = `health answered as ${seen}`;
       await Bun.sleep(POLL_MS);
     }
     const said = why(stderr);
     return {
-      ok: false,
-      line: `did not answer health as ${input.version} within ${Math.round(budget / 1000)}s (${last})${said ? `: ${said}` : ""}`,
+      result: {
+        ok: false,
+        line: `did not answer health as ${input.version} within ${Math.round(budget / 1000)}s (${last})${said ? `: ${said}` : ""}`,
+      },
+      portLost: false,
     };
   } finally {
     child.kill("SIGKILL");

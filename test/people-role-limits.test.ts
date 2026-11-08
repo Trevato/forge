@@ -39,7 +39,7 @@ afterAll(() => {
 
 test("the sentences come from the table and the refusal words", () => {
   expect(roleLimits()).toBe(
-    "A guest cannot create a repository, fork one or copy an app, or run a crew on a model allowance. " +
+    "A guest cannot create a repository or copy an app, or run a crew on a model allowance. " +
       "Only an admin can change the forge's settings or its releases.",
   );
 });
@@ -64,7 +64,7 @@ test("an admin reads what a guest cannot do, and not that nothing is refused", a
   expect(res.status).toBe(200);
   const text = (await res.text()).replace(/&#39;|&#x27;/g, "'").replace(/\s+/g, " ");
   expect(text).toContain(
-    "A guest cannot create a repository, fork one or copy an app, or run a crew on a model allowance.",
+    "A guest cannot create a repository or copy an app, or run a crew on a model allowance.",
   );
   expect(text).toContain("Only an admin can change the forge's settings or its releases.");
   expect(text).toContain(roleLimits());

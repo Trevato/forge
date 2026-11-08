@@ -1,5 +1,5 @@
 /**
- * Editing a JSON config file as a form (#7336).
+ * Editing a JSON, YAML or TOML config file as a form (#7336, #7337).
  *
  * GET  /:owner/:name/config/:ref/*path — the file's values as fields, typed
  *      by its schema when one is found (`render/json-schema.ts`), else by
@@ -12,11 +12,12 @@
  *                    proposes it: one commit on a new branch and a pull
  *                    (`actions/propose_edit.ts`).
  *
- * The file is written back in its own key order and indent, and a save
- * that changes nothing writes nothing. Everything works as a plain form
+ * The file is written back in its own key order and indent (YAML and TOML
+ * keep their comments: `render/config-format.ts`), and a save that changes
+ * nothing writes nothing. Everything works as a plain form
  * POST; a browser with HTML validation checks a schema's bounds inline.
- * A file that is not valid JSON goes back to its source view, with the
- * error and its line.
+ * A file that is not valid goes back to its source view, with the error and
+ * its line.
  */
 
 import { editFiles } from "../../actions/contents.ts";
@@ -28,16 +29,9 @@ import { loadRepo, notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field as formValue, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { isFormJson } from "../render/config.ts";
+import { isFormConfig, languageOf, parseConfig, writeConfig } from "../render/config-format.ts";
 import { applyOp, configFields, countFields, MAX_FIELDS, readValues } from "../render/config-form.ts";
-import {
-  detectStyle,
-  lineDiff,
-  parseJson,
-  sameDoc,
-  stringify,
-  type Json,
-} from "../render/json-doc.ts";
+import { lineDiff, parseJson, sameDoc, stringify, type Json } from "../render/json-doc.ts";
 import { findSchema, validate, type FoundSchema } from "../render/json-schema.ts";
 import { localScope, type RepoScope } from "../scope.ts";
 import { btn, field, icon } from "../ui.ts";
@@ -70,7 +64,7 @@ function configContext(ctx: Ctx, ref: string, path: string): RepoScope | Respons
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
-  if (!isSafeRef(ref) || !isSafeTreePath(path) || !isFormJson(path)) return notFoundPage(ctx);
+  if (!isSafeRef(ref) || !isSafeTreePath(path) || !isFormConfig(path)) return notFoundPage(ctx);
   const scope = localScope(ctx, repo);
   // A mirror you cannot push to proposes through its origin: the source editor's card.
   if (scope.propose !== undefined)
@@ -210,10 +204,10 @@ export async function configPage(ctx: Ctx): Promise<Response> {
   if (blob.value.kind !== "text" || blob.value.size > MAX_FORM_BYTES)
     return tooBig("This file is too large to edit as a form. Edit it as text, or with git.");
   const text = new TextDecoder().decode(blob.value.body);
-  const parsed = parseJson(text);
+  const parsed = parseConfig(path, text);
   if (!parsed.ok) {
     const e = parsed.error;
-    return tooBig(`Not valid JSON: ${e.message} at line ${e.line}, column ${e.column}. Fix it in the source first.`);
+    return tooBig(`Not valid ${languageOf(path)}: ${e.message} at line ${e.line}, column ${e.column}. Fix it in the source first.`);
   }
   if (countFields(parsed.value) > MAX_FIELDS)
     return tooBig(`This file has more than ${MAX_FIELDS.toLocaleString()} values, too many for a form. Edit it as text.`);
@@ -257,7 +251,12 @@ export async function configSubmit(ctx: Ctx): Promise<Response> {
   if (read === undefined) return flashTo(ctx, blobHref(scope, ref, path), { tone: "danger", message: "That form could not be read. Open the file again." });
   const current = await readText(scope, ref, path, MAX_FORM_BYTES);
   if (current === undefined) return notFoundPage(ctx);
-  const original = parseJson(current);
+  const original = parseConfig(path, current);
+  if (!original.ok)
+    return flashTo(ctx, blobHref(scope, ref, path, "?view=source"), {
+      tone: "danger",
+      message: `${path} is no longer valid ${languageOf(path)} on ${ref}. Fix it in the source first.`,
+    });
   const found = await schemaFor(scope, ref, path, read.doc);
   let state: FormState = { ref, path, base: formValue(form, "base"), doc: read.doc, found };
 
@@ -285,10 +284,21 @@ export async function configSubmit(ctx: Ctx): Promise<Response> {
       flash: { tone: "danger", message: `${path} changed on ${ref} since you opened it. Check your values, then review again.` },
     });
   }
-  if (original.ok && sameDoc(original.value, read.doc))
+  if (sameDoc(original.value, read.doc))
     return formPage(ctx, scope, { ...state, flash: { tone: "success", message: "Nothing changed, so there is nothing to save." } });
 
-  const after = stringify(read.doc, detectStyle(current));
+  const written = writeConfig(path, current, original.value, read.doc);
+  // What is written must read back as exactly the form's document.
+  const check = written.ok ? parseConfig(path, written.text) : undefined;
+  if (!written.ok || check === undefined || !check.ok || !sameDoc(check.value, read.doc))
+    return formPage(ctx, scope, {
+      ...state,
+      flash: {
+        tone: "danger",
+        message: written.ok ? "That change could not be written back safely. Edit the file as text." : written.message,
+      },
+    });
+  const after = written.text;
   if (step !== "save") return reviewPage(ctx, scope, state, { before: current, after });
 
   const subject = formValue(form, "message").trim();

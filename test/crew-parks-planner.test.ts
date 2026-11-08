@@ -4,6 +4,7 @@
  * migration 43 rewords old outage parks so they no longer count. Split from
  * `test/crew-parks.test.ts`, whose `engine` it shares.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -11,7 +12,7 @@ import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { migrations } from "../src/core/schema.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -72,6 +73,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
     await driveRepo(e.app, e.fresh());
     const deadline = Date.now() + 45_000;
     while (e.fresh().directionIssueId == null && Date.now() < deadline) await Bun.sleep(50);
+    if (e.fresh().directionIssueId == null) throw new Error(`never came: still waiting while e.fresh().directionIssueId == null`);
     const direction = e.fresh().directionIssueId!;
     const settled = () =>
       listRuns(e.app.db, e.repo.id, { kind: "agent" }).find(
@@ -132,7 +134,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
     if (!agent.ok) throw new Error(String(agent.error));
     expect(addToCrew(e.app, e.alice, e.fresh(), "sentinel").ok).toBe(true);
     const sentinel = getUserByName(e.app.db, "sentinel")!;
-    setCrewRole(e.app.db, e.repo.id, sentinel.id, "reviewer");
+    seatAs(e.app.db, e.repo.id, sentinel.id, "reviewer");
     const branch = await commitToBranch(e.app, e.alice, e.fresh(), {
       branch: "feature/spent",
       base: "main",
@@ -172,12 +174,14 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
     await driveRepo(e.app, e.fresh());
     const deadline = Date.now() + 45_000;
     while (e.fresh().directionIssueId == null && Date.now() < deadline) await Bun.sleep(50);
+    if (e.fresh().directionIssueId == null) throw new Error(`never came: still waiting while e.fresh().directionIssueId == null`);
     const direction = e.fresh().directionIssueId!;
     const settled = () =>
       listRuns(e.app.db, e.repo.id, { kind: "agent" }).find(
         (r) => r.issueId === direction && ["ok", "failed", "cancelled"].includes(r.state),
       );
     while (settled() === undefined && Date.now() < deadline) await Bun.sleep(100);
+    if (settled() === undefined) throw new Error(`never came: still waiting while settled() === undefined`);
     while (!existsSync(promptFile) && Date.now() < deadline) await Bun.sleep(50);
     expect(existsSync(promptFile)).toBe(true);
     const told = readFileSync(promptFile, "utf8");

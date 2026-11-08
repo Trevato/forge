@@ -15,6 +15,8 @@ import { optedOut, parseReport, recordVital, REPORT_MAX } from "../web/measure.t
 import type { Ctx } from "./context.ts";
 import { readBounded } from "./limits.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
+import { originOf } from "../perf/sources.ts";
+import { noteView } from "../perf/views_store.ts";
 
 const PER_CLIENT = 30;
 const PER_FORGE = 1200;
@@ -63,5 +65,13 @@ export async function measureSubmit(ctx: Ctx, routeOf: RouteOf): Promise<Respons
     clientAddress(request),
     request.headers.get("user-agent") ?? "",
   );
+  noteView(app.db, {
+    scope: "forge",
+    // The route pattern, never the path: a path can name a private repository.
+    path: route,
+    origin: originOf(report.ref, report.q, ctx.url.host, report.out),
+    client: clientAddress(request),
+    agent: request.headers.get("user-agent") ?? "",
+  });
   return refuse(204);
 }

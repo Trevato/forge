@@ -63,3 +63,27 @@ export function pileSays(pile: Pile): string {
   if (pile.total === 0) return "No open crew pulls.";
   return `${pile.total} open crew ${pile.total === 1 ? "pull" : "pulls"}, each counted once in the first pile it fits: ${pile.red} red, ${pile.conflicted} conflicted, ${pile.changesAsked} changes asked, ${pile.approved} approved and waiting, ${pile.awaitingReview} awaiting review.`;
 }
+
+/**
+ * The oldest open crew pulls that wait on a person or a reviewer (not red,
+ * not conflicted), as `owner/repo#n`: what a filed "waiting" issue names so a
+ * builder can start at the first one. Private repositories are left out
+ * unless the caller says `publicOnly` is false: the safe value is the default.
+ */
+export function oldestWaiting(db: Database, limit: number, publicOnly = true): string[] {
+  const rows = db
+    .query<{ repo: string; number: number }, [number, number]>(
+      `SELECT o.username || '/' || r.name AS repo, i.number AS number
+         FROM issue i JOIN pull p ON p.issue_id = i.id JOIN repo r ON r.id = i.repo_id
+         JOIN user o ON o.id = r.owner_id JOIN user a ON a.id = i.author_id
+        WHERE i.state = 'open' AND p.merged_at IS NULL AND (?1 = 0 OR r.visibility = 'public')
+          AND a.is_agent = 1 AND COALESCE(i.origin_author, '') = ''
+          AND EXISTS (SELECT 1 FROM repo_crew c WHERE c.repo_id = r.id AND c.user_id = a.id)
+          AND NOT COALESCE((SELECT c.state FROM run c WHERE c.kind = 'check' AND c.issue_id = i.id
+                              AND c.commit_oid = p.head_oid ORDER BY c.id DESC LIMIT 1) = 'failed', 0)
+        ORDER BY i.created_at ASC, i.id ASC LIMIT ?2`,
+    )
+    .all(publicOnly ? 1 : 0, Math.max(0, Math.floor(limit)));
+  const conflicted = new Set(conflictedPulls(db, publicOnly).map((p) => `${p.repo}#${p.number}`));
+  return rows.map((r) => `${r.repo}#${r.number}`).filter((s) => !conflicted.has(s));
+}

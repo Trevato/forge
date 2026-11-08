@@ -7,6 +7,7 @@
 import { listSecrets, putSecret, removeSecret } from "../../actions/secrets.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { body, json, requireScope, respondAccess, str } from "../respond.ts";
 import type { Router } from "../router.ts";
 
@@ -28,7 +29,15 @@ export function secretRoutes(router: Router<Handler>): void {
       ),
     );
     if (!listed.ok) return respondAccess(listed.error, 422);
-    return timePhase(ctx.request, "render", () => json({ items: listed.value, next_cursor: null }));
+    // The tag is of the exact bytes sent: names and timestamps, never a value. A secret set, replaced
+    // or removed in this scope changes the body; a denial or unknown scope returned above carries none.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify({ items: listed.value, next_cursor: null });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("PUT", "/api/v1/secrets/:scope/:name", async (ctx) => {

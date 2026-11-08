@@ -15,6 +15,8 @@
  * links to #606's page. Signed out, the page is where you are and home.
  */
 
+import { HELP_BUILD } from "../../core/contribute.ts";
+import { lacks } from "../../core/roles.ts";
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
 import { reportTitle } from "../../actions/page-report.ts";
@@ -265,7 +267,7 @@ export async function toolbarPage(ctx: Ctx): Promise<Response> {
     <div class="form-actions">
       ${when(
         !canWrite(db, repo, user),
-        () => btn("Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
+        () => btn(user !== undefined && lacks(db, user, "make_it_yours") ? HELP_BUILD : "Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
       )}
       ${other}${home}
     </div>

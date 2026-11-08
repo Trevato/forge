@@ -117,3 +117,12 @@ That produces a self-contained binary (it embeds the Bun runtime, so expect
 something in the 60–110 MB range; `dist/` is gitignored and binaries are never
 committed). Until you build it, `bun run src/cli/main.ts …` is the same
 program.
+
+## A whole pack, one command
+
+```sh
+git clone <forge>/trevato/forge.git && cd forge && bun install
+bun scripts/pack.ts up games      # or: business
+```
+
+It boots a forge on http://localhost:3000 with its state in `forge-data/`, deploys the pack's apps with their full history and a follow on their source, sets up the crew, and asks for nothing. Only the model credential is yours to add (`ANTHROPIC_API_KEY` in the environment, or Settings › Subscriptions); until then the crew is off and the command says so. No data, secret or variable is carried from the source. See `docs/features/packs.md`.

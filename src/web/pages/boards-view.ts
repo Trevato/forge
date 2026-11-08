@@ -25,7 +25,8 @@ import { forgeCeiling } from "../../flow/ceiling.ts";
 import { alarmLines, cachedAlarms } from "../studio/alarm_lines.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { panelData, runFor } from "../../boards/panel_data.ts";
-import { cellsOf, paramsOf, queryFields, readParams } from "./boards.ts";
+import { readParams } from "../../boards/params.ts";
+import { cellsOf, paramsOf, queryFields } from "./boards.ts";
 
 /** The events the panels' queries read (runs, pulls, checks, issues, usage): any of them may change a chart. */
 const READS = "run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*";
@@ -116,6 +117,7 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Boards</h1>
+        ${btn("Flow", { href: "/flow", variant: "ghost" })}
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
       ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))}
       ${card(make)} ${body} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,

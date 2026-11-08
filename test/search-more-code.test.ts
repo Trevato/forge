@@ -85,11 +85,35 @@ test("a roomy budget shows every row and offers nothing more", async () => {
   expect(html).not.toContain("data-more-code");
 });
 
-test("a search with no hits draws the empty state, not .no-hits", async () => {
+test("a search with no hits in any kind says so once and offers Explore", async () => {
   const html = await page(roomy, "q=qqqxnothingmatchesqqq");
   expect(html).not.toContain("no-hits");
-  expect(html).toContain("No app or repository matches");
-  expect(html).toContain("No issue or pull request matches");
+  expect(html).toContain("Nothing matches “qqqxnothingmatchesqqq”");
+  expect(html).toContain("code you can see");
+  expect(html).toContain('href="/explore"');
+  expect(html).not.toContain("No app or repository matches");
+  expect(html).not.toContain('id="repos"');
+  expect(html).not.toContain('id="code"');
+});
+
+test("the empty state escapes the query", async () => {
+  const html = await page(roomy, "q=" + encodeURIComponent("<b>qqzz</b>"));
+  expect(html).toContain("Nothing matches “&lt;b&gt;qqzz&lt;/b&gt;”");
+  expect(html).not.toContain("<b>qqzz</b>");
+});
+
+test("a narrowed kind with no match keeps its empty state and offers everything", async () => {
+  const html = await page(roomy, "q=qqqxnothingmatchesqqq&kind=code");
   expect(html).toContain("No line of code matches");
-  expect(html).toContain("empty-title");
+  expect(html).not.toContain("Nothing matches");
+  expect(html).toContain('href="/search?q=qqqxnothingmatchesqqq"');
+  expect(html).toContain("Search everything");
+});
+
+test("one result in any kind keeps the sections", async () => {
+  const html = await page(roomy, "q=zebrafish");
+  expect(html).not.toContain("Nothing matches");
+  expect(html).toContain('id="repos"');
+  expect(html).toContain("No app or repository matches");
+  expect(html).toContain('id="code"');
 });

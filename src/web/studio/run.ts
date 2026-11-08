@@ -32,7 +32,7 @@ import { runLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { badge, btn, card, listCard, row as stepRow, sha, type Tone } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
-import { costText, durationText, runTitle, runTokens } from "../pages/runs.ts";
+import { costText, durationText, RUN_PAGE_CSS, runTitle, runTokens } from "../pages/runs.ts";
 import { placementLine, sandboxLine } from "./sandbox.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
@@ -307,6 +307,7 @@ export async function runView(
                   }),
                 }),
               ),
+              { extra: "bare" },
             )}
             ${known
               ? html`<progress aria-label="Test files started" max="${row.of ?? 0}" value="${row.started ?? 0}"></progress>`
@@ -442,6 +443,7 @@ export async function runView(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
+    styleCss: RUN_PAGE_CSS,
     scriptJs: `${liveRegionsJs}\n${studioRunJs}`,
   });
 }

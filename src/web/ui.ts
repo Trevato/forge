@@ -50,14 +50,16 @@ export function timeAgo(iso: string): string {
 /**
  * A timestamp a machine and a screen reader can both read: relative text for
  * the eye, the exact instant in `datetime` and `title` for everyone else.
+ * `date` words it as the calendar day (`2026-12-02`), for an instant ahead
+ * of now, which "ago" cannot name.
  */
-export function time(iso: string): Html {
+export function time(iso: string, opts: { date?: boolean } = {}): Html {
   const parsed = Date.parse(iso);
   if (Number.isNaN(parsed)) return html``;
   const at = new Date(parsed);
   const exact = `${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
   return html`<time datetime="${at.toISOString()}" title="${exact}"
-    >${timeAgo(iso)}</time
+    >${opts.date === true ? at.toISOString().slice(0, 10) : timeAgo(iso)}</time
   >`;
 }
 
@@ -173,6 +175,8 @@ export interface BtnOptions {
   /** A submit that skips the browser's checks: a structural step (add,
    * remove, go back) must not wait for a field to be filled in. */
   formnovalidate?: boolean;
+  /** Where this submit posts instead of its form's own action. */
+  formaction?: string;
   current?: boolean;
   /** A toggle: emits `aria-pressed` with its state. */
   pressed?: boolean;
@@ -187,7 +191,7 @@ function btnAttrs(o: BtnOptions): Html {
   ${o.size ? html`data-size="${o.size}"` : null}
   ${o.title ? html`title="${o.title}"` : null}
   ${o.label ? html`aria-label="${o.label}"` : null}
-  ${o.shortcut ? html`data-shortcut="${o.shortcut}"` : null}
+  ${o.shortcut ? html`data-shortcut="${o.shortcut}" ${hintAttr(o.shortcut)}` : null}
   ${o.copy ? html`data-copy="${o.copy}"` : null}
   ${o.pressed !== undefined ? html`aria-pressed="${o.pressed ? "true" : "false"}"` : null}${o.current ? raw('aria-current="page"') : null}`;
 }
@@ -210,6 +214,7 @@ export function btn(content: Html | string, o: BtnOptions = {}): Html {
     ${o.form ? html`form="${o.form}"` : null}
     ${o.disabled ? raw("disabled") : null}
     ${o.formnovalidate ? raw("formnovalidate") : null}
+    ${o.formaction ? html`formaction="${o.formaction}"` : null}
     ${btnAttrs(o)}
   >
     ${inner}
@@ -243,22 +248,40 @@ export function copyField(
   value: string,
   label: string,
   copyLabel: string,
+  o: { lines?: number } = {},
 ): Html {
-  return html`<span class="bar"
-    ><input
-      class="input grow mono"
-      id="${id}"
-      type="text"
-      readonly
-      value="${value}"
-      aria-label="${label}"
-      data-size="sm"
-    />${iconBtn("copy", copyLabel, {
-      size: "sm",
-      type: "button",
-      copy: id,
-    })}</span
-  >`;
+  // The button needs script, so it is only on the page when there is script;
+  // without it the field is still there to select.
+  const button = iconBtn("copy", copyLabel, {
+    size: "sm",
+    type: "button",
+    copy: id,
+    extra: "js-only",
+  });
+  return o.lines !== undefined && o.lines > 1
+    ? html`<span class="stack stack-tight"
+        ><textarea
+          class="input mono"
+          id="${id}"
+          rows="${o.lines}"
+          wrap="off"
+          readonly
+          aria-label="${label}"
+          data-size="sm"
+        >${value}</textarea
+        >${button}</span
+      >`
+    : html`<span class="bar"
+        ><input
+          class="input grow mono"
+          id="${id}"
+          type="text"
+          readonly
+          value="${value}"
+          aria-label="${label}"
+          data-size="sm"
+        />${button}</span
+      >`;
 }
 
 // ---- badges, labels, pills, dots ----
@@ -756,6 +779,25 @@ export function kbd(keys: string[]): Html {
   return html`${keys.map((k) => html`<kbd>${k}</kbd>`)}`;
 }
 
+/** The key of an action, as an attribute: it takes no room at rest, shows as a
+ * tooltip on hover or focus, and as an overlay while hints are held (#8930). An
+ * icon-only control passes its `name`, so the tooltip is its only one (no `title`). */
+export function hintAttr(shortcut: string, name?: string): Html {
+  const label = name === undefined ? shortcut : `${name} · ${shortcut}`;
+  // aria-keyshortcuts lists alternatives, not sequences: a chord like `g h`
+  // would read as "g or h", so only a single key is announced; the help lists the rest.
+  return shortcut.includes(" ")
+    ? html`data-hint="${label}"`
+    : html`data-hint="${label}" aria-keyshortcuts="${shortcut}"`;
+}
+
+/** The keys of a `g i`-style shortcut in a menu or palette row, where a column
+ * holds it (`.keyhint`). Never beside a button, tab or the top bar: those use
+ * `hintAttr`, and design-lint refuses a `keyHint(` outside a menu item. */
+export function keyHint(shortcut: string): Html {
+  return html`<kbd class="keyhint">${shortcut}</kbd>`;
+}
+
 // ---- identity ----
 
 /** Twelve stable buckets, so the same name always wears the same hue. */
@@ -904,6 +946,9 @@ export interface RowOptions {
   href?: string;
   title: Html | string;
   meta?: Html;
+  /** Facts about the row, one `dt`/`dd` pair each, in a `dl.row-facts` under the meta. With facts the row's
+   * main column is a `<div>`, so the `dl` is valid HTML: not for a `fold` row, whose `<summary>` takes phrasing only. */
+  facts?: readonly { label: string; value: Html | string }[];
   /** Draw `.row-meta` even when `meta` is empty, for a script to write into. */
   metaSlot?: boolean;
   lead?: Html;
@@ -933,17 +978,26 @@ export interface RowOptions {
  * controls, `<summary>` when it folds — the hover affordance follows
  * automatically. */
 export function row(o: RowOptions): Html {
+  const facts = o.facts !== undefined && o.facts.length > 0 && o.fold === undefined;
   const inner = html`${o.lead
       ? html`<span class="row-lead">${o.lead}</span>`
       : null}
-    <span class="row-main">
+    ${facts ? html`<div class="row-main">
       <span
         class="row-title"
         ${o.titleAttr ? html`title="${o.titleAttr}"` : null}
         >${o.title}</span
       >
       ${o.meta || o.metaSlot ? html`<span class="row-meta">${o.meta}</span>` : null}
-    </span>
+      <dl class="row-facts">${o.facts!.map((f) => html`<div><dt>${f.label}</dt><dd>${f.value}</dd></div>`)}</dl>
+    </div>` : html`<span class="row-main">
+      <span
+        class="row-title"
+        ${o.titleAttr ? html`title="${o.titleAttr}"` : null}
+        >${o.title}</span
+      >
+      ${o.meta || o.metaSlot ? html`<span class="row-meta">${o.meta}</span>` : null}
+    </span>`}
     ${o.trail && o.trail.text.trim() !== ""
       ? html`<span class="row-trail">${o.trail}</span>`
       : null}`;
@@ -961,7 +1015,7 @@ export function row(o: RowOptions): Html {
         </details>`
       : o.href !== undefined
       ? html`<a href="${o.href}" ${attrs}>${inner}</a>`
-      : html`<div ${attrs}>${inner}</div>`}${o.after === undefined ? null : html`<span class="row-after">${o.after}</span>`}${o.children === undefined || o.children.length === 0
+      : html`<div ${attrs}>${inner}</div>`}${o.after === undefined ? null : html`<div class="row-after">${o.after}</div>`}${o.children === undefined || o.children.length === 0
       ? null
       : html`<ul class="row-children">${[...o.children]}</ul>`}
   </li>`;
@@ -987,7 +1041,7 @@ export function tabs(items: TabItem[], ariaLabel: string): Html {
         html`<a
           href="${t.href}"
           ${t.current ? raw('aria-current="page"') : null}
-          ${t.shortcut ? html`data-shortcut="${t.shortcut}"` : null}
+          ${t.shortcut ? html`data-shortcut="${t.shortcut}" ${hintAttr(t.shortcut)}` : null}
           >${t.icon ? icon(t.icon) : null}${t.label}${t.count !== undefined &&
           t.count > 0
             ? pill(t.count)
@@ -1057,10 +1111,16 @@ export interface MenuItem {
   icon?: IconName;
   current?: boolean;
   separator?: boolean;
+  /** A non-interactive group label. */
+  heading?: boolean;
   /** Renders as a submit button inside its own POST form. */
   post?: string;
   /** Shown but not usable: the reason, in words, under the label. */
   disabled?: string;
+  /** The key that does the same, drawn beside the label. */
+  hint?: string;
+  /** The link's tooltip; escaped. Absent, no title renders. */
+  title?: string;
 }
 
 /** A dropdown built on `<details>` — the only construct correct with JS off. */
@@ -1095,6 +1155,7 @@ export function menu(o: {
         if (item instanceof Html) return item;
         const i = item;
         if (i.separator) return html`<hr class="menu-sep" />`;
+        if (i.heading) return html`<span class="menu-title">${i.label}</span>`;
         if (i.disabled !== undefined) {
           return html`<span class="menu-item" aria-disabled="true" title="${i.disabled}"
             >${i.icon ? icon(i.icon) : null}<span class="grow"
@@ -1114,9 +1175,9 @@ export function menu(o: {
         return html`<a
           class="menu-item"
           href="${i.href ?? "#"}"
-          ${i.current ? raw('aria-current="true"') : null}
+          ${i.current ? raw('aria-current="true"') : i.title ? html`title="${i.title}"` : null}
           >${i.icon ? icon(i.icon) : null}<span class="grow">${i.label}</span
-          >${i.current ? icon("check") : null}</a
+          >${i.hint ? keyHint(i.hint) : null}${i.current ? icon("check") : null}</a
         >`;
       })}
     </div>

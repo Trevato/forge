@@ -1,3 +1,4 @@
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -152,6 +153,7 @@ describe("origins: connecting, mirroring, writing through", () => {
 
     // The forge under test.
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     base = servers.url;
     await seedAdmin(app, { username: "alice", email: "alice@forge.test", password: ALICE_PASSWORD });

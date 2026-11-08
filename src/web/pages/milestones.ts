@@ -59,8 +59,8 @@ import { html, when, type Html } from "../html.ts";
 import { field, readForm } from "../form.ts";
 import { page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { badge, btn, card, listCard, pill, row, time } from "../ui.ts";
-import { folded, issueRow, list, wrappedCard } from "./limb_view.ts";
+import { badge, btn, pill, row, time } from "../ui.ts";
+import { folded, issueRow, list, wrappedRows } from "./limb_view.ts";
 
 /** Where a milestone is: its own page. */
 export const milestoneHref = milestonePath;
@@ -230,7 +230,7 @@ export function milestonesPage(ctx: Ctx): Response {
     moverFor(ctx.app.db, repo, ctx.auth.user, plan.read),
   );
   const rendering = performance.now();
-  const body = html`${repoHeader(ctx, repo, "map")}
+  const body = html`${repoHeader(ctx, repo, "map")}<div data-milestone>
     <div class="page-head mt">
       <h1>Milestones</h1>
       <p class="muted">
@@ -244,13 +244,13 @@ export function milestonesPage(ctx: Ctx): Response {
           show. <a href="${base}/map">See the map</a>.
         </p>`
       : html`<div id="ms-limbs">
-          ${wrappedCard(
+          ${wrappedRows(
             plan.limbs.map((limb) =>
               limbLine(base, limb, move?.(limb.issue, "top") ?? null),
             ),
           )}
         </div>`}
-    ${liveMount({ repo: base })}`;
+    ${liveMount({ repo: base })}</div>`;
   const response = page({
     ctx,
     title: `Milestones · ${repo.name}`,
@@ -325,7 +325,7 @@ function replanChanged(ctx: Ctx, repo: Repo, m: Milestone): Html | null {
       <span class="muted small">#${n.number}</span>`;
   return html`<section class="mt" id="ms-replanned">
     <h2 class="mb">Re-planned ${time(result.at)}</h2>
-    ${listCard(
+    ${wrappedRows(
       result.splits.map((s) =>
         row({
           title: link(s),
@@ -409,14 +409,11 @@ function milestoneBody(
         <a href="${base}/milestones">Milestones</a>
       </p>
       <h1>${m.name}</h1>
-      ${card(
-        html`<div class="stack stack-tight">
-          <span><b>${w.done}</b> of ${w.total} done</span>
-          ${progress(w.done, w.total, `${w.done} of ${w.total} done`)}
-          <span class="muted small">${weightWords(m)}</span>
-        </div>`,
-        m.trim === undefined ? {} : { tone: "attn" },
-      )}
+      <div class="stack stack-tight" id="ms-progress">
+        <span><b>${w.done}</b> of ${w.total} done</span>
+        ${progress(w.done, w.total, `${w.done} of ${w.total} done`)}
+        <span class="muted small">${weightWords(m)}</span>
+      </div>
       <p id="ms-estimate">${m.estimate}</p>
       ${paceLine(m.pace)}
       ${when(
@@ -435,7 +432,7 @@ function milestoneBody(
       () =>
         html`<section class="mt" id="ms-limbs">
           <h2 class="mb">Limbs</h2>
-          ${wrappedCard(
+          ${wrappedRows(
             m.limbs.map((limb) =>
               limbLine(base, limb, move?.(limb.issue, String(m.issue.number)) ?? null),
             ),
@@ -447,7 +444,7 @@ function milestoneBody(
       () =>
         html`<section class="mt" id="ms-building">
           <h2 class="mb">Building now</h2>
-          ${listCard(
+          ${wrappedRows(
             m.building.map((b) =>
               issueRow(
                 base,
@@ -499,7 +496,7 @@ function milestoneBody(
           </p>
           ${spend.costliest.length === 0
             ? html`<p class="muted small">Nothing has cost anything yet.</p>`
-            : listCard(
+            : wrappedRows(
                 spend.costliest.map((c) =>
                   issueRow(base, c.issue, undefined, pill(dollars(c.usd))),
                 ),
@@ -540,13 +537,10 @@ function milestoneBody(
           ${when(
             closed.length > 0,
             () =>
-              card(
-                html`<details>
-                  <summary class="small">${closed.length} closed</summary>
-                  ${list(closed.map((leaf) => leafRow(leaf, false)))}
-                </details>`,
-                { pad: false },
-              ),
+              html`<details>
+                <summary class="small muted">${closed.length} closed</summary>
+                ${list(closed.map((leaf) => leafRow(leaf, false)), true)}
+              </details>`,
           )}
         </section>`,
     )}`;
@@ -598,9 +592,9 @@ export function milestonePage(ctx: Ctx, now: Date = new Date()): Response {
     title: `${milestone.name} · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
-    body: html`${repoHeader(ctx, repo, "map")}
+    body: html`${repoHeader(ctx, repo, "map")}<div data-milestone>
     ${milestoneBody(repo, milestone, owner, actions, move)}
-    ${replanChanged(ctx, repo, milestone)}
+    ${replanChanged(ctx, repo, milestone)}</div>
     ${liveMount({ repo: repoBase(repo) })}`,
     scriptJs: liveClientJs,
   });

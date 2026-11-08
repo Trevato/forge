@@ -4,6 +4,7 @@
  * action the pages call — so what a person may not do on a page they may
  * not do here.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -14,7 +15,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { pullDir } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { openIssue } from "../src/actions/issues.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
@@ -146,6 +147,34 @@ describe("the forge over MCP", () => {
     expect(get.headers.get("allow")).toBe("POST");
   });
 
+  test("a browser opening /mcp reads what it is; a client still gets the bare 405", async () => {
+    const browser = await fetch(`${base}/mcp`, { headers: { accept: "text/html" } });
+    expect(browser.status).toBe(405);
+    expect(browser.headers.get("allow")).toBe("POST");
+    expect(browser.headers.get("x-content-type-options")).toBe("nosniff");
+    const text = await browser.text();
+    expect(text).toContain("This is the forge's MCP server");
+    expect(text).toContain("/llms.txt");
+    expect(text).toContain("/.well-known/mcp.json");
+    const stream = await fetch(`${base}/mcp`, { headers: { accept: "text/event-stream" } });
+    expect(stream.status).toBe(405);
+    expect(stream.headers.get("allow")).toBe("POST");
+    expect(await stream.text()).toBe("");
+    const bare = await fetch(`${base}/mcp`);
+    expect(bare.status).toBe(405);
+    expect(await bare.text()).toBe("");
+    const anon = await (await fetch(`${base}/mcp`, { headers: { accept: "text/html" } })).text();
+    expect(anon).toContain('href="/signin"');
+    expect(anon).not.toContain('href="/settings/tokens">Settings');
+    const signedIn = await fetch(`${base}/mcp`, {
+      headers: { accept: "text/html", authorization: `Bearer ${rw}` },
+    });
+    expect(signedIn.status).toBe(405);
+    const page = await signedIn.text();
+    expect(page).toContain('<a href="/settings/tokens">Settings › Tokens</a>');
+    expect(page).not.toContain("to make a token");
+  });
+
   test("it speaks the protocol: initialize, a notification, ping, tools/list", async () => {
     const init = await call(rw, "initialize", {
       protocolVersion: "2025-03-26",
@@ -215,11 +244,15 @@ describe("the forge over MCP", () => {
       "secrets",
       "issue_teams",
       "issues",
+      "iterations",
+      "keep_plan",
       "orgs",
       "now",
+      "open_pull",
       "org_create",
       "stop",
       "health",
+      "forge_view",
       "audit",
       "model_grant",
       "accounts",
@@ -244,6 +277,7 @@ describe("the forge over MCP", () => {
       "events",
       "reports",
       "branches",
+      "builds",
       "commits",
       "waves",
       "probe",
@@ -257,6 +291,7 @@ describe("the forge over MCP", () => {
       "sever",
       "flag_set",
       "follow_mode",
+      "fork",
       "forks",
       "upstream",
       "propose_to_parent_forge",
@@ -264,6 +299,7 @@ describe("the forge over MCP", () => {
       "converge",
       "crew",
       "family",
+      "features",
       "next_steps",
       "notify",
       "thought",
@@ -275,10 +311,14 @@ describe("the forge over MCP", () => {
       "egress_grants",
       "explore",
       "person",
+      "bets",
+      "bet",
+      "pinned_forge",
       "search",
       "feed",
       "feed_chips",
       "feed_dismiss",
+      "maintenance",
       "make_it_yours",
       "origin_apps",
       "front_page",
@@ -300,6 +340,10 @@ describe("the forge over MCP", () => {
       "land_past_gate",
       "repo_labels",
       "wait_for",
+      "next_up",
+      "week",
+      "lift",
+      "held",
       "confirm_wait",
       "attach_look",
       "hold",
@@ -309,6 +353,7 @@ describe("the forge over MCP", () => {
       "scorecard",
       "flags",
       "flow",
+      "valves",
       "system",
       "backups",
       "telemetry_history",
@@ -534,7 +579,7 @@ describe("the forge over MCP", () => {
     const made = await createAgent(app, alice, { username: "closer", brief: "x" });
     if (!made.ok) throw new Error(String(made.error));
     expect(addToCrew(app, alice, game, "closer").ok).toBe(true);
-    setCrewRole(app.db, game.id, made.value.user.id, "planner");
+    seatAs(app.db, game.id, made.value.user.id, "planner");
     const botToken = createToken(app.db, made.value.user.id, "bot", "rw").token;
     const mine = (title: string) => {
       const o = openIssue(app, made.value.user, game, { title });
@@ -556,6 +601,8 @@ describe("the forge over MCP", () => {
     expect(viaApi.json.error).toBe("forbidden");
     const refused = await tool(botToken, "close", { repo: "alice/game", number: noNote.number, reason: "done" });
     expect(refused.error).toContain("forbidden");
+    expect(refused.error).toContain("already done on main");
+    expect(viaApi.json.message).toContain("already done on main");
 
     // Its own, dropped: closed, and the answer says so.
     const own = mine("a thing to drop");
@@ -571,7 +618,15 @@ describe("the forge over MCP", () => {
     if (!asked.ok) throw new Error(String(asked.error));
     expect(
       (await tool(botToken, "close", { repo: "alice/game", number: asked.value.number, reason: "dropped" })).error,
-    ).toContain("forbidden");
+    ).toContain("a person's ask stands in");
+    // Split into an issue that is not newer than the hand-over.
+    expect(
+      (await tool(botToken, "close", { repo: "alice/game", number: asked.value.number, reason: "split", into: [noNote.number] })).error,
+    ).toContain("opened after ");
+    // A closed issue is not the planner's to close again.
+    expect(
+      (await tool(botToken, "close", { repo: "alice/game", number: own.number })).error,
+    ).toContain("any other close is not the planner's");
     // Nor does an agent reopen.
     expect((await tool(botToken, "close", { repo: "alice/game", number: own.number, state: "open" })).error).toContain(
       "forbidden",
@@ -1573,11 +1628,11 @@ describe("the forge over MCP", () => {
     setMember(app.db, bob.id, false, alice.id, new Date());
     const guest = (await tool(bobRw, "whoami_can")).value;
     expect(guest.role).toBe("guest");
-    expect(guest.can).toEqual({ read: true, comment: true, make_it_yours: false, run_crew: false, administer: false });
+    expect(guest.can).toEqual({ read: true, comment: true, contribute: true, make_it_yours: false, run_crew: false, administer: false });
     setMember(app.db, bob.id, true, alice.id, new Date());
     const member = (await tool(bobRw, "whoami_can")).value;
     expect(member.role).toBe("member");
-    expect(member.can).toEqual({ read: true, comment: true, make_it_yours: true, run_crew: true, administer: false });
+    expect(member.can).toEqual({ read: true, comment: true, contribute: true, make_it_yours: true, run_crew: true, administer: false });
     const admin = (await tool(ro, "whoami_can")).value;
     expect(admin.role).toBe("admin");
     expect(admin.can.administer).toBe(true);

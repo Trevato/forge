@@ -25,6 +25,8 @@ import type { Ctx, Handler } from "./context.ts";
 import { running } from "../kernel/version.ts";
 import { bearerChallenge } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
+import { page, signInHref } from "../web/layout.ts";
+import { html } from "../web/html.ts";
 import type { Router } from "./router.ts";
 import { clientBucket } from "./peer.ts";
 import { proofOf } from "./report_filer.ts";
@@ -405,6 +407,30 @@ export function mcpRoutes(router: Router<Handler>): void {
   });
   // No server-to-client stream is offered: nothing to hold open, nothing
   // for a proxy to cut.
-  router.add("GET", "/mcp", () => NOT_HERE("POST"));
+  // A browser (Accept names text/html) is told what this is; every other
+  // Accept, an MCP client's event-stream included, gets the bare 405.
+  router.add("GET", "/mcp", (ctx) => {
+    if (!(ctx.request.headers.get("accept") ?? "").toLowerCase().includes("text/html"))
+      return NOT_HERE("POST");
+    const origin = ctx.url.origin;
+    const res = page(
+      {
+        ctx,
+        title: "MCP",
+        body: html`<div class="page-head"><h1>The forge's MCP server</h1></div>
+          <p>This is the forge's MCP server. Connect a harness to POST ${origin}/mcp with a token.</p>
+          <ul>
+            <li><a href="/llms.txt">/llms.txt</a>: what an agent can do here</li>
+            <li><a href="/.well-known/mcp.json">/.well-known/mcp.json</a>: the server's card</li>
+            <li>${ctx.auth.user === undefined
+              ? html`<a href="${signInHref(ctx)}">Sign in</a> to make a token`
+              : html`<a href="/settings/tokens">Settings › Tokens</a>`}</li>
+          </ul>`,
+      },
+      405,
+    );
+    res.headers.set("allow", "POST");
+    return res;
+  });
   router.add("DELETE", "/mcp", () => NOT_HERE("POST"));
 }

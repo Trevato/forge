@@ -23,7 +23,6 @@
  */
 
 import { parseFrom } from "../actions/tell_from.ts";
-import { getAppByRepo } from "../core/apps.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
 import { isPinned } from "../core/pins.ts";
 import {
@@ -33,6 +32,7 @@ import {
   type Origin,
 } from "../core/origins.ts";
 import { canWrite, countsForRepos, type Repo } from "../core/repos.ts";
+import { denied } from "../origins/operator.ts";
 import type { Ctx } from "../http/context.ts";
 import type {
   RepoFacts,
@@ -41,6 +41,7 @@ import type {
 } from "../view/source.ts";
 import { localSource } from "../view/local.ts";
 import { html, when, type Html } from "./html.ts";
+import { repoSteps } from "./repo_steps.ts";
 import { icon, type IconName } from "./icons.ts";
 import type { PaletteItem } from "./layout.ts";
 import { timeAgo } from "./ui.ts";
@@ -172,10 +173,7 @@ export function localScope(ctx: Ctx, repo: Repo): RepoScope {
       { label: repo.ownerName, href: `/${repo.ownerName}` },
       { label: repo.name, href: base },
     ],
-    palette: [
-      ...repoPalette(base, `${repo.ownerName}/${repo.name}`, true),
-      ...(getAppByRepo(ctx.app.db, repo.id) ? tellRow(ctx, repo, "This repository") : []),
-    ],
+    palette: repoPalette(ctx, repo),
   };
 }
 
@@ -196,7 +194,10 @@ function mirrorFacts(
   const link = originForRepo(ctx.app.db, repo.id);
   if (link === undefined) return { upstream, propose: undefined };
   const cached = getOriginRepo(ctx.app.db, link.origin.id, link.fullName);
-  if (cached?.canPush !== false) return { upstream, propose: undefined };
+  // A repository the operator protects takes no pushes from here, whatever
+  // the account could do: it, too, is proposed to through a fork.
+  if (cached?.canPush !== false && !denied(link.origin, link.fullName))
+    return { upstream, propose: undefined };
   return {
     upstream,
     propose: {
@@ -265,7 +266,7 @@ export async function originScope(
       },
       { label: fullName, href: base },
     ],
-    palette: repoPalette(base, fullName, false),
+    palette: originPalette(base, fullName, facts.htmlUrl ?? (where.kind === "origin" ? where.htmlUrl : ""), hostOf(origin.webUrl)),
   };
 }
 
@@ -287,26 +288,38 @@ export function tellRow(ctx: Ctx, repo: Repo, group: string): PaletteItem[] {
   return [{ t: `${base.slice(1)} — Tell the crew`, h, c: group }];
 }
 
-function repoPalette(
-  base: string,
-  name: string,
-  local: boolean,
-): PaletteItem[] {
+/**
+ * This repo's rows for the command palette: every step the head offers, on
+ * the head's own conditions (`repoSteps`), in the studio's nouns for an app —
+ * plus the one first verb a step list has no word for: telling the crew on an
+ * app (it posts from the app page itself), a new issue anywhere else.
+ */
+export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
+  const base = `/${repo.ownerName}/${repo.name}`;
+  const name = `${repo.ownerName}/${repo.name}`;
   const here = "This repository";
-  const items: PaletteItem[] = [
+  const { steps, studio } = repoSteps(ctx, base, repo);
+  const rows: PaletteItem[] = steps.map((st) => ({
+    t: `${name} — ${st.label === "Pulls" ? "Pull requests" : st.label}`,
+    h: st.href,
+    c: here,
+  }));
+  return studio
+    ? [...rows, ...tellRow(ctx, repo, here)]
+    : [...rows, { t: `${name} — New issue`, h: `${base}/issues/new`, c: here }];
+}
+
+/** A browsed repository's rows: its code, issues, pull requests, commits and the way out to its origin. */
+function originPalette(base: string, name: string, away: string, host: string): PaletteItem[] {
+  const here = "This repository";
+  return [
     { t: `${name} — Code`, h: base, c: here },
     { t: `${name} — Issues`, h: `${base}/issues`, c: here },
     { t: `${name} — Pull requests`, h: `${base}/pulls`, c: here },
     { t: `${name} — Commits`, h: `${base}/commits`, c: here },
+    // The head's "More" holds the way out; so does the palette.
+    ...(away === "" ? [] : [{ t: `${name} — Open on ${host}`, h: away, c: here }]),
   ];
-  if (local) {
-    items.push(
-      { t: `${name} — New issue`, h: `${base}/issues/new`, c: here },
-      { t: `${name} — Events`, h: `${base}/events`, c: here },
-      { t: `${name} — Settings`, h: `${base}/settings`, c: here },
-    );
-  }
-  return items;
 }
 
 // ---- the where strip ----
@@ -572,50 +585,54 @@ export function forkButton(scope: RepoScope): Html {
   if (isOwnRepo(origin.login, scope.fullName)) return html``;
   return html`<form method="post" action="${scope.base}/fork">
     <button
-      class="btn"
-      data-size="sm"
-      data-variant="outline"
+      class="menu-item"
       type="submit"
       title="Fork ${scope.fullName} into your account at ${hostOf(
         origin.webUrl,
       )}"
     >
-      ${icon("fork", 16)}Fork
+      ${icon("fork", 16)}<span class="grow">Fork</span>
     </button>
   </form>`;
 }
 
 /**
- * What a live browse offers instead of the write affordances: fork it, one
- * primary verb, and the way out to the forge that actually owns this
- * repository.
+ * What a live browse offers instead of the write affordances: one primary
+ * verb in a fixed place, and the rest (fork it, the way out to the forge that
+ * owns this repository) in an overflow beside it.
  */
 export function browseActions(scope: RepoScope): Html {
   if (scope.kind !== "origin" || scope.origin === undefined) return html``;
   const host = hostOf(scope.origin.webUrl);
   const mirror = scope.mirror;
-  return html`${forkButton(scope)}${mirror === undefined
-    ? html`<form method="post" action="${scope.base}/mirror">
-        <button class="btn" data-variant="primary" data-size="sm" type="submit">
-          ${icon("download", 16)}Mirror into your workbench
-        </button>
-      </form>`
-    : html`<a
-        class="btn"
-        data-variant="primary"
-        data-size="sm"
-        href="/${mirror.ownerName}/${mirror.name}"
-        >${icon("repo", 16)}Open the mirror</a
-      >`}
-  ${scope.originUrl === ""
-    ? null
-    : html`<a
-        class="btn"
-        data-size="sm"
-        data-variant="outline"
-        href="${scope.originUrl}"
-        target="_blank"
-        rel="noopener noreferrer"
-        >${icon("external", 16)}Open on ${host}</a
-      >`}`;
+  const primary =
+    mirror === undefined
+      ? html`<form method="post" action="${scope.base}/mirror">
+          <button class="btn" data-variant="primary" data-size="sm" type="submit">
+            ${icon("download", 16)}Mirror into your workbench
+          </button>
+        </form>`
+      : html`<a
+          class="btn"
+          data-variant="primary"
+          data-size="sm"
+          href="/${mirror.ownerName}/${mirror.name}"
+          >${icon("repo", 16)}Open the mirror</a
+        >`;
+  const fork = forkButton(scope);
+  const away =
+    scope.originUrl === ""
+      ? null
+      : html`<a
+          class="menu-item"
+          href="${scope.originUrl}"
+          target="_blank"
+          rel="noopener noreferrer"
+          >${icon("external", 16)}<span class="grow">Open on ${host}</span></a
+        >`;
+  if (fork.text.trim() === "" && away === null) return primary;
+  return html`${primary}<details class="menu" data-align="end">
+    <summary class="btn" data-variant="ghost" data-size="sm" aria-label="More actions">More</summary>
+    <div class="menu-panel">${fork}${away}</div>
+  </details>`;
 }

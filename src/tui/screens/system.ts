@@ -34,6 +34,7 @@ import { dialog } from "../ui/widgets.ts";
 import { Scroll, confirmScreen, drawLines, hitScroll, later, pickerScreen } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
 import { readHealth } from "../../actions/health.ts";
+import { readerPaces } from "../../system/telemetry_reads.ts";
 import { live as liveMachine } from "../../system/live.ts";
 
 const WIDTH = 72;
@@ -148,6 +149,27 @@ export function historyLines(session: Session, hours: number): string[] {
 /** Who may grant telemetry:read: the MCP tool's gate (`mayBoards`), a forge admin who is a person. */
 const mayGrant = (session: Session | undefined): boolean => session?.user?.isAdmin === true && session.user.kind !== "agent";
 
+const READER_ROWS = 6;
+
+/**
+ * Who read the telemetry routes in the last 10 minutes and how fast, as /system's
+ * "Telemetry readers" section says it (#9069): route, reader, reads, mean interval,
+ * and a flag for a flow reader under 5 s. Empty for anyone but a forge admin who is a person.
+ */
+export function readerLines(session: Session, now = Date.now()): string[] {
+  if (!mayGrant(session)) return [];
+  const rows = readerPaces(now);
+  if (rows.length === 0) return ["Telemetry readers: none in the last 10 minutes"];
+  const secs = (ms: number | null): string => (ms === null ? "—" : `${(ms / 1000).toFixed(1)} s`);
+  return [
+    "Telemetry readers, last 10 min (route, reader, reads, mean interval)",
+    ...rows.slice(0, READER_ROWS).map((r) =>
+      truncate(`${pad(r.route, 7)} ${pad(r.reader, 22)} ${pad(String(r.reads), 5, "right")} ${pad(secs(r.meanIntervalMs), 8, "right")}${r.tooFast ? "  TOO FAST" : ""}`, WIDTH - 6),
+    ),
+    ...(rows.length > READER_ROWS ? [`… and ${rows.length - READER_ROWS} more`] : []),
+  ];
+}
+
 /** The agents holding the grant, in one line. */
 export function grantLine(session: Session): string {
   const held = grantable(session.db).filter((a) => a.granted).map((a) => a.username);
@@ -203,6 +225,7 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session: Sessio
           ...lines,
           "",
           ...history,
+          ...(offered ? ["", ...readerLines(session)] : []),
           ...(offered ? ["", grantLine(session), "g: grant or take back telemetry:read"] : []),
         ],
         actions: [{ label: "Close" }],

@@ -78,6 +78,7 @@ describe("a packed file unpacks as its parts arrive", () => {
         if (key !== last) return inner.get(key);
         // Everything else has landed; wait for the file to show it was unpacked on arrival.
         for (let i = 0; i < 100 && diskBytes(dataDir) === 0; i++) await Bun.sleep(20);
+        if (diskBytes(dataDir) === 0) throw new Error(`never came: still waiting while diskBytes(dataDir) === 0`);
         grewBeforeLast = diskBytes(dataDir);
         await gate;
         return inner.get(key);

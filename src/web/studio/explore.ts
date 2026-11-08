@@ -10,30 +10,36 @@ import {
   explore,
   exploreLine,
   exploreNote,
+  exploreSuggestion,
   readExploreLine,
   type ExploreQuery,
   type ExploreRow,
 } from "../../actions/explore.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { pageHead } from "../chrome.ts";
+import { edgeLoginUrl } from "../../http/edge.ts";
+import { offersSignup, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, empty, listCard, nameMark, row as rowOf, seg, timeAgo } from "../ui.ts";
+import { btn, card, empty, nameMark, row as rowOf, seg, tabs, timeAgo } from "../ui.ts";
 
 const href = (query: ExploreQuery): string => {
   const line = exploreLine(query);
   return line === "" ? "/explore" : `/explore?q=${encodeURIComponent(line)}`;
 };
 
-/** A row's numbers as a person reads them; nothing that is zero. */
+/**
+ * A row's numbers as a person reads them; nothing that is zero. Hours awake
+ * are not among them: summed over every copy of an app, previews too, they
+ * read as a figure ("3085.9 h") that says nothing to a visitor. They still
+ * weigh in the ranking (`core/front.ts`).
+ */
 function numbers(row: ExploreRow): { apps: string; rest: string } {
   const n = row.numbers;
   const rest = [
     n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
     n.likes > 0 ? `${n.likes} like${n.likes === 1 ? "" : "s"}` : "",
     n.ships > 0 ? `${n.ships} shipped this month` : "",
-    n.awakeHours > 0 ? `${n.awakeHours} h in use` : "",
     row.shippedAt !== null ? `last shipped ${timeAgo(row.shippedAt)}` : "",
   ];
   return {
@@ -94,7 +100,7 @@ function terms(query: ExploreQuery): { term: string; without: ExploreQuery }[] {
 }
 
 /** Nothing to list: a bare line means nothing is public yet, not a miss. */
-function emptyState(signedIn: boolean, query: ExploreQuery): Html {
+function emptyState(ctx: Ctx, query: ExploreQuery): Html {
   const line = exploreLine(query);
   if (line !== "")
     return empty({
@@ -112,20 +118,23 @@ function emptyState(signedIn: boolean, query: ExploreQuery): Html {
     icon: "search",
     title: "Nothing public yet",
     note: "Make the first app and it shows up here.",
-    action: signedIn
-      ? btn("Make an app", { href: "/apps/new", variant: "primary" })
-      : btn("Sign in to make one", {
-          href: "/signin?next=/apps/new",
-          variant: "primary",
-        }),
+    action:
+      ctx.auth.user !== undefined
+        ? btn("Make an app", { href: "/apps/new", variant: "primary" })
+        : offersSignup(ctx)
+          ? html`${btn("Create an account", { href: "/signup?next=/apps/new", variant: "primary" })}
+            ${btn("Sign in", { href: "/signin?next=/apps/new" })}`
+          : btn("Sign in", { href: edgeLoginUrl("/apps/new"), variant: "primary" }),
   });
 }
 
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const { query, unknown } = readExploreLine(ctx.url.searchParams.get("q") ?? "");
+  const line = ctx.url.searchParams.get("q") ?? "";
+  const { query, unknown } = readExploreLine(line);
   const note = exploreNote(unknown);
+  const suggestion = exploreSuggestion(line);
   const ranking = performance.now();
   const rows = await explore(ctx.app, ctx.auth.user, query);
   notePhase(ctx.request, "rank", performance.now() - ranking);
@@ -153,7 +162,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "This week", updated: "7d" as const },
     { label: "This month", updated: "30d" as const },
   ];
-  const body = html`${pageHead("Explore", {
+  const body = html`<div data-explore>${pageHead("Explore", {
       sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
     })}
     <form method="get" action="/explore" class="bar mb">
@@ -169,15 +178,22 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
-    ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}</p>`}
-    <div class="bar mb">
-      ${seg(
+    ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}${
+          suggestion === undefined
+            ? html``
+            : html` Did you mean <a href="/explore?q=${encodeURIComponent(suggestion.line)}">${suggestion.fix}</a>?`
+        }</p>`}
+    <div class="mb">
+      ${tabs(
         kinds.map((k) => ({
           label: k.label,
           href: href({ ...query, kind: k.kind }),
           current: query.kind === k.kind,
         })),
+        "Kind",
       )}
+    </div>
+    <div class="bar mb small">
       ${seg(
         sorts.map((s) => ({
           label: s.label,
@@ -193,15 +209,15 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
         })),
       )}
       <a
-        class="btn" data-size="sm"
+        class="muted home-doors"
         href="${href({ ...query, archived: !query.archived })}"
         aria-pressed="${query.archived ? "true" : "false"}"
         >Show archived</a
       >
     </div>
     ${rows.length === 0
-      ? emptyState(ctx.auth.user !== undefined, query)
-      : listCard(rows.map(rowHtml))}`;
+      ? emptyState(ctx, query)
+      : card(html`<ul class="list">${rows.map(rowHtml)}</ul>`, { pad: false, extra: "bare" })}</div>`;
   const response = page({ ctx, title: "Explore", body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

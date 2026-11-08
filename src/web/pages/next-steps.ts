@@ -20,7 +20,7 @@ import { getUserById, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
-import { badge, btn, card, row } from "../ui.ts";
+import { badge, btn, row } from "../ui.ts";
 import { tellHref } from "../studio/nouns.ts";
 import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
@@ -61,12 +61,13 @@ function crewAtWork(
   return { lines, busy };
 }
 
-/** The step's row, then its body below it as a padded block of its own:
- * `.row-meta` is one clipped line, no place for a form. */
+/** One step: its row (title, "Done" trail; the primary one in bold), then its
+ * body as a block of its own under the title. `.row-meta` is one clipped line,
+ * no place for a form. */
 function stepBlock(step: NextStep, primary: boolean, body: Html | null): Html {
   const head = row({
     lead: step.done ? icon("check") : icon("issue"),
-    title: html`${primary ? html`<b>${step.title}</b>` : step.title}`,
+    title: primary ? html`<b>${step.title}</b>` : html`${step.title}`,
     ...(step.done ? { trail: badge("Done", { tone: "success" }) } : {}),
     data: {
       step: step.key,
@@ -77,7 +78,7 @@ function stepBlock(step: NextStep, primary: boolean, body: Html | null): Html {
   return html`<ul class="list">
       ${head}
     </ul>
-    ${!step.done && body ? html`<div class="card-body">${body}</div>` : null}`;
+    ${!step.done && body ? html`<div class="step-body">${body}</div>` : null}`;
 }
 
 /** The card, or nothing: not a spawned forge, not its owner, or every step done. */
@@ -117,26 +118,20 @@ export async function nextStepsCard(
       })}
     </p>`,
   };
-  return card(
-    html`${crew.lines.length > 0
-        ? html`<div class="card-body">
-              <p>
-                ${crew.busy
-                  ? "Your crew is already at work:"
-                  : "Your crew has its direction:"}
-              </p>
-            </div>
-            <ul class="list">
-              ${crew.lines}
-            </ul>`
-        : null}
-      ${steps.map((s) => stepBlock(s, s.key === primary, bodies[s.key]))}`,
-    {
-      id: "next-steps",
-      head: html`<h2>Your next steps</h2>`,
-      pad: false,
-    },
-  );
+  return html`<section id="next-steps">
+    <h2>Your next steps</h2>
+    ${crew.lines.length > 0
+      ? html`<p>
+            ${crew.busy
+              ? "Your crew is already at work:"
+              : "Your crew has its direction:"}
+          </p>
+          <ul class="list">
+            ${crew.lines}
+          </ul>`
+      : null}
+    ${steps.map((s) => stepBlock(s, s.key === primary, bodies[s.key]))}
+  </section>`;
 }
 
 /** The steps once per request, for the card and for the lean home to share. */

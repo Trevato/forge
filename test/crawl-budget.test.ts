@@ -147,9 +147,9 @@ test("a blob or commit at a full sha is immutable for an anonymous reader; a bra
   expect(commit.headers.get("cache-control")).toBe("public, max-age=31536000, s-maxage=86400, immutable");
   const branch = await get(`/alice/open/blob/main/a.txt`);
   expect(branch.headers.get("cache-control") ?? "").not.toContain("immutable");
-  // A cookie that carries no identity is still anonymous; one that does is not.
+  // A cookie that carries no identity still changes the page (a theme, a flash): never shared.
   const theme = await get(`/alice/open/blob/${sha}/a.txt`, { cookie: "forge_theme=dark" });
-  expect(theme.headers.get("cache-control")).toContain("immutable");
+  expect(theme.headers.get("cache-control") ?? "").not.toContain("public");
   const signedIn = await get(`/alice/open/blob/${sha}/a.txt`, { cookie: `forge_session=${createSession(app.db, alice.id).token}` });
   expect(signedIn.headers.get("cache-control") ?? "").not.toContain("public");
 });

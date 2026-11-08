@@ -54,7 +54,7 @@ describe("web budgets (docs/web.md)", () => {
       const res = await fetch(base + path);
       const text = await res.text();
       expect(new TextEncoder().encode(text).length).toBeLessThan(BUDGET.html);
-      expect(/<script(?![^>]*\s(src=|type="application\/json"))/.test(text)).toBe(BUDGET.inlineScripts > 0);
+      expect(/<script(?![^>]*\s(src=|type="application\/(ld\+)?json"))/.test(text)).toBe(BUDGET.inlineScripts > 0);
       expect(text.includes("<symbol")).toBe(BUDGET.inlineSvg > 0);
       expect(text).toContain("/assets/i-");
     });

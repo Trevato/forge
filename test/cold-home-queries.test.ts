@@ -50,7 +50,7 @@ test("breakerParked: parked by its newest note only, open only", () => {
                 ROW_NUMBER() OVER (PARTITION BY i.id ORDER BY c.created_at DESC, c.id DESC) AS rn
          FROM issue i JOIN comment c ON c.issue_id = i.id
          WHERE i.state = 'open' AND i.repo_id IN (?1)
-       ) WHERE rn = 1 AND body IN (?2, ?3)`,
+       ) WHERE rn = 1 AND body IN (?2, ?3, ?4)`,
     )
     .all(repoId, ...WAITING_NOTES);
   const now = breakerParked(f.app.db, [repoId]);

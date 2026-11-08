@@ -23,6 +23,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { settleAgentRun, sweepConflicts } from "../src/crew/autonomy.ts";
 import { conflictedPulls, conflictedSays } from "../src/flow/conflicted.ts";
+import { forgetFlow } from "../src/system/flow_cache.ts";
 import { flowLines } from "../src/tui/screens/flow.ts";
 
 let dataDir: string;
@@ -45,6 +46,7 @@ async function flowDoors() {
   });
   const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
   const page = await (await fetch(`${servers.url}/boards`, { headers: { cookie } })).text();
+  forgetFlow(app); // the MCP flow tool answers a copy a few seconds old
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: {

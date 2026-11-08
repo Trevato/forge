@@ -22,6 +22,7 @@ import { mayView, setSealed } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
+import { adoptResolution } from "../core/trusted_sources.ts";
 import { crewRole, isCrew } from "../core/agents.ts";
 import { moveBlockersToChildren } from "../core/dependencies.ts";
 import {
@@ -68,6 +69,8 @@ import {
 } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { clearFirst } from "../core/first.ts";
+import { clearRank } from "../core/rank.ts";
+import { followLabel } from "./gate.ts";
 import { inheritPillar } from "./pillars.ts";
 import {
   requireParticipant,
@@ -248,6 +251,7 @@ export function editIssue(
   if (changed.length === 0) return ok(issue);
   const updated = updateIssueText(app.db, issue.id, input);
   if (!updated.ok) return updated;
+  if (issue.kind === "pull" && changed.includes("body")) adoptResolution(app.db, issue.id);
   app.bus.append({
     kind: `${issue.kind}.edited`,
     repoId: repo.id,
@@ -296,6 +300,8 @@ export function assignIssue(
   issue: Issue,
   assignee: User | null,
   variantGroup?: string,
+  /** The crew's own pick under the operator's name: the pace holds it (`week_hold.ts`). */
+  pick = false,
 ): Result<
   Issue,
   AccessError | "assignee_cannot_read" | "agent_not_on_crew" | "unverified" | "not_member" | "archived"
@@ -333,6 +339,8 @@ export function assignIssue(
       assignee: assignee?.username ?? null,
       agent: assignee?.kind === "agent",
       ...(variantGroup ? { variantGroup } : {}),
+      // A person's assignment says so; an event without it (queued before the mark) is a pick.
+      ...(pick ? { pick: true } : { person: true }),
     },
   });
   return ok(updated);
@@ -379,7 +387,7 @@ export function setIssueState(
   closing: Closing = {},
 ): Result<
   Issue,
-  AccessError | "already_merged" | MirrorError | "invalid_reason"
+  AccessError | CloseError | MirrorError
 > {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
@@ -455,9 +463,35 @@ export function setIssueState(
     state === "closed" && issue.kind === "issue"
       ? (alreadyDone(app.db, [issue.id]).get(issue.id) ?? [])
       : [];
+  // A bug closed with no fix behind it (no commit on main, no split) says
+  // why; the crew's own live triage and stale sweeps note it themselves.
+  if (closing.note !== undefined && typeof closing.note !== "string") return err("invalid_note");
+  const note = (closing.note ?? "").trim();
+  if (note.length > MAX_NOTE) return err("invalid_note");
+  if (
+    state === "closed" &&
+    issue.kind === "issue" &&
+    reason !== "split" &&
+    doneBy.length === 0 &&
+    note === "" &&
+    !closing.triage &&
+    !closing.stale &&
+    !closing.system &&
+    labelsFor(app.db, issue.id).some((l) => l.name === "bug")
+  )
+    return err("reason_required");
   const changed = app.db.transaction(() => {
     const written = writeState(app.db, issue.id, state, reason);
-    if (written && state === "closed") clearFirst(app.db, issue.id);
+    if (written && state === "closed") {
+      clearFirst(app.db, issue.id);
+      clearRank(app.db, issue.id);
+    }
+    if (written && state === "closed" && note !== "")
+      insertComment(app.db, {
+        issueId: issue.id,
+        authorId: user.value.id,
+        body: `Closed${reason === "dropped" ? " as won't fix" : ""}: ${note}`,
+      });
     if (written && doneBy.length > 0)
       insertComment(app.db, {
         issueId: issue.id,
@@ -554,8 +588,39 @@ function handedToPlanner(
   actor: User,
   closing: Closing,
 ): boolean {
-  if (issue.kind !== "issue" || issue.state !== "open") return false;
-  if (crewRole(app.db, repo.id, actor.id) !== "planner") return false;
+  return (
+    crewRole(app.db, repo.id, actor.id) === "planner" &&
+    plannerCloseRefusal(app, repo, issue, actor, closing) === undefined
+  );
+}
+
+export const PLANNER_REFUSALS = {
+  done: 'a planner closes as done only an issue with an "already done on main" note naming commits on main; none name this one',
+  dropped:
+    "a planner does not drop an issue a person's ask stands in; split it into open issues, replace it, or defer it",
+  splitSince: (since: string) =>
+    `a planner splits an issue only into open issues, other than itself and the Later gate, opened after ${since}`,
+  pull: "a planner may close only an agent's pull whose issue is closed",
+  other:
+    "a planner closes only an open issue (done already on main, dropped, or split); any other close is not the planner's",
+} as const;
+
+/**
+ * Why the planner may not close this issue as asked: the message naming the
+ * rule, or undefined when the close is the planner's (see `handedToPlanner`
+ * above). Undefined too for anyone who is not the repository's planner, whose
+ * refusal is about credentials.
+ */
+export function plannerCloseRefusal(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  actor: User,
+  closing: Closing,
+): string | undefined {
+  if (crewRole(app.db, repo.id, actor.id) !== "planner") return undefined;
+  if (issue.kind === "pull") return PLANNER_REFUSALS.pull;
+  if (issue.state !== "open") return PLANNER_REFUSALS.other;
   // Replacements must be newer than the hand-over when the crew handed the
   // issue over, and newer than the issue itself when the planner re-plans it
   // on its own pass.
@@ -570,14 +635,19 @@ function handedToPlanner(
   // Done on main: only when commits already name the issue, as the close
   // note keeps them.
   if (closing.reason === undefined || closing.reason === "done")
-    return (alreadyDone(app.db, [issue.id]).get(issue.id) ?? []).length > 0;
+    return (alreadyDone(app.db, [issue.id]).get(issue.id) ?? []).length > 0
+      ? undefined
+      : PLANNER_REFUSALS.done;
   // Dropped only when no person's ask stands in it — not one the planner
   // wrote to replace a person's, however many times it was split since.
   if (closing.reason === "dropped")
-    return limbSince === undefined && !standsForPerson(app.db, issue);
-  if (closing.reason !== "split") return false;
+    return limbSince === undefined && !standsForPerson(app.db, issue)
+      ? undefined
+      : PLANNER_REFUSALS.dropped;
+  // What is left is a split: a request names no other reason (`CLOSE_REASONS`).
+  const refused = PLANNER_REFUSALS.splitSince(since.at);
   const into = closing.into ?? [];
-  if (into.length === 0) return false;
+  if (into.length === 0) return refused;
   const gate = laterGate(app.db, repo.id);
   const found = into.map((number) => getIssue(app.db, repo.id, number));
   const parts: Issue[] = [];
@@ -588,7 +658,7 @@ function handedToPlanner(
       part.id === issue.id ||
       part.number === gate
     )
-      return false;
+      return refused;
     parts.push(part);
   }
   // Every piece landed since: closed as done at or after the hand-over.
@@ -600,15 +670,27 @@ function handedToPlanner(
         (part.closedAt ?? "") >= since.at,
     )
   )
-    return true;
+    return undefined;
   // Opened since: in the same millisecond, the id says which came first.
   return parts.every(
     (part) =>
       part.state === "open" &&
       (part.createdAt > since.at ||
         (part.createdAt === since.at && part.id > since.id)),
-  );
+  )
+    ? undefined
+    : refused;
 }
+
+/** What a close can be refused for beyond access: a merged pull, a bad reason or note, a bug with no why. */
+export type CloseError =
+  | "already_merged"
+  | "invalid_reason"
+  | "invalid_note"
+  | "reason_required";
+
+/** The longest note a close takes: one sentence. */
+export const MAX_NOTE = 300;
 
 /** How an issue closes: done unless said otherwise; split names its children. */
 export interface Closing {
@@ -617,6 +699,10 @@ export interface Closing {
   readonly into?: readonly number[];
   /** The crew's live triage closed it, not the person whose name it carries. */
   readonly triage?: boolean;
+  /** Why, in a sentence: a bug closed with no fix behind it needs one. */
+  readonly note?: string;
+  /** The forge's own close: it says why itself, so a bug needs no note. */
+  readonly system?: boolean;
   /** A crew pull closed for staying conflicted 72 hours (`crew/stale_pulls.ts`). */
   readonly stale?: boolean;
 }
@@ -639,7 +725,10 @@ export function closingFrom(input: Record<string, unknown>): Closing | undefined
       return undefined;
     into = input.into as number[];
   }
+  // A note's shape is judged where it is used (`invalid_note`), not here.
+  const note = input.note as string | undefined;
   return {
+    ...(note === undefined ? {} : { note }),
     ...(reason === undefined ? {} : { reason: reason as CloseReason }),
     ...(into === undefined ? {} : { into }),
   };
@@ -667,6 +756,7 @@ export function setIssueLabels(
     if (!label) return err("unknown_label");
     if (!resolved.some((l) => l.id === label.id)) resolved.push(label);
   }
+  const before = labelsFor(app.db, issue.id);
   writeLabels(
     app.db,
     issue.id,
@@ -678,6 +768,13 @@ export function setIssueLabels(
     actorId: writer.value.id,
     payload: { number: issue.number, labels: resolved.map((l) => l.name) },
   });
+  // `Later` is the Later gate made visible: changing the label changes the gate.
+  const followed = followLabel(app, writer.value, repo, issue, before, resolved);
+  if (!followed.ok) {
+    // The label and the gate move together or not at all.
+    writeLabels(app.db, issue.id, before.map((l) => l.id));
+    return err("forbidden");
+  }
   return ok(labelsFor(app.db, issue.id));
 }
 
@@ -793,7 +890,7 @@ export async function setIssueStateThrough(
   state: IssueState,
   closing: Closing = {},
 ): Promise<
-  Result<Issue, ThroughError<AccessError | "already_merged" | "invalid_reason">>
+  Result<Issue, ThroughError<AccessError | CloseError>>
 > {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;

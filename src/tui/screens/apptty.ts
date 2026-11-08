@@ -6,7 +6,7 @@
  */
 
 import { runAppTty, ttyRefusalText } from "../../apps/tty.ts";
-import type { EnvName } from "../../apps/data.ts";
+import { envHostLabel, type EnvName } from "../../apps/data.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx } from "../app/app.ts";
@@ -23,8 +23,7 @@ export async function openAppTerminal(
     ctx.toast("this repository is not an app", "attn");
     return;
   }
-  const name =
-    env === "production" ? record.slug : `${record.slug}--${env.slice(5)}`;
+  const name = envHostLabel(record.slug, env);
   const ran = await ctx.suspend((host) =>
     runAppTty(f.app, host, f.user, { app: record, env }),
   );

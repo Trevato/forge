@@ -10,6 +10,7 @@
  * their comment did not go upstream, not silently given a local one.
  */
 
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -173,6 +174,7 @@ describe("origins on the web", () => {
     github = serveFakeForge(ghState);
 
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     base = servers.url;
     alice = await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD });
@@ -201,16 +203,36 @@ describe("origins on the web", () => {
     expect(response.headers.get("location")).toStartWith("/signin?next=");
   });
 
+  test("under Another forge, one line says an older forge is connected from here, linking the docs (#9626)", async () => {
+    const html = await (await asUser(alice, "/settings/origins")).text();
+    expect(html).toContain("A forge older than 0.7.346 cannot connect outward");
+    expect(html).toContain("upgrade it to connect both ways");
+    expect(html).toContain(
+      'href="/trevato/forge/blob/main/docs/features/forge-origin-older.md#connecting-from-an-older-forge"',
+    );
+    expect(html.indexOf("older-forge-line")).toBeGreaterThan(html.indexOf("Another forge"));
+    expect(html.split("older-forge-line").length - 1).toBe(1);
+  });
+
+  test("the line also shows where the forge cannot name its callback and asks for a token (#9626)", async () => {
+    const html = await (
+      await asUser(alice, "/settings/origins", { headers: { host: "unvouched.example.test" } })
+    ).text();
+    expect(html).toContain("Connect that forge");
+    expect(html).not.toContain("Sign in there");
+    expect(html).toContain("A forge older than 0.7.346 cannot connect outward");
+    expect(html).toContain("#connecting-from-an-older-forge");
+    expect(html.split("older-forge-line").length - 1).toBe(1);
+  });
+
   test("the origins page starts empty and offers the three ways in", async () => {
     const html = await (await asUser(alice, "/settings/origins")).text();
     expect(html).toContain("No origins connected");
     expect(html).toContain("Forgejo / Gitea, one click");
-    expect(html).toContain("Personal access token");
-    // The token path comes first and is open; the OAuth pair is folded away.
-    expect(html.indexOf("Personal access token")).toBeLessThan(
-      html.indexOf("One-click sign-in"),
-    );
-    expect(html).toContain("recommended");
+    // Another forge leads (#9388); the rest are folded.
+    expect(html).toContain("Another forge");
+    expect(html.indexOf("Another forge")).toBeLessThan(html.indexOf("A token for GitHub, Forgejo or Gitea"));
+    expect(html.indexOf("Another forge")).toBeLessThan(html.indexOf("One-click sign-in"));
     // Drawn with §5's rows and buttons, not the page's own classes.
     for (const gone of ["handoff", "connect-more", "connect-path"]) {
       expect(html).not.toContain(gone);
@@ -240,6 +262,7 @@ describe("origins on the web", () => {
     const closed = await (await asUser(alice, "/settings/origins")).text();
     const used = await (await asUser(alice, "/settings/origins?host=codeberg.org")).text();
     for (const [id, brand] of [
+      ["connect-forge", "globe"],
       ["connect-token", "key"],
       ["connect-github", "github"],
       ["connect-forgejo", "forgejo"],
@@ -254,10 +277,12 @@ describe("origins on the web", () => {
         expect(/<span\s+class="row-title"[^>]*>([\s\S]*?)<\/span\s*>/.exec(summary)![1]).toContain(pointAtSprite(icon(brand).text, spriteAsset().path));
       }
     }
-    expect(fold(closed, "connect-token").open).toBe(true);
+    expect(fold(closed, "connect-forge").open).toBe(true);
+    expect(fold(closed, "connect-token").open).toBe(false);
     expect(fold(closed, "connect-github").open).toBe(false);
     expect(fold(closed, "connect-forgejo").open).toBe(false);
-    expect(fold(used, "connect-token").open).toBe(true);
+    expect(fold(used, "connect-forge").open).toBe(true);
+    expect(fold(used, "connect-token").open).toBe(false);
     expect(fold(used, "connect-github").open).toBe(true);
     expect(fold(used, "connect-forgejo").open).toBe(true);
   });
@@ -512,10 +537,9 @@ describe("origins on the web", () => {
     expect(html).toContain("Sync now");
     expect(html).toContain("Pushes here go through to");
     expect(html).not.toMatch(/class="about"/);
-    // The facts render as §5 rows inside a labelled complementary landmark.
+    // The facts render as `dl` rows inside a labelled complementary landmark.
     expect(html).toContain('<aside aria-label="About">');
-    expect(html).toMatch(/row-title"[^>]*>Visibility</);
-    expect(html).not.toContain("<dl");
+    expect(html).toMatch(/<dt>Visibility<\/dt>/);
   });
 
   test("an imported issue shows the origin's author, not the local one", async () => {
@@ -771,6 +795,9 @@ describe("origins on the web", () => {
       redirect: "manual",
     });
     expect(unknown.status).toBe(404);
+    const plainBody = await unknown.clone().text();
+    expect(plainBody).not.toContain("/search?q=");
+    expect(plainBody).not.toContain("Create an account");
     app.db
       .query("UPDATE oauth_flow SET expires_at = ?1 WHERE id = ?2")
       .run("2020-01-01T00:00:00.000Z", flowId);
@@ -785,7 +812,8 @@ describe("origins on the web", () => {
       text
         .replaceAll(/nonce="[^"]*"/g, 'nonce="N"')
         .replaceAll(/here\?path=[^"&\s]*/g, "here?path=")
-        .replaceAll(/next=[^"]*/g, "next=");
+        .replaceAll(/next=[^"]*/g, "next=")
+        .replaceAll(/\/new\/issue\?from=[^"]*/g, "/new/issue?from=");
     const staleText = await stale.text();
     const unknownText = await unknown.text();
     expect(sameBut(staleText)).toBe(sameBut(unknownText));
@@ -865,7 +893,7 @@ describe("origins on the web", () => {
     expect(html).not.toContain("error-note");
     expect(html).not.toContain("origin-callback-err");
     // The token path is unaffected, and still offered.
-    expect(html).toContain("Personal access token");
+    expect(html).toContain("Another forge");
 
     const started = await fetch(`${base}/settings/origins/oauth`, {
       method: "POST",

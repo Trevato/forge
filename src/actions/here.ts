@@ -12,6 +12,7 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { lacks } from "../core/roles.ts";
 import { activeEdgeToken } from "../http/edge.ts";
 import { sshTellCommand } from "../ssh/command.ts";
 import { mcpPointers, TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
@@ -45,6 +46,8 @@ export interface Action {
   readonly http?: string;
   /** The MCP tool that does the same, when there is one. */
   readonly mcp?: string;
+  /** The arguments that tool takes here, plain data (`{ q }` for a filter). */
+  readonly mcpArgs?: Readonly<Record<string, string>>;
   /** The shell command that does the same, when the forge's SSH is on. */
   readonly ssh?: string;
   /** `true`: needs an account the caller does not have; `false`: needs none. */
@@ -271,6 +274,7 @@ function pageRead(page: "explore" | "search", path: string): Action {
     do: `${page === "explore" ? "browse the forge" : "search the forge"}${q === "" ? "" : `: ${q.slice(0, 200)}`}`,
     http,
     mcp: page,
+    mcpArgs: { q: q.slice(0, 200) },
   };
 }
 
@@ -288,11 +292,13 @@ function forgeActions(
       do: "explore apps and repositories",
       http: "GET /api/v1/explore?q=",
       mcp: "explore",
+      mcpArgs: { q: "" },
     },
     {
       do: "search issues, pulls, repositories and code",
       http: "GET /api/v1/search?q=",
       mcp: "search",
+      mcpArgs: { q: "" },
     },
     { do: "list public repositories", http: "GET /api/v1/repos" },
     {
@@ -400,6 +406,14 @@ function repoActions(
       mcp: "make_it_yours",
       ...(viewer === undefined ? { account: true } : unproven),
     });
+  // A guest on a public repository they cannot write: help build it.
+  if (
+    viewer !== undefined &&
+    repo.visibility === "public" &&
+    !canWrite(db, repo, viewer) &&
+    lacks(db, viewer, "make_it_yours")
+  )
+    out.push({ do: "help build this", http: `POST ${r}/forks`, ...unproven });
   if (!acts) return out;
   const tellSsh = sshTellCommand(app);
   if (mayDirectCrew(db, repo, viewer))

@@ -14,7 +14,7 @@ import { repoBase, repoNotFound } from "../chrome.ts";
 import { field, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, confirmAction, empty, labelChip, labelCss } from "../ui.ts";
+import { btn, confirmAction, empty, labelChip, labelCss, row } from "../ui.ts";
 import { adminForm, settingsPageResponse, timedAdminRepo } from "./settings.ts";
 
 /** `<input type="color">` submits `#rrggbb`; the store keeps six hex digits. */
@@ -46,21 +46,23 @@ function usage(base: string, label: Label, open: number): Html {
     : html`<span class="muted">unused</span>`;
 }
 
-function labelEditor(base: string, label: Label, open: number): Html {
-  return html`<li>
-    <form
-      class="edit-row"
+/** One label: its chip and open count at the head, the edit form in the trail. */
+function labelRow(base: string, label: Label, open: number): Html {
+  return row({
+    id: `label-${label.id}`,
+    title: labelChip(label),
+    meta: usage(base, label, open),
+    trail: html`<form
+      class="row-fields edit-row"
       method="post"
       action="${base}/settings/labels/${label.id}"
     >
-      <span class="preview">${labelChip(label)}</span>
-      ${usage(base, label, open)}
       <input
         class="input"
         type="text"
         name="name"
         value="${label.name}"
-        aria-label="Label name"
+        aria-label="Name of the label ${label.name}"
         required
       />
       ${colorField(label.color, `Colour of the label ${label.name}`)}
@@ -69,9 +71,10 @@ function labelEditor(base: string, label: Label, open: number): Html {
         action: `${base}/settings/labels/${label.id}/delete`,
         verb: "Delete",
         size: "sm",
+        label: `Delete the label ${label.name}`,
       })}
-    </form>
-  </li>`;
+    </form>`,
+  });
 }
 
 export function labelsPage(ctx: Ctx): Response {
@@ -89,14 +92,17 @@ export function labelsPage(ctx: Ctx): Response {
           title: "No labels yet",
           note: "Labels are this repository's work queue — a handful is usually enough.",
         })
-      : html`<div class="card">
-          <ul class="list">
-            ${labels.map((l) => labelEditor(base, l, counts.get(l.id) ?? 0))}
-          </ul>
-        </div>`;
+      : html`<ul class="list setting-list">
+          ${labels.map((l) => labelRow(base, l, counts.get(l.id) ?? 0))}
+        </ul>`;
 
-  const create = card(
-    html`<form class="edit-row" method="post" action="${base}/settings/labels">
+  const create = html`<section class="settings-block">
+    <h2>New label</h2>
+    <form
+      class="row-fields edit-row mt"
+      method="post"
+      action="${base}/settings/labels"
+    >
       <input
         class="input"
         type="text"
@@ -107,12 +113,11 @@ export function labelsPage(ctx: Ctx): Response {
       />
       ${colorField("6b7280", "Colour of the new label")}
       ${btn("Add label", { variant: "primary", size: "sm" })}
-    </form>`,
-    { head: html`<h2>New label</h2>`, pad: false },
-  );
+    </form>
+  </section>`;
 
-  const body = html`${list}
-    <div class="mt">${create}</div>`;
+  const body = html`<section class="settings-block">${list}</section>
+    ${create}`;
   const response = settingsPageResponse(
     ctx,
     repo,

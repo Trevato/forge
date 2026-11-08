@@ -84,15 +84,15 @@ const get = async (path: string, cookie?: string) =>
 const rowOf = (page: string, subject: string): string =>
   (page.split("<li>").find((l) => l.includes(subject)) ?? "").split("</li>")[0]!;
 
-test("the list shows green and red linked to their runs, and nothing without a check", async () => {
+test("the list shows green and red as plain badges, and nothing without a check", async () => {
   const page = await get("/alice/pub/commits");
   const green = rowOf(page, "green change");
   const red = rowOf(page, "red change");
   const none = rowOf(page, "none change");
   expect(green).toContain("Passed");
-  expect(green).toContain(`href="/alice/pub/runs/${runs.green}"`);
   expect(red).toContain("Failed");
-  expect(red).toContain(`href="/alice/pub/runs/${runs.red}"`);
+  expect(green).not.toContain("/runs/");
+  expect(red).not.toContain("/runs/");
   expect(none).not.toContain("/runs/");
   expect(none).not.toContain("badge");
 });
@@ -125,7 +125,6 @@ test("a private repository's verdict is the owner's alone", async () => {
     expect(seen).not.toContain("step secret failed");
   }
   const mine = await get(list, ownerCookie);
-  expect(mine).toContain(`href="/alice/priv/runs/${runs.priv}"`);
   expect(mine).toContain("Failed");
   expect(await get(one, ownerCookie)).toContain("first failing step secret failed");
 });
@@ -153,7 +152,28 @@ test("the sentence names whose check answered, a running check and a superseded 
   expect(gone).not.toContain("/runs/");
 });
 
-test("the badge link names the commit and the failing step", async () => {
-  const red = rowOf(await get("/alice/pub/commits"), "red change");
-  expect(red).toContain(`aria-label="Check failed for ${oids["pub/red"]!.slice(0, 7)}: step typecheck failed"`);
+test("the list has no card markup and each row has exactly one anchor and no avatar", async () => {
+  const page = await get("/alice/pub/commits");
+  expect(page).not.toContain('class="card');
+  const rows = page.split("<li>").slice(1).map((l) => l.split("</li>")[0]!).filter((l) => l.includes('class="row"'));
+  expect(rows.length).toBe(3);
+  for (const row of rows) {
+    expect(row.match(/<a[\s>]/g)?.length).toBe(1);
+    expect(row).not.toContain("avatar");
+    expect(row).not.toContain("row-lead");
+  }
+});
+
+test("a commit's page has no card and its check line follows the subject for green, red and not-run", async () => {
+  for (const [n, said] of [["green", "The check passed"], ["red", "The check failed"], ["none", ""]] as const) {
+    const one = await get(`/alice/pub/commit/${oids[`pub/${n}`]}`);
+    expect(one).not.toContain('class="card');
+    const afterSubject = one.slice(one.indexOf(`${n} change</h2>`));
+    if (said === "") expect(one).not.toContain("The check");
+    else {
+      const at = afterSubject.indexOf(said);
+      expect(at).toBeGreaterThan(0);
+      expect(at).toBeLessThan(afterSubject.indexOf("committed"));
+    }
+  }
 });

@@ -195,6 +195,21 @@ ${entries.join("\n")}
 const CHANGELOG_ENTRIES = 50;
 
 /**
+ * The weak tag of a changelog answer: the live version, the rows' repo,
+ * number, title and time, and `scope` (the chosen repo, the viewer when the
+ * answer depends on who asks). The Atom feed and the JSON share it, so the
+ * two cannot drift; with no scope the tag is the Atom's own, unchanged.
+ */
+export function changelogTag(
+  version: string,
+  rows: readonly { repo: string; number: number; title: string; at: string }[],
+  scope: readonly unknown[] = [],
+): string {
+  const key = [version, rows.map((l) => [l.repo, l.number, l.title, l.at]), ...scope];
+  return `W/"${Bun.hash(JSON.stringify(key)).toString(36)}"`;
+}
+
+/**
  * `GET /changelog.atom`: what went live, as /changelog lists it (the forge's
  * own repository, public pulls only). Landed-but-not-shipped is left out.
  */
@@ -203,7 +218,7 @@ export async function changelogAtom(ctx: Ctx): Promise<Response> {
   const answer = await timePhaseAsync(ctx.request, "releases", () => shippedAnswer(ctx.app));
   const origin = ctx.url.origin;
   const live = answer.live.slice(0, CHANGELOG_ENTRIES);
-  const etag = `W/"${Bun.hash(JSON.stringify([answer.version, live.map((l) => [l.repo, l.number, l.title, l.at])])).toString(36)}"`;
+  const etag = changelogTag(answer.version, live);
   const headers = { etag, "cache-control": "public, max-age=300" };
   if (holds(ctx.request.headers.get("if-none-match"), etag)) return new Response(null, { status: 304, headers });
   const entries = live.map((l) => {

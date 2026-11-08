@@ -4,7 +4,9 @@ import { getPull, pullDir, pullMergeState } from "../../../core/pulls.ts";
 import { canWrite } from "../../../core/repos.ts";
 import { mayView } from "../../../core/sealed.ts";
 import { whyIssue, whyPull, liveHead, whyRepo, type Why } from "../../../flow/why.ts";
-import { flowFor } from "../../../system/telemetry.ts";
+import { countRead } from "../../../system/telemetry_reads.ts";
+import { openBugs } from "../../../flow/bugs.ts";
+import { flowCached } from "../../../system/flow_cache.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 const number = (v: unknown): number | undefined =>
@@ -21,12 +23,13 @@ const said = (subject: string, why: Why) =>
 
 export const tool: Tool = {
   name: "flow",
-  doc: "with no arguments, the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing`; with `{ repo, issue? or pull? }` (a writer of the repository), why it is not moving: `{ subject, moving, state?, cause, says, clears, next? }`, the first of wall (a person decides new access), ceiling, hot_file, blocked_by, later_gate, no_builder, no_headroom, red_check, waiting_review that holds it (`flow/why.ts`); `repo` alone asks about the repository's builders",
+  doc: "with no arguments, the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing`; with `{ kind: bugs }`, `{ open, overdue, bugs: [{ repo, number, priority, dueAt }] }` soonest due first, at most 100 (an admin sees all, anyone else public repositories); with `{ repo, issue? or pull? }` (a writer of the repository), why it is not moving: `{ subject, moving, state?, cause, says, clears, next? }`, the first of wall (a person decides new access), ceiling, hot_file, blocked_by, later_gate, no_builder, no_headroom, red_check, waiting_review that holds it (`flow/why.ts`); `repo` alone asks about the repository's builders",
   description:
-    "Pipeline (admin); with `repo` and `issue` or `pull`: why it is not moving.",
+    "Pipeline (admin); `kind: \"bugs\"`: open bugs on their clocks; with `repo` and `issue` or `pull`: why it is not moving.",
   inputSchema: {
     type: "object",
     properties: {
+      kind: { type: "string", enum: ["bugs"] },
       repo: REPO_ARG,
       issue: { type: "integer", minimum: 1 },
       pull: { type: "integer", minimum: 1 },
@@ -34,12 +37,25 @@ export const tool: Tool = {
   },
   writes: false,
   async run(ctx, user, args) {
+    if (args["kind"] !== undefined) {
+      if (args["kind"] !== "bugs") return bad("invalid", "kind is bugs");
+      // As the terminal's bugs screen: an admin sees every repository, anyone else public ones.
+      const all = openBugs(ctx.app.db, user.isAdmin && user.kind !== "agent" ? {} : { publicOnly: true });
+      const now = Date.now();
+      const bugs = all.sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt));
+      return good({
+        open: bugs.length,
+        overdue: bugs.filter((b) => Date.parse(b.dueAt) <= now).length,
+        bugs: bugs.slice(0, 100).map((b) => ({ repo: b.repo, number: b.number, priority: b.high ? "high" : "low", dueAt: b.dueAt })),
+      });
+    }
     if (args["repo"] === undefined) {
       const reader = telemetryReader(ctx.app, user);
       if (!reader)
         return bad("forbidden", "only an admin of this forge, or an agent granted telemetry:read, reads its pipeline");
       noteRead(ctx.app, user, reader, "flow");
-      return good(flowFor(ctx.app, reader));
+      countRead("flow", user.username);
+      return good(flowCached(ctx.app, reader));
     }
     const repo = repoArg(ctx, user, args);
     if (isAnswer(repo)) return repo;

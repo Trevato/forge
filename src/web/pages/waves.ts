@@ -25,12 +25,32 @@ import { btn, empty, listCard, pill, row } from "../ui.ts";
 import { localScope } from "../scope.ts";
 import { milestoneHref, planFor, progress } from "./milestones.ts";
 
+/**
+ * A wave's headline is the writer's words, so a row lets it wrap (a long word
+ * breaks anywhere) instead of the list's one-line ellipsis, and the page
+ * never scrolls sideways at 390 px. Scoped to `[data-waves]`; no new class.
+ */
+export const WAVES_CSS = `[data-waves] { overflow-wrap: anywhere; }
+[data-waves] .row-title, [data-waves] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-waves] .row { align-items: flex-start; }`;
+
 const WHAT_A_WAVE =
   "A wave is a release note in waves/<version>.md that names its highlights and the pulls merged since the last one.";
 
 /** A wave's row title: `<version> · <date> · <headline> · N pulls`, N being the pulls this viewer can see. */
 export function waveLine(w: Wave, visible: number): string {
   return `${w.version} · ${w.date} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
+}
+
+/** One wave on the list: its headline, the first highlight's why as the one sentence under it, and version, date and pull count as a muted trail. */
+export function waveRow(w: Wave, href: string, visible: number) {
+  const why = w.highlights[0]?.why;
+  return row({
+    href,
+    title: w.headline,
+    ...(why === undefined || why === "" ? {} : { meta: html`${why}` }),
+    trail: html`<span class="muted small">${w.version} · ${w.date} · ${visible} ${visible === 1 ? "pull" : "pulls"}</span>`,
+  });
 }
 
 // GET /:owner/:name/waves
@@ -51,11 +71,12 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
 
   const rows = entries.map((e) =>
     e.ok
-      ? row({
-          href: fileHref(e.file),
+      ? waveRow(
+          e.wave,
+          fileHref(e.file),
           // The wave's own page lists these same pulls, so the two agree.
-          title: waveLine(e.wave, carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length),
-        })
+          carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length,
+        )
       : row({
           href: fileHref(e.file),
           title: e.file,
@@ -64,7 +85,8 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
   );
 
   const body = html`${scopeHeader(ctx, scope, "none", { compact: true })}
-    <div class="mt">
+    <div class="mt" data-waves>
+      <h1 class="sr-only">Waves</h1>
       ${entries.length === 0
         ? empty({
             title: "No waves yet",
@@ -77,7 +99,9 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
                 }
               : {}),
           })
-        : listCard(rows, { head: html`<h2>Waves</h2>` })}
+        : html`<ul class="list">
+            ${rows}
+          </ul>`}
     </div>`;
 
   const response = page({
@@ -86,6 +110,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: WAVES_CSS,
     feed: {
       href: `${repoBase(repo)}/waves.atom`,
       title: `${repo.ownerName}/${repo.name} waves`,

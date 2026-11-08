@@ -170,6 +170,7 @@ function repoSection(
           {
             head: html`${icon("repo")}
               <h2>${anyApps ? "Other repositories" : "Repositories"}</h2>`,
+            extra: "bare",
           },
         )}
     ${pager(
@@ -217,6 +218,7 @@ async function appsSection(
 
   const rows = await shelfRows(ctx, appRepos);
   return { count: appRepos.length, html: listCard(rows, {
+    extra: "bare",
     head: html`${icon("rocket")}
       <h2>Apps</h2>
       ${when(
@@ -263,6 +265,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
               ...(m.displayName ? { meta: html`@${m.username}` } : {}),
             }),
           ),
+          { extra: "bare" },
         )}
 
     <h2 class="mt" id="teams">Teams</h2>
@@ -280,6 +283,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
           )}`,
         }),
       ),
+      { extra: "bare" },
     )}
     ${when(canManage, () =>
       card(
@@ -303,7 +307,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
             ${btn("Create team", { variant: "primary" })}
           </div>
         </form>`,
-        { head: html`<h3>New team</h3>` },
+        { head: html`<h3>New team</h3>`, extra: "bare" },
       ),
     )}`;
 }
@@ -441,7 +445,6 @@ function orgForm(ctx: Ctx, value: string, error?: string): Response {
         ${pageHead("New organization")}
         <p class="muted small mb">
           An organization owns repositories and hands out access through teams.
-          You become its first owner.
         </p>
         <form method="post" action="/organizations/new">
           ${uiField({
@@ -542,32 +545,37 @@ export function teamPage(ctx: Ctx): Response {
     lead: icon("users"),
     sub: html`${badge(team.permission)} on every repository ${org.username} owns`,
   })}
-  ${members.length === 0
-    ? empty({ icon: "users", title: "Nobody on this team yet" })
-    : listCard(
-        members.map((m) =>
-          row({
-            lead: avatar(m.username),
-            title: html`<a href="/${m.username}"
-              >${m.displayName || m.username}</a
-            >`,
-            meta: html`@${m.username}`,
-            trail: when(
-              !protectedTeam || members.length > 1,
-              () =>
-                confirmAction({
-                  action: `${teamBase}/remove?user=${encodeURIComponent(m.username)}`,
-                  verb: "Remove",
-                  size: "sm",
-                }),
-            ),
-          }),
-        ),
-      )}
-  ${card(
-    html`<form method="post" action="${teamBase}/add">
+  <section class="settings-block">
+    <h2>Members</h2>
+    ${members.length === 0
+      ? html`<p class="muted">Nobody is on this team yet.</p>`
+      : html`<ul class="list setting-list">
+          ${members.map((m) =>
+            row({
+              lead: avatar(m.username),
+              title: html`<a href="/${m.username}"
+                >${m.displayName || m.username}</a
+              >`,
+              meta: html`@${m.username}`,
+              trail: when(
+                !protectedTeam || members.length > 1,
+                () =>
+                  confirmAction({
+                    action: `${teamBase}/remove?user=${encodeURIComponent(m.username)}`,
+                    verb: "Remove",
+                    size: "sm",
+                    label: `Remove ${m.username}`,
+                  }),
+              ),
+            }),
+          )}
+        </ul>`}
+  </section>
+  <section class="settings-block">
+    <h2>Add a member</h2>
+    <form method="post" action="${teamBase}/add">
       ${uiField({
-        label: "Add a member",
+        label: "Username",
         name: "user",
         required: true,
         hint: "Their username on this forge.",
@@ -575,22 +583,18 @@ export function teamPage(ctx: Ctx): Response {
       <div class="form-actions">
         ${btn("Add member", { variant: "primary" })}
       </div>
-    </form>`,
-    { head: html`<h3>Membership</h3>` },
-  )}
+    </form>
+  </section>
   ${when(!protectedTeam, () =>
-    card(
-      html`<p class="muted small mb">
-          Deleting ${team.name} revokes its ${team.permission} access for
-          ${members.length} ${members.length === 1 ? "person" : "people"}.
-          Repositories are untouched.
-        </p>
-        ${confirmAction({
-          action: `${teamBase}/delete`,
-          verb: "Delete team",
-        })}`,
-      { head: html`<h3>Danger zone</h3>`, tone: "danger" },
-    ),
+    html`<section class="settings-block">
+      <h2>Delete this team</h2>
+      <p class="muted small mb">
+        Deleting ${team.name} revokes its ${team.permission} access for
+        ${members.length} ${members.length === 1 ? "person" : "people"}.
+        Repositories are untouched.
+      </p>
+      ${confirmAction({ action: `${teamBase}/delete`, verb: "Delete team" })}
+    </section>`,
   )}`;
 
   const response = page({

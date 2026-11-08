@@ -10,6 +10,9 @@ shifts and Enter sends it with the page's path as `from`. Any failure falls back
 - `.tell-picture` — the picture a sender chose to send with a note, on its issue page: at most the card's width, height
   following (no layout shift beyond the image's own load).
 
+- `[data-tell]` — the wrapper of an issue's page (#9384): text wraps anywhere, the two columns may shrink, code scrolls
+  inside its own box. It is an attribute hook, not a component class.
+
 ## Client home: `client-app-finished`
 
 A muted line on a client's app row, `Finished <time>: <title>`, for the app's

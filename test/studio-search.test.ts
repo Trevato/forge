@@ -195,6 +195,14 @@ describe("finding things in the studio: /search", () => {
     expect(html).toContain("Apps &amp; repos");
   });
 
+  test("results are rows under a heading, not a boxed card", async () => {
+    const html = mainOf(await (await asAlice("/search?q=chess")).text());
+    const lists = html.match(/<div\s+class="card bare"[^>]*>\s*<ul class="list">/g) ?? [];
+    expect(lists.length).toBeGreaterThanOrEqual(2);
+    expect(html).not.toMatch(/<div\s+class="card"[^>]*>\s*<ul class="list">/);
+    expect(html).toMatch(/<h2 class="mt" id="repos">/);
+  });
+
   test("an empty query is an empty result, not an error page", async () => {
     const res = await asAlice("/search");
     expect(res.status).toBe(200);
@@ -1124,8 +1132,10 @@ describe("the studio names a person on the app's page, and the crew only for the
     const onList = rowWith(changes, `/pulls/${personPull.number}`);
     expect(onApp).toContain("ivy");
     expect(onApp).not.toContain("the crew");
-    // The same name the list gives, and the same initials beside it.
-    expect(initialsIn(onApp)).toBe(initialsIn(onList));
+    // The same name the list gives; the list's row wears a status dot in
+    // place of an avatar (#8719), so the initials are the app page's alone.
+    expect(onList).toContain("ivy");
+    expect(onList).not.toContain("the crew");
     expect(initialsIn(onApp)).toBe("i");
     expect(change).toContain("ivy");
 

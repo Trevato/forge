@@ -13,7 +13,7 @@
  * commits and selects the one the app most likely lives on — the person's
  * newest (`origins/work-branch.ts`); the Migrate button carries the choice.
  *
- * An account whose token sees public repositories only says so on its card
+ * An account whose token sees public repositories only says so under its account
  * (`origins/token-reach.ts`), with GitHub's new-token page one click away
  * and a field that replaces the token in place.
  *
@@ -55,7 +55,6 @@ import { flashTo, page, redirect } from "../layout.ts";
 import {
   badge,
   btn,
-  card,
   icon,
   row,
   selectField,
@@ -69,7 +68,7 @@ import {
 } from "../../origins/token-reach.ts";
 import type { TokenReach } from "../../origins/types.ts";
 import { STAGE_BADGE_JS, stageRow, stageStateFor } from "../stage-row.ts";
-import { prefill, originHost } from "./migrate-prefill.ts";
+import { prefill, originHost, migrationBuilders } from "./migrate-prefill.ts";
 import { githubConnectable, hostLabel } from "./origins.ts";
 
 interface MigrateValues {
@@ -295,8 +294,9 @@ function accounts(ctx: Ctx, origins: readonly OriginChoices[]): Html {
           <a href="/settings/origins">Settings → Origins</a>; a token pasted
           there works until then.
         </p>`;
-  return card(
-    html`${origins.length === 0
+  return html`<section class="mb" id="migrate-accounts-section">
+    <h2 class="mb">Your accounts</h2>
+    ${origins.length === 0
       ? null
       : html`<ul class="list" id="migrate-accounts">
           ${origins.map((origin) =>
@@ -315,12 +315,8 @@ function accounts(ctx: Ctx, origins: readonly OriginChoices[]): Html {
           )}
         </ul>`}
     ${origins.filter((o) => o.reach === "public").map(publicOnly)}
-    ${connect}`,
-    {
-      head: html`${icon("globe")}
-        <h2>Your accounts</h2>`,
-    },
-  );
+    ${connect}
+  </section>`;
 }
 
 /**
@@ -424,6 +420,7 @@ function migrateForm(
   branches: BranchChoices | undefined,
   error?: string,
   unmatched: readonly string[] = [],
+  refused: readonly string[] = [],
 ): Html {
   const user = ctx.auth.user!;
   const writeOrgs = listOrgsForUser(ctx.app.db, user.id).filter((org) =>
@@ -431,7 +428,7 @@ function migrateForm(
   );
   const owners = [user.username, ...writeOrgs.map((o) => o.username)];
   const agents = listAllAgents(ctx.app, user);
-  const crew = agents.ok ? agents.value : [];
+  const crew = agents.ok ? migrationBuilders(agents.value) : [];
 
   return html`<div class="narrow-wide">
     ${pageHead("Migrate a repository", {
@@ -449,11 +446,15 @@ function migrateForm(
           ${icon("globe")} Ignored, nothing here matches:
           ${unmatched.join(", ")}
         </p>`}
+    ${refused.length === 0
+      ? null
+      : html`<p class="muted small mb" id="prefill-refused">
+          ${icon("globe")} ${refused.join(" ")}
+        </p>`}
     ${accounts(ctx, origins)}
     <form method="get" action="/migrate" id="migrate-search"></form>
-    ${card(
-      html`<form method="post" action="/migrate">
-        <h3 class="mb">Source</h3>
+    <form method="post" action="/migrate">
+        <h2 class="mb">Source</h2>
         ${picker(origins, values, crew.length > 0, branches)}
         ${formField({
           label: origins.every((o) => o.repos.length === 0)
@@ -467,7 +468,7 @@ function migrateForm(
           autofocus: origins.every((o) => o.repos.length === 0),
           hint: "Any public repository over https, http or git. It is cloned anonymously.",
         })}
-        <h3 class="mb mt">Destination</h3>
+        <h2 class="mb mt">Destination</h2>
         ${selectField({
           label: "Owner",
           name: "owner",
@@ -501,7 +502,7 @@ function migrateForm(
             },
           ],
         })}
-        <h3 class="mb mt">Put a crew on it</h3>
+        <h2 class="mb mt">Put a crew on it</h2>
         ${crew.length === 0
           ? html`<p class="muted small mb">
               ${icon("bot")} No agents on this forge yet, so there is no crew to
@@ -544,7 +545,7 @@ function migrateForm(
                   >
                 </label>
               </div>`}
-        <h3 class="mb mt">What happens to the GitHub repository</h3>
+        <h2 class="mb mt">What happens to the GitHub repository</h2>
         ${selectField({
           label: "Afterwards",
           name: "after",
@@ -571,8 +572,7 @@ function migrateForm(
           ${btn("Migrate", { variant: "primary", icon: "download" })}
           ${btn("Cancel", { href: "/", variant: "ghost" })}
         </div>
-      </form>`,
-    )}
+      </form>
   </div>`;
 }
 
@@ -613,6 +613,7 @@ async function show(
   error?: string,
   status = 200,
   unmatched: readonly string[] = [],
+  refused: readonly string[] = [],
 ): Promise<Response> {
   // Asked for only: each draw is a listing and a commit per branch at the
   // origin (remembered a minute), so a plain visit costs none of it.
@@ -626,7 +627,7 @@ async function show(
     {
       ctx,
       title: "Migrate",
-      body: migrateForm(ctx, values, origins, branches, error, unmatched),
+      body: migrateForm(ctx, values, origins, branches, error, unmatched, refused),
       scriptJs: migrateJs,
     },
     status,
@@ -647,11 +648,14 @@ export async function migratePage(ctx: Ctx): Promise<Response> {
   const agents = timePhase(ctx.request, "agents", () =>
     listAllAgents(ctx.app, user),
   );
-  const names = agents.ok ? agents.value.map((a) => a.user.username) : [];
+  const all = agents.ok ? agents.value : [];
+  const builders = migrationBuilders(all);
+  const names = builders.map((a) => a.user.username);
   const linked = prefill(
     { from: q.get("from"), crew: q.get("crew") },
     origins,
     names,
+    all.filter((a) => !builders.includes(a)).map((a) => a.user.username),
   );
   return show(
     ctx,
@@ -676,6 +680,7 @@ export async function migratePage(ctx: Ctx): Promise<Response> {
     undefined,
     200,
     linked.unmatched,
+    linked.refused,
   );
 }
 
@@ -840,10 +845,8 @@ export function migrationJobPage(ctx: Ctx): Response {
     ...(failed ? {} : { scriptJs: migrateJobJs }),
     body: html`${pageHead(`Migrating ${job.fullName}`)}
       <div class="narrow-wide" id="migrate-job" data-job="${job.id}">
-        ${card(stageRows(job), {
-          head: html`${icon("download")}
-            <h2>${job.fullName}</h2>`,
-        })}
+        <h2 class="mb">${job.fullName}</h2>
+        ${stageRows(job)}
         ${failed
           ? html`<div class="field" data-invalid>
                 <span class="error" role="alert" id="migrate-job-err"

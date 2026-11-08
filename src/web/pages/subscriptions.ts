@@ -46,7 +46,6 @@ import { flashTo, page } from "../layout.ts";
 import {
   badge,
   btn,
-  card,
   confirmAction,
   empty,
   listCard,
@@ -141,14 +140,14 @@ export function subscriptionsPage(ctx: Ctx): Response {
       : empty({
           icon: "key",
           title: "The crew works on the forge's own token",
-          note: "Add a subscription here and grant it to a repository or an organization; its runs spend that account instead. One granted nowhere is never offered to the crew.",
+          note: "Add one, then grant it to a repository or organization.",
         });
   const list =
     pool.length === 0
       ? empty({
           icon: "key",
           title: "The crew works on the forge's own token",
-          note: "Add a subscription here and grant it to a repository or an organization; its runs spend that account instead. Two on one grant take turns, and one the provider rests hands over to the other.",
+          note: "Add one, then grant it to a repository or organization.",
         })
       : listCard(
           pool.map((s) => {
@@ -191,9 +190,12 @@ export function subscriptionsPage(ctx: Ctx): Response {
               )}${when(
                 st !== undefined,
                 () =>
-                  html`<br />${st!.windows.map((w, i) =>
-                    i === 0 ? windowText(w) : html` · ${windowText(w)}`,
-                  )}`,
+                  html`<br /><span
+                      title="A figure marked ~ is inferred from what the crew's runs spent; the rest the provider said."
+                      >${st!.windows.map((w, i) =>
+                        i === 0 ? windowText(w) : html` · ${windowText(w)}`,
+                      )}</span
+                    >`,
               )}`,
               trail: html`${when(
                 st !== undefined,
@@ -267,8 +269,8 @@ export function subscriptionsPage(ctx: Ctx): Response {
           { extra: "setting-list" },
         );
 
-  const add = card(
-    html`<form class="stack" method="post" action="${POOL}">
+  const add = html`<section class="settings-block"><h2>Add one</h2>
+    <form class="stack" method="post" action="${POOL}">
       <div class="field">
         <label for="f-name">Name</label>
         <input
@@ -294,9 +296,8 @@ export function subscriptionsPage(ctx: Ctx): Response {
           spellcheck="false"
         />
         <span class="hint"
-          ><code>claude setup-token</code> prints a subscription's token; an
-          Anthropic API key or an OpenRouter key (<code>sk-or-v1-…</code>)
-          works too. It is sealed on this forge and never shown again.</span
+          ><code>claude setup-token</code> prints one; an API key works too.
+          Sealed here, never shown again.</span
         >
       </div>
       <div class="field">
@@ -312,67 +313,30 @@ export function subscriptionsPage(ctx: Ctx): Response {
           spellcheck="false"
         />
         <span class="hint"
-          >Anthropic-compatible gateway for Claude Code. OpenRouter:
-          <code>https://openrouter.ai/api</code> (no <code>/v1</code> — the
-          SDK adds it). Leave empty for Anthropic itself; a setup-token
-          (sk-ant-oat…) takes none.</span
+          >Empty for Anthropic itself; a setup-token takes none.</span
         >
       </div>
       <div>${btn("Add", { variant: "primary", size: "sm", icon: "plus" })}</div>
-    </form>`,
-    {
-      head: html`${icon("plus")}
-        <h2>Add one</h2>`,
-    },
-  );
+    </form></section>`;
 
   const used =
     places.length === 0
       ? null
-      : card(
-          html`<ul class="list">
+      : html`<section class="settings-block"><h2>Where each is used</h2>
+          <dl class="status-rows">
             ${places.map(
-              (g) =>
-                html`<li>
-                  <div class="row">
-                    <span class="row-lead">${icon("key")}</span>
-                    <span class="row-main">
-                      <span class="row-title">${g.subscription}</span>
-                      <span class="row-meta"
-                        >${g.place} ·
-                        ${g.agent === undefined
-                          ? "everyone on the crew"
-                          : g.agent}</span
-                      >
-                    </span>
-                    <a class="row-trail small" href="${g.href}">change</a>
-                  </div>
-                </li>`,
+              (g) => html`<div class="status-row">
+                <dt>${g.subscription}</dt>
+                <dd>${g.place} · ${g.agent === undefined ? "everyone on the crew" : g.agent}</dd>
+                <dd class="status-act"><a href="${g.href}">Change</a></dd>
+              </div>`,
             )}
-          </ul>`,
-          {
-            pad: false,
-            head: html`${icon("map")}
-              <h2>Where each is used</h2>`,
-          },
-        );
+          </dl></section>`;
 
   const response = shell(
     ctx,
     html`${list} ${none === null ? null : html`<div class="mt">${none}</div>`}
-      ${when(
-        pool.length > 0,
-        () =>
-          html`<p class="muted small mt">
-            Windows in US dollars of list price. A figure marked ~ is inferred
-            from what the crew's runs spent; the rest the provider said. The
-            cap is learned the first time the provider calls a window full,
-            and the share kept for people is never spent by the crew. Tokens
-            are what the crew's runs read and wrote in the window, counted by
-            Claude's tokenizer.
-          </p>`,
-      )}
-      <p class="mt muted small">What these accounts spent, by credential, app, agent, issue and run kind: <a href="/settings/spend">Usage → Spend</a>.</p>
+      <p class="mt muted small">What they spent: <a href="/settings/spend">Usage → Spend</a>.</p>
       <div class="mt">${add}</div>
       ${used === null ? null : html`<div class="mt">${used}</div>`}`,
   );
@@ -503,17 +467,9 @@ export function grantsSection(
   },
 ): Html {
   const pool = listSubscriptions(ctx.app.db);
-  const head = html`${icon("key")}
-    <h2>${o.title ?? "Subscriptions"}</h2>`;
   if (pool.length === 0)
-    return card(
-      html`<p class="muted small">
-        Runs here work on the forge's own token. Add a subscription under
-        <a href="${POOL}">Settings → Subscriptions</a> to spend a particular
-        account here.
-      </p>`,
-      { head },
-    );
+    return html`<section class="settings-block"><h2>${o.title ?? "Subscriptions"}</h2>
+      <p class="muted small">Runs use the forge's own token. <a href="${POOL}">Add a subscription</a> to use another.</p></section>`;
   const granted = new Set(
     listGrants(ctx.app.db, o.scopeId).map(
       (g) => `${g.agentId}:${g.subscriptionId}`,
@@ -538,32 +494,24 @@ export function grantsSection(
           </td>`,
       )}
     </tr>`;
-  return html`<form method="post" action="${o.action}">
-    ${card(
-      html`<div class="table-scroll">
-        <table class="table">
-          <thead>
-            <tr>
-              <th></th>
-              ${pool.map((s) => html`<th scope="col">${s.name}</th>`)}
-            </tr>
-          </thead>
-          <tbody>
-            ${line(EVERYONE, html`Everyone on the crew`)}
-            ${o.agents.map((a) => line(a.user.id, html`${a.user.username}`))}
-          </tbody>
-        </table>
-      </div>`,
-      {
-        head,
-        pad: false,
-        foot: html`${btn("Save", { variant: "primary", size: "sm" })}
-          <span class="muted small"
-            >Two ticked on one row take turns. Nothing ticked means the wider
-            grant applies: ${o.wider}.</span
-          >`,
-      },
-    )}
+  return html`<form method="post" action="${o.action}" class="settings-block">
+    <h2>${o.title ?? "Subscriptions"}</h2>
+    <div class="table-scroll">
+      <table class="table">
+        <thead>
+          <tr>
+            <th></th>
+            ${pool.map((s) => html`<th scope="col">${s.name}</th>`)}
+          </tr>
+        </thead>
+        <tbody>
+          ${line(EVERYONE, html`Everyone on the crew`)}
+          ${o.agents.map((a) => line(a.user.id, html`${a.user.username}`))}
+        </tbody>
+      </table>
+    </div>
+    <p class="form-actions">${btn("Save", { variant: "primary", size: "sm" })}
+      <span class="muted small">Nothing ticked uses the wider grant: ${o.wider}.</span></p>
   </form>`;
 }
 

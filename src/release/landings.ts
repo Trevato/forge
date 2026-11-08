@@ -15,6 +15,7 @@
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { getRepo, type Repo } from "../core/repos.ts";
+import { creditsOf } from "../git/coauthors.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { running } from "../kernel/version.ts";
@@ -26,6 +27,12 @@ export interface Landing {
   /** When the pull merged. */
   readonly at: string;
   readonly live: boolean;
+  /** The bet whose scopes this pull built (#8713), set by the page that shows it. */
+  readonly bet?: string;
+  /** `account@host` when a trusted source's work folded in (#8937), set by the page that shows it. */
+  readonly from?: string;
+  /** Others credited on the landed commit (`Co-authored-by`), beyond whoever landed it. */
+  readonly with?: readonly string[];
 }
 
 export interface Landings {
@@ -204,11 +211,27 @@ async function askLive(app: App, rows: readonly MergedRow[]): Promise<void> {
   kept = { own: named, oids, misses, at, commit };
 }
 
+/** The names credited on the forge's own landed commits, by `repo#number`. */
+async function creditsOfRepo(app: App, own: string, rows: readonly MergedRow[]): Promise<Map<string, readonly string[]>> {
+  const [owner = "", name = ""] = own.split("/");
+  const repo = getRepo(app.db, owner, name);
+  if (repo === undefined) return new Map();
+  const mine = rows.filter((r) => r.repo.toLowerCase() === own.toLowerCase() && r.oid !== "").slice(0, ASKED);
+  const byOid = await creditsOf(repoDir(app.reposRoot, repo.ownerName, repo.name), mine.map((r) => r.oid));
+  return new Map(mine.map((r) => [`${r.repo}#${r.number}`, byOid.get(r.oid) ?? []] as const));
+}
+
 /** Every landing, live or on its way, as of the running commit. */
 export async function readLandings(app: App): Promise<Landings> {
   const rows = mergedRows(app.db);
   await askLive(app, rows).catch(() => undefined);
   const { live, onItsWay } = split(rows, kept);
+  const own = kept?.own;
+  const credits = own === undefined ? new Map<string, readonly string[]>() : await creditsOfRepo(app, own, rows).catch(() => new Map<string, readonly string[]>());
+  const named = (l: Landing): Landing => {
+    const names = credits.get(`${l.repo}#${l.number}`) ?? [];
+    return names.length === 0 ? l : { ...l, with: names };
+  };
   const { version, commit } = running();
-  return { version, commit, own: kept?.own, live, onItsWay };
+  return { version, commit, own, live: live.map(named), onItsWay: onItsWay.map(named) };
 }

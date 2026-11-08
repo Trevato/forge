@@ -14,6 +14,7 @@
  * says so, as it does for any fork's pull.
  */
 
+import { GUEST_REFUSALS, isGuestRefusal } from "../core/contribute.ts";
 import type { App } from "../app.ts";
 import { canWrite, getForkOf, type Repo } from "../core/repos.ts";
 import type { Pull } from "../core/pulls.ts";
@@ -112,6 +113,7 @@ export function proposeEditText(error: ProposeEditError): string {
       return "Proposing a change makes a fork, and forks are for members of this forge. Ask its admin to make you one.";
     if (reason === "limit" || reason === "repository_limit" || reason === "storage_limit")
       return "You cannot make another fork right now, so this could not be proposed. Try again later.";
+    if (isGuestRefusal(reason)) return GUEST_REFUSALS[reason];
     if (reason === "not_found") return "That repository is not one you can read.";
     return "A fork to carry this change could not be made.";
   }

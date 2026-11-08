@@ -7,11 +7,12 @@
 import type { App } from "../app.ts";
 import { previewEnv } from "../apps/data.ts";
 import { getAppByRepo, type AppRecord } from "../core/apps.ts";
-import { looksForEnv, lookUrl, type Look } from "../core/looks.ts";
+import { isAttached, looksForEnv, lookUrl, type Look } from "../core/looks.ts";
 import type { Pull } from "../core/pulls.ts";
 import { canEnterApp, canSeeOwnerFacts, type Repo } from "../core/repos.ts";
 import { sealedPreview } from "../core/sealed.ts";
 import type { User } from "../core/users.ts";
+import { pairCounts, pairsLine } from "./pairs.ts";
 import { keepLook } from "./service.ts";
 
 /**
@@ -76,4 +77,21 @@ export function pullLooks(
       url: lookUrl(base, l),
       at: l.createdAt,
     }));
+}
+
+/** The pairs line over a pull's looks for this reader (`pairs.ts`), or none. */
+export function pullPairsLine(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  user: User | undefined,
+): string | undefined {
+  const record = getAppByRepo(app.db, repo.id);
+  if (!record) return undefined;
+  const mine = (env: string) =>
+    looksForEnv(app.db, record.id, env, "any").filter(
+      (l) => !isAttached(l) && mayFetchLook(app, repo, record, l, user),
+    );
+  const head = mine(previewEnv(pull.number)).filter((l) => l.theme === "light");
+  return pairsLine(pairCounts(head, mine("production")));
 }

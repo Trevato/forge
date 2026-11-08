@@ -98,12 +98,13 @@ describe("terminal: give back a pull a pass handed over", () => {
     h.stop();
   });
 
-  test("a plain assignment has no reason and b refuses", async () => {
+  test("a plain assignment has no reason, and b still gives it to the crew", async () => {
     const pullId = pull(2);
     const h = await boot();
     expect(h.text()).not.toContain("handed to you");
+    expect(h.text()).toContain("b  give back to the crew");
     await h.press("b");
-    expect(getIssueById(forge.db, pullId)!.assigneeId).toBe(alice.id);
+    expect(getIssueById(forge.db, pullId)!.assigneeId).toBe(builder.id);
     h.stop();
   });
 });

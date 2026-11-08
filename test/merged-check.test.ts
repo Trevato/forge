@@ -55,7 +55,7 @@ describe("mergeForCheck: the pull as it would land on today's base", () => {
     const work = join(root, "work");
     await git(root, "clone", pullDir, work);
     await git(work, "checkout", "-b", "pull");
-    head = await commit(work, "pull.txt", "b\n", "pull change");
+    head = await commit(work, "pull.txt", "b\n", "pull change\n\nWhy now: the owner asked for it today");
     await git(work, "checkout", "-b", "clash", forkPoint);
     conflicting = await commit(work, "shared.txt", "theirs\n", "clash");
     await git(work, "push", "origin", "pull", "clash");
@@ -84,6 +84,14 @@ describe("mergeForCheck: the pull as it would land on today's base", () => {
     expect(m.line).toBe(`merge of ${head.slice(0, 7)} into main@${baseTip.slice(0, 7)}`);
     // The commit is a loose object: no branch or ref moved anywhere.
     expect([await refs(pullDir), await refs(baseDir)]).toEqual(before);
+  });
+
+  test("the merge commit message carries the pull's own commit messages", async () => {
+    const m = await mergeForCheck(pullDir, "main", baseTip, head);
+    if (!m.ok) throw new Error(m.error);
+    const body = await git(pullDir, "log", "-n1", "--format=%B", m.commit);
+    expect(body).toContain(`check of ${head.slice(0, 7)} merged into main`);
+    expect(body).toMatch(/^Why now: the owner asked for it today$/m);
   });
 
   test("the merge commit lives in the pull's repository, not the base's", async () => {

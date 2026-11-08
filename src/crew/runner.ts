@@ -11,6 +11,8 @@
  * what the forge has.
  */
 
+import { isStrangerPull } from "./stranger.ts";
+import { noteMeasure } from "../core/measure.ts";
 import { capacityEnv } from "../core/capacity.ts";
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,6 +36,8 @@ import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { chooseModel, modelFacts } from "./model_choice.ts";
 import { ownApp, ownAppUrls } from "./app_hosts.ts";
+import { machineEnv, machineFor, machineLimits, reachableApps } from "./machines.ts";
+import { repoMachines } from "./machines_read.ts";
 import { authorsInRepoPull } from "./authors_pull.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../core/apps.ts";
@@ -45,7 +49,8 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { refreshPullHead } from "../core/following.ts";
-import { UPSTREAM_TITLE, upstreamFollowing } from "../actions/upstream_follow.ts";
+import { reviewSourceNote } from "./source_held.ts";
+import { UPSTREAM_TITLE, sourceFollowing, upstreamFollowing } from "../actions/upstream_follow.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
   canWrite,
@@ -80,7 +85,7 @@ import { cloneWithMirror } from "./mirror.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
-import { aheadCount, resolveOid } from "../git/merge.ts";
+import { aheadCount, contentOnBase, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { bar } from "../cloud/gate.ts";
 import { declarationsOf } from "../cloud/declared.ts";
@@ -131,6 +136,8 @@ import { interruptedSummary } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
 import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
+import { boxesOf, landedBoxes } from "./box_pass.ts";
+import { reviewRange } from "./review_range.ts";
 import { heldNow, stuckOf } from "./held.ts";
 import { reserveOf } from "./reserve.ts";
 import { owed } from "./team_share.ts";
@@ -234,32 +241,37 @@ export function steerRun(app: App, runId: string, text: string): boolean {
   return send(text);
 }
 
-/** What a reviewer reads: the pull's diff against its base, and its pictures. */
+/**
+ * What a reviewer reads: the pull's diff (`review_range.ts` — a landed pull's
+ * is its merge commit's), and its pictures. `landedAs` names the merge commit
+ * the diff was read from, when it was.
+ */
 export async function reviewInputs(
   app: App,
   repo: Repo,
   pull: Pull,
   record: AppRecord | undefined,
   bare: string,
-): Promise<{ reviewDiff: string; looks: string[]; design: boolean }> {
-  const base = (await resolveOid(bare, `refs/heads/${pull.baseBranch}`)) ?? "";
+): Promise<{ reviewDiff: string; looks: string[]; design: boolean; landedAs?: string }> {
+  const range = await reviewRange(bare, pull);
   let reviewDiff = "(no diff available)";
   let design = false;
-  if (base !== "") {
+  if (range !== undefined) {
     const names = await runGitCapture(
-      ["diff", "--name-only", `${base}...${pull.headOid}`],
+      ["diff", "--name-only", range.from, range.to],
       { cwd: bare },
     );
     design = touchesDesign(names.stdout.toString().split("\n").filter((n) => n !== ""));
     const out = await runGitCapture(
-      ["diff", "--stat", "-p", `${base}...${pull.headOid}`],
+      ["diff", "--stat", "-p", range.from, range.to],
       { cwd: bare },
     );
     const text = out.stdout.toString();
-    reviewDiff =
-      text.length > REVIEW_DIFF_MAX
-        ? `${text.slice(0, REVIEW_DIFF_MAX)}\n… (cut at ${REVIEW_DIFF_MAX} bytes)`
-        : text;
+    if (out.code === 0)
+      reviewDiff =
+        text.length > REVIEW_DIFF_MAX
+          ? `${text.slice(0, REVIEW_DIFF_MAX)}\n… (cut at ${REVIEW_DIFF_MAX} bytes)`
+          : text;
   }
   const looks =
     record === undefined
@@ -278,7 +290,12 @@ export async function reviewInputs(
           .map((l) =>
             l.path.startsWith("/") ? l.path : join(app.config.dataDir, l.path),
           );
-  return { reviewDiff, looks, design };
+  return {
+    reviewDiff,
+    looks,
+    design,
+    ...(range?.landed === true && reviewDiff !== "(no diff available)" ? { landedAs: range.to } : {}),
+  };
 }
 
 const REVIEW_DIFF_MAX = 60 * 1024;
@@ -836,7 +853,7 @@ export function convergeFollowing(
   user: User,
 ): TaskInput["following"] {
   if (issue.title.startsWith(UPSTREAM_TITLE)) {
-    const upstream = upstreamFollowing(app, repo.id);
+    const upstream = sourceFollowing(app, issue.id) ?? upstreamFollowing(app, repo.id);
     if (upstream !== undefined) return upstream;
   }
   // Only a parent the agent may read is put in its brief.
@@ -1076,9 +1093,13 @@ async function work(
         : undefined;
     const policy =
       record === undefined ? undefined : await policyBrief(app, repo);
+    // The machine this seat runs in, from the default branch's forge.json.
+    const role = crewRole(app.db, repo.id, agent.user.id);
+    const machine = machineFor(await repoMachines(app, repo), role);
     const brief = {
       agent,
       repo,
+      machine,
       issue,
       pull,
       branch,
@@ -1093,7 +1114,7 @@ async function work(
         !reviewing &&
         previous?.sessionId !== undefined &&
         previous.sessionId !== "",
-      role: crewRole(app.db, repo.id, agent.user.id),
+      role,
     };
     const failedCheck =
       reason === "check_failed" && pull
@@ -1118,6 +1139,7 @@ async function work(
       issue: voiceOf(brief.issue),
       reason,
       paused: run.attempt > 0,
+      stranger: reason === "review" && pull !== undefined ? isStrangerPull(app.db, repo, pull) : undefined,
       comments,
       labels: (labelsForIssues(app.db, [issue.id]).get(issue.id) ?? []).map(
         (label) => label.name,
@@ -1158,6 +1180,8 @@ async function work(
       ...(reason === "review" && pull
         ? {
             ...(await reviewInputs(app, repo, pull, record, bare)),
+            sourceNote: await reviewSourceNote(app, repo, pull, bare),
+            boxes: boxesOf(app, repo, pull),
             retry: app.db
               .query<{ n: number }, [string, string, string]>(
                 `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND kind = 'agent'
@@ -1178,6 +1202,7 @@ async function work(
             ...(() => {
               const held = heldNow(app, repo);
               return {
+                landed: landedBoxes(held.by.landed),
                 stuck: stuckOf(held),
                 reserve: reserveOf(held.startable.length, repo.autonomySlots),
               };
@@ -1303,6 +1328,7 @@ async function work(
       ...passportEnv(app.config.dataDir),
       ...credentialEnv(picked),
       ...grant.env,
+      ...machineEnv(machine),
       ...(options.configDir === undefined
         ? {}
         : { CLAUDE_CONFIG_DIR: options.configDir }),
@@ -1322,7 +1348,7 @@ async function work(
         dataDir: app.config.dataDir,
         agentName: agent.user.username,
         urls: [options.localUrl, options.forgeUrl],
-        appUrls: ownAppUrls(ownApp(app, repo)),
+        appUrls: reachableApps(machine, ownAppUrls(ownApp(app, repo))),
         extraHosts: [
           ...(options.allowHosts ?? []),
           ...hosts,
@@ -1378,6 +1404,7 @@ async function work(
           resume,
           env,
           sandbox: shellPolicy(),
+          limits: machineLimits(machine),
           label: `crew:${agent.user.username}`,
           timeoutMs: Math.max(deadline - Date.now(), 0),
           log: write,
@@ -1385,6 +1412,7 @@ async function work(
           onSteer: (send) => {
             listenForSteer(run.id, send);
           },
+          onMeasure: (m) => noteMeasure(app.db, meter.subscriptionId ?? PLATFORM, m),
           onUsage: (so) =>
             meterLive(
               app,
@@ -2109,7 +2137,9 @@ async function landWork(
   // alternates and its own on top.
   const proposed =
     remote !== undefined && base !== undefined
-      ? await aheadCount(forkBare, base, remote)
+      ? (await contentOnBase(forkBare, base, remote))
+        ? 0
+        : await aheadCount(forkBare, base, remote)
       : 0;
   const report = [message.trim(), note]
     .filter((part): part is string => part !== undefined && part !== "")

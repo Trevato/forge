@@ -10,7 +10,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LookVitals } from "./summary.ts";
+import type { LookVitals, PageSize } from "./summary.ts";
 import { runsRoot } from "../runs/log.ts";
 
 export const looksPath = (dataDir: string, runId: string): string =>
@@ -36,6 +36,17 @@ const MAX_WORDS = 80;
 const words = (v: unknown): string | null =>
   typeof v === "string" && v.trim() !== "" ? v.trim().slice(0, MAX_WORDS) : null;
 
+const whole = (v: unknown): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1e6;
+
+function parseSize(v: unknown): PageSize | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const { scrollWidth, scrollHeight, innerWidth, innerHeight } = v as Record<string, unknown>;
+  return whole(scrollWidth) && whole(scrollHeight) && whole(innerWidth) && whole(innerHeight)
+    ? { scrollWidth, scrollHeight, innerWidth, innerHeight }
+    : undefined;
+}
+
 /** Plain data in: the parsed file's value, narrowed to the looks it validly holds. */
 export function parseLooks(raw: unknown): LookVitals[] {
   if (!Array.isArray(raw)) return [];
@@ -47,8 +58,10 @@ export function parseLooks(raw: unknown): LookVitals[] {
     if (look === null) continue;
     const skipped = words(rec.skipped);
     if (skipped !== null) out.push({ look, skipped });
-    else if (rec.entries && typeof rec.entries === "object" && !Array.isArray(rec.entries))
-      out.push({ look, entries: rec.entries });
+    else if (rec.entries && typeof rec.entries === "object" && !Array.isArray(rec.entries)) {
+      const size = parseSize(rec.size);
+      out.push({ look, entries: rec.entries, ...(size === undefined ? {} : { size }) });
+    }
   }
   return out;
 }

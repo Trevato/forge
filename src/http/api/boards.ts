@@ -16,9 +16,23 @@ import { PIN_OP_WORDS } from "../../core/arg_words.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { boardsAdmin } from "../api.ts";
 import type { Handler } from "../context.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { bodyCapFor, readBounded } from "../limits.ts";
 import { apiError, json, notFound, requireAccount } from "../respond.ts";
 import type { Router } from "../router.ts";
+
+/**
+ * An owner-scoped JSON answer tagged by its exact bytes: a repeat holding the
+ * tag gets 304. Callers check access first, so a 304 confirms nothing to
+ * someone who may not read it.
+ */
+function tagged(request: Request, data: unknown): Response {
+  const text = JSON.stringify(data);
+  const etag = weakEtag(text);
+  const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+  if (holds(request, etag)) return new Response(null, { status: 304, headers });
+  return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+}
 
 export function boardRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/boards/sources", (ctx) => {
@@ -65,7 +79,7 @@ export function boardRoutes(router: Router<Handler>): void {
     const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
     return timePhase(ctx.request, "render", () =>
       listed.ok
-        ? json({ boards: listed.value.map((b) => ({ slug: b.slug, ...b.board })) })
+        ? tagged(ctx.request, { boards: listed.value.map((b) => ({ slug: b.slug, ...b.board })) })
         : notFound());
   });
 
@@ -77,7 +91,7 @@ export function boardRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const listed = await timePhaseAsync(ctx.request, "boards", () => listPinnedPanels(ctx.app, ctx.auth.user));
     return timePhase(ctx.request, "render", () =>
-      listed.ok ? json({ pins: listed.value.map((p) => ({ slug: p.slug, title: p.title, panel: p.panel })) }) : notFound());
+      listed.ok ? tagged(ctx.request, { pins: listed.value.map((p) => ({ slug: p.slug, title: p.title, panel: p.panel })) }) : notFound());
   });
 
   router.add("POST", "/api/v1/boards/pins", async (ctx) => {
@@ -111,7 +125,7 @@ export function boardRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const shown = await timePhaseAsync(ctx.request, "boards", () => showBoard(ctx.app, ctx.auth.user, ctx.params.slug!));
     return timePhase(ctx.request, "render", () =>
-      shown.ok ? json({ slug: ctx.params.slug, ...shown.value }) : notFound());
+      shown.ok ? tagged(ctx.request, { slug: ctx.params.slug, ...shown.value }) : notFound());
   });
 
   // One panel's data (`boards/panel_data.ts`): `:id` is its place on the

@@ -83,9 +83,9 @@ async function exchange(clientName: string, tokenName: string): Promise<void> {
   if (!minted.ok || minted.value.token === undefined) throw new Error("no token");
 }
 
-/** The table row that carries a token's name. */
+/** The list row that carries a token's name. */
 function rowOf(page: string, tokenName: string): string {
-  const row = page.split("<tr>").find((r) => r.includes(`<strong>${tokenName}</strong>`));
+  const row = page.split("<li").find((r) => r.includes(`<strong>${tokenName}</strong>`));
   if (row === undefined) throw new Error(`no row for ${tokenName}`);
   return row;
 }

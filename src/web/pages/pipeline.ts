@@ -13,7 +13,7 @@ import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
 import { reportPath } from "../../checks/report.ts";
-import { card, row, stat } from "../ui.ts";
+import { stat } from "../ui.ts";
 
 /** What a pull waits on at each step, what only that step catches, and the parts inside it. */
 export const STEP_DETAIL: Record<Step, { waits: string; catches: string; inside: readonly string[] }> = {
@@ -77,48 +77,41 @@ export function pipelinePage(ctx: Ctx): Response {
         one it is at and, in one sentence, why it waits there.
       </p>
     </div>
-    <ol class="list" id="path">
+    <div id="path">
       ${STEPS.map((s, i) => {
         const d = STEP_DETAIL[s];
-        return row({
-          id: s,
-          data: { step: s },
-          title: `${i + 1}. ${title(s)}`,
-          meta: html`${STEP_MEANS[s]}`,
-          fold: {
-            id: `inside-${s}`,
-            open: false,
-            body: html`<div class="card-body">
-              <p class="small">It waits for ${d.waits} Only this step catches ${d.catches}</p>
-              <ul class="small">${d.inside.map((line) => html`<li>${line}</li>`)}</ul>
-              <p class="small muted">Measured, last ${STEP_WINDOW_DAYS} days, public repositories: median time, then how often red.</p>
-              <div class="stats" data-measures="${s}">${STEP_MEASURES[s].map((k) => {
-                const m = stats.get(k);
-                if (m === undefined) return "";
-                const p = statParts(m);
-                return stat({ label: m.label, value: p.value, title: m.medianMs === null ? "no median" : `median ${p.value}`, note: p.note, noteTitle: p.note });
-              })}</div>
-            </div>`,
-          },
-        });
+        return html`<section class="mb" id="${s}" data-step="${s}">
+          <h2>${i + 1}. ${title(s)}</h2>
+          <p>${STEP_MEANS[s]}</p>
+          <details id="inside-${s}">
+            <summary class="small">What is inside</summary>
+            <p class="small">It waits for ${d.waits} Only this step catches ${d.catches}</p>
+            <ul class="small">${d.inside.map((line) => html`<li>${line}</li>`)}</ul>
+            <p class="small muted">Measured, last ${STEP_WINDOW_DAYS} days, public repositories: median time, then how often red.</p>
+            <div class="stats" data-measures="${s}">${STEP_MEASURES[s].map((k) => {
+              const m = stats.get(k);
+              if (m === undefined) return "";
+              const p = statParts(m);
+              return stat({ label: m.label, value: p.value, title: m.medianMs === null ? "no median" : `median ${p.value}`, note: p.note, noteTitle: p.note });
+            })}</div>
+          </details>
+        </section>`;
       })}
-    </ol>
-    ${card(
-      html`<div class="card-body">
-        <p class="small">
-          The whole test suite does not stand in the path: a pull's check runs the tests its change reaches,
-          and the rest of the path runs lint and types. An admin sees how many changes sit at each step right now on
-          <a href="/boards">Boards</a>.
-        </p>
-        <p class="small" id="full-suite">
-          The whole suite still runs, as a report: after a landing, on a schedule, against the default branch's tip.
-          Each test file it finds failing gets one issue labelled <span class="mono">full-suite</span>, listed
-          <a href="${reportPath()}">here</a>. The report holds no pull, batch or release.
-        </p>
-        <p class="muted small">For agents: the MCP tool <span class="mono">pull</span> answers <span class="mono">step: { step, why, done }</span> with these four words.</p>
-      </div>`,
-      { head: html`<h2>Where to look next</h2>` },
-    )}`;
+    </div>
+    <section class="mb">
+      <h2>Where to look next</h2>
+      <p class="small">
+        The whole test suite does not stand in the path: a pull's check runs the tests its change reaches,
+        and the rest of the path runs lint and types. An admin sees how many changes sit at each step right now on
+        <a href="/boards">Boards</a>.
+      </p>
+      <p class="small" id="full-suite">
+        The whole suite still runs, as a report: after a landing, on a schedule, against the default branch's tip.
+        Each test file it finds failing gets one issue labelled <span class="mono">full-suite</span>, listed
+        <a href="${reportPath()}">here</a>. The report holds no pull, batch or release.
+      </p>
+      <p class="muted small">For agents: the MCP tool <span class="mono">pull</span> answers <span class="mono">step: { step, why, done }</span> with these four words.</p>
+    </section>`;
   const response = page({ ctx, title: "How a change lands", body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

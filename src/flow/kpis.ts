@@ -16,12 +16,15 @@
  * Those are not counted.
  */
 
+import { backupVerdict, isWatched, type BackupVerdict } from "../snapshot/bucket.ts";
+import { lastDrill } from "../snapshot/drills.ts";
 import type { Database } from "bun:sqlite";
 import { spentTodayEverywhere } from "../crew/autonomy.ts";
 import { ceilingHitAt, ceilingReached } from "./ceiling.ts";
 import type { IdleReason } from "../crew/idle_reason.ts";
 import { lastOffBox } from "../snapshot/off_box.ts";
 import { readReach, type Reach } from "./reach.ts";
+import { countBugs, type BugCount } from "./bugs.ts";
 import { HOURS, median } from "./throughput.ts";
 
 const HOUR_MS = 3_600_000;
@@ -46,12 +49,16 @@ export interface Kpis {
   readonly spend: { readonly todayUsd: number; readonly ceilingUsd: number | null; /** When the run that crossed the cap was created (ISO); null while under it. */ readonly hitAt?: string | null };
   /** When a snapshot was last known off the machine (a bucket destination or the mirror, `off_box.ts`); null when never. */
   readonly backupAt: string | null;
+  /** Open bugs, and those past their clock (`bugs.ts`). */
+  readonly bugs?: BugCount;
+  /** The verdict on what is in the bucket, read by this process (`snapshot/bucket.ts`); null when the forge is not watching one. */
+  readonly backup?: BackupVerdict | null;
   /** Accounts, visitors and page speed (`reach.ts`). */
   readonly reach: Reach;
 }
 
 /** The parts `readKpis` names to its `time` callback, in the order it runs them. */
-export const KPI_PARTS = ["kpis.landed", "kpis.live", "kpis.checks", "kpis.builders", "kpis.spend", "kpis.reach", "kpis.backup"] as const;
+export const KPI_PARTS = ["kpis.landed", "kpis.live", "kpis.checks", "kpis.builders", "kpis.spend", "kpis.reach", "kpis.backup", "kpis.bugs"] as const;
 export type KpiPart = (typeof KPI_PARTS)[number];
 export type KpiTimer = <T>(name: KpiPart, fn: () => T) => T;
 
@@ -84,12 +91,12 @@ export function readBuilders(db: Database, idle: IdleReason | null = null): Kpis
  * carries, read once, and the first per (repo, commit) kept here. A per-row
  * `NOT EXISTS` over every pull cost seconds on a production-size forge.
  */
-function firstLandings(db: Database, since: string, to: string): string[] {
+export function firstLandings(db: Database, since: string, to: string): string[] {
   const rows = db
     .query<{ repo: string; oid: string; at: string; issue: string; landing: number }, [string, string]>(
       `SELECT i.repo_id AS repo, q.merged_oid AS oid, q.merged_at AS at, q.issue_id AS issue,
               (q.base_branch = r.default_branch AND q.merged_at >= ?1
-                AND q.merged_oid != q.base_oid) AS landing
+                AND q.carried = 0 AND q.merged_oid != q.base_oid) AS landing
          FROM pull q JOIN issue i ON i.id = q.issue_id JOIN repo r ON r.id = i.repo_id
         WHERE q.merged_at IS NOT NULL AND q.merged_at <= ?2
           AND q.merged_oid IN (
@@ -110,6 +117,12 @@ function firstLandings(db: Database, since: string, to: string): string[] {
     if (row.at === seen.at && row.issue === seen.issue) out.push(row.at);
   }
   return out;
+}
+
+/** The bucket's verdict where one is watched; a job's own report only where nothing watches. */
+export function readBackup(db: Database, dataDir: string | undefined, end: number): { backup: BackupVerdict | null; backupAt: string | null } {
+  const backup = dataDir !== undefined && isWatched(dataDir) ? backupVerdict(dataDir, lastDrill(db), end) : null;
+  return { backup, backupAt: backup !== null ? backup.newestAt : dataDir === undefined ? null : lastOffBox(dataDir) };
 }
 
 export function readKpis(
@@ -163,10 +176,15 @@ export function readKpis(
 
   const reach = time("kpis.reach", () => readReach(db, now));
 
-  const backupAt = time("kpis.backup", () => (forge.dataDir === undefined ? null : lastOffBox(forge.dataDir)));
+  // Read from the bucket when it is watched; a job's own report only where nothing watches.
+  const { backup, backupAt } = time("kpis.backup", () => readBackup(db, forge.dataDir, end));
+
+  const bugs = time("kpis.bugs", () => countBugs(db, now));
 
   return {
+    bugs,
     backupAt,
+    backup,
     builders,
     reach,
     spend,

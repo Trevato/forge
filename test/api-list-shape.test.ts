@@ -20,6 +20,8 @@ const BARE: Record<string, string> = {
   "/api/v1/repos/:owner/:name/commits": "#5083",
   "/api/v1/user/origins": "#4841",
   "/api/v1/user/origin-apps": "#4841",
+  // The Gitea dialect a connecting forge reads is a bare array by definition (#8900).
+  "/api/v1/user/repos": "#8900",
 };
 
 const FILL: Record<string, string> = {

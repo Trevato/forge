@@ -15,8 +15,13 @@ import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
+import { trustedAdd, trustedPage, trustedRemove, trustedRevert, trustedStop } from "../web/pages/trusted.ts";
 import { usagePage } from "../web/pages/usage.ts";
 import { spendPage } from "../web/pages/spend-tab.ts";
+import { securityPage, securityShieldSet } from "../web/pages/security.ts";
+import { trafficPage } from "../web/pages/traffic.ts";
+import { sourcesPage } from "../web/pages/sources.ts";
+import { captureStart, captureStop, networksImport, scrapesExport, scrapesPage } from "../web/pages/scrapes.ts";
 import {
   accountAct,
   retireAct,
@@ -26,6 +31,7 @@ import {
   signInAct,
 } from "../web/pages/accounts.ts";
 import { confirmsList, confirmYes } from "../web/pages/confirms.ts";
+import { featureAccept, featurePage, featureSave, featuresPage, featureSwitch } from "../web/pages/features.ts";
 import { passkeyAdd, passkeyDelete, passkeyOptions, passkeysPage } from "../web/pages/passkeys.ts";
 import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
 import {
@@ -98,9 +104,11 @@ import {
 import { completeOAuthCallback } from "../actions/origins.ts";
 import { mirrorJobPage } from "../web/pages/browse.ts";
 import {
+  callbackLanding,
   originAppCreate,
   originAppDelete,
   originConnectToken,
+  originCheckSubmit,
   originDisconnect,
   originOAuthStart,
   originSyncSubmit,
@@ -108,10 +116,16 @@ import {
   originReplaceToken,
   originTrustedHosts,
 } from "../web/pages/origins.ts";
+import { originArchivedPage, originArchivedRestore } from "../web/pages/origin-archived.ts";
 import { originFlowPage, originFlowPoll } from "../web/pages/origin-flow.ts";
 import { originMirrorSubmit, originReposPage } from "../web/pages/origin-repos.ts";
 
 export function settingsRoutes(router: Router<Handler>, knownPatterns: () => readonly string[]): void {
+  router.add("GET", "/settings/trusted", trustedPage);
+  router.add("POST", "/settings/trusted", trustedAdd);
+  router.add("POST", "/settings/trusted/stop", trustedStop);
+  router.add("POST", "/settings/trusted/revert", trustedRevert);
+  router.add("POST", "/settings/trusted/:id/remove", trustedRemove);
   router.add("GET", "/settings/telemetry", telemetryPage);
   router.add("POST", "/settings/telemetry", telemetrySet);
   router.add("GET", "/settings", accountPage);
@@ -167,9 +181,25 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/settings/flags", flagsPage);
+  // Apps absorbed as the forge's own features, and their settings.
+  router.add("GET", "/settings/features", featuresPage);
+  router.add("GET", "/settings/features/:slug", featurePage);
+  router.add("POST", "/settings/features/:slug", featureSave);
+  router.add("POST", "/settings/features/:slug/absorb", featureSwitch(true));
+  router.add("POST", "/settings/features/:slug/unabsorb", featureSwitch(false));
+  router.add("POST", "/settings/features/:slug/accept", featureAccept);
   router.add("POST", "/settings/flags", flagsSet);
   router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
   router.add("GET", "/settings/spend", spendPage);
+  router.add("GET", "/settings/traffic", trafficPage);
+  router.add("GET", "/settings/traffic/sources", sourcesPage);
+  router.add("GET", "/settings/traffic/scrapes", scrapesPage);
+  router.add("GET", "/settings/traffic/scrapes/export", scrapesExport);
+  router.add("POST", "/settings/traffic/scrapes/capture", captureStart);
+  router.add("POST", "/settings/traffic/scrapes/stop", captureStop);
+  router.add("POST", "/settings/traffic/scrapes/networks", networksImport);
+  router.add("GET", "/settings/security", securityPage);
+  router.add("POST", "/settings/security/shield", securityShieldSet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("GET", "/settings/backups/live", backupsLive);
   router.add("POST", "/settings/backups/now", backupsNow);
@@ -229,15 +259,11 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
     const done = await completeOAuthCallback(ctx.app, ctx.auth.user, {
       state: ctx.url.searchParams.get("state") ?? "",
       code: ctx.url.searchParams.get("code") ?? "",
+      error: ctx.url.searchParams.get("error") ?? "",
     });
-    const query = !done.ok
-      ? "error=state"
-      : done.value.status === "done"
-        ? "connected=1"
-        : `error=${encodeURIComponent(done.value.detail.slice(0, 120))}`;
     return new Response(null, {
       status: 303,
-      headers: { location: `/settings/origins?${query}` },
+      headers: { location: callbackLanding(ctx, done) },
     });
   });
   // Origins. Literal thirds first, so `flows` and `apps` can never be
@@ -251,12 +277,16 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/origins/flows/:id", originFlowPage);
   router.add("POST", "/settings/origins/flows/:id/poll", originFlowPoll);
   router.add("GET", "/settings/origins/:id/repos", originReposPage);
+  router.add("GET", "/settings/origins/:id/archived", originArchivedPage);
+  router.add("POST", "/settings/origins/:id/archived", originArchivedRestore);
   router.add("POST", "/settings/origins/:id/mirror", originMirrorSubmit);
   // A mirror is a job with stages, so it has a page of its own to watch it
   // on. The literal "mirror" third segment is registered above the :id/:job
   // shape for the same reason `flows` and `apps` are.
   router.add("GET", "/settings/origins/:id/mirror/:job", mirrorJobPage);
   router.add("POST", "/settings/origins/:id/sync", originSyncSubmit);
+  // "Check again": the operator guard on a connection whose writes are paused.
+  router.add("POST", "/settings/origins/:id/check", originCheckSubmit);
   router.add("POST", "/settings/origins/:id/delete", originDisconnect);
   router.add("POST", "/settings/origins/:id/token", originReplaceToken);
   router.add("GET", "/settings/keys", keysPage);

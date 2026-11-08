@@ -18,6 +18,7 @@ import { childDirOf } from "../actions/spawn.ts";
 import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
 import { SIZES, type Size } from "./sizes.ts";
+import { childModelHosts } from "../core/capacity.ts";
 
 export const CELL_PREFIX = "cell-";
 export const ownsBody = (bodyId: string): boolean => bodyId.startsWith(CELL_PREFIX);
@@ -44,6 +45,8 @@ export function cellSpecFor(input: {
   size: Size;
   port: number;
   label: string;
+  /** The model provider hosts an admin let children reach (`children.modelEgress`); none by default. */
+  modelHosts?: readonly string[];
 }): CellSpec {
   return {
     dir: input.dir,
@@ -54,7 +57,10 @@ export function cellSpecFor(input: {
     hide: [input.parentDataDir],
     // The forge's own code may live under the parent's data (a release checkout).
     reveal: [CODE],
-    egress: [],
+    egress: [...(input.modelHosts ?? [])],
+    // A child's cell is held to this list whatever cells.egress says: report
+    // mode is for apps still declaring hosts, not for a whole forge.
+    egressMode: "enforce",
     reach: input.parentPort === undefined ? [input.parentUrl] : [input.parentUrl, parentLocal(input.parentPort)],
     limits: cellLimits(input.size),
     listen: input.port,
@@ -101,6 +107,12 @@ export interface CellChildren {
   /** Why the last start failed, in a sentence a person can read; undefined when it did not. */
   failure(bodyId: string): string | undefined;
   list(): readonly CellChild[];
+  /** Mark a request under way for this child; the returned function ends it. A child with one is not put to sleep. */
+  hold(bodyId: string): () => void;
+  /** Note that a request just reached this child, so it is not idle. */
+  touch(bodyId: string, now?: number): void;
+  /** Stop every running child quiet for `idleMs`; the names of those stopped (their data stays on disk). */
+  sleepIdle(idleMs: number, now?: number): Promise<string[]>;
 }
 
 const registries = new WeakMap<App, CellChildren>();
@@ -131,6 +143,10 @@ function makeRegistry(parent: App): CellChildren {
   /** When a start last failed: a broken child is not relaunched on every request. */
   const failed = new Map<string, { at: number; why: string }>();
   /** Held once it answers, never before: a start in flight is in `starting`. */
+  /** When a request last reached each running child, ms. */
+  const seen = new Map<string, number>();
+  /** Requests under way, by body id. */
+  const busy = new Map<string, number>();
 
   const launch = async (input: { bodyId: string; name: string; size: Size }): Promise<CellChild | undefined> => {
     const cells = await cellsAvailable();
@@ -153,6 +169,7 @@ function makeRegistry(parent: App): CellChildren {
       size: input.size,
       port,
       label: `forge:${input.name}`,
+      modelHosts: childModelHosts(parent.db),
     });
     const log = (line: string): void => {
       recent.push(line);
@@ -195,6 +212,7 @@ function makeRegistry(parent: App): CellChildren {
       return undefined;
     }
     held.set(input.bodyId, child);
+    seen.set(input.bodyId, Date.now());
     return child;
   };
 
@@ -232,6 +250,30 @@ function makeRegistry(parent: App): CellChildren {
     get: (bodyId) => held.get(bodyId),
     failure: (bodyId) => failed.get(bodyId)?.why,
     list: () => [...held.values()],
+    hold(bodyId) {
+      busy.set(bodyId, (busy.get(bodyId) ?? 0) + 1);
+      let ended = false;
+      return () => {
+        if (ended) return;
+        ended = true;
+        const left = (busy.get(bodyId) ?? 1) - 1;
+        if (left <= 0) busy.delete(bodyId);
+        else busy.set(bodyId, left);
+      };
+    },
+    touch(bodyId, now = Date.now()) {
+      if (held.has(bodyId)) seen.set(bodyId, now);
+    },
+    async sleepIdle(idleMs, now = Date.now()) {
+      const asleep: string[] = [];
+      for (const child of [...held.values()]) {
+        if (now - (seen.get(child.bodyId) ?? now) < idleMs || (busy.get(child.bodyId) ?? 0) > 0) continue;
+        asleep.push(child.name);
+        seen.delete(child.bodyId);
+        await this.stop(child.bodyId);
+      }
+      return asleep;
+    },
   };
 }
 

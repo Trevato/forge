@@ -97,7 +97,7 @@ describe("settings › crew doors", () => {
     });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
-    const bot = await createAgent(app, a.value, { username: "yardbot" });
+    const bot = await createAgent(app, a.value, { username: "yardbot", roles: ["planner", "builder", "reviewer"] });
     if (!bot.ok) throw new Error("agent");
     botId = bot.value.user.id;
     const sub = addSubscription(app.db, dataDir, {
@@ -106,7 +106,7 @@ describe("settings › crew doors", () => {
     });
     if (!sub.ok) throw new Error("subscription");
     subId = sub.value.id;
-    const other = await createAgent(app, a.value, { username: "otherbot" });
+    const other = await createAgent(app, a.value, { username: "otherbot", roles: ["planner", "builder", "reviewer"] });
     if (!other.ok) throw new Error("agent");
     otherId = other.value.user.id;
     const c = await createUser(app.db, {

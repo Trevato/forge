@@ -7,7 +7,8 @@ import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "following",
-  doc: "where a fork stands against what it follows, and what the crew is doing about it",
+  doc:
+    "`{ repo }`: for a fork `{ parent, state, behind, ahead, clean, conflicts, action, words, parentForge, converge, chain, severedAt, upstream }`, where it stands against what it follows (`state` in step, behind, ahead or diverged; `behind`/`ahead` commits; `clean` whether a merge would apply; `conflicts` the files that clash; `action` the one thing that reconciles it (none, fast-forward, offer, merge, keep-both) and `words` it said plainly; `converge` what the crew is doing about a conflict, else `null`; `parentForge`, `chain`, `severedAt` and `upstream` the forge-to-forge link, `null` when there is none); for a repository that is no fork but a spawned forge, only `{ chain, severedAt, upstream }`; refused `not_a_fork` when it follows nothing, `not_found` for a repository the caller may not see",
   description:
     "Where a fork stands against what it follows: in step, behind, ahead, diverged.",
   inputSchema: {
@@ -39,6 +40,8 @@ export const tool: Tool = {
       ahead: relation.ahead,
       clean: relation.clean,
       conflicts: relation.conflicts,
+      action: relation.action,
+      words: relation.words,
       parentForge: parentForgeFor(ctx.app.config),
       converge: converge?.kind ?? null,
     });

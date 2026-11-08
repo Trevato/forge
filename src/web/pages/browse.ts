@@ -950,6 +950,8 @@ export function forkFailure(error: string): string {
     return "The origin could not be reached. Nothing was created.";
   if (error === "origin_refused")
     return "The origin refused to fork that repository.";
+  if (error === "origin_paused")
+    return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Origins.";
   if (error === "mirror_failed")
     return "The fork was made, but a local copy of it could not be.";
   if (error === "unauthorized") return "Sign in first.";
@@ -1011,13 +1013,14 @@ const STAGES: { name: MirrorStage; label: string }[] = [
 const ORDER = STAGES.map((s) => s.name);
 
 /** The checklist. Its shape is what `mirrorJs` updates in place. */
-export function stageList(job: MirrorJob, streamUrl: string): Html {
+export function stageList(job: MirrorJob, streamUrl: string, landing = ""): Html {
   return html`<ol
     class="list stages"
     aria-live="polite"
     id="stages"
     data-stream="${streamUrl}"
     data-stage="${job.stage}"
+    ${landing === "" ? null : html`data-landing="${landing}"`}
     data-repo="${job.repo === undefined
       ? ""
       : `/${job.repo.ownerName}/${job.repo.name}`}"

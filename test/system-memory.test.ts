@@ -12,6 +12,8 @@ import { HOUR_MS, memoryHours, recordMemory } from "../src/boards/memory.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve } from "../src/http/server.ts";
+import { encodeRecent, RECENT_BYTES } from "../src/http/compress.ts";
+import { cachesSection, pageCaches } from "../src/web/pages/system.ts";
 
 const MiB = 1_048_576;
 let dir: string;
@@ -91,8 +93,8 @@ describe("GET /system", () => {
     const body = await (await get("alice")).text();
     expect(body).not.toContain("sys-pair");
     expect(body).toContain('<div class="plots">');
-    expect(body).toContain("<h2>RSS (MiB, hourly mean)</h2>");
-    expect(body).toContain("<h2>JS heap (MiB, hourly mean)</h2>");
+    expect(body).toContain('<h3 class="small">RSS (MiB, hourly mean)</h3>');
+    expect(body).toContain('<h3 class="small">JS heap (MiB, hourly mean)</h3>');
     expect(body).toContain('aria-label="Forge memory by hour"');
     expect(body).toContain("Heap max");
   });
@@ -101,6 +103,35 @@ describe("GET /system", () => {
     expect((await get("bob")).status).toBe(404);
     const anon = await fetch(servers.url + "/system", { redirect: "manual" });
     expect(anon.status).toBe(303);
+  });
+});
+
+describe("code page caches (#9514)", () => {
+  test("each cache shows its entries, bytes beside its cap, and hits and misses", () => {
+    const body = new TextEncoder().encode("<p>" + "x".repeat(4096) + "</p>") as Uint8Array<ArrayBuffer>;
+    const before = pageCaches().find((r) => r.name === "encoded bodies")!;
+    encodeRecent(body, "br");
+    encodeRecent(body, "br");
+    const after = pageCaches().find((r) => r.name === "encoded bodies")!;
+    expect(after.capBytes).toBe(RECENT_BYTES);
+    expect(after.hits).toBe(before.hits + 1);
+    expect(after.bytes).toBeGreaterThan(before.bytes);
+    expect(pageCaches().map((r) => r.name)).toEqual(["kept pages", "encoded bodies", "page columns", "folders and refs"]);
+    // 128 MB together at most is what the pull says: the caps add up to it.
+    const caps = pageCaches().filter((r) => r.name !== "page columns").reduce((n, r) => n + r.capBytes, 0);
+    expect(caps).toBe(128 * MiB);
+    const html = String(cachesSection([{ name: "kept pages", holds: "<b>", capBytes: 64 * MiB, entries: 3, bytes: 2 * MiB, hits: 3, misses: 1 }]));
+    expect(html).toContain('data-cache="kept pages"');
+    expect(html).toContain("&lt;b&gt;");
+    expect(html).toContain("2.0 MiB");
+    expect(html).toContain("64.0 MiB");
+    expect(html).toContain("75.0%");
+  });
+
+  test("the owner's /system shows them", async () => {
+    const body = await (await get("alice")).text();
+    expect(body).toContain("<h2>Code page caches</h2>");
+    for (const name of ["kept pages", "encoded bodies", "page columns", "folders and refs"]) expect(body).toContain(`data-cache="${name}"`);
   });
 });
 

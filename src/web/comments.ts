@@ -1,5 +1,5 @@
 /**
- * One comment card, shared by the full page render and the live-append
+ * One comment row (a row of the timeline, no box), shared by the full page render and the live-append
  * fragment so a comment that arrives over SSE looks identical to one that was
  * on the page at load. The `data-comment-id` is what the client tracks to know
  * what it has already shown — it is load-bearing, not decoration.
@@ -38,8 +38,8 @@ export function commentCard(card: CommentCard): Html {
     card.originAuthor != null && card.originAuthor !== ""
       ? originTag(card.originAuthor, card.originKind ?? "globe")
       : userLink(card.author, { mark: card.mark });
-  return html`<div ${idAttr}class="card comment">
-    <div class="card-head">
+  return html`<div ${idAttr}class="comment-row">
+    <div class="comment-head">
       ${byline}
       <span class="muted">${card.verb} ${time(card.at)}</span>
       ${when(

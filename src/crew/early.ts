@@ -21,7 +21,7 @@ import { listReviews } from "../core/reviews.ts";
 import type { Repo } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
 import type { Run } from "../core/runs.ts";
-import { aheadCount, resolveOid } from "../git/merge.ts";
+import { aheadCount, contentOnBase, resolveOid } from "../git/merge.ts";
 
 /** How often the branch is looked at at first. */
 export const WATCH_MS = 1000;
@@ -112,6 +112,8 @@ export function watchForPull(input: EarlyInput): EarlyPull {
   const log = `${input.forgeUrl}/${input.repo.ownerName}/${input.repo.name}/runs/${input.run.id}`;
   let done = input.continuing;
   let busy: Promise<void> = Promise.resolve();
+  // The (base, head) pair last found level in content: judged once, not every tick.
+  let level = "";
   const tick = async (): Promise<void> => {
     if (done) return;
     const head = await resolveOid(input.forkBare, `refs/heads/${input.branch}`);
@@ -119,6 +121,13 @@ export function watchForPull(input: EarlyInput): EarlyPull {
     const base = await resolveOid(input.bare, `refs/heads/${input.repo.defaultBranch}`);
     if (base === undefined || done) return;
     if ((await aheadCount(input.forkBare, base, head)) === 0 || done) return;
+    // Ahead by commits, level in content: a squash already carried it.
+    if (level === `${base} ${head}`) return;
+    if (await contentOnBase(input.forkBare, base, head)) {
+      level = `${base} ${head}`;
+      return;
+    }
+    if (done) return;
     // Set before the open, so a failed open is not retried every second:
     // `landWork` opens the pull at the run's end when this did not.
     done = true;

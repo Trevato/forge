@@ -21,7 +21,7 @@ async function git(args: string[], cwd: string): Promise<void> {
   if (code !== 0) throw new Error(`git ${args.join(" ")}: ${err}`);
 }
 
-let dataDir = "", work = "";
+let dataDir = "", work = "", commit = "";
 let app: App, servers: Servers, bearer = "";
 
 beforeAll(async () => {
@@ -47,9 +47,12 @@ beforeAll(async () => {
   const dir = join(work, "app");
   await Bun.write(join(dir, "a.ts"), "export const a = 1;\n");
   await Bun.write(join(dir, "README.md"), "# app\n");
+  await Bun.write(join(dir, "big.bin"), "x".repeat(1_200_000));
   await git(["add", "."], dir);
   await git(["commit", "-m", "one"], dir);
   await git(["push", "origin", "main"], dir);
+  const rev = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: dir, env });
+  commit = rev.stdout.toString().trim();
 }, 60_000);
 
 afterAll(async () => {
@@ -59,10 +62,10 @@ afterAll(async () => {
   await rm(work, { recursive: true, force: true });
 });
 
-const names = async (path: string): Promise<string[]> => {
+const names = async (path: string, status = 200): Promise<string[]> => {
   const res = await fetch(`${servers.url}${path}`, { headers: { authorization: `Bearer ${bearer}` } });
   await res.arrayBuffer();
-  expect(res.status).toBe(200);
+  expect(res.status).toBe(status);
   return (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
 };
 
@@ -93,5 +96,71 @@ test("a rendered Markdown blob sends no highlight", async () => {
   const got = await names("/alice/app/blob/main/README.md");
   expect(got).toEqual(expect.arrayContaining(["git", "render"]));
   expect(got).not.toContain("highlight");
+  once(got);
+});
+
+test("raw names session and git once each, and no stream", async () => {
+  const got = await names("/alice/app/raw/main/a.ts");
+  expect(got).toEqual(expect.arrayContaining(["app", "session", "git"]));
+  expect(got).not.toContain("stream");
+  once(got);
+});
+
+test("raw names session on a 404", async () => {
+  const got = await names("/alice/app/raw/main/nope.ts", 404);
+  expect(got).toContain("session");
+  once(got);
+});
+
+test("media on a small file names session and git, no stream", async () => {
+  const got = await names("/alice/app/media/main/a.ts");
+  expect(got).toEqual(expect.arrayContaining(["app", "session", "git"]));
+  expect(got).not.toContain("stream");
+  once(got);
+});
+
+test("media on a large file names stream once", async () => {
+  const got = await names("/alice/app/media/main/big.bin");
+  expect(got).toEqual(expect.arrayContaining(["session", "git", "stream"]));
+  once(got);
+});
+
+test("media on a 404 names session and git, not stream", async () => {
+  const got = await names("/alice/app/media/main/nope.ts", 404);
+  expect(got).toEqual(expect.arrayContaining(["session", "git"]));
+  expect(got).not.toContain("stream");
+  once(got);
+});
+
+test("a repeat media read at a full commit id is held and names no git", async () => {
+  const first = await names(`/alice/app/media/${commit}/a.ts`);
+  expect(first).toContain("git");
+  const again = await names(`/alice/app/media/${commit}/a.ts`);
+  expect(again).toContain("session");
+  expect(again).not.toContain("git");
+  expect(again).not.toContain("stream");
+  once(again);
+});
+
+test("a repeat raw read at a full commit id is held and names no git", async () => {
+  const first = await names(`/alice/app/raw/${commit}/README.md`);
+  expect(first).toContain("git");
+  const again = await names(`/alice/app/raw/${commit}/README.md`);
+  expect(again).toContain("session");
+  expect(again).not.toContain("git");
+  once(again);
+});
+
+test("a media 304 names git but no stream", async () => {
+  const first = await fetch(`${servers.url}/alice/app/media/main/big.bin`, { headers: { authorization: `Bearer ${bearer}` } });
+  await first.arrayBuffer();
+  const res = await fetch(`${servers.url}/alice/app/media/main/big.bin`, {
+    headers: { authorization: `Bearer ${bearer}`, "if-none-match": first.headers.get("etag") ?? "" },
+  });
+  await res.arrayBuffer();
+  expect(res.status).toBe(304);
+  const got = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
+  expect(got).toEqual(expect.arrayContaining(["session", "git"]));
+  expect(got).not.toContain("stream");
   once(got);
 });

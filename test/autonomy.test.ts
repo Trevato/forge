@@ -5,6 +5,7 @@
  * here starts a real agent; the crew is not running, so an assignment is
  * the observable effect.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,7 +19,7 @@ import {
   createRepo,
   updateRepoSettings,
 } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import {
   latestDecision,
   recordDecision,
@@ -110,9 +111,9 @@ describe("a repository on its own", () => {
     });
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
     for (const name of ["scout", "mason", "atlas"]) {
-      const agent = await createAgent(app, alice, { username: name });
+      const agent = await createAgent(app, alice, { username: name, roles: ["planner", "builder", "reviewer"] });
       if (!agent.ok) throw new Error(String(agent.error));
-      expect(addToCrew(app, alice, repo, name).ok).toBe(true);
+      expect(addToCrew(app, alice, repo, name, "builder").ok).toBe(true);
     }
     scout = getUserByName(
       app.db,
@@ -126,7 +127,7 @@ describe("a repository on its own", () => {
       app.db,
       "atlas",
     )!;
-    setCrewRole(app.db, repo.id, atlas.id, "planner");
+    seatAs(app.db, repo.id, atlas.id, "planner");
     for (const title of ["Renderer", "Input", "Scene graph"]) {
       const opened = openIssue(app, alice, repo, { title });
       if (!opened.ok) throw new Error(String(opened.error));
@@ -298,7 +299,7 @@ describe("a repository on its own", () => {
       ],
     });
     if (!branch.ok) throw new Error(JSON.stringify(branch.error));
-    const opened = await openPull(app, atlas, repo, {
+    const opened = await openPull(app, mason, repo, {
       title: "Shared",
       baseBranch: "main",
       headBranch: "feature/shared",
@@ -335,7 +336,7 @@ describe("a repository on its own", () => {
       );
     expect(conflicts().length).toBe(1);
     expect(conflicts()[0]!.summary).toBe("main moved: shared.ts");
-    expect(conflicts()[0]!.actorId).toBe(atlas.id);
+    expect(conflicts()[0]!.actorId).toBe(mason.id);
     // Still not landed, still one run waiting: a second look queues nothing.
     expect(await landIfGreen(app, fresh(), pull)).toBe(false);
     expect(conflicts().length).toBe(1);
@@ -505,6 +506,7 @@ describe("a repository on its own", () => {
       model: "",
       brief: "",
       budgetUsd: 0,
+      roles: ["builder"] as const,
       createdBy: null,
       createdAt: "",
     };
@@ -513,6 +515,7 @@ describe("a repository on its own", () => {
       model: "",
       brief: "",
       budgetUsd: 0,
+      roles: ["builder"] as const,
       createdBy: null,
       createdAt: "",
     };
@@ -670,16 +673,16 @@ describe("the slot count is the rule the loop enforces", () => {
     });
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
     for (const name of ["brick", "quill", "chart"]) {
-      const agent = await createAgent(app, alice, { username: name });
+      const agent = await createAgent(app, alice, { username: name, roles: ["planner", "builder", "reviewer"] });
       if (!agent.ok) throw new Error(String(agent.error));
-      expect(addToCrew(app, alice, repo, name).ok).toBe(true);
+      expect(addToCrew(app, alice, repo, name, "builder").ok).toBe(true);
     }
     const byName = getUserByName;
     builder = byName(app.db, "brick")!;
     reviewer = byName(app.db, "quill")!;
     planner = byName(app.db, "chart")!;
-    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
-    setCrewRole(app.db, repo.id, planner.id, "planner");
+    seatAs(app.db, repo.id, reviewer.id, "reviewer");
+    seatAs(app.db, repo.id, planner.id, "planner");
     for (const title of ["Warp", "Weft", "Shuttle", "Heddle"]) {
       const opened = openIssue(app, alice, repo, { title });
       if (!opened.ok) throw new Error(String(opened.error));
@@ -815,13 +818,13 @@ describe("the planner is held while nothing lands or the plate is full", () => {
     });
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
     for (const name of ["brick", "chart"]) {
-      const agent = await createAgent(app, alice, { username: name });
+      const agent = await createAgent(app, alice, { username: name, roles: ["planner", "builder", "reviewer"] });
       if (!agent.ok) throw new Error(String(agent.error));
-      expect(addToCrew(app, alice, repo, name).ok).toBe(true);
+      expect(addToCrew(app, alice, repo, name, "builder").ok).toBe(true);
     }
     const byName = getUserByName;
     planner = byName(app.db, "chart")!;
-    setCrewRole(app.db, repo.id, planner.id, "planner");
+    seatAs(app.db, repo.id, planner.id, "planner");
     const on = await updateRepoSettings(app, alice, repo, {
       autonomy: "autonomous",
       autonomyDirection: "Weave the loom",

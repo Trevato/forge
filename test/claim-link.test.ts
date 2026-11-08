@@ -143,6 +143,17 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(html).toContain('name="token"');
   });
 
+  test("the claim page and its dead-link state are not boxed in cards", async () => {
+    const html = await (await fetch(`${childServers.url}/claim`)).text();
+    expect(html).not.toContain('class="card');
+    expect(html).toContain('id="claim-access"');
+    expect(html).toMatch(/<form[^>]*action="\/claim"/);
+    expect(html).toContain('class="settings-block"');
+    const dead = await claim({ token: "nonsense", username: "x" });
+    expect(dead.status).toBe(404);
+    expect(await dead.text()).not.toContain('class="card');
+  });
+
   test("the claim page draws the passkey state as a badge, not a passkey-on class", async () => {
     const html = await (await fetch(`${childServers.url}/claim`)).text();
     expect(html).toContain("Passkey off");

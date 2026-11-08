@@ -5,6 +5,15 @@ import { join } from "node:path";
 import { migrations } from "../src/core/schema.ts";
 import {
   appendTurn,
+  archiveConversation,
+  findConversations,
+  findQuery,
+  pageAround,
+  getConversation,
+  listConversations,
+  newConversation,
+  renameConversation,
+  TITLE_MAX,
   listTurns,
   MAX_TURN_CHARS,
   openConversation,
@@ -128,5 +137,140 @@ describe("conversations", () => {
     expect(add("person", "  ")).toEqual({ ok: false, error: "empty_text" });
     expect(add("robot", "hi")).toEqual({ ok: false, error: "bad_role" });
     db.close();
+  });
+});
+
+describe("many conversations (#8814)", () => {
+  test("new starts another; the list is newest activity first and the latest is where messages go", () => {
+    const db = open("many.db");
+    const a = openConversation(db, "u1");
+    const b = newConversation(db, "u1");
+    expect(b.id).not.toBe(a.id);
+    expect(listConversations(db, "u1").map((c) => c.id)).toEqual([b.id, a.id]);
+    Bun.sleepSync(3);
+    appendTurn(db, "u1", a.id, { role: "person", text: "hi" });
+    expect(listConversations(db, "u1").map((c) => c.id)).toEqual([a.id, b.id]);
+    expect(openConversation(db, "u1").id).toBe(a.id);
+  });
+
+  test("rename keeps a clean title and refuses a long or multi-line one", () => {
+    const db = open("rename.db");
+    const c = openConversation(db, "u1");
+    const named = renameConversation(db, "u1", c.id, "  Plan the week ");
+    expect(named.ok && named.value.title).toBe("Plan the week");
+    expect(renameConversation(db, "u1", c.id, "x".repeat(TITLE_MAX + 1))).toEqual({ ok: false, error: "bad_title" });
+    expect(renameConversation(db, "u1", c.id, "a\nb")).toEqual({ ok: false, error: "bad_title" });
+    expect(getConversation(db, "u1", c.id)?.title).toBe("Plan the week");
+  });
+
+  test("archive puts one behind the filter, restore brings it back, turns survive", () => {
+    const db = open("archive.db");
+    const a = openConversation(db, "u1");
+    appendTurn(db, "u1", a.id, { role: "person", text: "keep me" });
+    const b = newConversation(db, "u1");
+    expect(archiveConversation(db, "u1", b.id, true).ok).toBe(true);
+    expect(listConversations(db, "u1").map((c) => c.id)).toEqual([a.id]);
+    expect(listConversations(db, "u1", { archived: true }).map((c) => c.id)).toEqual([b.id]);
+    expect(openConversation(db, "u1").id).toBe(a.id);
+    archiveConversation(db, "u1", a.id, true);
+    expect(openConversation(db, "u1").id).not.toBe(a.id);
+    archiveConversation(db, "u1", a.id, false);
+    expect(listTurns(db, "u1", a.id)).toMatchObject({ ok: true, value: [{ text: "keep me" }] });
+  });
+
+  test("another person's id is not found for every call", () => {
+    const db = open("other.db");
+    const mine = openConversation(db, "u1");
+    expect(getConversation(db, "u2", mine.id)).toBeUndefined();
+    expect(renameConversation(db, "u2", mine.id, "x")).toEqual({ ok: false, error: "not_found" });
+    expect(archiveConversation(db, "u2", mine.id, true)).toEqual({ ok: false, error: "not_found" });
+    expect(listConversations(db, "u2")).toEqual([]);
+    expect(listTurns(db, "u2", mine.id)).toEqual({ ok: false, error: "not_found" });
+  });
+
+  test("a word in an old turn finds its conversation, with the turn to open (#8823)", () => {
+    const db = open("find.db");
+    const c = newConversation(db, "u1");
+    const old = appendTurn(db, "u1", c.id, { role: "person", text: "how do I rotate the zebrafish keys?" });
+    for (let i = 0; i < 80; i++) appendTurn(db, "u1", c.id, { role: "agent", text: `filler ${i}` });
+    const other = newConversation(db, "u1");
+    appendTurn(db, "u1", other.id, { role: "person", text: "nothing relevant" });
+    const hits = findConversations(db, "u1", "zebra");
+    expect(hits.map((h) => h.conversation.id)).toEqual([c.id]);
+    const turn = old.ok ? old.value.id : "";
+    expect(hits[0]!.turnId).toBe(turn);
+    // The page that holds it is the one before a later turn, so it is not the latest.
+    const before = pageAround(db, "u1", c.id, turn);
+    expect(before).toBeDefined();
+    const page = listTurns(db, "u1", c.id, { before: before! });
+    expect(page.ok && page.value.some((t) => t.id === turn)).toBe(true);
+    db.close();
+  });
+
+  test("a title is found, and a renamed one is found by the new name only", () => {
+    const db = open("find-title.db");
+    const c = newConversation(db, "u1");
+    renameConversation(db, "u1", c.id, "Quarterly invoices");
+    expect(findConversations(db, "u1", "invoic").map((h) => h.conversation.id)).toEqual([c.id]);
+    expect(findConversations(db, "u1", "invoices")[0]!.turnId).toBeUndefined();
+    renameConversation(db, "u1", c.id, "Holiday");
+    expect(findConversations(db, "u1", "invoices")).toEqual([]);
+    expect(findConversations(db, "u1", "holiday")).toHaveLength(1);
+    db.close();
+  });
+
+  test("another person's conversations never appear", () => {
+    const db = open("find-owner.db");
+    const mine = newConversation(db, "u1");
+    const theirs = newConversation(db, "u2");
+    appendTurn(db, "u2", theirs.id, { role: "person", text: "the secret platypus plan" });
+    renameConversation(db, "u2", theirs.id, "platypus");
+    appendTurn(db, "u1", mine.id, { role: "person", text: "my own platypus" });
+    const hits = findConversations(db, "u1", "platypus");
+    expect(hits.map((h) => h.conversation.id)).toEqual([mine.id]);
+    expect(findConversations(db, "u1", "secret")).toEqual([]);
+    db.close();
+  });
+
+  test("another person's many matches cannot crowd out this person's one", () => {
+    const db = open("find-crowd.db");
+    const theirs = newConversation(db, "u2");
+    // Rows from u2 that rank above u1's single short row for the same word.
+    for (let i = 0; i < 250; i++) appendTurn(db, "u2", theirs.id, { role: "person", text: "walrus" });
+    const mine = newConversation(db, "u1");
+    appendTurn(db, "u1", mine.id, { role: "person", text: "a long line of words that ends with the walrus and then goes on a while more" });
+    expect(findConversations(db, "u1", "walrus").map((h) => h.conversation.id)).toEqual([mine.id]);
+    db.close();
+  });
+
+  test("set-aside and removed turns stop matching; restored ones match again", () => {
+    const db = open("find-aside.db");
+    const c = newConversation(db, "u1");
+    const t = appendTurn(db, "u1", c.id, { role: "person", text: "quokka" });
+    const id = t.ok ? t.value.id : "";
+    db.query("UPDATE conversation_turn SET replaced_at = 'now' WHERE id = ?1").run(id);
+    expect(findConversations(db, "u1", "quokka")).toEqual([]);
+    db.query("UPDATE conversation_turn SET replaced_at = NULL WHERE id = ?1").run(id);
+    expect(findConversations(db, "u1", "quokka")).toHaveLength(1);
+    db.query("DELETE FROM conversation_turn WHERE id = ?1").run(id);
+    expect(findConversations(db, "u1", "quokka")).toEqual([]);
+    db.close();
+  });
+
+  test("typed search syntax never reaches the engine", () => {
+    expect(findQuery('"" OR * NEAR( x:y')).toBe('"OR" "NEAR" "x" "y"*');
+    expect(findQuery('  ()"* ')).toBeUndefined();
+    const db = open("find-syntax.db");
+    expect(findConversations(db, "u1", '" OR ( AND *')).toEqual([]);
+    db.close();
+  });
+});
+
+describe("conversation_find writes", () => {
+  test("every delete is keyed by rowid, never by an UNINDEXED column (a scan of every person's rows)", async () => {
+    const sql = (await import("../src/core/migrations/20261108110000-conversation-find.ts")).default;
+    const deletes = sql.match(/DELETE FROM conversation_find[^;]*;/g) ?? [];
+    expect(deletes.length).toBeGreaterThan(0);
+    for (const d of deletes) expect(d).toMatch(/WHERE rowid = /);
   });
 });

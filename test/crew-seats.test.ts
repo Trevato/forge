@@ -4,13 +4,14 @@
  * `addToCrew` names the seat only for an agent who joins now; the terminal's
  * About card lists the seats and `p` fills one.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { crewRole, listCrewRoles, removeCrew, setCrewRole } from "../src/core/agents.ts";
+import { crewRole, listCrewRoles, removeCrew } from "../src/core/agents.ts";
 import { createRepo, getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { seatsOf } from "../src/crew/seats.ts";
@@ -58,7 +59,7 @@ describe("the team's seats", () => {
     const made = await createRepo(app.db, app.reposRoot, { ownerId: alice.id, name: "yard", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
-    for (const name of ["aplan", "bbuild"]) if (!(await createAgent(app, alice, { username: name })).ok) throw new Error("agent");
+    for (const name of ["aplan", "bbuild"]) if (!(await createAgent(app, alice, { username: name, roles: ["planner", "builder", "reviewer"] })).ok) throw new Error("agent");
     cookies = { alice: await signIn("alice"), bob: await signIn("bob") };
   }, 30_000);
 
@@ -83,30 +84,31 @@ describe("the team's seats", () => {
     expect(seatsOf(app.db, fresh(), true).auto).toBe(false);
   });
 
-  test("the card puts the first free agent on the seat it names, for an admin only", async () => {
+  test("each list picks from the agents that declare its role, for an admin only", async () => {
     mode("autonomous");
     const html = await page("alice");
-    for (const role of ["planner", "builder", "reviewer"])
+    for (const role of ["planner", "builder", "reviewer"]) {
       expect(html).toContain(`name="role" value="${role}"`);
-    expect(html).toContain('name="agent" value="aplan"');
-    expect(html).toContain("Put aplan on reviewer");
+      expect(html).toContain(`id="f-add-${role}"`);
+    }
+    expect(html).toContain('<option value="aplan">');
+    expect(html).toContain("Planners");
     expect(await page("bob")).not.toContain('name="role"');
   });
 
-  test("a filled seat names who fills it and has no button; the others still do", async () => {
+  test("a filled seat names who fills it; the others still have a picker", async () => {
     expect(addToCrew(app, alice, fresh(), "aplan", "planner").ok).toBe(true);
     expect(states()).toEqual({ planner: "filled", builder: "warn", reviewer: "warn" });
     expect(seatsOf(app.db, fresh()).seats[0]!.by).toEqual(["aplan"]);
     const html = await page("alice");
-    expect(html).not.toContain('name="role" value="planner"');
-    expect(html).toContain('name="role" value="builder"');
-    expect(html).toContain('name="agent" value="bbuild"');
+    expect(html).toContain('data-member="aplan"');
+    expect(html).toContain('id="f-add-builder"');
     expect(html).not.toContain("No planner:");
     expect(html).toContain("No builder: nothing gets built.");
   });
 
   test("an agent already on the crew keeps its role", () => {
-    setCrewRole(app.db, repo.id, idOf("aplan"), "reviewer");
+    seatAs(app.db, repo.id, idOf("aplan"), "reviewer");
     const again = addToCrew(app, alice, fresh(), "aplan", "builder");
     expect(again.ok).toBe(true);
     expect(crewRole(app.db, repo.id, idOf("aplan"))).toBe("reviewer");

@@ -164,13 +164,46 @@ describe("the Resolve page", () => {
     expect(page).toContain("m6\nmine\ny\n");
   });
 
+  test("conflict blocks are headings over rows, not boxed cards", async () => {
+    const page = await (await fetch(`${base}/dev/app/pulls/1/resolve`, { headers })).text();
+    expect(page).toContain('<section class="rs-card">');
+    expect(page).not.toContain('class="card');
+    expect(page).toContain("<h2>Block 1 of 2</h2>");
+    expect(page).toContain('name="b0"');
+  });
+
+  test("the sides are rows on the page background, and the words are plain", async () => {
+    const page = await (await fetch(`${base}/dev/app/pulls/1/resolve`, { headers })).text();
+    // Sides: a muted label over the text, no box, a hairline where it ends.
+    const rule = /\.rs-side pre, \.rs-merged \{([^}]*)\}/.exec(page)![1]!;
+    expect(rule).toContain("background: none");
+    expect(rule).toContain("border-radius: 0");
+    expect(rule).toContain("border-bottom: 1px solid");
+    expect(rule).not.toMatch(/background:\s*var/);
+    expect(page).toMatch(/<span class="rs-label small mono">main<\/span>\s*<pre>/);
+    expect(page).not.toMatch(/<strong class="small mono">main<\/strong>/);
+    // Only the radio taps keep a border.
+    expect(/\.rs-taps label \{[^}]*border: 1px solid/.test(page)).toBe(true);
+    // Plain taps and help text.
+    for (const w of ["Keep main", "Keep loud", "Keep both", "Write my own", "Show the result", "Save to loud", "nothing is saved until you finish"])
+      expect(page).toContain(w);
+    for (const w of [">Ours<", ">Theirs<", ">Mine<", "Before either changed", "Update the merged file", "Finish: commit"])
+      expect(page).not.toContain(w);
+  });
+
+  test("the empty states are plain text, no card, in plain words", async () => {
+    const none = await (await fetch(`${base}/dev/app/pulls/1/resolve?file=nope.txt`, { headers })).text();
+    expect(none).not.toContain('class="card');
+    expect(none).toContain("No conflict in that file.");
+    expect(none).not.toContain("Nothing to resolve");
+  });
+
   test("readers and strangers do not get it; an unnamed file is not read", async () => {
     const url = `${base}/dev/app/pulls/1/resolve`;
     expect((await fetch(url)).status).toBe(404);
     const odd = await (await fetch(`${url}?file=../../etc/passwd`, { headers })).text();
-    expect(odd).toContain("Nothing to resolve");
-    expect(odd).toContain("not one of the conflicted files");
-    expect(odd).not.toContain("has no conflicts");
+    expect(odd).toContain("No conflict in that file.");
+    expect(odd).not.toContain("This pull has no conflicts.");
   });
 
   test("the merge box offers Resolve to a writer", async () => {

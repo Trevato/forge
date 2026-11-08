@@ -17,6 +17,8 @@ import {
   passkeyRoom,
   PASSKEY_NAME_MAX,
 } from "../../core/passkeys.ts";
+import { linkEdgeLogin } from "../../core/edge_links.ts";
+import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { createSession } from "../../core/sessions.ts";
 import { LAST_WAY_IN, removeOwnPasskey } from "../../actions/passkeys.ts";
@@ -33,7 +35,7 @@ import { html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { passkeyJs } from "../passkey-client.ts";
 import { passkeyNote } from "../passkey-state.ts";
-import { card, empty, confirmAction, time } from "../ui.ts";
+import { confirmAction, row, time } from "../ui.ts";
 import { accountShell } from "./account.ts";
 import { safeNext, sessionCookie, signinAllowed } from "./site.ts";
 import { PASSKEY_EXPIRED, PASSKEY_REJECTED, PASSKEY_TAKEN } from "../passkey-words.ts";
@@ -58,7 +60,10 @@ const refuse = (status: number, message: string) =>
 function sessionOnly(ctx: Ctx): Response | undefined {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   if (!ctx.auth.user) return refuse(401, "Sign in first.");
-  if (ctx.auth.via !== "session") return refuse(403, "Passkeys are changed from a signed-in browser.");
+  // A browser the platform edge signed in is a signed-in browser too: adding a
+  // passkey there is how an account comes to sign in without the edge (#9432).
+  if (ctx.auth.via !== "session" && ctx.auth.via !== "edge")
+    return refuse(403, "Passkeys are changed from a signed-in browser.");
   return undefined;
 }
 
@@ -69,42 +74,36 @@ export function passkeysPage(ctx: Ctx): Response {
   const user = ctx.auth.user;
   const keys = timePhase(ctx.request, "passkeys", () => listPasskeys(ctx.app.db, user.id));
   const rendering = performance.now();
-  const body = html`<p class="muted small mb">
-      A passkey signs you in with a fingerprint, face or device PIN instead of
-      a password. Add one per device; each can be removed on its own.
-    </p>
-    ${keys.length === 0
-      ? empty({ icon: "key", title: "No passkeys yet", note: "Your password still works; add a passkey now, as every new account starts with one." })
-      : card(
-          html`<div class="table-scroll">
-            <table class="table" id="passkeys">
-              <thead><tr><th>Name</th><th>Added</th><th>Last used</th><th></th></tr></thead>
-              <tbody>
-                ${keys.map(
-                  (k) => html`<tr>
-                    <td><strong>${k.name}</strong></td>
-                    <td class="muted">${time(k.createdAt)}</td>
-                    <td class="muted">${k.lastUsedAt ? time(k.lastUsedAt) : "never"}</td>
-                    <td>${confirmAction({ action: `/settings/passkeys/${k.id}/delete`, verb: "Remove", size: "sm" })}</td>
-                  </tr>`,
-                )}
-              </tbody>
-            </table>
-          </div>`,
-          { pad: false },
-        )}
-    ${card(
-      html`<div class="field">
-          <label for="passkey-name">Name</label>
-          <input id="passkey-name" name="name" maxlength="${PASSKEY_NAME_MAX}" autocomplete="off" placeholder="Laptop, phone, security key" />
-        </div>
-        ${passkeyNote("passkey-add-note")}
-        <noscript><p class="muted small">Adding a passkey needs JavaScript.</p></noscript>
-        <div class="form-actions">
-          <button type="button" id="passkey-add" class="btn" data-variant="primary">Add a passkey</button>
-        </div>`,
-      { head: html`<h3>New passkey</h3>` },
-    )}`;
+  const body = html`<section class="settings-block">
+      <h2>Your passkeys</h2>
+      <p class="muted small" id="passkey-why">
+        A passkey signs you in with a fingerprint, face or device PIN, so your
+        account never waits on another service; add one per device.
+      </p>
+      ${keys.length === 0
+        ? html`<p class="small mt">No passkeys yet. Your password still works; add a passkey now, as every new account starts with one.</p>`
+        : html`<ul class="list setting-list" id="passkeys">
+            ${keys.map((k) =>
+              row({
+                title: k.name,
+                meta: html`added ${time(k.createdAt)} · ${k.lastUsedAt ? html`last used ${time(k.lastUsedAt)}` : "never used"}`,
+                trail: confirmAction({ action: `/settings/passkeys/${k.id}/delete`, verb: "Remove", size: "sm", label: `Remove ${k.name}` }),
+              }),
+            )}
+          </ul>`}
+    </section>
+    <section class="settings-block">
+      <h2>New passkey</h2>
+      <div class="field">
+        <label for="passkey-name">Name</label>
+        <input id="passkey-name" name="name" maxlength="${PASSKEY_NAME_MAX}" autocomplete="off" placeholder="Laptop, phone, security key" />
+      </div>
+      ${passkeyNote("passkey-add-note")}
+      <noscript><p class="muted small">Adding a passkey needs JavaScript.</p></noscript>
+      <div class="form-actions">
+        <button type="button" id="passkey-add" class="btn" data-variant="primary">Add a passkey</button>
+      </div>
+    </section>`;
   const response = accountShell(ctx, "passkeys", "Passkeys", body, 200, passkeyJs);
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -149,6 +148,14 @@ export async function passkeyAdd(ctx: Ctx): Promise<Response> {
       409,
       added.error === "too_many" ? "That is as many passkeys as an account keeps." : PASSKEY_TAKEN,
     );
+  // A browser the edge signed in carries the login it vouched for: link it to
+  // this account, so the edge still reaches it by that login and no second
+  // account is made. A refused link (taken, malformed) leaves the passkey added.
+  if (ctx.auth.via === "edge") {
+    const login = edgeIdentity(ctx.request, activeEdgeToken(ctx.app));
+    if (login !== undefined)
+      linkEdgeLogin(ctx.app.db, ctx.auth.user!, login);
+  }
   return json({ ok: true });
 }
 

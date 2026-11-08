@@ -61,6 +61,11 @@ a failure names the bytes over and the longest descriptions.
   `instructions` say once that a tool with `dryRun` plans unless it is `false`.
 - The ceiling is the owner's: never raise it in a feature pull.
 
+`flow` with `{ kind: "bugs" }` is such a door (#8973): `{ open, overdue, bugs }`,
+each bug `{ repo, number, priority, dueAt }`, soonest due first, at most 100,
+from `src/flow/bugs.ts`. An admin sees every repository; anyone else only
+public ones, as the terminal's bugs screen does.
+
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.
 
@@ -114,7 +119,7 @@ longer sentences:
 - `tell.from`: a path on this forge the issue links to, like `/alice/notes/pulls/3`. `tell.context`: where this was told from, for the builder.
 - `spawn.reveal`, `claim_link.reveal`: put the live claim link in the answer (default false); it is a secret, only when its person reads it. `spawn.fresh`: a fresh app beside the copied ones. `spawn.followMode`: `tell-me` (default) tells the owner in their inbox when this forge's code moves; `take-updates` opens a pull with the new code, and a person merges it. `spawn.size`: recorded only, not enforced. `spawn.keepAccess`: stay an owner once claimed.
 - `commits.ref`: branch, tag or commit; the default branch when absent. `report.page`: the http(s) address where the problem was seen. `plan.issues.pillar`: the pillar served, as `"P0"` or `"P0 Trust"`; `later: true` means no pillar and needs `why`.
-- `explore.query`: words, plus `kind:app|person|forge` and `sort:score|forks|ships|likes|use|fresh|name`, `updated:1d|7d|30d` (only what moved in that window) and `archived:yes`.
+- `explore.q`: words, plus `kind:app|person|forge` and `sort:score|forks|ships|likes|use|fresh|name`, `updated:1d|7d|30d` (only what moved in that window), `owner:name` and `archived:yes`. `query` is the same argument; `q` wins when both are given.
 - `archive.repos`: several repositories, as `owner/name`, to archive in one operation.
 - `milestones.issue`: the number of an issue that waits for others; the limbs when absent. `watch.issue` is the same number; `watch.watch` false stops watching, anything else watches.
 - `limb.reason` (close): why it is not being done, in one sentence. `limb.pillar` (resume): the pillar to return it under. `limb.under` (raise, lower): `top` or a milestone number, only when the limb sits in several places.

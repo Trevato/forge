@@ -94,3 +94,34 @@ describe("labels page counts", () => {
     expect(mcp.value.items.find((l: any) => l.id === bugId).open).toBe(2);
   });
 });
+
+describe("labels page rows", () => {
+  test("each label is a setting-list row with a plain POST form and a confirm link", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-label-rows-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    const servers = await serve(app);
+    try {
+      const cookie = await adminCookie(app, { username: "olive", email: "olive@f.dev", password: "label-rows-password" });
+      await fetch(`${servers.url}/new`, {
+        method: "POST",
+        headers: { cookie },
+        body: new URLSearchParams({ name: "proj", visibility: "private", description: "" }),
+        redirect: "manual",
+      });
+      const repo = app.db.query<{ id: string }, []>("SELECT id FROM repo").get()!;
+      const made = createLabel(app.db, repo.id, "bug", "d73a4a");
+      if (!made.ok) throw new Error("label");
+      const text = await (await fetch(`${servers.url}/olive/proj/settings/labels`, { headers: { cookie } })).text();
+      expect(text).toContain("setting-list");
+      expect(text).toContain(`id="label-${made.value.id}"`);
+      expect(text).toContain(`action="/olive/proj/settings/labels/${made.value.id}"`);
+      expect(text).toContain(`value="#d73a4a"`);
+      expect(text).toContain("/-/confirm?to=");
+      expect(text).not.toContain('class="card"><ul');
+    } finally {
+      servers.stop();
+      app.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});

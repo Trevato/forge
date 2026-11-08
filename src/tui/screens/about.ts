@@ -15,6 +15,7 @@
  * card is an OSC 8 hyperlink besides.
  */
 
+import { sourcesScreen } from "./sources.ts";
 import { audienceFor } from "../../core/audience.ts";
 import { isPinned } from "../../core/pins.ts";
 import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
@@ -227,6 +228,7 @@ export function aboutScreen(
               binding(["f"], checking() ? "stop following upstream" : "follow upstream"),
             ]
           : []),
+        ...(may() && repo?.origin === null ? [binding(["s"], "followed sources")] : []),
         // Who can read it is a person's, an admin's call (#8008).
         ...(mayPerson()
           ? [binding(["V"], repo?.visibility === "public" ? "make private" : "make public")]
@@ -586,6 +588,10 @@ export function aboutScreen(
           })
           .catch(() => ctx.toast("that could not be checked", "danger"))
           .finally(() => ctx.invalidate());
+        return true;
+      }
+      if (e.key === "s" && repo !== undefined && may()) {
+        ctx.push(sourcesScreen(f, ctx, repo));
         return true;
       }
       if (e.key === "f" && repo !== undefined && mayFollow()) {

@@ -76,7 +76,7 @@ async function build(): Promise<BuiltAsset | null> {
  * other response. Only hashed assets come through here, so only they are
  * immutable.
  */
-export function staticResponse(request: Request, body: string, type: string, etag: string): Response {
+export function staticResponse(request: Request, body: string | Uint8Array<ArrayBuffer>, type: string, etag: string): Response {
   const headers: Record<string, string> = {
     "content-type": type,
     "cache-control": "public, max-age=31536000, immutable",
@@ -87,8 +87,8 @@ export function staticResponse(request: Request, body: string, type: string, eta
   if (matches(request.headers.get("if-none-match"), etag))
     return new Response(null, { status: 304, headers });
   const encoding = negotiate(request.headers.get("accept-encoding"));
-  const bytes = new TextEncoder().encode(body);
-  if (encoding === null || bytes.length < MIN_BYTES || request.method === "HEAD") return new Response(body, { headers });
+  const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
+  if (encoding === null || bytes.length < MIN_BYTES || request.method === "HEAD") return new Response(bytes, { headers });
   // Hashed, so the encoded bytes are as immutable as the plain ones: made once.
   return new Response(encodeOnce(etag, bytes, encoding), { headers: { ...headers, "content-encoding": encoding } });
 }

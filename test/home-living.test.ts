@@ -117,7 +117,7 @@ describe("home", () => {
     const page = await home(rootCookie);
     expect(page).toContain('id="now-line"');
     for (const word of ["check", "review", "land"]) expect(page).toContain(`</strong> ${word}</a>`);
-    expect(page).toMatch(/href="\/releases"><strong>\d+<\/strong> live<\/a>/);
+    expect(page).toMatch(/href="\/now\/live"><strong>\d+<\/strong> live<\/a>/);
   });
 
   test("the forge-wide pipeline counts never reach a viewer who is not a site admin", async () => {
@@ -214,5 +214,21 @@ describe("the feed page", () => {
     expect(page).not.toContain("Being built");
     const stranger = await get("/feed");
     expect(stranger.status).not.toBe(200);
+  });
+
+  test("the home speaks in rows and plain links, not boxes and button strips (#9584)", async () => {
+    const page = await home(aliceCookie);
+    // The tell box has one button; Notes and Talk are muted links.
+    const form = /<form id="tell-box"[\s\S]*?<\/form>/.exec(page)![0];
+    expect(form).not.toContain('href="/notes"');
+    expect(page).toMatch(/<p class="small muted home-doors">\s*<a href="\/notes"[^>]*>Notes<\/a>/);
+    // Your apps are links, not chips with buttons.
+    const apps = /<section aria-label="Your apps"[\s\S]*?<\/section>/.exec(page)![0];
+    expect(apps).not.toContain('class="btn');
+    expect(apps).toContain('href="/apps/new"');
+    // The moving lists are rows, not a card.
+    const moving = /<section aria-label="Being built">[\s\S]*?<\/section>/.exec(page)![0];
+    expect(moving).toContain('<ul class="list">');
+    expect(moving).not.toContain('class="card');
   });
 });

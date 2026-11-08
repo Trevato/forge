@@ -14,8 +14,10 @@ import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
-import { btn, listCard, row, timeAgo } from "../ui.ts";
+import { btn, row, timeAgo } from "../ui.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import type { NowStage } from "../../flow/now_rows.ts";
+import { nowHref } from "../pages/now.ts";
 import { writableAppsOf } from "./asks.ts";
 import { FORGE_TARGET, sharedDraft } from "./feed.ts";
 import { repoBase } from "../chrome.ts";
@@ -35,18 +37,18 @@ export function pipelineNow(db: Database, at = Date.now()): Now {
   return now;
 }
 
-/** `check 10 › review 1 › land 3 › live`: each word links to the boards where the same stage is. */
+/** `check 10 › review 1 › land 3 › live`: each word opens what it counts (`/now/:stage`). */
 export function nowLine(now: Now, boards = true): Html {
   // An agent admin has no boards to open: the word is then plain.
-  const part = (word: string, n: number) =>
-    boards ? html`<a href="/boards"><strong>${String(n)}</strong> ${word}</a>` : html`<span><strong>${String(n)}</strong> ${word}</span>`;
+  const part = (stage: NowStage, n: number) =>
+    boards ? html`<a href="${nowHref(stage)}"><strong>${String(n)}</strong> ${stage}</a>` : html`<span><strong>${String(n)}</strong> ${stage}</span>`;
   return html`<section aria-label="Now">
     <h2 class="small muted">Now</h2>
     <p class="bar" id="now-line">
       ${part("check", now.check)} <span class="muted" aria-hidden="true">›</span>
       ${part("review", now.review)} <span class="muted" aria-hidden="true">›</span>
       ${part("land", now.land)} <span class="muted" aria-hidden="true">›</span>
-      <a href="/releases"><strong>${String(now.live)}</strong> live</a>
+      ${part("live", now.live)}
     </p>
   </section>`;
 }
@@ -65,7 +67,9 @@ function listOf(label: string, rows: readonly MovingRow[], empty: string): Html 
     shown.push(row({ title: html`<span class="muted small">${i === 0 ? empty : " "}</span>` }));
   return html`<section aria-label="${label}">
     <h2 class="small muted">${label}</h2>
-    ${listCard(shown)}
+    <ul class="list">
+      ${shown}
+    </ul>
   </section>`;
 }
 
@@ -112,8 +116,11 @@ export function tellBox(ctx: Ctx, user: User): Html {
           <option value="${FORGE_TARGET}">the forge</option>
         </select>`}
     ${btn("Tell", { variant: "primary" })}
-    ${btn("Talk", { href: "/talk", icon: "comment", title: "Talk to the forge" })}
-  </form>`;
+  </form>
+  <p class="small muted home-doors">
+    <a href="/notes" title="Your notes and where they stand">Notes</a> 
+    <a href="/talk" title="Talk to the forge">Talk</a>
+  </p>`;
 }
 
 /** Your apps as chips, each a link to the app, and a plus for a new one. */
@@ -121,11 +128,11 @@ export function appChips(ctx: Ctx, user: User): Html {
   const { repos } = writableAppsOf(ctx, user);
   return html`<section aria-label="Your apps" id="live-chips" data-live="app.serving,app.stopped,app.created,app.deleted" data-live-src="/live/chips">
     <h2 class="small muted">Your apps</h2>
-    <div class="bar">
-      ${repos.slice(0, 12).map((r) => btn(r.name, { href: repoBase(r), size: "sm" }))}
-      ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}
-      ${repos.length > 12 ? btn(`All ${repos.length}`, { href: "/apps", size: "sm" }) : null}
-    </div>
+    <p class="bar small">
+      ${repos.slice(0, 12).map((r) => html`<a href="${repoBase(r)}">${r.name}</a>`)}
+      <a href="/apps/new">New app</a>
+      ${repos.length > 12 ? html`<a href="/apps">All ${repos.length}</a>` : null}
+    </p>
   </section>`;
 }
 

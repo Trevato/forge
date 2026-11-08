@@ -28,7 +28,7 @@ import { quietLogs } from "./helpers/globals.ts";
 quietLogs();
 
 /** Parameters the seed supplies; any other parameter makes a pattern unseeded. */
-const SEEDED = new Set(["owner", "name", "username", "number", "ref", "oid", "path", "env", "slug", "spec"]);
+const SEEDED = new Set(["owner", "name", "username", "number", "ref", "oid", "path", "env", "slug", "spec", "machine"]);
 
 const ORIGIN = "needs a connected origin account and a mirror job; the seed connects none";
 const MIGRATE = "needs a migration job, which only an import creates";
@@ -42,23 +42,39 @@ const FLEET = "needs a fleet operation, started by an operator action";
 const SECRET = "needs a secret scope an operator has set";
 const GO = "needs a short code minted by a share; the seed shares nothing";
 const ARCH = "needs an archived-home operation id; the seed archives nothing";
+const NOW = "the stage is one of check, review, land or live; the seed fills no word with a name it cannot guess";
 const GATE = "needs a kept gate log, written only when a full gate runs on land";
+const BET = "needs a bet, which the seed does not propose";
+const TALK = "needs a conversation of the signed-in person; the seed starts none";
 const HOOK = "needs a webhook, which the seed does not register";
 
 /** GET patterns the seed cannot fill → why. Requested with a placeholder all the same. */
+const SHOT = "needs a pin with a picture kept by refs/shots; the seed pins nothing";
+const CART = "the seed pins no build with a cart (test/build-cart.test.ts covers its headers)";
 const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
+  "/talk/:id": TALK,
+  "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",
+  "/:owner/:name/bets/:id": BET,
+  "/:owner/:name/builds/:label/cart": CART,
+  "/:owner/:name/builds/:label/cart.png": CART,
+  "/:owner/:name/builds/:label/shots": SHOT,
+  "/:owner/:name/builds/:label/shots/:file": SHOT,
   "/:owner/:name/looks/:env/:commit/:kind.png": LOOK,
   "/:owner/:name/milestones/:number/limb/:op": LIMB,
   "/:owner/:name/variants/:group": VARIANT,
   "/:owner/:name/waves/:version": WAVE,
   "/api/v1/boards/:slug/panels/:id": BOARD,
+  "/api/v1/conversation/files/:id": "an attachment id exists only once its owner uploads a file; the seed holds none",
   "/api/v1/fleet/ops/:id": FLEET,
   "/api/v1/migrate/:job": MIGRATE,
   "/api/v1/migrate/:job/stream": MIGRATE,
   "/api/v1/orgs/:org": ORG,
   "/api/v1/orgs/:org/teams": ORG,
   "/api/v1/orgs/:org/teams/:team/members": ORG,
+  "/api/v1/repos/:owner/:name/builds/:label/cart": CART,
+  "/api/v1/repos/:owner/:name/builds/:label/shots": SHOT,
+  "/api/v1/repos/:owner/:name/builds/:label/shots/looks": SHOT,
   "/api/v1/repos/:owner/:name/gates/:id/log": GATE,
   "/api/v1/repos/:owner/:name/hooks/:id/deliveries": HOOK,
   "/api/v1/repos/:owner/:name/waves/:version": WAVE,
@@ -84,6 +100,7 @@ const UNSEEDED: Record<string, string> = {
   "/go/:code": GO,
   "/home/archived/:op": ARCH,
   "/migrate/jobs/:job": MIGRATE,
+  "/now/:stage": NOW,
   "/origins/:id/r/:owner/:name": ORIGIN,
   "/origins/:id/r/:owner/:name/blob/:ref/*path": ORIGIN,
   "/origins/:id/r/:owner/:name/branches": ORIGIN,
@@ -100,6 +117,8 @@ const UNSEEDED: Record<string, string> = {
   "/origins/:id/r/:owner/:name/raw/:ref/*path": ORIGIN,
   "/origins/:id/r/:owner/:name/tree/:ref": ORIGIN,
   "/origins/:id/r/:owner/:name/tree/:ref/*path": ORIGIN,
+  "/resilience/nightly/:job": "a nightly job's name (flake-hunt, outside-gate); the placeholder names none, so its not-found page is what gets the floor checked",
+  "/settings/origins/:id/archived": ORIGIN,
   "/settings/origins/:id/mirror/:job": ORIGIN,
   "/settings/origins/:id/repos": ORIGIN,
   "/settings/origins/flows/:id": ORIGIN,
@@ -137,7 +156,7 @@ beforeAll(async () => {
   if (!inserted.ok) throw new Error(inserted.error);
   Object.assign(fill, {
     owner: "ada", name: "notes", username: "ada", ref: "main", oid: pull.value.headOid,
-    path: "a.txt", env: "prod", slug: "notes", spec: "192",
+    path: "a.txt", env: "prod", slug: "notes", spec: "192", machine: "standard",
     issue: String(issue.value.number), pull: String(pull.value.number), run: run.id,
   });
   cookie = `forge_session=${createSession(app.db, ada.id).token}`;

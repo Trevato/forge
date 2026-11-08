@@ -31,14 +31,14 @@ const report = (fail: boolean): string =>
     ? `printf 't/a.test.ts:\\n(fail) grp > works\\n 0 pass\\n 1 fail\\n'; exit 1`
     : `printf 't/a.test.ts:\\n(pass) grp > works\\n 1 pass\\n 0 fail\\n'`;
 
-async function push(fail: boolean): Promise<string> {
+async function push(fail: boolean, note = ""): Promise<string> {
   const pushed = await commitToBranch(app, alice, repo, {
     message: fail ? "breaks it" : "works",
     files: [
       { path: "forge.json", content: JSON.stringify({ check: { run: "true", verify: report(fail), install: "" } }) },
       {
         path: "t/a.test.ts",
-        content: `import { test, expect, describe } from "bun:test";\ndescribe("grp", () => { test("works", () => { expect(${fail ? 2 : 1}).toBe(1); }); });\n`,
+        content: `${note}import { test, expect, describe } from "bun:test";\ndescribe("grp", () => { test("works", () => { expect(${fail ? 2 : 1}).toBe(1); }); });\n`,
       },
     ],
   });
@@ -115,4 +115,32 @@ test("a red verification that fails alone too names the push that broke it in on
   const log = readRunLog(app.config.dataDir, run.id).lines.join("\n");
   expect(log).toContain("fails alone too");
   expect(log).toContain("landed by no pull");
+}, 60_000);
+
+test("a later green verification closes the report's issue for the file it passed (#9524)", async () => {
+  // A tree never proven green before: a proven one is not run again, and prints no file.
+  const oid = await push(false, "// fixed\n");
+  await until(() => finished(repo.defaultBranch, oid));
+  expect(await checks.verifyDue(Date.now() + 62 * 60_000)).toHaveLength(1);
+  const run = await until(() => finished(VERIFY_ENV, oid));
+  expect(run.state).toBe("ok");
+  const closed = await until(() =>
+    app.db
+      .query<{ id: string; state: string; close_reason: string | null }, [string]>(
+        "SELECT id, state, close_reason FROM issue WHERE repo_id = ?1 AND title = 'Full suite red: t/a.test.ts' AND state = 'closed'",
+      )
+      .get(repo.id) ?? undefined,
+  );
+  expect(closed.close_reason).toBe("done");
+  const said = app.db
+    .query<{ body: string }, [string]>("SELECT body FROM comment WHERE issue_id = ?1")
+    .all(closed.id)
+    .map((c) => c.body);
+  expect(said).toContain(`Green again in the full suite (check run ${run.id}, ${oid.slice(0, 7)}).`);
+  // The culprit's issue is not the report's: it stays open.
+  const culprit = app.db
+    .query<{ state: string }, [string]>("SELECT state FROM issue WHERE repo_id = ?1 AND title LIKE 'Red after landing:%'")
+    .get(repo.id);
+  expect(culprit?.state).toBe("open");
+  expect(readRunLog(app.config.dataDir, run.id).lines.join("\n")).toContain("t/a.test.ts green again");
 }, 60_000);

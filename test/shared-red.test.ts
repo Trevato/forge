@@ -1,7 +1,8 @@
 /**
  * A red many pulls share (#2266), on in-memory SQLite: a test failed by
  * three pulls in the hour is the lane's, one failed by fewer, or failed
- * longer ago, is the pull's own; the vitals carry one card per shared test,
+ * longer ago, is the pull's own, and so is one main passes that no re-run
+ * passed (#8786); the vitals carry one card per shared test,
  * linked to its flake issue once the sentinel has filed one.
  */
 import { nameUnnamed } from "../src/checks/bun-test.ts";
@@ -21,6 +22,7 @@ import {
   TREE_GATES,
   flakeHref,
   flakeKey,
+  pullsOwn,
   sharedCause,
   sharedTests,
   sharedWithPulls,
@@ -50,6 +52,18 @@ const red = (issueId: string, names: string[], repoId = "r1"): Run => {
   return finishRun(db, run.id, { state: "failed", summary: "check failed", checkDetail: { passed: 1, failed: names.length, names } })!;
 };
 const shared = (run: Run | undefined, now?: number) => sharedWithPulls(db, run, now);
+/** Main's newest check: green, or red naming `names`. */
+const mainCheck = (state: "ok" | "failed", names: string[] = []): void => {
+  const run = createRun(db, { repoId: "r1", kind: "check", env: "main", commitOid: "b".repeat(40), reason: "push" });
+  claimRun(db, run.id);
+  finishRun(db, run.id, { state, summary: state, ...(state === "failed" ? { checkDetail: { passed: 1, failed: names.length, names } } : {}) });
+};
+/** A pull's re-run of the same commit, green. */
+const green = (issueId: string): void => {
+  const run = createRun(db, { repoId: "r1", kind: "check", env: `pull-${issueId}`, issueId, commitOid: "a".repeat(40), reason: "retry" });
+  claimRun(db, run.id);
+  finishRun(db, run.id, { state: "ok", summary: "ok" });
+};
 
 describe("a red many pulls share", () => {
   test("three pulls on one test share it; two do not", () => {
@@ -75,53 +89,93 @@ describe("a red many pulls share", () => {
     expect(sharedTests(db)).toEqual([]);
   });
 
-  test("a gate on the tree is each pull's own red, however many trip it (#2868)", () => {
-    const gate = "design check: nothing added outside the system (#2678) > the tree is no worse than its baseline";
-    for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
-    expect(shared(red("i4", [gate]))).toBe(false);
-    expect(shared(red("i5", [gate, "X"]))).toBe(false);
+  test("three pulls fail a test main passes, and none is a shared red (#8786)", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    expect(shared(third)).toBe(false);
     expect(sharedTests(db)).toEqual([]);
-  });
-
-  test("every reserved page a pull forgot is that pull's own red, not the lane's (#7809)", () => {
-    const gate = "reserved names > every top-level page of the forge is a reserved name";
-    for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
-    expect(shared(red("i4", [gate]))).toBe(false);
-    const index = "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`";
-    for (const i of ["i1", "i2", "i3"]) red(i, [index]);
-    expect(shared(red("i4", [index]))).toBe(false);
-    expect(sharedTests(db)).toEqual([]);
-    // The rest of the suite is no gate: three pulls on it still share it.
-    const other = "reserved names > the forge's own nouns are reserved too";
-    for (const i of ["i1", "i2"]) red(i, [other]);
-    expect(shared(red("i3", [other]))).toBe(true);
-  });
-
-  test("three pulls each adding a route with no OpenAPI row are three pulls' own reds (#8184)", () => {
-    const gate = "every registered /api/v1 route has an OpenAPI row or is listed as not yet described";
-    for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
-    expect(shared(red("i4", [gate]))).toBe(false);
-    const index = "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`";
-    for (const i of ["i1", "i2", "i3"]) red(i, [index]);
-    expect(shared(red("i4", [index]))).toBe(false);
-    expect(sharedTests(db)).toEqual([]);
+    expect(pullsOwn(db, "r1", "X", Date.now() - SHARED_WINDOW_MS)).toBe(true);
     const v = vitals({ db, dataDir: tmpdir(), signals: { errors: new ErrorLedger(), refused: new RefusedLedger() } });
     expect(v.degraded.filter((d) => d.cause.startsWith("shared:"))).toEqual([]);
-    // Named whole, not by prefix: a top-level test it begins does not hide.
-    const longer = `${gate} twice`;
-    for (const i of ["i1", "i2"]) red(i, [longer]);
-    expect(shared(red("i3", [longer]))).toBe(true);
+    // Main red on other tests it named still ran this one, and passed it.
+    mainCheck("failed", ["Y"]);
+    expect(shared(red("i4", ["X"]))).toBe(false);
   });
 
-  test("three pulls each adding a tool without regenerating the index are three pulls' own reds (#7906)", () => {
-    const index = "the gathered tools > the index is current: run `bun scripts/mcp-tools.ts`";
-    for (const i of ["i1", "i2", "i3"]) red(i, [index]);
-    expect(shared(red("i4", [index]))).toBe(false);
+  test("three pulls fail a test main also fails, and it is shared (#8786)", () => {
+    mainCheck("failed", ["X"]);
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    expect(shared(red("i3", ["X"]))).toBe(true);
+    expect(sharedTests(db).map((t) => t.test)).toEqual(["X"]);
+  });
+
+  test("a flake that passes on a pull's re-run is still the lane's, main green (#8786)", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    expect(shared(third)).toBe(false);
+    // i2's re-run of the same commit is green: the test is random, not i2's.
+    green("i2");
+    expect(shared(third)).toBe(true);
+    expect(sharedTests(db).map((t) => t.test)).toEqual(["X"]);
+  });
+
+  test("a re-run red on other tests it named passed this one; one naming nothing did not", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    red("i2", []);
+    expect(shared(third)).toBe(false);
+    const broken = red("i2", ["Y"]);
+    db.run("UPDATE run SET check_detail = '{not json' WHERE id = ?1", [broken.id]);
+    expect(shared(third)).toBe(false);
+    red("i2", ["Y"]);
+    expect(shared(third)).toBe(true);
+  });
+
+  test("a test the check runner re-ran alone and recorded a flake is the lane's (#8786)", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    expect(shared(third)).toBe(false);
+    db.run(
+      "INSERT INTO check_flake (id, repo_id, run_id, commit_oid, test, file, at) VALUES ('f1', 'r1', ?1, 'a', 'X', 'x.test.ts', ?2)",
+      [third.id, new Date().toISOString()],
+    );
+    expect(shared(third)).toBe(true);
+  });
+
+  test("a test that fails again on the same pull's re-run, main green, is that pull's own", () => {
+    mainCheck("ok");
+    for (const i of ["i1", "i2", "i3"]) red(i, ["X"]);
+    expect(shared(red("i3", ["X"]))).toBe(false);
     expect(sharedTests(db)).toEqual([]);
-    // The rest of the suite is no gate: three pulls on it still share it.
-    const other = "the gathered tools > are ordered by code point, not the machine's locale";
-    for (const i of ["i1", "i2"]) red(i, [other]);
-    expect(shared(red("i3", [other]))).toBe(true);
+  });
+
+  test("main's verdict unread (no check, or a red naming nothing) leaves a many-pull red the lane's", () => {
+    for (const i of ["i1", "i2"]) red(i, ["X"]);
+    const third = red("i3", ["X"]);
+    expect(shared(third)).toBe(true);
+    mainCheck("failed", []);
+    expect(shared(third)).toBe(true);
+  });
+
+  test("every gate once listed by hand is each pull's own by the rule, main green (#2868, #7809, #8140, #7906, #8184)", () => {
+    mainCheck("ok");
+    const gates = [
+      "design check: nothing added outside the system (#2678) > the tree is no worse than its baseline",
+      "reserved names > every top-level page of the forge is a reserved name",
+      "every registered /api/v1 route has an OpenAPI row or is listed as not yet described",
+      "the gathered routes > the index is current: run `bun scripts/openapi-routes.ts`",
+      "the gathered tools > the index is current: run `bun scripts/mcp-tools.ts`",
+    ];
+    for (const gate of gates) {
+      for (const i of ["i1", "i2", "i3"]) red(i, [gate]);
+      expect([gate, shared(red("i4", [gate]))]).toEqual([gate, false]);
+      // Checked per gate: each gate's reds share one commit, so a later gate's red passes an earlier one, as a re-run would.
+      expect(sharedTests(db).map((t) => t.test)).not.toContain(gate);
+    }
   });
 
   test("every tree gate names a suite, or a test in it, that exists", () => {
@@ -255,12 +309,9 @@ describe("a failure outside a named test names its file and hook (#4582)", () =>
 
   test("summary names the file and the hook, not (unnamed)", () => {
     const failure = summariseCheckFailure(captured, "check exited with code 1");
-    expect(failure.detail?.names).toEqual([
-      "a.test.ts > beforeEach/afterEach (timeout)",
-      "c.test.ts > s > (unnamed): error: late",
-      "(unnamed)",
-    ]);
-    expect(failure.summary).toContain("a.test.ts > beforeEach/afterEach (timeout)");
+    // The (unnamed) fallout shows only when nothing else is named (#8730).
+    expect(failure.detail?.names).toEqual(["a.test.ts > beforeEach/afterEach (timeout)"]);
+    expect(failure.summary).toBe('2 of 12 tests — "a.test.ts > beforeEach/afterEach (timeout)" and 1 more');
   });
 
   test("the recap after the summary is not given the last file's name", () => {

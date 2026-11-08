@@ -67,6 +67,7 @@ describe("a restore drill from the terminal's Resilience dialog", () => {
         await Bun.sleep(20);
         await press();
       }
+      if (!app.screen.toText().includes(text)) throw new Error(`never came: still waiting while !app.screen.toText().includes(text)`);
     };
     return { text: () => app.screen.toText(), press, open, waitFor, stop: () => app.stop() };
   }

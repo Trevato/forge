@@ -25,10 +25,12 @@ import { migrationFiles, NUMBERED } from "../core/schema.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { ownProbeHeaders } from "../kernel/probe.ts";
+import { bootStall } from "../perf/live.ts";
 import { running } from "../kernel/version.ts";
 import { compareVersions, readTags, recordFor } from "../release/shipped.ts";
 import { checkoutRelease, preflightRelease } from "../release/checkout.ts";
 import { handover } from "../release/swap.ts";
+import { snapshotsOf } from "../snapshot/service.ts";
 import { kubeDeployer } from "./deploy.ts";
 import { swapper } from "./swapper.ts";
 import type { KeeperPorts } from "./keeper.ts";
@@ -106,6 +108,7 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
     repo: { id: repo.id, ownerId: repo.ownerId },
     now: () => Date.now(),
     live: () => running().version,
+    bootStallMs: () => bootStall.worst(),
     async main() {
       const head = await runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${repo.defaultBranch}^{commit}`], { cwd: dir });
       return head.ok && OID.test(head.value) ? head.value : undefined;
@@ -119,6 +122,7 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
       return sha.ok && OID.test(sha.value) ? { version: top.version, sha: sha.value } : undefined;
     },
     gating: gatesInFlight,
+    snapshotting: () => snapshotsOf(app)?.takingMs(),
     deployer,
     async tag(version, sha) {
       if (!VERSION.test(version) || !OID.test(sha)) return "not a version and a commit";

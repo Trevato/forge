@@ -1,32 +1,61 @@
 import { mayView } from "../../../core/sealed.ts";
 import { addCommentThrough } from "../../../actions/issues.ts";
 import { getIssue } from "../../../core/issues.ts";
+import { archiveConversation, createConversation, getConversation, listConversations, renameConversation, TOO_MANY_WORDS } from "../../../core/conversations.ts";
 import { talk, TALK_WORDS } from "../../../actions/talk.ts";
 import { WORDS_MAX } from "../../../core/fence.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "say",
-  doc: "speak on an issue or a pull; a working builder hears it as its next step. With no `repo` or `number` it speaks to the forge's own agent (`forge talk`), which answers in `GET /api/v1/conversation/turns`",
+  doc: "`{ repo?, number?, text?, conversation?, action?, title?, archived? }`: speak on an issue or a pull; a working builder hears it as its next step. With no `repo` or `number` it speaks to the forge's own agent (`forge talk`), which answers in `GET /api/v1/conversation/turns`. `conversation` names one of your conversations (default: the latest); `action` list | new | rename | archive | restore manages them (`title` for rename and new; `archived` lists archived ones)",
   description:
-    "Say something on an issue or pull; with no repo, to the forge's own agent.",
+    "Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action).",
   inputSchema: {
     type: "object",
     properties: {
       repo: REPO_ARG,
       number: { type: "integer", minimum: 1 },
       text: { type: "string", maxLength: 8000 },
+      conversation: { type: "string" },
+      action: { type: "string", enum: ["list", "new", "rename", "archive", "restore"] },
+      title: { type: "string", maxLength: 80 },
+      archived: { type: "boolean" },
     },
-    required: ["text"],
   },
   writes: true,
   async run(ctx, user, args) {
     if (args["repo"] === undefined && args["number"] === undefined) {
       // The forge's own agent never wakes itself: its via token is refused.
       if (ctx.auth.through !== undefined) return bad("forbidden", "the forge's agent cannot start its own turn");
-      const text = str(args["text"]);
+      const db = ctx.app.db;
+      const action = args["action"];
+      if (action === "list") return good({ conversations: listConversations(db, user.id, { archived: args["archived"] === true }).map(({ id, title, updatedAt }) => ({ id, title, updatedAt })) });
+      if (action === "new") {
+        const started = createConversation(db, user.id);
+        if (!started.ok) return bad("too_many", TOO_MANY_WORDS);
+        const made = started.value;
+        const title = str(args["title"]);
+        if (title !== "" && !renameConversation(db, user.id, made.id, title).ok) return bad("invalid_title", "title is up to 80 characters, on one line");
+        return good({ conversation: made.id, says: "Started; send text with this conversation to speak in it. It opens at /talk/" + made.id + "." });
+      }
+      if (action !== undefined) {
+        const target = getConversation(db, user.id, str(args["conversation"]));
+        if (target === undefined) return bad("not_found", "no such conversation of yours");
+        if (action === "rename") {
+          if (typeof args["title"] !== "string") return bad("invalid_title", "rename needs a title");
+          const named = renameConversation(db, user.id, target.id, args["title"]);
+          return named.ok ? good({ says: "Renamed." }) : bad("invalid_title", "title is up to 80 characters, on one line");
+        }
+        if (action !== "archive" && action !== "restore") return bad("invalid", "action is list, new, rename, archive or restore");
+        archiveConversation(db, user.id, target.id, action === "archive");
+        return good({ says: action === "archive" ? "Archived." : "Restored." });
+      }
+      if (typeof args["text"] !== "string") return bad("invalid_text", "say needs `text` (or an `action` to manage conversations)");
+      const text = args["text"];
       if (text.trim() === "" || text.length > WORDS_MAX) return bad("invalid_text", `text is 1 to ${WORDS_MAX} characters`);
-      const talked = talk(ctx.app, user, text);
+      const named = args["conversation"] === undefined ? undefined : str(args["conversation"]);
+      const talked = talk(ctx.app, user, text, [], "inject", named);
       if (!talked.ok) return bad(talked.error, TALK_WORDS[talked.error][1]);
       return good({ says: talked.value.how === "steered" ? "Said to the forge's agent, mid-answer." : "The forge's agent is answering; read it in GET /api/v1/conversation/turns." });
     }

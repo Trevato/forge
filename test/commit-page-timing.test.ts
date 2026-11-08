@@ -104,11 +104,12 @@ test("a commit's head draws §5's bar, not .issue-meta", async () => {
   expect(body).toContain(oid.slice(0, 7));
 });
 
-test("a commit's head and body draw §5's card-head and prose, not commit-head/commit-body", async () => {
+test("a commit's head and body draw a heading and prose, not commit-head/commit-body", async () => {
   const body = await (await fetch(`${servers.url}/ada/engine/commit/${oid}`)).text();
   expect(body).not.toContain("commit-head");
   expect(body).not.toContain("commit-body");
-  expect(body).toContain('<div class="card-head"><h2>add a</h2></div>');
+  expect(body).toContain("<h2>add a</h2>");
+  expect(body).not.toContain("card-head");
 });
 
 test("a commit with a body shows it, escaped, inside the prose message div", async () => {

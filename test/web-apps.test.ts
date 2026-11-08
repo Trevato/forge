@@ -18,6 +18,8 @@ import {
   STARTERS,
   starterHref,
 } from "../src/web/pages/apps-starters.ts";
+import { previewLook, productionStrip } from "../src/web/pages/apps.ts";
+import type { EnvStatus } from "../src/apps/runtime.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -305,6 +307,37 @@ describe("apps, runs and the crew on the web", () => {
     const anonymous = await bodyOf("", "/apps");
     expect(anonymous).toContain('href="/alice/hello"');
     expect(anonymous).toContain("Sign in");
+  });
+
+  test("the apps list is rows, not a box, and so is the new-app step", async () => {
+    const list = await bodyOf(alice, "/apps");
+    expect(list).toContain('class="list setting-list"');
+    expect(list).not.toMatch(/class="card[ "]/);
+    expect(list).toMatch(
+      /<div class="page-head">[\s\S]*?<span class="page-head-sub[^"]*">Every app you can reach, and whether it is serving\.<\/span>/,
+    );
+    const form = await bodyOf(alice, "/apps/new");
+    expect(form).toContain('action="/apps/new"');
+    expect(form).not.toMatch(/class="card[ "]/);
+  });
+
+  test("an empty /apps says so in plain words, with no box", async () => {
+    const none = await bodyOf(alice, "/apps?archived=1");
+    expect(none).toContain("Nothing is archived");
+    expect(none).not.toMatch(/class="card[ "]/);
+  });
+
+  test("the preview card is bare when quiet and keeps its tone and box when failed", () => {
+    const env = { env: "pull-1", state: "ok" } as unknown as EnvStatus;
+    expect(previewLook(env)).toEqual({ extra: "bare env-card" });
+    expect(previewLook({ ...env, state: "failed" } as EnvStatus)).toEqual({
+      extra: "env-card",
+      tone: "danger",
+    });
+    expect(previewLook({ ...env, error: "boom" } as EnvStatus).tone).toBe("danger");
+    expect(
+      previewLook({ ...env, failedDeploy: {} } as unknown as EnvStatus),
+    ).toEqual({ extra: "env-card", tone: "attn" });
   });
 
   // ---- the app page and the runs ----
@@ -732,7 +765,7 @@ describe("apps, runs and the crew on the web", () => {
     expect(await bodyOf(alice, "/settings")).toContain('href="/settings/crew"');
 
     const bad = await web(alice, "/settings/crew", {
-      form: { username: "bot", budgetUsd: "-4" },
+      form: { username: "bot", budgetUsd: "-4", roles: "builder" },
     });
     expect(bad.status).toBe(422);
     const badPage = words(await bad.text());
@@ -751,6 +784,7 @@ describe("apps, runs and the crew on the web", () => {
         model: "",
         brief: "Be brief.",
         budgetUsd: "2",
+        roles: "builder",
       },
     });
     expect(made.status).toBe(303);
@@ -765,14 +799,14 @@ describe("apps, runs and the crew on the web", () => {
     expect(edit).toContain('value="bot"');
     expect(edit).toContain("Retire this agent");
     const updated = await web(alice, "/settings/crew/bot", {
-      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "3" },
+      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "3", roles: "builder" },
     });
     expect(updated.status).toBe(303);
     expect(getAgentByName(app.db, "bot")?.model).toBe("sonnet");
     expect(getAgentByName(app.db, "bot")?.budgetUsd).toBe(3);
     // A refused edit shows the error beside its field.
     const refused = await web(alice, "/settings/crew/bot", {
-      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "-4" },
+      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "-4", roles: "builder" },
     });
     expect(refused.status).toBe(422);
     const refusedPage = words(await refused.text());
@@ -900,9 +934,9 @@ describe("apps, runs and the crew on the web", () => {
 
     // The preview is on the change; the assignee, the checks line and the
     // merge box are its Files step, one tab under it.
-    expect(await bodyOf(alice, `/alice/hello/pulls/${number}`)).toContain(
-      "<h2>Preview</h2>",
-    );
+    const change = await bodyOf(alice, `/alice/hello/pulls/${number}`);
+    expect(change).toContain("<h2>Preview</h2>");
+    expect(change).toMatch(/<div\s+class="card bare[ "][^>]*>\s*<div class="card-head">\s*<svg[^]*?<h2>Preview<\/h2>/);
     const page = await bodyOf(alice, `/alice/hello/pulls/${number}/files`);
     expect(page).toContain("<h2>Assignee</h2>");
     // Checks are required: the line says so, and the box waits for them
@@ -977,6 +1011,7 @@ describe("apps, runs and the crew on the web", () => {
     const open = () =>
       app.db.query("SELECT 1 FROM run WHERE state IN ('queued','running') LIMIT 1").get();
     for (let i = 0; i < 200 && open() !== null; i++) await Bun.sleep(25);
+    if (open() !== null) throw new Error(`never came: still waiting while open() !== null`);
     app.db.query("UPDATE run SET serving_at = NULL WHERE env LIKE 'pull-%'").run();
   };
 
@@ -1037,5 +1072,28 @@ describe("apps, runs and the crew on the web", () => {
     expect(getAppByRepo(app.db, hello.id)?.slug).toBe("hello");
     expect(getAgentByName(app.db, "evil")).toBeUndefined();
     expect(getAgentByName(app.db, "bot")).toBeDefined();
+  });
+
+  test("the app page says in a sentence that production is not running, and what to do", async () => {
+    const stop = await web(alice, "/alice/hello/app/production/stop", { form: {} });
+    expect(stop.status).toBeLessThan(400);
+    try {
+      // /app is the app page's old address: it lands on the studio page.
+      const old = await web(alice, "/alice/hello/app");
+      expect(old.status).toBe(302);
+      const page = words(await (await web(alice, `${old.headers.get("location")!}/files`)).text());
+      const strip = page.slice(page.indexOf('class="app-strip"'));
+      expect(strip).toContain("Not running. Deploy main to start it.");
+    } finally {
+      // Leave production as found, so test order does not matter.
+      await web(alice, "/alice/hello/app/production/redeploy", { form: {} });
+    }
+    const say = (s: Parameters<typeof productionStrip>[0], d = false) =>
+      productionStrip(s, d).toString();
+    expect(say("failed")).toContain("Failed to start. Deploy main to try again.");
+    expect(say("stopped", true)).toContain("Asleep. Deploy main to wake it.");
+    expect(say("asleep")).toContain("Asleep. Deploy main to wake it.");
+    expect(say("running", true)).toContain("Running");
+    expect(say("failed", true)).toContain("Failed to start");
   });
 });

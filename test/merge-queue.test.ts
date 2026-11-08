@@ -28,6 +28,7 @@ import { repoDir } from "../src/git/repos.ts";
 import { logLevel, setLogLevel } from "../src/kernel/log.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { forgetFlow } from "../src/system/flow_cache.ts";
 import { flowLines } from "../src/tui/screens/flow.ts";
 
 /**
@@ -159,6 +160,7 @@ describe("the merge queue", () => {
   };
   /** The MCP `flow` tool's `queue` field, as alice reads it. */
   const mcpQueue = async () => {
+    forgetFlow(app); // the MCP flow tool answers a copy a few seconds old
     const res = await fetch(`${servers.url}/mcp`, {
       method: "POST",
       headers: {

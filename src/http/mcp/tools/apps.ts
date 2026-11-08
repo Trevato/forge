@@ -5,7 +5,7 @@ import { bad, good, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "apps",
-  doc: "the apps you can see: live or not, where served, how each runs itself, what is working",
+  doc: "`{ archived? }`: the apps you can see: live or not, where served, how each runs itself, what is working",
   description:
     "Apps you can see: live or not, where served, how each runs, what works.",
   inputSchema: { type: "object", properties: { archived: { type: "boolean" } } },

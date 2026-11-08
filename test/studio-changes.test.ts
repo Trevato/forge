@@ -363,7 +363,7 @@ describe("the studio, continued", () => {
       expect(issues).toContain("Plain list: an issue");
       // A plain repository speaks of issues: an untouched one reads "open",
       // and neither Told nor Look is a filter there (#683 follow-up).
-      expect(issues).toMatch(/data-word="told"\s*>open</);
+      expect(issues).toMatch(/data-word="told"[^>]*aria-label="open\b/);
       expect(issues).toContain(`href="/alice/plainlists/issues?word=working"`);
       expect(issues).not.toContain(`href="/alice/plainlists/issues?word=told"`);
       expect(issues).not.toContain(`href="/alice/plainlists/issues?word=look"`);
@@ -1000,7 +1000,7 @@ describe("the studio, continued", () => {
         headers: { cookie: "forge_mode=studio" },
       })
     ).text();
-    expect(dev).toContain("<h1>Apps, live.</h1>");
+    expect(dev).toContain("Software for what you");
     expect(dev).toContain("a lighthouse in the fog");
     expect(dev).not.toContain("<h1>Your code, your machine.</h1>");
     await done();
@@ -1186,7 +1186,7 @@ describe("the studio, continued", () => {
         });
         expect(response.status).toBe(200);
         const body = await response.text();
-        expect(body).toContain("<h1>Apps, live.</h1>");
+        expect(body).toContain("Software for what you");
         expect(body).toContain("Nothing public is up yet");
         expect(body).toContain('href="/signup"');
         expect(body).toContain('href="/signin"');

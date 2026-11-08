@@ -7,6 +7,7 @@
  * same three steps over the MCP.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { orgAccessByOrg } from "../src/core/orgs.ts";
 import { getUserSetting } from "../src/core/settings.ts";
@@ -16,7 +17,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
@@ -108,7 +109,7 @@ describe("the first login to a spawned forge", () => {
       createdBy: alice.id,
     });
     addCrew(parent.db, repo.value.id, atlas.value.id, alice.id);
-    setCrewRole(parent.db, repo.value.id, atlas.value.id, "planner");
+    seatAs(parent.db, repo.value.id, atlas.value.id, "planner");
     parentServers = await serve(parent);
     const spawned = await spawnForge(
       parent,
@@ -219,7 +220,7 @@ describe("the first login to a spawned forge", () => {
     // A pending step's body is a block of its own, never inside the row's
     // one-line, clipped `.row-meta`.
     expect(home).not.toContain("row-meta");
-    expect(home).toMatch(/<div class="card-body">\s*<p class="muted small">/);
+    expect(home).toMatch(/<div class="step-body">\s*<p class="muted small">/);
     // Each app with its way in.
     expect(home).toContain('href="/marias/bakery"');
   });

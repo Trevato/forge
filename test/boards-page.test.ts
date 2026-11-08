@@ -101,7 +101,7 @@ describe("/boards/data", () => {
     const body = await (await get("/boards/data?source=runs&by=day", "admin")).text();
     expect(body).not.toContain("boards-result");
     expect(body).toMatch(/<table\s+class="table mt"/);
-    expect(body).toContain("<h2>runs</h2>");
+    expect(body).toContain("<h2>Crew and build runs</h2>");
     expect(body).toContain('<th scope="col" class="num">');
     expect(body).toContain("2026-10-02");
   });

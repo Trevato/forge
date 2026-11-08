@@ -9,7 +9,7 @@ import { childDirOf } from "../actions/spawn.ts";
 import { createApp, type App } from "../app.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { resolveAppHost, type AppSocket, type AppTarget } from "../apps/proxy.ts";
-import { childAppsSummary, startChildApps, stopChildApps } from "./child-apps.ts";
+import { childAppsSummary, startChildApps, stopChildApps, stopChildAppsOf } from "./child-apps.ts";
 import { childHost } from "./door.ts";
 import { markHostedChild } from "./hosted-mark.ts";
 import { firstBoot } from "./first-boot.ts";
@@ -25,12 +25,18 @@ import {
 import { DEFAULT_SIZE, isSize, type Size } from "./sizes.ts";
 import { cellChildren, forward, forwardSocket, type CellChild } from "./cell.ts";
 import { cellsAvailable } from "../apps/contain.ts";
+import { limitValue } from "../settings/limits.ts";
+import { awakeRefusal, idleAfterMs, WakeRate } from "./sleep.ts";
+import { wakingResponse } from "../web/pages/waking.ts";
+import { takeDoor } from "../http/strangers.ts";
+import { vouched } from "./vouch.ts";
 import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 interface ChildLedger {
   readonly name: string;
   readonly bodyId: string;
+  readonly ownerId: string | undefined;
   readonly done: boolean;
   readonly placement: PlacementKind;
   readonly size: Size;
@@ -42,6 +48,7 @@ function readLedgerSync(app: App, name: string): ChildLedger | undefined {
     const parsed = JSON.parse(raw) as {
       name?: unknown;
       bodyId?: unknown;
+      ownerId?: unknown;
       done?: unknown;
       placement?: unknown;
       size?: unknown;
@@ -50,6 +57,7 @@ function readLedgerSync(app: App, name: string): ChildLedger | undefined {
     return {
       name: parsed.name,
       bodyId: parsed.bodyId,
+      ownerId: typeof parsed.ownerId === "string" ? parsed.ownerId : undefined,
       done: parsed.done === true,
       placement: parsed.placement === "cell" ? "cell" : "hosted",
       size: isSize(parsed.size) ? parsed.size : DEFAULT_SIZE,
@@ -72,13 +80,238 @@ function cacheOf(parent: App): Map<string, App> {
   return m;
 }
 
+/** Who wants to hear that one of a parent's hosted children is closing. */
+const closeWatchers = new WeakMap<App, Set<(child: App) => void>>();
+
+/**
+ * Call `onClose(child)` for each hosted child of `parent` as it is closed,
+ * before its database closes: what holds something per child (its hook
+ * listener in `http/server.ts`) lets go of it there. Returns the unwatch.
+ */
+export function watchHostedChildClose(parent: App, onClose: (child: App) => void): () => void {
+  let set = closeWatchers.get(parent);
+  if (!set) closeWatchers.set(parent, (set = new Set()));
+  set.add(onClose);
+  return () => {
+    set.delete(onClose);
+  };
+}
+
+/** Whether `child` is the App this parent has open for it now (not one closed since). */
+export function hostedChildOpen(parent: App, child: App): boolean {
+  for (const open of caches.get(parent)?.values() ?? []) if (open === child) return true;
+  return false;
+}
+
+/** When a request last reached each open hosted child, by body id, with the name it goes by. */
+const touched = new WeakMap<App, Map<string, { name: string; at: number }>>();
+const wakeRates = new WeakMap<App, WakeRate>();
+const personWakes = new WeakMap<App, WakeRate>();
+/** A clock the gate reads; a test sets it to a fake. */
+export const gateClock = { now: () => Date.now() };
+const sweepers = new WeakMap<App, ReturnType<typeof setInterval>>();
+
+function touch(parent: App, ledger: { bodyId: string; name: string }, now = Date.now()): void {
+  let m = touched.get(parent);
+  if (!m) touched.set(parent, (m = new Map()));
+  m.set(ledger.bodyId, { name: ledger.name, at: now });
+}
+
+/** Forges awake now: hosted children open in this process plus children running in a cell. */
+export function awakeCount(parent: App): number {
+  const awake = (caches.get(parent)?.size ?? 0) + cellChildren(parent).list().length;
+  // A wake granted but not finished holds its slot, so two at once cannot both pass the ceiling.
+  return awake + reservedCount(parent);
+}
+
+/** Wakes granted and not yet awake, by body id, with when. */
+const waking = new WeakMap<App, Map<string, number>>();
+const RESERVE_MS = 30_000;
+
+function reservedCount(parent: App, now = Date.now()): number {
+  const m = waking.get(parent);
+  if (!m) return 0;
+  let n = 0;
+  for (const [bodyId, at] of [...m]) {
+    if (now - at >= RESERVE_MS || isAwakeBody(parent, bodyId)) m.delete(bodyId);
+    else n++;
+  }
+  return n;
+}
+
+const isAwakeBody = (parent: App, bodyId: string): boolean =>
+  caches.get(parent)?.has(bodyId) === true || cellChildren(parent).get(bodyId) !== undefined;
+
+/** Requests being answered now, by body id: a forge answering one does not sleep under it. */
+const inFlight = new WeakMap<App, Map<string, number>>();
+
+/** Mark a request as under way for this child; the function it answers ends it. */
+export function holdChild(parent: App, child: App): () => void {
+  const m = inFlight.get(parent) ?? new Map<string, number>();
+  inFlight.set(parent, m);
+  const key = child.config.dataDir;
+  m.set(key, (m.get(key) ?? 0) + 1);
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    const left = (m.get(key) ?? 1) - 1;
+    if (left <= 0) m.delete(key);
+    else m.set(key, left);
+  };
+}
+
+/** Whether the child is mid-request or has crew work queued or running: it is not idle however quiet its visitors. */
+function working(parent: App, child: App): boolean {
+  if ((inFlight.get(parent)?.get(child.config.dataDir) ?? 0) > 0) return true;
+  try {
+    return child.db.query("SELECT 1 FROM run WHERE state IN ('queued','running') LIMIT 1").get() !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Put to sleep every child quiet for `idleMs`: a hosted child's apps stop and its App
+ * closes, a cell child's process stops. Their data stays on disk; the next request
+ * wakes them. Answers the names put to sleep.
+ */
+export async function sleepIdleChildren(parent: App, idleMs = idleAfterMs(), now = Date.now()): Promise<string[]> {
+  const asleep: string[] = [];
+  const cache = caches.get(parent);
+  for (const [bodyId, child] of [...(cache ?? [])]) {
+    const mark = touched.get(parent)?.get(bodyId);
+    if (mark === undefined || now - mark.at < idleMs || working(parent, child)) continue;
+    asleep.push(await closeOne(parent, cache!, bodyId, child, mark.name));
+  }
+  const cellsAsleep = await cellChildren(parent).sleepIdle(idleMs, now);
+  for (const [bodyId, mark] of [...(touched.get(parent) ?? [])]) if (cellsAsleep.includes(mark.name)) {
+    touched.get(parent)?.delete(bodyId);
+    waking.get(parent)?.delete(bodyId);
+  }
+  asleep.push(...cellsAsleep);
+  for (const name of asleep) parent.log.info("child forge asleep", { name });
+  return asleep;
+}
+
+/** Put one named child to sleep now (its owner stopped it); true when it was awake. */
+export async function sleepChild(parent: App, name: string): Promise<boolean> {
+  const ledger = readLedgerSync(parent, name);
+  if (ledger === undefined) return false;
+  const cache = caches.get(parent);
+  const child = cache?.get(ledger.bodyId);
+  if (cache !== undefined && child !== undefined) {
+    await closeOne(parent, cache, ledger.bodyId, child, name);
+    return true;
+  }
+  if (cellChildren(parent).get(ledger.bodyId) === undefined) return false;
+  touched.get(parent)?.delete(ledger.bodyId);
+  waking.get(parent)?.delete(ledger.bodyId);
+  await cellChildren(parent).stop(ledger.bodyId);
+  return true;
+}
+
+/** Whether a child is awake: open in this process or running in a cell. */
+export function childAwake(parent: App, name: string): boolean {
+  const ledger = readLedgerSync(parent, name);
+  if (ledger === undefined) return false;
+  return caches.get(parent)?.has(ledger.bodyId) === true || cellChildren(parent).get(ledger.bodyId) !== undefined;
+}
+
+async function closeOne(parent: App, cache: Map<string, App>, bodyId: string, child: App, name: string): Promise<string> {
+  cache.delete(bodyId);
+  touched.get(parent)?.delete(bodyId);
+  waking.get(parent)?.delete(bodyId);
+  for (const onClose of closeWatchers.get(parent) ?? []) {
+    try {
+      onClose(child);
+    } catch (error) {
+      parent.log.warn("a hosted child's close watcher failed", { error: String(error) });
+    }
+  }
+  await stopChildAppsOf(parent, name).catch(() => {});
+  child.close();
+  return name;
+}
+
+function keepSweeping(parent: App): void {
+  if (sweepers.has(parent)) return;
+  const every = Math.max(1000, Math.min(60_000, Math.floor(idleAfterMs() / 4)));
+  const timer = setInterval(() => void sleepIdleChildren(parent).catch(() => {}), every);
+  timer.unref?.();
+  sweepers.set(parent, timer);
+}
+
+/** Whether the child itself vouches for the request's session or token: a header a client merely wrote is not enough. */
+const carriesCredentials = (parent: App, bodyId: string, request: Request): boolean =>
+  vouched(childDirOf(parent, bodyId), request, caches.get(parent)?.get(bodyId)?.db);
+
+/**
+ * Before a child's Host is answered: a child already awake is marked busy (by a
+ * request whose session or token the child verifies, so a stranger cannot keep it awake); one
+ * asleep is woken within the limits (a stranger's address first, then this host's
+ * awake ceiling, then, for strangers, the child's wakes an hour), else a plain
+ * refusal. The slot is reserved here. Undefined means carry on.
+ */
+export function wakeGate(parent: App, request: Request): Response | undefined {
+  const name = parseHostedChildName(request.headers.get("host") ?? "", childHost(parent));
+  if (name === undefined) return undefined;
+  const ledger = readLedgerSync(parent, name);
+  if (ledger === undefined || !ledger.done) return undefined;
+  keepSweeping(parent);
+  const known = carriesCredentials(parent, ledger.bodyId, request);
+  if (isAwakeBody(parent, ledger.bodyId)) {
+    if (known) {
+      touch(parent, ledger);
+      cellChildren(parent).touch(ledger.bodyId);
+    }
+    return undefined;
+  }
+  // A wake already granted (a cell takes a moment to answer) is one wake, not one per request.
+  let reserved = waking.get(parent);
+  if (!reserved) waking.set(parent, (reserved = new Map()));
+  if (reservedCount(parent) > 0 && reserved.has(ledger.bodyId)) return undefined;
+  const verdict = takeDoor(parent, "api", request);
+  if (!verdict.allowed) return wakingResponse(parent, request, name, "too many requests to sleeping forges from your address; try again in a minute");
+  let rates = wakeRates.get(parent);
+  if (!rates) wakeRates.set(parent, (rates = new WakeRate()));
+  const at = gateClock.now();
+  let people = personWakes.get(parent);
+  if (!people) personWakes.set(parent, (people = new WakeRate()));
+  const wait = ledger.ownerId === undefined ? 0 : people.waitS(ledger.ownerId, limitValue(parent.db, "forges.wakes_per_person_hour"), at);
+  if (wait > 0) return wakingResponse(parent, request, name, `waking too often, try in ${wait} s`, wait);
+  const why = awakeRefusal(awakeCount(parent)) ?? (known ? undefined : rates.refusal(ledger.bodyId, at));
+  if (why !== undefined) return wakingResponse(parent, request, name, why);
+  if (!known) rates.note(ledger.bodyId, at);
+  if (ledger.ownerId !== undefined) people.note(ledger.ownerId, at);
+  reserved.set(ledger.bodyId, Date.now());
+  touch(parent, ledger);
+  return undefined;
+}
+
 /** Drop every hosted child App this parent has open (call when the parent stops). */
 export function closeHostedChildren(parent: App): void {
+  const sweeper = sweepers.get(parent);
+  if (sweeper !== undefined) clearInterval(sweeper);
+  sweepers.delete(parent);
+  touched.delete(parent);
+  waking.delete(parent);
+  inFlight.delete(parent);
   const m = caches.get(parent);
   if (!m) return;
   const children = [...m.values()];
   m.clear();
   caches.delete(parent);
+  // What holds something per child lets go first, while its database is open.
+  for (const child of children) {
+    for (const onClose of closeWatchers.get(parent) ?? []) {
+      try {
+        onClose(child);
+      } catch (error) {
+        parent.log.warn("a hosted child's close watcher failed", { error: String(error) });
+      }
+    }
+  }
   // A child's apps and checks use its database: they stop before it closes.
   void stopChildApps(parent).finally(() => {
     for (const child of children) child.close();
@@ -187,6 +420,7 @@ function openOnce(parent: App, ledger: ChildLedger): Promise<App> | App {
   if (!flight) {
     flight = openChild(parent, ledger).then((opened) => {
       cache.set(ledger.bodyId, opened);
+      touch(parent, ledger);
       return opened;
     });
     flight.finally(() => flights.delete(ledger.bodyId)).catch(() => {});
@@ -287,13 +521,36 @@ export async function answerFromCell(parent: App, request: Request, named?: stri
   const name = named ?? parseHostedChildName(request.headers.get("host") ?? "", childHost(parent));
   const ledger = name === undefined ? undefined : readLedgerSync(parent, name);
   if (ledger === undefined || ledger.placement !== "cell") return new Response("not found", { status: 404 });
-  const child = cellChildren(parent).get(ledger.bodyId);
-  if (child !== undefined) return forward(child, request, parent.config.clientIpHeader);
-  // Never a wait on a cell that may not come up: it starts behind this
-  // answer, and once it has failed the ledger says hosted.
-  void settleCell(parent, ledger);
-  return new Response("this forge is starting", { status: 503, headers: { "retry-after": "5", "cache-control": "no-store" } });
+  const cells = cellChildren(parent);
+  const child = cells.get(ledger.bodyId);
+  if (child !== undefined) {
+    const release = cells.hold(ledger.bodyId);
+    try {
+      return await forward(child, request, parent.config.clientIpHeader);
+    } finally {
+      release();
+    }
+  }
+  // Asleep: it wakes behind this answer. A git push or an API call waits a few
+  // seconds for it; a page, or a wake that takes longer, is a plain "waking up" page.
+  // A page never waits: it starts the cell and gets the waking page at once.
+  const path = new URL(request.url).pathname;
+  const patient = path.startsWith("/api/") || path.includes(".git/");
+  const starting = settleCell(parent, ledger);
+  const woke = patient ? await Promise.race([starting, Bun.sleep(WAKE_WAIT_MS).then(() => undefined)]) : undefined;
+  if (woke !== undefined) {
+    const release = cells.hold(ledger.bodyId);
+    try {
+      return await forward(woke, request, parent.config.clientIpHeader);
+    } finally {
+      release();
+    }
+  }
+  return wakingResponse(parent, request, ledger.name);
 }
+
+/** How long a request waits for a sleeping cell forge before it is told it is waking. */
+const WAKE_WAIT_MS = 4000;
 
 /**
  * A websocket handshake for a child in its own cell (its home or one of its

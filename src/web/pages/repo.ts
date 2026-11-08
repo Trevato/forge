@@ -8,12 +8,19 @@
  * path segment and can never smuggle a path of its own.
  */
 
-import { immutableWhenAddressed } from "../../http/addressed.ts";
-import { cachedTree, keepTree, resolveCommit } from "./tree_cache.ts";
-import { behindLine, followingLine } from "./upstream-follow.ts";
+import { repoLine } from "../describe.ts";
+import { recordLook } from "../../flow/valve_store.ts";
+import { PINNED_PUBLIC, immutableWhenAddressed, mayShare } from "../../http/addressed.ts";
+import { EDGE_VARY } from "../../http/edge_cache.ts";
+import { keepPage, keptPage, keptPageKey } from "./kept_page.ts";
+import { cachedBlobPage, cachedRaw, cachedTree, keepBlobPage, keepRaw, keepTree, keptRefs, resolveCommit, withKeptFolders } from "./tree_cache.ts";
+import { behindLine, followingLine, originAheadLine } from "./upstream-follow.ts";
+import { CONFLICT_WORDS, UNREAD_WORDS } from "../../origins/ahead.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
 import { offerUpstream } from "./offer-upstream.ts";
-import { NOT_A_MEMBER } from "../../core/roles.ts";
+import { VERIFY_FIRST } from "../../actions/verify_words.ts";
+import { GUEST_REFUSALS, HELP_BUILD, HELP_BUILD_NEXT, isContributionFork, isGuestRefusal } from "../../core/contribute.ts";
+import { lacks, NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { canRead, canWrite, listForks, type Repo } from "../../core/repos.ts";
 import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "../../actions/repos.ts";
@@ -37,7 +44,7 @@ import {
 } from "./following.ts";
 import { nothingNew } from "../../actions/follow.ts";
 import { frozenBlock } from "./frozen.ts";
-import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
+import { pinRepo, syncRepoNow, takeFromOrigin, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
   forkParentFor,
@@ -69,9 +76,12 @@ import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../cor
 import { liveClientJs, liveMount } from "../live.ts";
 import { appStrip } from "./apps.ts";
 import { studioApp } from "../studio/app.ts";
+import { declaresFeature } from "../../actions/features.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
+import { type CodeRows, rowsMarkup } from "../code_rows.ts";
+import { rowsOffThread } from "../code_rows_pool.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
@@ -90,6 +100,7 @@ import {
   tokenCount,
   icon,
   listCard,
+  type CardOptions,
   row,
   seg,
   time,
@@ -237,36 +248,56 @@ function forkRanking(
           ${listCard(nothingNew.map((f) => line(f, false)))}`}`;
 }
 
-/** The "forked from …" lineage line and a Fork button, for the repo home. */
-function forkBar(ctx: Ctx, repo: Repo): Html {
-  const canFork =
-    ctx.auth.user !== undefined && ctx.auth.user.id !== repo.ownerId;
-  // Forge it is for any signed-in person, the owner too: it makes a forge, not a copy in this one.
-  const canForge = ctx.auth.user?.kind === "user";
-  const forkCount = forksFor(ctx, repo).length;
-  if (!canFork && !canForge && forkCount === 0) return html``;
+/** What a guest's own fork is for, on its home: what to do next and how to drop it. */
+function contributionBar(repo: Repo): Html {
+  const base = repoBase(repo);
   return html`<div class="mt">
     ${listCard([
       row({
         lead: icon("fork"),
-        title:
-          forkCount > 0
-            ? html`<a href="${repoBase(repo)}/forks"
-                >${badge(`${forkCount} fork${forkCount === 1 ? "" : "s"}`)}</a
-              >`
-            : "Forks",
-        trail: html`${canFork
-          ? html`<form method="post" action="${repoBase(repo)}/fork">
-              ${btn("Fork", { size: "sm", icon: "fork" })}
-            </form>`
-          : html``}${canForge
-          ? html`<form method="post" action="${repoBase(repo)}/forge">
-              ${btn("Forge it", { size: "sm", icon: "rocket", variant: "outline" })}
-            </form>`
-          : html``}`,
+        title: "Your copy, for sending changes back",
+        meta: html`Change it, then send it for review. Nothing here runs: a person reviews your pull request first.`,
+        trail: html`${btn("Send for review", { size: "sm", icon: "merge", href: `${base}/pulls/new` })}
+          <form method="post" action="${base}/settings/delete">
+            <input type="hidden" name="confirm" value="${repo.ownerName}/${repo.name}" />
+            ${btn("Delete this copy", { size: "sm", variant: "outline" })}
+          </form>`,
       }),
     ])}
   </div>`;
+}
+
+/** The "forked from …" lineage line and a Fork button, for the repo home. */
+function forkBar(ctx: Ctx, repo: Repo): Html {
+  const user = ctx.auth.user;
+  // A guest's fork is help on a public repository, and says so; a private one offers none.
+  const guest = user !== undefined && lacks(ctx.app.db, user, "make_it_yours");
+  const canFork =
+    user !== undefined && user.id !== repo.ownerId && (!guest || repo.visibility === "public");
+  // Forge it is for any signed-in person, the owner too: it makes a forge, not a copy in this one.
+  const canForge = ctx.auth.user?.kind === "user";
+  const forkCount = forksFor(ctx, repo).length;
+  if (!canFork && !canForge && forkCount === 0) return html``;
+  const forks = row({
+    lead: icon("fork"),
+    title:
+      forkCount > 0
+        ? html`<a href="${repoBase(repo)}/forks"
+            >${badge(`${forkCount} fork${forkCount === 1 ? "" : "s"}`)}</a
+          >`
+        : "Forks",
+    ...(guest && canFork ? { meta: html`${HELP_BUILD_NEXT}` } : {}),
+    trail: html`${canFork
+      ? html`<form method="post" action="${repoBase(repo)}/fork">
+          ${btn(guest ? HELP_BUILD : "Fork", { size: "sm", icon: "fork" })}
+        </form>`
+      : html``}${canForge
+      ? html`<form method="post" action="${repoBase(repo)}/forge">
+          ${btn("Forge it", { size: "sm", icon: "rocket", variant: "outline" })}
+        </form>`
+        : html``}`,
+  });
+  return html`<div class="mt">${listCard([forks], { extra: "bare" })}</div>`;
 }
 
 // POST /:owner/:name/fork
@@ -285,10 +316,16 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
   );
   if (!forked.ok) {
     const reason =
-      forked.error === "name_taken"
+      isGuestRefusal(forked.error)
+        ? GUEST_REFUSALS[forked.error]
+        : forked.error === "already_forked"
+        ? "You already have a fork of this repository."
+        : forked.error === "name_taken"
         ? "You already have a repository by that name."
         : forked.error === "not_member"
         ? `Not made: ${NOT_A_MEMBER}.`
+        : forked.error === "unverified"
+        ? VERIFY_FIRST
         : forked.error === "repository_limit"
         ? `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user)}.`
         : forked.error === "storage_limit"
@@ -299,7 +336,9 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
     return flashTo(ctx, repoBase(repo), { tone: "danger", message: reason });
   }
   return flashTo(ctx, repoBase(forked.value), {
-    message: `Forked to ${forked.value.ownerName}/${forked.value.name}.`,
+    message: isContributionFork(ctx.app.db, forked.value.id)
+      ? `This is your copy of ${repo.ownerName}/${repo.name}. Change it, then send it for review.`
+      : `Forked to ${forked.value.ownerName}/${forked.value.name}.`,
   });
 }
 
@@ -343,20 +382,42 @@ export async function repoSyncSubmit(ctx: Ctx): Promise<Response> {
     });
   }
   const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
-  if (!synced.ok)
-    return flashTo(ctx, repoBase(repo), {
-      tone: "danger",
-      message:
-        synced.error !== "not_found"
-          ? "You need write access to sync this mirror."
-          : repo.detached !== null
-            ? "This mirror is frozen: its origin was disconnected. Reconnect it first."
-            : "This repository does not mirror an origin.",
-    });
+  if (!synced.ok) return flashTo(ctx, repoBase(repo), { tone: "danger", message: mirrorRefusal(repo, synced.error) });
   return flashTo(ctx, repoBase(repo), {
     ...(synced.value.error === ""
       ? { message: "Synced from the origin." }
       : { tone: "danger" as const, message: synced.value.error }),
+  });
+}
+
+/** Why a mirror's sync or take was refused, in the words both say. */
+function mirrorRefusal(repo: Repo, error: "unauthorized" | "forbidden" | "not_found"): string {
+  return error !== "not_found"
+    ? "You need write access to sync this mirror."
+    : repo.detached !== null
+      ? "This mirror is frozen: its origin was disconnected. Reconnect it first."
+      : "This repository does not mirror an origin.";
+}
+
+// POST /:owner/:name/sync/take — "Take them" under "N new commits upstream":
+// the mirror's sync, asked first, so a default branch holding commits the
+// origin lacks is reported as a conflict and nothing moves.
+export async function repoTakeSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const taken = await takeFromOrigin(ctx.app, ctx.auth.user, repo);
+  if (!taken.ok) return flashTo(ctx, repoBase(repo), { tone: "danger", message: mirrorRefusal(repo, taken.error) });
+  const t = taken.value;
+  if (t.kind === "conflict")
+    return flashTo(ctx, repoBase(repo), { tone: "danger", message: CONFLICT_WORDS(repo.defaultBranch, t.count) });
+  if (t.kind === "unread") return flashTo(ctx, repoBase(repo), { tone: "danger", message: UNREAD_WORDS });
+  return flashTo(ctx, repoBase(repo), {
+    ...(t.report.error === ""
+      ? { message: `Took ${t.count} new commit${t.count === 1 ? "" : "s"} from the origin.` }
+      : { tone: "danger" as const, message: t.report.error }),
   });
 }
 
@@ -457,7 +518,9 @@ export function treeListing(
           >
           ${total}`
       : total;
-  return listCard(rows, foot.text.trim() === "" ? {} : { foot });
+  const options: CardOptions = { extra: "bare" };
+  if (foot.text.trim() !== "") options.foot = foot;
+  return listCard(rows, options);
 }
 
 /**
@@ -601,6 +664,7 @@ export async function readmeFor(
       ? html``
       : html`<p><a href="${`${whole}/${at.split("/").map(encodeURIComponent).join("/")}`}">Read the whole README</a></p>`;
   const made = card(html`<div class="prose">${rendered}${more}</div>`, {
+    extra: "bare",
     pad: false,
     head: html`${icon("file")}
       <h2>${readme.name}</h2>`,
@@ -633,6 +697,7 @@ export function blobBody(
   blob: Blob,
   highlighted?: (ms: number) => void,
   all = false,
+  ready?: CodeRows,
 ): { content: Html; lines: number } {
   const encoded = encodeURIComponent(ref);
   if (blob.kind === "binary") {
@@ -665,30 +730,35 @@ export function blobBody(
       }),
     };
   }
-  const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
   const limit = all ? MAX_RENDER_LINES : FIRST_LINES;
   // Highlighting runs left to right, so the first N lines highlight the same
   // alone as inside the whole file; only that prefix is read and painted.
-  const began = performance.now();
-  const total = countLines(text);
-  const lines = highlightPrefix(text, path, limit);
-  highlighted?.(performance.now() - began);
-  const truncated = total > lines.length;
+  let total: number;
+  let shown: number;
+  let rows: string;
+  if (ready !== undefined) ({ total, shown, rows } = ready);
+  else {
+    const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
+    const began = performance.now();
+    total = countLines(text);
+    const lines = highlightPrefix(text, path, limit);
+    highlighted?.(performance.now() - began);
+    shown = lines.length;
+    rows = rowsMarkup(lines);
+  }
+  const truncated = total > shown;
   const fileHref = `${base}/blob/${encoded}/${path}`;
   return {
     lines: total,
     content: html`<div class="card code">
         <table>
-          ${lines.map(
-            (line, i) =>
-              html`<tr id="L${i + 1}"><td class="ln"><a href="#L${i + 1}">${i + 1}</a></td><td><pre>${line}</pre></td></tr>`,
-          )}
+          ${raw(rows)}
         </table>
       </div>
       ${when(truncated, () =>
         empty({
           icon: "file",
-          title: `${(total - lines.length).toLocaleString("en-US")} more lines`,
+          title: `${(total - shown).toLocaleString("en-US")} more lines`,
           note: all
             ? "The rest is in the raw file."
             : "The page draws the first lines so it opens at once. A link to a later line (#L…) lands once you show all lines.",
@@ -723,6 +793,15 @@ export function codeBar(
     variant: "outline",
     icon: "history",
   })}`;
+}
+
+/**
+ * One fact of the About column: a `dl` pair, the label over its value. The
+ * rail is narrower than `.status-row`'s 168px label column, so it stacks and
+ * separates the facts with space, not a rule per row.
+ */
+function fact(label: string, value: Html): Html {
+  return html`<div class="rail-fact"><dt>${label}</dt><dd>${value}</dd></div>`;
 }
 
 /**
@@ -797,82 +876,70 @@ function aboutCard(
         </p>
       </div>`,
   );
-  return html`${card(
-      html`${when(
-          repo.description !== "",
-          () => html`<p class="mb">${repo.description}</p>`,
-        )}
-        <ul class="list setting-list">
-          ${row({ title: "Visibility", trail: html`${repo.visibility}` })}
-          ${row({
-            title: "Default",
-            trail: html`<span class="mono">${repo.defaultBranch}</span>`,
-          })}
-          ${row({ title: "Protection", trail: html`${repo.protectDefault ? "on" : "off"}` })}
-          ${row({
-            title: "Branches",
-            trail: html`<span class="num">${refs.branches.length}</span>`,
-          })}
-          ${when(
-            refs.tags.length > 0,
-            () =>
-              row({
-                title: "Tags",
-                trail: html`<span class="num">${refs.tags.length}</span>`,
-              }),
-          )}
-          ${when(
-            parent,
-            (p) =>
-              // The standing and the one thing to do about it live in the
-              // Following card above the code; the rail only names the parent.
-              row({
-                title: "Fork of",
-                trail: html`<a href="/${p.ownerName}/${p.name}"
-                  >${p.ownerName}/${p.name}</a
-                >`,
-              }),
-          )}
-          ${when(
-            upstream,
-            (up) =>
-              row({
-                title: "Fork of",
-                trail:
-                  upstreamHref === undefined
-                    ? html`<span class="mono">${up}</span>`
-                    : html`<a href="${upstreamHref}">${up}</a>`,
-              }),
-          )}
-        </ul>
-        ${followingLine(ctx, repo)}
-        ${whereItLives}
-        ${when(
-          repo.visibility === "public" && repo.origin === null,
-          () =>
-            html`<p class="mt small muted">
-              ${icon("lock")} Found a security problem?
-              <a href="${repoBase(repo)}/issues/new?sealed=1"
-                >Report it sealed</a
-              >: only the people who keep this repository and its crew see it
-              until the fix is released.
-            </p>`,
-        )}
-        <p class="mt small muted">Clone over HTTPS</p>
-        ${copyField("clone-https", cloneUrl, "HTTPS clone address", "Copy clone URL")}
-        ${when(
-          sshUrl,
-          (url) =>
-            html`<p class="mt small muted">Clone over SSH</p>
-              ${copyField(
-                  "clone-ssh",
-                  url,
-                  "SSH clone address",
-                  "Copy SSH clone URL",
-                )}`,
-        )}`,
-      { head: html`<h2>About</h2>` },
-  )}`;
+  return html`<section class="settings-block">
+    <h2>About</h2>
+    ${when(
+      repo.description !== "",
+      () => html`<p class="mb">${repo.description}</p>`,
+    )}
+    <dl class="rail-facts">
+      ${fact("Visibility", html`${repo.visibility}`)}
+      ${fact("Default", html`<span class="mono">${repo.defaultBranch}</span>`)}
+      ${fact("Protection", html`${repo.protectDefault ? "on" : "off"}`)}
+      ${fact("Branches", html`<span class="num">${refs.branches.length}</span>`)}
+      ${when(
+        refs.tags.length > 0,
+        () =>
+          fact("Tags", html`<span class="num">${refs.tags.length}</span>`),
+      )}
+      ${when(
+        parent,
+        (p) =>
+          // The standing and the one thing to do about it live in the
+          // Following card above the code; the rail only names the parent.
+          fact(
+            "Fork of",
+            html`<a href="/${p.ownerName}/${p.name}">${p.ownerName}/${p.name}</a>`,
+          ),
+      )}
+      ${when(
+        upstream,
+        (up) =>
+          fact(
+            "Fork of",
+            upstreamHref === undefined
+              ? html`<span class="mono">${up}</span>`
+              : html`<a href="${upstreamHref}">${up}</a>`,
+          ),
+      )}
+    </dl>
+    ${followingLine(ctx, repo)}
+    ${whereItLives}
+    ${when(
+      repo.visibility === "public" && repo.origin === null,
+      () =>
+        html`<p class="mt small muted">
+          ${icon("lock")} Found a security problem?
+          <a href="${repoBase(repo)}/issues/new?sealed=1"
+            >Report it sealed</a
+          >: only the people who keep this repository and its crew see it
+          until the fix is released.
+        </p>`,
+    )}
+    <p class="mt small muted">Clone over HTTPS</p>
+    ${copyField("clone-https", cloneUrl, "HTTPS clone address", "Copy clone URL")}
+    ${when(
+      sshUrl,
+      (url) =>
+        html`<p class="mt small muted">Clone over SSH</p>
+          ${copyField(
+            "clone-ssh",
+            url,
+            "SSH clone address",
+            "Copy SSH clone URL",
+          )}`,
+    )}
+  </section>`;
 }
 
 // ---- pages ----
@@ -1053,6 +1120,8 @@ export function renderBlob(
     highlighted?: (ms: number) => void;
     /** Draw every line instead of the first 1,500. */
     all?: boolean;
+    /** Rows a worker already built for this file. */
+    rows?: CodeRows;
   },
 ): Html {
   const base = scope.base;
@@ -1075,7 +1144,7 @@ export function renderBlob(
   const { content, lines, summary } =
     drawn !== undefined && fellBack === undefined
       ? drawn
-      : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all), summary: undefined };
+      : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all, o.rows), summary: undefined };
   const sizeText =
     blob.kind === "too_large" ? "" : sizeWithTokens(blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
@@ -1155,12 +1224,15 @@ export function rawResponse(
 ): Response {
   if (blob.kind === "too_large") return new Response("", { status: 404 });
   // A full commit id names bytes that can never change; a branch name does
-  // not, so it revalidates every time, against the blob's own oid. Only a
-  // public repository's bytes may sit in a shared cache.
+  // not, so it revalidates every time, against the blob's own oid. Only an
+  // anonymous request's copy of a public repository's bytes may sit in a
+  // shared cache (`mayShare`).
   const etag = cache.oid ? `"${cache.oid}"` : undefined;
   const control =
     cache.immutable && etag
-      ? `${cache.public ? "public" : "private"}, max-age=31536000, immutable`
+      ? cache.public
+        ? PINNED_PUBLIC
+        : "private, max-age=31536000, immutable"
       : "private, max-age=0";
   const headers: Record<string, string> = {
     "content-type":
@@ -1170,6 +1242,7 @@ export function rawResponse(
     "x-content-type-options": "nosniff",
     "content-security-policy": "default-src 'none'; sandbox",
     "cache-control": control,
+    ...(cache.immutable && etag && cache.public ? { vary: EDGE_VARY } : {}),
   };
   if (etag) {
     headers.etag = etag;
@@ -1179,6 +1252,12 @@ export function rawResponse(
   return new Response(blob.body, { headers });
 }
 
+/** A forge admin looking at a repository is counted, to suggest a valve on /flow and never to set one. */
+function noteLook(ctx: Ctx, repoId: string): void {
+  const user = ctx.auth.user;
+  if (user?.isAdmin === true && user.kind !== "agent") recordLook(ctx.app.db, user.id, repoId);
+}
+
 // GET /:owner/:name — the repo home. An app's home is the app, for every
 // viewer: what it serves, who is on it, what it asks; its code is one tab
 // deeper, at /files. Any other repository's home is its code. An older
@@ -1186,6 +1265,7 @@ export function rawResponse(
 export async function repoHome(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  noteLook(ctx, repo.id);
   const record = getAppByRepo(ctx.app.db, repo.id);
   if (record === undefined) return await codeHome(ctx, repo);
   if (ctx.url.searchParams.has("ref"))
@@ -1245,23 +1325,20 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
           title: "An empty repository, ready for its first push",
           note: "Point a local repository at it and push — the first branch you push becomes the code you see here.",
         })}
-        ${card(
-          copyField(
+        <section class="settings-block">
+          <h2>Get started</h2>
+          ${copyField(
             "clone-https",
             `git remote add origin ${cloneUrl} && git push -u origin ${repo.defaultBranch}`,
             "Get started command",
             "Copy the get started command",
-          ),
-          {
-            head: html`${icon("command")}
-              <h2>Get started</h2>`,
-          },
-        )}
+          )}
+        </section>
       </div>`;
     const emptyResponse = page({
       ctx,
       title: repo.name,
-      description: repo.description,
+      description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
       ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
       feed: {
         href: `${repoBase(repo)}/activity.atom`,
@@ -1307,20 +1384,23 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     following !== undefined && canWrite(ctx.app.db, repo, ctx.auth.user)
       ? null
       : upstreamOffer(ctx.app, ctx.auth.user, repo, parent, drift?.ahead);
+  const declares = isApp && (await timePhaseAsync(ctx.request, "feature", () => declaresFeature(ctx.app, ctx.auth.user, repo)));
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${archivedLine(ctx, repo)}${noApp}
+  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${originAheadLine(ctx, repo)}${archivedLine(ctx, repo)}${noApp}
   ${offerUpstream(repo, parent, offer)}
   ${latest === null
     ? ""
     : html`<p class="muted latest-wave">Latest:
         <a href="${repoBase(repo)}/waves/${encodeURIComponent(latest.version)}">${latest.version}</a>
         · ${latest.headline} · ${latest.date}</p>`}
-  ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo)}
-  ${following === undefined
-    ? html`${archivedParentLine(ctx, repo)}${forkBar(ctx, repo)}`
-    : followingCard(ctx, repo, following)}
+  ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo, declares)}
+  ${ctx.auth.user?.id === repo.ownerId && isContributionFork(ctx.app.db, repo.id)
+    ? contributionBar(repo)
+    : following === undefined
+      ? html`${archivedParentLine(ctx, repo)}${forkBar(ctx, repo)}`
+      : followingCard(ctx, repo, following, { bare: true })}
   ${await renderCode(scope, {
     refs,
     ref,
@@ -1333,7 +1413,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const response = page({
     ctx,
     title: repo.name,
-    description: repo.description,
+    description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
     ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
     feed: {
       href: `${repoBase(repo)}/activity.atom`,
@@ -1456,20 +1536,31 @@ export async function treePage(ctx: Ctx): Promise<Response> {
     anonymous && !fragmentOnly && isSafeRef(ref)
       ? await resolveCommit(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), ref)
       : undefined;
+  // The whole page as it last went out to a stranger, encoded (`kept_page.ts`).
+  const keptKey = commit === undefined ? undefined : keptPageKey(ctx, repo.id, commit);
+  const finished = keptKey === undefined ? undefined : keptPage(keptKey);
+  if (finished !== undefined) {
+    git.done();
+    return immutableWhenAddressed(ctx.request, true, repo, ref, finished);
+  }
+  const kept = (response: Response) => (keptKey === undefined ? response : keepPage(keptKey, response));
   if (commit !== undefined) {
     const hit = cachedTree(repo.id, commit, ref, path, all);
     if (hit !== undefined) {
       git.done();
       return immutableWhenAddressed(
+        ctx.request,
         true,
         repo,
         ref,
-        codePage(ctx, scope, { title: `${path || ref} · ${repo.name}`, ref, explorer: hit.explorer, content: hit.content }),
+        await kept(codePage(ctx, scope, { title: `${path || ref} · ${repo.name}`, ref, explorer: hit.explorer, content: hit.content })),
       );
     }
   }
 
-  const entries = await git.read(() => scope.source.tree(commit ?? ref, path));
+  // A stranger's listing reads its folders and ref names through what other strangers' pages kept (#9514).
+  const source = commit === undefined ? scope.source : withKeptFolders(repo.id, scope.source);
+  const entries = await git.read(() => source.tree(commit ?? ref, path));
   if (!entries.ok) return notFoundPage(ctx);
 
   // The explorer's lazy expansion asks for exactly one directory.
@@ -1482,8 +1573,8 @@ export async function treePage(ctx: Ctx): Promise<Response> {
 
   const [refs, explorer] = await git.read(() =>
     Promise.all([
-      refSetFrom(scope.source),
-      loadExplorer(scope.source, ref, path, false),
+      commit === undefined ? refSetFrom(scope.source) : keptRefs(repo.id, () => refSetFrom(scope.source)),
+      loadExplorer(source, ref, path, false),
     ]),
   );
   git.done();
@@ -1502,14 +1593,16 @@ export async function treePage(ctx: Ctx): Promise<Response> {
     ...(commit === undefined ? {} : { linkRef: commit }),
   });
   if (commit !== undefined) keepTree(repo.id, commit, ref, path, all, { explorer: explorerHtml, content });
-  const response = codePage(ctx, scope, {
-    title: `${path || ref} · ${repo.name}`,
-    ref,
-    explorer: explorerHtml,
-    content,
-  });
+  const response = await kept(
+    codePage(ctx, scope, {
+      title: `${path || ref} · ${repo.name}`,
+      ref,
+      explorer: explorerHtml,
+      content,
+    }),
+  );
   notePhase(ctx.request, "render", performance.now() - began);
-  return immutableWhenAddressed(anonymous, repo, ref, response);
+  return immutableWhenAddressed(ctx.request, anonymous, repo, ref, response);
 }
 
 // GET /:owner/:name/blob/:ref/*path
@@ -1521,21 +1614,64 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const path = ctx.params.path ?? "";
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const git = gitClock(ctx.request);
+  // A stranger's page at a full commit id is kept under that id (#9405): the
+  // second read of it walks no git at all.
+  const kept =
+    ctx.auth.user === undefined && repo.visibility === "public" && FULL_OID.test(ref) && ctx.url.searchParams.get("fragment") !== "1";
+  const view = blobView(ctx.url.searchParams.get("view"));
+  const all = ctx.url.searchParams.get("all") === "1";
+  // The whole page as it last went out to a stranger, encoded (`kept_page.ts`).
+  const keptKey = kept ? keptPageKey(ctx, repo.id) : undefined;
+  const finished = keptKey === undefined ? undefined : keptPage(keptKey);
+  if (finished !== undefined) {
+    git.done();
+    return immutableWhenAddressed(ctx.request, true, repo, ref, finished);
+  }
+  const keepFinished = (response: Response) => (keptKey === undefined ? response : keepPage(keptKey, response, true));
+  if (kept) {
+    const hit = cachedBlobPage(repo.id, ref, path, String(view), all);
+    if (hit !== undefined) {
+      git.done();
+      return immutableWhenAddressed(
+        ctx.request,
+        true,
+        repo,
+        ref,
+        await keepFinished(codePage(ctx, scope, {
+          title: hit.title,
+          ref,
+          explorer: hit.explorer,
+          content: hit.content,
+          objectSrc: hit.objectSrc,
+          ...(hit.csv ? { extraJs: csvJs } : {}),
+        })),
+      );
+    }
+  }
   const blob = await git.read(() => scope.source.blob(ref, path));
   if (!blob.ok) return notFoundPage(ctx);
-  const refs = await git.read(() => refSetFrom(scope.source));
+  // A stranger's file page reads its folders and ref names through what other strangers' pages kept (#9514).
+  const source = kept ? withKeptFolders(repo.id, scope.source) : scope.source;
+  const refs = await git.read(() => (kept ? keptRefs(repo.id, () => refSetFrom(scope.source)) : refSetFrom(scope.source)));
   let highlightMs: number | undefined;
   const renderStart = performance.now();
-  const view = blobView(ctx.url.searchParams.get("view"));
   const shown = capped(blob.value);
+  // A cold page for a stranger highlights and lays out its rows on a worker (#9630).
+  let rows: CodeRows | undefined;
+  if (kept && shown.kind === "text" && (view === "source" || !blobRenderer(scope, path, shown))) {
+    const began = performance.now();
+    rows = await rowsOffThread(shown.body, path, all ? MAX_RENDER_LINES : FIRST_LINES);
+    if (rows !== undefined) notePhase(ctx.request, "highlight", performance.now() - began);
+  }
   const pane = renderBlob(scope, {
+    ...(rows !== undefined ? { rows } : {}),
     refs,
     ref,
     path,
     blob: shown,
     view,
     highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
-    all: ctx.url.searchParams.get("all") === "1",
+    all,
   });
   if (highlightMs !== undefined) notePhase(ctx.request, "highlight", highlightMs);
   const paneMs = performance.now() - renderStart - (highlightMs ?? 0);
@@ -1549,28 +1685,38 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   }
 
   const explorer = await git.read(() =>
-    loadExplorer(scope.source, ref, path, true),
+    loadExplorer(source, ref, path, true),
   );
   git.done();
   const filename = path.split("/").pop() ?? path;
   const pageStart = performance.now();
-  const response = await codePage(ctx, scope, {
+  const explorerHtml = explorerColumn(scope, explorer, {
+    finder: true,
+    actions: newFileAction(
+      scope,
+      ref,
+      path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "",
+    ),
+  });
+  const objectSrc = drawsPdf(scope, path, shown, view);
+  if (kept)
+    keepBlobPage(repo.id, ref, path, String(view), all, {
+      title: `${filename} · ${repo.name}`,
+      explorer: explorerHtml,
+      content: pane,
+      objectSrc,
+      csv: isCsvPath(path),
+    });
+  const response = await keepFinished(codePage(ctx, scope, {
     title: `${filename} · ${repo.name}`,
     ref,
-    explorer: explorerColumn(scope, explorer, {
-      finder: true,
-      actions: newFileAction(
-        scope,
-        ref,
-        path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "",
-      ),
-    }),
+    explorer: explorerHtml,
     content: pane,
-    objectSrc: drawsPdf(scope, path, shown, view),
+    objectSrc,
     ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
-  });
+  }));
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
-  return immutableWhenAddressed(ctx.auth.user === undefined, repo, ref, response);
+  return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, ref, response);
 }
 
 /**
@@ -1612,6 +1758,9 @@ export function capped(blob: Blob): Blob {
  * a file in a repository can never execute as a page on this origin.
  */
 export async function rawBlob(ctx: Ctx): Promise<Response> {
+  // `session` first, so it is named on every answer, 404s included. There is
+  // no `stream` phase: the body is bytes already in memory, nothing to time.
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const ref = ctx.params.ref ?? "";
@@ -1619,13 +1768,27 @@ export async function rawBlob(ctx: Ctx): Promise<Response> {
   if (!isSafeRef(ref) || !isSafeTreePath(path)) return notFoundPage(ctx);
 
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const blob = await blobForRender(dir, ref, path, 25_000_000);
+  // At a full commit id the bytes never change: a small file is kept (#9405).
+  const pinned = FULL_OID.test(ref);
+  // A held read names no `git` phase: git did not run. A read that throws
+  // still names the time it took.
+  const held = pinned ? cachedRaw(repo.id, ref, path) : undefined;
+  let blob = held;
+  if (blob === undefined) {
+    const gitAt = performance.now();
+    try {
+      blob = await blobForRender(dir, ref, path, 25_000_000);
+    } finally {
+      notePhase(ctx.request, "git", performance.now() - gitAt);
+    }
+  }
   if (blob.kind === "missing" || blob.kind === "too_large")
     return notFoundPage(ctx);
+  if (pinned && held === undefined) keepRaw(repo.id, ref, path, blob);
   return rawResponse(blob, {
     oid: blob.oid,
     immutable: FULL_OID.test(ref),
-    public: repo.visibility === "public",
+    public: mayShare(ctx.request, ctx.auth.user === undefined, repo, ref),
     request: ctx.request,
   });
 }

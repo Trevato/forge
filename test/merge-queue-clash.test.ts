@@ -128,6 +128,7 @@ describe("the merge queue remembers clashes", () => {
     const options = { depth: 2, room: () => 4 };
     const first = enqueue(repoId, [b], holding, options);
     for (let i = 0; i < 2000 && open < 1; i++) await Bun.sleep(5);
+    if (open < 1) throw new Error(`never came: still waiting while open < 1`);
     const f = entry(6, await headAdding("f", "f.txt"));
     const second = enqueue(repoId, [f], holding, options);
     for (let i = 0; i < 40; i++) await Bun.sleep(5);

@@ -1,3 +1,4 @@
+import { seatAs } from "./seat.ts";
 import { expect } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { createApp } from "../../src/app.ts";
 import { addToCrew, createAgent } from "../../src/actions/crew.ts";
 import { openIssue } from "../../src/actions/issues.ts";
 import { createRepo, updateRepoSettings } from "../../src/actions/repos.ts";
-import { setCrewRole } from "../../src/core/agents.ts";
+import {} from "../../src/core/agents.ts";
 import type { Issue } from "../../src/core/issues.ts";
 import { getRepoById } from "../../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../../src/core/runs.ts";
@@ -48,7 +49,7 @@ export async function engine(
   }
   const atlas = getUserByName(app.db, "atlas")!;
   const mason = getUserByName(app.db, "mason")!;
-  setCrewRole(app.db, repo.id, atlas.id, "planner");
+  seatAs(app.db, repo.id, atlas.id, "planner");
   const set = await updateRepoSettings(app, alice, repo, {
     autonomy: "autonomous",
     autonomyDirection: "Keep the engine small.",

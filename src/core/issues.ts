@@ -621,6 +621,24 @@ export function addComment(
   return ok(getComment(db, commentId)!);
 }
 
+/**
+ * A thank-you note (#9013) for this landing already stands on the pull: one
+ * written by the person who landed it, naming the landing commit. Keyed on
+ * its author, so a note anyone else posts cannot stand in for it.
+ */
+export function landingThanked(
+  db: Database,
+  input: { pullId: string; authorId: string; mergeOid: string },
+): boolean {
+  return (
+    db
+      .query<{ n: number }, [string, string, string]>(
+        "SELECT count(*) AS n FROM comment WHERE issue_id = ?1 AND author_id = ?2 AND body LIKE 'Thank you, %' AND instr(body, ?3) > 0",
+      )
+      .get(input.pullId, input.authorId, input.mergeOid.slice(0, 12))!.n > 0
+  );
+}
+
 function getComment(db: Database, commentId: string): Comment | undefined {
   const row = db
     .query<

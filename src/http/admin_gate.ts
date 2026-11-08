@@ -19,6 +19,8 @@ const under = (path: string, root: string): boolean => path === root || path.sta
 
 /** Whether this path is one the `administer` ability guards. */
 export function isAdminPath(path: string): boolean {
+  // `/admin/flows` answers anyone but a site admin with the not-found page (#9594), so it keeps its own refusal.
+  if (path === "/admin/flows") return false;
   return under(path, "/admin") || under(path, "/api/v1/admin") || under(path, "/releases");
 }
 

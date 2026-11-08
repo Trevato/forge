@@ -3,6 +3,7 @@
  * `Re-planned <time ago>` and one line per split, as the milestones page does,
  * and Enter on a split line opens the new issue. Owner facts only.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +14,7 @@ import { linkIssue } from "../src/actions/dependencies.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { replanLimb } from "../src/actions/limb_replan.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -90,7 +91,7 @@ describe("the limbs screen after a re-plan", () => {
     if (!agent.ok) throw new Error(String(agent.error));
     expect(addToCrew(app, alice, repo, "atlas").ok).toBe(true);
     atlas = getUserByName(app.db, "atlas")!;
-    setCrewRole(app.db, repo.id, atlas.id, "planner");
+    seatAs(app.db, repo.id, atlas.id, "planner");
     const set = await updateRepoSettings(app, alice, repo, {
       autonomy: "autonomous",
       autonomyDirection: "Keep the engine small.",

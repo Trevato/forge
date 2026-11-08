@@ -8,6 +8,7 @@
  * functions the card and MCP `release_hold` call.
  */
 
+import { stallWords } from "../../perf/boot_stall.ts";
 import { blocking, holdAs, liftAs, standingHolds } from "../../keeper/hold.ts";
 import { secondsWords, withLandedToLive, type LandedRelease } from "../../keeper/landed.ts";
 import { listKeeperReleases, type Stage } from "../../keeper/record.ts";
@@ -41,7 +42,7 @@ export function readKeeper(f: Session): KeeperRead | undefined {
 }
 
 export function keeperRows(releases: readonly LandedRelease[]): ListRow[] {
-  return releases.map((r) => ({
+  return releases.map((r, i) => ({
     title: r.version,
     tone: STAGE[r.stage].tone,
     meta: metaOf(
@@ -53,6 +54,7 @@ export function keeperRows(releases: readonly LandedRelease[]): ListRow[] {
       `roll ${r.rollNon200}/${r.rollProbes} non-200`,
       `${r.probes} probes, ${r.pages} pages`,
       `worst ${r.worstMs} ms`,
+      r.worstStallMs === 0 ? "" : `boot stall ${stallWords(r.worstStallMs, releases[i + 1]?.worstStallMs)}`,
       `${r.secondsDark} s dark`,
     ),
   }));

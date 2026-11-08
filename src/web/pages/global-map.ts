@@ -208,15 +208,23 @@ export function globalLanes(
 
 /** A lane: one folding list row — the caret, the repository's name and its
  * autonomy mode, who is on it, its counts — over its map. */
-export function laneHtml(lane: Lane, width: number): Html {
+export function laneHtml(lane: Lane, width: number, drawn = false): Html {
   const { repo } = lane;
+  const name = `${repo.ownerName}/${repo.name}`;
   return row({
     lead: icon("chevronRight"),
     title: html`<a href="${repoBase(repo)}/map"
         ><span class="muted">${repo.ownerName}/</span>${repo.name}</a
       >
       ${badge(repo.autonomy, { variant: "outline" })}`,
-    meta: countsLine(lane.counts),
+    // The way to the drawing is in the row itself, so a folded lane is one
+    // tap from its graph; a drawn lane says so and offers the way back.
+    meta: html`${countsLine(lane.counts)} ·
+      ${drawn
+        ? html`<a href="/map#lane-${repo.ownerName}-${repo.name}">Show fewer</a>`
+        : html`<a href="/map?lane=${name}#lane-${repo.ownerName}-${repo.name}"
+            >Draw ${lane.graph.issues.length} issues</a
+          >`}`,
     trail:
       lane.workers.length === 0
         ? html``
@@ -233,8 +241,16 @@ export function laneHtml(lane: Lane, width: number): Html {
       : { autonomy: repo.autonomy },
     fold: {
       id: `lane-${repo.ownerName}-${repo.name}`,
-      open: !lane.idle,
-      body: drawMap(
+      open: drawn || !lane.idle,
+      // The drawing is the heavy part (megabytes across every lane): the
+      // first screen carries the headers and the next things, and a lane's
+      // graph comes when asked for, at `?lane=owner/name`.
+      body: !drawn
+        ? html`<p class="muted small">
+            Drawn on request: <a href="/map?lane=${name}#lane-${repo.ownerName}-${repo.name}">draw it here</a>
+            or <a href="${repoBase(repo)}/map">open its own map</a>.
+          </p>`
+        : drawMap(
         repo,
         lane.graph,
         lane.placed,
@@ -247,6 +263,37 @@ export function laneHtml(lane: Lane, width: number): Html {
       ),
     },
   });
+}
+
+/** `owner/name` as the `?lane=` of `/map` names it, or undefined: capped, and
+ * made of the characters a repository path is made of, nothing else. */
+export function parseLane(raw: string | null): string | undefined {
+  if (raw === null || raw.length > 200) return undefined;
+  return /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/.test(raw) ? raw : undefined;
+}
+
+/** How many next things the first screen names. */
+export const NEXT_COUNT = 5;
+
+/** The next things across the lanes, the crew's lanes first (lane order). */
+export function nextThings(lanes: readonly Lane[], n = NEXT_COUNT): Html {
+  const picked = lanes
+    .flatMap((lane) => lane.ready.map((r) => ({ lane, r })))
+    .slice(0, n);
+  if (picked.length === 0) return html``;
+  return html`<h2>Next</h2>
+    ${listCard(
+      picked.map(({ lane, r }) =>
+        row({
+          href: `${repoBase(lane.repo)}/issues/${r.issue.number}`,
+          title: r.issue.title,
+          meta: html`${lane.repo.ownerName}/${lane.repo.name} #${r.issue.number}
+            · ${lane.counts.ready} ready there${lane.inFlight > 0
+              ? html` · crew working`
+              : null}`,
+        }),
+      ),
+    )}`;
 }
 
 /** GET /map — every app the viewer can see, one lane each. */
@@ -263,16 +310,26 @@ export function globalMapPage(ctx: Ctx): Response {
   notePhase(request, "layout", spent.layoutMs);
   const renderStart = performance.now();
   const width = Math.max(0, ...lanes.map((l) => drawingWidth(l.placed)));
+  const want = parseLane(ctx.url.searchParams.get("lane"));
   const body = html`${pageHead("Map", {
       sub: "Every app you can see, laid out by what waits for what. The top edge of each lane is ready now; a ringed card is where the crew is.",
     })}
+    ${nextThings(lanes)}
     <div id="lanes" data-live="${LIVE_KINDS}">
       ${lanes.length === 0
         ? html`<p class="muted">
             Nothing to map: no open issues anywhere you can see, and nobody
             working.
           </p>`
-        : listCard(lanes.map((lane) => laneHtml(lane, width)))}
+        : listCard(
+            lanes.map((lane) =>
+              laneHtml(
+                lane,
+                width,
+                want === `${lane.repo.ownerName}/${lane.repo.name}`,
+              ),
+            ),
+          )}
     </div>`;
   const response = page({
     ctx,

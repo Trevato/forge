@@ -75,3 +75,11 @@ test("the fork's danger zone sends Detach from parent through the confirm page",
   expect(body).toContain("There is no undo.");
   expect(body).toContain(`action="${to}"`);
 });
+
+test("the confirm page is a heading, a sentence and a form, not a box (#9860)", async () => {
+  const to = `/${fork.ownerName}/${fork.name}/settings/detach`;
+  const body = await (await fetch(`${servers.url}/-/confirm?to=${encodeURIComponent(to)}`, { headers: { cookie } })).text();
+  expect(body.match(/<h1[\s>]/g)?.length).toBe(1);
+  expect(body).not.toContain('class="card');
+  expect(body).toMatch(new RegExp(`<form method="post" action="${to}"`));
+});

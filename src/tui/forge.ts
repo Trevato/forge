@@ -14,6 +14,7 @@ import { cleanQuery } from "../core/search.ts";
 import { guestCodeSearch } from "../http/strangers.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { sourceFor } from "../view/source.ts";
+import { packsCommand } from "./screens/packs.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
 import type { Command, PaletteItem, PaletteSearch } from "./app/palette.ts";
 import { G } from "./term/screen.ts";
@@ -33,6 +34,7 @@ import {
 import { chainScreen } from "./screens/chain.ts";
 import { canSeeMemory } from "../boards/memory.ts";
 import { askedScreen } from "./screens/asked.ts";
+import { notesScreen } from "./screens/thoughtnotes.ts";
 import { deciderScreen } from "./screens/decider.ts";
 import { familyScreen } from "./screens/family.ts";
 import { familyLines, familyView } from "../spawn/family.ts";
@@ -49,9 +51,11 @@ import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { modelScreen } from "./screens/model.ts";
 import { notifyScreen } from "./screens/notify.ts";
+import { talkChatsScreen } from "./screens/talk_chats.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { passkeysScreen } from "./screens/passkeys.ts";
 import { confirmsScreen } from "./screens/confirms.ts";
+import { mayTrust, trustedScreen } from "./screens/trusted.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { signInsScreen } from "./screens/signins.ts";
 import { originAppsScreen } from "./screens/originapps.ts";
@@ -72,13 +76,20 @@ import { keeperScreen } from "./screens/keeper.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
 import { fileHoldsPrompt } from "./screens/fileholds.ts";
+import { heldScreen } from "./screens/held.ts";
 import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
+import { nextScreen } from "./screens/next.ts";
+import { findingsScreen } from "./screens/findings.ts";
+import { flowsScreen } from "./screens/flows.ts";
+import { weekScreen } from "./screens/week.ts";
+import { machinesScreen } from "./screens/machines.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newForgeScreen } from "./screens/newforge.ts";
 import { newOrgScreen } from "./screens/neworg.ts";
 import { migrateScreen } from "./screens/migrate.ts";
+import { bringScreen } from "./screens/bring.ts";
 import { newAppScreen } from "./screens/newapp.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
@@ -109,6 +120,12 @@ const REPO_VERBS: readonly {
     open: (f, ctx, repo) => issuesScreen(f, ctx, local(f, repo), "issue"),
   },
   {
+    // What the Later gate holds, as /held shows it: reading is the repository's own.
+    id: "held",
+    title: "Held by the Later gate",
+    open: (f, ctx, repo) => heldScreen(f, ctx, repo),
+  },
+  {
     id: "pulls",
     title: "Pull requests in a repository",
     open: (f, ctx, repo) => issuesScreen(f, ctx, local(f, repo), "pull"),
@@ -117,6 +134,36 @@ const REPO_VERBS: readonly {
     id: "milestones",
     title: "Milestones in a repository",
     open: (f, ctx, repo) => limbsScreen(f, ctx, repo),
+  },
+  {
+    // The owner's one ranked list the crew builds from (#8694).
+    id: "next-up",
+    title: "Next up in a repository",
+    open: (f, ctx, repo) => nextScreen(f, ctx, repo),
+  },
+  {
+    // The retrospective the forge wrote at the last weekly reset, and its proposals (#8704).
+    id: "week",
+    title: "The week in a repository",
+    open: (f, ctx, repo) => weekScreen(f, ctx, repo),
+  },
+  {
+    // What flows in and out of a repository, and the radar's key for its admin (#9434).
+    id: "flows",
+    title: "Flows of a repository",
+    open: (f, ctx, repo) => flowsScreen(f, ctx, repo),
+  },
+  {
+    // What code scanning found, and acceptance with a reason for a writer (#9593).
+    id: "findings",
+    title: "Findings in a repository",
+    open: (f, ctx, repo) => findingsScreen(f, ctx, repo),
+  },
+  {
+    // Settings → Machines' other door: the machines and last shell sessions, writers only (#9471).
+    id: "machines",
+    title: "Machines of a repository",
+    open: (f, ctx, repo) => machinesScreen(f, ctx, repo),
   },
   {
     // What the crew's tokens bought on one app, as MCP `returns` with `repo` (#7271).
@@ -159,6 +206,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "on the web",
         run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
       },
+      packsCommand(session, ctx),
       {
         // A person's or an org's page is the web's (#636): the terminal
         // hands over its address.
@@ -223,6 +271,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "say what it does in a sentence; the crew starts on it",
         run: () => ctx.push(newAppScreen(session, ctx, blank("New app"))),
       });
+    // An app from another forge, as /bring does: a person's, never an agent's.
+    if (session.user !== undefined && session.user.kind !== "agent")
+      commands.push({
+        id: "bring-app",
+        title: "Bring an app",
+        hint: "paste a link from another forge; it runs here",
+        run: () => ctx.push(bringScreen(session, ctx, blank("Bring an app"))),
+      });
     // An organization you own, as /organizations/new and MCP `org_create` make it: a person's, never an agent's (#7260).
     if (session.user !== undefined && session.user.kind !== "agent")
       commands.push({
@@ -254,6 +310,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "your thoughts and what became of them",
         run: () => ctx.push(askedScreen(session, ctx)),
       });
+    // One box to write an idea in, each note with its live state; /notes' own door (#8696).
+    if (session.signedIn)
+      commands.push({
+        id: "thought-notes",
+        title: "Notes",
+        hint: "write an idea and watch it become shipped work",
+        run: () => ctx.push(notesScreen(session, ctx)),
+      });
     if (session.signedIn)
       commands.push({
         id: "decider",
@@ -276,6 +340,22 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Confirms",
         hint: "what the forge's agent asked to do; y does it once",
         run: () => ctx.push(confirmsScreen(session, ctx)),
+      });
+    // Who folds in without a person's review, and the kill switch (#8937): a forge admin's.
+    if (session.signedIn && mayTrust(session))
+      commands.push({
+        id: "trusted",
+        title: "Trusted sources",
+        hint: "who folds in without review; a trusts, x removes, s stops all, v reverts",
+        run: () => ctx.push(trustedScreen(session, ctx)),
+      });
+    // The forge's agent keeps many conversations, as /talk lists them (#8814).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "conversations",
+        title: "Conversations",
+        hint: "your talks with the forge's agent; n starts one, r renames, x archives",
+        run: () => ctx.push(talkChatsScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push({

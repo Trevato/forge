@@ -8,6 +8,8 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { guardedRefusal } from "../crew/stranger.ts";
+import { MAX_PASS, passOf } from "../actions/box_pass.ts";
 import { homeTruth } from "../system/home_truth.ts";
 import { upstreamFacts } from "../actions/upstream_follow.ts";
 import { FAMILY_WORDS } from "../actions/family_words.ts";
@@ -54,13 +56,18 @@ import { isProbe } from "../kernel/probe.ts";
 import { PRIVATE_ADDRESS_REFUSED } from "../kernel/address_words.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
+import { HOOK_BODY_MAX, receiveOriginHook, signatureOf } from "../origins/hook.ts";
+import { receiveMirrorHook } from "../origins/mirror-pulls.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { takeOrTell } from "../actions/follow.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
-import { flowFor, historyFor, sourcesOut, systemFor, welcome } from "../system/telemetry.ts";
+import { flowCopy, flowEtag, flowMaxAge } from "../system/flow_cache.ts";
+import { countRead } from "../system/telemetry_reads.ts";
+import { historyFor, sourcesOut, systemWithReaders, welcome } from "../system/telemetry.ts";
 import { markReaders } from "../crew/direct.ts";
 import {
   addCommentThrough,
+  PLANNER_REFUSALS,
   setIssueStateThrough,
 } from "../actions/issues.ts";
 import {
@@ -90,6 +97,7 @@ import {
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { landSlice } from "../actions/pull_slices.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
 import { pullLooks } from "../looks/readable.ts";
@@ -97,8 +105,10 @@ import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import { THOUGHT_MAX, keepThought } from "../actions/thought.ts";
-import { search, searchWithin, type SearchPhase } from "../actions/search.ts";
+import { search, searchRefusal, searchWithin, type SearchPhase } from "../actions/search.ts";
 import { runRepos } from "./run_gate.ts";
+import { writeStamp } from "../core/write_clock.ts";
+import { listChildren } from "../actions/spawn.ts";
 import {
   commitToBranch,
   createRepo,
@@ -151,6 +161,7 @@ import {
   getRepo,
   listReposByOwner,
   listReposVisibleTo,
+  visibleReposMarker,
   type Repo,
   type RepoCounts,
   canWrite,
@@ -212,7 +223,8 @@ import {
   removeFromCrew,
 } from "../actions/crew.ts";
 import { assignIssue, editIssue, TAKEN_UP } from "../actions/issues.ts";
-import { steerRepoRun } from "../actions/runs.ts";
+import { requireReader } from "../actions/access.ts";
+import { looksOfCheck, mayReadRuns, runsViewKey, steerRepoRun } from "../actions/runs.ts";
 import { openPlan, parsePlan, proposePlan } from "../actions/plan.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { mapHeldFor } from "../crew/held.ts";
@@ -229,6 +241,7 @@ import { forReader } from "../crew/handover.ts";
 import { globalMapJson } from "../web/pages/global-map.ts";
 import { mapJson, marksFor, withoutDone } from "../web/pages/map.ts";
 import { cachedMap } from "../web/map_snapshot.ts";
+import { scopeKey } from "../web/map_cache.ts";
 import {
   milestoneData,
   milestonesJson,
@@ -253,6 +266,8 @@ import {
   isTerminal,
   latestRunsForIssues,
   listActiveRuns,
+  RUN_STATES,
+  type ListRunsOptions,
   type Run,
 } from "../core/runs.ts";
 import { checkStale } from "../checks/stale.ts";
@@ -266,6 +281,7 @@ import { recentGates } from "../checks/gate_result.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree, refTip } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+import { holds, weakEtag } from "./etag.ts";
 import { carriedPulls, pullPath } from "../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves } from "../story/waves.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
@@ -308,9 +324,11 @@ import {
 } from "./respond.ts";
 import {
   explorePage,
+  cursorFits,
   type ExploreRow,
   exploreLine,
   exploreNote,
+  exploreSuggestion,
   readExploreLine,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
@@ -318,21 +336,30 @@ import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { passportRoutes } from "./passport_edge.ts";
 import { egressGrantRoutes } from "./api/egress_grants.ts";
 import { forgeRoutes } from "./api/forges.ts";
+import { forgeViewRoutes } from "./api/forge_view.ts";
 import { releasesRoutes } from "./api/releases.ts";
 import { hookRoutes } from "./api/hooks.ts";
 import { keeperRoutes } from "./api/keeper.ts";
 import { agentRoutes } from "./api/agents.ts";
 import { subscriptionRoutes } from "./api/subscriptions.ts";
 import { boardRoutes } from "./api/boards.ts";
+import { displayRoutes } from "./api/displays.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { visionRoutes } from "./api/vision.ts";
 import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
+import { maintenanceRoutes } from "./api/maintenance.ts";
 import { flagsRoutes } from "./api/flags.ts";
 import { issueRoutes, labelsHandler } from "./api/issues.ts";
+import { FORGE_NOT_CARRIED } from "../origins/words.ts";
+import { forgeOriginRoutes } from "./api/forge_origin.ts";
 import { userRoutes } from "./api/user.ts";
 import { appRoutes } from "./api/app.ts";
+import { buildRoutes } from "./api/builds.ts";
+import { buildShotRoutes } from "./api/build_shots.ts";
+import { buildCartRoutes } from "./api/build_cart.ts";
+import { iterationRoutes } from "./api/iterations.ts";
 import { appNoteRoutes } from "./api/app_notes.ts";
 import { reportRoutes } from "./api/reports.ts";
 import { rollbackRoutes } from "./api/rollback.ts";
@@ -344,6 +371,7 @@ import { promptRoutes } from "./api/prompts.ts";
 import { cloudRoutes } from "./api/cloud.ts";
 import { secretRoutes } from "./api/secrets.ts";
 import { drillRoutes } from "./api/drills.ts";
+import { featureRoutes } from "./api/features.ts";
 import { upstreamRoutes } from "./api/upstream.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
@@ -536,6 +564,9 @@ export function originJson(origin: Origin) {
     lastError: origin.lastError,
     needsReauth: origin.needsReauth,
     expiresAt: origin.expiresAt,
+    software: origin.software,
+    // What a forge origin does not bring, said where a client reads the origin.
+    carries: origin.software === "forge" ? FORGE_NOT_CARRIED : null,
   };
 }
 
@@ -601,6 +632,14 @@ export function originAware(error: string, status = 422): Response {
       422,
       "a reason is done, dropped, or split (with `into`: the issues it became); only an issue closing takes one",
     );
+  if (error === "invalid_note")
+    return apiError("invalid_note", 422, "`note` is one sentence of text, at most 300 characters");
+  if (error === "reason_required")
+    return apiError(
+      "reason_required",
+      422,
+      "a bug closed without a fix says why: send `note` (one sentence, at most 300 characters)",
+    );
   if (error === "mirrored")
     return apiError(
       "mirrored",
@@ -624,6 +663,18 @@ export function originAware(error: string, status = 422): Response {
       "origin_refused",
       409,
       "the origin refused this change; nothing was changed here either",
+    );
+  if (error === "origin_protected")
+    return apiError(
+      "origin_protected",
+      409,
+      "the operator protects this repository at its origin: nothing is pushed to it from here; propose the change from your fork",
+    );
+  if (error === "origin_paused")
+    return apiError(
+      "origin_paused",
+      409,
+      "this connection is not verified against the operator's rules yet, so writes through it are paused; nothing was changed",
     );
   return respondAccess(error, status);
 }
@@ -679,7 +730,7 @@ function editFailure(error: { kind: string } & Record<string, unknown>) {
   const status =
     kind === "branch_moved"
       ? 409
-      : kind === "file_too_large" || kind === "commit_too_large"
+      : kind === "file_too_large" || kind === "commit_too_large" || kind === "storage_limit"
         ? 413
         : kind === "protected_branch"
           ? 403
@@ -774,6 +825,15 @@ export function contributionJson(ctx: Ctx, result: ContributeResult) {
  * ordinary access and origin codes every other route already speaks.
  */
 export function contributeFailure(error: unknown): Response {
+  // Only a refusal that left nothing behind. A pull refused after its commit
+  // landed is `pull_failed` below, which carries that commit.
+  const landed = typeof error === "object" && error !== null && (error as { kind?: unknown }).kind === "pull_failed";
+  if (!landed && (String(error) === "origin_refused" || JSON.stringify(error).includes("origin_refused")))
+    return apiError(
+      "origin_refused",
+      403,
+      "the origin refused: this connection cannot write there, and a fork there takes a token that can write (rw). Nothing was changed. Connect again with one, or ask its owner.",
+    );
   if (typeof error === "object" && error !== null && "kind" in error) {
     const detail = error as {
       kind: string;
@@ -839,17 +899,18 @@ export function listQuery(ctx: Ctx) {
   const limit = readLimit(ctx, undefined);
   if (limit instanceof Response) return limit;
   const stateParam = q.get("state");
-  const state: IssueState | "all" =
-    stateParam === "closed" || stateParam === "all" ? stateParam : "open";
-  const cursorParam = Number(q.get("cursor"));
+  if (stateParam !== null && stateParam !== "open" && stateParam !== "closed" && stateParam !== "all")
+    return apiError("invalid_state", 422, "state is open, closed or all");
+  const state: IssueState | "all" = stateParam ?? "open";
+  const rawCursor = q.get("cursor");
+  if (rawCursor !== null && !/^[1-9]\d{0,15}$/.test(rawCursor))
+    return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
   const label = q.get("label");
   const author = q.get("author");
   return {
     state,
     limit: pageLimit(limit),
-    ...(Number.isInteger(cursorParam) && cursorParam > 0
-      ? { cursor: cursorParam }
-      : {}),
+    ...(rawCursor !== null ? { cursor: Number(rawCursor) } : {}),
     ...(label ? { label } : {}),
     ...(author ? { author } : {}),
   };
@@ -898,22 +959,31 @@ export function pageParams(
 }
 
 /**
- * One page of `rows` (already in order) after the row whose id is the cursor,
- * as a response. A cursor no row answers to (deleted between two requests, or
- * invented) is a 422 `invalid_cursor`, as for branches: an empty last page
- * would tell the client it had seen everything.
+ * One page of `rows` (already in order) after the row whose id is the cursor:
+ * `{ items, next_cursor }`. A cursor no row answers to (deleted between two
+ * requests, or invented) is a 422 `invalid_cursor`, as for branches: an empty
+ * last page would tell the client it had seen everything.
  */
-export function pageOf<T extends { id: string }>(
+export function slicePage<T extends { id: string }>(
   rows: T[],
   page: { limit: number; cursor: string | null },
-): Response {
+): { items: T[]; next_cursor: string | null } | Response {
   const at = page.cursor === null ? -1 : rows.findIndex((r) => r.id === page.cursor);
   if (page.cursor !== null && at === -1)
     return apiError("invalid_cursor", 422, "that cursor names a row that is gone: start over");
   const start = at + 1;
   const items = rows.slice(start, start + page.limit);
   const more = start + page.limit < rows.length;
-  return json({ items, next_cursor: more ? items[items.length - 1]!.id : null });
+  return { items, next_cursor: more ? items[items.length - 1]!.id : null };
+}
+
+/** `slicePage` as a response. */
+export function pageOf<T extends { id: string }>(
+  rows: T[],
+  page: { limit: number; cursor: string | null },
+): Response {
+  const sliced = slicePage(rows, page);
+  return sliced instanceof Response ? sliced : json(sliced);
 }
 
 /** The page of `rows` (sorted by name) after the cursor: `{ items, next_cursor }`. */
@@ -935,11 +1005,13 @@ export function keyedPage<T>(
 function repoQuery(ctx: Ctx) {
   const q = ctx.url.searchParams;
   const cursor = q.get("cursor");
+  if (cursor !== null && !/^[A-Za-z0-9_-]{1,64}$/.test(cursor))
+    return apiError("invalid_cursor", 422, "cursor is the next_cursor of a previous page");
   const limit = readLimit(ctx, undefined);
   if (limit instanceof Response) return limit;
   return {
     limit: pageLimit(limit),
-    ...(cursor ? { cursor } : {}),
+    ...(cursor !== null ? { cursor } : {}),
   };
 }
 
@@ -974,6 +1046,7 @@ export function agentJson(agent: Agent) {
     model: agent.model,
     brief: agent.brief,
     budgetUsd: agent.budgetUsd,
+    roles: agent.roles,
     createdAt: agent.createdAt,
   };
 }
@@ -1132,24 +1205,35 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
     if (query instanceof Response) return query;
+    const owned = { ...query, owner: user.username };
+    const marker = timePhase(ctx.request, "tag", () => visibleReposMarker(ctx.app.db, ctx.auth.user, owned));
+    const viewer = ctx.auth.user === undefined ? "anon" : `u${Bun.hash(ctx.auth.user.id).toString(36)}`;
+    const headers = {
+      etag: `W/"user-repos-${Bun.hash(`${user.id}|${viewer}|${query.limit}|${query.cursor ?? ""}|${marker}`).toString(36)}"`,
+      "cache-control": "private, no-cache",
+      vary: "authorization, cookie",
+    };
+    if (holds(ctx.request, headers.etag)) return new Response(null, { status: 304, headers });
     const items = timePhase(ctx.request, "repos", () =>
       listReposByOwner(ctx.app.db, user.username, ctx.auth.user, query),
     );
     return timePhase(ctx.request, "render", () =>
-      json(paged(items, query.limit, (r) => r.id)),
+      json(paged(items, query.limit, (r) => r.id), 200, headers),
     );
   });
 
   tokenRoutes(router);
 
   userRoutes(router);
+  forgeOriginRoutes(router);
   adminRoutes(router);
+  maintenanceRoutes(router);
   flagsRoutes(router);
 
   // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.
   // Anyone else is refused; every agent read is logged.
   const telemetryRead =
-    (what: string, out: (ctx: Ctx, reader: Reader) => unknown) =>
+    (what: string, out: (ctx: Ctx, reader: Reader) => unknown | (() => Response)) =>
     (ctx: Ctx): Response => {
       notePhase(ctx.request, "session", takeSessionTime(ctx.request));
       if (!ctx.auth.user) return unauthorized();
@@ -1158,11 +1242,28 @@ export function apiRoutes(router: Router<Handler>): void {
       const reader = telemetryReader(ctx.app, ctx.auth.user);
       if (!reader) return forbidden();
       noteRead(ctx.app, ctx.auth.user, reader, what);
+      // Counted after the body, so a body that lists the readers does not count this read.
       const body = timePhase(ctx.request, "read", () => out(ctx, reader));
+      countRead(what, ctx.auth.user.username);
+      // A read may hand back a responder (headers, a 304); it runs in the render phase.
+      if (typeof body === "function") return timePhase(ctx.request, "render", body as () => Response);
       return timePhase(ctx.request, "render", () => json(body));
     };
-  router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));
-  router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, r) => flowFor(c.app, r)));
+  router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemWithReaders(c.app, r)));
+  // The flow read tells a poller how fresh it is: the etag is the reader kind and
+  // the copy's computed-at time, so a repeat inside the TTL is a 304 (#9068).
+  router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, reader) => {
+    const copy = flowCopy(c.app, reader);
+    const etag = flowEtag(reader, copy.at);
+    const headers = {
+      "cache-control": `private, max-age=${flowMaxAge(copy.at)}`,
+      vary: "authorization, cookie",
+      etag,
+    };
+    const sent = (c.request.headers.get("if-none-match") ?? "").split(",").map((t) => t.trim().replace(/^W\//, ""));
+    return () =>
+      sent.includes(etag) || sent.includes("*") ? new Response(null, { status: 304, headers }) : json(copy.body, 200, headers);
+  }));
   router.add("GET", "/api/v1/telemetry/home", telemetryRead("home", (c) => homeTruth(c.app, c.auth.user!)));
   router.add("GET", "/api/v1/telemetry/sources", telemetryRead("sources", () => ({ sources: sourcesOut() })));
   router.add("GET", "/api/v1/telemetry/history", telemetryRead("history", (c) => ({ points: historyFor(c.app) })));
@@ -1174,6 +1275,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   boardRoutes(router);
+  displayRoutes(router);
 
   // A domain drill and its verdict (`kernel/domain_drill.ts`): an admin
   // person's, kept whether green or red.
@@ -1383,6 +1485,8 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/search", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const q = ctx.url.searchParams;
+    const refusal = searchRefusal(q.get("kind"), q.get("limit"));
+    if (refusal) return apiError(refusal.code, 422, refusal.message);
     const kind = searchKind(q.get("kind"));
     const query = q.get("q") ?? "";
     const greps =
@@ -1411,7 +1515,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = await (mine === undefined
         ? search(ctx.app, ctx.auth.user, timed)
         : searchWithin(ctx.app, ctx.auth.user, mine, timed));
-      const note = searchNote(q.get("q"), q.get("kind"));
+      const note = searchNote(q.get("q"));
       return timePhase(ctx.request, "render", () => json(note === undefined ? found : { ...found, note }));
     } finally {
       held?.release();
@@ -1424,8 +1528,18 @@ export function apiRoutes(router: Router<Handler>): void {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     const query = repoQuery(ctx);
     if (query instanceof Response) return query;
+    // A poller holding the tag gets 304 after the marker alone: the rows are
+    // not built, counted or serialised (#9115).
+    const marker = timePhase(ctx.request, "tag", () => visibleReposMarker(ctx.app.db, ctx.auth.user, query));
+    const viewer = ctx.auth.user === undefined ? "anon" : `u${Bun.hash(ctx.auth.user.id).toString(36)}`;
+    const headers = {
+      etag: `W/"repos-${Bun.hash(`${viewer}|${query.limit}|${query.cursor ?? ""}|${marker}`).toString(36)}"`,
+      "cache-control": "private, no-cache",
+      vary: "authorization, cookie",
+    };
+    if (holds(ctx.request, headers.etag)) return new Response(null, { status: 304, headers });
     const items = timePhase(ctx.request, "repos", () => listReposVisibleTo(ctx.app.db, ctx.auth.user, query));
-    return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id)));
+    return timePhase(ctx.request, "render", () => json(paged(items, query.limit, (r) => r.id), 200, headers));
   });
 
   router.add("POST", "/api/v1/repos", async (ctx) => {
@@ -1552,6 +1666,8 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const deleted = await deleteRepo(ctx.app, ctx.auth.user, repo);
+    if (!deleted.ok && deleted.error === "has_pulls")
+      return apiError("has_pulls", 409, "a pull request was sent from this repository, and that pull request needs it");
     if (!deleted.ok) return respondAccess(deleted.error, 500);
     return json({}, 200);
   });
@@ -1605,13 +1721,22 @@ export function apiRoutes(router: Router<Handler>): void {
       // The cursor is the name of the last branch of the page before.
       const start = cursor === null ? 0 : all.findIndex((r) => r.name === cursor) + 1;
       if (start === 0 && cursor !== null) return undefined;
+      // Ahead/behind rests on the default's tip, so the tag covers every ref.
+      const etag = weakEtag(
+        [limit, cursor ?? "", repo.defaultBranch, repo.protectDefault, ...all.map((r) => `${r.name}\0${r.oid}`)].join("\n"),
+      );
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return { notModified: new Response(null, { status: 304, headers }) };
       const slice = all.slice(start, start + limit);
-      const compared = await compareBranches(dir, repo.defaultBranch, slice, all.length);
-      return { branches: compared.branches, more: start + limit < all.length };
+      return { slice, total: all.length, more: start + limit < all.length, headers };
     });
     if (page === undefined)
       return apiError("invalid_cursor", 422, "cursor is the next_cursor of a page before");
-    const items = page.branches.map((b) => ({
+    if ("notModified" in page) return page.notModified;
+    const compared = await timePhaseAsync(ctx.request, "compare", () =>
+      compareBranches(dir, repo.defaultBranch, page.slice, page.total),
+    );
+    const items = compared.branches.map((b) => ({
       name: b.name,
       oid: b.oid,
       isDefault: b.isDefault,
@@ -1621,7 +1746,7 @@ export function apiRoutes(router: Router<Handler>): void {
     }));
     const more = page.more;
     return timePhase(ctx.request, "render", () =>
-      json({ items, next_cursor: more ? items[items.length - 1]!.name : null }),
+      json({ items, next_cursor: more ? items[items.length - 1]!.name : null }, 200, page.headers),
     );
   });
 
@@ -1692,7 +1817,12 @@ export function apiRoutes(router: Router<Handler>): void {
       const from = at + 1;
       const items = all.slice(from, from + limit);
       const more = from + limit < all.length;
-      return json({ items, next_cursor: more ? items[items.length - 1]!.name : null });
+      // The tag is of the exact bytes sent: a pushed, moved or deleted tag changes them, and so does the page.
+      const text = JSON.stringify({ items, next_cursor: more ? items[items.length - 1]!.name : null });
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
     });
   });
 
@@ -1709,7 +1839,15 @@ export function apiRoutes(router: Router<Handler>): void {
     const log = await timePhaseAsync(ctx.request, "git", () =>
       commitLog(dirOf(ctx, repo), ref, { limit }),
     );
-    return timePhase(ctx.request, "render", () => json(log.ok ? log.value : []));
+    // The tag is of the exact bytes sent plus the ref and limit asked, so a moved tip
+    // misses, a push to another branch does not, and two queries never share a tag.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify(log.ok ? log.value : []);
+      const etag = weakEtag(`${ref}\n${limit}\n${text}`);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid", async (ctx) => {
@@ -1744,7 +1882,17 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!found.ok) return notFound();
     return timePhase(ctx.request, "render", () =>
-      json(found.value, 200, { "cache-control": "no-store" }),
+      json(
+        {
+          ...found.value,
+          looks: looksOfCheck(ctx.app, ctx.auth.user, repo, {
+            id: found.value.runId ?? "",
+            commitOid: found.value.checkedCommit,
+          }),
+        },
+        200,
+        { "cache-control": "no-store" },
+      ),
     );
   });
 
@@ -2179,7 +2327,16 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!built)
       for (const name of ["graph", "marks", "pillars", "asktolive", "held", "render"])
         notePhase(request, name, 0, hit);
-    return json(ctx.url.searchParams.get("done") === "1" ? value : withoutDone(value));
+    // Tagged by the facts served (never an age that ticks) and the reader's sealed
+    // scope, so two scopes never share a tag; access was checked by loadRepo.
+    const text = JSON.stringify(ctx.url.searchParams.get("done") === "1" ? value : withoutDone(value));
+    const etag = weakEtag(`${scopeKey(scope)}\n${text}`);
+    const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+    if (holds(request, etag)) {
+      notePhase(request, "not-modified", 0, true);
+      return new Response(null, { status: 304, headers });
+    }
+    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
   });
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).
@@ -2300,9 +2457,15 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(states[i] ?? {}),
       }));
     });
-    return timePhase(ctx.request, "render", () =>
-      json(paged(items, query.limit, (p) => p.number)),
-    );
+    // The tag is of the exact bytes sent, so a new verdict, head or state is never hidden behind a 304;
+    // the page, state, limit, cursor and fields are in the body or the query that chose it.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify(paged(items, query.limit, (p) => p.number));
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   // A writer hands a child its own narrow credential for this repository
@@ -2441,8 +2604,9 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     return timePhase(ctx.request, "render", () => {
       const hold = getHold(ctx.app.db, found.pull.id);
-      return json({
+      const text = JSON.stringify({
         ...withLabels(ctx, found.pull),
+        check: checkWord(checkSummary(ctx.app.db, found.pull.id, status.headOid).run ?? undefined, status.headOid),
         checkStale: checkStaleNow,
         variantSiblings: variantSiblings(ctx.app.db, [found.pull])[0] ?? [],
         ...(live ? { mergeable: status.mergeable, conflicts: status.conflicts } : {}),
@@ -2451,6 +2615,11 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(diff === undefined ? {} : { diff }),
         hold: hold === undefined ? null : holdJson(hold),
       });
+      // Tagged by the exact bytes sent, after access was checked: a new head, verdict, review or merge is never hidden behind a 304.
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
     });
   });
 
@@ -2509,7 +2678,7 @@ export function apiRoutes(router: Router<Handler>): void {
             return apiError(
               "forbidden",
               403,
-              "a planner may close only an agent's pull whose issue is closed",
+              PLANNER_REFUSALS.pull,
             );
           return originAware(changed.error, 409);
         }
@@ -2586,10 +2755,41 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!merged.ok) {
         if (typeof merged.error !== "string")
-          return json({ error: merged.error.kind }, 409);
+          return merged.error.kind === "guarded"
+            ? json({ error: "guarded", message: guardedRefusal(merged.error.paths), paths: merged.error.paths }, 409)
+            : json({ error: merged.error.kind }, 409);
         return originAware(merged.error, 409);
       }
       return json({ merged: true, ...merged.value });
+    },
+  );
+
+  // Land the author's commits up to `upTo` as their own merge commit (#9010).
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/slices",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const landed = await landSlice(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        str(input.upTo),
+      );
+      if (!landed.ok) {
+        if (typeof landed.error !== "string")
+          return json({ error: landed.error.kind }, 409);
+        if (landed.error === "bad_slice" || landed.error === "sealed" || landed.error === "not_fork")
+          return json({ error: landed.error }, 422);
+        if (landed.error === "held") return json({ error: "held" }, 409);
+        return originAware(landed.error, 409);
+      }
+      return json(landed.value);
     },
   );
 
@@ -2789,12 +2989,19 @@ export function apiRoutes(router: Router<Handler>): void {
           422,
           `comments is a list of {"path","line","side","body"}. ${ANCHOR_FORMAT}`,
         );
+      const pass = passOf(input.ticks, input.left);
+      if (pass === undefined)
+        return apiError(
+          "invalid_boxes",
+          422,
+          `ticks is a list of {"issue","box"} and left a list of {"issue","box","why"}, at most ${MAX_PASS} each; box counts the issue's unticked boxes from 1`,
+        );
       const submitted = await submitReview(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.pull,
-        { state, body: str(input.body), comments },
+        { state, body: str(input.body), comments, pass },
       );
       if (!submitted.ok) {
         if (submitted.error === "self_review")
@@ -3098,7 +3305,9 @@ export function apiRoutes(router: Router<Handler>): void {
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const { query, unknown } = readExploreLine(ctx.url.searchParams.get("q") ?? "");
+    const line = ctx.url.searchParams.get("q") ?? "";
+    const { query, unknown } = readExploreLine(line);
+    const suggest = exploreSuggestion(line);
     const mine = runRepos(ctx.app, ctx.auth);
     // A run token is shown only the rows of its own repositories; the cut
     // and the cursor are made from those rows alone.
@@ -3108,13 +3317,34 @@ export function apiRoutes(router: Router<Handler>): void {
         : (row: ExploreRow) =>
             row.repo !== undefined &&
             mine.some((r) => r.ownerName.toLowerCase() === row.repo!.owner.toLowerCase() && r.name.toLowerCase() === row.repo!.name.toLowerCase());
+    // The tag names the line, the cursor, the viewer and the forge's write clock
+    // (which moves on any like, fork, push or visibility change), and no clock
+    // for the ranking, so the tag is deterministic. Freshness ranks
+    // drift only by age, so a repeat may keep an order a little behind until
+    // the next write moves the clock. A repeat is answered before the explore
+    // phase runs, and only for a cursor that parses (`*` must not hide a 400).
+    const stamp = writeStamp(ctx.app.db);
+    let headers: Record<string, string> = {};
+    const cursor = ctx.url.searchParams.get("cursor");
+    if (cursor !== null && !cursorFits(cursor, query))
+      return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
+    if (stamp !== undefined) {
+      const viewer = ctx.auth.user === undefined ? "anonymous" : `${ctx.auth.user.id}${ctx.auth.user.isAdmin ? ":admin" : ""}`;
+      const confined = mine === undefined ? "" : mine.map((r) => r.id).join(",");
+      const children = ctx.auth.user?.isAdmin === true ? JSON.stringify((await listChildren(ctx.app)).map((c) => [c.name, c.done])) : "";
+      const etag = weakEtag(
+        [exploreLine(query), cursor ?? "", viewer, confined, stamp, children].join("\n"),
+      );
+      headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    }
     const page = await timePhaseAsync(ctx.request, "explore", () =>
-      explorePage(ctx.app, ctx.auth.user, query, ctx.url.searchParams.get("cursor"), visible),
+      explorePage(ctx.app, ctx.auth.user, query, cursor, visible),
     );
     if (page === null)
       return apiError("invalid_cursor", 400, "cursor is the next_cursor of a page before");
     const items = page.items;
-    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), items, next_cursor: page.nextCursor }));
+    return timePhase(ctx.request, "render", () => json({ query: exploreLine(query), ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }), ...(suggest === undefined ? {} : { suggest: suggest.line }), items, next_cursor: page.nextCursor }, 200, headers));
   });
 
   // Make it yours (#606): a fork with its app, planned unless dryRun is
@@ -3211,6 +3441,22 @@ export function apiRoutes(router: Router<Handler>): void {
     return kept ? json({ ok: true }) : apiError("not_found", 404, "no such door");
   });
 
+  // A mirror's origin saying a pull moved (`origins/hook.ts`). Signed; every
+  // refusal is the same 404.
+  router.add("POST", "/api/v1/repos/:owner/:name/origin-hook", async (ctx) => {
+    // Not `loadRepo`: the origin is no reader here, the signature is the proof.
+    const repo = getRepo(ctx.app.db, ctx.params.owner ?? "", ctx.params.name ?? "");
+    const bytes = await readBounded(ctx.request, HOOK_BODY_MAX);
+    if (!repo || bytes === "too_large") return notFound();
+    const raw = new TextDecoder().decode(bytes);
+    const signature = signatureOf(ctx.request.headers);
+    // The origin this repository mirrors, or the mirror it pushes to (#9011).
+    const kept =
+      (await receiveOriginHook(ctx.app, repo, raw, signature)) ||
+      (await receiveMirrorHook(ctx.app, repo, raw, signature));
+    return kept ? json({ ok: true }) : notFound();
+  });
+
   // The family (#425): the parent for anyone, the children for an admin.
   router.add("GET", "/api/v1/family", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -3223,6 +3469,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   forgeRoutes(router);
+  forgeViewRoutes(router);
   releasesRoutes(router);
 
   router.add("GET", "/api/v1/apps", (ctx) => {
@@ -3418,6 +3665,10 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   appRoutes(router);
+  buildRoutes(router);
+  buildShotRoutes(router);
+  buildCartRoutes(router);
+  iterationRoutes(router);
 
   egressGrantRoutes(router);
 
@@ -3427,6 +3678,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   secretRoutes(router);
   drillRoutes(router);
+  featureRoutes(router);
 
   // What the crew's runs here spent over a window (`core/usage.ts`):
   // tokens, cost, wall time and outcome, by subscription, agent and issue.
@@ -3559,22 +3811,46 @@ export function apiRoutes(router: Router<Handler>): void {
     const q = ctx.url.searchParams;
     const kind = q.get("kind");
     const env = q.get("env");
+    const wanted = q.get("state");
+    const state = RUN_STATES.find((s) => s === wanted);
+    if (wanted !== null && state === undefined)
+      return apiError("invalid_state", 422, `state is one of ${RUN_STATES.join(", ")}`);
     const limit = Math.min(Math.max(Number(q.get("limit")) || 50, 1), 200);
+    const options: ListRunsOptions = {
+      ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
+      ...(env !== null && isEnvName(env) ? { env } : {}),
+      ...(state === undefined ? {} : { state }),
+      ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
+      limit,
+    };
+    // The tag: repository, viewer, what shapes the page, and a marker over
+    // the page's rows (every field a row shows), so a repeat is a 304 before
+    // the list is built.
+    // Someone who may not read the repository gets the 404 of the list path,
+    // never a tag or a 304; someone who may not read its runs gets the list
+    // as it is (empty), untagged.
+    if (!requireReader(ctx.app, ctx.auth.user, repo).ok) return notFound();
+    const viewer = ctx.auth.user === undefined ? "anonymous" : ctx.auth.user.id;
+    let headers: Record<string, string> = {};
+    if (mayReadRuns(ctx.app, ctx.auth.user, repo)) {
+      const etag = timePhase(ctx.request, "tag", () =>
+        weakEtag(
+          [repo.id, viewer, JSON.stringify(options), runsViewKey(ctx.app, ctx.auth.user, repo, options)].join("\n"),
+        ),
+      );
+      headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+    }
     // Already as this reader may see them (`runForReader`): a stranger's
     // runs carry no cost, turns, agent session or node. Each row also names
     // its agent and its pull or issue (`nameRuns`), so a client never parses
     // the branch.
     const runs = timePhase(ctx.request, "runs", () => {
-      const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
-        ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
-        ...(env !== null && isEnvName(env) ? { env } : {}),
-        ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
-        limit,
-      });
+      const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, options);
       return listed.ok ? nameRuns(ctx.app, listed.value) : undefined;
     });
     if (runs === undefined) return notFound();
-    return timePhase(ctx.request, "render", () => json(paged(runs, limit, (r) => r.id)));
+    return timePhase(ctx.request, "render", () => json(paged(runs, limit, (r) => r.id), 200, headers));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
@@ -3774,6 +4050,9 @@ export function apiRoutes(router: Router<Handler>): void {
           state: latest?.state ?? "none",
           required: found.repo.requireChecks,
           run: latest ?? null,
+          looks: latest
+            ? looksOfCheck(ctx.app, ctx.auth.user, found.repo, { id: latest.id, commitOid: latest.commitOid })
+            : [],
           runs,
         }),
       );

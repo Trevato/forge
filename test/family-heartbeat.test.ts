@@ -165,8 +165,8 @@ describe("family heartbeats", () => {
     expect((await post(body, sign(key, body))).status).toBe(404);
     const html = await family(adminCookie);
     expect(html).toContain("reporting");
-    expect(html).toContain("version 0.7.114");
-    expect(html).toContain("3 open proposals");
+    expect(html).not.toContain("version 0.7.114");
+    expect(html).not.toContain("open proposals");
     expect(html).toMatch(/\d+ releases? behind/);
     const stored = await readFile(join(dir, "beats", "maria.json"), "utf8");
     expect(Object.keys(JSON.parse(stored).beat).sort()).toEqual([
@@ -309,7 +309,10 @@ describe("family heartbeats", () => {
     expect(page).toContain("you are here");
     expect(page).toContain('aria-label="Forges, by who sent whom"');
     expect(page).toContain('class="row"');
-    expect(page).toContain("version ");
+    expect(page).not.toContain("version ");
+    // Bare: no card wrapper, the tree is a bare list.
+    expect(page).not.toMatch(/class="card/);
+    expect(page).toContain('<ul class="list bare-tree"');
     // The tree stays a tree: what this forge sent is a list inside this forge's row.
     expect(page).toContain('<ul class="row-children">');
     expect(page.indexOf('aria-current="true"')).toBeLessThan(page.indexOf("row-children"));
@@ -360,21 +363,14 @@ describe("family heartbeats", () => {
     expect(await sendBeat(parent, async () => new Response("{}"))).toBe(false);
   });
 
-  test("the parent's /family says where a child's code is, and when it stopped following", async () => {
+  test("the parent's /family keeps the row to the follow line: no code tip, no severed date", async () => {
     const tip = "0123456789abcdef0123456789abcdef01234567";
-    const send = async (o: Record<string, unknown>) => {
-      const body = beat({ at: Date.now() + 1000, ...o });
-      expect((await post(body, sign(key, body))).status).toBeLessThan(300);
-    };
-    await send({ forgeTip: tip });
-    const before = (await family(adminCookie)).replace(/\s+/g, " ");
-    expect(before).toContain("code at");
-    expect(before).toContain("0123456");
-    expect(before).not.toContain("follows nothing since");
-    await send({ forgeTip: tip, severedAt: "2030-02-03T04:05:06.000Z", at: Date.now() + 2000 });
-    const after = (await family(adminCookie)).replace(/\s+/g, " ");
-    expect(after).toContain("follows nothing since 2030-02-03");
-    expect(after).not.toContain("code at");
+    const body = beat({ at: Date.now() + 1000, forgeTip: tip, severedAt: "2030-02-03T04:05:06.000Z" });
+    expect((await post(body, sign(key, body))).status).toBeLessThan(300);
+    const page = await family(adminCookie);
+    expect(page).not.toContain("code at");
+    expect(page).not.toContain("follows nothing since");
+    expect(page).not.toContain("0123456");
   });
 
   test("a beat may say how the child follows: mode, commits behind, conflict", async () => {

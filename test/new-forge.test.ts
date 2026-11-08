@@ -382,3 +382,49 @@ describe("+ New forge", () => {
     expect(childrenForMemory(GiB)).toBe(5);
   });
 });
+
+describe("/forges/new: More options (#9647)", () => {
+  let dir = "";
+  let app: App;
+  let servers: Servers;
+  let cookie = "";
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-new-forge-more-"));
+    app = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
+    const a = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "a@x.test", password: PASSWORD, isAdmin: true });
+    if (!a.ok) throw new Error(a.error);
+    servers = await serve(app);
+    const res = await fetch(`${servers.url}/signin`, { method: "POST", body: new URLSearchParams({ username: "alice", password: PASSWORD }), redirect: "manual" });
+    cookie = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+  });
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  const post = async (form: [string, string][]) =>
+    (await fetch(`${servers.url}/forges/new`, { method: "POST", headers: { cookie, origin: "https://forge.test" }, body: new URLSearchParams(form), redirect: "manual" })).text();
+  const opening = (html: string) => /<details class="disclosure"[^>]*>/.exec(html)?.[0] ?? "";
+
+  test("a fresh form keeps the rarer fields in a closed disclosure inside the form, so they submit", async () => {
+    const html = await (await fetch(`${servers.url}/forges/new`, { headers: { cookie } })).text();
+    expect(opening(html)).not.toContain("open");
+    const form = html.slice(html.indexOf('id="new-forge"'));
+    const more = form.slice(form.indexOf("<summary>More options</summary>"), form.indexOf("</details>"));
+    expect(more.length).toBeGreaterThan(0);
+    for (const name of ["followMode", "keepAccess", "modelKey", "modelEndpoint", "budgetUsd", "template", "size"])
+      expect(more).toContain(`name="${name}"`);
+    expect(form.indexOf("</details>")).toBeLessThan(form.indexOf("</form>"));
+    // The visible fields stay out of it.
+    expect(form.indexOf('name="direction"')).toBeLessThan(form.indexOf("<summary>More options</summary>"));
+  });
+  test("a bad value in a hidden field opens it", async () => {
+    const html = await post([["name", "okname"], ["budgetUsd", "not-a-number"], ["modelKey", KEY]]);
+    expect(opening(html)).toContain("open");
+  });
+  test("an error on the name alone leaves it closed", async () => {
+    const html = await post([["name", "Bad Name!"]]);
+    expect(html).toContain("name");
+    expect(opening(html)).not.toContain("open");
+  });
+});

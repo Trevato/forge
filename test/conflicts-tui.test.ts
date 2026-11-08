@@ -150,6 +150,7 @@ describe("the terminal reads a conflicted pull's blocks", () => {
     expect(out).not.toContain("<<<<<<<");
     // The commit lands off the key's own turn: wait for the branch to move.
     for (let i = 0; i < 100 && (await tip("refs/heads/loud")) === was; i++) await Bun.sleep(50);
+    if ((await tip("refs/heads/loud")) === was) throw new Error(`never came: still waiting while (await tip("refs/heads/loud")) === was`);
     const now = await tip("refs/heads/loud");
     expect(now).not.toBe(was);
     const parents = await runGit(["rev-list", "--parents", "-n", "1", now], { cwd: dir });

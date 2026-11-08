@@ -256,6 +256,28 @@ export function looksForApps(db: Database, appIds: readonly string[]): Look[] {
 }
 
 /**
+ * Every picture taken of some commits, in any environment and either
+ * theme, newest first: what a pin's screenshots are picked from. Errors
+ * are left out; a person picks only what is there.
+ */
+export function looksForCommits(db: Database, commitOids: readonly string[]): Look[] {
+  const out: Look[] = [];
+  const unique = [...new Set(commitOids)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<Row, string[]>(
+        `SELECT * FROM look WHERE error IS NULL AND commit_oid IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         ORDER BY created_at DESC, kind, theme`,
+      )
+      .all(...batch);
+    for (const row of rows) out.push(toLook(row));
+  }
+  return out;
+}
+
+/**
  * Forget an environment's looks — all of them, or all but one commit's
  * (a person's attachments are not the forge's to age out: they go with the
  * environment).

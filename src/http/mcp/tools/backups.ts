@@ -3,11 +3,13 @@ import { resolveDestination, scrubReason, sealedTarget } from "../../../snapshot
 import { mirrorNeed } from "../../../snapshot/mirror.ts";
 import { s3FromEnv } from "../../../snapshot/store.ts";
 import { listSnapshots } from "../../../snapshot/snapshot.ts";
+import { backupVerdict } from "../../../snapshot/bucket.ts";
+import { lastDrill } from "../../../snapshot/drills.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "backups",
-  doc: "where snapshots go (`destination`: `kind` sealed, dir or env, and `place`, never a credential; `null` with the Backups page's sentence when none), the last fourteen snapshots (`key`, `at`, `bytes`) and the off-box `mirror`'s state; a forge admin's, as /settings/backups",
+  doc: "where snapshots go (`destination`: `kind` sealed, dir or env, and `place`, never a credential; `null` with the Backups page's sentence when none), `verdict` (state, line, reasons, lanes with newest object, drill: read from the bucket, red past 26 h), the last fourteen snapshots (`key`, `at`, `bytes`) and the off-box `mirror`'s state; a forge admin's, as /settings/backups",
   description: "Admin: snapshot destination, recent, mirror.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
@@ -25,8 +27,10 @@ export const tool: Tool = {
       syncedAt: state?.syncedAt ?? null,
       says: need?.sentence ?? null,
     };
+    const verdict = backupVerdict(ctx.app.config.dataDir, lastDrill(ctx.app.db));
     if (!dest)
       return good({
+        verdict,
         destination: null,
         says: "nothing — no snapshots are taken",
         snapshots: [],
@@ -44,6 +48,7 @@ export const tool: Tool = {
       listing = scrubReason(target, error);
     }
     return good({
+      verdict,
       destination: { kind: dest.source, place: dest.store.where },
       snapshots,
       ...(listing === undefined ? {} : { listing }),

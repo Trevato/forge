@@ -31,6 +31,7 @@ import type {
   RemoteReviewState,
   RemoteTreeEntry,
   TokenReach,
+  RepoWalk,
 } from "../types.ts";
 import {
   NO_ACCOUNT,
@@ -107,6 +108,7 @@ export class GitHubProvider implements Provider {
       htmlUrl:
         asString(field(result.value.data, "html_url")) ||
         `${this.webUrl}/${login}`,
+      siteAdmin: asBool(field(result.value.data, "site_admin")),
     });
   }
 
@@ -148,6 +150,42 @@ export class GitHubProvider implements Provider {
       items: asArray(result.value.data).map((r) => toRepo(r)),
       next: linkNext(result.value.headers) ? String(page + 1) : null,
     });
+  }
+
+  /**
+   * The guard's walk on GitHub: `/user/repos` oldest first, so a repository
+   * made while the walk runs lands on a later page rather than shifting an
+   * earlier one, and `Link` decides the end. GitHub counts nothing here,
+   * so there is no total to check against; a failed page fails the walk.
+   */
+  async walkRepos(options: {
+    maxPages: number;
+    pauseMs?: number;
+  }): Promise<ProviderResult<RepoWalk>> {
+    const repos = new Map<string, RemoteRepo>();
+    for (let page = 1; page <= options.maxPages; page++) {
+      if (page > 1 && (options.pauseMs ?? 0) > 0)
+        await new Promise((resolve) => setTimeout(resolve, options.pauseMs));
+      const result = await this.api.call({
+        path: "/user/repos",
+        query: {
+          per_page: PER_PAGE,
+          page,
+          sort: "created",
+          direction: "asc",
+          affiliation: "owner,collaborator,organization_member",
+        },
+      });
+      if (!result.ok)
+        return succeed({ repos: [...repos.values()], complete: false, why: "failed" });
+      for (const raw of asArray(result.value.data)) {
+        const repo = toRepo(raw);
+        repos.set(repo.remoteId || repo.fullName.toLowerCase(), repo);
+      }
+      if (!linkNext(result.value.headers))
+        return succeed({ repos: [...repos.values()], complete: true });
+    }
+    return succeed({ repos: [...repos.values()], complete: false, why: "too_many" });
   }
 
   async getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
@@ -692,13 +730,38 @@ export class GitHubProvider implements Provider {
     return succeed(toPull(result.value.data));
   }
 
-  async forkRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
+  async listForks(
+    fullName: string,
+  ): Promise<ProviderResult<readonly RemoteRepo[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+
+    const forks: RemoteRepo[] = [];
+    for (let page = 1; page <= MAX_INTERNAL_PAGES; page++) {
+      const result = await this.api.call({
+        path: `/repos/${seg(named.owner)}/${seg(named.name)}/forks`,
+        query: { per_page: PER_PAGE, page },
+      });
+      if (!result.ok) return result;
+      const rows = asArray(result.value.data);
+      forks.push(...rows.map((r) => toRepo(r)));
+      if (!linkNext(result.value.headers)) break;
+    }
+    return succeed(forks);
+  }
+
+  async forkRepo(
+    fullName: string,
+    name?: string,
+  ): Promise<ProviderResult<RemoteRepo>> {
     const named = splitFullName(fullName);
     if (!named) return fail("not_found", `not a repository name: ${fullName}`);
     const result = await this.api.call({
       path: `/repos/${seg(named.owner)}/${seg(named.name)}/forks`,
       method: "POST",
-      body: {},
+      // Both forges take `name` (Forgejo's CreateForkOption, GitHub's
+      // create-fork body); without it the fork takes the upstream's name.
+      body: name === undefined ? {} : { name },
     });
     if (!result.ok) return result;
     return succeed(toRepo(result.value.data));

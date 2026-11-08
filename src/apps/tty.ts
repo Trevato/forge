@@ -27,13 +27,18 @@ import { canEnterApp, canRead, canWrite, getRepoById } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { SshSession } from "../ssh/server.ts";
-import { isEnvName, previewEnv, type EnvName } from "./data.ts";
+import {
+  buildEnvFromLabel,
+  isEnvName,
+  previewEnv,
+  type EnvName,
+} from "./data.ts";
 import { appEnv, signalGroup } from "./process.ts";
 import { appsRuntime } from "./runtime.ts";
 
 const CRLF = "\r\n";
 
-/** `notes` → production, `notes--12` → the preview of pull 12. */
+/** `notes` → production, `notes--12` → the preview of pull 12, `notes--b1a2b3c4` → the build at 1a2b3c4. */
 export function parseAppLogin(
   login: string,
 ): { slug: string; env: EnvName } | undefined {
@@ -43,6 +48,8 @@ export function parseAppLogin(
     return isSlugLike(name) ? { slug: name, env: "production" } : undefined;
   const slug = name.slice(0, at);
   const number = name.slice(at + 2);
+  const build = buildEnvFromLabel(number);
+  if (isSlugLike(slug) && build !== undefined) return { slug, env: build };
   if (!isSlugLike(slug) || !/^[1-9]\d*$/.test(number)) return undefined;
   const env = previewEnv(Number(number));
   return isEnvName(env) ? { slug, env } : undefined;
@@ -179,6 +186,8 @@ export async function runAppTty(
       target.app.id,
       target.env,
     ),
+    // An absorbed app's settings, as its process was started with.
+    feature: runtime.featureFor(repo, target.app.id, target.env, live.dir),
   });
   env["TERM"] = host.term;
   env["COLORTERM"] = "truecolor";
@@ -237,6 +246,9 @@ export interface TerminalProgram {
   readonly hangup: () => void;
 }
 
+/** Where `setsid` is, found once; null on a host without util-linux. */
+const SETSID = Bun.which("setsid");
+
 /**
  * Start `command` (through `sh -c`) on `terminal`, held in `cell` when
  * there is one. Without a cell the program leads a process group of its
@@ -256,11 +268,20 @@ export function startTerminal(
   },
 ): TerminalProgram {
   const { cell } = options;
-  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
+  const argv = cell?.argv(command) ?? ["/bin/sh", "-c", command];
+  // Bun's `terminal` gives the child the pty as its stdio but not as its
+  // controlling terminal, so the kernel has no one to tell of a resize: no
+  // SIGWINCH, and tmux never redraws at the new size (#9472). `setsid -c`
+  // (util-linux, Essential on the image's Debian) makes the program lead a
+  // session whose controlling terminal is the pty, in place: it is not a
+  // group leader yet, so setsid execs rather than forks, the pid stays, and
+  // the group is the program's own as `detached` made it.
+  const ctty = SETSID !== null;
+  const proc = Bun.spawn(ctty ? [SETSID, "-c", ...argv] : argv, {
     terminal: options.terminal,
     env: cell?.env(options.env) ?? options.env,
     cwd: options.cwd,
-    detached: cell === undefined,
+    detached: !ctty && cell === undefined,
   });
   const exited = proc.exited.then((code) => {
     cell?.close();

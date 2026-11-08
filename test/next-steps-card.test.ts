@@ -5,6 +5,7 @@
  * second account.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
@@ -102,7 +103,7 @@ describe("the next-steps card of a spawned forge", () => {
       createdBy: alice.id,
     });
     addCrew(parent.db, repo.value.id, atlas.value.id, alice.id);
-    setCrewRole(parent.db, repo.value.id, atlas.value.id, "planner");
+    seatAs(parent.db, repo.value.id, atlas.value.id, "planner");
     parentServers = await serve(parent);
     const spawned = await spawnForge(
       parent,
@@ -177,6 +178,18 @@ describe("the next-steps card of a spawned forge", () => {
     const at = titles.map((t) => cardOf(home).indexOf(t));
     expect(at.every((n) => n >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  test("the steps are one plain section, not boxed in cards", async () => {
+    const card = cardOf(await page(owner));
+    expect(card).not.toContain('class="card');
+    expect(card).not.toContain("card-body");
+    // A pending step's body is a block under its row, never an inline sibling of the title.
+    expect(card).toMatch(/<\/ul>\s*<div class="step-body">/);
+    // The first pending step, and only it, is the primary one.
+    expect(card).toMatch(/data-step="everyday"[^>]*data-primary/);
+    expect(card.match(/data-primary/g)?.length).toBe(1);
+    expect(keys(await page(owner))).toEqual(["everyday", "apps", "tell"]);
   });
 
   test("each step's way in answers 200 for the admin", async () => {

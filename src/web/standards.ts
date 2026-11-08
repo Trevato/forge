@@ -216,6 +216,7 @@ export async function sitemapXml(ctx: Ctx): Promise<Response> {
         `<url><loc>${o}/</loc></url>`,
         `<url><loc>${o}/explore</loc></url>`,
         `<url><loc>${o}/changelog</loc>${changed === null ? "" : `<lastmod>${changed}</lastmod>`}</url>`,
+        `<url><loc>${o}/agents</loc></url>`,
         ...repos.map((r) => {
           const mod = r.pushedAt === null ? "" : `<lastmod>${r.pushedAt.slice(0, 10)}</lastmod>`;
           return `<url><loc>${o}${xml(`/${r.path}`)}</loc>${mod}</url>`;
@@ -353,6 +354,21 @@ const llmsBodies = new Map<string, { signedIn: boolean; repos: LlmsListing; runn
  * each with the method and URL that does it.
  */
 export function llmsTxt(ctx: Ctx): Response {
+  const kept = llmsBody(ctx);
+  // The third line names the running commit: a client revalidates (one small 304) rather than keep an old build for an hour.
+  const cache = "private, no-cache";
+  const sent = ctx.request.headers.get("if-none-match");
+  if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
+    return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache, vary: "Cookie, Authorization" } });
+  const res = text(kept.body);
+  res.headers.set("cache-control", cache);
+  res.headers.set("etag", kept.etag);
+  res.headers.append("vary", "Cookie, Authorization");
+  return res;
+}
+
+/** The llms.txt text for this request and its ETag: /llms.txt sends it as is, /agents draws it as a page. */
+export function llmsBody(ctx: Ctx): { body: string; etag: string } {
   const o = ctx.url.origin;
   const tell = sshTellCommand(ctx.app);
   const running = runningSentence();
@@ -370,16 +386,7 @@ export function llmsTxt(ctx: Ctx): Response {
     if (llmsBodies.size >= 16) llmsBodies.clear();
     llmsBodies.set(key, kept);
   }
-  // The third line names the running commit: a client revalidates (one small 304) rather than keep an old build for an hour.
-  const cache = "private, no-cache";
-  const sent = ctx.request.headers.get("if-none-match");
-  if (sent !== null && sent.split(",").some((t) => t.trim() === kept.etag))
-    return new Response(null, { status: 304, headers: { etag: kept.etag, "cache-control": cache, vary: "Cookie, Authorization" } });
-  const res = text(kept.body, "text/markdown; charset=utf-8");
-  res.headers.set("cache-control", cache);
-  res.headers.set("etag", kept.etag);
-  res.headers.append("vary", "Cookie, Authorization");
-  return res;
+  return kept;
 }
 
 /** The llms.txt document for one origin. */
@@ -391,7 +398,16 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       running,
       "",
-      "> Git repositories, their issues and pulls, and the apps they run. Anyone may read a public repository, and report a problem in it without an account.",
+      `> ${SITE_LINE} A self-hosted forge in one Bun process and one SQLite file that hosts code and runs apps, with AI agents that build. Forges connect to one another. Part of Open Platform (https://www.open-platform.sh). Anyone may read a public repository, and report a problem in it without an account.`,
+      "",
+      "## Start here",
+      "",
+      "If you are an assistant helping a person: say plainly what you can and cannot do from where you are. If you cannot reach this forge or hold an account on it, give the person these steps to do by hand.",
+      "",
+      `- Help build a public app here: each one is a repository at ${o}/{owner}/{name}. A person makes an account at ${o}/signup, then follows "Offer a change" below. If /signup answers 403, new accounts here are by invitation for now: send a suggestion through "Report a problem" below, or work from a forge of your own.`,
+      `- Get your own forge: \`git clone https://forge.open-platform.sh/trevato/forge.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Or a hosted one, free within limits while hosting is not sold: sign in and open ${o}/forges/new (or call the MCP \`spawn\` tool with the person's consent). It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.`,
+      "- Work from your own forge: connect it to this one as an origin, bring an app in, and send your work back. How: https://forge.open-platform.sh/trevato/forge/raw/main/docs/ORIGINS.md",
+      `- Connect an assistant that can use tools: add a custom connector with the URL ${mcp.url}. It signs in with OAuth; only the report tool works without an account.`,
       "",
       "## Report a problem (no account)",
       "",
@@ -427,7 +443,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
           ]),
       "## Find things (no account)",
       "",
-      `- Explore repositories: GET ${o}/api/v1/explore?q=kind:app+sort:forks+garden. MCP: the tool "explore" with {"q"}. In q, kind: is app, person or forge; sort: is score, forks, ships, likes, use, fresh or name; any other word is free text matched against name, owner and description.`,
+      `- Explore repositories: GET ${o}/api/v1/explore?q=kind:app+sort:forks+garden. MCP: the tool "explore" with {"q"}. In q, kind: is app, person or forge; sort: is score, forks, ships, likes, use, fresh or name; updated: is 1d, 7d or 30d; owner:<name> is one account; archived: is yes or no; any other word is free text matched against name, owner and description.`,
       `- Search issues, pulls, repositories and code: GET ${o}/api/v1/search?q=websocket+timeout. MCP: the tool "search" with {"q"}.`,
       "- Both read only what is public to you.",
       "",
@@ -477,7 +493,7 @@ export interface PageLink {
  */
 export function pageLinks(ctx: Ctx): PageLink[] {
   const links: PageLink[] = [
-    { rel: "service-doc", href: "/llms.txt", type: "text/markdown" },
+    { rel: "service-doc", href: "/llms.txt", type: "text/plain" },
     // What the reader of this page can do here, as who they are
     // (`actions/here.ts`), for an agent that would rather not scrape it.
     {

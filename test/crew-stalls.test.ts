@@ -7,6 +7,7 @@
  * The repositories are assisted, where nothing parks a stall when its run
  * ends, so the tick is what frees it.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
+import { getAgentByName } from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
 import { getRepoById, listAutonomousRepos, type Repo } from "../src/core/repos.ts";
 import {
@@ -55,7 +56,7 @@ async function crewed(builders: readonly string[]): Promise<Repo> {
     }
     expect(addToCrew(app, alice, created.value, name).ok).toBe(true);
   }
-  setCrewRole(app.db, created.value.id, getUserByName(app.db, "atlas")!.id, "planner");
+  seatAs(app.db, created.value.id, getUserByName(app.db, "atlas")!.id, "planner");
   const set = await updateRepoSettings(app, alice, created.value, {
     autonomy: "assisted",
     autonomyDirection: "Keep the engine small.",

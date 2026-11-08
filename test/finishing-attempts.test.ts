@@ -4,6 +4,7 @@
  * and ended without a push. A run the forge cut short — a network error, a
  * checkout that failed — is no attempt, and a new base is a new chance.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -73,7 +74,7 @@ beforeAll(async () => {
     expect(addToCrew(app, alice, repo, name).ok).toBe(true);
   }
   const quill = getUserByName(app.db, "quill")!;
-  setCrewRole(app.db, repo.id, quill.id, "reviewer");
+  seatAs(app.db, repo.id, quill.id, "reviewer");
   const branch = await commitToBranch(app, alice, repo, {
     branch: "feature/1",
     base: "main",

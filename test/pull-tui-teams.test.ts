@@ -2,6 +2,7 @@
  * The terminal's pull screen names the team that still owes a review (#2897),
  * as the web pull page's team card does.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { saveTeam } from "../src/core/teams.ts";
@@ -58,7 +59,7 @@ test("a two-team issue shows one team approved and one awaited; no team shows no
     const agent = await createAgent(app, alice, { username: name });
     if (!agent.ok) throw new Error(String(agent.error));
     addToCrew(app, alice, repo, name);
-    setCrewRole(app.db, repo.id, id(name), "reviewer");
+    seatAs(app.db, repo.id, id(name), "reviewer");
   }
   saveTeam(app.db, "design", { charter: "", dial: 0, members: [id("quill")] });
   saveTeam(app.db, "data-science", { charter: "", dial: 0, members: [id("pike")] });

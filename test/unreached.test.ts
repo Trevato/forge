@@ -40,8 +40,10 @@ test("unreached() follows imports from the entries and scripts, and nothing else
     put("src/a.ts", 'export const load = () => import(\n  "./b"\n);\n');
     put("src/b/index.ts", "export const t = () => import(`./tpl`);\n");
     put("src/b/tpl.ts");
-    put("src/side.ts");
-    put("src/c.ts");
+    put("src/side.ts", 'Bun.build({ entrypoints: [Bun.fileURLToPath(new URL("./entry.ts", import.meta.url))] });\n');
+    put("src/entry.ts");
+    put("src/c.ts", 'const notAnEntry = new URL("./g.ts", "https://x");\n');
+    put("src/g.ts");
     put("src/d.ts", 'import "./c.ts";\n');
     put("src/e.ts");
     put("src/a.test.ts", 'import "./e.ts";\n');
@@ -49,7 +51,7 @@ test("unreached() follows imports from the entries and scripts, and nothing else
     put("src/core/migrations/001.ts");
     put("src/f.ts");
     put("scripts/tool.ts", 'const { f } = await import("../src/f.ts");\n');
-    expect(unreached(dir)).toEqual(["src/c.ts", "src/d.ts", "src/e.ts"]);
+    expect(unreached(dir)).toEqual(["src/c.ts", "src/d.ts", "src/e.ts", "src/g.ts"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

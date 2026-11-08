@@ -165,7 +165,7 @@ describe("every kind of page unfurls", () => {
     expect(res.status).toBe(200);
     const t = tags(await res.text());
     expect(t.get("og:title")).toBeTruthy();
-    expect(t.get("og:description")).toMatch(/·.*\.$/);
+    expect(t.get("og:description")).toMatch(/Status: .+\.$/);
     expect(t.get("twitter:card")).toBe("summary_large_image");
     const image = new URL(t.get("og:image")!).pathname;
     expect(image).toBe("/og/app/widget.png");

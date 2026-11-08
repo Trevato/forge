@@ -10,7 +10,7 @@
 
 import type { App } from "../app.ts";
 import type { Database } from "bun:sqlite";
-import { addComment, createLabel, getLabel, listIssues, type Label } from "../core/issues.ts";
+import { addComment, createLabel, getLabel, listIssues, setIssueState, type Label } from "../core/issues.ts";
 import { getRepo, type Repo } from "../core/repos.ts";
 import { ownRepoPath } from "../kernel/own_repo.ts";
 import type { CheckDetail, Run } from "../core/runs.ts";
@@ -25,6 +25,8 @@ export const MAX_FAILURES = 40;
 const NAMED = 10;
 
 export const reportTitle = (file: string): string => `Full suite red: ${file}`;
+/** How every report issue's body opens: with the label and title, what tells it from one a person wrote. */
+const FILED_BY = "_Filed by the scheduled full-suite report, not written by a person.";
 
 /** A red verification's detail with the failing tests under its failing files (at most {@link MAX_FAILURES}). */
 export function redDetail(
@@ -61,7 +63,7 @@ export function reportRed(app: App, repo: Repo, run: Run): string[] {
     const filed = fileIssueOnce(app.db, app.bus, repo, {
       title,
       body:
-        `_Filed by the scheduled full-suite report, not written by a person. It holds no pull, batch or release._\n\n` +
+        `${FILED_BY} It holds no pull, batch or release._\n\n` +
         `\`${file}\` failed in the full suite on ${repo.defaultBranch} (${where}).` +
         `${said}${more}\n\nFiles: ${file}`,
       ...(label === undefined ? {} : { labelId: label.id }),
@@ -80,6 +82,55 @@ export function reportRed(app: App, repo: Repo, run: Run): string[] {
         });
       lines.push(`report: added to #${filed.number} for ${file}`);
     }
+  }
+  return lines;
+}
+
+/**
+ * The lines for a finished verification's log: one per open report issue
+ * whose file ran and passed every test in it (#9524), commented on and
+ * closed as done. `passed` is what the run's own log showed
+ * (`verify.ts` `passedFiles`); a file it never printed (a shard that did
+ * not run, a run cut short) keeps its issue open. Only an issue the report
+ * filed is closed: its label, its exact title, the owner as author and the
+ * report's own opening line, never one a person wrote.
+ */
+export function reportGreen(app: App, repo: Repo, run: Run, passed: readonly string[]): string[] {
+  if (run.state !== "ok" && run.state !== "failed") return [];
+  if (passed.length === 0) return [];
+  const ran = new Map(passed.map((file) => [reportTitle(file), file]));
+  const open = app.db
+    .query<{ id: string; number: number; title: string; body: string }, [string, string, string]>(
+      `SELECT issue.id, issue.number, issue.title, issue.body FROM issue
+       WHERE issue.repo_id = ?1 AND issue.kind = 'issue' AND issue.state = 'open'
+         AND issue.author_id = ?2
+         AND EXISTS (SELECT 1 FROM issue_label JOIN label ON label.id = issue_label.label_id
+                     WHERE issue_label.issue_id = issue.id AND label.name = ?3)
+       ORDER BY issue.number`,
+    )
+    .all(repo.id, repo.ownerId, REPORT_LABEL);
+  const where = `check run ${run.id}, ${run.commitOid.slice(0, 7)}`;
+  const lines: string[] = [];
+  for (const issue of open) {
+    const file = ran.get(issue.title);
+    if (file === undefined || !issue.body.startsWith(FILED_BY)) continue;
+    const body = `Green again in the full suite (${where}).`;
+    const noted = addComment(app.db, { issueId: issue.id, authorId: repo.ownerId, body });
+    if (noted.ok)
+      app.bus.append({
+        kind: "issue.commented",
+        repoId: repo.id,
+        actorId: repo.ownerId,
+        payload: { number: issue.number, body, commentId: noted.value.id },
+      });
+    if (setIssueState(app.db, issue.id, "closed", "done") === undefined) continue;
+    app.bus.append({
+      kind: "issue.closed",
+      repoId: repo.id,
+      actorId: repo.ownerId,
+      payload: { number: issue.number },
+    });
+    lines.push(`report: closed #${issue.number}, ${file} green again`);
   }
   return lines;
 }

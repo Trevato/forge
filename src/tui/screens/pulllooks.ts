@@ -6,10 +6,11 @@
 
 import type { Pull } from "../../core/pulls.ts";
 import type { Repo } from "../../core/repos.ts";
-import { pullLooks } from "../../looks/readable.ts";
+import { pullLooks, pullPairsLine } from "../../looks/readable.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
+import { style } from "../term/style.ts";
 import { emptyState } from "../ui/widgets.ts";
 import { ListState, ago, drawList, type ListRow } from "./common.ts";
 
@@ -19,6 +20,7 @@ const plain = (text: string): string =>
 export function pullLooksScreen(f: Session, ctx: Ctx, repo: Repo, pull: Pull): Screen {
   const state = new ListState();
   const looks = pullLooks(f.app, repo, pull, f.user);
+  const pairs = pullPairsLine(f.app, repo, pull, f.user);
   const rows: ListRow[] = looks.map((l) => ({
     title: plain(`${l.width} · ${l.says ?? "taken by the forge"}`),
     meta: ago(l.at),
@@ -37,7 +39,10 @@ export function pullLooksScreen(f: Session, ctx: Ctx, repo: Repo, pull: Pull): S
         });
         return;
       }
-      drawList(s, area, ctx.theme.c, state, rows);
+      const shown = pairs !== undefined && area.h > 1;
+      if (shown)
+        s.text(area.x, area.y, plain(pairs).slice(0, area.w), style(ctx.theme.c.mutedFg, ctx.theme.c.bg), area.x + area.w);
+      drawList(s, shown ? { ...area, y: area.y + 1, h: area.h - 1 } : area, ctx.theme.c, state, rows);
     },
     key(e) {
       if (e.key === "esc" || e.key === "q") ctx.pop();

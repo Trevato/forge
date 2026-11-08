@@ -61,15 +61,11 @@ export function searchKind(raw: string | null): SearchKind {
 
 /**
  * What a caller who asked wrongly is told, in one sentence, or undefined when
- * the request was fine. Plain text: the caller escapes it where it draws it.
+ * the request was fine (an unknown kind or limit is `searchRefusal`'s 422, not a note). Plain text: the caller escapes it where it draws it.
  */
-export function searchNote(rawQ: string | null, rawKind: string | null): string | undefined {
-  const kinds = "kind=all|repos|issues|code";
-  const asked = rawKind === null ? undefined : rawKind.length > 40 ? `${rawKind.slice(0, 39)}…` : rawKind;
-  if (rawKind !== null && rawKind !== "all" && searchKind(rawKind) === "all")
-    return `kind ${JSON.stringify(asked)} is not a kind — use ${kinds}`;
+export function searchNote(rawQ: string | null): string | undefined {
   if (cleanQuery(rawQ ?? "") === "")
-    return `q is empty — send what to find, e.g. q=parser&kind=code (${kinds})`;
+    return "q is empty — send what to find, e.g. q=parser&kind=code (kind=all|repos|issues|code)";
   return undefined;
 }
 
@@ -582,7 +578,11 @@ export interface GrepWho {
   readonly now?: () => number;
   /** Resolves after `ms`; `clear` stops it. A `setTimeout` by default. */
   readonly timer?: (ms: number) => BudgetTimer;
+  /** The first batch's ceiling (`BUDGETED_GREP_MS`), kept apart from `timer` so tests fire each on its own. */
+  readonly firstTimer?: (ms: number) => BudgetTimer;
 }
+
+type Got = RawHit[] | "skipped" | "timeout";
 
 export interface BudgetTimer {
   readonly done: Promise<void>;
@@ -603,8 +603,10 @@ function budgetTimer(ms: number): BudgetTimer {
  * stops the moment the cap is reached — a common word in a monorepo costs
  * one repo's work, not fifty.
  *
- * With a finite budget the first batch is always waited for, so a cold search
- * shows what it finds however slow git is. Each later batch races the time
+ * With a finite budget the first batch is waited for up to `BUDGETED_GREP_MS`,
+ * queue for git's gate included, so a cold search shows what it finds without
+ * a busy forge holding the page; what answered by then is kept, the rest is
+ * `more` (#9402). Each later batch races the time
  * left: when the budget runs out first the answer goes back with `more`, and
  * the batch's greps are left to finish on their own. They keep the slot
  * `search/grep_slots.ts` gave them until git exits — that is the only cap on
@@ -637,46 +639,54 @@ export async function grepRepos(
     answered = true;
     return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
   };
-  const grepBatch = async (slice: readonly Repo[]) => {
-    const found: (RawHit[] | "skipped" | "timeout")[] = [];
+  // Each grep writes its answer into its own place as it settles, so a batch
+  // cut at the clock still keeps the repositories that did answer.
+  const grepBatch = async (slice: readonly Repo[], found: (Got | undefined)[]) => {
     for (let k = 0; k < slice.length && !answered; k += width) {
-      found.push(
-        ...(await Promise.all(
-          slice
-            .slice(k, k + width)
-            .map((repo) =>
-              grepCached(
-                repo,
-                repoDir(reposRoot, repo.ownerName, repo.name),
-                query,
-                who,
-                timeoutMs,
-              ),
-            ),
-        )),
+      await Promise.all(
+        slice.slice(k, k + width).map((repo, j) =>
+          grepCached(
+            repo,
+            repoDir(reposRoot, repo.ownerName, repo.name),
+            query,
+            who,
+            timeoutMs,
+          ).then((got) => {
+            found[k + j] = got;
+          }),
+        ),
       );
     }
-    return found;
   };
   for (let i = 0; i < considered.length; i += batch) {
     const slice = considered.slice(i, i + batch);
-    let found: (RawHit[] | "skipped" | "timeout")[];
-    if (i === 0 || budgetMs === Infinity) {
-      found = await grepBatch(slice);
+    const found: (Got | undefined)[] = [];
+    let cut = false;
+    if (budgetMs === Infinity) {
+      await grepBatch(slice, found);
     } else {
-      const left = budgetMs - (now() - started);
-      if (left <= 0) return more();
-      const running = grepBatch(slice);
+      // Batch 0 is waited for, but never past BUDGETED_GREP_MS counted from
+      // here: a grep's own timeout starts only once git's gate admits it, so a
+      // forge busy with git could otherwise hold the page for seconds (#9402).
+      const wait = i === 0 ? BUDGETED_GREP_MS : budgetMs - (now() - started);
+      if (wait <= 0) return more();
+      const running = grepBatch(slice, found);
       // An abandoned batch settles on its own; a rejection then is nobody's.
       running.catch(() => {});
-      const timer = (who.timer ?? budgetTimer)(left);
-      const raced = await Promise.race([running, timer.done.then(() => "cut" as const)]);
+      const timer = (i === 0 ? (who.firstTimer ?? budgetTimer) : (who.timer ?? budgetTimer))(wait);
+      const raced = await Promise.race([
+        running.then(() => "done" as const),
+        timer.done.then(() => "cut" as const),
+      ]);
       timer.clear();
-      if (raced === "cut") return more();
-      found = raced;
+      if (raced === "cut") {
+        answered = true;
+        cut = true;
+      }
     }
     for (const [j, repo] of slice.entries()) {
-      const mine = found[j] ?? [];
+      const mine = found[j];
+      if (mine === undefined) continue;
       if (mine === "skipped") {
         skipped = true;
         continue;
@@ -694,6 +704,7 @@ export async function grepRepos(
         });
       }
     }
+    if (cut) return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: true, skipped };
   }
   return { hits, truncated: repos.length > MAX_SEARCH_REPOS, more: gaveUp, skipped };
 }

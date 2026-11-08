@@ -217,7 +217,9 @@ test("a private repository is linked only to who may read it", async () => {
   const mine = await (await door(host, as(alice, "alice", "admin"))).text();
   expect(mine).toContain(`href="${servers.url}/alice/vault"`);
   expect(mine).toContain("alice/vault");
-  expect(mine).toContain("secret plan · check running");
+  // Which word depends on whether the runtime has started this pull's preview
+  // yet, a race the test does not own; the check word has its own test below.
+  expect(mine).toMatch(/>#\d+ secret plan · check (none|running|green|red)</);
 });
 
 test("HEAD answers the headers with no body; POST is a 405 that says what is allowed", async () => {

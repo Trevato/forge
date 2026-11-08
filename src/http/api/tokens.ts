@@ -13,6 +13,7 @@ import { listTokensWithClients } from "../../core/oauth.ts";
 import { ADMIN_TOKEN_WORDS } from "../../core/tokens.ts";
 import { type User, verifyPasswordThrottled } from "../../core/users.ts";
 import { sessionCookie } from "../../web/pages/site.ts";
+import { holds, weakEtag } from "../etag.ts";
 import { cookieValue, crossOrigin, type Handler } from "../context.ts";
 import { STRANGER_MAX } from "../limits.ts";
 import { clientAddress } from "../peer.ts";
@@ -119,7 +120,16 @@ export function tokenRoutes(router: Router<Handler>): void {
     const denied = requireAccount(ctx);
     if (denied) return denied;
     const tokens = timePhase(ctx.request, "tokens", () => listTokensWithClients(ctx.app.db, ctx.auth.user!.id));
-    return timePhase(ctx.request, "render", () => json(tokens));
+    // The tag is of the exact bytes sent, which name every token with its
+    // last use and client, so a token made, used or revoked moves it; the 401
+    // and 403 above carry none, so a 304 is reached only past the access check.
+    return timePhase(ctx.request, "render", () => {
+      const text = JSON.stringify(tokens);
+      const etag = weakEtag(text);
+      const headers = { etag, "cache-control": "private, no-cache", vary: "authorization, cookie" };
+      if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
+      return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    });
   });
 
   router.add("DELETE", "/api/v1/tokens/:id", (ctx) => {

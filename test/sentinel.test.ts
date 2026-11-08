@@ -21,6 +21,7 @@ import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { recordCap } from "../src/crew/guard.ts";
 import { sharedCause } from "../src/checks/shared_red.ts";
+import { bugClockAlarm, HIGH_BUG_MS, openBugs } from "../src/flow/bugs.ts";
 import {
   budgetBreaches,
   degradedCauses,
@@ -691,7 +692,7 @@ describe("a budget breach is crew work at once", () => {
     const issue = open[0]!;
     // The sentinel never builds, so it never assigns itself (#3002).
     expect(issue.assigneeId).toBeNull();
-    expect(labelsFor(bapp.db, issue.id).map((l) => l.name)).toEqual(["P0 Trust"]);
+    expect(labelsFor(bapp.db, issue.id).map((l) => l.name).sort()).toEqual(["P0 Trust", "bug"]);
     expect(listEvents(bapp.db, { kind: "issue.assigned" }).length).toBe(0);
   });
 
@@ -977,5 +978,105 @@ describe("a degraded finding whose cause has stayed closed", () => {
     const t = T0 + 3 * DAY;
     happ.db.query("INSERT INTO degraded_span (cause, sentence, href, opened_at, closed_at) VALUES ('drill', 'It is slow.', '/x', ?1, ?2)").run(t - HOUR, t - 20 * D_MIN);
     expect(hunt(happ, "alice/forge", t).filed).toBe(1);
+  });
+});
+
+describe("a finding is filed sorted (#8856)", () => {
+  let kapp: App;
+  let krepo: Repo;
+  let kdir: string;
+  const names = (issueId: string): string[] => labelsFor(kapp.db, issueId).map((l) => l.name).sort();
+  const openTitled = (part: string) =>
+    listIssues(kapp.db, krepo.id, { state: "open", limit: 200 }).find((i) => i.title.includes(part));
+  beforeAll(async () => {
+    kdir = await mkdtemp(join(tmpdir(), "forge-sentinel-kind-"));
+    kapp = createApp({ dataDir: kdir, port: 0 });
+    const a = await createUser(kapp.db, {
+      origin: "seed",
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const made = await createRepo(kapp, a.value, { name: "forge", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    krepo = made.value;
+    kapp.db.exec(
+      `CREATE TRIGGER planted_guard BEFORE INSERT ON repo
+       BEGIN SELECT RAISE(ABORT, 'forge: paused'); END`,
+    );
+  });
+  afterAll(async () => {
+    kapp.db.close();
+    await rm(kdir, { recursive: true, force: true });
+  });
+
+  test("a security finding lands as a high bug, and is past its clock after 4 h", () => {
+    const found = findFaults(kapp.db, NOW).find((f) => f.key === "trigger:planted_guard");
+    expect(found?.kind).toBe("security");
+    expect(hunt(kapp, "alice/forge", NOW).filed).toBe(1);
+    const issue = openTitled("planted_guard")!;
+    // The repository had no `bug` or `high`: the sentinel made them.
+    expect(names(issue.id)).toEqual(["bug", "high"]);
+    const filedAt = Date.parse(issue.createdAt);
+    expect(bugClockAlarm(kapp.db, new Date(filedAt + HIGH_BUG_MS - 60_000)).fired).toBe(false);
+    const alarm = bugClockAlarm(kapp.db, new Date(filedAt + HIGH_BUG_MS + 60_000));
+    expect(alarm.fired).toBe(true);
+    expect(alarm.href).toBe(`/alice/forge/issues/${issue.number}`);
+    expect(alarm.says).toContain("4 h");
+  });
+
+  test("still present, it only comments; re-filed after close, it keeps its labels", () => {
+    expect(hunt(kapp, "alice/forge", NOW + 60_000).filed).toBe(0);
+    const issue = openTitled("planted_guard")!;
+    kapp.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(issue.id);
+    expect(hunt(kapp, "alice/forge", NOW + 120_000).filed).toBe(1);
+    const again = openTitled("planted_guard")!;
+    expect(again.id).not.toBe(issue.id);
+    expect(names(again.id)).toEqual(["bug", "high"]);
+  });
+
+  test("an issue adopted after its record was lost gets its labels", () => {
+    const lost = () => [
+      { key: "log:lost", title: "The log says lost 3 times", evidence: ["lost"], pillar: "Reliability", lookFor: "No lost.", kind: "defect" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, lost).filed).toBe(1);
+    const issue = openTitled("log says lost")!;
+    // The record is lost and so are the labels: the next hunt adopts the issue, files nothing, and labels it again.
+    kapp.db.query("DELETE FROM sentinel_finding WHERE key = 'log:lost'").run();
+    kapp.db.query("DELETE FROM issue_label WHERE issue_id = ?1").run(issue.id);
+    expect(hunt(kapp, "alice/forge", NOW + 60_000, lost).filed).toBe(0);
+    expect(openTitled("log says lost")!.id).toBe(issue.id);
+    expect(names(issue.id)).toEqual(["bug"]);
+  });
+
+  test("another defect is a bug on the 48 h clock", () => {
+    const defect = () => [
+      { key: "log:x", title: "The log says x 3 times", evidence: ["x"], pillar: "Reliability", lookFor: "No x.", kind: "defect" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, defect).filed).toBe(1);
+    expect(names(openTitled("log says x")!.id)).toEqual(["bug"]);
+  });
+
+  test("a cosmetic finding lands as polish, on no bug clock (#8969)", () => {
+    const cosmetic = () => [
+      { key: "look:y", title: "The link y lands on / and is not Home", evidence: ["y"], pillar: "Craft", lookFor: "No y.", kind: "cosmetic" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, cosmetic).filed).toBe(1);
+    const issue = openTitled("link y lands")!;
+    expect(names(issue.id)).toEqual(["polish"]);
+    expect(openBugs(kapp.db).some((b) => b.number === issue.number)).toBe(false);
+  });
+
+  test("a broken route lands as a high bug (#8969)", () => {
+    const broken = () => [
+      { key: "route:z", title: "The route /z answers 500", evidence: ["GET /z → 500"], pillar: "Reliability", lookFor: "/z answers.", kind: "broken-route" as const },
+    ];
+    expect(hunt(kapp, "alice/forge", NOW, broken).filed).toBe(1);
+    const issue = openTitled("route /z")!;
+    expect(names(issue.id)).toEqual(["bug", "high"]);
+    expect(openBugs(kapp.db).find((b) => b.number === issue.number)?.high).toBe(true);
   });
 });

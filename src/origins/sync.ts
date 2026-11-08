@@ -45,8 +45,10 @@ import { pullDiff, type Pull, getPull } from "../core/pulls.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { bustOrigin } from "../view/cache.ts";
+import { aheadOf, forgetAhead, HELD_WORDS } from "./ahead.ts";
 import { providerForOrigin } from "./credential.ts";
 import { fetchMirror } from "./git-mirror.ts";
+import { watchPullsSoon } from "./hook.ts";
 import {
   importComments,
   importIssue,
@@ -54,6 +56,7 @@ import {
   importReviews,
   importReviewStates,
 } from "./import.ts";
+import { refreshOpenPulls } from "./pull-check.ts";
 import type { Provider, ProviderFailure, RemoteIssue } from "./types.ts";
 
 const log = createLog("origins");
@@ -113,6 +116,12 @@ export interface SyncOptions {
   readonly initial?: boolean;
   /** Sync only this repo (the "sync this mirror now" path). */
   readonly onlyRepoId?: string;
+  /**
+   * Sync now on one mirror: a person asked for the origin's branches, so a
+   * default branch holding commits the origin lacks is overwritten. Without
+   * it such a mirror is held (see `origins/ahead.ts`).
+   */
+  readonly overwrite?: boolean;
   /** Live stage reports, for a mirror job with a UI attached. */
   readonly onProgress?: SyncProgress;
 }
@@ -353,7 +362,13 @@ async function syncMirrorUnguarded(
   const runStarted = new Date().toISOString();
 
   // ---- git ----
-  if (cloneUrl !== "") {
+  // A mirror whose default branch holds commits the origin lacks (the last
+  // reading said so) is held: its page says taking would overwrite them, and
+  // the sweep keeps that true. Only Sync now, a person's word, overwrites.
+  const held = options.overwrite !== true && aheadOf(app, repo)?.diverged === true;
+  if (held) {
+    recordFetch(app.db, repo.id, { at: runStarted, error: HELD_WORDS(repo.defaultBranch) });
+  } else if (cloneUrl !== "") {
     report("fetching", "fetching git objects");
     const authEnv = await provider.gitAuthEnv(cloneUrl);
     const fetched = await fetchMirror(dir, cloneUrl, authEnv);
@@ -365,6 +380,7 @@ async function syncMirrorUnguarded(
       });
     } else {
       recordFetch(app.db, repo.id, { at: runStarted });
+      forgetAhead(app, origin.id, repo.id);
       out.refsMoved = fetched.value.changes.length;
       if (fetched.value.changes.length > 0) {
         // Objects were written without a push: measure again at the next check.
@@ -487,12 +503,20 @@ async function syncMirrorUnguarded(
       setCursor(app.db, origin.id, key, runStarted);
   }
 
+  // A check finishing or a review landing does not move a pull's updated
+  // time on every origin, so the open pulls are read again each sweep: the
+  // catch-up for a webhook that never came.
+  await refreshOpenPulls(ctx, provider, mirror.fullName);
+
   // Whatever the browse cache holds for this remote was true before this
   // sweep and is a guess after it. Dropping it costs one request; keeping it
   // means a page that shows a stale answer with a fresh timestamp.
   bustOrigin(origin.id, mirror.fullName);
 
   if (options.initial) {
+    // Once per mirror: ask the origin for its events, so its issues, comments
+    // and pulls arrive at once. The sweep catches up whatever it misses.
+    void watchPullsSoon(app, repo);
     // One event for a first import, not one per row: a repo with 900 issues
     // would otherwise deliver 900 webhooks the moment it is connected.
     app.bus.append({

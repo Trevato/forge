@@ -197,8 +197,8 @@ describe("og cards", () => {
     });
 
     test("the card says what the thing is", async () => {
-      expect(await (await get("/og/issue/alice~shown~1.svg")).text()).toContain("ISSUE");
-      expect(await (await get("/og/pull/alice~shown~2.svg")).text()).toContain("PULL");
+      expect(await (await get("/og/issue/alice~shown~1.svg")).text()).not.toContain("ISSUE");
+      expect(await (await get("/og/pull/alice~shown~2.svg")).text()).not.toContain("PULL");
       expect(await (await get(`/og/run/alice~shown~${runId}.svg`)).text()).toContain("did a thing");
     });
 

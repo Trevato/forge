@@ -82,6 +82,7 @@ async function seed(): Promise<void> {
           new Date(now - (i % 6) * DAY).toISOString(),
         );
   }
+  if (stopped) throw new Error("never came: the seed was torn down before all 500 repositories were made"); // teardown awaits setup.catch
 }
 beforeAll(() => {
   setup = seed();

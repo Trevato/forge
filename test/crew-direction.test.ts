@@ -5,6 +5,7 @@
  * steers a run. A reader's words stay on the thread and do nothing more,
  * and a run's brief quotes them as a reader's, never as an instruction.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -25,7 +26,7 @@ import {
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import { steerRepoRun } from "../src/actions/runs.ts";
-import { setCrewRole, type Agent } from "../src/core/agents.ts";
+import { type Agent } from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getIssue, listComments, type Issue } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
@@ -136,7 +137,7 @@ fi
   if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
   expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
   expect(addToCrew(app, alice, repo, "judge").ok).toBe(true);
-  setCrewRole(app.db, repo.id, judge.user.id, "reviewer");
+  seatAs(app.db, repo.id, judge.user.id, "reviewer");
 }, 30_000);
 
 afterAll(async () => {

@@ -90,7 +90,7 @@ export function listAccounts(db: Database): AccountRow[] {
       isAdmin: r.is_admin === 1,
       createdAt: r.created_at,
       via: origin.via,
-      signsInThrough: origin.via === "edge" ? EDGE_METHOD : null,
+      signsInThrough: origin.via === EDGE_VIA ? EDGE_METHOD : null,
       address: origin.address,
       repos: r.repos,
       apps: r.apps,
@@ -101,6 +101,9 @@ export function listAccounts(db: Database): AccountRow[] {
     };
   });
 }
+
+/** What `user.created` records as `via` for an account the platform edge made. */
+const EDGE_VIA = "edge";
 
 function parseOrigin(payload: string | null): {
   via: string | null;
@@ -178,4 +181,71 @@ export function scrubAccount(db: Database, userId: string, at: string): void {
      WHERE id = ?2`,
   ).run(at, userId);
   forgetListings(db);
+}
+
+/**
+ * People who can sign in only through the platform edge: an account it made
+ * or one linked to an edge login, with no password, no passkey and no parent
+ * link. Switching `signin.edge` off would strand each of them. Admins first,
+ * then oldest, so the longest-waiting is named first.
+ */
+export function edgeOnlyAccounts(
+  db: Database,
+): { username: string; isAdmin: boolean; createdAt: string }[] {
+  return withoutOwnCredential(db, true);
+}
+
+/**
+ * Active people with no password, no passkey and no parent link. With
+ * `edgeMade` only those the edge made or linked; without, everyone the
+ * edge alone could sign in, whatever made the account.
+ */
+function withoutOwnCredential(
+  db: Database,
+  edgeMade: boolean,
+  userId = "",
+): { username: string; isAdmin: boolean; createdAt: string }[] {
+  return db
+    .query<{ username: string; is_admin: number; created_at: string }, [string, number, string]>(
+      `SELECT u.username, u.is_admin, u.created_at FROM user u
+       WHERE u.kind = 'user' AND u.is_agent = 0 AND u.removed_at IS NULL
+         AND (?3 = '' OR u.id = ?3)
+         AND u.password_hash = ''
+         AND NOT EXISTS (SELECT 1 FROM passkey p WHERE p.user_id = u.id)
+         AND NOT EXISTS (SELECT 1 FROM federated_identity f WHERE f.user_id = u.id)
+         AND (?2 = 0 OR EXISTS (SELECT 1 FROM edge_link l WHERE l.user_id = u.id)
+              OR EXISTS (SELECT 1 FROM event e WHERE e.kind = 'user.created'
+                         AND e.actor_id = u.id
+                         AND CASE WHEN json_valid(e.payload)
+                                  THEN json_extract(e.payload, '$.via') END = ?1))
+       ORDER BY u.is_admin DESC, u.created_at, u.id`,
+    )
+    .all(EDGE_VIA, edgeMade ? 1 : 0, userId)
+    .map((r) => ({ username: r.username, isAdmin: r.is_admin === 1, createdAt: r.created_at }));
+}
+
+/**
+ * How far the forge's own sign-in reaches: the people who can sign in
+ * without the platform edge and the ones who cannot (everyone `withoutOwnCredential` names).
+ */
+export function signinReach(db: Database): {
+  total: number;
+  own: number;
+  stranded: { username: string; isAdmin: boolean; createdAt: string }[];
+} {
+  const total = db
+    .query<{ n: number }, []>(
+      "SELECT COUNT(*) AS n FROM user WHERE kind = 'user' AND is_agent = 0 AND removed_at IS NULL",
+    )
+    .get()?.n ?? 0;
+  const stranded = withoutOwnCredential(db, false);
+  return { total, own: Math.max(0, total - stranded.length), stranded };
+}
+
+/**
+ * Whether this person can sign in without the platform edge. The one
+ * predicate behind the reach count, the lists and the admin's own refusal.
+ */
+export function signsInWithoutEdge(db: Database, userId: string): boolean {
+  return withoutOwnCredential(db, false, userId).length === 0;
 }

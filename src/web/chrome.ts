@@ -8,40 +8,33 @@
  * `ui.ts` may not. That is the line between the two files.
  */
 
-import { sshCommand } from "../ssh/command.ts";
-import { mayReadRuns } from "../actions/runs.ts";
-import { getAppByRepo } from "../core/apps.ts";
 import { audienceFacts, audienceOf } from "../core/audience.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../http/edge.ts";
 import {
-  canAdmin,
   canRead,
   forkParentFor,
   getRepo,
-  visibleForks,
 } from "../core/repos.ts";
-import { canEnterApp, type Repo } from "../core/repos.ts";
+import { type Repo } from "../core/repos.ts";
 import { parentUrl, shownTrail, sourceLabel } from "../core/provenance.ts";
 import type { Database } from "bun:sqlite";
 import type { Ctx } from "../http/context.ts";
 import { apiError, prefersJson } from "../http/respond.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { icon } from "./icons.ts";
-import { page, redirect, type PaletteItem } from "./layout.ts";
+import { page, redirect } from "./layout.ts";
 import {
   browseActions,
   hostOf,
-  tellRow,
+  repoPalette,
   localScope,
   studioOriginNote,
   upstreamHref,
   whereRow,
   type RepoScope,
 } from "./scope.ts";
-import { changesHref, tellsHref } from "./studio/nouns.ts";
-import { knownSpec, warmSpec } from "../apps/api_spec.ts";
-import { appsRuntime } from "../apps/runtime.ts";
-import { badge, btn, empty, tabs, type TabItem } from "./ui.ts";
+import { repoSteps, TAB_STEPS, type RepoTab } from "./repo_steps.ts";
+import { badge, btn, empty, keyHint, pill, tabs, type TabItem } from "./ui.ts";
 
 // ---- loading ----
 
@@ -72,8 +65,12 @@ export function crumbsFor(repo: Repo): { label: string; href: string }[] {
  * this address; `plain` leaves that out for a miss that must reveal nothing
  * (a dead `/go/:code`). */
 export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response {
-  const offerSignIn =
-    !opts.plain && ctx.auth.user === undefined && ctx.request.method === "GET";
+  const get = !opts.plain && ctx.request.method === "GET";
+  const offerSignIn = get && ctx.auth.user === undefined;
+  const asked = get ? askedFor(ctx.url.pathname) : "";
+  const search = asked
+    ? btn(`Search for ‘${asked}’`, { href: `/search?q=${encodeURIComponent(asked)}` })
+    : html``;
   return page(
     {
       ctx,
@@ -87,13 +84,25 @@ export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response
             ? btn("Go home", { href: "/", variant: "primary" })
             : offerSignIn
               ? html`${btn("Sign in", { href: signInHref(ctx), variant: "primary" })}
+                ${btn("Create an account", { href: "/signup" })} ${search}
                 ${btn("Go home", { href: "/" })} ${btn("Explore", { href: "/explore" })}`
-              : html`${btn("Go home", { href: "/", variant: "primary" })}
+              : html`${btn("Go home", { href: "/", variant: "primary" })} ${search}
                 ${btn("Explore", { href: "/explore" })}`,
         })}`,
     },
     404,
   );
+}
+
+/** What the reader asked for: the last path segment, URL-decoded, trimmed,
+ * at most 100 characters; empty for `/` or an undecodable segment. */
+function askedFor(pathname: string): string {
+  const segment = pathname.slice(pathname.lastIndexOf("/") + 1);
+  try {
+    return decodeURIComponent(segment).trim().slice(0, 100).trim();
+  } catch {
+    return "";
+  }
 }
 
 export const repoNotFound = notFoundPage;
@@ -148,23 +157,20 @@ export function signInHref(ctx: Ctx): string {
   return `/signin?next=${encodeURIComponent(next)}`;
 }
 
+/**
+ * Whether a signed-out visitor is offered Create an account beside Sign in.
+ * Behind a platform edge the edge is the one way in, unless it has vouched
+ * for them as a stranger who may sign up here. Home and explore share this.
+ */
+export function offersSignup(ctx: Ctx): boolean {
+  const token = activeEdgeToken(ctx.app);
+  return token === undefined || edgeStrangerLogin(ctx.request, token, ctx.auth.user) !== undefined;
+}
+
 // ---- repo header ----
 
-export type RepoTab =
-  | "code"
-  | "issues"
-  | "pulls"
-  | "forks"
-  | "map"
-  | "commits"
-  | "branches"
-  | "app"
-  | "runs"
-  | "events"
-  | "api"
-  | "settings"
-  /** A page that belongs to no tab (waves): nothing is marked current. */
-  | "none";
+export { repoPalette };
+export type { RepoTab };
 
 export interface RepoHeaderOptions {
   /** Rendered at the right of the title line (fork, clone, watch). */
@@ -182,6 +188,8 @@ export interface RepoHeaderOptions {
    * the repo name steps down to a plain element. Exactly one h1 per document.
    */
   ownTitle?: boolean;
+  /** Leave the where strip to the repository's home (#8773): a page about one change shows less at rest. */
+  quiet?: boolean;
 }
 
 /**
@@ -199,6 +207,25 @@ export function repoHeader(
 }
 
 /**
+ * The head's navigation at rest: the few steps most visits want as tabs, the
+ * rest (and any tab the page is on) folded into one "More" menu. Links keep
+ * their `g` shortcuts; each is also a palette row (`repoPalette`).
+ */
+function repoNav(items: TabItem[]): Html {
+  const shown = items.filter((t) => TAB_STEPS.has(t.label) || t.current === true);
+  const rest = items.filter((t) => !shown.includes(t));
+  if (rest.length === 0) return tabs(shown, "Repository");
+  const more = html`<details class="menu" data-align="start">
+    <summary class="btn" data-variant="ghost" data-size="sm">More</summary>
+    <div class="menu-panel">${rest.map(
+      (t) =>
+        html`<a class="menu-item" href="${t.href}"${t.shortcut ? html` data-shortcut="${t.shortcut}"` : null}>${t.label}${t.count !== undefined && t.count > 0 ? pill(t.count) : null}${t.shortcut ? keyHint(t.shortcut) : null}</a>`,
+    )}</div>
+  </details>`;
+  return html`<div class="repo-nav">${tabs(shown, "Repository")}${more}</div>`;
+}
+
+/**
  * The one repo header, for either side of the world. Identity, the where
  * strip, and the tab strip with live counts. Settings appears only for an
  * admin of a repository we actually hold — a tab that 404s is a lie about
@@ -213,159 +240,28 @@ export function scopeHeader(
   const base = scope.base;
   const repo = scope.repo;
   const facts = scope.facts;
-  const admin = repo !== undefined && canAdmin(ctx.app.db, repo, ctx.auth.user);
+  const { steps, admin, studio } = repoSteps(ctx, base, repo);
+  const counts: Partial<Record<RepoTab, number | null>> = {
+    issues: facts.openIssues,
+    pulls: facts.openPulls,
+    branches: options.branchCount ?? null,
+  };
+  const items: TabItem[] = steps.map((st) => {
+    const count = st.count ?? counts[st.key] ?? undefined;
+    return {
+      label: st.label,
+      href: st.href,
+      current: st.key === active && st.key !== "none",
+      ...(st.shortcut === undefined ? {} : { shortcut: st.shortcut }),
+      ...(count === undefined ? {} : { count }),
+    };
+  });
   // "forked from …" names another repository, so it says nothing to somebody
   // who cannot read that one — same rule as the About rail's Fork-of row.
   const parent =
     repo === undefined
       ? undefined
       : forkParentFor(ctx.app.db, repo, ctx.auth.user);
-
-  const record =
-    repo === undefined ? undefined : getAppByRepo(ctx.app.db, repo.id);
-  const isApp = record !== undefined;
-  // An app speaks the studio's words (told, changes), a plain repository
-  // git's (issues, pulls, commits, branches) — for every viewer (#603).
-  const studio = isApp;
-  // An app's home is the app, for every viewer, and its code is the Files
-  // step one tab over (`repoFiles`); any other repository's home is its code.
-  const items: TabItem[] = [
-    ...(isApp
-      ? [
-          {
-            label: studio ? "Studio" : "App",
-            href: base,
-            icon: "rocket" as const,
-            current: active === "app",
-          },
-          {
-            label: "Files",
-            href: `${base}/files`,
-            icon: "repo" as const,
-            current: active === "code",
-            shortcut: "g c",
-          },
-        ]
-      : [
-          {
-            label: "Code",
-            href: base,
-            icon: "repo" as const,
-            current: active === "code",
-            shortcut: "g c",
-          },
-        ]),
-    {
-      // Issues and pull requests are called that in every mode (#3241).
-      label: "Issues",
-      href: tellsHref(base),
-      icon: "issue",
-      ...(facts.openIssues === null ? {} : { count: facts.openIssues }),
-      current: active === "issues",
-      shortcut: "g i",
-    },
-    {
-      label: "Pulls",
-      href: changesHref(base),
-      icon: "pull",
-      ...(facts.openPulls === null ? {} : { count: facts.openPulls }),
-      current: active === "pulls",
-      shortcut: "g p",
-    },
-    {
-      label: "Map",
-      href: `${base}/map`,
-      icon: "map",
-      current: active === "map",
-      shortcut: "g a",
-    },
-    ...(studio
-      ? []
-      : [
-          {
-            label: "Commits",
-            href: `${base}/commits`,
-            icon: "commit" as const,
-            current: active === "commits",
-            shortcut: "g m",
-          },
-          {
-            label: "Branches",
-            href: `${base}/branches`,
-            icon: "branch" as const,
-            ...(options.branchCount === undefined
-              ? {}
-              : { count: options.branchCount }),
-            current: active === "branches",
-            shortcut: "g b",
-          },
-        ]),
-  ];
-  // The family: a repository with forks, or one that is a fork, gets a tab
-  // to the tree — where each fork stands against what it follows. One with
-  // neither has no family to show, and the tab stays away.
-  if (repo !== undefined) {
-    // Only the forks this viewer may read: a private fork is not counted.
-    const forks = visibleForks(ctx.app.db, repo.id, ctx.auth.user).length;
-    if (forks > 0 || repo.forkParentId !== null)
-      items.splice(3, 0, {
-        label: "Forks",
-        href: `${base}/forks`,
-        icon: "fork",
-        ...(forks > 0 ? { count: forks } : {}),
-        current: active === "forks",
-        shortcut: "g f",
-      });
-  }
-  // The depth row's last two steps (#603): the runs, for who may read them
-  // (`mayReadRuns`: a private app's are for those who may enter it), and
-  // how to open the terminal (the TUI over SSH) for whoever has keys. A
-  // repository only browsed from elsewhere has no runs here.
-  if (repo !== undefined && mayReadRuns(ctx.app, ctx.auth.user, repo))
-    items.push({
-      label: "Runs",
-      href: `${base}/runs`,
-      icon: "activity",
-      current: active === "runs",
-      shortcut: "g r",
-    });
-  // What happened on the repository, as the reader may see it: the events
-  // page, for any repository kept here.
-  if (repo !== undefined)
-    items.push({
-      label: "Events",
-      href: `${base}/events`,
-      icon: "activity",
-      current: active === "events",
-    });
-  // An app that serves /openapi.json gets its API reference one tab over.
-  // The spec is read in the background and remembered, so a header never waits.
-  if (repo !== undefined && record !== undefined && canEnterApp(ctx.app.db, repo, record, ctx.auth.user)) {
-    const port = appsRuntime(ctx.app)?.envStatus(record, "production")?.port;
-    warmSpec(record, port);
-    if (knownSpec(record.id) != null)
-      items.push({
-        label: "API",
-        href: `${base}/api`,
-        icon: "command",
-        current: active === "api",
-      });
-  }
-  if (ctx.auth.user !== undefined && sshCommand(ctx.app) !== undefined)
-    items.push({
-      label: "Terminal",
-      href: "/settings/keys#terminal",
-      icon: "command",
-    });
-  if (admin)
-    items.push({
-      label: "Settings",
-      href: `${base}/settings`,
-      icon: "settings",
-      current: active === "settings",
-      shortcut: "g s",
-    });
-
   const owner = facts.owner;
   const actions = options.actions ?? browseActions(scope);
   const title = html`${icon(
@@ -383,7 +279,7 @@ export function scopeHeader(
     >
     ${facts.visibility === "private"
       ? badge("Private", { icon: "lock", variant: "secondary" })
-      : badge("Public", { variant: "secondary" })}
+      : null}
     ${actions.text.trim() !== ""
       ? html`<span class="repo-actions">${actions}</span>`
       : null}`;
@@ -410,8 +306,8 @@ export function scopeHeader(
           <span class="mono">${scope.upstream}</span>
         </p>`,
     )}
-    ${studio ? studioOriginNote(repo) : whereRow(ctx, scope)}
-    ${tabs(items, "Repository")}
+    ${studio ? studioOriginNote(repo) : options.quiet ? null : whereRow(ctx, scope)}
+    ${repoNav(items)}
   </header>`;
 }
 
@@ -455,7 +351,7 @@ export function lineageLine(
 
 /**
  * Who can see this repository, in the one sentence `audienceOf` gives, on a
- * line under the title. The Public/Private badge in the title says the code's
+ * line under the title. The Private badge in the title says the code's
  * visibility; a Split repository (public code, private app) is the case it
  * cannot say, so only then does a badge lead the sentence. The sentence is the
  * link to the settings for whoever can open them.
@@ -469,50 +365,6 @@ function audienceLine(ctx: Ctx, repo: Repo, admin: boolean, base: string): Html 
 }
 
 export { hostOf };
-
-/** This repo's own rows for the command palette — the studio's nouns for a
- * studio-mode viewer of an app, so the palette never sends someone to a
- * list under a name the address bar would not use. Commits is dev's own
- * page (no studio tab reaches it, `scopeHeader` above), so it drops out of
- * a studio app's rows rather than sit there under a dev word; New issue
- * gives way to the studio's own first verb, telling the crew, which posts
- * from the app page itself (`${base}#tell`, `studio/app.ts`). */
-export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
-  const base = repoBase(repo);
-  const name = `${repo.ownerName}/${repo.name}`;
-  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
-  const studio = isApp;
-  if (studio) {
-    return [
-      { t: `${name} — Studio`, h: base, c: "This repo" },
-      { t: `${name} — Files`, h: `${base}/files`, c: "This repo" },
-      { t: `${name} — Issues`, h: tellsHref(base), c: "This repo" },
-      { t: `${name} — Pull requests`, h: changesHref(base), c: "This repo" },
-      // Telling the crew is for who may direct it (`mayDirectCrew`: a
-      // writer, or anyone signed in where the owner let outsiders in), so
-      // nobody else is offered a door that leads nowhere.
-      ...tellRow(ctx, repo, "This repo"),
-      ...(mayReadRuns(ctx.app, ctx.auth.user, repo)
-        ? [{ t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" }]
-        : []),
-      { t: `${name} — Events`, h: `${base}/events`, c: "This repo" },
-      { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
-    ];
-  }
-  return [
-    ...(isApp ? [{ t: `${name} — App`, h: base, c: "This repo" }] : []),
-    { t: `${name} — Code`, h: isApp ? `${base}/files` : base, c: "This repo" },
-    { t: `${name} — Issues`, h: `${base}/issues`, c: "This repo" },
-    { t: `${name} — Pull requests`, h: `${base}/pulls`, c: "This repo" },
-    { t: `${name} — Commits`, h: `${base}/commits`, c: "This repo" },
-    { t: `${name} — New issue`, h: `${base}/issues/new`, c: "This repo" },
-    ...(mayReadRuns(ctx.app, ctx.auth.user, repo)
-      ? [{ t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" }]
-      : []),
-    { t: `${name} — Events`, h: `${base}/events`, c: "This repo" },
-    { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
-  ];
-}
 
 // ---- generic furniture ----
 
@@ -534,10 +386,24 @@ export interface SettingsSection {
   href: string;
   icon?: Parameters<typeof icon>[0];
   current?: boolean;
+  /** The group it is listed under; consecutive sections share one heading. */
+  group?: string;
 }
 
-/** The settings two-pane: a sticky section list beside the content on a
- * desktop, the same scroll strip as the repo tabs on a phone.
+/** Consecutive sections that share a group, in order; ungrouped ones form one unnamed run. */
+function settingsGroups(sections: SettingsSection[]): { name: string | undefined; items: SettingsSection[] }[] {
+  const out: { name: string | undefined; items: SettingsSection[] }[] = [];
+  for (const s of sections) {
+    const last = out[out.length - 1];
+    if (last !== undefined && last.name === s.group) last.items.push(s);
+    else out.push({ name: s.group, items: [s] });
+  }
+  return out;
+}
+
+/** The settings two-pane: a sticky section list, grouped and filterable,
+ * beside the content on a desktop; on a phone, one menu at the top that names
+ * the section you are on and opens onto the same groups.
  *
  * The sections are `data-nav` rows, so `j`/`k` walk them from the one you
  * are on and Enter opens one; the main pane is the page's box, so `c`
@@ -547,17 +413,41 @@ export function settingsLayout(
   body: Html,
   ariaLabel = "Settings sections",
 ): Html {
+  const groups = settingsGroups(sections);
+  const named = groups.some((g) => g.name !== undefined);
+  const here = sections.find((s) => s.current);
+  const list = (nav: boolean) =>
+    groups.map(
+      (g) => html`<div class="settings-group" ${g.name === undefined ? null : html`role="group" aria-label="${g.name}"`}>
+        ${g.name === undefined ? null : html`<p class="settings-group-name">${g.name}</p>`}
+        ${g.items.map(
+          (s) =>
+            html`<a
+              href="${s.href}"
+              ${nav ? raw("data-nav") : null}
+              ${s.current ? raw('aria-current="page"') : null}
+              >${s.label}</a
+            >`,
+        )}
+      </div>`,
+    );
   return html`<div class="settings">
+    <details class="settings-jump">
+      <summary>${here === undefined ? "Sections" : here.label}${icon("chevronDown")}</summary>
+      <div class="settings-jump-list">${list(false)}</div>
+    </details>
     <nav class="settings-nav" aria-label="${ariaLabel}">
-      ${sections.map(
-        (s) =>
-          html`<a
-            href="${s.href}"
-            data-nav
-            ${s.current ? raw('aria-current="page"') : null}
-            >${s.icon ? icon(s.icon) : null}${s.label}</a
-          >`,
-      )}
+      ${named
+        ? html`<input
+            class="input settings-filter js-only"
+            type="search"
+            placeholder="Filter settings"
+            aria-label="Filter settings"
+            autocomplete="off"
+            data-settings-filter
+          />`
+        : null}
+      ${list(true)}
     </nav>
     <div class="settings-main" data-box="Edit the form">${body}</div>
   </div>`;

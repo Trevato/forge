@@ -12,7 +12,7 @@ import { emailVerified, markUnproven, markVerified } from "../src/core/verify.ts
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { settleApp, settlePalette, settleUntil } from "./helpers/tui.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
@@ -56,6 +56,8 @@ describe("verify an email from the People screen", () => {
     await settleApp(app);
     await press("ctrl+k");
     for (const ch of "People") await press(ch);
+    // Enter before the palette's live re-run lands can open a row it then moves.
+    await settlePalette(app);
     await press("enter");
     await settleUntil(app, "alice");
     return { app, press, text: () => app.screen.toText() };
@@ -141,6 +143,7 @@ describe("verify an email from the People screen", () => {
   }, 30_000);
 
   // Its own accounts, so its verdict never rests on the screen tests above.
+  // Two password hashes: on a loaded check machine they outlast bun's 5 s default.
   test("listPeople says who is verified", async () => {
     const proven = await createUser(forge.db, { username: "dora", email: "dora@forge.test", password: "a-long-passphrase", origin: "seed" });
     const unproven = await createUser(forge.db, { username: "evan", email: "evan@forge.test", password: "a-long-passphrase", origin: "seed" });
@@ -152,5 +155,5 @@ describe("verify an email from the People screen", () => {
     expect(byName.get("alice")).toBe(true);
     expect(byName.get("dora")).toBe(true);
     expect(byName.get("evan")).toBe(false);
-  });
+  }, 30_000);
 });

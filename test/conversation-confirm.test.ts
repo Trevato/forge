@@ -121,10 +121,10 @@ describe("the one list of what asks first", () => {
   // settings and can be put back. A new `writes: true` tool is on neither list until someone decides.
   const NOT_ASKED = new Set([
     "access", "account_verify", "app_members", "app_notes", "asks_act", "asks_decide", "asks_proposal", "asks_undecide",
-    "assign", "attach_look", "board_pins", "board_write", "branches", "capacity", "cloud_accounts", "close", "confirm_wait",
+    "assign", "attach_look", "bet", "board_pins", "board_write", "branches", "capacity", "valves", "cloud_accounts", "close", "confirm_wait",
     "crew", "decisions_by", "detach", "edit", "email_verify", "feed_chips", "feed_dismiss", "flag_set", "flag_winner",
-    "follow_mode", "front_page", "hold", "issue_teams", "labels", "limb", "make_it_yours", "map", "merge", "new_app",
-    "notify", "org_create", "origin_apps", "pins", "plan", "profile", "propose_to_parent_forge", "repo_labels", "reports",
+    "follow_mode", "fork", "front_page", "hold", "issue_teams", "keep_plan", "labels", "lift", "limb", "maintenance", "make_it_yours", "map", "merge", "new_app",
+    "next_up", "week", "notify", "open_pull", "org_create", "origin_apps", "pins", "plan", "profile", "propose_to_parent_forge", "repo_labels", "reports",
     "restore_drill", "review", "say", "signup", "snapshot_now", "spend", "steer", "sync", "take_back", "take_updates",
     "teams", "tell", "threads", "trail", "upstream", "variant", "wait_for", "watch", "whoami_can", "write_file",
   ]);
@@ -137,7 +137,7 @@ describe("the one list of what asks first", () => {
       expect(listed || NOT_ASKED.has(t.name), `${t.name} writes: ask first (ASKING) or name it in NOT_ASKED`).toBe(true);
       expect(listed && NOT_ASKED.has(t.name), `${t.name} is on both lists`).toBe(false);
     }
-    for (const name of ["land_past_gate", "share", "invites", "egress_grants", "sever", "parent_unlink", "quotas", "spawn", "app_deploy", "stop", "converge", "origins", "cloud_account", "outsiders", "seal", "migrate"])
+    for (const name of ["land_past_gate", "share", "invites", "egress_grants", "sever", "parent_unlink", "quotas", "spawn", "app_deploy", "stop", "converge", "origins", "cloud_account", "pinned_forge", "outsiders", "seal", "migrate"])
       expect(ASKING[name], name).toBeDefined();
   });
 

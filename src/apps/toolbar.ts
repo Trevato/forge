@@ -15,6 +15,14 @@ import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
 
+/** What the panel says about a preview's freshness (#9111): the pill's words, in one table. */
+export const FRESHNESS_WORDS = {
+  merged: "Merged: this preview shows the pull as it landed",
+  closed: "Closed without landing",
+  deploying: "A newer push is deploying",
+  behind: "Shows an older push than the pull's newest",
+} as const;
+
 /** The client, as plain source: no `eval`, no inline handlers. */
 export const toolbarJs = `(function () {
   if (window.__forgeToolbar) return;
@@ -88,6 +96,13 @@ export const toolbarJs = `(function () {
     panel.appendChild(pl);
   } else if (d.pull) line("Preview of pull #" + d.pull);
   if (d.title) line(d.title);
+  // Whether this is the pull as it stands now; an open, current preview says nothing.
+  var W = ${JSON.stringify(FRESHNESS_WORDS)};
+  var freshness = d.state === "merged" ? W.merged
+    : d.state === "closed" ? W.closed
+    : d.deploying ? W.deploying
+    : d.behind ? W.behind : "";
+  if (freshness) line(freshness);
   var link = document.createElement("a");
   link.textContent = "Home";
   link.rel = "noopener";
@@ -565,6 +580,12 @@ export type PillWhere = {
   env: string;
   pull?: number;
   title?: string;
+  /** Whether the pull is open, merged or closed; for a reader of the pull only. */
+  state?: "open" | "merged" | "closed";
+  /** The preview runs a commit that is not the pull's head (and none is deploying). */
+  behind?: boolean;
+  /** A newer commit is being deployed now. */
+  deploying?: boolean;
 };
 
 /** `text` safe inside a double-quoted HTML attribute. */
@@ -612,6 +633,9 @@ export function toolbarTag(
           ["env", where.env],
           ["pull", where.pull === undefined ? undefined : String(where.pull)],
           ["title", where.title],
+          ["state", where.state],
+          ["behind", where.behind === true ? "1" : undefined],
+          ["deploying", where.deploying === true ? "1" : undefined],
         ]
           .filter((pair): pair is [string, string] => pair[1] !== undefined)
           .map(([k, v]) => ` data-${k}="${escapeAttr(v)}"`)

@@ -20,6 +20,7 @@ import {
   type Repo,
 } from "../core/repos.ts";
 import { forgeSpend, type SpanSpend } from "../core/usage_report.ts";
+import { measureFor } from "../core/measure.ts";
 import { freePct, standings, type Standing } from "../core/standing.ts";
 import {
   budgetsOf,
@@ -274,11 +275,15 @@ export function readForgeUsage(
       subscription: names.get(id) ?? (id === PLATFORM ? id : "a removed subscription"),
       today: at(spend.today, id),
       last24h: at(spend.last24h, id),
-      headroom: (read.get(id)?.windows ?? []).map((w) => ({
-        window: w.window,
-        pct: freePct(w.cap?.value ?? null, w.used.value),
-        resetsAt: w.resetsAt?.value ?? null,
-      })),
+      headroom: (read.get(id)?.windows ?? []).map((w) => {
+        // The provider's own measurement wins over the ledger's inference (#8960).
+        const m = measureFor(db, id, w.window, now);
+        return {
+          window: w.window,
+          pct: m === null ? freePct(w.cap?.value ?? null, w.used.value) : Math.round(100 - m.usedPct),
+          resetsAt: m === null ? (w.resetsAt?.value ?? null) : m.resetsAt,
+        };
+      }),
     }))
     .sort((a, b) => a.subscription.localeCompare(b.subscription));
   // Totals come from every row, so no spend can fall out of them.

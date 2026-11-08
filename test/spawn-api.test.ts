@@ -155,20 +155,24 @@ describe("spawn over the API and MCP", () => {
     expect(String(made.url)).toContain("kid");
     expect(placed).toBe(1);
     const list = (await (await get(ro)).json()) as any;
-    expect(list.items).toEqual([
-      {
-        name: "kid",
-        url: expect.stringContaining("kid"),
-        bodyId: "fake-1",
-        done: true,
-        for: null,
-        apps: expect.any(Array),
-        createdAt: expect.any(String),
-        size: "small",
-        placement: "hosted",
-        placementNote: null,
-      },
-    ]);
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]).toMatchObject({
+      name: "kid",
+      url: expect.stringContaining("kid"),
+      for: null,
+      apps: ["alice/notes"],
+      size: "small",
+      made: true,
+      attention: "silent",
+      // what the list carried before the client rows, kept beside them
+      bodyId: "fake-1",
+      done: true,
+      createdAt: expect.any(String),
+      placement: "hosted",
+      placementNote: null,
+    });
+    for (const key of ["claimed", "running", "reach", "spendTodayUsd", "ceilingUsd", "use", "nextStep", "sentAt"]) expect(list.items[0]).toHaveProperty(key);
+
     // The same request again is answered, not made twice.
     const again = await post(rw, { name: "kid", apps: ["alice/notes"], crew: ["scout"], dryRun: false });
     expect(again.status).toBe(200);

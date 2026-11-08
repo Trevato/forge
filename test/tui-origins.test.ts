@@ -121,6 +121,7 @@ describe("connected origins in the terminal", () => {
       expect(listOrigins(forge.db, made.value.id)[0]!.lastError).toBe("");
       await h.press("s");
       for (let i = 0; i < 40 && listOrigins(forge.db, made.value.id)[0]!.lastSyncAt === null; i++) await Bun.sleep(100);
+      if (listOrigins(forge.db, made.value.id)[0]!.lastSyncAt === null) throw new Error(`never came: still waiting while listOrigins(forge.db, made.value.id)[0]!.lastSyncAt === null`);
       await h.press("k");
       expect(listOrigins(forge.db, made.value.id)[0]!.lastSyncAt).not.toBeNull();
       expect(h.text()).toContain("Synced 0 repositories.");

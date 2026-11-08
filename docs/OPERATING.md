@@ -1,6 +1,14 @@
 # Operating the forge
 
-What an operator sets and watches once the forge is running: its configuration, its health, how a release proves itself, the switches and limits an admin turns, and how its checks are run. How to start it is the README's "Run it".
+This document is for the person who runs a forge after it has started. It covers
+configuration, health, how a release proves itself, the switches and limits an
+admin controls, and how checks run. Configuration is environment variables with
+defaults.
+
+To start a forge, see "Run it" in [`REFERENCE.md`](REFERENCE.md#run-it). To
+respond to an attack or a leaked token, see
+[`SECURITY-RUNBOOK.md`](SECURITY-RUNBOOK.md). To recover from a failure, see
+[`RECOVERY.md`](RECOVERY.md).
 
 ## Configuration
 
@@ -13,7 +21,8 @@ routers learn it is going, so a roll refuses nobody (`docs/ops/ROLL.md`).
 Connecting origins
 adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_GITHUB_CLIENT_ID` / `FORGE_GITHUB_CLIENT_SECRET`, and
-`FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Behind a
+`FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN, for discovery
+and for that origin's git). Behind a
 platform edge that signs people in for every app it serves, `FORGE_EDGE_TOKEN`
 is the edge's secret: a request carrying it and `X-Plat-User` is that person,
 signed in by the platform if an account of that name exists. An unknown login
@@ -28,7 +37,26 @@ MCP `capacity` tool) makes the forge ignore `X-Plat-User` even when the secret
 matches; people then sign in with a password or a passkey. An admin with
 neither is refused, so no one locks themselves out. Accounts the edge made
 cannot sign in while it is off until they add a passkey (a password-less
-account cannot set a password: `/settings/password` asks for the current one).
+account cannot set a password: `/settings/password` asks for the current one). Before switching it off, see [edge-only accounts](features/edge-only-accounts.md).
+To switch it off on a preview: sign in there as an admin with a password or a
+passkey (Settings → Passkeys adds one), open Settings → Capacity, set "Sign in
+through the platform edge" to `off`, then sign out and back in with the passkey
+to prove the way in. To roll back, set the same row to `on` (or Put back, which
+returns to `FORGE_SIGNIN_EDGE`, `on` when unset); with no browser,
+`PUT /api/v1/admin/capacity/signin.edge` with `{"value":"on"}` and an admin
+token (`POST /api/v1/tokens` with the password still mints one while it is
+off). A stored value outranks `FORGE_SIGNIN_EDGE`, so changing the environment
+alone does not roll back. Switching production off is the owner's to do, with
+the owner present. `test/signin-edge-off.test.ts` walks this round trip.
+**Dry run first.** Settings → Capacity has a "Dry run" button on that row (and
+`PUT /api/v1/admin/capacity/signin.edge` with `{"dry_run":true}`): it changes
+nothing, says how many accounts sign in without the edge, names each one that
+would be locked out, and says so when that includes you, in which case the switch
+is refused until you add a passkey. Settings → Accounts shows the same count.
+With the edge off, `/_plat/login` is not linked from the sign-in page and
+`X-Plat-User` is ignored; `--first-admin` is untouched, so the operator's link
+still works as a break-glass. Locked out: see `docs/SECURITY-RUNBOOK.md`,
+"Locked out after the edge went off".
 Account settings show "open-platform.sh: linked as <login>" or "not linked": Link
 records the login the request carries against the signed-in account, Unlink removes
 it (same-origin POSTs). An edge sign-in finds the account by its link first, then by
@@ -93,6 +121,9 @@ answer `/healthz` as that version, then runs the smoke checks (`src/release/smok
 keeps the verdict in `$FORGE_APP_DATA/release/proof.json`. A failure is a
 `Release X is unproven: …` card on an admin's board and on the terminal's first
 screen (the same cards), and is paged once; a later passing version clears it.
+A failed proof is tried again after 5 minutes, doubling to an hour; one that
+failed only because an answer was slow (`slow: true` in the proof) is tried
+again after a minute per failure in a row (1, 2, 3, 4 minutes), then the doubling.
 
 **The outsider suite** (#663) is the proof a person reads before flipping signup
 to open. It adds the proof only: it removes no gate and reopens nothing.

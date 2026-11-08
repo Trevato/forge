@@ -30,8 +30,12 @@ let mason: User;
 let repo: Repo;
 let n = 0;
 const requested: string[] = [];
+/** The reds of the burst test, which the flow-report test counts. */
+const burst: Awaited<ReturnType<typeof pullBy>>[] = [];
 
-const T0 = new Date("2026-11-02T12:00:00.000Z");
+// From the clock, not a date: rows the test makes carry today's real time, and a fixed T0 stops
+// passing once the day reaches it.
+const T0 = new Date();
 const at = (minutes: number) => new Date(T0.getTime() + minutes * 60_000);
 
 beforeAll(async () => {
@@ -191,7 +195,7 @@ test("a pull red for over a day that conflicts with main is closed saying so", a
 });
 
 test("a burst of reds is paced: no more than PER_TICK start in one tick", async () => {
-  const made: Awaited<ReturnType<typeof pullBy>>[] = [];
+  const made = burst;
   for (let i = 0; i < PER_TICK + 2; i++) {
     const p = await pullBy(mason);
     finished(p, "check", "failed", 3000, "", `engine > burst ${i}`);
@@ -207,6 +211,12 @@ test("a burst of reds is paced: no more than PER_TICK start in one tick", async 
 
 test("the flow report counts stale reds and the keeper names them as a cause", () => {
   const now = at(3100 + 600);
+  // Only the burst is left open: an earlier pull's queued run may be picked up and finished by
+  // the app's own runner at a time of its choosing, which would add a sixth red on a slow machine.
+  const ids = burst.map((p) => p.pull.id);
+  app.db
+    .query(`UPDATE issue SET state = 'closed' WHERE state = 'open' AND id NOT IN (${ids.map(() => "?").join(",")})`)
+    .run(...ids);
   const read = readStaleReds(app.db, now);
   // The burst's five reds, failed at minute 3000, 700 minutes before `now`; the held,
   // person-assigned, parked and closed ones are not counted.

@@ -115,6 +115,7 @@ describe("the terminal's forks screen takes the parent's updates with t", () => 
     );
     // Bob's fork follows by itself; put it back where it was so it is behind only.
     for (let i = 0; i < 100 && (await behind("bob")) !== 0; i++) await Bun.sleep(50);
+    if ((await behind("bob")) !== 0) throw new Error(`never came: still waiting while (await behind("bob")) !== 0`);
     await git(repoDir(app.reposRoot, "bob", "app"), "update-ref", "refs/heads/main", before);
     expect(await behind("bob")).toBe(1);
     converge = must(createIssue(app.db, { repoId: dan.id, authorId: users["dan"]!.id, title: convergeTitle(upstream) })).number;

@@ -9,7 +9,8 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
-import { candidates, forgetLive } from "../src/release/landings.ts";
+import { candidates, forgetLive, type Landing, type Landings } from "../src/release/landings.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 
 const must = <T>(r: { ok: true; value: T } | { ok: false; error: unknown }): T => {
   if (!r.ok) throw new Error(JSON.stringify(r.error));
@@ -234,6 +235,25 @@ describe("changelog page", () => {
     expect(body).toContain('href="/changelog"');
   });
 
+  test("warm, the page answers with its days already drawn, for no more work than cold (#9688)", async () => {
+    const url = `${servers.url}/changelog`;
+    const cold = await requestStatements(app.db, url);
+    const warmStatements = await requestStatements(app.db, url);
+    expectWork(warmStatements, { max: cold });
+    const res = await fetch(url);
+    expect(res.headers.get("server-timing")).toContain("render");
+    const { Window } = await import("happy-dom");
+    const doc = new Window().document;
+    doc.body.innerHTML = await res.text();
+    // No script ran: the days, their headings and their rows are in the markup the server sent.
+    doc.querySelectorAll("script").forEach((s) => s.remove());
+    const days = [...doc.querySelectorAll("#shipped section[data-day]")];
+    expect(days.length).toBe(1);
+    expect(days[0]!.querySelector("h2 time")!.getAttribute("datetime")).toBe(new Date().toISOString().slice(0, 10));
+    expect([...days[0]!.querySelectorAll("li .row-title")].map((t) => t.textContent)).toEqual(["Second thing", "First <b>thing</b>"]);
+    expect(doc.getElementById("shipped-today")!.textContent).toBe("2 shipped today (UTC).");
+  });
+
   test("empty only when nothing has shipped", async () => {
     app.db.run("UPDATE pull SET merged_at = NULL");
     const body = await (await fetch(`${servers.url}/changelog`)).text();
@@ -404,5 +424,72 @@ describe("the top line names what is running", () => {
     expect(hidden).toContain('<span class="sha">8a16183</span>');
     expect(hidden).not.toContain("/commit/");
     expect(String(shippedRegion({ ...base, own: undefined }, "all"))).not.toContain("/commit/");
+  });
+});
+
+describe("changelog rows, not boxes (#9688)", () => {
+  const landing = (number: number, at: string, bet?: string): Landing => ({ repo: "a/forge", number, title: `T${number}`, at, live: true, ...(bet === undefined ? {} : { bet }) });
+  const landings = (live: Landing[], onItsWay: Landing[] = []): Landings => ({ live, onItsWay, version: "1", commit: null, own: "a/forge" });
+  const sample = landings([landing(2, "2026-11-02T01:00:00.000Z"), landing(1, "2026-11-01T01:00:00.000Z", "Speed")], [landing(3, "2026-11-02T02:00:00.000Z")]);
+  const parse = async (markup: string) => {
+    const { Window } = await import("happy-dom");
+    const doc = new Window().document;
+    doc.body.innerHTML = markup;
+    return doc;
+  };
+
+  test("each day is a section with an h2 over a list, and nothing is a card", async () => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    const doc = await parse(String(shippedRegion(sample, "all", new Date("2026-11-02T10:00:00.000Z"))));
+    expect(doc.querySelectorAll(".card, .card-head").length).toBe(0);
+    const days = [...doc.querySelectorAll("section[data-day]")];
+    expect(days.map((d) => d.getAttribute("data-day"))).toEqual(["2026-11-02", "2026-11-01"]);
+    for (const d of days) {
+      // The heading, then the list, and nothing else.
+      expect([...d.children].map((c) => `${c.tagName}.${c.className}`)).toEqual(["H2.", "UL.list setting-list"]);
+    }
+    // On its way is the same shape: a heading over the same list.
+    const way = [...doc.querySelectorAll("h2")].find((h) => h.textContent === "On its way")!;
+    expect(way.nextElementSibling!.className).toBe("list setting-list");
+  });
+
+  test("each heading holds what localDaysJs reads, in its order: the day, the UTC mark, then the one count badge", async () => {
+    const { shippedRegion, localDaysJs } = await import("../src/web/pages/changelog.ts");
+    const doc = await parse(String(shippedRegion(sample, "all", new Date("2026-11-02T10:00:00.000Z"))));
+    const heads = [...doc.querySelectorAll("section[data-day] > h2")];
+    expect(heads.length).toBe(2);
+    const shape = heads.map((h) => [...h.children].map((c) => (c.tagName === "TIME" ? `time ${c.getAttribute("datetime")}` : c.hasAttribute("data-zone") ? `zone ${c.textContent}` : `${c.className} ${c.textContent}`)));
+    expect(shape).toEqual([
+      ["time 2026-11-02", "zone UTC", "badge 1"],
+      ["time 2026-11-01", "zone UTC", "badge 1"],
+    ]);
+    // The script's first .badge in a section, once the zone mark is gone, is the count: a row's bet badge sits under the list.
+    for (const h of heads) {
+      h.querySelector("[data-zone]")!.remove();
+      expect(h.parentElement!.querySelector(".badge")!.textContent).toBe("1");
+    }
+    // In the reader's own zone there is no mark at all.
+    const local = await parse(String(shippedRegion(sample, "all", new Date("2026-11-02T10:00:00.000Z"), "America/Chicago")));
+    expect(local.querySelectorAll("[data-zone]").length).toBe(0);
+    for (const sel of ["[data-day]", "h2 time", "[data-zone]", ".badge"]) expect(localDaysJs).toContain(`'${sel}'`);
+    expect(localDaysJs.indexOf("[data-zone]")).toBeLessThan(localDaysJs.indexOf("c.querySelector('.badge')"));
+  });
+
+  test("nothing shipped is one quiet line, the board's own", async () => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    const doc = await parse(String(shippedRegion(landings([]), "all")));
+    const lines = [...doc.querySelectorAll("p")].filter((p) => p.id !== "shipped-top");
+    expect(lines.map((p) => [p.className, p.innerHTML])).toEqual([["mt muted", "Nothing has shipped yet."]]);
+    expect(doc.querySelectorAll(".card, strong").length).toBe(0);
+  });
+
+  test("the region is bounded work (no clock) and reads without script", async () => {
+    const { shippedRegion } = await import("../src/web/pages/changelog.ts");
+    const many = Array.from({ length: 100 }, (_, i) => landing(i + 1, new Date(Date.UTC(2026, 10, 1) - i * 7_200_000).toISOString()));
+    const out = String(shippedRegion(landings(many), "all"));
+    // Work, not a stopwatch: about 100 bytes of markup per row beyond its title, a day section per two rows.
+    expectWork(out.length, { max: 100 * 700 });
+    const doc = await parse(out);
+    expect(doc.querySelectorAll("section[data-day] li").length).toBe(100);
   });
 });

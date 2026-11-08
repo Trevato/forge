@@ -304,6 +304,36 @@ describe("statements", () => {
   });
 });
 
+describe("the retired FLOW ONLY switch leaves no schema behind (#8731)", () => {
+  const DROP = "20261103100000-drop-flow-only";
+  const columns = (db: Database, table: string): string[] =>
+    db.query<{ name: string }, []>(`SELECT name FROM pragma_table_info('${table}')`).all().map((c) => c.name);
+
+  test("a database that had the switch on loses the column and the table, and keeps its repositories", () => {
+    const path = fresh();
+    const old = openDb(path, migrationFiles.filter((m) => m.name !== DROP).map((m) => m.sql));
+    expect(columns(old, "repo")).toContain("flow_only");
+    expect(has(old, "flow_only_watch")).toBe(true);
+    old.exec("INSERT INTO user (id, username, email, password_hash) VALUES ('u1', 'ada', 'ada@example.com', 'x')");
+    old.exec("INSERT INTO repo (id, owner_id, name, flow_only) VALUES ('r1', 'u1', 'lab', 1)");
+    old.exec("INSERT INTO flow_only_watch (repo_id, alarm_at) VALUES ('r1', 1)");
+    old.close();
+
+    const db = openDb(path, migrations);
+    expect(columns(db, "repo")).not.toContain("flow_only");
+    expect(has(db, "flow_only_watch")).toBe(false);
+    expect(db.query("SELECT id, name FROM repo").all()).toEqual([{ id: "r1", name: "lab" }]);
+    db.close();
+  });
+
+  test("a fresh database never keeps either", () => {
+    const db = openDb(":memory:", migrations);
+    expect(columns(db, "repo")).not.toContain("flow_only");
+    expect(has(db, "flow_only_watch")).toBe(false);
+    db.close();
+  });
+});
+
 describe("a migration is a file named by a sortable id (#1837)", () => {
   const source = join(import.meta.dir, "../src/core/migrations");
 

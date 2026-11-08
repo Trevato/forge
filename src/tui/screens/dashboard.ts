@@ -14,7 +14,7 @@
  * whole of this screen's design.
  */
 
-import { exploreLine, isExploreLine, exploreNote, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
+import { exploreLine, isExploreLine, exploreNote, exploreSuggestion, explorePage, parseExploreQuery, readExploreLine, type ExploreRow } from "../../actions/explore.ts";
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { governorSeen } from "../../crew/governed.ts";
@@ -119,6 +119,7 @@ import { lastClearedNote } from "../../flow/clog_tick.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { alarmIdleCrew } from "../../flow/alarm_idle_crew.ts";
 import { idleLine, idleReason } from "../../crew/idle_reason.ts";
+import { weekBlock } from "../../crew/week_read.ts";
 import { noReleaseAlarm } from "../../flow/alarm_no_release.ts";
 import { redMainAlarm } from "../../flow/alarm_red_main.ts";
 import { alarmStuck } from "../../flow/alarm_stuck.ts";
@@ -399,6 +400,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ? []
         : [
             ...idleLines(f.app, now),
+            ...weekBlock(f.app, now),
             ...kpiLines(readKpis(f.db, now, { ...kpiForge(f.app), idle: () => idleReason(f.app, now) }), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
             vitalsLine(readVitals(f.db, now)),
             ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }).map((a) => a.says),
@@ -777,12 +779,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     });
   };
 
-  /** Give the handed-over pull under the cursor back to its builder, through the action the web uses. */
+  /** Give the handed-over or assigned work under the cursor to the crew, through the action the web uses. */
   const giveBackHere = (): void => {
     const here = onYou[at("onyou").index];
     if (here === undefined) return;
-    if (here.over !== true && here.passed === undefined) {
-      ctx.toast("only a handed-over pull goes back to the crew", "attn");
+    if (here.hand === true) {
+      ctx.toast("only work handed to you goes back to the crew", "attn");
       return;
     }
     const done = giveBack(f.app, f.user, `${here.over === true ? "handover" : "assigned"}:${here.issue.id}`);
@@ -951,8 +953,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     if (focus === "repos") {
       if (exploring()) openExplored(exploredRows()[at("repos").index]);
       else openRepo(shown()[at("repos").index]);
-    }
-    else if (focus === "onyou") openAssigned(onYou[at("onyou").index]);
+    } else if (focus === "onyou") openAssigned(onYou[at("onyou").index]);
     else openPin(pins[at("machine").index]);
   };
 
@@ -969,7 +970,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ...(focus === "onyou" && onYou[at("onyou").index]?.hand === true
           ? [binding(["D"], "let the decider")]
           : []),
-        ...(focus === "onyou" && (onYou[at("onyou").index]?.over === true || onYou[at("onyou").index]?.passed !== undefined)
+        ...(focus === "onyou" && onYou[at("onyou").index] !== undefined && onYou[at("onyou").index]?.hand !== true
           ? [binding(["b"], "give back to the crew")]
           : []),
         ...(focus === "onyou" && waveHere() !== undefined
@@ -1062,8 +1063,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         );
         body = rest!;
       }
-      // A short terminal drops the last figures before it drops the list.
-      const shown = figures.slice(0, Math.max(0, body.h - FIGURES_ROOM));
+      // A short terminal drops lesser figures before it drops the list; the spend line goes last.
+      const shown = keepFigures(figures, body.h - FIGURES_ROOM);
       if (shown.length > 0) {
         const [strip, rest] = split(body, "v", [len(shown.length), fill(1)]);
         shown.forEach((line, i) =>
@@ -1129,10 +1130,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // with less than its default protection — the web footer's line.
       const read = exploring() ? readExploreLine(filter.query) : undefined;
       const note = read === undefined ? "" : exploreNote(read.unknown);
+      const mend = exploring() ? exploreSuggestion(filter.query) : undefined;
       const readAs =
         read === undefined
           ? undefined
-          : `Read as: ${exploreLine(read.query) || "everything"}${note === "" ? "" : ` · ${note}`}`;
+          : `Read as: ${exploreLine(read.query) || "everything"}${mend === undefined ? "" : ` · Did you mean ${mend.line}?`}${note === "" ? "" : ` · ${note}`}`;
       const reduced = readAs ?? (f.user?.isAdmin === true ? protectionNotice() : undefined);
       const [box, warn, list] = split(
         main,
@@ -1520,6 +1522,23 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   return screen;
 }
+
+/**
+ * The figures a strip of `room` rows keeps, in the order they are drawn:
+ * the crew spend line (with its ceiling words) is kept ahead of every other
+ * figure, and the rest fill what room is left from the top (#9512).
+ */
+export function keepFigures(figures: readonly string[], room: number): string[] {
+  const n = Math.max(0, room);
+  if (figures.length <= n) return [...figures];
+  const first = figures.findIndex((line) => line.startsWith(SPEND_LINE));
+  const order = first < 0 ? figures.map((_, i) => i) : [first, ...figures.map((_, i) => i).filter((i) => i !== first)];
+  const kept = new Set(order.slice(0, n));
+  return figures.filter((_, i) => kept.has(i));
+}
+
+/** How the crew spend figure begins, as `kpiLines` says it. */
+const SPEND_LINE = "Crew spend today";
 
 /** Why the builders are idle, as the one line an admin's home reads; none while they are not. */
 function idleLines(app: App, now: Date): string[] {

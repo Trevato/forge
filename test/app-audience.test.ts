@@ -1,5 +1,5 @@
 /**
- * The app page says who the app answers to, in the head beside its state:
+ * The app page says who the app answers to, once, in the repository's head:
  * a public app, a private app, and a private app on a public repository
  * (#620).
  */
@@ -29,7 +29,11 @@ describe("the app page's audience sentence", () => {
     });
     expect(res.status).toBe(200);
     const body = await res.text();
-    return /<p class="muted small" id="app-audience">([^<]*)<\/p>/.exec(body)?.[1];
+    // Said once, under the title (the repo head), not again in the app's own head.
+    expect(body).not.toContain("app-audience");
+    const line = /<header class="repo-head">[\s\S]*?<p class="muted small">([\s\S]*?)<\/p>/.exec(body)?.[1];
+    // The Split badge that leads a split repository's line is a word, not the sentence.
+    return line?.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim().replace(/^Split /, "");
   };
 
   beforeAll(async () => {

@@ -43,6 +43,7 @@ import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
 import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
+import { proposesViaFork } from "../../origins/fork-route.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
@@ -228,6 +229,7 @@ export function followingCard(
   ctx: Ctx,
   repo: Repo,
   following: Following,
+  o: { bare?: boolean } = {},
 ): Html {
   const { relation, converge } = following;
   const parent = relation.parent;
@@ -284,11 +286,18 @@ export function followingCard(
       proposal === undefined
         ? html`<form method="post" action="${base}/following">
             <input type="hidden" name="do" value="propose" />
-            ${btn("Propose upstream", {
-              size: "sm",
-              type: "submit",
-              icon: "merge",
-            })}
+            ${proposesViaFork(ctx.app, parent)
+              ? btn("Propose via your fork", {
+                  size: "sm",
+                  type: "submit",
+                  icon: "fork",
+                  title: `Your account can only read ${parent.ownerName}/${parent.name}'s origin, or its operator protects it: the change goes to your own fork there, and the pull opens from it`,
+                })
+              : btn("Propose upstream", {
+                  size: "sm",
+                  type: "submit",
+                  icon: "merge",
+                })}
           </form>`
         : btn("See the upstream proposal", {
             size: "sm",
@@ -304,10 +313,13 @@ export function followingCard(
           ? writer
             ? null
             : html`A writer can ask the crew to converge it.`
-          : html`Nobody is on the crew to converge it: add someone under
-              <a href="${base}/settings/crew">Settings → Crew</a>, or merge
-              <span class="mono">refs/following/${parent.defaultBranch}</span>
-              by hand.`
+          : // Only a writer can do either; a visitor is not told to.
+            writer
+            ? html`Nobody is on the crew to converge it: add someone under
+                <a href="${base}/settings/crew">Settings → Crew</a>, or merge
+                <span class="mono">refs/following/${parent.defaultBranch}</span>
+                by hand.`
+            : null
         : null
       : converge.kind === "working"
         ? html`${converge.agent === undefined
@@ -357,6 +369,8 @@ export function followingCard(
     prose.push(block.sentence);
     rows.push(...block.links);
   }
+  if (parent.detached === null && relation.action !== "none")
+    prose.push(html`<p class="muted small">${relation.words}</p>`);
   if (foot !== null) prose.push(html`<p class="muted small">${foot}</p>`);
   if (canAdmin(ctx.app.db, repo, ctx.auth.user) && writer)
     prose.push(modeForm(base, following.mode, "How this fork follows its parent"));
@@ -376,6 +390,7 @@ export function followingCard(
       )}`,
     {
       id: "following",
+      ...(o.bare === true ? { extra: "bare" } : {}),
       head,
       ...(actions.length > 0 ? { foot: html`${actions}` } : {}),
       pad: false,

@@ -69,6 +69,7 @@ const open = (host: string, path = "/ws?x=1", protocols: string[] = ["chat"]) =>
 
 const until = async (ok: () => boolean) => {
   for (let i = 0; i < 100 && !ok(); i++) await Bun.sleep(20);
+  if (!ok()) throw new Error(`never came: still waiting while !ok()`);
 };
 
 test("an app's socket in a cell: frames go both ways, with the app's own Host and path", async () => {

@@ -4,7 +4,11 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { scanNightly } from "./checks/scan.ts";
+import { nightlyDue } from "./checks/scan_store.ts";
 import { runModelReview } from "./actions/model_review.ts";
+import { getRepoById } from "./core/repos.ts";
+import { plannedRepoIds, tickWeeks } from "./flow/retro.ts";
 import { BOOT_ACTOR, setSignup, signupFromEnv } from "./settings/signup.ts";
 import { startMemorySampler } from "./boards/memory.ts";
 import { startSampler } from "./boards/sampler.ts";
@@ -13,6 +17,8 @@ import { drainOnHandover, handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
+import { readOnlyFrom } from "./http/read_only.ts";
+import { warmFlow } from "./system/flow_cache.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { loadTrustedHosts } from "./origins/trusted-hosts.ts";
 import { flushFlagUses, loadFlags } from "./core/flags.ts";
@@ -21,6 +27,8 @@ import { offerStartingBoards } from "./actions/boards.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
+import { previewIdentityKey } from "./spawn/preview-owner.ts";
+import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
 import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { startUpstreamWatch } from "./spawn/upstream.ts";
 import { startReachWatch } from "./spawn/reach.ts";
@@ -32,6 +40,8 @@ import { drainStreams } from "./http/sse.ts";
 import { serve } from "./http/server.ts";
 import { checkDue } from "./actions/upstream_follow.ts";
 import { runSync } from "./origins/sync.ts";
+import { runAheadReads } from "./origins/ahead.ts";
+import { runGuardSweep } from "./origins/credential.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { listApps } from "./core/apps.ts";
@@ -43,7 +53,9 @@ import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { stopQueue } from "./checks/queue.ts";
 import { startLooks } from "./looks/service.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
+import { startMirrorPulls } from "./origins/mirror-pulls.ts";
 import { startProbes } from "./contract/probes.ts";
+import { startNightly } from "./nightly/service.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
 import { resolveMirror } from "./snapshot/mirror.ts";
@@ -61,6 +73,7 @@ import { peopleOnCrews } from "./core/agents.ts";
 import { startNotifier } from "./crew/notify.ts";
 import { expireCrewHolds } from "./actions/holds.ts";
 import { startClogTick } from "./flow/clog_tick.ts";
+import { resumeAtBoot } from "./maintenance/service.ts";
 import { startKeeper } from "./flow/keeper.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
@@ -86,9 +99,10 @@ import { createLog } from "./kernel/log.ts";
 import { watchStalls } from "./kernel/loop_lag.ts";
 import { startPerfWatcher, TICK_MS } from "./perf/duty.ts";
 import { stallLine } from "./perf/loop.ts";
-import { gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
+import { bootStall, gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
+import { closeStaleSessions } from "./machines/shell.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -156,7 +170,10 @@ const hosted = hostedAt !== "";
 
 // SSH is on by default: the terminal UI is a first-class surface, not an
 // add-on. `FORGE_SSH_PORT=0` turns the listener off entirely.
-const sshPort = Number(process.env.FORGE_SSH_PORT ?? (hosted ? 0 : 2222));
+// A read-only standby (FORGE_READ_ONLY=1, #9657) serves reads from a restored
+// directory: no terminal, no apps, no crew, no jobs.
+const readOnly = readOnlyFrom(process.env);
+const sshPort = readOnly ? 0 : Number(process.env.FORGE_SSH_PORT ?? (hosted ? 0 : 2222));
 
 // FORGE_URL is the address people reach the forge at when a proxy in front
 // terminates TLS. Parsed once here so a typo fails the boot, not a request.
@@ -213,12 +230,16 @@ if (parentProblem !== null) {
 // draining included.
 const loopLog = createLog("loop");
 watchStalls(loopLog, undefined, undefined, undefined, (late, at) => {
+  bootStall.note(late, at);
   const stall = loopWatch.stalled(late, at);
   if (stall !== null) loopLog.warn(stallLine(stall));
 });
 
+const previewKey = previewIdentityKey(process.env);
+
 const app = createApp({
   dataDir,
+  ...(readOnly ? { readOnly } : {}),
   // A new forge starts with signup = invite (FORGE_SIGNUP below still wins).
   seedSignup: true,
   ...(parentUrl === "" ? {} : { parentUrl }),
@@ -228,6 +249,9 @@ const app = createApp({
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
   ...(edgeToken === "" ? {} : { edgeToken }),
+  // A preview of this forge hears its parent's admins as the preview admin
+  // (spawn/preview-owner.ts); production is never handed the key.
+  ...(previewKey === undefined ? {} : { previewIdentityKey: previewKey }),
   // Hosted, the host says how this forge's terminal is reached; printed
   // verbatim wherever the forge tells people how to connect.
   ...(hosted && (process.env.FORGE_APP_SSH ?? "").trim() !== ""
@@ -236,6 +260,8 @@ const app = createApp({
   // The repository holding this forge's own code: a landing there is
   // checked out under releases/ and preflighted (#1662).
   ...releaseEnv(process.env),
+  // FORGE_NOTES_INTENT: the intent doc people's build notes are copied into.
+  ...((process.env.FORGE_NOTES_INTENT ?? "").trim() !== "" ? { notesIntent: (process.env.FORGE_NOTES_INTENT ?? "").trim() } : {}),
   // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
   // across every repository. Unset is no forge-wide ceiling.
   ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"
@@ -302,6 +328,19 @@ const app = createApp({
 timeStatements(app.db, createLog("sql"));
 loadFlags(app.db);
 loadTrustedHosts(app.db);
+if (readOnly) {
+  const servers = await serve(app);
+  // Only the listener runs: no reconcile, perf watcher, timers, apps, crew,
+  // checks, releases, mirrors, snapshots or nightly jobs. Reads are answered until a signal.
+  app.log.info("forge is up, read-only standby", { url: servers.url, data: app.config.dataDir });
+  const stop = (): void => {
+    servers.stop();
+    app.close();
+    process.exit(0);
+  };
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.once(signal, stop);
+  await new Promise<never>(() => {});
+}
 // FORGE_SIGNUP (checked in configProblem) sets who may sign up; kept like any change.
 const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
 if (bootSignup.ok && bootSignup.value !== null)
@@ -408,6 +447,10 @@ const earlySignals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 for (const signal of earlySignals) process.once(signal, leaveEarly);
 await waitForPeer(app.db, app.log);
 for (const signal of earlySignals) process.off(signal, leaveEarly);
+// No shell outlives its forge: a row a stop or crash left open is closed. Only
+// once the other forge has let go: its shells are live until then, and a write
+// at boot would wait on its lock with the event loop held (#9472).
+closeStaleSessions(app.db);
 // A repository's own check, on every push a pull or the default branch takes.
 const checks =
   process.env.FORGE_CHECKS === "0"
@@ -429,12 +472,18 @@ const checks =
       });
 // Migrated repositories kept as a read-only mirror push to their source.
 const mirrorOut = startMirrorOut(app);
+// …and take the pulls opened on that mirror as pulls here (#9011).
+const mirrorPulls = startMirrorPulls(app);
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
 const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
 // Is it so: the forge knocks on every door of an app with a contract after
 // each production deploy and once a night, and compares with the table.
 const probes = apps === undefined ? undefined : startProbes(app, apps);
+// The nightly jobs that were Forgejo workflows: the flake hunt and the run
+// of what the gate excludes, filing the same `Flaky:` and `Red:` issues and
+// the quarantine pull (docs/DEVELOP.md).
+const nightly = appsOn ? startNightly(app, { forgeUrl, token: process.env["FORGE_TOKEN"] }) : undefined;
 // The snapshot: everything that cannot be rebuilt, nightly, to what an
 // operator sealed on the Backups page, else the platform's (`S3_*`) or a
 // directory (`FORGE_SNAPSHOT_DIR`). A forge given none says so on that page.
@@ -502,9 +551,19 @@ if (crew !== undefined) {
 // Hosted children come back with their apps, awake before the first visit.
 // The listener is up; the children open behind it, not in front of /healthz.
 void bootHostedChildren(app);
+// The pipeline answer is filled in slices behind the listener, so no read computes it (#8978).
+void warmFlow(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
+// A preview of this forge seeds its admin and a small world to look at
+// (spawn/preview-seed.ts); anywhere else this is refused and says nothing.
+await seedPreview(app)
+  .then((seeded) => {
+    if (seeded.ok && seeded.value.seeded) app.log.info("preview seeded", { admin: PREVIEW_ADMIN });
+    else if (!seeded.ok && seeded.error !== "not_preview") app.log.warn("preview not seeded", { error: seeded.error });
+  })
+  .catch((error) => app.log.warn("preview not seeded", { error: String(error) }));
 // A spawned child reports its standing to its parent (spawn/heartbeat.ts).
 const heartbeatTimer = startHeartbeat(app);
 // ...and looks upstream once an hour (spawn/upstream.ts).
@@ -546,8 +605,17 @@ function positive(value: string | undefined, fallback: number): number {
 // pushed to: an origin is due every ten minutes by default, and the tick only
 // asks who is due — so this costs one indexed read a minute when nothing is
 // connected. Like runDelivery, runSync never throws into the timer.
-const syncTimer = setInterval(() => runSync(app), 60_000);
+// The mirrors' "N new commits upstream" readings ride the same tick under
+// their own guard (`origins/ahead.ts`), so a slow origin there never holds
+// the sweep. The operator guard's sweep of stored origins rides it too: one
+// origin a tick, the never-checked first (so on boot), every other daily.
+const syncTimer = setInterval(() => {
+  runSync(app);
+  void runAheadReads(app);
+  void runGuardSweep(app);
+}, 60_000);
 runSync(app); // one pass on boot: a forge that was down has fetching to do
+void runGuardSweep(app);
 
 // Which green pulls no longer merge as they stand, so the asks can leave
 // them out (`crew/stale_asks.ts`): git answers, off the request path, and an
@@ -624,6 +692,12 @@ const processTick = (): void => {
 const stopClogTick = startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }), 60_000);
 // The throughput keeper (#7645) names what binds landings each minute and lifts what is its to lift.
 const stopKeeper = startKeeper(app, () => sweepAssigned(app));
+// A forge that went down prepared for maintenance comes back by itself. The
+// listener is up (`serve` above) and the checks service started; the tunnel
+// is outside this process and may come up later, so its probe asks again.
+void resumeAtBoot(app, undefined, { forgeUrl, runner: checks?.lane }).catch((error) =>
+  app.log.warn("resume at boot failed", { error: String(error) }),
+);
 // An agent's hold that has stood 24 h is released each minute (#6918).
 const holdTimer = setInterval(() => {
   try {
@@ -639,6 +713,25 @@ const modelReviewTimer = setInterval(() => {
   } catch (error) {
     app.log.warn("model review failed", { error: String(error) });
   }
+}, 3_600_000);
+// The week is the sprint (#8704): at each weekly reset the forge writes its retrospective, unasked.
+const weekTimer = setInterval(() => {
+  try {
+    const repos = plannedRepoIds(app.db).flatMap((id) => getRepoById(app.db, id) ?? []);
+    for (const repo of tickWeeks(app.db, repos, new Date()))
+      app.bus.append({ kind: "week.retro", repoId: repo.id, payload: {} });
+  } catch (error) {
+    app.log.warn("week retrospective failed", { error: String(error) });
+  }
+}, 3_600_000);
+// Code scanning's nightly pass (#9593): each hour, the repositories whose last pass is a day old get secrets, advisories and static analysis over their default branch.
+const nightlyScanTimer = setInterval(() => {
+  void (async () => {
+    for (const id of nightlyDue(app.db, new Date(Date.now() - 24 * 3_600_000).toISOString(), 25)) {
+      const repo = getRepoById(app.db, id);
+      if (repo !== undefined) await scanNightly(app, repo);
+    }
+  })().catch((error) => app.log.warn("nightly scan failed", { error: String(error) }));
 }, 3_600_000);
 const processTimer = setInterval(processTick, 60_000);
 processTick();
@@ -780,6 +873,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   // process that replaced this one, not to this one while it finishes.
   drainStreams();
   clearInterval(deliveryTimer);
+  clearInterval(nightlyScanTimer);
   clearInterval(heartbeatTimer);
   clearInterval(upstreamTimer);
   clearInterval(reachTimer);
@@ -791,6 +885,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   clearInterval(processTimer);
   clearInterval(holdTimer);
   clearInterval(modelReviewTimer);
+  clearInterval(weekTimer);
   clearInterval(leaseTimer);
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.
@@ -811,8 +906,10 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     // longer ends it: a person's stop cuts checks off (queued again) at once.
     checks?.stop({ drain: signal === "SIGTERM" }),
     mirrorOut(),
+    mirrorPulls(),
     looks?.stop(),
     probes?.stop(),
+    nightly?.stop(),
     snapshots.stop(),
     sampler.stop(),
     memorySampler.stop(),

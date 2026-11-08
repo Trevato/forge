@@ -7,7 +7,7 @@
  * is disjoint and covering, and that one red shard makes the run red.
  */
 
-import { nameUnnamed } from "../src/checks/bun-test.ts";
+import { isSummaryLine, nameUnnamed } from "../src/checks/bun-test.ts";
 
 /**
  * No more than this many `bun test` processes at once, whatever the host:
@@ -545,14 +545,18 @@ export function besideOthers(
   return { red: stillRed, besideOthers: cleared, line };
 }
 
-const HEADER = /^(\S+\.test\.[cm]?[jt]sx?):$/;
+// Under GitHub-style Actions (GITHUB_ACTIONS=true, which Forgejo's runner
+// sets too) bun opens each file's tests with `::group::path:` instead of
+// `path:`; the group marker is not part of the path.
+const HEADER = /^(?:::group::)?(\S+\.test\.[cm]?[jt]sx?):$/;
 const FAILED = /^\(fail\) /;
 
 /**
  * The files whose tests failed in one `bun test` report, in the order the
- * report reached them: bun prints `path:` before a file's tests and
- * `(fail) name` for each one that failed. A report that names no failing
- * test (a crash, a file that would not load) yields none.
+ * report reached them: bun prints `path:` (in an Actions job,
+ * `::group::path:`) before a file's tests and `(fail) name` for each one
+ * that failed. A report that names no failing test (a crash, a file that
+ * would not load) yields none.
  */
 export function failingFiles(output: string): string[] {
   const found: string[] = [];
@@ -560,6 +564,7 @@ export function failingFiles(output: string): string[] {
   for (const line of output.split("\n")) {
     const header = HEADER.exec(line);
     if (header) current = header[1]!;
+    else if (isSummaryLine(line)) current = undefined;
     else if (FAILED.test(line) && current !== undefined && !found.includes(current))
       found.push(current);
   }

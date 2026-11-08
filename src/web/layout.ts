@@ -7,11 +7,16 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { NEW_ISSUE_KEY } from "./script_keys.ts";
+import { newIssueHref } from "./issue_from.ts";
 import { OPENSEARCH_PATH, OPENSEARCH_TITLE, OPENSEARCH_TYPE } from "./opensearch.ts";
 import { protectionNotice } from "../kernel/protection.ts";
 import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
+import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { wordClip } from "../text/word_clip.ts";
+import { absorbedForNav } from "../actions/features.ts";
 import {
   enterableApps,
   getRepo,
@@ -55,7 +60,7 @@ import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
 import { quotaFull } from "../spawn/quota.ts";
 import { icon, inlineIcons, pointAtSprite, themeGlyph } from "./icons.ts";
-import { btn, copyField, kbd, menu, type MenuItem } from "./ui.ts";
+import { btn, copyField, hintAttr, kbd, menu, type MenuItem } from "./ui.ts";
 import { SITE_LINE } from "./site_line.ts";
 
 /** One row of the command palette: title, href, category. */
@@ -68,6 +73,8 @@ export interface PaletteItem {
   x?: string;
   o?: string;
   m?: 1;
+  /** A mutation: the palette posts these fields to `h`, as the page's own form does. */
+  p?: Record<string, string>;
 }
 
 export interface PageOptions {
@@ -101,6 +108,8 @@ export interface PageOptions {
   feed?: { href: string; title: string };
   /** This page's JSON twin, advertised in the head for agents. */
   json?: { href: string; title: string };
+  /** Structured data (JSON-LD) for the head, already escaped by `safeJson`. */
+  jsonLd?: string;
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
   crumbs?: { label: string; href: string }[];
   body: Html;
@@ -129,6 +138,13 @@ export interface PageOptions {
    */
   scriptAsset?: string;
   /**
+   * The page compiles WebAssembly (a machine's shell page runs its terminal
+   * emulator in it): `script-src` gains `'wasm-unsafe-eval'`, which admits
+   * WebAssembly compilation and nothing else — no `eval`, no inline script.
+   * Only that page asks; no other page's policy changes.
+   */
+  wasm?: boolean;
+  /**
    * The page draws a PDF from the media route in an `<object>`: the browser's
    * own viewer may load it from this origin (`object-src 'self'`). Only the
    * blob page of a PDF asks; no other page's policy changes.
@@ -140,6 +156,12 @@ export interface PageOptions {
    * nothing else on this page is relaxed.
    */
   turnstile?: boolean;
+  /**
+   * One more origin this page may frame, as `scheme://host[:port]`: the
+   * display origin a captured page plays on. It loosens `frame-src` for this
+   * page alone; anything that is not a bare origin is ignored.
+   */
+  frameSrc?: string | undefined;
   /** Extra palette rows for this page's context (a repo's own tabs). */
   palette?: PaletteItem[];
   /**
@@ -147,6 +169,10 @@ export interface PageOptions {
    * (the board). The overlays stay, so the palette is still one chord away.
    */
   bare?: boolean;
+  /** A visitor's page: what the bar holds in place of search and the menu. */
+  tools?: Html;
+  /** A visitor's page: what the foot holds in place of its usual line. */
+  foot?: Html;
   /** The theme when the viewer has chosen none: for a page that is dark by nature. */
   theme?: ThemeName;
 }
@@ -184,10 +210,19 @@ const helpItem = html`<button class="menu-item js-only hide-sm" type="button" da
 </button>`;
 
 /** Someone not signed in has no user menu; theme and help share this one. */
-function guestMenu(theme: ThemeName | undefined): Html {
+/**
+ * "New issue" from this page, with no script (`c` is the same door): a link
+ * in the menus. Read-only origin browse has nowhere to write, so it has none.
+ */
+const newIssueItem = (ctx: Ctx): MenuItem[] =>
+  ctx.url.pathname.startsWith("/origins/")
+    ? []
+    : [{ label: "New issue", href: newIssueHref(ctx.url.pathname), hint: NEW_ISSUE_KEY }];
+
+function guestMenu(ctx: Ctx, theme: ThemeName | undefined): Html {
   return menu({
     trigger: themeGlyph,
-    items: [helpItem, themeForm(theme)],
+    items: [...newIssueItem(ctx), { label: "Packs", href: "/packs", icon: "rocket" }, helpItem, themeForm(theme)],
     label: "Appearance and help",
     triggerOptions: { extra: "btn-icon" },
   });
@@ -214,6 +249,7 @@ const forgeDoor = (ctx: Ctx): MenuItem[] => {
 
 function newMenu(ctx: Ctx): Html {
   const items: MenuItem[] = [
+    ...newIssueItem(ctx),
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
@@ -229,6 +265,31 @@ function newMenu(ctx: Ctx): Html {
   });
 }
 
+/** A summary's longest title: a tooltip, not a paragraph. */
+const SUMMARY_TITLE_MAX = 200;
+
+/**
+ * The apps absorbed as the forge's own features, for the menu: each
+ * opens at its declared page through the forge's door, which vouches for the
+ * viewer, so a private feature opens without a second sign-in.
+ */
+function featureItems(ctx: Ctx, user: User): MenuItem[] {
+  const runtime = appsRuntime(ctx.app);
+  const entries = absorbedForNav(ctx.app, user).map((f) => {
+    // Without a runtime there is no host to open: the app's own page instead.
+    const href =
+      runtime === undefined
+        ? `/${f.repo}`
+        : `/apps/open?host=${encodeURIComponent(new URL(runtime.urlFor(f.record, "production")).host)}&to=${encodeURIComponent(f.page)}`;
+    const entry: MenuItem = { label: f.name, href, icon: "rocket" };
+    return f.summary ? { ...entry, title: wordClip(f.summary, SUMMARY_TITLE_MAX) } : entry;
+  });
+  // Under a heading of their own, so an app's chosen name cannot pass for a forge item.
+  return entries.length === 0
+    ? []
+    : [{ separator: true, label: "" }, { label: "Features from apps", heading: true }, ...entries];
+}
+
 function userMenu(
   ctx: Ctx,
   user: User,
@@ -237,13 +298,18 @@ function userMenu(
 ): Html {
   const items: (MenuItem | Html)[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
-    { label: "Your repositories", href: "/", icon: "repo" },
+    { label: "Repositories", href: "/repos", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
+    { label: "Notes", href: "/notes", icon: "comment" },
     { label: "Talk", href: "/talk", icon: "comment" },
     { label: "Explore", href: "/explore", icon: "search" },
+    { label: "Packs", href: "/packs", icon: "rocket" },
+    { label: "Displays", href: "/displays", icon: "monitor" },
     { label: "Map", href: "/map", icon: "map" },
+    ...featureItems(ctx, user),
     { separator: true, label: "" },
     // The "+" menu shows on every width; these repeat it for the user menu.
+    ...newIssueItem(ctx),
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
@@ -310,6 +376,8 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Explore", h: "/explore", c: "Go to" },
+  { t: "Forge packs", h: "/packs", c: "Go to" },
+  { t: "Displays", h: "/displays", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "Front page", h: "/front", c: "Go to" },
@@ -317,6 +385,7 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "New repository", h: "/new", c: "Create" },
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
+  { t: "Notes", h: "/notes", c: "Go to" },
   { t: "Talk to the forge", h: "/talk", c: "Go to" },
   { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
@@ -326,7 +395,7 @@ const STATIC_PALETTE: PaletteItem[] = [
 ];
 
 /** What a signed-out visitor can reach: places to go, not Create and Settings rows that end at a sign-in wall. */
-const VISITOR_PALETTE = new Set(["Home", "Apps", "Explore", "Front page", "Search"]);
+const VISITOR_PALETTE = new Set(["Home", "Apps", "Explore", "Forge packs", "Front page", "Search"]);
 
 /** First path segments that are the forge's own pages, never an owner: no repository read for them. */
 const NOT_AN_OWNER = new Set([
@@ -400,6 +469,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     return app !== undefined && enterable.has(app.id) ? [app] : [];
   });
   const states = open.length > 0 ? appsRuntime(ctx.app)?.statusMany(open) : undefined;
+  const foundry = foundryHref(ctx.app, ctx.auth.user);
   const items: PaletteItem[] = [
     ...extra,
     ...repos.map((r): PaletteItem => {
@@ -437,6 +507,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     ...(sendsForges(ctx)
       ? [{ t: "New forge", h: "/forges/new", c: "Create" }]
       : []),
+    ...(foundry === undefined ? [] : [{ t: "Foundry", h: foundry, c: "Go to" }]),
     ...(ctx.auth.user?.isAdmin
       ? [
           { t: "System", h: "/system", c: "Go to" },
@@ -544,11 +615,12 @@ function topbar(
   ctx: Ctx,
   theme: ThemeName | undefined,
   crumbs: PageOptions["crumbs"],
+  tools?: Html,
 ): Html {
   const user = ctx.auth.user;
   return html`<a class="skip" href="#main">Skip to content</a>
     <header class="topbar" role="banner">
-      <a href="/" class="wordmark" data-shortcut="g h"
+      <a href="/" class="wordmark" data-shortcut="g h" ${hintAttr("g h")}
         ><span class="mark"></span>forge</a
       >
       ${when(
@@ -566,11 +638,11 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}
+        ${tools ?? html`${searchBar()}
         ${user
-          ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" title="Talk to the forge" data-shortcut="g t"
+          ? html`<a class="btn btn-icon" href="/talk" aria-label="Talk to the forge" data-shortcut="g t" ${hintAttr("g t", "Talk to the forge")}
                 >${icon("comment")}</a
-              ><a class="small" href="/asks" data-shortcut="g q">Asks</a
+              ><a class="small" href="/asks" data-shortcut="g q" ${hintAttr("g q")}>Asks</a
               >${newMenu(ctx)}${userMenu(
                 ctx,
                 user,
@@ -583,9 +655,9 @@ function topbar(
                     }
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
               )}`
-          : html`${guestMenu(theme)}${btn("Sign in", {
+          : html`${guestMenu(ctx, theme)}${btn("Sign in", {
               href: signInHref(ctx),
-            })}`}
+            })}`}`}
       </span>
     </header>`;
 }
@@ -595,7 +667,8 @@ function topbar(
  * build stamped it (`kernel/version.ts`), in place of the line everyone
  * else gets: the one person who is asked "which version is this?".
  */
-function footer(ctx: Ctx): Html {
+function footer(ctx: Ctx, own?: Html): Html {
+  if (own !== undefined) return html`<footer class="foot">${own}</footer>`;
   const reduced =
     ctx.auth.user?.isAdmin === true ? protectionNotice() : undefined;
   return html`<footer class="foot">
@@ -604,7 +677,7 @@ function footer(ctx: Ctx): Html {
       >forge
       ${ctx.auth.user?.isAdmin === true
         ? runningLine()
-        : "— your code, your machine"}</span
+        : "· yours to keep"}</span
     >
     ${reduced === undefined
       ? null
@@ -638,10 +711,14 @@ function pageDescription(options: PageOptions): string {
   return line.length <= 200 ? line : `${line.slice(0, 197).trimEnd()}…`;
 }
 
-/** The tab title: the forge named once, whether or not the page's own title already ends in it. */
+/**
+ * The tab title: the forge named once, whether or not the page's own title
+ * already ends in it, or opens with it ("forge: …" names it already).
+ */
 export function tabTitle(title: string): string {
   const own = title.replace(/(?: · forge)+$/, "");
-  return own === "" || own === "forge" ? "forge" : `${own} · forge`;
+  if (own === "" || own === "forge") return "forge";
+  return own.startsWith("forge: ") ? own : `${own} · forge`;
 }
 
 export function page(options: PageOptions, status = 200): Response {
@@ -656,7 +733,7 @@ export function page(options: PageOptions, status = 200): Response {
 
   // The body's markup. Every `icon()` left a `<use>` behind; they are aimed
   // at the one hashed sprite file below, so no page carries a drawing.
-  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs)}
+  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs, options.tools)}
     <main
       class="${options.bare
         ? "bare"
@@ -667,7 +744,7 @@ export function page(options: PageOptions, status = 200): Response {
     >
       ${flash ? flashToast(flash) : null}${options.body}
     </main>
-    ${options.bare ? null : footer(ctx)} ${overlays()}
+    ${options.bare ? null : footer(ctx, options.foot)} ${overlays()}
     ${paletteIndex(ctx, options.palette ?? [])}`;
 
   const own = options.scriptJs ? pageScriptAsset(options.scriptJs, ctx.app.config.dataDir) : undefined;
@@ -745,6 +822,7 @@ export function page(options: PageOptions, status = 200): Response {
           options.json,
           (j) => html`<link rel="alternate" type="application/json" title="${j.title}" href="${j.href}" />`,
         )}
+        ${when(options.jsonLd, (d) => html`<script type="application/ld+json">${raw(d)}</script>`)}
         <meta name="color-scheme" content="light dark" />
         ${theme
           ? html`<meta name="theme-color" content="${metaThemeColor(theme)}" />`
@@ -804,7 +882,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The hashed stylesheet and scripts are 'self'; the two inline <style>s
     // are named by hash. connect-src 'self' lets the live event stream
     // (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.wasm ? " 'wasm-unsafe-eval'" : ""}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${frameSources(options)}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are
@@ -839,6 +917,18 @@ export function page(options: PageOptions, status = 200): Response {
 }
 
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
+
+/** A bare origin: scheme, host and optional port, nothing that could add a directive. */
+const BARE_ORIGIN = /^https?:\/\/[a-z0-9.-]+(?::\d{1,5})?$/i;
+
+/** The `frame-src` directive (with its trailing space), or nothing when the page frames nothing. */
+export function frameSources(options: Pick<PageOptions, "turnstile" | "frameSrc">): string {
+  const origins = [
+    ...(options.turnstile ? [TURNSTILE_ORIGIN] : []),
+    ...(options.frameSrc !== undefined && BARE_ORIGIN.test(options.frameSrc) ? [options.frameSrc] : []),
+  ];
+  return origins.length === 0 ? "" : `frame-src ${origins.join(" ")}; `;
+}
 
 export interface RedirectOptions {
   /** A Set-Cookie value to send alongside (session, theme). */

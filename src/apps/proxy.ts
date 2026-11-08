@@ -1,6 +1,7 @@
 /**
  * Apps on the forge's own port, by `Host`. `<slug>.<domain>` is production,
- * `<slug>--<n>.<domain>` the preview of pull `n`; the request is fetched
+ * `<slug>--<n>.<domain>` the preview of pull `n`, `<slug>--b<sha7>.<domain>`
+ * a build preview; the request is fetched
  * from the deployment's loopback port and streamed back. A websocket
  * handshake is the same request until the app accepts it — then the forge
  * holds one socket to the browser and one to the app and carries frames
@@ -17,7 +18,9 @@
 import { compressBytes, MIN_BYTES, negotiate } from "../http/compress.ts";
 import type { Database } from "bun:sqlite";
 import { getIssue, type Issue } from "../core/issues.ts";
+import { getPull } from "../core/pulls.ts";
 import { mayView } from "../core/sealed.ts";
+import { holds, weakEtag } from "../http/etag.ts";
 import { holdOpen } from "../http/caller.ts";
 import { appHostSuffix } from "./host.ts";
 import { REPORT_LINK_TITLE } from "../actions/report_words.ts";
@@ -38,7 +41,13 @@ import { verifyToken } from "../core/tokens.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
-import { previewEnv, type EnvName } from "./data.ts";
+import {
+  buildEnvFromLabel,
+  envBuild,
+  envWords,
+  previewEnv,
+  type EnvName,
+} from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
 import { sideOf, type Side } from "./side.ts";
@@ -97,11 +106,17 @@ export function parseAppHost(
   if (label === "" || label.includes(".")) return undefined;
   const parts = label.split("--");
   if (parts.some((part) => part === "")) return undefined;
-  // The app of ours is the tail of the label: `slug`, or `slug--N` for the
-  // preview of pull N. Whatever comes before it belongs to the app's own
-  // world — a forge hosted here has apps of its own, at `<theirs>--<ours>`
-  // — and travels through untouched in `Host`, for that app to route.
+  // The app of ours is the tail of the label: `slug`, `slug--N` for the
+  // preview of pull N, or `slug--b<sha7>` for a build preview (`b` and seven
+  // hex digits is no slug: `isSlug`). Whatever comes before it belongs to the
+  // app's own world — a forge hosted here has apps of its own, at
+  // `<theirs>--<ours>` — and travels through untouched in `Host`, for that
+  // app to route.
   const last = parts.at(-1)!;
+  const build = parts.length >= 2 ? buildEnvFromLabel(last) : undefined;
+  if (build !== undefined) {
+    return { slug: parts.at(-2)!, env: build, nested: parts.length > 2 };
+  }
   if (parts.length >= 2 && /^\d+$/.test(last)) {
     if (!/^[1-9]\d*$/.test(last)) return undefined;
     return {
@@ -453,7 +468,19 @@ export function pillWhere(
   where.pull = Number(number);
   const pull = getIssue(db, target.app.repoId, where.pull);
   if (pull === undefined) return where;
-  if (reads && mayView(db, repo, pull, user)) where.title = pull.title;
+  if (!reads || !mayView(db, repo, pull, user)) return where;
+  where.title = pull.title;
+  // How current the preview is: the row's head against the commit it runs. A
+  // signed-in reader only, so a page an anonymous viewer may share never carries it.
+  if (user === undefined) return where;
+  const row = getPull(db, target.app.repoId, where.pull);
+  if (row === undefined) return where;
+  where.state = row.mergedAt !== null ? "merged" : row.state === "closed" ? "closed" : "open";
+  // Only an open pull has a newer push to be behind.
+  if (where.state !== "open") return where;
+  const status = runtime.envStatus?.(target.app, target.env);
+  if (status?.state === "deploying") where.deploying = true;
+  where.behind = status?.state !== "deploying" && status?.commitOid !== undefined && status.commitOid !== row.headOid;
   return where;
 }
 
@@ -1122,8 +1149,12 @@ export async function proxyApp(
     !target.nested &&
     status.toolbar !== false &&
     (request.headers.get("accept") ?? "").includes("text/html")
-  )
+  ) {
     headers.set("accept-encoding", "identity");
+    // The proxy compares after fetching: a tag it did not make would pair an
+    // old toolbar with a new page.
+    headers.delete("if-none-match");
+  }
 
   if (isWebSocketHandshake(request)) {
     return proxyWebSocket(
@@ -1253,8 +1284,31 @@ export async function proxyApp(
       out.set("content-encoding", encoding);
     }
     out.set("content-length", String(sent.length));
+    const upstreamTag = out.get("etag");
     out.delete("etag");
     out.delete("content-md5");
+    // The same page for every viewer keeps a validator: the app's tag joined
+    // with the bytes of what was sent, so a new toolbar is a new tag.
+    const tag =
+      upstreamTag !== null &&
+      response.status === 200 &&
+      request.method === "GET" &&
+      proof === undefined &&
+      vouched?.who === undefined &&
+      out.getSetCookie().length === 0 &&
+      cspNonce(out.get("content-security-policy")) === undefined &&
+      !/\b(no-store|private)\b/i.test(out.get("cache-control") ?? "")
+        ? weakEtag(`${upstreamTag}|${Bun.hash(page).toString(36)}`)
+        : undefined;
+    if (tag !== undefined) {
+      out.set("etag", tag);
+      if (holds(request, tag)) {
+        out.delete("content-length");
+        out.delete("content-encoding");
+        relayPhase(request, "rewrite", performance.now() - rewriting);
+        return withPhases(request, new Response(null, { status: 304, headers: out }));
+      }
+    }
     relayPhase(request, "rewrite", performance.now() - rewriting);
     return withPhases(
       request,
@@ -1628,9 +1682,9 @@ export function unavailable(
 ): Response {
   const name = target.app.slug;
   const where =
-    target.env === "production"
-      ? "production"
-      : `the preview of pull #${target.env.slice(5)}`;
+    target.env.startsWith("pull-")
+      ? `the preview of pull #${target.env.slice(5)}`
+      : envWords(target.env);
   const state = status?.state ?? "stopped";
   const deploying = state === "deploying";
   // A preview is gone when its pull is closed, merged or no longer exists:
@@ -1649,7 +1703,12 @@ export function unavailable(
   // environment keeps its 502.
   const absent = preview && !gone && status === undefined;
   const words = servingWords(status, preview ? (gone ? "closed" : "open") : null);
-  const message = reason ?? words.says;
+  const build = envBuild(target.env) !== undefined;
+  const message =
+    reason ??
+    (build && gone
+      ? "This build preview is gone: it was taken down, and its data with it. Ask for it again from the app's builds."
+      : words.says);
   const links = discoveryLinks(runtime, target);
   const report = links.length > 0;
   const runLink =

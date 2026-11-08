@@ -45,7 +45,7 @@ import { field, readForm } from "../form.ts";
 import { pageAddress } from "../studio/toolbar.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, empty, field as formField, messageText, time } from "../ui.ts";
+import { btn, field as formField, messageText, row, time } from "../ui.ts";
 
 /** The repository, when it takes reports: public, and so seen by anyone. */
 function publicRepo(ctx: Ctx): Repo | undefined {
@@ -155,11 +155,10 @@ function reportBody(ctx: Ctx, repo: Repo): Response {
         compact: true,
         ownTitle: true,
       })}
-      ${empty({
-        icon: "check",
-        title: "Report sent",
-        note: "A person who keeps this repository will read it.",
-      })}`,
+      <section class="settings-block">
+        <h1>Report sent</h1>
+        <p>A person who keeps this repository will read it.</p>
+      </section>`,
     });
   return reportForm(ctx, repo, {
     title: "",
@@ -230,45 +229,37 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
   );
 }
 
-function reportCard(base: string, report: Report): Html {
+function reportRow(base: string, report: Report): Html {
   const action = (verb: "accept" | "dismiss") =>
     `${base}/reports/${report.id}/${verb}`;
-  const accept = `accept-${report.id}`;
-  return card(
-    html`<p><strong>${report.title}</strong></p>
-      ${when(
-        report.body !== "",
-        () => messageText(report.body),
-      )}
-      ${when(report.page, (p) => html`<p class="hint">Sent from ${p}</p>`)}
-      <form
-        class="mt"
-        id="${accept}"
-        method="post"
-        action="${action("accept")}"
-      >
-        ${formField({
-          label: "Title of the issue",
-          name: "title",
-          id: `title-${report.id}`,
-          value: outsideWords(report.title),
-          required: true,
-          hint: `It opens as “${OUTSIDE_TITLE.trim()}” and then these words. Change the words if you like; the mark stays.`,
-        })}
-      </form>`,
-    {
-      tone: "attn",
-      head: html`From outside, ${filerWords(report.filedBy)}, not checked · ${time(report.createdAt)}`,
-      foot: html`${btn("Accept as an issue", {
-          variant: "primary",
-          icon: "issue",
-          form: accept,
-        })}
-        <form method="post" action="${action("dismiss")}">
+  return row({
+    title: report.title,
+    meta: html`From outside, ${filerWords(report.filedBy)}, not checked · ${time(report.createdAt)}`,
+    fold: {
+      id: `report-${report.id}`,
+      open: true,
+      body: html`<div class="report-body">
+        ${when(report.body !== "", () => messageText(report.body))}
+        ${when(report.page, (p) => html`<p class="hint">Sent from ${p}</p>`)}
+        <form id="accept-${report.id}" method="post" action="${action("accept")}">
+          ${formField({
+            label: "Title of the issue",
+            name: "title",
+            id: `title-${report.id}`,
+            value: outsideWords(report.title),
+            required: true,
+            hint: `It opens as “${OUTSIDE_TITLE.trim()}” and then these words. Change the words if you like; the mark stays.`,
+          })}
+          <div class="form-actions">
+            ${btn("Accept as an issue", { variant: "primary", icon: "issue" })}
+          </div>
+        </form>
+        <form class="form-actions" method="post" action="${action("dismiss")}">
           ${btn("Dismiss", { variant: "ghost" })}
-        </form>`,
+        </form>
+      </div>`,
     },
-  );
+  });
 }
 
 const sameFiler = (a: FiledBy, b: FiledBy): boolean =>
@@ -313,22 +304,18 @@ export function reportsPage(ctx: Ctx): Response {
         sees one until you accept it; then it is your issue, with the words
         quoted.
       </p>
-      <div class="mt">
-        ${waiting.value.length === 0
-          ? empty({
-              icon: "check",
-              title: "Nothing waiting",
-              note: `Anyone can report a problem at ${base}/report.`,
-            })
-          : byFiler(waiting.value).map(
-              (g) => html`<section class="mt">
-                <h2>${groupTitle(g)} · ${g.count}</h2>
+      ${waiting.value.length === 0
+        ? html`<p class="muted small mt">Nothing is waiting at <a href="${base}/report">${base}/report</a>.</p>`
+        : byFiler(waiting.value).map(
+            (g) => html`<section class="settings-block">
+              <h2>${groupTitle(g)} · ${g.count}</h2>
+              <ul class="list setting-list">
                 ${waiting.value
                   .filter((r) => sameFiler(r.filedBy, g))
-                  .map((r) => reportCard(base, r))}
-              </section>`,
-            )}
-      </div>`,
+                  .map((r) => reportRow(base, r))}
+              </ul>
+            </section>`,
+          )}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

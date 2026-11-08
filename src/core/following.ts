@@ -31,16 +31,18 @@ import {
 import {
   fetchInto,
   merge,
-  mergeBase,
   mergeable,
   resolveOid,
   writeRef,
   type MergeIdentity,
 } from "../git/merge.ts";
 import { runGit } from "../git/env.ts";
+import { describeLink, syncLink, type Reconcile } from "../git/sync_link.ts";
 import { readTipOrAbsent } from "../git/tip.ts";
 import { readTips } from "../git/tips.ts";
 import { repoDir } from "../git/repos.ts";
+import { combine } from "../git/combined.ts";
+import { fromKeptFork } from "./landing_kind.ts";
 import { forkFollowMode } from "./fork_follow.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -150,6 +152,20 @@ export function follow(forge: Following): () => void {
  * the comparison is memoized on that pair of tips, so a relationship is
  * recomputed only when either side moves; the database never holds it.
  */
+const reconcileOf = (
+  state: RelationState,
+  behind: number,
+  ahead: number,
+  clean: boolean,
+  conflicts: readonly string[],
+): { action: Reconcile; words: string } => {
+  // Two histories with no common commit count as nothing either way, and are not in sync.
+  if (state === "diverged" && behind === 0 && ahead === 0)
+    return { action: "keep-both", words: "The two sides share no history; keep both and choose which one to follow." };
+  const { action, words } = describeLink(behind, ahead, clean, conflicts);
+  return { action, words };
+};
+
 export type RelationState = "synced" | "behind" | "ahead" | "diverged";
 
 export interface ForkRelation {
@@ -165,6 +181,9 @@ export interface ForkRelation {
   readonly conflicts: readonly string[];
   readonly forkTip: string;
   readonly parentTip: string;
+  /** The one action that reconciles the two, and the words for it: the sync contract's (`describeLink`). */
+  readonly action: Reconcile;
+  readonly words: string;
 }
 
 export async function forkRelation(
@@ -200,6 +219,7 @@ export async function forkRelation(
     conflicts,
     forkTip: forkTip ?? "",
     parentTip: parentTip ?? "",
+    ...reconcileOf(state, behind, ahead, clean, conflicts),
   });
   // An empty side has nothing to follow or to differ by.
   if (parentTip === undefined || forkTip === undefined || parentTip === forkTip)
@@ -453,6 +473,12 @@ export async function refreshPullHead(
   forge.db
     .query("UPDATE pull SET head_oid = ?2 WHERE issue_id = ?1")
     .run(pull.id, tip);
+  // A kept fork's pull is combined with main on our side (#9012).
+  if (!apart && fromKeptFork(forge.db, pull)) {
+    const baseTip = await resolveOid(baseDir, `refs/heads/${pull.baseBranch}`);
+    if (baseTip !== undefined)
+      await combine(baseDir, { number: pull.number, baseOid: baseTip, headOid: tip });
+  }
   return tip;
 }
 
@@ -505,17 +531,22 @@ export async function fastForwardFork(
   const from = await resolveOid(forkDir, ref);
   if (to === undefined || from === to)
     return ok({ updated: false, from: from ?? "", to: to ?? "" });
-  // The parent's objects reach the fork through its alternates, so the
-  // ancestry question is answerable before anything is fetched.
-  if (from !== undefined && (await mergeBase(forkDir, from, to)) !== from)
-    return err("diverged");
-  const tip = await fetchInto(
+  // The contract (`syncLink`): their tip is staged whole, and the fork's
+  // branch moves only by a fast-forward, compare-and-swap. Both paths are
+  // computed here from repository rows, never from text a person typed.
+  const synced = await syncLink(
     forkDir,
+    ref,
     parentDir,
     `refs/heads/${parent.defaultBranch}`,
+    `refs/following/${parent.defaultBranch}`,
   );
-  if (tip === undefined || !(await writeRef(forkDir, ref, tip)))
-    return ok({ updated: false, from: from ?? "", to });
+  if (!synced.ok) return ok({ updated: false, from: from ?? "", to });
+  if (!synced.value.moved)
+    return synced.value.judgement.state === "synced"
+      ? ok({ updated: false, from: from ?? "", to })
+      : err("diverged");
+  const tip = synced.value.to;
   forge.bus.append({
     kind: "push",
     repoId: fork.id,

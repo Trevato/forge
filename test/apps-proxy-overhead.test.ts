@@ -7,7 +7,7 @@
 
 import { afterAll, beforeAll, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { loadavg, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
@@ -24,7 +24,13 @@ const DOMAIN = "apps.test";
 const RUNS = 25;
 const MEDIAN_MS = 5;
 const P95_MS = 20;
+// Rounds are tried for at most this long (under the test's own timeout), and at
+// least ROUNDS of them: a loaded lane can stay slow for many seconds, a real
+// regression stays slow in every round.
 const ROUNDS = 20;
+const WINDOW_MS = 10_000;
+// One in-flight round and slowest() fit after the window, so the budget message wins.
+const TIMEOUT_MS = WINDOW_MS + 15_000;
 // About the size of the scaffold app's home page.
 const PAGE = `<!doctype html><html><head><title>notes</title></head><body>${"<p>hello hello hello</p>".repeat(60)}</body></html>`;
 
@@ -140,21 +146,29 @@ for (const [label, pill] of [["with the toolbar rewrite", undefined], ["without 
     // every round and fails; a noisy round cannot.
     let median = Infinity;
     let p95 = Infinity;
-    for (let round = 0; round < ROUNDS; round++) {
+    let directMedian = Infinity;
+    const began = performance.now();
+    let rounds = 0;
+    while (rounds < ROUNDS || performance.now() - began < WINDOW_MS) {
+      rounds++;
       const overhead: number[] = [];
+      const directs: number[] = [];
       for (let i = 0; i < RUNS; i++) {
         // Back to back, so a slow moment on the machine lands on both.
         const d = await time(direct, { accept: "text/html" });
         const p = await time(proxied, HEADERS);
         overhead.push(p - d);
+        directs.push(d);
       }
       overhead.sort((x, y) => x - y);
+      directs.sort((x, y) => x - y);
+      directMedian = Math.min(directMedian, at(directs, 0.5));
       median = Math.min(median, at(overhead, 0.5));
       p95 = Math.min(p95, at(overhead, 0.95));
       if (median < MEDIAN_MS && p95 < P95_MS) return;
     }
     throw new Error(
-      `proxy overhead floor: median ${median.toFixed(2)} ms (budget ${MEDIAN_MS}), p95 ${p95.toFixed(2)} ms (budget ${P95_MS}) over ${ROUNDS} rounds; five slowest phases: ${await slowest()}`,
+      `proxy overhead floor: median ${median.toFixed(2)} ms (budget ${MEDIAN_MS}), p95 ${p95.toFixed(2)} ms (budget ${P95_MS}) over ${rounds} rounds (direct fetch median floor ${directMedian.toFixed(2)} ms, load average ${loadavg().map((l) => l.toFixed(1)).join(" ")}; a high direct floor means a loaded machine, a low one means the proxy); five slowest phases: ${await slowest()}`,
     );
-  }, 60_000);
+  }, TIMEOUT_MS);
 }

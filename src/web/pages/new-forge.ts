@@ -30,6 +30,7 @@ import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
+import { pickList } from "../pick.ts";
 import { btn, card, field as formField, row, selectField } from "../ui.ts";
 
 interface Values {
@@ -65,6 +66,9 @@ const EMPTY: Values = {
   hadKey: false,
 };
 
+/** The fields behind "More options": an error on one opens it. */
+const MORE_FIELDS = ["followMode", "crew", "keepAccess", "modelKey", "modelEndpoint", "budgetUsd", "template", "size"];
+
 type Errors = Partial<Record<string, string>>;
 
 const all = (form: Form, name: string): string[] =>
@@ -78,29 +82,6 @@ function errorsOf(door: Door): Errors {
   const m = /^([A-Za-z]+): (.*)$/.exec(message);
   if (door.body["error"] === "invalid" && m) return { [m[1]!]: m[2]! };
   return { form: message };
-}
-
-function checks(
-  name: string,
-  items: readonly { value: string; label: string; note?: string }[],
-  chosen: readonly string[],
-): Html {
-  return html`${items.map(
-    (i) =>
-      html`<label class="check">
-        <input
-          type="checkbox"
-          name="${name}"
-          value="${i.value}"
-          ${chosen.includes(i.value) ? html`checked` : null}
-        />
-        <span
-          >${i.label}${i.note
-            ? html` <span class="muted small">${i.note}</span>`
-            : null}</span
-        >
-      </label>`,
-  )}`;
 }
 
 /** What the form reads before it draws: room, then (when there is room) the repositories and the crew. */
@@ -161,7 +142,7 @@ function formView(
 ): Html {
   const { full, quota, repos, crew } = reads;
   if (full)
-    return html`<div class="narrow-wide">
+    return html`<div class="narrow-wide" data-forges>
       ${pageHead("New forge")}
       ${card(
         html`<p role="status">This forge cannot hold another child: ${full}.</p>
@@ -171,13 +152,14 @@ function formView(
       )}
     </div>`;
   const anon = user === undefined;
-  return html`<div class="narrow-wide">
+  return html`<div class="narrow-wide" data-forges>
     ${pageHead("New forge", {
       sub: anon
-        ? "Your own forge: pick a name, and the public apps to start from. Whoever opens the claim link becomes its admin."
-        : "Your own forge, or one for someone else: the apps you choose, a crew, and one link to claim.",
+        ? "Pick a name and the apps to start from. Whoever opens the claim link becomes its admin."
+        : "Pick a name and the apps to start from; you get one link to send.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
+    <p class="muted small" id="hosting-terms">Free within limits: it sleeps when idle, and its crew stays off until you bring a model key.</p>
     ${quota ? html`<p role="status" id="quota-full">This forge cannot hold another child: ${quota}.</p>` : null}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
@@ -200,7 +182,7 @@ function formView(
               label: "For whom",
               name: "for",
               value: values.forWhom,
-              hint: `A person, a client or an organisation, for your list of forges sent (at most ${MAX_FOR_CHARS} characters). Never copied into the child.`,
+              hint: `A person or a client, for your list (at most ${MAX_FOR_CHARS} characters). Not copied into the forge.`,
               ...(errors["for"] ? { error: errors["for"] } : {}),
             })}
         ${formField({
@@ -212,20 +194,17 @@ function formView(
           hint: "In your words: the crew's first direction. Optional.",
           ...(errors["direction"] ? { error: errors["direction"] } : {}),
         })}
-        <fieldset class="field" ${errors["apps"] ? html`data-invalid` : null}>
-          <legend>Apps to fork, with their history</legend>
-          ${checks(
-            "apps",
-            repos.map((r) => ({
-              value: `${r.ownerName}/${r.name}`,
-              label: `${r.ownerName}/${r.name}`,
-            })),
-            values.apps,
-          )}
-          ${errors["apps"]
-            ? html`<span class="error" id="f-apps-err">${errors["apps"]}</span>`
-            : null}
-        </fieldset>
+        ${pickList({
+          legend: "Apps to fork, with their history",
+          name: "apps",
+          noun: "repositories",
+          items: repos.map((r) => ({
+            value: `${r.ownerName}/${r.name}`,
+            label: `${r.ownerName}/${r.name}`,
+          })),
+          chosen: values.apps,
+          error: errors["apps"],
+        })}
         ${formField({
           label: "Or a fresh app (optional)",
           name: "fresh",
@@ -233,6 +212,8 @@ function formView(
           hint: `One line on what it is; the child gets a small app to start from (at most ${MAX_FRESH_CHARS} characters).`,
           ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
         })}
+        <details class="disclosure" ${Object.keys(errors).some((k) => MORE_FIELDS.includes(k)) ? html`open` : null}>
+          <summary>More options</summary>
         <fieldset class="field" ${errors["followMode"] ? html`data-invalid` : null}>
           <legend>How it follows this forge's code</legend>
           <label class="check">
@@ -263,22 +244,14 @@ function formView(
         </fieldset>
         ${crew.length === 0
           ? null
-          : html`<fieldset class="field">
-              <legend>Crew whose briefs go along</legend>
-              ${checks(
-                "crew",
-                crew.map((a) => ({
-                  value: a.user.username,
-                  label: a.user.username,
-                })),
-                values.crew,
-              )}
-              ${errors["crew"]
-                ? html`<span class="error" id="f-crew-err"
-                    >${errors["crew"]}</span
-                  >`
-                : null}
-            </fieldset>`}
+          : pickList({
+              legend: "Crew whose briefs go along",
+              name: "crew",
+              noun: "crew",
+              items: crew.map((a) => ({ value: a.user.username, label: a.user.username })),
+              chosen: values.crew,
+              error: errors["crew"],
+            })}
         ${anon
           ? null
           : html`<fieldset class="field">
@@ -339,9 +312,10 @@ function formView(
           options: sizeOptions(values.size),
           ...(errors["size"] ? { error: errors["size"] } : {}),
         })}
-        <p class="muted small">
-          Never copied: ${LEFT_BEHIND.join(", ")}. The child mints its own.
-        </p>
+          <p class="muted small">
+            Never copied: ${LEFT_BEHIND.join(", ")}. The child mints its own.
+          </p>
+        </details>
         <div class="form-actions">
           <button class="btn" type="submit" name="do" value="plan">
             See the plan
@@ -407,12 +381,12 @@ export function claimLinkBody(link: string, note?: string): Html {
     <p class="muted small mb">
       Send it as you would a password: to them alone, not to a group.
     </p>
-    ${card(html`<ul class="list setting-list">${
+    <ul class="list setting-list">${
       row({
         title: html`<code class="mono" id="claim-link">${link}</code>`,
         trail: btn("Copy the link", { type: "button", copy: "claim-link", icon: "copy", variant: "primary", size: "sm" }),
       })
-    }</ul>`, { pad: false })}
+    }</ul>
     <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>
     ${note === undefined ? null : html`<p class="small mt">${note}</p>`}`;
 }
@@ -421,7 +395,7 @@ function madeView(body: Record<string, unknown>): Html {
   const link = body["claimUrl"];
   const note = body["keyNote"];
   const name = String(body["name"] ?? "");
-  return html`<div class="narrow-wide">
+  return html`<div class="narrow-wide" data-forges>
     ${pageHead(
       body["existed"] === true ? `${name} already exists` : `${name} is ready`,
     )}
@@ -449,7 +423,7 @@ export function newForgePage(ctx: Ctx): Response {
   const response = page({
     ctx,
     title: "New forge",
-    body: formView(ctx, user, EMPTY, {}, null, reads),
+    body: formView(ctx, user, { ...EMPTY, name: (ctx.url.searchParams.get("name") ?? "").slice(0, 38) }, {}, null, reads),
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

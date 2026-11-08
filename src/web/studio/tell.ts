@@ -19,6 +19,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { LATER_TITLED } from "../../core/pillars.ts";
 import { deferredOf, linkedIssueIds } from "../../core/dependencies.ts";
 import { hasPicture } from "../../core/note_pictures.ts";
+import { heldBanner } from "../pages/gate.ts";
 import {
   getIssuesByNumbers,
   labelsFor,
@@ -452,7 +453,7 @@ async function studioTell(
     doneBy.length === 0
       ? null
       : card(
-          html`<form method="post" action="${thread}/state" class="row">
+          html`<form method="post" action="${thread}/state" class="row" data-now="Closed" data-now-once>
             <input type="hidden" name="state" value="closed" />
             <input type="hidden" name="reason" value="done" />
             <span
@@ -559,11 +560,12 @@ async function studioTell(
     { extra: "mt" },
   );
 
-  const body = html`${repoHeader(ctx, repo, "issues", {
+  const body = html`<div data-tell>${repoHeader(ctx, repo, "issues", {
       compact: true,
       ownTitle: true,
     })}
     ${head}
+    ${heldBanner(ctx, repo, issue)}
     <div class="split">
       <div>
         ${talk.node} ${doneLine}
@@ -580,11 +582,14 @@ async function studioTell(
         ${privateWorkCard(ctx, repo, issue, `${thread}/private`)}
         ${hasPicture(db, repo.id, issue.number)
           ? card(
-              html`<h2>Picture of the page</h2>
-                <a href="${thread}/picture"
+              html`<a href="${thread}/picture"
                   ><img src="${thread}/picture" alt="The page the sender was looking at" loading="lazy" class="tell-picture"
                 /></a>`,
-              { extra: "mt" },
+              {
+                extra: "mt",
+                head: html`${icon("eye")}
+                  <h2>Picture of the page</h2>`,
+              },
             )
           : null}
         ${runsCard}
@@ -598,7 +603,7 @@ async function studioTell(
       thread: "issue",
       number: issue.number,
       lastCommentId: talk.lastCommentId,
-    })}`;
+    })}</div>`;
 
   const response = page({
     ctx,

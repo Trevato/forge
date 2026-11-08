@@ -1,5 +1,6 @@
 /**
- * The Resilience command's dialog, a forge admin's: where snapshots go now and
+ * The Resilience command's dialog, a forge admin's: the backups line /resilience
+ * opens with (`snapshot/backups_line.ts`), where snapshots go now and
  * where the off-box mirror is, the newest snapshots, then one line per
  * THREATS.md protection with its standing in the last gate, as /resilience
  * says it. Enter, Esc or q closes it.
@@ -17,6 +18,10 @@
  * key, secret key — both keys typed masked; a blank keeps what was sealed).
  * `t` tries the destination in effect, as `testDestination` says it.
  * A key is never drawn, kept past the save, or put in a note.
+ *
+ * `o`, a forge admin's as /resilience/nightly/<job> is, opens the tail of
+ * each nightly job's newest output (`nightly/output.ts`): the run its
+ * `Flaky:` and `Red:` issues link to.
  */
 
 import { drillNow, mirrorNow, recentSnapshots, snapshotNow } from "../../actions/backups_now.ts";
@@ -30,6 +35,12 @@ import {
   type DestinationInput,
 } from "../../actions/destination.ts";
 import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
+import { JOBS } from "../../nightly/jobs.ts";
+import { outputTail } from "../../nightly/output.ts";
+import { nightlyLines } from "../../nightly/says.ts";
+import { backupsLine } from "../../snapshot/backups_line.ts";
+import { backupVerdict } from "../../snapshot/bucket.ts";
+import { lastDrill } from "../../snapshot/drills.ts";
 import { resolveDestination } from "../../snapshot/destination.ts";
 import { snapshotsOf } from "../../snapshot/service.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -50,6 +61,25 @@ export function resilienceLines(dataDir: string): string[] {
   return rows.flatMap(({ p, s }) => wrap(`${pad(s, 11)} ${p.text}`, INNER));
 }
 
+/** How many of a nightly job's last lines the output dialog shows. */
+export const OUTPUT_TAIL = 12;
+
+/** Each nightly job's line and the tail of its newest output, as /resilience/nightly/<job> shows it whole. */
+export function nightlyOutputLines(dataDir: string): string[] {
+  const said = nightlyLines(dataDir);
+  return JOBS.flatMap((job, i) => {
+    const tail = outputTail(dataDir, job.name, OUTPUT_TAIL);
+    return [
+      ...(i === 0 ? [] : [""]),
+      ...wrap(said[i] ?? job.name, OUTPUT_INNER),
+      ...(tail === undefined ? ["  no output here yet: it has not run on this forge"] : tail.map((l) => `  ${l}`)),
+    ];
+  });
+}
+
+const OUTPUT_WIDTH = 100;
+const OUTPUT_INNER = OUTPUT_WIDTH - 6;
+
 /** The source of the destination in effect, in the Backups page's words. */
 const SOURCE: Record<string, string> = {
   sealed: "sealed in this forge",
@@ -69,6 +99,18 @@ export function destinationLine(f: Session): string {
 export function mirrorLine(f: Session): string {
   const where = snapshotsOf(f.app)?.mirror?.where;
   return where === undefined ? "Mirror: none." : `Mirror: ${where}`;
+}
+
+/** The bucket's verdict, as home and the MCP's `backups` say it: the line, each lane's newest, what is wrong. */
+export function verdictLines(f: Session): string[] {
+  const v = backupVerdict(f.app.config.dataDir, lastDrill(f.app.db));
+  const mark = v.state === "red" ? "RED" : v.state === "unknown" ? "unknown" : "ok";
+  return [
+    ...wrap(`Backups ${mark}: ${v.line}`, INNER),
+    ...wrap(`  ${v.checkLine}`, INNER),
+    ...v.lanes.flatMap((l) => wrap(`  ${l.state === "red" ? "!" : " "} ${l.says}`, INNER).concat(wrap(`      ${l.line}`, INNER))),
+    ...[...v.reasons, ...v.unknowns].flatMap((r) => wrap(`  - ${r}`, INNER)),
+  ];
 }
 
 const STEPS: readonly { key: keyof DestinationInput; label: string; placeholder?: string; mask?: true }[] = [
@@ -238,8 +280,12 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
     const out: string[] = [];
     if (asking !== undefined) out.push(QUESTION[asking], "");
     else if (said !== "") out.push(...wrap(said, INNER), "");
+    // A refusal or a result of a change stays up here too, above where a prompt opens over the middle.
+    if (note !== "") out.push(...wrap(note, INNER), "");
+    out.push(...wrap(backupsLine(f.app).says, INNER), ...verdictLines(f), "");
+    for (const line of nightlyLines(f.app.config.dataDir)) out.push(...wrap(line, INNER));
+    out.push("");
     out.push(...wrap(destinationLine(f), INNER), ...wrap(mirrorLine(f), INNER));
-    if (note !== "") out.push(...wrap(note, INNER));
     if (mayChange()) out.push("d sets where snapshots go, x forgets it.", "m sets the mirror, f forgets it.", "t tests where snapshots go.");
     out.push("", "Snapshots, newest first:");
     if (snapshots === undefined) out.push("  reading…");
@@ -262,6 +308,7 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
               binding(["l"], "bring the mirror level now"),
               binding(["r"], "run a restore drill"),
             ]),
+        ...(mayAct() ? [binding(["o"], "nightly output")] : []),
         ...(mayChange()
           ? [
               binding(["d"], "set destination"),
@@ -297,7 +344,17 @@ export function resilienceScreen(f: Session, ctx: Ctx): Screen {
       if (ask !== undefined && !busy && mayAct()) {
         asking = ask;
         said = "";
-      } else if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
+      } else if (e.key === "o" && mayAct())
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: "Nightly output",
+            body: nightlyOutputLines(f.app.config.dataDir),
+            actions: [{ label: "Close" }],
+            onChoose: () => undefined,
+            width: OUTPUT_WIDTH,
+          }),
+        );
+      else if (e.key === "enter" || e.key === "esc" || e.key === "q") ctx.pop();
       else if (!mayChange()) return true;
       else if (e.key === "d") ctx.push(step(destination, 0, BLANK));
       else if (e.key === "x") ctx.push(forgetDest());

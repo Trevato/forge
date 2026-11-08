@@ -20,7 +20,6 @@ the same line (#4888).
 
 - **`style/base.ts`** — the page shell (topbar, main, footer) and the layout and text utilities every page leans on (all of them now named in docs/design/areas/shell.md and visibility.md).
 - **`style/components.ts`** — parts of the §5 components that the table does not spell out — the palette's list, the menu's items, a dialog's head and foot, comments — and a few small helpers beside them:
-  - `.error-note`
 - **`style/content.ts`, page furniture** — what frames a page's content: repo heads, the front page and its tiles, explore, backups, boards, the fleet chart's series colours, lineage:
   - `.repo-actions`
 - **`style/content.ts`, apps, runs, and the crew** — run pages, their logs and checks (a pull's look is §5's **look**).

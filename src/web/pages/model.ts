@@ -23,7 +23,7 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card } from "../ui.ts";
+import { btn, card, row } from "../ui.ts";
 import { accountOnly, accountSections } from "./origins.ts";
 
 // GET /settings/model
@@ -34,6 +34,7 @@ export function modelPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const own = timePhase(ctx.request, "subscription", () => ownSubscription(ctx.app.db, user.id));
   const budget = timePhase(ctx.request, "budget", () => budgetLine(ctx.app.db, user, new Date()));
+  const grant = getModelGrant(ctx.app.db, user.id);
   const rendering = performance.now();
   const form = own
     ? html`<p class="muted">
@@ -64,12 +65,16 @@ export function modelPage(ctx: Ctx): Response {
     body: html`<div class="page-head"><h1>Model</h1></div>
       ${settingsLayout(
         accountSections("model", { admin: user.isAdmin }),
-        card(html`${form}`, {
-          head: html`<h2>Your model budget</h2>
-            <p class="muted" id="model-budget">
-              ${budget}
-            </p>`,
-        }),
+        html`<section class="settings-block">
+          <h2>Your model budget</h2>
+          ${grant === undefined || own || user.isAdmin
+            ? html`<p class="muted" id="model-budget">${budget}</p>`
+            : html`<ul class="list setting-list" id="model-budget">${row({
+                title: "A grant from an admin",
+                meta: html`${budget}`,
+              })}</ul>`}
+          ${form}
+        </section>`,
         "Account settings",
       )}`,
   });

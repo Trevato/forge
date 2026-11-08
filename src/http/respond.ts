@@ -7,6 +7,7 @@
 import { bodyCapFor, readBounded } from "./limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import { ARCHIVED_WHY } from "../core/repos.ts";
+import { GUEST_REFUSALS, guestRefusalStatus, isGuestRefusal } from "../core/contribute.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
 import { NEW_ACCOUNT_GUARD_MESSAGE } from "../core/capacity.ts";
 import { VERIFY_FIRST } from "../actions/verify_words.ts";
@@ -73,6 +74,19 @@ export const forbidden = () => apiError("forbidden", 403, FORBIDDEN_MESSAGE);
 // code comment there rather than a header a person would never read.
 export const noRoute = (method: string, path: string) =>
   apiError("no_route", 404, `no ${method} route for ${path}`);
+
+// A path some route takes under other methods: the path is right, the method
+// is not. `allowed` is sorted and carries HEAD with GET; the message leaves
+// HEAD out, as it is implied.
+export const methodNotAllowed = (method: string, allowed: string[]) =>
+  json(
+    {
+      error: "method_not_allowed",
+      message: `${method} is not taken here; use ${allowed.filter((m) => m !== "HEAD").join(", ")}`,
+    },
+    405,
+    { allow: allowed.join(", ") },
+  );
 
 /**
  * One media range beats another only when it names it (or a wildcard that
@@ -248,6 +262,8 @@ export function respondAccess(error: string, status: number): Response {
   if (error === "archived") return json({ error, message: ARCHIVED_WHY }, 409);
   if (error === "not_member")
     return json({ error, message: NOT_A_MEMBER }, 403);
+  if (isGuestRefusal(error))
+    return json({ error, message: GUEST_REFUSALS[error] }, guestRefusalStatus(error));
   if (error === "unauthorized") return unauthorized();
   if (error === "forbidden") return forbidden();
   return json({ error }, status);

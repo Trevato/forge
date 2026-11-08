@@ -33,11 +33,9 @@ import { localScope } from "../scope.ts";
 import {
   badge,
   btn,
-  card,
   empty,
   field,
   icon,
-  listCard,
   selectField,
   sha,
   time,
@@ -210,23 +208,17 @@ function branchRow(
       </span>
       <span class="row-trail">
         ${divergence(row)}
-        ${when(!row.isDefault && canWrite, () =>
-          btn("New pull", {
-            href: `${base}/pulls/new?head=${encoded}`,
-            size: "sm",
-            variant: "outline",
-            icon: "pull",
-          }),
+        ${when(
+          canWrite,
+          () => html`<a class="small" href="${base}/builds/new?sha=${row.oid}&source=${encodeURIComponent(`branch ${row.name}`)}" aria-label="Pin a build of ${row.name}">Pin</a>`,
         )}
-        ${when(!row.isDefault && canWrite, () =>
-          btn("Delete", {
-            href: `/-/confirm?to=${encodeURIComponent(
-              `${base}/branches/${encodeURIComponent(row.name)}/delete`,
-            )}`,
-            size: "sm",
-            variant: "danger",
-            label: `Delete branch ${row.name}`,
-          }),
+        ${when(
+          !row.isDefault && canWrite,
+          () => html`<a class="small" href="${base}/pulls/new?head=${encoded}" aria-label="Open a pull from ${row.name}">New pull</a>`,
+        )}
+        ${when(
+          !row.isDefault && canWrite,
+          () => html`<a class="small branch-del" href="/-/confirm?to=${encodeURIComponent(`${base}/branches/${encodeURIComponent(row.name)}/delete`)}" aria-label="Delete branch ${row.name}">Delete</a>`,
         )}
       </span>
     </div>
@@ -234,32 +226,27 @@ function branchRow(
 }
 
 function createForm(scope: RepoScope, refs: string[], from: string): Html {
-  return card(
-    html`<form method="post" action="${scope.base}/branches" class="field-row">
-      ${field({
-        label: "New branch",
-        name: "name",
-        placeholder: "feature/thing",
-        mono: true,
-        required: true,
-        autocomplete: "off",
-      })}
-      ${selectField({
-        label: "From",
-        name: "from",
-        options: refs.map((r) => ({
-          value: r,
-          label: r,
-          selected: r === from,
-        })),
-      })}
-      ${btn("Create branch", { variant: "primary", icon: "plus" })}
-    </form>`,
-    {
-      head: html`${icon("branch")}
-        <h2>Create a branch</h2>`,
-    },
-  );
+  return html`<h2 class="mt">Create a branch</h2>
+  <form method="post" action="${scope.base}/branches" class="field-row">
+    ${field({
+      label: "New branch",
+      name: "name",
+      placeholder: "feature/thing",
+      mono: true,
+      required: true,
+      autocomplete: "off",
+    })}
+    ${selectField({
+      label: "From",
+      name: "from",
+      options: refs.map((r) => ({
+        value: r,
+        label: r,
+        selected: r === from,
+      })),
+    })}
+    ${btn("Create branch", { variant: "primary", icon: "plus" })}
+  </form>`;
 }
 
 // GET /:owner/:name/branches
@@ -299,29 +286,32 @@ export async function renderBranches(
       ${when(scope.caps.write && scope.repo !== undefined, () =>
         createForm(scope, all.length === 0 ? [startFrom] : all, startFrom),
       )}
+      ${rows.length === 0 && scope.kind === "local"
+        ? html`<p class="small"><a href="${scope.base}/builds">Builds</a></p>`
+        : null}
       ${rows.length === 0
         ? empty({
             icon: "branch",
             title: "No branches yet",
             note: "Push one, or create the first from the form above.",
           })
-        : listCard(
-            rows.map((row) => branchRow(scope, scope.repo, row)),
-            {
-              head: html`<h2>
-                  ${rows.length} branch${rows.length === 1 ? "" : "es"}
-                </h2>
-                ${when(
-                  !compared && scope.kind === "local",
-                  () =>
-                    html`<span class="spacer"></span
-                      ><span class="muted small"
-                        >Too many branches to compare — ahead/behind is
-                        omitted.</span
-                      >`,
-                )}`,
-            },
-          )}
+        : html`<h2 class="mt">
+              ${rows.length} branch${rows.length === 1 ? "" : "es"}
+              ${when(
+                scope.kind === "local",
+                () => html`<a class="small" href="${scope.base}/builds">Builds</a>`,
+              )}
+            </h2>
+            ${when(
+              !compared && scope.kind === "local",
+              () =>
+                html`<p class="muted small">
+                  Too many branches to compare — ahead/behind is omitted.
+                </p>`,
+            )}
+            <ul class="list">
+              ${rows.map((row) => branchRow(scope, scope.repo, row))}
+            </ul>`}
     </div>
     ${when(scope.kind === "local", () => liveMount({ repo: scope.base }))}`;
 
@@ -349,6 +339,10 @@ export const CREATE_ERRORS: Record<string, string> = {
     "The origin could not be reached, so nothing was created.",
   origin_refused:
     "The origin refused that branch, so nothing was created here.",
+  origin_protected:
+    "The operator protects this repository at its origin, so no branch is pushed to it from here. Propose the change from your fork.",
+  origin_paused:
+    "This connection is not verified yet, so writes through it are paused. Nothing was created. Check it again under Settings → Origins.",
   forbidden: "You need write access to create a branch.",
   unauthorized: "You need write access to create a branch.",
   not_found: "You need write access to create a branch.",

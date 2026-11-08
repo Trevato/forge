@@ -32,9 +32,22 @@ export interface Report {
   readonly lcp: number | null;
   readonly inp: number | null;
   readonly cls: number;
+  /** document.referrer, location.search and the host of the link the visitor left by; absent from an older beacon. */
+  readonly ref?: string;
+  readonly q?: string;
+  readonly out?: string;
 }
 
-const FIELDS = new Set(["path", "ttfb", "load", "lcp", "inp", "cls"]);
+const FIELDS = new Set(["path", "ttfb", "load", "lcp", "inp", "cls", "ref", "q", "out"]);
+
+/** An optional text field: absent is fine, a wrong kind or a long or control-laden one is malformed. */
+function optionalText(body: Record<string, unknown>, key: string, max: number): string | undefined | "malformed" {
+  const given = body[key];
+  if (given === undefined) return undefined;
+  // eslint-disable-next-line no-control-regex
+  if (typeof given !== "string" || given.length > max || /[\u0000-\u001f\u007f]/.test(given)) return "malformed";
+  return given;
+}
 
 const bounded = (value: unknown, max: number): number | undefined =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max
@@ -71,6 +84,10 @@ export function parseReport(text: string): Report | "malformed" {
     // 0 is how the beacon says "not measured".
     times[key] = value === 0 ? null : value;
   }
+  const ref = optionalText(body, "ref", 300);
+  const q = optionalText(body, "q", 300);
+  const out = optionalText(body, "out", 253);
+  if (ref === "malformed" || q === "malformed" || out === "malformed") return "malformed";
   return {
     path,
     ttfb: times["ttfb"] ?? null,
@@ -78,6 +95,9 @@ export function parseReport(text: string): Report | "malformed" {
     lcp: times["lcp"] ?? null,
     inp: times["inp"] ?? null,
     cls,
+    ...(ref === undefined ? {} : { ref }),
+    ...(q === undefined ? {} : { q }),
+    ...(out === undefined ? {} : { out }),
   };
 }
 

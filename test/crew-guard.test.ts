@@ -9,6 +9,7 @@
  * since its last pass (#1097). Each skip and cap is counted for the
  * token-return view.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,7 +27,7 @@ import {
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import { readUsage } from "../src/actions/usage.ts";
-import { getAgent, setCrewRole, type Agent } from "../src/core/agents.ts";
+import { getAgent, type Agent } from "../src/core/agents.ts";
 import { listDecisions } from "../src/core/decisions.ts";
 import {
   getIssueById,
@@ -105,6 +106,12 @@ function ran(
     summary: state === "ok" ? "answered" : "declined: no",
     costUsd: 0.5,
   });
+  // Runs on one issue are spread past the repeat stop's ten minutes (#8707), so
+  // the cap and the breaker, which these tests are about, are what they meet.
+  const before = runsOn(issue).length - 1;
+  app.db
+    .query("UPDATE run SET created_at = ?1 WHERE id = ?2")
+    .run(new Date(Date.now() - before * 11 * 60_000).toISOString(), run.id);
   if (reply !== undefined) ok(addComment(app, bot.user, repo, issue, reply));
 }
 
@@ -411,7 +418,7 @@ describe("the planner is not given the direction again with nothing new (#1097)"
     );
     for (const name of ["bot", "atlas"])
       expect(addToCrew(app, alice, round, name).ok).toBe(true);
-    setCrewRole(app.db, round.id, atlas.user.id, "planner");
+    seatAs(app.db, round.id, atlas.user.id, "planner");
     ok(
       await updateRepoSettings(app, alice, round, {
         autonomy: "autonomous",

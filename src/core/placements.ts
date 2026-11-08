@@ -60,6 +60,13 @@ function toPlacement(r: Row): Placement {
   };
 }
 
+/** Add what a person's overrule did to a placement (#8696); what the planner wrote stays as it was. */
+export function appendPlaced(db: Database, thoughtId: string, more: readonly Placed[]): void {
+  const now = placementOf(db, thoughtId);
+  if (!now) return;
+  db.query("UPDATE placement SET placed = ?2 WHERE thought_id = ?1").run(thoughtId, JSON.stringify([...now.placed, ...more]));
+}
+
 export function placementOf(db: Database, thoughtId: string): Placement | undefined {
   const row = db.query<Row, [string]>("SELECT * FROM placement WHERE thought_id = ?1").get(thoughtId);
   return row ? toPlacement(row) : undefined;

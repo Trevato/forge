@@ -31,6 +31,8 @@ export interface KeeperRelease {
   readonly badInRow: number;
   readonly worstMs: number;
   readonly secondsDark: number;
+  /** The worst event-loop stall in the release's first five minutes, ms (#8848). */
+  readonly worstStallMs: number;
   readonly reason: string;
 }
 
@@ -51,6 +53,7 @@ interface Row {
   bad_in_row: number;
   worst_ms: number;
   seconds_dark: number;
+  worst_stall_ms: number;
   reason: string;
 }
 
@@ -70,6 +73,7 @@ const toRelease = (r: Row): KeeperRelease => ({
   badInRow: r.bad_in_row,
   worstMs: r.worst_ms,
   secondsDark: r.seconds_dark,
+  worstStallMs: r.worst_stall_ms,
   reason: r.reason,
 });
 
@@ -114,6 +118,19 @@ export function keepTally(db: Database, id: number, t: Tally, rollDark: number):
   db.query(
     `UPDATE keeper_release SET probes = ?2, pages = ?3, bad_in_row = ?4, worst_ms = ?5, seconds_dark = ?6 WHERE id = ?1`,
   ).run(id, t.probes, t.pages, t.worstRun, t.worstMs, rollDark + t.secondsDark);
+}
+
+/** The worst stall the release's process saw in its first five minutes. */
+export function keepStall(db: Database, id: number, ms: number): void {
+  db.query(`UPDATE keeper_release SET worst_stall_ms = ?2 WHERE id = ?1`).run(id, Math.max(0, Math.round(ms)));
+}
+
+/** The release before this one, cut and finished, newest first: what a stall is compared with. */
+export function releaseBefore(db: Database, id: number): KeeperRelease | undefined {
+  const row = db
+    .query<Row, [number]>(`SELECT * FROM keeper_release WHERE id < ?1 AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 1`)
+    .get(id);
+  return row === null ? undefined : toRelease(row);
 }
 
 export function finish(db: Database, id: number, stage: "verified" | "rolled_back", reason: string, at: number): void {

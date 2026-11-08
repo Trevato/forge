@@ -29,13 +29,16 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
 import { resolveAppEnv } from "../core/app_env.ts";
+import { featureVarsAt } from "./feature_env.ts";
 import { mintAppToken, renewAppToken, revokeAppToken } from "./token.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
 import { requeueAbandonedChecks } from "../checks/service.ts";
 import { checkInstallCache } from "../checks/install.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
+import { isContributionFork } from "../core/contribute.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
+import { guestWaits } from "../origins/guest.ts";
 import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
 import { runningLimitSentence } from "../settings/quotas.ts";
 import type { User } from "../core/users.ts";
@@ -55,6 +58,7 @@ import {
 import { Gate } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { headUnder, previewCommit } from "../git/combined.ts";
 import { createLog } from "../kernel/log.ts";
 import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
@@ -79,6 +83,9 @@ import { DRAIN_BUDGET_MS, drainPort } from "./handoff.ts";
 import type { DomainResolver } from "./domains.ts";
 import {
   appsRoot,
+  buildEnv,
+  envBuild,
+  envHostLabel,
   ensureEnvData,
   envDataDir,
   envDir,
@@ -213,6 +220,8 @@ export interface EnvStatus {
    * as `tty`.
    */
   readonly looks?: readonly string[] | undefined;
+  /** The pages of `looks` pictured as the owner (`app.looksAsOwner`), once known live. */
+  readonly looksAsOwner?: readonly string[] | undefined;
   /** `false` when its `forge.json` turns the forge pill off; unset is on. */
   readonly toolbar?: boolean | undefined;
   /**
@@ -349,7 +358,12 @@ interface Environment {
   lastErrorCommitOid?: string | undefined;
   /** Crash restarts in the current window, for backing off. */
   restarts: number[];
+  /** A build preview's place in the order build previews were started, oldest lowest. */
+  buildOrder?: number | undefined;
 }
+
+/** How many build previews (`build-<sha7>`) one app runs at once; a newer one takes the oldest's place. */
+export const BUILD_PREVIEWS_MAX = 3;
 
 /** The deploy reasons that mean a person touched the change. */
 const TOUCH_REASONS: readonly string[] = [
@@ -392,13 +406,13 @@ export function envsFor(
   return runtime.status(record);
 }
 
-/** Production first, then previews by pull number — a number, so `pull-10` follows `pull-9`. */
-const byEnv = (a: EnvStatus, b: EnvStatus): number =>
-  a.env === "production"
-    ? -1
-    : b.env === "production"
-      ? 1
-      : (envPull(a.env) ?? 0) - (envPull(b.env) ?? 0);
+/**
+ * Production first, then build previews, then previews by
+ * pull number — a number, not a string, so `pull-10` follows `pull-9`.
+ */
+const envRank = (env: EnvName): number =>
+  env === "production" ? -1 : (envPull(env) ?? 0);
+const byEnv = (a: EnvStatus, b: EnvStatus): number => envRank(a.env) - envRank(b.env);
 
 export class AppsRuntime {
   private readonly envs = new Map<string, Environment>();
@@ -411,6 +425,8 @@ export class AppsRuntime {
   private unsubscribe: (() => void) | undefined;
   private sweeper: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
+  /** Counts build previews as they start, so the oldest is the lowest. */
+  private buildCount = 0;
 
   constructor(
     readonly app: App,
@@ -433,8 +449,7 @@ export class AppsRuntime {
   // ---- addressing ----
 
   hostFor(slug: string, env: EnvName): string {
-    const label = env === "production" ? slug : `${slug}--${env.slice(5)}`;
-    return `${label}${appHostSuffix(this.options.domain)}`;
+    return `${envHostLabel(slug, env)}${appHostSuffix(this.options.domain)}`;
   }
 
   /**
@@ -442,9 +457,7 @@ export class AppsRuntime {
    * login, the forge is the host — or undefined when SSH is off.
    */
   sshFor(record: AppRecord, env: EnvName): string | undefined {
-    const login =
-      env === "production" ? record.slug : `${record.slug}--${env.slice(5)}`;
-    return sshCommand(this.app, login);
+    return sshCommand(this.app, envHostLabel(record.slug, env));
   }
 
   /**
@@ -505,8 +518,8 @@ export class AppsRuntime {
     for (const state of this.envs.values()) {
       if (state.app.id === record.id) out.push(this.describe(state));
     }
-    // Production first, then previews by pull number — a number, not a
-    // string, so `pull-10` follows `pull-9`.
+    // Production first, then build previews, then previews
+    // by pull number (`envRank`).
     return out.sort(byEnv);
   }
 
@@ -537,6 +550,7 @@ export class AppsRuntime {
               createdAt: state.live.createdAt,
               tty: state.live.manifest.tty,
               looks: state.live.manifest.looks,
+              looksAsOwner: state.live.manifest.looksAsOwner,
               toolbar: state.live.manifest.toolbar,
               ...(state.live.deployStartedAt === null
                 ? {}
@@ -574,6 +588,7 @@ export class AppsRuntime {
         createdAt: state.live.createdAt,
         tty: state.live.manifest.tty,
         looks: state.live.manifest.looks,
+        looksAsOwner: state.live.manifest.looksAsOwner,
         toolbar: state.live.manifest.toolbar,
         ...(state.live.deployStartedAt === null
           ? {}
@@ -737,8 +752,8 @@ export class AppsRuntime {
 
   /**
    * Make the environments match the repository: production at the default
-   * branch, a preview per open pull, and nothing for pulls that closed
-   * while the forge was away.
+   * branch, a preview per open pull, and nothing for pulls that closed while the
+   * forge was away.
    */
   async reconcileApp(
     record: AppRecord,
@@ -751,6 +766,11 @@ export class AppsRuntime {
     if (tip !== undefined && only !== "preview")
       this.requestDeploy(record, repo, "production", tip, reason);
     const open = new Set<EnvName>(["production"]);
+    // A build preview lives only in memory: one this forge is running stays,
+    // and one an earlier life left on disk goes (`previewBuild`).
+    for (const state of this.envs.values())
+      if (state.app.id === record.id && envBuild(state.env) !== undefined)
+        open.add(state.env);
     for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
       state: "open",
       limit: 200,
@@ -803,10 +823,8 @@ export class AppsRuntime {
 
   private async pullHead(repo: Repo, pull: Pull): Promise<string | undefined> {
     const dir = await pullDir(this.app.db, this.app.reposRoot, repo, pull);
-    const ref = pull.crossRepo
-      ? `refs/pull/${pull.number}/head`
-      : `refs/heads/${pull.headBranch}`;
-    return (await resolveOid(dir, ref)) ?? (pull.headOid || undefined);
+    // A fork's pull combined on our side previews the combined build (#9012).
+    return previewCommit(dir, pull);
   }
 
   // ---- events ----
@@ -904,7 +922,9 @@ export class AppsRuntime {
         return;
       }
       // An approval is what lets a reader's pull run: deploy its head now.
+      // A guest's approval restarts its preview with the app's variables.
       case "pull.run_granted":
+      case "pull.guest_approved":
       case "pull.reviewed": {
         // A writer asking for changes may withdraw what let the preview run:
         // if the code it serves may no longer run, it stops now, not at its
@@ -939,7 +959,9 @@ export class AppsRuntime {
             repo,
             previewEnv(pull.number),
             head,
-            "approved",
+            // The same head may be serving already: start it again so it
+            // comes up holding the variables it ran without.
+            event.kind === "pull.guest_approved" ? "redeploy" : "approved",
             event.actorId ?? undefined,
           );
         return;
@@ -1017,7 +1039,7 @@ export class AppsRuntime {
       return state.deploying.run;
     }
     const issue =
-      env === "production" ? undefined : this.pullIssueId(repo, env);
+      envPull(env) === undefined ? undefined : this.pullIssueId(repo, env);
     const run = createRun(this.app.db, {
       repoId: repo.id,
       kind: "deploy",
@@ -1043,6 +1065,38 @@ export class AppsRuntime {
       await this.execute(state, repo, run);
     });
     return run;
+  }
+
+  /**
+   * Serve one commit now, at `build-<sha7>`. Asked again for a build already
+   * here, it redeploys nothing and hands back the same environment. A new
+   * one beyond `BUILD_PREVIEWS_MAX` takes the place of the oldest, which is
+   * torn down with its data. Nothing of it outlives this process: a forge
+   * coming back removes what a build preview left on disk.
+   */
+  async previewBuild(
+    record: AppRecord,
+    repo: Repo,
+    commitOid: string,
+    actorId?: string,
+  ): Promise<{ env: EnvName; run: Run | undefined }> {
+    const env = buildEnv(commitOid);
+    const k = key(record.id, env);
+    if (!this.envs.has(k)) {
+      // Claimed before anything waits, so two asks at once count each other.
+      this.envFor(record, env).buildOrder = ++this.buildCount;
+      const builds = [...this.envs.values()]
+        .filter((s) => s.app.id === record.id && s.buildOrder !== undefined)
+        .sort((a, b) => b.buildOrder! - a.buildOrder!);
+      for (const old of builds.slice(BUILD_PREVIEWS_MAX)) {
+        log.info("build preview replaced", { app: record.slug, env: old.env, by: env });
+        await this.teardown(record, old.env);
+      }
+    }
+    // Torn down by a newer ask while the old ones went: nothing to deploy.
+    if (!this.envs.has(k)) return { env, run: undefined };
+    const run = this.requestDeploy(record, repo, env, commitOid, "build", actorId);
+    return { env, run };
   }
 
   private pullIssueId(repo: Repo, env: EnvName): string | undefined {
@@ -1391,13 +1445,8 @@ export class AppsRuntime {
       ssh: this.sshFor(state.app, state.env),
       // Read at start, never cached: a change is a redeploy, and the
       // process that comes up is the one that sees it.
-      vars: resolveAppEnv(
-        this.app.db,
-        this.app.config.dataDir,
-        state.app.id,
-        state.env,
-      ),
-      forgeToken: token.token,
+      ...this.secretsFor(repo, state.app.id, state.env, token.token),
+      feature: this.featureFor(repo, state.app.id, state.env, dir),
       log: write,
       warm,
       cell: this.cellFor(state.app, state.env),
@@ -1630,6 +1679,48 @@ export class AppsRuntime {
   }
 
   /**
+   * An absorbed app's settings for a process about to start in `dir`, read
+   * from that checkout's forge.json; nothing for an app not absorbed. A
+   * guest's preview nobody has approved holds none, as it holds no secrets,
+   * and only production renames the menu entry: a pull's forge.json cannot
+   * relabel the forge's menu for every reader.
+   */
+  featureFor(repo: Repo, appId: string, env: EnvName, dir: string): Record<string, string> {
+    const number = envPull(env);
+    const pull = number === undefined ? undefined : getPull(this.app.db, repo.id, number);
+    if (pull !== undefined && guestWaits(this.app.db, pull)) return {};
+    let forgeJson: string | undefined;
+    try {
+      forgeJson = readFileSync(join(dir, "forge.json"), "utf8");
+    } catch {
+      forgeJson = undefined;
+    }
+    return featureVarsAt(this.app.db, appId, forgeJson);
+  }
+
+  /**
+   * What a process for `env` starts holding: the operator's variables, read
+   * at start, and the forge token. A preview of a guest pull nobody has
+   * approved yet (`origins/guest.ts`) holds neither.
+   */
+  secretsFor(
+    repo: Repo,
+    appId: string,
+    env: EnvName,
+    forgeToken: string,
+  ): { vars: Record<string, string>; forgeToken: string | undefined } {
+    const number = envPull(env);
+    const pull =
+      number === undefined ? undefined : getPull(this.app.db, repo.id, number);
+    if (pull !== undefined && guestWaits(this.app.db, pull))
+      return { vars: {}, forgeToken: undefined };
+    return {
+      vars: resolveAppEnv(this.app.db, this.app.config.dataDir, appId, env),
+      forgeToken,
+    };
+  }
+
+  /**
    * An environment asleep is started again, warm, from the checkout it
    * kept; one start serves every request that arrives while it happens.
    * Returns once it is live, or once it is clear it will not be.
@@ -1645,11 +1736,21 @@ export class AppsRuntime {
     env: EnvName,
     commitOid: string,
   ): boolean {
-    if (env === "production") return true;
+    // A guest's fork has no app; were one ever to reach here, it starts nothing.
+    if (isContributionFork(this.app.db, repo.id)) return false;
+    // Production is the default branch and a build preview a commit a writer asked to see
+    // (`actions/build_preview.ts`): each is a writer's choice already.
+    if (env === "production" || envBuild(env) !== undefined)
+      return true;
     const number = envPull(env);
     const pull =
       number === undefined ? undefined : getPull(this.app.db, repo.id, number);
-    if (pull !== undefined && pullMayRun(this.app.db, repo, pull, commitOid))
+    // A combined preview runs under the head it carries, read from git (#9012).
+    const head =
+      pull === undefined
+        ? commitOid
+        : headUnder(repoDir(this.app.reposRoot, repo.ownerName, repo.name), pull, commitOid);
+    if (pull !== undefined && pullMayRun(this.app.db, repo, pull, head))
       return true;
     log.info("preview waits for a writer's approval", {
       app: record.slug,
@@ -1708,13 +1809,8 @@ export class AppsRuntime {
         forgeUrl: this.options.forgeUrl,
         identityKey: identityKey(this.app.config.dataDir, record.id),
         ssh: this.sshFor(record, env),
-        vars: resolveAppEnv(
-          this.app.db,
-          this.app.config.dataDir,
-          record.id,
-          env,
-        ),
-        forgeToken: token.token,
+        ...this.secretsFor(repo, record.id, env, token.token),
+        feature: this.featureFor(repo, record.id, env, asleep.dir),
         log: write,
         signal: new AbortController().signal,
         warm: true,

@@ -16,6 +16,7 @@ import { envPull } from "./data.ts";
 import { forgeApiUrl } from "./token.ts";
 import { backgroundArgv } from "./background.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
+import { isFeatureVarName } from "./feature_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
@@ -56,6 +57,8 @@ export interface StartInput {
   readonly ssh?: string | undefined;
   /** The operator's variables for this app (`core/app_env.ts`). */
   readonly vars?: Record<string, string> | undefined;
+  /** An absorbed app's `FORGE_FEATURE` and `FORGE_SETTING_*` (`apps/feature_env.ts`). */
+  readonly feature?: Record<string, string> | undefined;
   /** The process's read-only credential into the forge (`apps/token.ts`). */
   readonly forgeToken?: string | undefined;
   readonly log: (line: string) => void;
@@ -72,6 +75,8 @@ export interface StartInput {
    * start — the forge coming back, or an environment waking — only runs it.
    */
   readonly warm?: boolean | undefined;
+  /** Chooses the app's port; tests hold one open to prove the retry. */
+  readonly pickPort?: (() => number) | undefined;
   /**
    * The repository's shared bun cache (`checks/install.ts`
    * `checkInstallCache`), the one its checks fill (#7544). The forge fills
@@ -156,6 +161,8 @@ export function appEnv(input: {
   ssh?: string | undefined;
   /** The operator's variables: an admin password, an API key. */
   vars?: Record<string, string> | undefined;
+  /** An absorbed app's settings, as the forge keeps them (`apps/feature_env.ts`). */
+  feature?: Record<string, string> | undefined;
   /** A read-only forge token for this process (`apps/token.ts`). */
   forgeToken?: string | undefined;
 }): Record<string, string> {
@@ -166,6 +173,7 @@ export function appEnv(input: {
   // matters, in case that path is ever bypassed.
   const env = {
     ...operatorVars(input.vars),
+    ...featureVars(input.feature),
     ...childEnv({
       PORT: String(input.port),
       HOST: "127.0.0.1",
@@ -194,6 +202,13 @@ export function appEnv(input: {
   delete env["USER"];
   delete env["LOGNAME"];
   return env;
+}
+
+/** An absorbed app's settings: only the names a feature owns, never one the forge sets itself. */
+function featureVars(vars: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(vars ?? {})) if (isFeatureVarName(name)) out[name] = value;
+  return out;
 }
 
 /** The operator's variables minus any name the forge owns. */
@@ -510,32 +525,36 @@ export async function startProcess(
           cell: stepCell(input),
         });
 
-  const port = freePort();
-  log(`$ ${manifest.run}  (PORT=${port})`);
-  const spawnedAt = Date.now();
-  let firstOutputAt: number | undefined;
-  const cell: Cell | undefined =
-    input.cell === undefined
-      ? undefined
-      : openCell(
-          {
-            dir: input.dir,
-            writable: [input.dataDir],
-            home: input.cell.home,
-            hide: input.cell.hide,
-            egress: manifest.egress ?? [],
-            granted: input.cell.granted,
-            reach: [input.forgeUrl],
-            limits: resolveLimits("app", manifest.limits),
-            listen: port,
-            onUndeclared: input.cell.onUndeclared,
-            egressMode: input.cell.egressMode,
-            label: input.cell.label,
-          },
-          log,
-        );
-  const command = `exec ${manifest.run}`;
-  const env = appEnv({
+  // The port is chosen, then released, then bound by the app: another
+  // process can take it in between. An app that dies on an address-in-use
+  // error is started again on a fresh port (`startOnFreshPort`).
+  const pick = input.pickPort ?? freePort;
+  const launch = async (port: number): Promise<Launch> => {
+    log(`$ ${manifest.run}  (PORT=${port})`);
+    const spawnedAt = Date.now();
+    let firstOutputAt: number | undefined;
+    const cell: Cell | undefined =
+      input.cell === undefined
+        ? undefined
+        : openCell(
+            {
+              dir: input.dir,
+              writable: [input.dataDir],
+              home: input.cell.home,
+              hide: input.cell.hide,
+              egress: manifest.egress ?? [],
+              granted: input.cell.granted,
+              reach: [input.forgeUrl],
+              limits: resolveLimits("app", manifest.limits),
+              listen: port,
+              onUndeclared: input.cell.onUndeclared,
+              egressMode: input.cell.egressMode,
+              label: input.cell.label,
+            },
+            log,
+          );
+    const command = `exec ${manifest.run}`;
+    const env = appEnv({
       port,
       dataDir: input.dataDir,
       env: input.env,
@@ -545,92 +564,102 @@ export async function startProcess(
       identityKey: input.identityKey,
       ssh: input.ssh,
       vars: input.vars,
+      feature: input.feature,
       forgeToken: input.forgeToken,
-  });
-  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
-    cwd: input.dir,
-    env: cell?.env(env) ?? env,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    // Without a cell, the app leads a process group of its own, so what it
-    // starts can be signalled with it (`signalGroup`). A cell's tree is
-    // bubblewrap's, walked by `signalTree` and `killTree`.
-    detached: cell === undefined,
-  });
-  // The cell's sockets and watch end with the process, however it ends.
-  // Without a cell, so does the rest of its group: a child that outlived
-  // the app, stopped or crashed, is not left running on its data.
-  // Read before the cell closes: its cgroup's OOM count goes with it.
-  let breach: string | undefined;
-  void proc.exited.then(() => {
-    breach = cell?.breach();
-    cell?.close();
-    if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
-  });
-  cell?.watch(proc.pid, () => killTree(proc.pid));
-  // Output is pumped for the life of the process, not just the start.
-  const recent: string[] = [];
-  const dirs = spellings([input.dir, input.dataDir]);
-  const remember = (raw: string): void => {
-    firstOutputAt ??= Date.now();
-    const line = stripForgeDirs(dirs, raw);
-    recent.push(line);
-    if (recent.length > 20) recent.shift();
-    log(line);
-  };
-  void pump(proc.stdout, remember);
-  void pump(proc.stderr, remember);
+    });
+    const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
+      cwd: input.dir,
+      env: cell?.env(env) ?? env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      // Without a cell, the app leads a process group of its own, so what it
+      // starts can be signalled with it (`signalGroup`). A cell's tree is
+      // bubblewrap's, walked by `signalTree` and `killTree`.
+      detached: cell === undefined,
+    });
+    // The cell's sockets and watch end with the process, however it ends.
+    // Without a cell, so does the rest of its group: a child that outlived
+    // the app, stopped or crashed, is not left running on its data.
+    // Read before the cell closes: its cgroup's OOM count goes with it.
+    let breach: string | undefined;
+    void proc.exited.then(() => {
+      breach = cell?.breach();
+      cell?.close();
+      if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
+    });
+    cell?.watch(proc.pid, () => killTree(proc.pid));
+    // Output is pumped for the life of the process, not just the start.
+    const recent: string[] = [];
+    const dirs = spellings([input.dir, input.dataDir]);
+    const remember = (raw: string): void => {
+      firstOutputAt ??= Date.now();
+      const line = stripForgeDirs(dirs, raw);
+      recent.push(line);
+      if (recent.length > 20) recent.shift();
+      log(line);
+    };
+    const drained = Promise.all([pump(proc.stdout, remember), pump(proc.stderr, remember)]);
 
-  let inner: number | undefined;
-  const handle: ProcessHandle = {
-    // In a cell, the app's own pid rather than bubblewrap's: what has
-    // children when the app is busy (`apps/busy.ts`).
-    get pid() {
-      if (cell === undefined) return proc.pid;
-      inner ??= commandPid(proc.pid);
-      return inner ?? proc.pid;
-    },
-    port,
-    exited: proc.exited,
-    breach: () => breach,
-    stop: async () => {
-      if (proc.exitCode !== null || proc.signalCode !== null) return;
-      // In a cell the pid is bubblewrap's, which passes no signal on: the
-      // app itself is asked, so it shuts down the way it would anywhere.
-      if (cell === undefined) signalGroup(proc.pid, "SIGTERM");
-      else signalTree(proc.pid, "SIGTERM");
-      const gone = await Promise.race([
-        proc.exited.then(() => true),
-        Bun.sleep(STOP_GRACE_MS).then(() => false),
-      ]);
-      if (!gone) {
-        if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
-        else killTree(proc.pid);
-        await proc.exited;
-      }
-    },
-  };
+    let inner: number | undefined;
+    const handle: ProcessHandle = {
+      // In a cell, the app's own pid rather than bubblewrap's: what has
+      // children when the app is busy (`apps/busy.ts`).
+      get pid() {
+        if (cell === undefined) return proc.pid;
+        inner ??= commandPid(proc.pid);
+        return inner ?? proc.pid;
+      },
+      port,
+      exited: proc.exited,
+      breach: () => breach,
+      stop: async () => {
+        if (proc.exitCode !== null || proc.signalCode !== null) return;
+        // In a cell the pid is bubblewrap's, which passes no signal on: the
+        // app itself is asked, so it shuts down the way it would anywhere.
+        if (cell === undefined) signalGroup(proc.pid, "SIGTERM");
+        else signalTree(proc.pid, "SIGTERM");
+        const gone = await Promise.race([
+          proc.exited.then(() => true),
+          Bun.sleep(STOP_GRACE_MS).then(() => false),
+        ]);
+        if (!gone) {
+          if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
+          else killTree(proc.pid);
+          await proc.exited;
+        }
+      },
+    };
 
-  const ready = await waitUntilReady({
-    port,
-    path: manifest.health,
-    timeoutMs: manifest.ready * 1000,
-    exited: proc.exited,
-    signal: input.signal,
-  });
-  if (!ready.ok) {
-    await handle.stop();
+    const ready = await waitUntilReady({
+      port,
+      path: manifest.health,
+      timeoutMs: manifest.ready * 1000,
+      exited: proc.exited,
+      signal: input.signal,
+    });
+    if (!ready.ok) {
+      await handle.stop();
+      // The exit can be seen before the pumps deliver its last lines, the
+      // address-in-use one among them; a pipe a child holds open is not waited on.
+      await Promise.race([drained, Bun.sleep(DRAIN_CAP_MS)]);
+      const tail = recent.length > 0 ? ` — ${failureReason(recent)}` : "";
+      return {
+        error: { stage: ready.error.stage, message: ready.error.message + tail },
+        portTaken: ready.error.exited && recent.some((line) => ADDRESS_IN_USE_RE.test(line)),
+      };
+    }
+    return { handle, spawnedAt, firstOutputAt };
+  };
+  const launched = await startOnFreshPort(launch, pick, input.signal, log);
+  if ("error" in launched) {
     // The app never came up: the test step running beside it has nothing
     // left to verify, and must not outlive this failed run.
     testAbort.abort();
     await tested.catch(() => {});
-    const tail = recent.length > 0 ? ` — ${failureReason(recent)}` : "";
-    return err({
-      stage: ready.error.stage,
-      message: ready.error.message + tail,
-    });
+    return err(launched.error);
   }
+  const { handle, spawnedAt, firstOutputAt } = launched;
   log(`ready: ${input.url}`);
   // How the process's own share of the start divides: the time until it
   // first said anything (the runtime loading the app, the app's own boot
@@ -652,7 +681,7 @@ async function waitUntilReady(input: {
   timeoutMs: number;
   exited: Promise<number>;
   signal: AbortSignal;
-}): Promise<Result<void, StartError>> {
+}): Promise<Result<void, StartError & { readonly exited: boolean }>> {
   const deadline = Date.now() + input.timeoutMs;
   let exitCode: number | undefined;
   void input.exited.then((code) => {
@@ -661,11 +690,12 @@ async function waitUntilReady(input: {
   let lastStatus: number | undefined;
   while (Date.now() < deadline) {
     if (input.signal.aborted)
-      return err({ stage: "start", message: "cancelled" });
+      return err({ stage: "start", message: "cancelled", exited: false });
     if (exitCode !== undefined)
       return err({
         stage: "start",
         message: `exited with code ${exitCode} before answering`,
+        exited: true,
       });
     try {
       const response = await fetch(
@@ -685,11 +715,43 @@ async function waitUntilReady(input: {
   }
   return err({
     stage: "ready",
+    exited: false,
     message:
       lastStatus === undefined
         ? `no answer on ${input.path} within ${Math.round(input.timeoutMs / 1000)}s`
         : `${input.path} answered ${lastStatus} for ${Math.round(input.timeoutMs / 1000)}s`,
   });
+}
+
+/** How many more times an app that lost its port is started on a fresh one. */
+export const PORT_RETRIES = 2;
+/** How long a failed start waits for the app's last output to arrive. */
+const DRAIN_CAP_MS = 1_000;
+const ADDRESS_IN_USE_RE = /address (?:already )?in use|EADDRINUSE|port \d+ in use/i;
+
+/** One start of the app on one port: up, or the error and whether the port was lost. */
+type Launch =
+  | {
+      readonly handle: ProcessHandle;
+      readonly spawnedAt: number;
+      readonly firstOutputAt: number | undefined;
+    }
+  | { readonly error: StartError; readonly portTaken: boolean };
+
+/** Launch on a picked port; while the app lost it to another process, on a fresh one, up to PORT_RETRIES more times. */
+async function startOnFreshPort(
+  launch: (port: number) => Promise<Launch>,
+  pick: () => number,
+  signal: AbortSignal,
+  log: (line: string) => void,
+): Promise<Launch> {
+  let launched = await launch(pick());
+  for (let retry = 0; retry < PORT_RETRIES; retry++) {
+    if (!("error" in launched) || !launched.portTaken || signal.aborted) break;
+    log("the port was taken before the app bound it; starting again on another");
+    launched = await launch(pick());
+  }
+  return launched;
 }
 
 /** A port the OS says is free right now. */

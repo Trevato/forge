@@ -5,6 +5,7 @@
  * on the crew can ask never stops the pull being reviewed.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
 import { teamsOfIssue, teamVerdicts } from "../src/core/issue_teams.ts";
 import type { Issue } from "../src/core/issues.ts";
@@ -142,7 +143,7 @@ describe("naming teams, at every door", () => {
     const agent = await createAgent(app, alice, { username: "quill" });
     if (!agent.ok) throw new Error(String(agent.error));
     addToCrew(app, alice, repo, "quill");
-    setCrewRole(app.db, repo.id, id("quill"), "reviewer");
+    seatAs(app.db, repo.id, id("quill"), "reviewer");
   }, 30_000);
 
   afterAll(async () => {

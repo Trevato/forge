@@ -46,6 +46,7 @@ import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
   btn,
+  disclosure,
   empty,
   icon,
   labelChip,
@@ -67,6 +68,8 @@ import {
   pullWords,
   runWord,
   wordBadge,
+  wordDot,
+  wordText,
   type Word,
   servingHistory,
   type WordCtx,
@@ -89,7 +92,8 @@ const WORD_FILTERS: readonly WordFilter[] = [
 ];
 
 function listBucket(word: Word): WordFilter {
-  if (word === "waiting" || word === "planned") return "working";
+  if (word === "waiting" || word === "planned" || word === "silent" || word === "needs input")
+    return "working";
   if (word === "done") return "shipped";
   if (word === "cancelled") return "stopped";
   return word;
@@ -231,7 +235,12 @@ function shown(word: Word, f: ListFacets): boolean {
 
 /** The narrowings in force as chips, each ✕ clearing itself, then the
  * repository's labels to narrow by. Nothing at all when there is neither. */
-function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html {
+function facetChips(
+  base: string,
+  f: ListFacets,
+  labels: readonly Label[],
+  fold = false,
+): Html {
   const active = (
     [
       ["assignee", "has it"],
@@ -254,6 +263,9 @@ function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html
       : null;
   if (active.length === 0 && labels.length === 0 && state === null)
     return html``;
+  const chosen = f.label.toLowerCase();
+  const rest = labels.filter((l) => l.name.toLowerCase() !== chosen);
+  const picked = labels.find((l) => l.name.toLowerCase() === chosen);
   return html`<div class="bar mb">
     ${state}
     ${active.map(
@@ -266,17 +278,27 @@ function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html
           >${f[name]} ${says} ✕</a
         >`,
     )}
-    ${labels.map((l) =>
-      f.label.toLowerCase() === l.name.toLowerCase()
-        ? html`<a
-            class="label lc-${l.color}"
-            href="${facetHref(base, f, { label: "" })}"
-            aria-current="true"
-            title="Remove this filter"
-            >${l.name} ✕</a
-          >`
-        : labelChip(l, facetHref(base, f, { label: l.name })),
+    ${when(
+      picked,
+      (l) => html`<a
+        class="label lc-${l.color}"
+        href="${facetHref(base, f, { label: "" })}"
+        aria-current="true"
+        title="Remove this filter"
+        >${l.name} ✕</a
+      >`,
     )}
+    ${rest.length === 0
+      ? null
+      : !fold
+        ? rest.map((l) => labelChip(l, facetHref(base, f, { label: l.name })))
+        : disclosure(
+          "Labels",
+          html`<div class="bar">
+            ${rest.map((l) => labelChip(l, facetHref(base, f, { label: l.name })))}
+          </div>`,
+          { small: true },
+        )}
   </div>`;
 }
 
@@ -324,6 +346,48 @@ function listRead(ctx: Ctx, repo: Repo, f: ListFacets) {
   };
   return { options, record, wordCtx };
 }
+
+/**
+ * Every action the issues list offers, as palette entries (Cmd-K): the
+ * filters, the compose page and the outside reports. What the page shows
+ * quietly is still one keystroke away.
+ */
+export function tellsListActions(o: {
+  base: string;
+  name: string;
+  word: readonly WordFilter[];
+  signedIn: boolean;
+  reports: number;
+  labels?: readonly string[];
+}): { t: string; h: string; c: string }[] {
+  const c = "This list";
+  return [
+    { t: `${o.name} — Open issues`, h: `${o.base}/issues`, c },
+    ...o.word.map((w) => ({
+      t: `${o.name} — Issues: ${w === "told" ? "Not started" : w}`,
+      h: `${o.base}/issues?word=${w}`,
+      c,
+    })),
+    ...(o.labels ?? []).map((l) => ({
+      t: `${o.name} — Issues labelled ${l}`,
+      h: `${o.base}/issues?label=${encodeURIComponent(l)}`,
+      c,
+    })),
+    ...(o.signedIn ? [{ t: `${o.name} — New issue`, h: `${o.base}/issues/new`, c }] : []),
+    ...(o.reports > 0
+      ? [{ t: `${o.name} — Reports from outside`, h: `${o.base}/reports`, c }]
+      : []),
+  ];
+}
+
+/**
+ * An issue's title is the writer's words, so inside `[data-tells]` a row wraps
+ * them (a long word breaks anywhere) in place of the one-line ellipsis, and the
+ * page never scrolls sideways at 390 px. No new class.
+ */
+export const TELLS_CSS = `[data-tells] { overflow-wrap: anywhere; }
+[data-tells] .row-title, [data-tells] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-tells] .row { align-items: flex-start; }`;
 
 /**
  * GET /:owner/:name/issues: every issue, for every
@@ -392,16 +456,15 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
             row({
               href: tellHref(base, issue.number),
               nav: true,
-              lead: avatar(issue.assigneeName ?? "crew"),
+              lead: wordDot(info.word, info.note),
               title: titled(issue.title, labels.get(issue.id)),
               titleAttr: issue.title,
-              meta: html`${when(
+              meta: html`${wordText(info.word)}${when(
                 issue.originAuthor,
                 (login) => html`${originTag(login, originGlyph(repo))} · `,
               )}${issue.assigneeName
                 ? html`${issue.assigneeName} · `
-                : null}${info.note} · ${time(issue.updatedAt)}`,
-              trail: wordBadge(info.word),
+                : null}${time(issue.updatedAt)}`,
               ...(mayLabel && issue.state === "open"
                 ? {
                     after: flowButton(
@@ -413,6 +476,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
                 : {}),
             }),
           ),
+          { extra: "bare" },
         );
   const lastNumber = fetched[fetched.length - 1]?.number;
   // Self-links follow the address that reached this page.
@@ -423,8 +487,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     btn(PAGE_TITLES.compose, {
       href: `${base}/issues/new`,
       size: "sm",
-      variant: "outline",
-      icon: "plus",
+      variant: "primary",
       shortcut: "c",
     }),
   );
@@ -441,7 +504,11 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   const waiting = waitingCount(ctx.app, ctx.auth.user, repo);
   const reports =
     waiting > 0
-      ? btn(`${waiting} from outside`, { href: `${base}/reports`, size: "sm" })
+      ? btn(`${waiting} from outside`, {
+          href: `${base}/reports`,
+          size: "sm",
+          variant: "ghost",
+        })
       : undefined;
   // Signed out, the way in: sign in to open one, or report a problem
   // without an account where the repository is public.
@@ -458,7 +525,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
       : html`${reports ?? null} ${compose} ${outside ?? null} ${signIn}`;
 
   const body = html`${repoHeader(ctx, repo, "issues")}
-    <div class="mt">
+    <div class="mt" data-tells>
       ${wordFilterBar(
         (word) => facetHref(listBase, f, { word }),
         f.word,
@@ -479,9 +546,19 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     ctx,
     title: pageTitle("tells", repo, record !== undefined),
     crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
+    palette: [
+      ...repoPalette(ctx, repo),
+      ...tellsListActions({
+        base,
+        word: record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
+        name: `${repo.ownerName}/${repo.name}`,
+        signedIn: ctx.auth.user !== undefined,
+        reports: waiting,
+        labels: repoLabels.map((l) => l.name),
+      }),
+    ],
     body,
-    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
+    styleCss: `${TELLS_CSS}\n${labelCss([...repoLabels, ...[...labels.values()].flat()])}`,
     scriptJs: liveClientJs,
   });
   notePhase(ctx.request, "render", performance.now() - at);
@@ -492,6 +569,15 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
 function stepAfter(step: PathStep | null | undefined): { after?: Html } {
   return step == null ? {} : { after: stepLink(step) };
 }
+
+/**
+ * A pull's title and branch are the writer's words, so inside `[data-pulls]`
+ * a row wraps them (a long word breaks anywhere) in place of the list's
+ * one-line ellipsis, and the page never scrolls sideways at 390 px. No new class.
+ */
+export const PULLS_CSS = `[data-pulls] { overflow-wrap: anywhere; }
+[data-pulls] .row-title, [data-pulls] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-pulls] .row { align-items: flex-start; }`;
 
 /**
  * GET /:owner/:name/pulls: every pull request, for every
@@ -553,14 +639,13 @@ export async function changesList(ctx: Ctx): Promise<Response> {
             row({
               href: changeHref(base, pull.number),
               nav: true,
-              lead: avatar(pull.authorName),
+              lead: wordDot(info.word, info.note),
               title: titled(pull.title, labels.get(pull.id)),
               titleAttr: pull.title,
-              meta: html`${pull.originAuthor
+              meta: html`${wordText(info.word)}${pull.originAuthor
                 ? originTag(pull.originAuthor, originGlyph(repo))
-                : pull.authorName} · ${info.note} ·
+                : pull.authorName} ·
               ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
-              trail: wordBadge(info.word),
               ...stepAfter(steps.get(pull.id)),
             }),
           ),
@@ -570,7 +655,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   const listBase = ctx.url.pathname;
 
   const body = html`${repoHeader(ctx, repo, "pulls")}
-    <div class="mt">
+    <div class="mt" data-pulls>
       ${wordFilterBar(
         (word) => facetHref(listBase, f, { word }),
         f.word,
@@ -593,7 +678,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
+    styleCss: `${PULLS_CSS}\n${labelCss([...repoLabels, ...[...labels.values()].flat()])}`,
     scriptJs: liveClientJs,
   });
   lap("render");
@@ -786,6 +871,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
               trail: wordBadge(info.word),
             });
           }),
+          { extra: "bare" },
         );
   const last = fetched[fetched.length - 1];
 

@@ -11,7 +11,7 @@ import { createAgent } from "../src/actions/crew.ts";
 import { createApp, type App } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
-import { CAPACITY_KEYS, capacityValue } from "../src/core/capacity.ts";
+import { CAPACITY_KEYS, capacityDefault, capacityValue } from "../src/core/capacity.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { capacityScreen } from "../src/tui/screens/capacity.ts";
@@ -84,6 +84,24 @@ describe("tui capacity", () => {
     expect(h.text()).toContain("Merge queue candidates at once");
     expect(h.text()).not.toContain("read-only");
     h.stop();
+  });
+
+  test("a crew concurrency below its ceiling is marked, and not at it", async () => {
+    const ceiling = capacityDefault("crew.concurrency");
+    try {
+      changeCapacity(app, carol, "crew.concurrency", "1");
+      const low = boot(carol);
+      await low.press();
+      expect(low.text()).toContain(`below ceiling ${ceiling}`);
+      low.stop();
+      changeCapacity(app, carol, "crew.concurrency", ceiling);
+      const level = boot(carol);
+      await level.press();
+      expect(level.text()).not.toContain("below ceiling");
+      level.stop();
+    } finally {
+      changeCapacity(app, carol, "crew.concurrency", null);
+    }
   });
 
   test("changes crew concurrency after the plan and a confirm", async () => {

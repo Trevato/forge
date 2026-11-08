@@ -1,6 +1,13 @@
 # A tour of the forge
 
-What each page, screen and door does, past the front door in the README. Each section is one feature with every door it has: the web, the terminal over SSH, the API and the MCP. The crew is in `docs/CREW.md`, apps in `docs/APPS.md`, origins in `docs/ORIGINS.md`, asks in `docs/ASKS.md`, and running the forge in `docs/OPERATING.md`.
+This document describes each page and screen beyond the studio, one feature per
+section. It is for people who want every way to reach a feature: the web, the
+terminal over SSH, the API and the MCP.
+
+Related documents cover the rest: [`STUDIO.md`](STUDIO.md) for the main pages,
+[`CREW.md`](CREW.md) for the crew, [`APPS.md`](APPS.md) for apps,
+[`ORIGINS.md`](ORIGINS.md) for connected forges, [`ASKS.md`](ASKS.md) for
+questions waiting on a person, and [`OPERATING.md`](OPERATING.md) for running it.
 
 ## Live in the terminal
 
@@ -93,11 +100,11 @@ a destination that is a bucket, `snapshot/state.json`; `src/snapshot/off_box.ts`
 The backup tile past 24 hours, or with none (`never`), takes the card's existing
 `data-tone="attn"` and says overdue in its label.
 The last three (`src/flow/reach.ts`, the `reach` board source's rows) are
-visitors (`5 today`, `31 in 7 days`), accounts (`1 of 2`, signed in today) and
+reporting browsers (`5 today`, `31 in 7 days`), accounts (`1 of 2`, seen today) and
 page speed (the slowest quarter's page load over 7 days, and `reacts in 180 ms`,
 the same for the delay after a tap), from the page-view beacon. Each links to
 the Reach starting board (`/boards/reach`). The visitor hash rotates daily, so
-the 7-day visitors is each day's distinct count summed.
+the 7-day reporting browsers is each day's distinct count summed.
 They count every repository, so only a site admin sees them, on both doors;
 nobody else does, and neither does the lean client home. On the web each is a
 card linking to `/board`, `/releases`, `/boards` or `/boards/reach`. The terminal's first screen
