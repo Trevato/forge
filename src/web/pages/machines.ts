@@ -31,7 +31,7 @@ import {
 } from "../chrome.ts";
 import { page } from "../layout.ts";
 import { html } from "../html.ts";
-import { btn, card, icon, time } from "../ui.ts";
+import { badge, btn, icon, row, time } from "../ui.ts";
 import { ghosttyWasmAsset, machineTermAsset } from "../machine-term-asset.ts";
 import { settingsPageResponse } from "./settings.ts";
 
@@ -62,52 +62,42 @@ export async function machinesSettingsPage(ctx: Ctx): Promise<Response> {
 }
 
 function render(ctx: Ctx, repo: Repo, list: readonly Machine[], sessions: readonly SessionRecord[]): Response {
-  const machines = card(
-    html`<p class="muted">
-        A machine is where the crew's shell runs. A writer can open a shell into one; each
-        writer has a directory and home of their own on each machine, never shared with the
-        next. A shell outlives its tab: reload, or open it again, and you are back in it.
-      </p>
-      <div class="table-scroll">
-        <table class="table">
-          <thead><tr><th>Machine</th><th>Tools</th><th>Reach</th><th><span class="sr-only">Shell</span></th></tr></thead>
-          <tbody>
-            ${list.map(
-              (m) => html`<tr>
-                <td><strong>${m.name}</strong></td>
-                <td class="muted">${m.tools.length === 0 ? "none" : m.tools.join(", ")}</td>
-                <td class="muted">${m.reach.length === 0 ? "the forge only" : "the forge and its apps"}</td>
-                <td>${btn("Open shell", { href: shellPath(repo, m.name), icon: "terminal", size: "sm" })}</td>
-              </tr>`,
-            )}
-          </tbody>
-        </table>
-      </div>`,
-    { head: html`${icon("terminal")}<h2>Machines</h2>` },
-  );
-  const recent = card(
-    sessions.length === 0
-      ? html`<p class="muted">No shell has been opened here yet.</p>`
-      : html`<div class="table-scroll">
-          <table class="table">
-            <thead><tr><th>Machine</th><th>Who</th><th>Started</th><th>Ended</th></tr></thead>
-            <tbody>
-              ${sessions.map(
-                (s) => html`<tr>
-                  <td><strong>${s.machine}</strong></td>
-                  <td>${s.ownerName}</td>
-                  <td class="muted">${time(s.startedAt)}</td>
-                  <td class="muted">${s.endedAt === undefined
-                    ? "running"
-                    : html`${time(s.endedAt)} · ${ENDED[s.endReason ?? "stopped"]}`}</td>
-                </tr>`,
-              )}
-            </tbody>
-          </table>
-        </div>`,
-    { head: html`${icon("history")}<h2>Last sessions</h2>` },
-  );
-  const body = html`${machines}<div class="mt">${recent}</div>`;
+  const machines = html`<section class="settings-block">
+    <h2>Machines</h2>
+    <p class="muted">A machine is where the crew shell runs; each writer gets a directory and home of their own on it.</p>
+    <ul class="list setting-list" id="machines">
+      ${list.map((m) =>
+        row({
+          lead: icon("terminal"),
+          title: m.name,
+          meta: html`Tools: ${m.tools.length === 0 ? "none" : m.tools.join(", ")} · Reach: ${m.reach.length === 0 ? "the forge only" : "the forge and its apps"}`,
+          trail: btn("Open shell", { href: shellPath(repo, m.name), icon: "terminal", size: "sm" }),
+          data: { machine: m.name },
+        }),
+      )}
+    </ul>
+  </section>`;
+  // The mark is not colour alone: a running shell carries the word in a badge,
+  // an ended one says why in words and a dash.
+  const recent = html`<section class="settings-block">
+    <h2>Last sessions</h2>
+    ${sessions.length === 0
+      ? html`<p class="small">No shell has been opened here yet.</p>`
+      : html`<ul class="list setting-list" id="machine-sessions">
+          ${sessions.map((s) =>
+            row({
+              lead: html`<span aria-hidden="true">${s.endedAt === undefined ? "●" : "–"}</span>`,
+              title: html`${s.machine} · ${s.ownerName}`,
+              meta: html`Started ${time(s.startedAt)}${s.endedAt === undefined
+                ? null
+                : html` · ended ${time(s.endedAt)} · ${ENDED[s.endReason ?? "stopped"]}`}`,
+              ...(s.endedAt === undefined ? { trail: badge("running", { tone: "success" }) } : {}),
+              data: { session: s.id },
+            }),
+          )}
+        </ul>`}
+  </section>`;
+  const body = html`${machines}${recent}`;
   // The settings frame and its sections are an admin's; a writer who is not
   // one sees this pane alone, so no link offers them a page that refuses.
   if (canAdmin(ctx.app.db, repo, ctx.auth.user))

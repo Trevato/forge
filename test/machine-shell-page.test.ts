@@ -167,3 +167,17 @@ test("a joining connection's first size redraws the screen; a new size is set on
   const one = { cols: 80, rows: RESIZE.rows.min };
   expect(resizePlan(one, one, true)).toEqual([{ cols: 80, rows: 2 }, one]);
 });
+
+test("Settings › Machines is headed sections of rows, never a card (#9788)", async () => {
+  const body = await (await get("/alice/lab/settings/machines", "alice")).text();
+  const main = body.slice(body.indexOf("<main"), body.indexOf("</main>"));
+  expect(main).toContain('<section class="settings-block">');
+  expect(main).toContain("<h2>Machines</h2>");
+  expect(main).toContain("<h2>Last sessions</h2>");
+  const machines = main.slice(main.indexOf('id="machines"'));
+  expect(machines.slice(0, machines.indexOf("</ul>"))).toContain('class="row-title"');
+  expect(main).toContain('data-machine="standard"');
+  expect(main).toContain('href="/alice/lab/machines/standard/shell"');
+  expect(main).toContain("No shell has been opened here yet.");
+  for (const boxed of ['class="card', "card-head", "card-body", "<table"]) expect(main).not.toContain(boxed);
+});

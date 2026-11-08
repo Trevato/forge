@@ -15,3 +15,10 @@ table and `btn` it already had; no new class there.
   shifts as the words change; muted text, a polite live region. The server
   renders it empty and the script says "Connecting…"; without JavaScript a
   `<noscript>` line in the same class says the shell needs it.
+
+Settings › Machines (`/:owner/:name/settings/machines`) adds no component class. As on the home page it is headings over
+rows: Machines and Last sessions are each a `<section class="settings-block">` with an `<h2>`. Each machine is a `row()` in
+`<ul class="list setting-list" id="machines">` (tools and reach in its meta, "Open shell" as its trail, writers only as the
+page is); each session a `row()` in `#machine-sessions`, a running one marked by a ● glyph and a "running" badge, an ended
+one by a dash and its reason in words, so state is never colour alone. With no session, one plain sentence says so.
+`test/machine-shell-page.test.ts` holds the shape.
