@@ -47,6 +47,58 @@ describe("pack definition", () => {
   });
 });
 
+describe("pack absorb", () => {
+  const withAbsorb = (absorb: unknown) => parse({ ...good, apps: [{ ...good.apps[0], absorb }] });
+  test("absorb is a boolean on an app; anything else is refused", () => {
+    const yes = withAbsorb(true);
+    expect(yes.ok && yes.value.apps[0]!.absorb).toBe(true);
+    const no = withAbsorb(false);
+    expect(no.ok && no.value.apps[0]!.absorb).toBeUndefined();
+    for (const v of ["yes", 1, {}, null]) expect(withAbsorb(v).ok).toBe(false);
+  });
+  const hands = (calls: string[], absorbed: { ok: boolean }): Hands => ({
+    async makeApp(name) {
+      return name === "kept" ? { ok: false, exists: true, why: "x", owner: "me" } : { ok: true, owner: "me" };
+    },
+    async defaultBranch() {
+      return "main";
+    },
+    async carryHistory() {
+      return { ok: true };
+    },
+    async follow() {
+      return { ok: true };
+    },
+    async absorb(owner, name) {
+      calls.push(`absorb ${owner}/${name}`);
+      return absorbed.ok ? { ok: true } : { ok: false, why: "declares no feature" };
+    },
+    async makeAgent() {
+      return { ok: true };
+    },
+  });
+  const apps = [
+    { name: "a", description: "d", source: "https://github.com/a/b", absorb: true },
+    { name: "plain", description: "d", source: "https://github.com/a/c" },
+    { name: "kept", description: "d", source: "https://github.com/a/d", absorb: true },
+  ];
+  test("deploy absorbs exactly the apps that ask, made or kept", async () => {
+    const calls: string[] = [];
+    const pack = parse({ ...good, crew: [], apps });
+    if (!pack.ok) throw new Error(pack.error);
+    const steps = await deployPack(pack.value, hands(calls, { ok: true }));
+    expect(calls).toEqual(["absorb me/a", "absorb me/kept"]);
+    expect(steps.filter((s) => s.what.startsWith("absorb")).map((s) => s.state)).toEqual(["done", "done"]);
+  });
+  test("a refused absorb is reported and leaves the app made", async () => {
+    const pack = parse({ ...good, crew: [], apps });
+    if (!pack.ok) throw new Error(pack.error);
+    const steps = await deployPack(pack.value, hands([], { ok: false }));
+    expect(steps[0]!.state).toBe("done");
+    expect(steps.find((s) => s.what === "absorb a")).toMatchObject({ state: "failed", note: "declares no feature" });
+  });
+});
+
 describe("shipped packs", () => {
   test("Games and Business ship and parse", () => {
     const c = catalog();
@@ -73,6 +125,9 @@ describe("deploy", () => {
       },
       async follow(owner, name, source, branch) {
         calls.push(`follow ${owner}/${name} ${source} ${branch}`);
+        return { ok: true };
+      },
+      async absorb() {
         return { ok: true };
       },
       async makeAgent(a) {

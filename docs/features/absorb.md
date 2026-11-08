@@ -68,6 +68,12 @@ See `docs/features/absorb-review.md` for the findings of #9441.
 - Code: `src/apps/feature.ts` (the declaration), `src/core/features.ts` (storage), `src/actions/features.ts` (the rules), `src/apps/feature_env.ts` (the environment), `src/web/pages/features.ts`, `src/http/api/features.ts`, `src/http/mcp/tools/features.ts`.
 - Tests: `test/features.test.ts` holds the rules. `test/apps-features.test.ts` runs a real app: it absorbs the app, changes a setting and reads the variables back from the running process.
 
+## Packs
+
+A pack's app may carry `"absorb": true` (a boolean, nothing else). `pack deploy` then absorbs it as the deploying admin's act, with the `app.absorbed` event, after the app is made and followed. The app must declare a `feature` in its `forge.json`: if it does not, the step is reported as failed and the app stays made. A pack still carries no setting values.
+
+Settings stay behind on a fork. A fork of another forge's app carries its `feature` block, which declares and does nothing; the new forge has its own settings (the declared defaults until an admin changes them) and its own admin decides on the absorb.
+
 ## Not done yet
 
 The forge does not yet fire a feature's schedule, show its feed items, serve its MCP tools inside the forge's `/mcp`, keep `secret` settings or show its health on `/system`.

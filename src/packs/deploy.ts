@@ -20,6 +20,8 @@ export interface Hands {
   carryHistory(source: string, owner: string, name: string, branch: string | undefined): Promise<{ ok: true; branch?: string } | { ok: false; why: string }>;
   /** Make the app follow `source` on `branch`, so Settings shows it and a new upstream commit shows as drift. No branch is a failure: a wrong one is never guessed. */
   follow(owner: string, name: string, source: string, branch: string | undefined): Promise<{ ok: true } | { ok: false; why: string }>;
+  /** Absorb the app as a feature, as the deploying admin. Refused when the app declares no feature: a repository cannot promote itself. */
+  absorb(owner: string, name: string): Promise<{ ok: true } | { ok: false; why: string }>;
   makeAgent(a: Pack["crew"][number]): Promise<{ ok: true } | { ok: false; exists: boolean; why: string }>;
 }
 
@@ -27,6 +29,12 @@ export interface Step {
   readonly what: string;
   readonly state: "done" | "kept" | "failed";
   readonly note?: string;
+}
+
+/** Absorbing is a step of its own, so a refusal (no declared feature) is reported and never hides that the app is made. */
+async function absorbStep(hands: Hands, owner: string, name: string): Promise<Step> {
+  const r = await hands.absorb(owner, name);
+  return r.ok ? { what: `absorb ${name}`, state: "done", note: "a feature in the menu" } : { what: `absorb ${name}`, state: "failed", note: r.why };
 }
 
 export async function deployPack(pack: Pack, hands: Hands): Promise<readonly Step[]> {
@@ -52,6 +60,7 @@ export async function deployPack(pack: Pack, hands: Hands): Promise<readonly Ste
           ? { what: `app ${app.name}`, state: "kept", note: "already here" }
           : { what: `app ${app.name}`, state: "failed", note: `already here, not followed: ${followed.why}` },
       );
+      if (followed.ok && app.absorb === true) steps.push(await absorbStep(hands, owner, app.name));
       continue;
     }
     const carried = await hands.carryHistory(app.source, made.owner, app.name, app.branch);
@@ -65,6 +74,7 @@ export async function deployPack(pack: Pack, hands: Hands): Promise<readonly Ste
         ? { what: `app ${app.name}`, state: "done", note: `history from ${app.source}, following it` }
         : { what: `app ${app.name}`, state: "failed", note: `history carried, not followed: ${followed.why}` },
     );
+    if (followed.ok && app.absorb === true) steps.push(await absorbStep(hands, made.owner, app.name));
   }
   for (const member of pack.crew) {
     const made = await hands.makeAgent(member);

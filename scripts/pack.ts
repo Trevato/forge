@@ -127,6 +127,19 @@ export function realHands(url: string, token: string, options: HandsOptions = {}
       if (r.ok) return { ok: true };
       return { ok: false, why: `the forge answered ${r.status}` };
     },
+    async absorb(owner, name) {
+      const auth = { authorization: `Bearer ${token}` };
+      const listed = await fetch(`${url}/api/v1/features`, { headers: auth }).catch(() => null);
+      if (listed === null || !listed.ok) return { ok: false, why: listed === null ? `cannot reach ${url}` : `the forge answered ${listed.status}` };
+      const body = (await listed.json().catch(() => null)) as { items?: { slug?: string; repo?: string }[] } | null;
+      const row = body?.items?.find((f) => f.repo === `${owner}/${name}`);
+      if (typeof row?.slug !== "string") return { ok: false, why: "the app declares no feature in its forge.json, so there is nothing to absorb" };
+      const r = await fetch(`${url}/api/v1/features/${encodeURIComponent(row.slug)}`, { method: "PUT", headers: auth }).catch(() => null);
+      if (r === null) return { ok: false, why: `cannot reach ${url}` };
+      if (r.ok) return { ok: true };
+      if (r.status === 403) return { ok: false, why: "the forge refused (403): absorbing needs a site admin's token with admin scope, and this token is not one" };
+      return { ok: false, why: `the forge answered ${r.status}` };
+    },
     async makeAgent(a) {
       const r = await fetch(`${url}/api/v1/agents`, {
         method: "POST",

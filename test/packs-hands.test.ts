@@ -124,3 +124,57 @@ describe("terminal screen", () => {
     tui.stop?.();
   });
 });
+
+describe("absorb hand", () => {
+  async function withForge(put: number, items: { slug: string; repo: string }[], run: (url: string, puts: string[]) => Promise<void>) {
+    const puts: string[] = [];
+    const s = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const u = new URL(req.url);
+        if (u.pathname === "/api/v1/features" && req.method === "GET") return Response.json({ items });
+        if (u.pathname.startsWith("/api/v1/features/") && req.method === "PUT") {
+          puts.push(u.pathname);
+          return new Response("{}", { status: put });
+        }
+        return new Response("no", { status: 404 });
+      },
+    });
+    try {
+      await run(`http://127.0.0.1:${s.port}`, puts);
+    } finally {
+      await s.stop(true);
+    }
+  }
+  test("a listed app is absorbed through its own slug", async () => {
+    await withForge(200, [{ slug: "other", repo: "o/other" }, { slug: "radar-1", repo: "o/radar" }], async (url, puts) => {
+      expect(await realHands(url, "t").absorb("o", "radar")).toEqual({ ok: true });
+      expect(puts).toEqual(["/api/v1/features/radar-1"]);
+    });
+  });
+  test("an app that declares no feature fails the step and sends no PUT", async () => {
+    await withForge(200, [{ slug: "other", repo: "o/other" }], async (url, puts) => {
+      const r = await realHands(url, "t").absorb("o", "radar");
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.why).toContain("declares no feature");
+      expect(puts).toEqual([]);
+    });
+  });
+  test("a 403 names the missing admin; another status is reported as is", async () => {
+    await withForge(403, [{ slug: "radar", repo: "o/radar" }], async (url) => {
+      const r = await realHands(url, "t").absorb("o", "radar");
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.why).toMatch(/site admin/);
+    });
+    await withForge(500, [{ slug: "radar", repo: "o/radar" }], async (url) => {
+      const r = await realHands(url, "t").absorb("o", "radar");
+      if (!r.ok) expect(r.why).toContain("500");
+      expect(r.ok).toBe(false);
+    });
+  });
+  test("an unreachable forge fails the step", async () => {
+    const r = await realHands("http://127.0.0.1:1", "t").absorb("o", "radar");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.why).toContain("cannot reach");
+  });
+});

@@ -28,6 +28,8 @@ export interface PackApp {
   /** An https address of a public git repository, no credentials in it. */
   readonly source: string;
   readonly branch?: string;
+  /** Deploy absorbs the app as a feature, as the deploying admin's act (an event). Only a yes is carried; it sets no setting. */
+  readonly absorb?: boolean;
 }
 
 export interface PackCrew {
@@ -122,7 +124,8 @@ export function parsePack(raw: string): Result<Pack, string> {
     const branch = r.branch === undefined ? undefined : text(r.branch, 100);
     if (r.branch !== undefined && (branch === undefined || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch)))
       return bad(`app "${appName}" has an unusable "branch"`);
-    apps.push({ name: appName, description: about, source, ...(branch === undefined ? {} : { branch }) });
+    if (r.absorb !== undefined && typeof r.absorb !== "boolean") return bad(`app "${appName}" has an unusable "absorb": it is true or false`);
+    apps.push({ name: appName, description: about, source, ...(branch === undefined ? {} : { branch }), ...(r.absorb === true ? { absorb: true } : {}) });
   }
 
   const crew: PackCrew[] = [];
