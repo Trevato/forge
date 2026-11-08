@@ -18,10 +18,14 @@ import type { Flash } from "../flash.ts";
 import { html, raw, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { mirrorJs } from "../client.ts";
-import { btn, card, field, icon } from "../ui.ts";
+import { btn, field } from "../ui.ts";
 import type { Ctx } from "../../http/context.ts";
 import { accountOnly, hostLabel } from "./origins.ts";
 import { stageList } from "./browse.ts";
+
+/** One step of the page: a heading over its words and form, no box around them. No heading when the page's h1 already says it. */
+const step = (heading: Html | null, body: Html, id?: string): Html =>
+  html`<section class="stack" ${id === undefined ? null : html`id="${id}"`}>${heading === null ? null : html`<h2>${heading}</h2>`}${body}</section>`;
 
 const NOT_COPIED = ["data", "variables", "secrets"];
 
@@ -35,7 +39,8 @@ const cardSite = (host: string, link: string): string => `${/^http:\/\//i.test(l
  */
 function connectCard(host: string, link: string, error?: string): Html {
   const site = cardSite(host, link);
-  return card(
+  return step(
+    html`Connect ${hostLabel(site)} first`,
     html`<p>
         This app is on <strong>${hostLabel(site)}</strong>, and you have not
         connected your account there yet. Do it here: your link is kept.
@@ -68,7 +73,7 @@ function connectCard(host: string, link: string, error?: string): Html {
         <div class="form-actions">${btn("Connect and bring it", { icon: "download" })}</div>
       </form>
       </details>`,
-    { id: "bring-connect-card", head: html`${icon("globe")}<h2>Connect ${hostLabel(site)} first</h2>` },
+    "bring-connect-card",
   );
 }
 
@@ -80,7 +85,8 @@ function form(ctx: Ctx, value: string, problem?: Flash, status = 200, connect?: 
       ...(problem === undefined ? {} : { flash: problem }),
       body: html`<div class="page-head"><h1>Bring an app</h1></div>
         <div class="narrow-wide">
-          ${card(
+          ${step(
+            null,
             html`<p class="muted small">
                 Paste the link to an app on another forge. It comes across with
                 how it builds and runs, and goes live here at its own address.
@@ -101,7 +107,6 @@ function form(ctx: Ctx, value: string, problem?: Flash, status = 200, connect?: 
                 })}
                 <div class="bar">${btn("Bring it here", { ...(connect === undefined ? { variant: "primary" as const } : {}), icon: "download" })}</div>
               </form>`,
-            { head: html`${icon("download")}<h2>Bring it here</h2>` },
           )}
           ${connect ?? null}
         </div>`,
@@ -201,7 +206,8 @@ export async function bringJobPage(ctx: Ctx): Promise<Response> {
         title: `Brought ${job.fullName}`,
         body: html`<div class="page-head"><h1>${job.fullName} is here</h1></div>
           <div class="narrow-wide">
-            ${card(
+            ${step(
+              html`Ready to run`,
               html`<p>
                   The code and its history are copied, linked back to
                   <span class="mono">${job.fullName}</span> so your improvements
@@ -211,7 +217,6 @@ export async function bringJobPage(ctx: Ctx): Promise<Response> {
                 <form method="post" action="${here}/run" class="bar">
                   ${btn("Run it here", { variant: "primary", icon: "rocket" })}
                 </form>`,
-              { head: html`${icon("rocket")}<h2>Ready to run</h2>` },
             )}
           </div>`,
       });
@@ -221,18 +226,19 @@ export async function bringJobPage(ctx: Ctx): Promise<Response> {
       title: `Brought ${job.fullName}`,
       body: html`<div class="page-head"><h1>${job.fullName} is here</h1></div>
         <div class="narrow-wide">
-          ${card(
+          ${step(
+            html`Live here`,
             html`<p>
                 It is deploying now as a private app, linked back to
                 <span class="mono">${job.fullName}</span> so your improvements
                 can flow to its author. Watch the first deploy on its page.
               </p>
               <div class="bar">${btn("Watch the first deploy", { href: open, variant: "primary", icon: "rocket" })}</div>`,
-            { head: html`${icon("rocket")}<h2>Live here</h2>` },
           )}
           ${asking.length === 0
             ? null
-            : card(
+            : step(
+                html`What it needs`,
                 html`<p class="muted small">
                     The app lists these in its <span class="mono">.env.example</span>.
                     Nothing came with it: give what you want it to have, leave the
@@ -244,7 +250,6 @@ export async function bringJobPage(ctx: Ctx): Promise<Response> {
                     )}
                     <div class="bar">${btn("Save and continue", { variant: "primary", icon: "key" })}</div>
                   </form>`,
-                { head: html`${icon("key")}<h2>What it needs</h2>` },
               )}
         </div>`,
     });
@@ -257,9 +262,7 @@ export async function bringJobPage(ctx: Ctx): Promise<Response> {
     title: `Bringing ${job.fullName}`,
     body: html`<div class="page-head"><h1>Bringing ${job.fullName}</h1></div>
       <div class="narrow-wide">
-        ${card(stageList(job, running ? stream : "", here), {
-          head: html`${icon("download")}<h2>${job.fullName}</h2>`,
-        })}
+        ${step(null, stageList(job, running ? stream : "", here))}
         ${job.stage === "failed"
           ? html`<p class="mt" role="alert">${job.error ?? "The import failed."}</p>
               <div class="bar mt">${btn("Try another link", { href: "/bring", variant: "outline" })}</div>`

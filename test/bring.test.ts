@@ -74,6 +74,14 @@ const PASSWORD = "alice-secret-7089";
 const basic = (user: string, secret: string): string =>
   `Basic ${Buffer.from(`${user}:${secret}`).toString("base64")}`;
 
+/** Rows, not boxes (#9712): a step is a heading over its words and form, never a card. */
+const rowsNotBoxes = (text: string, form: RegExp, heading: string | null): void => {
+  expect(text).not.toMatch(/class="card[\s"]/);
+  expect(text).not.toContain("card-head");
+  expect(text).not.toContain("card-body");
+  expect(text).toMatch(new RegExp(`<section class="stack"[^>]*>${heading === null ? "(?!<h2>)" : `<h2>${heading}</h2>`}[\\s\\S]*?${form.source}`));
+};
+
 describe("bringing an app whole", () => {
   let dirs: string[] = [];
   let app: App;
@@ -149,7 +157,9 @@ describe("bringing an app whole", () => {
   test("the page asks for a link", async () => {
     const res = await fetch(`${servers.url}/bring`, { headers: { authorization: basic("alice", PASSWORD) } });
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('name="link"');
+    const text = await res.text();
+    expect(text).toContain('name="link"');
+    rowsNotBoxes(text, /<form method="post" action="\/bring"/, null);
   });
 
   test("a bad link and an unconnected forge are refused in words, starting nothing", async () => {
@@ -163,6 +173,8 @@ describe("bringing an app whole", () => {
     expect(card).toContain(`value="${fake.url}/octo/widgets"`);
     expect(card).toContain(`${fake.url}/settings/tokens`);
     expect(card).toContain("Sign in there");
+    rowsNotBoxes(card, /action="\/settings\/origins\/oauth"/, "Connect [^<]* first");
+    expect(card).toContain('id="bring-connect-card"');
     // The sign-in carries the link through and back.
     expect(card).toContain('name="then" value="bring"');
     // A token the forge refuses keeps the card and the link, and echoes nothing.
@@ -203,7 +215,9 @@ describe("bringing an app whole", () => {
     const get = () => fetch(`${servers.url}${where}`, { headers: { authorization: basic("alice", PASSWORD) } });
     const before = await get();
     expect(before.status).toBe(200);
-    expect(await before.text()).toContain(`${where}/run`);
+    const beforeText = await before.text();
+    expect(beforeText).toContain(`${where}/run`);
+    rowsNotBoxes(beforeText, new RegExp(`action="${where}/run"`), "Ready to run");
     expect(getAppByRepo(app.db, getRepo(app.db, "alice", "widgets")!.id)).toBeUndefined();
 
     const ran = await post(`${where}/run`, {});
@@ -214,6 +228,7 @@ describe("bringing an app whole", () => {
     const text = await landed.text();
     expect(text).toContain("/alice/widgets/app");
     expect(text).toContain("API_KEY");
+    rowsNotBoxes(text, new RegExp(`action="${where}/env"`), "What it needs");
     expect(text).toContain("GREETING");
     expect(text).not.toContain("real-secret");
 
