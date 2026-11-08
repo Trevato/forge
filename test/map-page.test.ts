@@ -92,3 +92,30 @@ test("?done=1 draws the closed issues and offers Open only", async () => {
   expect(body).toMatch(/<a\s+class="map-toggle"\s+href="\/alice\/big\/map"\s*>Open only/);
   expect(body).not.toContain("Show done");
 });
+
+test("the map's lists are rows under headings, not boxed cards, ready first, nothing lost", async () => {
+  const body = await get("/alice/big/map");
+  const aside = body.slice(body.indexOf("<aside"), body.indexOf("</aside>"));
+  expect(aside).not.toMatch(/class="card(?![^"]*\bbare\b)[^"]*"/);
+  expect(aside).not.toContain('class="badge"');
+  expect(aside.indexOf("<h2>Ready now</h2>")).toBeGreaterThan(-1);
+  expect(aside.indexOf("<h2>Ready now</h2>")).toBeLessThan(aside.indexOf("<h2>Blocked on</h2>"));
+  expect(aside).toMatch(/ready · (holds nothing up|finishing it frees)/);
+  expect(aside).toContain('method="post"');
+  const rule = body.match(/\.map-canvas \{([^}]*)\}/);
+  expect(rule).not.toBeNull();
+  expect(rule![1]).not.toMatch(/border:\s*1px/);
+});
+
+test("a Blocked-on row says its word and what it holds up, and says nothing of waiting when it waits for nothing", async () => {
+  const alice = { ...(await import("../src/core/users.ts")).getUserByName(app.db, "alice")! };
+  const repo = (await import("../src/core/repos.ts")).getRepo(app.db, "alice", "big")!;
+  const a = await openIssue(app, alice, repo, { title: "Front one" });
+  const b = await openIssue(app, alice, repo, { title: "Behind one" });
+  if (!a.ok || !b.ok) throw new Error("open");
+  addDependency(app.db, b.value, a.value, alice.id);
+  const body = await get("/alice/big/map");
+  const blockedRows = body.slice(body.indexOf("<h2>Blocked on</h2>"));
+  expect(blockedRows.slice(0, 600)).toContain("ready · holds up 1");
+  expect(blockedRows.slice(0, 600)).not.toContain("waits for");
+});

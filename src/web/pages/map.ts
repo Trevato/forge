@@ -51,7 +51,7 @@ import {
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { badge, btn, card, empty, row } from "../ui.ts";
+import { btn, card, empty, row } from "../ui.ts";
 import {
   parkedTwice,
   struckOut,
@@ -989,7 +989,7 @@ function rankedList(
               }),
             )}
           </ul>`,
-          { pad: false },
+          { pad: false, extra: "bare" },
         )}
   </section>`;
 }
@@ -1093,7 +1093,7 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
                         >#${i.number}</a
                       >${" "}`,
                 )}${(r.issues ?? []).length > 8 ? "…" : ""}`,
-                trail: badge(counts(r)),
+                trail: html`<span class="muted small">${counts(r)}</span>`,
                 data: { pillar: "" },
               })
             : row({
@@ -1114,12 +1114,12 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
                         >
                         ${hours(r.askToLive.slowest.hours)}`}</span
                 >`,
-                trail: badge(counts(r)),
+                trail: html`<span class="muted small">${counts(r)}</span>`,
                 data: { pillar: r.name },
               }),
         )}
       </ul>`,
-      { pad: false },
+      { pad: false, extra: "bare" },
     )}
   </section>`;
 }
@@ -1130,7 +1130,7 @@ export const mapCss = /* css */ `
 .map-main { min-width: 0; }
 
 /* ---- the canvas ---- */
-.map-canvas { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.map-canvas { position: relative; overflow: hidden; border: 0; border-radius: 0; background: var(--bg); touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .map-canvas.is-view { cursor: grab; }
 .map-canvas.is-drag { cursor: grabbing; }
 .map-canvas.is-cut::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 36px; background: linear-gradient(to bottom, transparent, var(--bg)); pointer-events: none; }
@@ -1418,6 +1418,11 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
   // still noted, by hand, as their total, for readers of the header.
   notePhase(rq, "map", performance.now() - reading);
   const rendering = performance.now();
+  /** A row's pillar, as the words lead with it: "Name · ", or nothing. */
+  const pillarOf = (r: Ranked): string => {
+    const name = pillars?.of.get(r.issue.id);
+    return name === undefined || name === null ? "" : `${name} · `;
+  };
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
@@ -1444,12 +1449,6 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         ${placed.nodes.length === 0 && counts.done === 0 ? null : countsLine(counts, { base: `${repoBase(repo)}/map`, showDone })}
       </div>
       <aside class="stack">
-        ${pillars === undefined
-          ? null
-          : pillarList(
-              repo,
-              pillarRows(repo, graph, readySet, marks, pillars, ask),
-            )}
         ${graph.issues.length === 0
           ? null
           : rankedList(
@@ -1457,7 +1456,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
               "Ready now",
               ready,
               (r) =>
-                `${graph.flow?.has(r.issue.id) ? "flow · " : ""}${
+                `ready · ${pillarOf(r)}${graph.flow?.has(r.issue.id) ? "flow · " : ""}${
                   r.holdsUp === 0
                     ? "holds nothing up"
                     : `finishing it frees ${r.holdsUp}`
@@ -1472,11 +1471,18 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
                 by: new Map([...firstMarksInRepo(db, repo.id)].map(([id, m]) => [id, m.by])),
               },
             )}
+        ${pillars === undefined
+          ? null
+          : pillarList(
+              repo,
+              pillarRows(repo, graph, readySet, marks, pillars, ask),
+            )}
         ${rankedList(
           repo,
           "Blocked on",
           blocked,
-          (r) => `holds up ${r.holdsUp}`,
+          (r) =>
+            `${wordFor(r.issue, readySet, marks)} · ${pillarOf(r)}${r.waitsFor > 0 ? `waits for ${r.waitsFor} · ` : ""}holds up ${r.holdsUp}`,
           "Nothing open holds anything up.",
           tellHref,
         )}
