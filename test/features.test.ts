@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { statements } from "./helpers/statements.ts";
 import { expectWork } from "./helpers/work.ts";
 import { createApp, type App } from "../src/app.ts";
-import { absorbApp, acceptDeclaration, absorbedForNav, declaredFeature, changeFeatureSettings, getFeature, unabsorbApp } from "../src/actions/features.ts";
+import { absorbApp, acceptDeclaration, declaresFeature, absorbedForNav, declaredFeature, changeFeatureSettings, getFeature, unabsorbApp } from "../src/actions/features.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName } from "../src/apps/feature.ts";
 import { featureVarsAt } from "../src/apps/feature_env.ts";
@@ -220,6 +220,40 @@ describe("absorbing an app", () => {
     expect(featureVarsAt(app.db, appId, FORGE_JSON)).toEqual({});
     const seen = await getFeature(app, cy, "radar");
     expect(seen.ok && seen.value.absorbed).toBe(false);
+  });
+
+  test("an admin sees Features on the page of a declaring app that is not absorbed; nobody else does", async () => {
+    expect(getAbsorbed(app.db, appId)).toBeUndefined();
+    const link = 'href="/settings/features/radar"';
+    expect(await (await web(adaCookie, "/cy/radar/files")).text()).toContain(link);
+    // The owner reads the page, but is no site admin.
+    const owned = await web(cyCookie, "/cy/radar/files");
+    expect(owned.status).toBe(200);
+    expect(await owned.text()).not.toContain(link);
+    const made0 = await createUser(app.db, { origin: "seed", trusted: true, username: "pixel", email: "pixel@forge.local", password: "a-good-passphrase" });
+    if (!made0.ok) throw new Error(made0.error);
+    const bot = made0.value;
+    promote(app.db, bot);
+    // An agent, even one holding the admin flag, is not offered it.
+    app.db.query("UPDATE user SET is_agent = 1, is_admin = 1 WHERE id = ?1").run(bot.id);
+    const botToken = createToken(app.db, bot.id, "read", "ro").token;
+    const asBot = await fetch(`${servers.url}/cy/radar/files`, { headers: { authorization: `Bearer ${botToken}` } });
+    const botBody = await asBot.text();
+    expect({ status: asBot.status, link: botBody.includes(link) }).toEqual({ status: 200, link: false });
+    expect(botBody).toContain("app-strip");
+    const agent = { ...ada, kind: "agent" as const };
+    expect(await declaresFeature(app, agent, repo)).toBe(false);
+    expect(await declaresFeature(app, ada, repo)).toBe(true);
+    expect(await declaresFeature(app, undefined, repo)).toBe(false);
+    // An app whose forge.json declares none has no link.
+    const plain = await createRepo(app, cy, { name: "bare", visibility: "private", description: "" });
+    if (!plain.ok) throw new Error(String(plain.error));
+    await commitToBranch(app, cy, plain.value, { message: "plain", files: [{ path: "forge.json", content: JSON.stringify({ app: { run: "x" } }) }] });
+    const made = insertApp(app.db, { repoId: plain.value.id, slug: "bare", access: "private" });
+    if (!made.ok) throw new Error(made.error);
+    const page = await web(adaCookie, "/cy/bare/files");
+    expect(page.status).toBe(200);
+    expect(await page.text()).not.toContain("/settings/features/bare");
   });
 
   test("only a site admin absorbs: the repository's own admin is refused, a stranger learns nothing", async () => {

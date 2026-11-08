@@ -21,7 +21,7 @@ import type { App } from "../app.ts";
 import { readFileAt } from "../apps/checkout.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName, type FeatureSpec } from "../apps/feature.ts";
 import { appsRuntime } from "../apps/runtime.ts";
-import { getAppById, getAppBySlug, listApps, type AppRecord } from "../core/apps.ts";
+import { getAppByRepo, getAppById, getAppBySlug, listApps, type AppRecord } from "../core/apps.ts";
 import {
   absorb,
   keepDeclaration,
@@ -117,6 +117,19 @@ async function readDeclaration(dir: string, tip: string): Promise<Result<Feature
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return ok(undefined);
   return parseFeature(parsed as Record<string, unknown>);
+}
+
+/**
+ * Whether the link to an app's feature shows on its page: the app is absorbed
+ * or its default branch declares a feature, a site admin's only, and read through `declaredFeature`'s cache by
+ * commit, so a page view costs a git read only the first time a tip is seen.
+ */
+export async function declaresFeature(app: App, actor: User | undefined, repo: Repo): Promise<boolean> {
+  if (!siteAdmin(actor)) return false;
+  const record = getAppByRepo(app.db, repo.id);
+  if (record !== undefined && getAbsorbed(app.db, record.id) !== undefined) return true;
+  const read = await declaredFeature(app, repo);
+  return read.ok && read.value !== undefined;
 }
 
 function viewOf(record: AppRecord, repo: Repo, app: App, spec: FeatureSpec | undefined, problem: string | null): FeatureView {

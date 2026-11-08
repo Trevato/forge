@@ -76,6 +76,7 @@ import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../cor
 import { liveClientJs, liveMount } from "../live.ts";
 import { appStrip } from "./apps.ts";
 import { studioApp } from "../studio/app.ts";
+import { declaresFeature } from "../../actions/features.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
@@ -1383,6 +1384,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     following !== undefined && canWrite(ctx.app.db, repo, ctx.auth.user)
       ? null
       : upstreamOffer(ctx.app, ctx.auth.user, repo, parent, drift?.ahead);
+  const declares = isApp && (await timePhaseAsync(ctx.request, "feature", () => declaresFeature(ctx.app, ctx.auth.user, repo)));
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
@@ -1393,7 +1395,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     : html`<p class="muted latest-wave">Latest:
         <a href="${repoBase(repo)}/waves/${encodeURIComponent(latest.version)}">${latest.version}</a>
         · ${latest.headline} · ${latest.date}</p>`}
-  ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo)}
+  ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo, declares)}
   ${ctx.auth.user?.id === repo.ownerId && isContributionFork(ctx.app.db, repo.id)
     ? contributionBar(repo)
     : following === undefined

@@ -96,6 +96,7 @@ export async function featuresPage(ctx: Ctx): Promise<Response> {
             icon: "rocket",
             title: "No app declares a feature yet",
             note: 'An app declares one with a "feature" block in its forge.json: a name, a page and typed settings. Absorbing it puts it in the forge\'s nav and keeps its settings here.',
+            action: html`<p><a href="${DOCS}">How an app declares a feature</a></p>`,
           })}
         </div>`
       : html`<ul class="list setting-list">
@@ -106,7 +107,7 @@ export async function featuresPage(ctx: Ctx): Promise<Response> {
         <h2>Features</h2>`,
       pad: false,
     },
-  )}${when(listed.value.length === 0, () => html`<p class="muted small"><a href="${DOCS}">How an app declares a feature</a></p>`)}`;
+  )}`;
   const response = shell(ctx, "Features", body);
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

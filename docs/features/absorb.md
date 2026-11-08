@@ -86,7 +86,7 @@ This section is ready for the owner to share with Ben.
 
 ## Finding it, and what the switch does
 
-A site admin sees a "Features" link on the app strip of an absorbed app (an app not yet absorbed is reached from Settings → Features: finding one that merely declares a feature would cost a git read on every app page). The same list, switch and settings are in the terminal: the "Features" palette entry. Beside Absorb or Un-absorb, a line says what restarts and whose menu gains or loses the entry. A refused settings save re-draws the form with what was typed and marks the refused field.
+A site admin (a person, not an agent) sees a "Features" link on the app strip of any app whose default branch declares a feature, absorbed or not, and of any absorbed app; nobody else does. The strip is on the app's code page, not its other tabs. The declaration is read from git once per commit and cached, so later page views cost no git read. The Settings → Features page lists the same apps, and its empty state links this guide. The same list, switch and settings are in the terminal: the "Features" palette entry. Beside Absorb or Un-absorb, a line says what restarts and whose menu gains or loses the entry. A refused settings save re-draws the form with what was typed and marks the refused field.
 
 ## The menu entry is the admin's, not the deploy's
 

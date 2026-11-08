@@ -12,7 +12,6 @@
  * 404 for everyone.
  */
 
-import { getAbsorbed } from "../../core/features.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
@@ -572,7 +571,7 @@ export function testCopyLink(url: string): Html {
  * way to the app's page in the studio, where its environments are run.
  * Nothing for a repository that is not an app.
  */
-export function appStrip(ctx: Ctx, repo: Repo): Html {
+export function appStrip(ctx: Ctx, repo: Repo, declares: boolean): Html {
   const view = appView(ctx.app, ctx.auth.user, repo);
   if (!view.ok) return html``;
   const { app: record, environments, serving } = view.value;
@@ -609,8 +608,8 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
     )}
     ${when(pace, (line) => html`<span class="muted">${line}</span>`)}
     ${when(
-      ctx.auth.user?.isAdmin === true && ctx.auth.user.kind !== "agent" && getAbsorbed(ctx.app.db, record.id) !== undefined,
-      () => html`<a href="/settings/features/${encodeURIComponent(record.slug)}" title="This app is one of the forge's features">Features</a>`,
+      declares, // already gated on a site admin by `declaresFeature`
+      () => html`<a href="/settings/features/${encodeURIComponent(record.slug)}" title="This app declares a feature: absorb it or change its settings">Features</a>`,
     )}
   </div>`;
 }
