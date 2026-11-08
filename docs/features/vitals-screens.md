@@ -8,3 +8,5 @@ A check's per-look vitals say how many screens tall each look is (`scrollHeight 
 Report-only: neither can turn a check red. Skipped looks show no screens.
 
 API: `GET /api/v1/repos/:owner/:name/commits/:oid/check` and `GET /api/v1/repos/:owner/:name/pulls/:number/checks` carry `looks: [{look, screens, sideways}]`, from the same file as the run page (a run with no file of its own falls back to the commit's filed looks). `screens` is the one-decimal string (`""` without a size), `sideways` is a boolean; `[]` when there are none or the reader may not read runs.
+
+The held page (`/preview-admin/sample/held`) is measured as an owner look (`PREVIEW_OWNER_LOOKS`), not a visitor look, because the visitor cap (`LOOKS_MAX`, 24) is spent; the check lists it at desktop and phone with its screens (#9508).
