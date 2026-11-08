@@ -85,7 +85,7 @@ export type Baseline = { files: Record<string, Counts> };
 export type Finding = { line: number; kind: "colour" | "size"; text: string; use: string };
 export type Scan = Baseline & { classes: string[]; found?: Record<string, Finding[]> };
 
-const SKIP = /(^|\/)(og\/vendor)\//;
+const SKIP = /(^|\/)(og\/vendor|web\/vendor)\//;
 
 export function sourceFiles(root: string): string[] {
   const out: string[] = [];

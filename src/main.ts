@@ -98,6 +98,7 @@ import { stallLine } from "./perf/loop.ts";
 import { bootStall, gitRecord, loopWatch, perfRecord } from "./perf/live.ts";
 import { timeStatements } from "./kernel/slow_sql.ts";
 import { waitForPeer } from "./runs/peer.ts";
+import { closeStaleSessions } from "./machines/shell.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -425,6 +426,10 @@ const earlySignals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 for (const signal of earlySignals) process.once(signal, leaveEarly);
 await waitForPeer(app.db, app.log);
 for (const signal of earlySignals) process.off(signal, leaveEarly);
+// No shell outlives its forge: a row a stop or crash left open is closed. Only
+// once the other forge has let go: its shells are live until then, and a write
+// at boot would wait on its lock with the event loop held (#9472).
+closeStaleSessions(app.db);
 // A repository's own check, on every push a pull or the default branch takes.
 const checks =
   process.env.FORGE_CHECKS === "0"

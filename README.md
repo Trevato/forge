@@ -46,3 +46,8 @@ It lives at [forge.open-platform.sh/trevato/forge](https://forge.open-platform.s
 GitHub holds a read-only mirror; issues and pulls are on the forge.
 
 Open source under the [AGPL-3.0](LICENSE). See [contributing](CONTRIBUTING.md).
+
+One dependency is vendored for browsers: [ghostty-web](https://github.com/coder/ghostty-web)
+0.4.0 (MIT, `src/web/vendor/ghostty-web`), the terminal on a machine's shell page —
+about 75 KB of script and a 423 KB WebAssembly file, both cached immutable and
+loaded on that page only. See [NOTICE](NOTICE).

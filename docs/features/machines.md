@@ -90,9 +90,49 @@ repository's machines:
   on its own for a writer who is not one), and in the terminal: the palette's
   **Machines of a repository** (`src/tui/screens/machines.ts`), writers only.
 
+## The shell in the browser (#9472)
+
+`/<owner>/<repo>/settings/machines` lists the machines with **Open shell**,
+which goes to `/<owner>/<repo>/machines/<machine>/shell`: the same path as the
+socket, answered as a page when it is not an upgrade. Writers only, like the
+socket (a reader is refused 403; a private repository or an undeclared
+machine answers 404). The page renders on the server and draws the terminal
+with one script:
+
+- **The emulator** is [ghostty-web](https://github.com/coder/ghostty-web)
+  0.4.0, vendored unmodified in `src/web/vendor/ghostty-web` (MIT; what was copied and
+  its hashes are in its README). `src/web/machine-term-asset.ts` bundles it
+  with the page's client (`src/web/machine-term-client.ts`) into
+  `/assets/machine-term-<hash>.js` (about 75 KB, dropping the module's own
+  inlined copy of the WebAssembly) and serves `ghostty-vt.wasm` at
+  `/assets/ghostty-vt-<hash>.wasm` (423 KB); both are content-addressed and
+  cached immutable.
+- **The interface** to it is thin: `Term` in `src/web/machine-term-wire.ts`
+  is `write`, `onData`, `resize` and `fit`, and all of the protocol
+  (`wire`) is written against that, so it is tested without a browser and the
+  emulator can be swapped without touching it.
+- **CSP.** Only this page adds `'wasm-unsafe-eval'` to `script-src` (the
+  page option `wasm` in `src/web/layout.ts`): it admits compiling
+  WebAssembly, not `eval` or inline script. Every other page's policy is
+  unchanged.
+- **Reload.** A reload opens a new socket, which joins the person's running
+  session (above). On open the page sends its size; a connection's first
+  size equal to the pty's own makes the server pass the pty through one row
+  less for 30 ms (`resizePlan`, `src/machines/shell.ts`), because the kernel
+  signals only a change and tmux redraws the whole screen on the signal. So
+  the reloaded page shows the screen, not a blank one.
+- **Resize.** The page refits the terminal to its box when the box changes
+  (debounced 100 ms) and sends one resize frame per new size, never the same
+  size twice; tmux redraws the prompt at the new size.
+- **Closed.** The status line says why the socket closed (the shell exited,
+  idle, the forge cannot hold a shell) and to reload to reattach.
+
+Try it: on a preview, sign in as a writer of a repository, open
+`/<owner>/<repo>/settings/machines`, press **Open shell** on `standard`. A
+forge that cannot hold a cell says so in the status line and closes.
+
 ## Not done yet (split from #9418)
 
 Disk ceilings are not declared (#9460); the tools are declared, not yet
-installed in an image (the brief reports which are on PATH); the browser terminal (ghostty-web) that speaks to the
-shell socket is not built; the shell's cell does not reach the repository's
+installed in an image (the brief reports which are on PATH); the shell's cell does not reach the repository's
 apps even when its machine says `apps`.

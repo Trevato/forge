@@ -246,6 +246,9 @@ export interface TerminalProgram {
   readonly hangup: () => void;
 }
 
+/** Where `setsid` is, found once; null on a host without util-linux. */
+const SETSID = Bun.which("setsid");
+
 /**
  * Start `command` (through `sh -c`) on `terminal`, held in `cell` when
  * there is one. Without a cell the program leads a process group of its
@@ -265,11 +268,20 @@ export function startTerminal(
   },
 ): TerminalProgram {
   const { cell } = options;
-  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
+  const argv = cell?.argv(command) ?? ["/bin/sh", "-c", command];
+  // Bun's `terminal` gives the child the pty as its stdio but not as its
+  // controlling terminal, so the kernel has no one to tell of a resize: no
+  // SIGWINCH, and tmux never redraws at the new size (#9472). `setsid -c`
+  // (util-linux, Essential on the image's Debian) makes the program lead a
+  // session whose controlling terminal is the pty, in place: it is not a
+  // group leader yet, so setsid execs rather than forks, the pid stays, and
+  // the group is the program's own as `detached` made it.
+  const ctty = SETSID !== null;
+  const proc = Bun.spawn(ctty ? [SETSID, "-c", ...argv] : argv, {
     terminal: options.terminal,
     env: cell?.env(options.env) ?? options.env,
     cwd: options.cwd,
-    detached: cell === undefined,
+    detached: !ctty && cell === undefined,
   });
   const exited = proc.exited.then((code) => {
     cell?.close();

@@ -1,5 +1,5 @@
 /** GET /api/v1/cloud/accounts carries a weak ETag and answers a repeat with 304 until an account or its use changes (#9206). */
-import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, expect, mock, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +62,9 @@ beforeAll(async () => {
   if (!added.ok) throw new Error(String(added.error));
 }, 30_000);
 afterAll(async () => {
+  // The spy outlives this file otherwise: every later file in the same `bun test`
+  // run would read a frozen clock, and setSystemTime would move nothing.
+  mock.restore();
   servers.stop();
   app.close();
   await rm(dataDir, { recursive: true, force: true });

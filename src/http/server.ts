@@ -535,7 +535,8 @@ import {
 import { getVerifiedDomain } from "../core/domains.ts";
 import { previewOwner } from "../spawn/preview-owner.ts";
 import { cellsAvailable } from "../apps/contain.ts";
-import { machinesSettingsPage } from "../web/pages/machines.ts";
+import { machineShellPage, machinesSettingsPage } from "../web/pages/machines.ts";
+import { machineTermAsset, wasmResponse, ghosttyWasmAsset } from "../web/machine-term-asset.ts";
 import {
   defaultCommand,
   mayOpenShell,
@@ -544,7 +545,6 @@ import {
   shellTarget,
   stopShells,
   withShells,
-  closeStaleSessions,
   type ForgeSocket,
   type ShellSocket,
 } from "../machines/shell.ts";
@@ -726,6 +726,10 @@ export function buildRouter(): Router<Handler> {
     if (ctx.params.name === TOOLBAR_NAME) return toolbarResponse(ctx.request);
     const own = pageScriptNamed(ctx.params.name!, ctx.app.config.dataDir);
     if (own !== undefined) return fileResponse(ctx.request, own);
+    if (ctx.params.name!.startsWith("machine-term-")) {
+      const term = await machineTermAsset();
+      return term !== null && ctx.params.name === term.name ? assetResponse(ctx.request, term) : notFound();
+    }
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(ctx.request, asset);
@@ -733,6 +737,10 @@ export function buildRouter(): Router<Handler> {
   // The icon sprite and the speculation rules: hashed, immutable, one file each.
   router.add("GET", "/assets/:name.svg", (ctx) =>
     ctx.params.name === spriteAsset().name ? fileResponse(ctx.request, spriteAsset()) : notFound(),
+  );
+  // The machine shell's terminal emulator (`web/machine-term-asset.ts`).
+  router.add("GET", "/assets/:name.wasm", (ctx) =>
+    ctx.params.name === ghosttyWasmAsset().name ? wasmResponse(ctx.request) : notFound(),
   );
   router.add("GET", "/assets/:name.json", (ctx) =>
     ctx.params.name === speculationAsset().name ? fileResponse(ctx.request, speculationAsset()) : notFound(),
@@ -1371,6 +1379,8 @@ export function buildRouter(): Router<Handler> {
   );
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("GET", "/:owner/:name/settings/machines", machinesSettingsPage);
+  // The shell page; an upgrade at the same path is the socket (`machines/shell.ts`).
+  router.add("GET", "/:owner/:name/machines/:machine/shell", machineShellPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
   router.add("POST", "/:owner/:name/settings/app/members", appMembersUpdate);
@@ -2161,8 +2171,6 @@ export function forgeHttp(app: App): ForgeHttp {
 
 export async function serve(app: App): Promise<Servers> {
   const router = buildRouter();
-  // No shell outlives its forge: a row a stop or crash left open is closed.
-  closeStaleSessions(app.db);
   const apiRouter = buildApiRouter();
   await clearStaleSockets(app);
   // One limiter per listener: its state is a minute of timestamps, and two

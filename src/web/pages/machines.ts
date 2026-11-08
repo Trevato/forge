@@ -1,8 +1,15 @@
 /**
  * GET /:owner/:name/settings/machines — the machines a repository declares
- * (`crew/machines.ts`) and its last shell sessions (`machines/shell.ts`):
- * who opened which machine, when, and when and why it ended. Writers only:
- * a session is a shell on the repository's machine, so a reader sees none.
+ * (`crew/machines.ts`), each with "Open shell", and its last shell sessions
+ * (`machines/shell.ts`): who opened which machine, when, and when and why it
+ * ended. Writers only: a session is a shell on the repository's machine, so a
+ * reader sees none.
+ *
+ * GET /:owner/:name/machines/:machine/shell — the shell itself: a terminal in
+ * the browser (ghostty-web, `web/machine-term-client.ts`) on the WebSocket at
+ * the same path (an upgrade there is answered by `machines/shell.ts` before
+ * any route). Writers only, as the socket is. A reload joins the same tmux
+ * session. The one page whose CSP admits WebAssembly (`'wasm-unsafe-eval'`).
  */
 
 import type { Machine } from "../../crew/machines.ts";
@@ -11,12 +18,37 @@ import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from
 import { repoMachines } from "../../crew/machines_read.ts";
 import type { Ctx } from "../../http/context.ts";
 import { ENDED, lastSessions, type SessionRecord } from "../../machines/shell.ts";
-import { crumbsFor, forbiddenPage, loadRepo, repoHeader, repoNotFound, repoPalette, NOT_YOURS_TO_DO } from "../chrome.ts";
+import {
+  crumbsFor,
+  forbiddenPage,
+  loadRepo,
+  notFoundPage,
+  pageHead,
+  repoHeader,
+  repoNotFound,
+  repoPalette,
+  NOT_YOURS_TO_DO,
+} from "../chrome.ts";
 import { page } from "../layout.ts";
 import { html } from "../html.ts";
-import { card, icon, time } from "../ui.ts";
+import { btn, card, icon, time } from "../ui.ts";
+import { ghosttyWasmAsset, machineTermAsset } from "../machine-term-asset.ts";
 import { settingsPageResponse } from "./settings.ts";
 
+/** The shell page's own rules: a terminal box that fills the window below the head and never moves. */
+// --machine-term-above is everything over the box: the site bar (48), the
+// compact repository header (88), the page head with its sub line (96), the
+// status line with its margins (40), and the page's top and bottom padding
+// (28). Padding and margins are the 4px scale's 8 (DESIGN §4).
+export const MACHINE_SHELL_CSS = /* css */ `
+.machine-term { --machine-term-above: 300px; height: calc(100dvh - var(--machine-term-above)); min-height: 320px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); overflow: hidden; }
+.machine-term-status { min-height: 1.5em; margin: 8px 0; color: var(--muted-fg); }
+`;
+
+/** Where a machine's shell page (and its socket) lives. */
+export function shellPath(repo: Repo, machine: string): string {
+  return `/${repo.ownerName}/${repo.name}/machines/${machine}/shell`;
+}
 
 export async function machinesSettingsPage(ctx: Ctx): Promise<Response> {
   nameFrame(ctx.request);
@@ -34,17 +66,18 @@ function render(ctx: Ctx, repo: Repo, list: readonly Machine[], sessions: readon
     html`<p class="muted">
         A machine is where the crew's shell runs. A writer can open a shell into one; each
         writer has a directory and home of their own on each machine, never shared with the
-        next. The browser terminal that opens it is not built yet.
+        next. A shell outlives its tab: reload, or open it again, and you are back in it.
       </p>
       <div class="table-scroll">
         <table class="table">
-          <thead><tr><th>Machine</th><th>Tools</th><th>Reach</th></tr></thead>
+          <thead><tr><th>Machine</th><th>Tools</th><th>Reach</th><th><span class="sr-only">Shell</span></th></tr></thead>
           <tbody>
             ${list.map(
               (m) => html`<tr>
                 <td><strong>${m.name}</strong></td>
                 <td class="muted">${m.tools.length === 0 ? "none" : m.tools.join(", ")}</td>
                 <td class="muted">${m.reach.length === 0 ? "the forge only" : "the forge and its apps"}</td>
+                <td>${btn("Open shell", { href: shellPath(repo, m.name), icon: "terminal", size: "sm" })}</td>
               </tr>`,
             )}
           </tbody>
@@ -85,5 +118,43 @@ function render(ctx: Ctx, repo: Repo, list: readonly Machine[], sessions: readon
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body: html`${repoHeader(ctx, repo, "settings", { compact: true })}${body}`,
+  });
+}
+
+export async function machineShellPage(ctx: Ctx): Promise<Response> {
+  nameFrame(ctx.request);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
+  if (!repo) return repoNotFound(ctx);
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user)) return forbiddenPage(ctx, NOT_YOURS_TO_DO);
+  const config = await timePhaseAsync(ctx.request, "machines", () => repoMachines(ctx.app, repo));
+  const machine = config.machines.find((m) => m.name === ctx.params.machine);
+  if (machine === undefined) return notFoundPage(ctx);
+  const script = await timePhaseAsync(ctx.request, "asset", () => machineTermAsset());
+  return timePhase(ctx.request, "render", () => renderShell(ctx, repo, machine, script?.path));
+}
+
+function renderShell(ctx: Ctx, repo: Repo, machine: Machine, script: string | undefined): Response {
+  const base = `/${repo.ownerName}/${repo.name}`;
+  const term =
+    script === undefined
+      ? html`<p class="muted" role="status">The terminal could not load on this forge.</p>`
+      : html`<p id="machine-term-status" class="machine-term-status" role="status" aria-live="polite"></p>
+          <noscript><p class="machine-term-status">This shell runs in the browser and needs JavaScript; with it off, nothing connects.</p></noscript>
+          <div id="machine-term" class="machine-term" data-wasm="${ghosttyWasmAsset().path}"></div>`;
+  return page({
+    ctx,
+    title: `Shell · ${machine.name} · ${repo.name}`,
+    crumbs: crumbsFor(repo),
+    palette: repoPalette(ctx, repo),
+    wide: true,
+    styleCss: MACHINE_SHELL_CSS,
+    ...(script === undefined ? {} : { scriptAsset: script, wasm: true }),
+    body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
+      ${pageHead(html`${icon("terminal")}Shell on ${machine.name}`, {
+        sub: machine.tools.length === 0 ? "No tools beyond the shell." : `Tools: ${machine.tools.join(", ")}.`,
+        actions: btn("All machines", { href: `${base}/settings/machines`, size: "sm" }),
+      })}
+      ${term}`,
   });
 }

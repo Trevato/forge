@@ -127,6 +127,28 @@ export function parseControl(text: string): { cols: number; rows: number } | und
   return { cols, rows };
 }
 
+export interface PtySize {
+  readonly cols: number;
+  readonly rows: number;
+}
+
+/**
+ * The sizes to give the pty for a resize frame, in order. A new size is set
+ * once. A connection's first frame at the size the pty already has (a
+ * reload, a second tab) passes through one row less first: the kernel only
+ * signals a change, and tmux redraws the whole screen on the signal, so the
+ * page that joined sees the screen rather than a blank one. A later frame at
+ * the same size changes nothing.
+ */
+export function resizePlan(current: PtySize, next: PtySize, firstFromPeer: boolean): PtySize[] {
+  if (current.cols !== next.cols || current.rows !== next.rows) return [next];
+  if (!firstFromPeer) return [];
+  return [{ cols: next.cols, rows: next.rows > RESIZE.rows.min ? next.rows - 1 : next.rows + 1 }, next];
+}
+
+/** How long the pty holds the nudged size before the real one, so the program sees two changes. */
+export const REDRAW_NUDGE_MS = 30;
+
 // ---- the records ----
 
 export type EndReason = "exit" | "idle" | "stopped" | "revoked" | "failed";
@@ -205,6 +227,8 @@ export interface ShellSocket {
   readonly shell: ShellGrant & { readonly app: App };
   joined?: Session;
   release?: () => void;
+  /** This connection has sent a size; its first one redraws a joined screen (`resizePlan`). */
+  sized?: boolean;
 }
 
 type Peer = Bun.ServerWebSocket<ShellSocket>;
@@ -217,6 +241,8 @@ interface Session {
   readonly terminal: Bun.Terminal;
   readonly program: TerminalProgram;
   readonly peers: Set<Peer>;
+  /** The pty's size, as last set. */
+  size: PtySize;
   lastInput: number;
   ended: boolean;
   readonly timer: ReturnType<typeof setInterval>;
@@ -387,6 +413,7 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
       terminal: term,
       program,
       peers,
+      size: { cols, rows },
       lastInput: Date.now(),
       ended: false,
       timer: setInterval(
@@ -460,7 +487,16 @@ export const shellWebSocket = {
         ws.close(1003, "a text frame is a resize");
         return;
       }
-      if (!session.terminal.closed) session.terminal.resize(resize.cols, resize.rows);
+      const plan = resizePlan(session.size, resize, ws.data.sized !== true);
+      ws.data.sized = true;
+      session.size = resize;
+      const apply = (size: PtySize): void => {
+        if (!session.ended && !session.terminal.closed) session.terminal.resize(size.cols, size.rows);
+      };
+      const [first, ...rest] = plan;
+      if (first !== undefined) apply(first);
+      // A newer frame in the meantime is the size that stands; this one is dropped.
+      if (rest.length > 0) setTimeout(() => session.size === resize && rest.forEach(apply), REDRAW_NUDGE_MS);
       return;
     }
     if (message.byteLength > MAX_INPUT_BYTES) {

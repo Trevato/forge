@@ -59,6 +59,8 @@ beforeAll(async () => {
   if (!shut.ok) throw new Error(String(shut.error));
   // A row a crashed forge left open, closed when this one boots.
   staleRow = recordStart(app.db, repo.id, "standard", alice.id);
+  // What main.ts does once no other forge holds the database.
+  closeStaleSessions(app.db);
   servers = await serve(app);
   base = servers.url.replace(/^http/, "ws");
 });
@@ -165,6 +167,36 @@ test("a writer's session echoes input, applies a resize, reattaches, and is reco
   expect(lastSessions(app.db, repo.id)[0]).toMatchObject({ endReason: "exit" });
   expect(liveSessions(app)).toBe(0);
 });
+
+test("a reload's first size redraws the screen, though the size is the same; a repeat does not", async () => {
+  const first = await open("alice");
+  first.ws.send(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+  first.ws.send(new TextEncoder().encode("stty size\n"));
+  await until(() => first.seen().includes("30 100"));
+  // A program in the foreground redraws (here: prints its size) on every
+  // change it is signalled, as tmux does; its output alone reaches a page.
+  first.ws.send(new TextEncoder().encode("sh -c 'trap \"stty size\" WINCH; while :; do sleep 0.05; done'\n"));
+  await Bun.sleep(200);
+  first.ws.close(); // the reload
+  await until(() => liveSessions(app) === 1 && first.ws.readyState === WebSocket.CLOSED);
+
+  const second = await open("alice");
+  expect(liveSessions(app)).toBe(1);
+  second.ws.send(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+  await until(() => second.seen().includes("30 100"));
+  const redraws = () => second.seen().split("30 100").length - 1;
+  const after = redraws();
+  // The same size again from the same page changes nothing.
+  second.ws.send(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+  await Bun.sleep(300);
+  expect(redraws()).toBe(after);
+
+  const closed = new Promise((r) => second.ws.addEventListener("close", r));
+  second.ws.send(new TextEncoder().encode("\x03"));
+  second.ws.send(new TextEncoder().encode("exit\n"));
+  await closed;
+  await until(() => liveSessions(app) === 0);
+}, 15_000);
 
 test("a text frame that is not a resize ends the connection", async () => {
   const { ws } = await open("alice");

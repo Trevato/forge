@@ -28,7 +28,7 @@ import { quietLogs } from "./helpers/globals.ts";
 quietLogs();
 
 /** Parameters the seed supplies; any other parameter makes a pattern unseeded. */
-const SEEDED = new Set(["owner", "name", "username", "number", "ref", "oid", "path", "env", "slug", "spec"]);
+const SEEDED = new Set(["owner", "name", "username", "number", "ref", "oid", "path", "env", "slug", "spec", "machine"]);
 
 const ORIGIN = "needs a connected origin account and a mirror job; the seed connects none";
 const MIGRATE = "needs a migration job, which only an import creates";
@@ -156,7 +156,7 @@ beforeAll(async () => {
   if (!inserted.ok) throw new Error(inserted.error);
   Object.assign(fill, {
     owner: "ada", name: "notes", username: "ada", ref: "main", oid: pull.value.headOid,
-    path: "a.txt", env: "prod", slug: "notes", spec: "192",
+    path: "a.txt", env: "prod", slug: "notes", spec: "192", machine: "standard",
     issue: String(issue.value.number), pull: String(pull.value.number), run: run.id,
   });
   cookie = `forge_session=${createSession(app.db, ada.id).token}`;
