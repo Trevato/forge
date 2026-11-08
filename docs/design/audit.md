@@ -101,6 +101,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/resilience` — `pages/resilience.ts` · each protection in `docs/THREATS.md` against the last gate's tests · `/settings/resilience` (similar name, different content) · none seen.
 - `/maintenance` — `pages/maintenance.ts` · prepare the forge for a power-off and end it · `/resilience`, `/settings/backups` · none seen.
 - `/admin/limits` — `pages/admin-limits.ts` · every limit with value, default and reason · `/settings/capacity` (also a numbers-you-can-change page) · none seen.
+- `/admin/flows` — `pages/flows-all.ts` · every repository's flow lines with state and last moved, by kind and stale · `/:owner/:name/flows` · none seen.
 - `/settings/capacity` — `pages/capacity.ts` · how many runs and checks go at once · `/admin/limits`, `/settings/usage` · none seen.
 - `/settings/usage` — `pages/usage.ts` · route patterns by use, unused first · `/settings/telemetry`, `/board/returns` · none seen. Not about cost, despite the name.
 - `/settings/telemetry` — `pages/telemetry.ts` · which agents may read telemetry · `/settings/crew` (agent grants) · none seen.

@@ -27,6 +27,7 @@ import { entry as edgeOnly } from "./edgeonly.ts";
 import { entry as traffic } from "./trafficview.ts";
 import { entry as feed } from "./feed.ts";
 import { entry as forgeView } from "./forgeview.ts";
+import { entry as flowsAll } from "./flowsall.ts";
 import { entry as front } from "./front.ts";
 import { entry as forges } from "./forges.ts";
 import { entry as homePins } from "./home_pins.ts";
@@ -98,6 +99,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   people,
   quotas,
   limits,
+  flowsAll,
   scrapes,
   teams,
   orgTeams,

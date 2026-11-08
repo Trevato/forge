@@ -125,6 +125,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["people", "People", "who is a guest, a member or an admin; promote or demote"],
     ["quotas", "Account quotas", "what one account may own, and who changed it"],
     ["limits", "Limits", "what the forge caps, with default and bounds; change one"],
+    ["flows-all", "Flows across the forge", "every repository's flow lines, by kind and stale"],
     ["teams", "Crew teams", "each team's charter, dial and members"],
     ["agents", "Crew agents", "each agent's model, budget and brief"],
     ["invites", "Invite links", "make a single-use link, see which are open, revoke one"],

@@ -89,6 +89,7 @@ import {
 } from "../ui.ts";
 
 export type AccountSection =
+  | "adminflows"
   | "security"
   | "profile"
   | "confirms"
@@ -157,6 +158,7 @@ const SECTION_ROWS: readonly (readonly [
   ["This forge", "Accounts", "/settings/accounts", "users", (c) => c === "accounts", true],
   ["This forge", "People", "/settings/people", "users", (c) => c === "people", true],
   ["This forge", "Limits", "/admin/limits", "activity", (c) => c === "limits", true],
+  ["This forge", "Flows", "/admin/flows", "activity", (c) => c === "adminflows", true],
   ["This forge", "Flags", "/settings/flags", "activity", (c) => c === "flags", true],
   ["This forge", "Features", "/settings/features", "rocket", (c) => c === "features", true],
   ["This forge", "Backups", "/settings/backups", "download", (c) => c === "backups", true],

@@ -29,6 +29,7 @@ import { pipelinePage } from "../web/pages/pipeline.ts";
 import { maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
+import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
 import { settingsRoutes } from "./settings_routes.ts";
 import { pinnedRoutes } from "./pinned_routes.ts";
@@ -965,6 +966,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/boards/:slug/live", boardLive);
   router.add("POST", "/boards/:slug/:op", boardPost);
   router.add("GET", "/admin/limits", limitsPage);
+  router.add("GET", "/admin/flows", allFlowsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);
   router.add("POST", "/admin/signup", signupSet);

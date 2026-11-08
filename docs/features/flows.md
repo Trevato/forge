@@ -18,7 +18,7 @@
 - **Forks.** Each fork out reads *fork, takes updates* or *fork, told of updates* (its `fork_follow` mode), and its last-moved time is its newest push (its creation until it has one). A fork following its parent is the only "follower" the forge records; there is no table of people following a repository.
 - **Forges that follow.** A child forge holding a proposal token for the repository is a *forge follows* line (its origin without userinfo or query; last use of the token, else when it was minted; *token ended* once expired). Only people who can write to the repository see these lines, page and terminal alike.
 
-Left out: the CHANGELOG sections between pin and newest (dropped until a lookup can read one within a byte bound); the nightly radar is below; code scanning (and the release block on a new high finding); per-line buttons (actions are listed under the columns); counting a fork's commits ahead of its parent; GitHub release tags; the all-repositories admin view. Each is its own pull on top of `dep_latest` and `readFlows`.
+Left out: the CHANGELOG sections between pin and newest (dropped until a lookup can read one within a byte bound); the nightly radar is below; code scanning (and the release block on a new high finding); per-line buttons (actions are listed under the columns); counting a fork's commits ahead of its parent; GitHub release tags; the all-repositories admin view is `admin-flows.md`. Each is its own pull on top of `dep_latest` and `readFlows`.
 
 ## The nightly radar (#9592)
 
