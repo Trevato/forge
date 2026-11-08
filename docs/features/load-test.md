@@ -25,7 +25,7 @@ Not done here: the profile of tree/blob/raw/media under production's shape, the 
 
 ## The per-phase profile (#9503)
 
-`bench/code-phases.ts` holds the same open-loop rate and tallies each answer's `Server-Timing` by page kind (tree, blob, raw, media), printing p50/p95 of wall time and of every named phase as a table. `git`, `render`, `highlight` and `session` are always listed; n = 0 means that page never names the phase (today `/raw` and `/media` name none, so only their wall time is profiled).
+`bench/code-phases.ts` holds the same open-loop rate and tallies each answer's `Server-Timing` by page kind (tree, blob, raw, media), printing p50/p95 of wall time and of every named phase as a table. `git`, `render`, `highlight` and `session` are always listed; n = 0 means that page never names the phase (`/raw` names `session` and `git`; `/media` names `session`, `git` and, only when it opens a stream of a file over 1 MB, `stream`; a phase that did not run is not named, so it never skews a percentile).
 
 ```sh
 bun bench/code-phases.ts --url https://copy.example --repo owner/name --rate 500 --seconds 20

@@ -22,6 +22,7 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { holds } from "../../http/etag.ts";
 import { parseRange } from "../../http/range.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { loadRepo, notFoundPage } from "../chrome.ts";
 import { cachedMedia, keepMedia } from "./tree_cache.ts";
 import { HEAD_BYTES, mediaType } from "../render/kinds.ts";
@@ -50,6 +51,24 @@ export const mediaHref = (base: string, ref: string, path: string): string =>
   `${base}/media/${encodeURIComponent(ref)}/${path}`;
 
 export async function mediaBlob(ctx: Ctx): Promise<Response> {
+  // Server-Timing: `session` as the router measured it, `git` the object
+  // reads, `stream` the time to have a body to send (the stream opened). A phase
+  // is named only when it ran: no `git` before a stat, no `stream` for a small
+  // file, a 304 or a 416.
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const clock: Clock = {};
+  try {
+    return await mediaRead(ctx, clock);
+  } finally {
+    if (clock.git !== undefined) notePhase(ctx.request, "git", clock.git);
+    if (clock.stream !== undefined) notePhase(ctx.request, "stream", clock.stream);
+  }
+}
+
+/** Milliseconds per phase; a phase that never ran stays undefined. */
+type Clock = { git?: number; stream?: number };
+
+async function mediaRead(ctx: Ctx, clock: Clock): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const ref = ctx.params.ref ?? "";
@@ -59,8 +78,10 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const reader = readerFor(dir);
   // At a full commit id a small file never changes: a repeat read spawns no git (#9505).
+  // A held read names no `git` phase: it did not run.
   const pinned = /^[0-9a-f]{40}$/.test(ref);
   const held = pinned ? cachedMedia(repo.id, ref, path) : undefined;
+  let at = performance.now();
   let oid: string;
   let size: number;
   if (held !== undefined) {
@@ -68,6 +89,7 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
     size = held.body.length;
   } else {
     const stat = await reader.stat(`${ref}:${path}`).catch(() => undefined);
+    clock.git = (clock.git ?? 0) + (performance.now() - at);
     if (stat === undefined || !stat.ok || stat.value.type !== "blob")
       return notFoundPage(ctx);
     ({ oid, size } = stat.value);
@@ -105,15 +127,19 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
     body = held.body;
     head = body.subarray(0, HEAD_BYTES);
   } else if (size <= SMALL_BYTES) {
+    at = performance.now();
     const object = await reader.object(oid).catch(() => undefined);
+    clock.git = (clock.git ?? 0) + (performance.now() - at);
     if (object === undefined || !object.ok) return notFoundPage(ctx);
     body = object.value.body;
     head = body.subarray(0, HEAD_BYTES);
     if (pinned) keepMedia(repo.id, ref, path, { oid, body });
   } else {
+    at = performance.now();
     const sniff = await blobStream(dir, oid, 0, HEAD_BYTES - 1, { signal: ctx.request.signal });
     if (sniff === "busy" || sniff === "gone") return busy();
     head = await new Response(sniff).bytes();
+    clock.git = (clock.git ?? 0) + (performance.now() - at);
   }
   const type = download ? "application/octet-stream" : mediaType(path, head);
   headers["content-type"] = type;
@@ -138,7 +164,9 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
   // stream); `Content-Range` still names the whole size, which is what a
   // seeking player reads.
   if (body === undefined) {
+    at = performance.now();
     const stream = await blobStream(dir, oid, start, end, { signal: ctx.request.signal });
+    clock.stream = performance.now() - at;
     if (stream === "busy" || stream === "gone") return busy();
     return new Response(stream, { status, headers });
   }

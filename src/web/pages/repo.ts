@@ -1738,6 +1738,9 @@ export function capped(blob: Blob): Blob {
  * a file in a repository can never execute as a page on this origin.
  */
 export async function rawBlob(ctx: Ctx): Promise<Response> {
+  // `session` first, so it is named on every answer, 404s included. There is
+  // no `stream` phase: the body is bytes already in memory, nothing to time.
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const ref = ctx.params.ref ?? "";
@@ -1747,8 +1750,18 @@ export async function rawBlob(ctx: Ctx): Promise<Response> {
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   // At a full commit id the bytes never change: a small file is kept (#9405).
   const pinned = FULL_OID.test(ref);
+  // A held read names no `git` phase: git did not run. A read that throws
+  // still names the time it took.
   const held = pinned ? cachedRaw(repo.id, ref, path) : undefined;
-  const blob = held ?? (await blobForRender(dir, ref, path, 25_000_000));
+  let blob = held;
+  if (blob === undefined) {
+    const gitAt = performance.now();
+    try {
+      blob = await blobForRender(dir, ref, path, 25_000_000);
+    } finally {
+      notePhase(ctx.request, "git", performance.now() - gitAt);
+    }
+  }
   if (blob.kind === "missing" || blob.kind === "too_large")
     return notFoundPage(ctx);
   if (pinned && held === undefined) keepRaw(repo.id, ref, path, blob);
