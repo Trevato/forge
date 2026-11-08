@@ -36,3 +36,16 @@ Words, from `--words-only` on `96b47467e^` and `96b47467e` (seeded rows as above
 **Heights are a blocker, not a result.** The author's sandbox cannot start Chromium, and the preview deployments run pull branches, not `96b47467e^`, so no height was obtained and none is claimed. Whether any page grew in height is therefore unanswered; words alone fell on all four pages. Someone with Chromium runs the command above once per commit.
 
 `96b47467e` is the commit the issue names; its subject carries #9617, the issue text says #9583. The hash is the pair measured.
+
+## On file: the four `/settings/*` paths (#9780)
+
+`bun scripts/measure-page.ts --words-only --root <checkout> /settings/tokens /settings/crew /settings/subscriptions /settings/usage`, once with `--root` at a checkout of `96b47467e^` (`96b47467e`'s parent) and once at `96b47467e`; all eight pages rendered with status 200.
+
+| Page | words before (`96b47467e^`) | words after (`96b47467e`) |
+| --- | --- | --- |
+| `/settings/tokens` | 274 | 274 |
+| `/settings/crew` | 578 | 578 |
+| `/settings/subscriptions` | 394 | 289 |
+| `/settings/usage` | 20185 | 2508 |
+
+No page has more words after. Tokens and Crew read the same at both commits at these paths: the rewrite's Tokens and Crew sections are the ones on the repository settings page (`/alice/demo/settings#proposal-tokens`, `#crew`, table above), which these account-level paths do not render. Usage's drop is the zero-filled "By role"/"By surface" cells, as explained above. Heights are still not taken (no Chromium in the sandbox).
