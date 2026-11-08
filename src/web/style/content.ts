@@ -158,7 +158,11 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 [data-tell] .page-head-sub { flex-wrap: wrap; }
 [data-tell] .comment-body img { max-width: 100%; height: auto; }
 [data-tell] pre { max-width: 100%; overflow-x: auto; }
-[data-apps], [data-apps-page], [data-bet-card], [data-milestone], [data-now], [data-people] { overflow-wrap: anywhere; }
+[data-apps], [data-apps-page], [data-bet-card], [data-explore], [data-milestone], [data-now], [data-people] { overflow-wrap: anywhere; }
+/* /explore (#9370): rows wrap rather than truncate a long name or description. */
+[data-explore] .row-title, [data-explore] .row-meta { white-space: normal; overflow: visible; }
+[data-explore] .row { flex-wrap: wrap; }
+[data-explore] .row-main { flex: 1 1 14rem; }
 [data-bet-card] h2, [data-bet-card] ul, [data-bet-card] p { margin-block: 8px; }
 [data-bet-card] ul { padding-inline-start: 16px; }
 [data-bet-card] { max-height: 80vh; overflow-x: hidden; overflow-y: auto; }

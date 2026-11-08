@@ -162,7 +162,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "This week", updated: "7d" as const },
     { label: "This month", updated: "30d" as const },
   ];
-  const body = html`${pageHead("Explore", {
+  const body = html`<div data-explore>${pageHead("Explore", {
       sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
     })}
     <form method="get" action="/explore" class="bar mb">
@@ -214,7 +214,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     </div>
     ${rows.length === 0
       ? emptyState(ctx, query)
-      : listCard(rows.map(rowHtml))}`;
+      : listCard(rows.map(rowHtml))}</div>`;
   const response = page({ ctx, title: "Explore", body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
