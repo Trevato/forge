@@ -23,6 +23,7 @@ import type { Ctx } from "../../http/context.ts";
 import { holds } from "../../http/etag.ts";
 import { parseRange } from "../../http/range.ts";
 import { loadRepo, notFoundPage } from "../chrome.ts";
+import { cachedMedia, keepMedia } from "./tree_cache.ts";
 import { HEAD_BYTES, mediaType } from "../render/kinds.ts";
 
 /** The policy every media answer leaves with. */
@@ -57,10 +58,20 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
 
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const reader = readerFor(dir);
-  const stat = await reader.stat(`${ref}:${path}`).catch(() => undefined);
-  if (stat === undefined || !stat.ok || stat.value.type !== "blob")
-    return notFoundPage(ctx);
-  const { oid, size } = stat.value;
+  // At a full commit id a small file never changes: a repeat read spawns no git (#9505).
+  const pinned = /^[0-9a-f]{40}$/.test(ref);
+  const held = pinned ? cachedMedia(repo.id, ref, path) : undefined;
+  let oid: string;
+  let size: number;
+  if (held !== undefined) {
+    oid = held.oid;
+    size = held.body.length;
+  } else {
+    const stat = await reader.stat(`${ref}:${path}`).catch(() => undefined);
+    if (stat === undefined || !stat.ok || stat.value.type !== "blob")
+      return notFoundPage(ctx);
+    ({ oid, size } = stat.value);
+  }
 
   const download = ctx.url.searchParams.get("download") === "1";
   const etag = `"${oid}"`;
@@ -90,11 +101,15 @@ export async function mediaBlob(ctx: Ctx): Promise<Response> {
   // its first bytes and streamed, so its size never becomes memory.
   let body: Uint8Array | undefined;
   let head: Uint8Array;
-  if (size <= SMALL_BYTES) {
+  if (held !== undefined) {
+    body = held.body;
+    head = body.subarray(0, HEAD_BYTES);
+  } else if (size <= SMALL_BYTES) {
     const object = await reader.object(oid).catch(() => undefined);
     if (object === undefined || !object.ok) return notFoundPage(ctx);
     body = object.value.body;
     head = body.subarray(0, HEAD_BYTES);
+    if (pinned) keepMedia(repo.id, ref, path, { oid, body });
   } else {
     const sniff = await blobStream(dir, oid, 0, HEAD_BYTES - 1, { signal: ctx.request.signal });
     if (sniff === "busy" || sniff === "gone") return busy();

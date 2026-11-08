@@ -17,6 +17,7 @@ import { mediaGate } from "../src/git/env.ts";
 import { blobStream, MEDIA_QUEUE_MAX, refTip, readerFor } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { cachedMedia } from "../src/web/pages/tree_cache.ts";
 import { MEDIA_POLICY, PDF_POLICY } from "../src/web/pages/media.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -89,6 +90,22 @@ afterAll(async () => {
 });
 
 describe("the media route", () => {
+  test("a small file at a full commit id is kept, a branch's and a large one are not", async () => {
+    const repoId = app.db.query<{ id: string }, []>("select id from repo where name = 'gallery'").get()!.id;
+    expect(cachedMedia(repoId, sha, "art/logo.png")).toBeUndefined();
+    const first = await get(`/alice/gallery/media/${sha}/art/logo.png`);
+    const bytes = new Uint8Array(await first.arrayBuffer());
+    const held = cachedMedia(repoId, sha, "art/logo.png");
+    expect(held?.body).toEqual(PNG);
+    const again = await get(`/alice/gallery/media/${sha}/art/logo.png`);
+    expect(again.headers.get("etag")).toBe(first.headers.get("etag"));
+    expect(new Uint8Array(await again.arrayBuffer())).toEqual(bytes);
+    await get("/alice/gallery/media/main/art/logo.png");
+    expect(cachedMedia(repoId, "main", "art/logo.png")).toBeUndefined();
+    await (await get(`/alice/gallery/media/${sha}/clip.mp4`)).arrayBuffer();
+    expect(cachedMedia(repoId, sha, "clip.mp4")).toBeUndefined();
+  });
+
   test("a confirmed PNG is served as image/png with its bytes", async () => {
     const res = await get("/alice/gallery/media/main/art/logo.png");
     expect(res.status).toBe(200);

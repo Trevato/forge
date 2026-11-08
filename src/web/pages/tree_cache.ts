@@ -54,6 +54,7 @@ export const treeCacheStats = () => cache.stats();
 export const clearTreeCache = (): void => {
   cache.clear();
   rawCache.clear();
+  mediaCache.clear();
   parts.clear();
   clearKeptPages();
 };
@@ -135,4 +136,19 @@ export const cachedRaw = (repoId: string, commit: string, path: string) => rawCa
 export function keepRaw(repoId: string, commit: string, path: string, blob: BlobForRender): void {
   if (blob.kind === "missing" || blob.kind === "too_large") return;
   if (blob.size <= RAW_MAX) rawCache.set(rawKey(repoId, commit, path), blob, TTL_MS, blob.size);
+}
+
+/** A small media file at a full commit id (#9505): its blob id and bytes, so a repeat read spawns no git. */
+export interface KeptMedia {
+  readonly oid: string;
+  readonly body: Uint8Array;
+}
+const MEDIA_MAX = 1024 * 1024;
+const mediaCache = new ViewCache({ maxEntries: 512, maxBytes: 32 * 1024 * 1024 });
+const mediaKey = (repoId: string, commit: string, path: string): string => ["media", repoId, commit, path].join("\0");
+
+export const cachedMedia = (repoId: string, commit: string, path: string) => mediaCache.get<KeptMedia>(mediaKey(repoId, commit, path));
+
+export function keepMedia(repoId: string, commit: string, path: string, media: KeptMedia): void {
+  if (media.body.length <= MEDIA_MAX) mediaCache.set(mediaKey(repoId, commit, path), media, TTL_MS, media.body.length + 128);
 }
