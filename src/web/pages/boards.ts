@@ -13,7 +13,8 @@ import { runQuery, type Row } from "../../boards/query.ts";
 import { gaps, SYSTEM } from "../../boards/sampler.ts";
 import { SOURCES } from "../../boards/sources.ts";
 import { BUCKET_MS, isBucket, MAX_PARAM, readParams, toQuery, type Bucket, type Params } from "../../boards/params.ts";
-import { aggregateOption, ask, columnNote, columnOption, unitOf, GUIDE, parseSentence, QUESTIONS, sentence } from "../../boards/guide.ts";
+import { fillFromSentence, MODEL_FILLED, unreadWords } from "../../boards/model_fill.ts";
+import { aggregateOption, ask, columnNote, columnOption, unitOf, GUIDE, QUESTIONS, sentence } from "../../boards/guide.ts";
 import { listAllBoards } from "../../actions/boards.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
@@ -21,6 +22,7 @@ import { notFoundPage } from "../chrome.ts";
 import { html, when } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
+import { readForm } from "../form.ts";
 
 const AGGREGATES = ["count", "sum", "avg", "max"] as const;
 const OPS = ["eq", "ne", "lt", "lte", "gt", "gte", "starts"] as const;
@@ -139,15 +141,32 @@ export function paramsOf(q: Record<string, unknown>, chart: Chart = "line"): Par
   };
 }
 
-// GET /boards/data
+// GET /boards/data: a `?ask=` sentence is read by the rules only, so no link can spend the model.
 export async function boardsPage(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user?.isAdmin !== true || user.kind === "agent") return notFoundPage(ctx);
+  return explorer(ctx, user, ctx.url.searchParams.get("ask"), false);
+}
+
+// POST /boards/data: the page's own sentence box. Only here may a miss ask the model, which spends the
+// asker's budget; `readForm` refuses a form another site sent (`crossOrigin`), as every mutation is.
+export async function boardsAsk(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (user?.isAdmin !== true || user.kind === "agent") return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const asked = form.get("ask");
+  return explorer(ctx, user, typeof asked === "string" ? asked.slice(0, 200) : "", true);
+}
+
+async function explorer(ctx: Ctx, user: NonNullable<Ctx["auth"]["user"]>, asked: string | null, mayAsk: boolean): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const asked = ctx.url.searchParams.get("ask");
-  const fill = asked ? parseSentence(asked, Date.now()) : null;
-  if (fill) return new Response(null, { status: 303, headers: { location: link({ ...readParams(new URLSearchParams(fill)), ...fill } as Params) } });
-  const p = readParams(ctx.url.searchParams);
+  // The rules answer first, free, and a hit redirects to its link.
+  const filled = asked !== null && asked.trim() !== "" ? await fillFromSentence(ctx.app, user.id, asked, Date.now(), mayAsk) : null;
+  if (filled?.ok && filled.by === "rules") return new Response(null, { status: 303, headers: { location: link({ ...readParams(new URLSearchParams(filled.fill)), ...filled.fill } as Params) } });
+  // A model's fill is drawn here, not redirected to: only this response knows the model made it.
+  const modelFilled = filled?.ok === true;
+  const p = readParams(filled?.ok ? new URLSearchParams(filled.fill) : ctx.url.searchParams);
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
   const answer = timePhase(ctx.request, "query", () =>
     p.rows === "" ? runFor(ctx.app.db, p.chart, toQuery(p)) : runQuery(ctx.app.db, toQuery(p), { repoIds: "all" }),
@@ -176,8 +195,8 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
   // A blank box (Show pressed with nothing typed) is no sentence, not an unreadable one.
   const unread = asked !== null && asked.trim() !== "";
   const questions = card(
-    html`<form method="get" action="/boards/data" class="bar">
-      ${field({ label: "Ask in a sentence", name: "ask", id: "f-ask", placeholder: "memory over the last 3 days", maxlength: 200, ...(unread ? { error: "I could not read that. Try a topic (cpu, memory, spend, deploys, slowest pages) and a window (last 3 days)." } : {}) })}
+    html`<form method="post" action="/boards/data" class="bar">
+      ${field({ label: "Ask in a sentence", name: "ask", id: "f-ask", placeholder: "memory over the last 3 days", maxlength: 200, ...(unread ? { error: unreadWords(filled?.ok === false ? filled.why : "unread") } : {}) })}
       ${btn("Show", { variant: "ghost" })}
     </form>
     <ul class="list">
@@ -262,7 +281,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Data</h1>${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
-      ${questions} ${card(result, { head: html`<h2>${GUIDE[p.source]?.name ?? p.source}</h2>`, foot: html`${sentence(p)}`, id: "says" })} ${form} ${absent} ${pin} ${sources}`,
+      ${questions} ${card(result, { head: html`<h2>${GUIDE[p.source]?.name ?? p.source}</h2>`, foot: html`${sentence(p)}${modelFilled ? html` <span class="muted small">${MODEL_FILLED}</span>` : null}`, id: "says" })} ${form} ${absent} ${pin} ${sources}`,
   });
   notePhase(ctx.request, "render", Math.max(0, performance.now() - rendering - boardsMs));
   return response;

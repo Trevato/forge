@@ -9,6 +9,8 @@ import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { exploreRows, resultLines } from "../src/tui/screens/ask_data.ts";
 import { entry } from "../src/tui/screens/ask_data.ts";
 import { readParams } from "../src/boards/params.ts";
+import { useModel } from "../src/boards/model_fill.ts";
+import { ok } from "../src/kernel/result.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -79,4 +81,22 @@ test("nobody else has the door, the rows or a query", async () => {
     expect(await typed(who, [])).not.toContain("CPU over the last week");
   }
   expect(resultLines(new Session(app, identity(carol)), readParams(new URLSearchParams("source=runs"))).length).toBeGreaterThan(0);
+});
+
+test("a sentence the rules cannot read goes to the model, and the result says so; a hit never does", async () => {
+  const asked: string[] = [];
+  useModel(async (_a, _u, _s, prompt) => (asked.push(prompt), ok(JSON.stringify({ source: "spend", aggregate: "sum", column: "cost_usd", by: "day", chart: "bar" }))));
+  try {
+    const hit = await typed(carol, ["/", ..."memory over the last 3 days", "\r"]);
+    expect(hit).toContain("Average memory bytes per hour");
+    expect(asked).toEqual([]);
+    const filled = await typed(carol, ["/", ..."how pricey were the robots", "\r"]);
+    expect(asked.length).toBe(1);
+    expect(filled).toContain("Total cost USD per day");
+    expect(filled).toContain("The model filled this form");
+    useModel(async () => ok(JSON.stringify({ source: "users", aggregate: "count" })));
+    expect(await typed(carol, ["/", ..."how pricey were the robots", "\r"])).toContain("not a query this explorer can run");
+  } finally {
+    useModel();
+  }
 });

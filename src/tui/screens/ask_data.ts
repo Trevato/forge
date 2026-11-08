@@ -3,12 +3,15 @@
  * text. A list of the ready questions, then the sources by their plain names;
  * `enter` opens one as its one-line description and the rows the query
  * returns, and `/` takes a sentence ("memory over the last 3 days") that
- * `parseSentence` reads. A sentence it cannot read says so and nothing more.
+ * `parseSentence` reads. A sentence it cannot read goes to the model
+ * (`boards/model_fill.ts`), which may only fill the explorer's own fields;
+ * with no model it says so and nothing more.
  * The gate is the page's: a site admin who is a person, never an agent; for
  * anyone else the door is not offered, the list is empty and no query runs.
  */
 
 import { ask, GUIDE, parseSentence, QUESTIONS, sentence } from "../../boards/guide.ts";
+import { fillFromSentence, MODEL_FILLED, unreadWords } from "../../boards/model_fill.ts";
 import { runFor } from "../../boards/panel_data.ts";
 import { runQuery } from "../../boards/query.ts";
 import { SOURCES } from "../../boards/sources.ts";
@@ -41,10 +44,10 @@ export function exploreRows(session: Session, now: number): ExploreRow[] {
 }
 
 /** What a query shows: its sentence, then one line per row; empty for anyone the gate refuses. */
-export function resultLines(session: Session, p: Params): string[] {
+export function resultLines(session: Session, p: Params, note = ""): string[] {
   if (!mayExplore(session)) return [];
   const answer = p.rows === "" ? runFor(session.app.db, p.chart, toQuery(p)) : runQuery(session.app.db, toQuery(p), { repoIds: "all" });
-  const lines = [plain(sentence(p)), ""];
+  const lines = [plain(sentence(p)), ...(note === "" ? [] : [note]), ""];
   if (!answer.ok) return [...lines, `refused: ${plain(answer.error)}`];
   if (answer.rows.length === 0) return [...lines, "No rows: nothing matches this query."];
   for (const r of answer.rows) {
@@ -53,11 +56,13 @@ export function resultLines(session: Session, p: Params): string[] {
   return lines;
 }
 
-export function resultScreen(ctx: Ctx, session: Session, p: Params): Screen {
+export const resultScreen = (ctx: Ctx, session: Session, p: Params, note = ""): Screen => linesScreen(ctx, GUIDE[p.source]?.name ?? "Data", resultLines(session, p, note));
+
+/** Lines of text, scrolled, with `esc` to go back. */
+function linesScreen(ctx: Ctx, title: string, lines: string[]): Screen {
   const scroll = new Scroll();
-  const lines = resultLines(session, p);
   return {
-    title: GUIDE[p.source]?.name ?? "Data",
+    title,
     keys: [binding(["j", "k"], "scroll"), binding(["esc", "q"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
@@ -75,7 +80,7 @@ export function resultScreen(ctx: Ctx, session: Session, p: Params): Screen {
 export function askDataScreen(session: Session, ctx: Ctx): Screen {
   const state = new ListState();
   let rows: ExploreRow[] = [];
-  const open = (p: Params): void => ctx.push(resultScreen(ctx, session, p));
+  const open = (p: Params, note = ""): void => ctx.push(resultScreen(ctx, session, p, note));
   const screen: Screen = {
     title: "Data",
     keys: [binding(["j", "k"], "move"), binding(["enter"], "open"), binding(["/"], "ask in a sentence")],
@@ -104,10 +109,16 @@ export function askDataScreen(session: Session, ctx: Ctx): Screen {
             label: "Sentence",
             placeholder: "memory over the last 3 days",
             onSubmit: (text) => {
-              const fill = parseSentence(text, Date.now());
-              if (!fill) return "I could not read that. Try a topic (cpu, memory, spend, deploys, slowest pages) and a window (last 3 days).";
-              // The prompt closes itself after this returns; the result opens once it has.
-              return Promise.resolve().then(() => open(paramsOf(fill)));
+              if (text.trim() === "") return unreadWords("unread");
+              const rules = parseSentence(text, Date.now());
+              // The rules answer first, free, with the prompt closing after this returns.
+              if (rules) return Promise.resolve().then(() => open(paramsOf(rules)));
+              // A miss asks the model, on the asker's own budget; the result says it did.
+              return fillFromSentence(session.app, session.user!.id, text, Date.now()).then((r) => {
+                if (r.ok) return open(paramsOf(r.fill), r.by === "model" ? MODEL_FILLED : "");
+                // The prompt has closed by now; the reason shows as a toast, not a screen.
+                ctx.toast(unreadWords(r.why), "danger");
+              });
             },
           }),
         );

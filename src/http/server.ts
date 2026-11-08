@@ -31,7 +31,7 @@ import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke }
 import { measureSubmit } from "./measure.ts";
 import { settingsRoutes } from "./settings_routes.ts";
 import { pinnedRoutes } from "./pinned_routes.ts";
-import { boardsPage } from "../web/pages/boards.ts";
+import { boardsAsk, boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
 import { boardsHoldPost } from "../web/pages/boards-holds.ts";
 import { nowPage } from "../web/pages/now.ts";
@@ -952,6 +952,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/signup/passkey", signupPasskey);
   router.add("GET", "/boards", boardsList);
   router.add("GET", "/boards/data", boardsPage);
+  router.add("POST", "/boards/data", boardsAsk);
   router.add("POST", "/boards/new", boardNew);
   router.add("POST", "/boards/holds", boardsHoldPost);
   router.add("POST", "/boards/pin", boardPin);

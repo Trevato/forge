@@ -62,7 +62,7 @@ export function setAccountCeiling(
   return true;
 }
 
-/** What the account's repositories and conversation have spent today (UTC), running runs included. */
+/** What the account's repositories, conversation and one-shot questions have spent today (UTC), running runs included. */
 export function daySpent(db: Database, userId: string, now: Date): number {
   return (
     db
@@ -70,7 +70,9 @@ export function daySpent(db: Database, userId: string, now: Date): number {
         `SELECT COALESCE((SELECT SUM(u.cost_usd) FROM usage u JOIN repo r ON r.id = u.repo_id
                           WHERE r.owner_id = ?1 AND u.at >= ?2), 0)
               + COALESCE((SELECT SUM(c.cost_usd) FROM conversation_run c
-                          WHERE c.user_id = ?1 AND c.started_at >= ?2), 0) AS n`,
+                          WHERE c.user_id = ?1 AND c.started_at >= ?2), 0)
+              + COALESCE((SELECT SUM(o.cost_usd) FROM one_shot_spend o
+                          WHERE o.user_id = ?1 AND o.at >= ?2), 0) AS n`,
       )
       .get(userId, dayStart(now))?.n ?? 0
   );
