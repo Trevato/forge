@@ -52,3 +52,5 @@ Disks and network, Processes, Main-thread stalls, Telemetry readers, Code page c
 `<section class="settings-block">` with one `<h2>`; the lines are `row()`s in a `.list`, the wide figures stay tables. With
 nothing to show a part says so in one plain sentence. The live regions (`summary`, `cores`, `mem`, `temps`, `sys-disks`,
 `sys-procs`, …) keep their ids, so `system-live.ts` still patches them. `test/system-parts.test.ts` holds the shape.
+
+`/forges` (#9798) speaks the home page's language and adds no class: "Side by side" and "Forges" are each a `<section class="settings-block">` under an `<h2>` (the list is the same `row()`s in a `.list.setting-list`); with none sent, one headed section ("No forges sent yet") says so in a plain sentence with the New forge button. The fresh-link page, the remove confirm and the stop/remove receipts are a `.settings-block` too, no `.card`; the claim link (`claimLinkBody`) is a bare row list. Those pages stay `cache-control: no-store`. `test/forges-language.test.ts` holds the shape.

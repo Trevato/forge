@@ -381,12 +381,12 @@ export function claimLinkBody(link: string, note?: string): Html {
     <p class="muted small mb">
       Send it as you would a password: to them alone, not to a group.
     </p>
-    ${card(html`<ul class="list setting-list">${
+    <ul class="list setting-list">${
       row({
         title: html`<code class="mono" id="claim-link">${link}</code>`,
         trail: btn("Copy the link", { type: "button", copy: "claim-link", icon: "copy", variant: "primary", size: "sm" }),
       })
-    }</ul>`, { pad: false })}
+    }</ul>
     <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>
     ${note === undefined ? null : html`<p class="small mt">${note}</p>`}`;
 }

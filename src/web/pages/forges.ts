@@ -14,7 +14,7 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { reissueDoor } from "../../spawn/door.ts";
 import { readForm } from "../form.ts";
-import { badge, btn, card, empty, row, time } from "../ui.ts";
+import { badge, btn, row, time } from "../ui.ts";
 import { noRoom } from "../../spawn/door.ts";
 import { sizeWords, useWords } from "../../spawn/usage.ts";
 import { listChildren } from "../../actions/spawn.ts";
@@ -148,18 +148,21 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
         actions: action,
       })}
       ${rows.length === 0
-        ? empty({
-            icon: "fork",
-            title: "No forges sent yet",
-            note: "A whole forge for someone: the apps you choose, a crew, and one link to send.",
-            action,
-          })
-        : html`<section id="forges-compare">${sideBySide(rows)}</section>`}
-      ${rows.length === 0
-        ? null
-        : html`<ul class="list setting-list">
-            ${rows.map(forgeRow)}
-          </ul>`}
+        ? html`<section class="settings-block">
+            <h2>No forges sent yet</h2>
+            <p class="muted">A whole forge for someone: the apps you choose, a crew, and one link to send.</p>
+            <p>${action}</p>
+          </section>`
+        : html`<section class="settings-block" id="forges-compare">
+              <h2>Side by side</h2>
+              ${sideBySide(rows)}
+            </section>
+            <section class="settings-block">
+              <h2>Forges</h2>
+              <ul class="list setting-list">
+                ${rows.map(forgeRow)}
+              </ul>
+            </section>`}
       <p class="mt"><a href="/fleet/graph">Fleet graph</a></p>
     </div>`,
   });
@@ -183,12 +186,12 @@ export async function forgeLinkSubmit(ctx: Ctx): Promise<Response> {
       title: "A fresh link",
       body: html`<div class="narrow-wide" data-forges>
         ${pageHead(typeof link === "string" ? `A fresh link for ${name}` : `No fresh link for ${name}`)}
-        ${card(
-          typeof link === "string"
+        <section class="settings-block">
+          ${typeof link === "string"
             ? claimLinkBody(link)
             : html`<p>${String(door.body["message"] ?? "")}</p>
-                <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>`,
-        )}
+                <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>`}
+        </section>
       </div>`,
     },
     door.status,
@@ -211,7 +214,10 @@ function manageSubmit(act: (app: Ctx["app"], name: string) => Promise<Managed>, 
         title,
         body: html`<div class="narrow-wide" data-forges>
           ${pageHead(title)}
-          ${card(html`<p role="status">${done.says}</p><p class="mt">${btn("Back to your forges", { href: "/forges", size: "sm" })}</p>`)}
+          <section class="settings-block">
+            <p role="status">${done.says}</p>
+            <p class="mt">${btn("Back to your forges", { href: "/forges", size: "sm" })}</p>
+          </section>
         </div>`,
       },
       done.ok ? 200 : 404,
@@ -235,11 +241,14 @@ export async function forgeRemoveConfirm(ctx: Ctx): Promise<Response> {
     title: `Remove ${name}?`,
     body: html`<div class="narrow-wide" data-forges>
       ${pageHead(`Remove ${name}?`)}
-      ${card(html`<p>This deletes the forge <strong>${name}</strong> at ${child.url.replace(/^https?:\/\//, "")} with everything in it: its repositories, issues, accounts and settings. It cannot be undone.</p>
+      <section class="settings-block">
+        <h2>What removing deletes</h2>
+        <p>This deletes the forge <strong>${name}</strong> at ${child.url.replace(/^https?:\/\//, "")} with everything in it: its repositories, issues, accounts and settings. It cannot be undone.</p>
         <form method="post" action="/forges/${name}/remove" class="mt">
           ${btn("Remove it for good", { variant: "primary" })}
           ${btn("Keep it", { href: "/forges" })}
-        </form>`)}
+        </form>
+      </section>
     </div>`,
   });
   response.headers.set("cache-control", "no-store");
