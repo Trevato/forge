@@ -41,7 +41,7 @@ export interface Proof {
   readonly since?: string;
   /** How many proofs of this version have failed in a row; 1 when unset. */
   readonly failures?: number;
-  /** The first failing check was only a slow or empty answer (`Failure.slow`, `Failure.empty`); retried sooner (#9358). */
+  /** The first failing check was only a slow, empty or hung answer (`Failure.slow`, `.empty`, `.hung`); retried sooner (#9358, #9482). */
   readonly slow?: boolean;
 }
 
@@ -160,7 +160,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       anonymousBoard: true,
       heavy: { version: o.version, probe: ownProbeHeaders(o.dataDir), ...o.heavy }, ...(o.appHost ? { appHost: o.appHost } : {}),
     });
-    return finish(failures[0] === undefined ? undefined : checkLine(failures[0]), failures[0]?.slow === true || failures[0]?.empty === true);
+    return finish(failures[0] === undefined ? undefined : checkLine(failures[0]), failures[0]?.slow === true || failures[0]?.empty === true || failures[0]?.hung === true);
   } catch (error) {
     return finish(`the smoke checks could not run: ${String(error)}`);
   }

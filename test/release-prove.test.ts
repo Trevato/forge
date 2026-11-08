@@ -279,3 +279,22 @@ describe("an empty-body proof is asked again sooner (#9358)", () => {
     }
   });
 });
+
+describe("a hung proof is asked again sooner (#9482)", () => {
+  test("a version whose /explore never answers is due again after a minute, not five", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-prove-"));
+    try {
+      const timeout = (): Response => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      };
+      const { fake } = site("5.1.0", { "/explore": timeout });
+      const p = await proveRelease({ dataDir: dir, version: "5.1.0", url: "https://forge.test", fetch: fake, sleep: async () => {}, heavy: { watchMs: 30, pollMs: 5 } });
+      expect(p?.ok).toBe(false);
+      expect(p?.failure).toContain("did not answer");
+      expect(p?.slow).toBe(true);
+      expect(proofDue(p, "5.1.0", Date.parse(p!.at) + 61_000)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

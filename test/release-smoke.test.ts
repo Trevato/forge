@@ -127,7 +127,7 @@ test("a page whose Server-Timing says the forge itself was slow still fails", as
 
 test("a hang is a failure whatever Server-Timing would have said", async () => {
   const quick = (p: string) => (p === "/explore" ? new Response("page", { headers: { "server-timing": "app;dur=5.0" } }) : undefined);
-  const failures = await smoke(forge(0, [], quick, (p, hit) => (p === "/explore" && hit === 1 ? 2_000 : 0)), "t", { heavy });
+  const failures = await smoke(forge(0, [], quick, (p, hit) => (p === "/explore" && hit <= 2 ? 2_000 : 0)), "t", { heavy });
   expect(failures.some((f) => f.url.endsWith("/explore") && f.why.includes("did not answer"))).toBe(true);
 });
 
@@ -137,10 +137,17 @@ test("forgeMs reads the app entry of Server-Timing, and nothing when there is no
   expect(forgeMs(new Response(""))).toBeUndefined();
 });
 
-test("a hung first load is not asked again", async () => {
+test("a first load that hangs once is asked again and passes (#9482)", async () => {
   const seen: string[] = [];
   const failures = await smoke(forge(0, seen, () => undefined, (p, hit) => (p === "/boards" && hit === 1 ? 2_000 : 0)), "t", { heavy });
-  expect(failures.some((f) => f.url.endsWith("/boards") && f.why.includes("did not answer"))).toBe(true);
+  expect(failures).toEqual([]);
+  expect(seen.filter((p) => p === "/boards").length).toBeGreaterThan(1);
+});
+
+test("a first load that hangs twice in a row fails, marked hung (#9482)", async () => {
+  const failures = await smoke(forge(0, [], () => undefined, (p, hit) => (p === "/boards" && hit <= 2 ? 2_000 : 0)), "t", { heavy });
+  const hung = failures.find((f) => f.url.endsWith("/boards") && f.why.includes("did not answer"));
+  expect(hung?.hung).toBe(true);
 });
 
 test("a /healthz that gets no answer once in the watch is asked again and passes (#7724)", async () => {

@@ -11,8 +11,8 @@
  * must answer 200 within `SLOW_MS`, then polls `/healthz` once a second for
  * `WATCH_MS`, rotating through those pages, and fails naming the page that
  * was slow or failed (#6898: `/readyz` never touches the database, 0.7.277 hung).
- * An empty 200 body is asked again once, like a slow answer: one lost body in
- * a release's proof says little, two in a row fail it (#9334).
+ * An empty 200 body or a hang is asked again once, like a slow answer: one
+ * lost answer in a release's proof says little, two in a row fail it (#9334, #9482).
  * An answer slow on the probe's clock whose `Server-Timing` says the forge
  * itself spent `SLOW_MS` or less is the road to the public edge, not the
  * release, and passes (#9022); a hang still fails.
@@ -85,6 +85,8 @@ export interface Failure {
   slow?: boolean;
   /** The check failed only because a 200 answered with no body: a lost answer, retried like a slow one (#9358). */
   empty?: boolean;
+  /** The check failed only because no answer came within twice the slowest allowed: retried like a slow one (#9482). */
+  hung?: boolean;
 }
 
 /** The first stylesheet href in a page, or null. */
@@ -202,17 +204,19 @@ async function watch(root: URL, token: string, heavy: Heavy, fetch: typeof globa
       }
       return { failure: null, slow: false };
     } catch (error) {
-      return { ...gone(`${path} did not answer within ${slowMs * 2} ms (${error})`), hung: true };
+      const lost = gone(`${path} did not answer within ${slowMs * 2} ms (${error})`);
+      return { failure: { ...lost.failure, hung: true }, slow: false, hung: true };
     }
   };
   // The cause of 0.7.279's 1098 ms /boards is unconfirmed; a cold cache after
   // the boot is the guess (#7198). So each page's first load, and only that,
-  // is asked again after a slow answer (never a hang or an error), and the
-  // first slow answer is printed. The watch below asks again once as well,
-  // so one slow answer there no longer fails the proof (#8917).
+  // is asked again after a slow, empty or hung answer (never an error), and
+  // the first is printed: 0.7.415's first `/` hung once right after its boot
+  // and cost the release 12 minutes (#9482). The watch below asks again once
+  // as well, so one slow answer there no longer fails the proof (#8917).
   const timed = async (path: string): Promise<Failure | null> => {
     const first = await once(path);
-    if (!first.slow && !first.empty) return first.failure;
+    if (!first.slow && !first.empty && !first.hung) return first.failure;
     console.warn(`smoke: ${first.failure?.why}; asking again`);
     return (await once(path)).failure;
   };
