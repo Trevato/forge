@@ -1003,7 +1003,7 @@ export function row(o: RowOptions): Html {
         </details>`
       : o.href !== undefined
       ? html`<a href="${o.href}" ${attrs}>${inner}</a>`
-      : html`<div ${attrs}>${inner}</div>`}${o.after === undefined ? null : html`<span class="row-after">${o.after}</span>`}${o.children === undefined || o.children.length === 0
+      : html`<div ${attrs}>${inner}</div>`}${o.after === undefined ? null : html`<div class="row-after">${o.after}</div>`}${o.children === undefined || o.children.length === 0
       ? null
       : html`<ul class="row-children">${[...o.children]}</ul>`}
   </li>`;

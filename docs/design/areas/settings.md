@@ -89,3 +89,8 @@ Settings › Account (`src/web/pages/account.ts`: profile, password, tokens, SSH
 is a `block()` — a `.settings-block` with an `<h2>` — and the lists (tokens, SSH keys, signed-in browsers) are
 `.setting-list` rows: name and badge as the title, dates and fingerprint as the meta, Revoke/Remove/Sign out in the trail.
 An empty list is one muted sentence. No new class. Pinned by `test/account-rows.test.ts`.
+
+Settings › Accounts (`src/web/pages/accounts.ts`) adds no component class. As on the home page it is headings over rows: the
+accounts are `row()`s in `<ul class="list setting-list" id="accounts-list">` under `<h2>Who is on this forge</h2>`, the acts
+(Sign-ins, Verify, Suspend, Remove) in the row's `after` slot; the mail, ownerless-organization, sign-in reach and
+confirm/refusal notices are plain `<section class="settings-block">` blocks with an `<h2>`. `test/accounts-rows.test.ts` holds the shape.

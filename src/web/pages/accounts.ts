@@ -38,7 +38,7 @@ import {
   btn,
   card,
   confirmAction,
-  empty,
+  row,
   time,
   userLink,
 } from "../ui.ts";
@@ -71,7 +71,7 @@ function standing(a: AccountRow): Html {
 }
 
 /** `sole`: the organizations this account is the only person owning. */
-function row(a: AccountRow, sole: readonly string[]): Html {
+function personRow(a: AccountRow, sole: readonly string[]): Html {
   const at = `/settings/accounts/${encodeURIComponent(a.username)}`;
   const how = [
     originOf(a),
@@ -84,26 +84,17 @@ function row(a: AccountRow, sole: readonly string[]): Html {
   ];
   // Who may be acted on: a person who is not an admin and is still here.
   const actionable = a.kind === "user" && !a.isAdmin && a.removedAt === null;
-  return html`<li class="row">
-    <div class="row-main">
-      ${userLink(a.username, { mark: markOf(a) })} ${standing(a)}
-      <div class="row-meta">
-        joined
-        ${time(a.createdAt)}${how.length > 0
-          ? html` · ${how.join(" · ")}`
-          : null}
-        · ${holds.join(" · ")}${sole.length > 0 && a.suspendedAt === null
-          ? html` · only owner of ${sole.join(", ")}`
-          : null}
-      </div>
-      ${sole.length > 0 && a.suspendedAt !== null
-        ? html`<div class="row-meta">
-            ${badge(`${sole.join(", ")}: no active owner`, { tone: "danger" })}
-          </div>`
-        : null}
-    </div>
-    ${actionable
-      ? html`<div class="row-actions">
+  return row({
+    title: html`${userLink(a.username, { mark: markOf(a) })} ${standing(a)}`,
+    meta: html`joined
+      ${time(a.createdAt)}${how.length > 0 ? html` · ${how.join(" · ")}` : null}
+      · ${holds.join(" · ")}${sole.length > 0 && a.suspendedAt === null
+        ? html` · only owner of ${sole.join(", ")}`
+        : null}${sole.length > 0 && a.suspendedAt !== null
+        ? html` · ${badge(`${sole.join(", ")}: no active owner`, { tone: "danger" })}`
+        : null}`,
+    ...(actionable
+      ? { after: html`
           ${btn("Sign-ins", { href: at, size: "sm", variant: "ghost" })}
           ${a.verified
             ? null
@@ -111,22 +102,14 @@ function row(a: AccountRow, sole: readonly string[]): Html {
                 ${btn("Verify email", { type: "submit", size: "sm" })}
               </form>`}
           ${a.suspendedAt === null
-            ? confirmAction({
-                action: `${at}/suspend`,
-                verb: "Suspend",
-                size: "sm",
-              })
+            ? confirmAction({ action: `${at}/suspend`, verb: "Suspend", size: "sm" })
             : html`<form method="post" action="${at}/unsuspend">
                 ${btn("Unsuspend", { type: "submit", size: "sm" })}
               </form>`}
-          ${confirmAction({
-            action: `${at}/remove`,
-            verb: "Remove",
-            size: "sm",
-          })}
-        </div>`
-      : null}
-  </li>`;
+          ${confirmAction({ action: `${at}/remove`, verb: "Remove", size: "sm" })}
+        ` }
+      : {}),
+  });
 }
 
 // GET /settings/accounts
@@ -149,14 +132,14 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
   const mail = timePhase(ctx.request, "mail", () => mailConfigured(ctx.app));
   const noMail = mail
     ? null
-    : card(
-        html`<p>
-          Mail is not configured, so newcomers cannot verify their email
-          themselves. Verify them here, or set <code>MAIL_SMTP_URL</code> and
-          <code>MAIL_FROM</code> under <a href="/settings/secrets">Secrets</a>.
-        </p>`,
-        { tone: "attn" },
-      );
+    : html`<section class="settings-block" id="no-mail">
+        <h2>Mail is not configured</h2>
+        <p>
+          Newcomers cannot verify their email themselves. Verify them here, or
+          set <code>MAIL_SMTP_URL</code> and <code>MAIL_FROM</code> under
+          <a href="/settings/secrets">Secrets</a>.
+        </p>
+      </section>`;
   // An organization every owner of which is suspended or removed stays as
   // it is for its members; only the forge's owner can mend it.
   const orphans = timePhase(ctx.request, "orphans", () =>
@@ -165,8 +148,9 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
   const ownerless =
     orphans.length === 0
       ? null
-      : card(
-          html`<p>
+      : html`<section class="settings-block" id="ownerless">
+          <h2>No active owner</h2>
+          <p>
             ${orphans.map(
               (o, i) => html`${i > 0 ? ", " : ""}${userLink(o.username)}`,
             )}
@@ -178,18 +162,17 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
                     >${o.username}'s Owners</a
                   >`,
             )}.
-          </p>`,
-          { tone: "attn" },
-        );
+          </p>
+        </section>`;
   const reach = timePhase(ctx.request, "edge-only", () => signinReach(ctx.app.db));
   const stranded = reach.stranded;
   const edgeOnly =
     stranded.length === 0
-      ? card(
-          html`<p id="signin-reach">All ${reach.total} accounts can sign in without the platform edge.</p>`,
-        )
-      : card(
-          html`<p id="signin-reach">${reach.own} of ${reach.total} accounts can sign in without the platform edge.</p>
+      ? html`<section class="settings-block">
+          <p id="signin-reach">All ${reach.total} accounts can sign in without the platform edge.</p>
+        </section>`
+      : html`<section class="settings-block">
+          <h2 id="signin-reach">${reach.own} of ${reach.total} accounts can sign in without the platform edge.</h2>
           <p>
             ${stranded.length === 1 ? "This account signs" : "These accounts sign"}
             in only through the platform edge, so switching
@@ -202,9 +185,8 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
                   ? " (admin)"
                   : ""}`,
             )}.
-          </p>`,
-          { tone: "attn" },
-        );
+          </p>
+        </section>`;
   const sole = timePhase(ctx.request, "owned", () =>
     people.map((a) => {
       const u = getUserByName(ctx.app.db, a.username);
@@ -216,21 +198,13 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
   const rendering = performance.now();
   const response = shell(
     ctx,
-    html`${notice ?? null}${ownerless}${edgeOnly}${noMail}${card(
-      people.length === 0
-        ? empty({ icon: "users", title: "Nobody has joined yet." })
-        : html`<ul class="rows">
-            ${people.map((a, i) => row(a, sole[i] ?? []))}
-          </ul>`,
-      {
-        head: html`<h2>Who is on this forge</h2>
-          <p class="muted">
-            Newest first. You hear of each new account on your phone, if you set
-            a notify address. Suspending stops an account's sign-in and
-            everything its repositories run; removing deletes what it owns.
-          </p>`,
-      },
-    )}`,
+    html`${notice ?? null}${ownerless}${edgeOnly}${noMail}<section class="settings-block" id="accounts">
+      <h2>Who is on this forge</h2>
+      <p class="muted">Newest first.</p>
+      <ul class="list setting-list" id="accounts-list">
+        ${people.map((a, i) => personRow(a, sole[i] ?? []))}
+      </ul>
+    </section>`,
     status,
   );
   notePhase(ctx.request, "render", performance.now() - rendering);
@@ -244,8 +218,9 @@ const ownersTeam = (org: string): string =>
 /** Before suspending the last active owner of an organization, say so once. */
 function confirmSuspend(username: string, orgs: readonly string[]): Html {
   const at = `/settings/accounts/${encodeURIComponent(username)}`;
-  return card(
-    html`<p>
+  return html`<section class="settings-block" id="confirm-suspend">
+      <h2>Suspend the only active owner?</h2>
+      <p>
         <strong>${username}</strong> is the only active owner of
         ${orgs.join(", ")}. Suspended, nobody can administer
         ${orgs.length === 1 ? "it" : "them"} until they are unsuspended or
@@ -263,15 +238,15 @@ function confirmSuspend(username: string, orgs: readonly string[]): Html {
           ? null
           : btn("Add an owner first", { href: ownersTeam(orgs[0]), size: "sm" })}
         ${btn("Keep them", { href: "/settings/accounts", size: "sm", variant: "ghost" })}
-      </form>`,
-    { tone: "attn" },
-  );
+      </form>
+    </section>`;
 }
 
 /** A removal refused for a sole-owned organization: the way through, once. */
 function refuseRemove(username: string): Html {
-  return card(
-    html`<p>
+  return html`<section class="settings-block" id="refuse-remove">
+      <h2>Not removed</h2>
+      <p>
         <strong>${username}</strong> is the only owner of an organization
         (named in their row). Make someone else an owner first, or remove the
         organization too after seeing everything that would go. Nothing was
@@ -283,9 +258,8 @@ function refuseRemove(username: string): Html {
           size: "sm",
           variant: "danger",
         })}
-      </div>`,
-    { tone: "attn" },
-  );
+      </div>
+    </section>`;
 }
 
 // GET /settings/accounts/:username — where one person is signed in
@@ -441,8 +415,9 @@ export function retirePage(ctx: Ctx): Response {
     );
   return shell(
     ctx,
-    card(
-      html`<p>
+    html`<section class="settings-block" id="retire">
+        <h2>Remove ${username}</h2>
+        <p>
           ${orgs.length === 0 && own.length === 0
             ? html`Removing <strong>${username}</strong> removes only the account.`
             : html`Removing <strong>${username}</strong> also removes
@@ -460,36 +435,24 @@ export function retirePage(ctx: Ctx): Response {
         ${orgs.length === 0 && own.length === 0
           ? html`<p class="muted">They own no organization alone.</p>`
           : null}
-        <ul class="rows">
+        <ul class="list setting-list">
           ${own.length === 0
             ? null
-            : html`<li class="row">
-                <div class="row-main">
-                  <strong>${username}</strong>
-                  <div class="row-meta">${repoList(own)}</div>
-                </div>
-              </li>`}
-          ${orgs.map(
-            (o) => html`<li class="row">
-              <div class="row-main">
-                <strong>${o.org}</strong>
-                <div class="row-meta">
-                  ${o.repos.length === 0 ? "no repositories" : repoList(o.repos)}
-                </div>
-                <div class="row-meta">
-                  teams: ${o.teams.length === 0 ? "none" : o.teams.join(", ")}
-                </div>
-              </div>
-            </li>`,
+            : row({ title: username, meta: html`${repoList(own)}` })}
+          ${orgs.map((o) =>
+            row({
+              title: o.org,
+              meta: html`${o.repos.length === 0 ? "no repositories" : repoList(o.repos)}
+                · teams: ${o.teams.length === 0 ? "none" : o.teams.join(", ")}`,
+            }),
           )}
         </ul>
         <form method="post" action="${at}/retire" class="form-actions">
           <input type="hidden" name="confirm" value="1" />
           ${btn("Remove everything", { type: "submit", size: "sm", variant: "danger" })}
           ${btn("Keep them", { href: "/settings/accounts", size: "sm", variant: "ghost" })}
-        </form>`,
-      { tone: "attn" },
-    ),
+        </form>
+      </section>`,
   );
 }
 
@@ -519,28 +482,26 @@ export async function retireAct(ctx: Ctx): Promise<Response> {
   if (failed !== null)
     return shell(
       ctx,
-      card(
-        html`<p>
-            <strong>${failed}</strong> would not go, so the removal stopped
-            there. ${removed.length === 0 ? "Nothing was removed yet." : "Removed so far:"}
+      html`<section class="settings-block">
+          <h2>Removal stopped</h2>
+          <p>
+            <strong>${failed}</strong> would not go. ${removed.length === 0 ? "Nothing was removed yet." : "Removed so far:"}
             Trying again finishes the job.
           </p>
           ${removed.length === 0 ? null : list}
           <form method="post" action="/settings/accounts/${encodeURIComponent(username)}/retire" class="form-actions">
             <input type="hidden" name="confirm" value="1" />
             ${btn("Try again", { type: "submit", size: "sm", variant: "danger" })} ${back}
-          </form>`,
-        { tone: "danger" },
-      ),
+          </form>
+        </section>`,
       500,
     );
   return shell(
     ctx,
-    card(
-      html`<p>
-          ${removed.length === 0 ? `${username} was already removed.` : "Removed:"}
-        </p>
-        ${removed.length === 0 ? null : list} ${back}`,
-    ),
+    html`<section class="settings-block">
+        <h2>${removed.length === 0 ? `${username} was already removed.` : "Removed"}</h2>
+        ${removed.length === 0 ? null : list}
+        <p>${back}</p>
+      </section>`,
   );
 }

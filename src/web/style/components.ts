@@ -473,6 +473,9 @@ a.row:hover .row-title { color: var(--accent); }
 .list > li.has-after { display: flex; align-items: center; flex-wrap: wrap; }
 .list > li.has-after > .row, .list > li.has-after > details { flex: 1 1 0; min-width: 0; }
 .row-after { flex: none; padding: 0 14px 0 0; }
+/* A settings row's acts (Accounts): always visible, wrapping, a full line under 640px. */
+.setting-list > li.has-after > .row-after { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+@media (max-width: 640px) { .setting-list > li.has-after > .row-after { flex-basis: 100%; justify-content: flex-start; padding: 0 14px 10px; } }
 .list > li.has-after > .row-children { flex-basis: 100%; }
 .archived-list .row-title, .archived-list .row-meta { white-space: normal; overflow-wrap: anywhere; }
 @media (max-width: 640px) {
