@@ -179,7 +179,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
       { headers: { authorization: `Bearer ${token}` } },
     ).then((r) => r.text());
     expect(page).toContain("Ask the crew to fix it");
-    expect(page).toMatch(/id="crew-proposal"[^>]*>\s*<div\s+class="card bare"/);
+    expect(page).toMatch(/id="crew-proposal" data-live="[^"]*"><section>\s*<h2>The crew<\/h2>/);
+    expect(page).not.toContain('class="card');
     expect(page).toContain("<h2>The crew</h2>");
     expect(page).toContain(`pulls/${pull.number}/resolve/propose`);
     const stranger = await fetch(

@@ -166,8 +166,8 @@ describe("the Resolve page", () => {
 
   test("conflict blocks are headings over rows, not boxed cards", async () => {
     const page = await (await fetch(`${base}/dev/app/pulls/1/resolve`, { headers })).text();
-    expect(page).toMatch(/<div\s+class="card bare rs-card"/);
-    expect(page).not.toMatch(/<div\s+class="card rs-card"/);
+    expect(page).toContain('<section class="rs-card">');
+    expect(page).not.toContain('class="card');
     expect(page).toContain("<h2>Block 1 of 2</h2>");
     expect(page).toContain('name="b0"');
   });
@@ -191,10 +191,9 @@ describe("the Resolve page", () => {
       expect(page).not.toContain(w);
   });
 
-  test("the empty states and the crew card are bare, in plain words", async () => {
+  test("the empty states are plain text, no card, in plain words", async () => {
     const none = await (await fetch(`${base}/dev/app/pulls/1/resolve?file=nope.txt`, { headers })).text();
-    expect(none).toMatch(/<div\s+class="card bare"/);
-    expect(none).not.toMatch(/<div\s+class="card"/);
+    expect(none).not.toContain('class="card');
     expect(none).toContain("No conflict in that file.");
     expect(none).not.toContain("Nothing to resolve");
   });

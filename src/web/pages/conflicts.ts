@@ -33,7 +33,7 @@ import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { btn, card } from "../ui.ts";
+import { btn } from "../ui.ts";
 import { changeHead, changeTabs, pullContext } from "../studio/change.ts";
 
 /** More blocks or longer words than this are not a hand's work. */
@@ -126,7 +126,7 @@ async function proposalCard(
     </form>`);
   if (parts.length === 0) return html``;
   // A live region: the run's events re-read the card, so nobody reloads.
-  return html`<div id="crew-proposal" data-live="run.queued,run.started,run.finished,pull.*,comment.*">${card(html`${parts}`, { extra: "bare", head: html`<h2>The crew</h2>` })}</div>`;
+  return html`<div id="crew-proposal" data-live="run.queued,run.started,run.finished,pull.*,comment.*"><section><h2>The crew</h2>${parts}</section></div>`;
 }
 
 const CSS = `
@@ -173,13 +173,10 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
       palette: repoPalette(ctx, repo),
       body: html`${repoHeader(ctx, repo, "pulls", { compact: true, ownTitle: true })}
         ${changeHead(ctx, repo, pull)}${changeTabs(repo, pull, "files")}
-        ${card(
-          html`<p>${unknown && pull.state === "open"
+        <p class="mt">${unknown && pull.state === "open"
               ? "No conflict in that file."
               : "This pull has no conflicts."}
-            <a href="${back}">Back to the files</a>.</p>`,
-          { extra: "bare" },
-        )}
+            <a href="${back}">Back to the files</a>.</p>
         ${crew}`,
     });
     notePhase(req, "render", performance.now() - rendering);
@@ -206,8 +203,8 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
         ><input type="radio" name="b${i}" value="${kind}" ${pick === kind ? html`checked` : ""} />${label}</label
       >`;
     const own = choices[i];
-    return card(
-      html`<div class="rs-sides">
+    return html`<section class="rs-card"><h2>Block ${i + 1} of ${total}</h2>
+        <div class="rs-sides">
           <div class="rs-side">
             <span class="rs-label small mono">${pull.baseBranch}</span>
             <pre>${block.ours}</pre>
@@ -224,12 +221,7 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
           ${tap("ours", `Keep ${pull.baseBranch}`)}${tap("theirs", `Keep ${pull.headBranch}`)}${tap("both", "Keep both")}${tap("text", "Write my own")}
         </div>
         <textarea class="rs-text" name="t${i}" rows="3" maxlength="${MAX_TEXT}"
-          aria-label="Your own words for block ${i + 1}">${own?.kind === "text" ? own.text : ""}</textarea>`,
-      {
-        extra: "bare rs-card",
-        head: html`<h2>Block ${i + 1} of ${total}</h2>`,
-      },
-    );
+          aria-label="Your own words for block ${i + 1}">${own?.kind === "text" ? own.text : ""}</textarea></section>`;
   });
 
   const body = html`${repoHeader(ctx, repo, "pulls", { compact: true, ownTitle: true })}
@@ -250,10 +242,8 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
       : ""}
     ${crew}
     ${total === 0
-      ? card(
-          html`<p>This file has no text to choose between. It may be deleted on
-            one side. Fix it in your own checkout.</p>`,
-        )
+      ? html`<p class="mt">This file has no text to choose between. It may be deleted on
+            one side. Fix it in your own checkout.</p>`
       : html`<form method="get" action="${here}">
           <input type="hidden" name="file" value="${file}" />
           <input type="hidden" name="head" value="${status.headOid}" />

@@ -18,4 +18,4 @@ The pull page's cards (merge box, review, commits, slices, run-this-code) are `.
 
 ## The conflict resolver (#9713)
 
-`/:owner/:name/pulls/:number/resolve`: each conflict block, the crew proposal and the empty states are `.card.bare` (#9588), a heading over rows on the one background. The two sides lose their hairline box; the taps keep theirs (a control). The ours/theirs/both/Mine taps, the text box and `#crew-proposal` are unchanged. No new class; `test/conflicts.test.ts` holds it.
+`/:owner/:name/pulls/:number/resolve`: each conflict block, the crew proposal and the empty states are a `<section>` with an `<h2>` over rows (no `card`), on the one background. The two sides lose their hairline box; the taps keep theirs (a control). The ours/theirs/both/Mine taps, the text box and `#crew-proposal` are unchanged. No new class; `test/conflicts.test.ts` holds it.
