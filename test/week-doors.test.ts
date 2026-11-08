@@ -291,6 +291,20 @@ describe("the week's doors", () => {
     expect(takenOf(forge.db, repo.id, retro.weekEnd).size).toBe(0);
   });
 
+  test("the page is plain sections: no card around a list or the polish share, figures in strong.num, the note said once", async () => {
+    const res = await fetch(`${base}/alice/plan/week`, { headers: { cookie: aliceCookie } });
+    const body = await res.text();
+    const main = body.slice(body.indexOf("<h1>The week</h1>"));
+    expect(main).not.toMatch(/class="[^"]*\bcard\b/);
+    expect(main).not.toContain('class="stat');
+    expect(main).not.toContain('class="mt"');
+    expect(main).toContain('<section class="settings-block"><h2>Polish share</h2>');
+    expect(main).not.toContain("Polish this week");
+    expect(main).toMatch(/<strong class="num">\d+<\/strong> shipped/);
+    expect(main.split("Nothing changes until you tap.").length - 1).toBe(1);
+    expect(main).toContain("Take it");
+  });
+
   test("POST /week: no cookie, another origin, a reader and an agent are refused", async () => {
     const same = { origin: base };
     expect((await post({ ...same })).status).not.toBe(200);

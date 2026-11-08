@@ -5,7 +5,7 @@
  * and nothing else on the page changes anything.
  */
 import { takeProposal } from "../../actions/week.ts";
-import { polishSpend, polishWords } from "../../crew/small_share.ts";
+import { polishSpend } from "../../crew/small_share.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { latestRetro, takenOf, type Line, type Retro } from "../../flow/retro.ts";
@@ -14,66 +14,74 @@ import { crumbsFor, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette, s
 import { backTo, field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashOrJson, page } from "../layout.ts";
-import { btn, card, meter, row, stat } from "../ui.ts";
+import { btn, meter, row } from "../ui.ts";
 
 const lines = (base: string, ls: readonly Line[], none: string): Html =>
   ls.length === 0
     ? html`<p class="muted">${none}</p>`
-    : card(
-        html`<ul class="list setting-list">${ls.map((l) =>
-          row({ href: `${base}/issues/${l.number}`, title: l.title, meta: html`#${String(l.number)} · ${l.why}` }),
-        )}</ul>`,
-        { pad: false },
-      );
+    : html`<ul class="list setting-list">${ls.map((l) =>
+        row({ href: `${base}/issues/${l.number}`, title: l.title, meta: html`#${String(l.number)} · ${l.why}` }),
+      )}</ul>`;
+
+/** A figure in the page's words, in the home page's type: `<strong class="num">`. */
+const N = (n: number): Html => html`<strong class="num">${String(n)}</strong>`;
+
+/** One section: the heading, then its words, on the spacing the settings pages use between sections. */
+const block = (heading: string, ...body: (Html | null)[]): Html =>
+  html`<section class="settings-block"><h2>${heading}</h2>${body}</section>`;
 
 function screen(base: string, retro: Retro, taken: ReadonlySet<number>, writer: boolean): Html {
   const p = retro.projected;
   const shipped = retro.shipped.length;
   const acc = retro.accuracy;
-  return html`<h2>What shipped</h2>
-    <p>${p === null
-      ? `${shipped} shipped. No projection was made for this week.`
-      : `${shipped} shipped against a projection of ${p.shipLow === p.shipHigh ? p.shipHigh : `${p.shipLow} to ${p.shipHigh}`} (${p.confidence} confidence).`}</p>
-    ${lines(base, retro.shipped, "Nothing shipped this week.")}
-    <h2>Estimate accuracy</h2>
-    <p>${acc.compared === 0
-      ? "No shipped issue had an estimate to compare."
-      : `${acc.inside} of ${acc.compared} shipped issues cost inside their estimated range.`}</p>
-    <h2>Cost most for least</h2>
-    ${lines(base, retro.costly, "Nothing open spent money this week.")}
-    <h2>Stuck</h2>
-    ${lines(base, retro.stuck, "Nothing is stuck.")}
-    <h2>Proposed changes</h2>
-    ${retro.proposals.length === 0
-      ? html`<p class="muted">Nothing to propose.</p>`
-      : html`<ul class="list setting-list">${retro.proposals.map((pr, idx) =>
-          row({
-            title: html`${pr.words}`,
-            meta: html`${taken.has(idx) ? "Taken." : writer ? "Nothing changes until you tap." : "Only someone who writes here can take it."}`,
-            ...(taken.has(idx) || !writer
-              ? {}
-              : {
-                  after: html`<form method="post" action="${base}/week">
-                    <input type="hidden" name="week_end" value="${retro.weekEnd}" />
-                    <input type="hidden" name="idx" value="${String(idx)}" />
-                    ${btn("Take it", { size: "sm" })}
-                  </form>`,
-                }),
-          }),
-        )}</ul>`}`;
+  const proposals = retro.proposals;
+  return html`${block(
+      "What shipped",
+      html`<p>${p === null
+        ? html`${N(shipped)} shipped. No projection was made for this week.`
+        : html`${N(shipped)} shipped against a projection of ${p.shipLow === p.shipHigh ? N(p.shipHigh) : html`${N(p.shipLow)} to ${N(p.shipHigh)}`} <span class="muted">(${p.confidence} confidence)</span>.`}</p>`,
+      lines(base, retro.shipped, "Nothing shipped this week."),
+    )}
+    ${block(
+      "Estimate accuracy",
+      html`<p>${acc.compared === 0
+        ? "No shipped issue had an estimate to compare."
+        : html`${N(acc.inside)} of ${N(acc.compared)} shipped issues cost inside their estimated range.`}</p>`,
+    )}
+    ${block("Cost most for least", lines(base, retro.costly, "Nothing open spent money this week."))}
+    ${block("Stuck", lines(base, retro.stuck, "Nothing is stuck."))}
+    ${block(
+      "Proposed changes",
+      proposals.length === 0
+        ? html`<p class="muted">Nothing to propose.</p>`
+        : html`<p class="muted">${writer ? "Nothing changes until you tap." : "Only someone who writes here can take it."}</p>
+          <ul class="list setting-list">${proposals.map((pr, idx) =>
+            row({
+              title: html`${pr.words}`,
+              ...(taken.has(idx) ? { meta: html`Taken.` } : {}),
+              ...(taken.has(idx) || !writer
+                ? {}
+                : {
+                    after: html`<form method="post" action="${base}/week">
+                      <input type="hidden" name="week_end" value="${retro.weekEnd}" />
+                      <input type="hidden" name="idx" value="${String(idx)}" />
+                      ${btn("Take it", { size: "sm" })}
+                    </form>`,
+                  }),
+            }),
+          )}</ul>`,
+    )}`;
 }
 
-/** Polish spent against its share: a labelled fact, with the words the terminal and the tool print under it. */
-function polishCard(ctx: Ctx, repo: Repo): Html {
+/** Polish spent against its share, with the facts the terminal and the tool print. */
+function polishBlock(ctx: Ctx, repo: Repo): Html {
   const p = polishSpend(ctx.app.db, repo.id, repo.polishShare, new Date());
-  return card(
-    html`<div data-polish>${stat({
-      label: "Polish share",
-      value: `${p.percent.toFixed(1)}% of ${p.share}%`,
-      title: "Agent spend in the last seven days on issues labelled polish or in the small-fixes lane, against all agent spend",
-      note: html`${polishWords(p)}`,
-    })}${meter(p.share === 0 ? 100 : (p.percent / p.share) * 100, `polish has used ${p.percent.toFixed(1)}% of the week's spend; its share is ${p.share}%`, p.under ? undefined : "attn")}</div>`,
-  );
+  const usd = (n: number) => `$${n.toFixed(2)}`;
+  return html`<div data-polish>${block(
+    "Polish share",
+    html`<p title="Agent spend in the last seven days on issues labelled polish or in the small-fixes lane, against all agent spend"><strong class="num">${p.percent.toFixed(1)}% of ${String(p.share)}%</strong> <span class="muted">(${usd(p.polishUsd)} of ${usd(p.totalUsd)}): ${p.under ? "ready polish may start" : "no polish starts until it is under"}</span></p>`,
+    meter(p.share === 0 ? 100 : (p.percent / p.share) * 100, `polish has used ${p.percent.toFixed(1)}% of the week's spend; its share is ${p.share}%`, p.under ? undefined : "attn"),
+  )}</div>`;
 }
 
 export function weekPage(ctx: Ctx): Response {
@@ -91,8 +99,7 @@ export function weekPage(ctx: Ctx): Response {
         ? "The forge writes this when the weekly window closes. None has closed yet."
         : `Written when the window ended ${retro.weekEnd.slice(0, 10)}, once, and never edited.`} <a href="${base}/next">Next up</a></p>
     </div>
-    <h2>Polish this week</h2>
-    ${polishCard(ctx, repo)}
+    ${polishBlock(ctx, repo)}
     ${retro === undefined ? null : screen(base, retro, takenOf(ctx.app.db, repo.id, retro.weekEnd), writer)}`;
   const response = page({ ctx, title: `The week · ${repo.name}`, crumbs: crumbsFor(repo), palette: repoPalette(ctx, repo), body });
   notePhase(ctx.request, "render", performance.now() - rendering);

@@ -201,6 +201,7 @@ test("the week page and the week tool show polish spent against the share", asyn
   spend(feature, 9, new Date(now.getTime() - 86_400_000));
   spend(polish, 1, new Date(now.getTime() - 86_400_000));
   const page = await (await fetch(`${servers.url}/alice/notes/week`, { headers: { cookie } })).text();
-  expect(page).toContain("polish 10.0% of 10% this week ($1.00 of $10.00)");
+  expect(page).toContain("10.0% of 10%");
+  expect(page).toContain("($1.00 of $10.00)");
   expect(page).toContain("no polish starts until it is under");
 });
