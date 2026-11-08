@@ -223,7 +223,7 @@ import {
 } from "../actions/crew.ts";
 import { assignIssue, editIssue, TAKEN_UP } from "../actions/issues.ts";
 import { requireReader } from "../actions/access.ts";
-import { mayReadRuns, runsViewKey, steerRepoRun } from "../actions/runs.ts";
+import { looksOfCheck, mayReadRuns, runsViewKey, steerRepoRun } from "../actions/runs.ts";
 import { openPlan, parsePlan, proposePlan } from "../actions/plan.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { mapHeldFor } from "../crew/held.ts";
@@ -1877,7 +1877,17 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!found.ok) return notFound();
     return timePhase(ctx.request, "render", () =>
-      json(found.value, 200, { "cache-control": "no-store" }),
+      json(
+        {
+          ...found.value,
+          looks: looksOfCheck(ctx.app, ctx.auth.user, repo, {
+            id: found.value.runId ?? "",
+            commitOid: found.value.checkedCommit,
+          }),
+        },
+        200,
+        { "cache-control": "no-store" },
+      ),
     );
   });
 
@@ -4033,6 +4043,9 @@ export function apiRoutes(router: Router<Handler>): void {
           state: latest?.state ?? "none",
           required: found.repo.requireChecks,
           run: latest ?? null,
+          looks: latest
+            ? looksOfCheck(ctx.app, ctx.auth.user, found.repo, { id: latest.id, commitOid: latest.commitOid })
+            : [],
           runs,
         }),
       );

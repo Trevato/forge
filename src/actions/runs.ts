@@ -9,6 +9,8 @@
  */
 
 import { commitVerdicts, isCommitId, releaseCheck, type CommitCheck } from "../checks/commit_check.ts";
+import { readLooks } from "../checks/looks.ts";
+import { vitalsRows } from "../checks/summary.ts";
 import { hasCommit, isAncestor } from "../git/local.ts";
 import { repoDir } from "../git/repos.ts";
 import { mayViewId } from "../core/sealed.ts";
@@ -239,6 +241,28 @@ export async function checkOfCommit(
       contains: (descendant) => isAncestor(dir, oid, descendant),
     }),
   );
+}
+
+/** One look of a check as the API words it: how many screens tall, and whether a phone look scrolls sideways. */
+export interface LookFigures {
+  readonly look: string;
+  readonly screens: string;
+  readonly sideways: boolean;
+}
+
+/**
+ * The looks of the run that checked a commit, from the same file the run page
+ * reads; `[]` for someone who may not read runs or when none were filed.
+ */
+export function looksOfCheck(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  run: { readonly id: string; readonly commitOid: string },
+): LookFigures[] {
+  if (!mayReadRuns(app, actor, repo)) return [];
+  const looks = readLooks(app.config.dataDir, { id: run.id, repoId: repo.id, commitOid: run.commitOid });
+  return vitalsRows(looks).map((g) => ({ look: g.look, screens: g.screens, sideways: g.sideways }));
 }
 
 /** The own green or red verdicts of a page of commits, for whoever may read the runs; empty otherwise. */
