@@ -58,10 +58,8 @@ import {
   avatar,
   badge,
   btn,
-  card,
   confirmAction,
-  empty,
-  listCard,
+  dot,
   pager,
   repoCounts,
   row,
@@ -71,6 +69,19 @@ import {
 } from "../ui.ts";
 
 const PER_PAGE = 20;
+
+/** Rows as a plain list under a heading: the page's lists are sections, never boxes. */
+function plainList(rows: Html[]): Html {
+  return html`<ul class="list setting-list">
+    ${rows}
+  </ul>`;
+}
+
+/** An empty state as one muted line (a title, and a note when there is one). */
+function nothing(title: string, note?: string, action?: Html): Html {
+  return html`<p class="muted">${title}${note ? html`. ${note}` : null}</p>
+    ${action ? html`<p class="form-actions">${action}</p>` : null}`;
+}
 
 // ---- profile ----
 
@@ -126,53 +137,46 @@ function repoSection(
       </form>
     </div>
     ${shown.length === 0
-      ? empty({
-          icon: "repo",
-          title:
-            query !== ""
-              ? "No matches"
-              : anyApps
-                ? "No other repositories"
-                : "No repositories yet",
-          note:
-            query !== ""
-              ? "Try a different search."
-              : anyApps
-                ? `Every repository ${owner.username} has is already listed as an app above.`
-                : `${owner.username} has not published anything you can see.`,
-          ...(isSelf && query === ""
-            ? {
-                action: btn("New repository", {
-                  href: `/new?owner=${owner.username}`,
-                  variant: "primary",
-                }),
-              }
-            : {}),
-        })
-      : listCard(
-          shown.map((repo) =>
-            row({
-              href: `/${repo.ownerName}/${repo.name}`,
-              lead: lead(repo),
-              title: repo.name,
-              nav: true,
-              ...(repo.description !== ""
-                ? { meta: html`${repo.description}` }
-                : {}),
-              trail: html`${repoCounts({
-                openIssues: repo.counts?.openIssues,
-                openPulls: repo.counts?.openPulls,
-              })}${repo.visibility === "private"
-                ? badge("Private", { icon: "lock", variant: "secondary" })
-                : badge("Public", { variant: "secondary" })}`,
-            }),
-          ),
-          {
-            head: html`${icon("repo")}
-              <h2>${anyApps ? "Other repositories" : "Repositories"}</h2>`,
-            extra: "bare",
-          },
-        )}
+      ? nothing(
+          query !== ""
+            ? "No matches"
+            : anyApps
+              ? "No other repositories"
+              : "No repositories yet",
+          query !== ""
+            ? "Try a different search."
+            : anyApps
+              ? `Every repository ${owner.username} has is already listed as an app above.`
+              : `${owner.username} has not published anything you can see.`,
+          isSelf && query === ""
+            ? btn("New repository", {
+                href: `/new?owner=${owner.username}`,
+                variant: "primary",
+              })
+            : undefined,
+        )
+      : html`<section class="settings-block">
+          <h2>${anyApps ? "Other repositories" : "Repositories"}</h2>
+          ${plainList(
+            shown.map((repo) =>
+              row({
+                href: `/${repo.ownerName}/${repo.name}`,
+                lead: lead(repo),
+                title: repo.name,
+                nav: true,
+                ...(repo.description !== ""
+                  ? { meta: html`${repo.description}` }
+                  : {}),
+                trail: html`${repoCounts({
+                  openIssues: repo.counts?.openIssues,
+                  openPulls: repo.counts?.openPulls,
+                })}${repo.visibility === "private"
+                  ? badge("Private", { icon: "lock", variant: "secondary" })
+                  : badge("Public", { variant: "secondary" })}`,
+              }),
+            ),
+          )}
+        </section>`}
     ${pager(
       repos.length > PER_PAGE && last
         ? { next: `/${owner.username}?${nextParams.toString()}` }
@@ -207,30 +211,25 @@ async function appsSection(
     return {
       count: 0,
       html: when(isSelf, () =>
-        empty({
-          icon: "rocket",
-          title: "No apps yet",
-          note: "Make one, tell the crew what it is, and watch it come up.",
-          action: btn("New app", { href: newAppHref, variant: "primary" }),
-        }),
+        nothing(
+          "No apps yet",
+          "Make one, tell the crew what it is, and watch it come up.",
+          btn("New app", { href: newAppHref, variant: "primary" }),
+        ),
       ),
     };
 
   const rows = await shelfRows(ctx, appRepos);
-  return { count: appRepos.length, html: listCard(rows, {
-    extra: "bare",
-    head: html`${icon("rocket")}
+  return {
+    count: appRepos.length,
+    html: html`<section class="settings-block">
       <h2>Apps</h2>
-      ${when(
-        isSelf,
-        () =>
-          html`<span class="spacer"></span>${btn("New app", {
-              href: newAppHref,
-              size: "sm",
-              icon: "plus",
-            })}`,
-      )}`,
-  }) };
+      ${plainList(rows)}
+      ${when(isSelf, () =>
+        html`<p class="form-actions">${btn("New app", { href: newAppHref, size: "sm", icon: "plus" })}</p>`,
+      )}
+    </section>`,
+  };
 }
 
 /** Everyone on any of the org's teams, once each. */
@@ -252,42 +251,47 @@ function memberCount(n: number): Html {
 function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
   const teams = listTeams(ctx.app.db, org.id);
   const members = orgMembers(ctx, teams);
-  return html`<h2 class="mt">Members</h2>
-    ${members.length === 0
-      ? empty({ icon: "users", title: "No members yet" })
-      : listCard(
-          members.map((m) =>
-            row({
-              href: `/${m.username}`,
-              lead: avatar(m.username),
-              title: m.displayName || m.username,
-              nav: true,
-              ...(m.displayName ? { meta: html`@${m.username}` } : {}),
-            }),
-          ),
-          { extra: "bare" },
-        )}
-
-    <h2 class="mt" id="teams">Teams</h2>
-    ${listCard(
-      teams.map((t) =>
-        row({
-          lead: icon("users"),
-          title: t.name,
-          meta: memberCount(listTeamMembers(ctx.app.db, t.id).length),
-          trail: html`${badge(t.permission)}${when(canManage, () =>
-            btn("Manage", {
-              href: `/${org.username}/-/teams/${t.id}`,
-              size: "sm",
-            }),
-          )}`,
-        }),
-      ),
-      { extra: "bare" },
-    )}
-    ${when(canManage, () =>
-      card(
-        html`<form method="post" action="/${org.username}/-/teams">
+  return html`<section class="settings-block">
+      <h2>Members</h2>
+      ${members.length === 0
+        ? nothing("No members yet")
+        : plainList(
+            members.map((m) =>
+              row({
+                href: `/${m.username}`,
+                lead: avatar(m.username),
+                title: m.displayName || m.username,
+                nav: true,
+                ...(m.displayName ? { meta: html`@${m.username}` } : {}),
+              }),
+            ),
+          )}
+    </section>
+    <section class="settings-block">
+      <h2 id="teams">Teams</h2>
+      ${teams.length === 0
+        ? nothing("No teams yet")
+        : plainList(
+        teams.map((t) =>
+          row({
+            lead: icon("users"),
+            title: t.name,
+            meta: memberCount(listTeamMembers(ctx.app.db, t.id).length),
+            trail: html`${badge(t.permission)}${when(canManage, () =>
+              btn("Manage", {
+                href: `/${org.username}/-/teams/${t.id}`,
+                size: "sm",
+              }),
+            )}`,
+          }),
+        ),
+      )}
+    </section>
+    ${when(
+      canManage,
+      () => html`<section class="settings-block">
+        <h2>New team</h2>
+        <form method="post" action="/${org.username}/-/teams">
           ${uiField({
             label: "Team name",
             name: "name",
@@ -306,9 +310,8 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
           <div class="form-actions">
             ${btn("Create team", { variant: "primary" })}
           </div>
-        </form>`,
-        { head: html`<h3>New team</h3>`, extra: "bare" },
-      ),
+        </form>
+      </section>`,
     )}`;
 }
 
@@ -359,15 +362,12 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
       )}
     </div>
     ${ownerless
-      ? card(
-          html`<p>
-            Nobody can administer this organization right now: everyone on
-            its Owners team is suspended or removed. What it holds stays as
-            it is; the forge's owner can unsuspend an owner or
-            <a href="/${owner.username}/-/teams/${OWNERS_TEAM}">add one</a>.
-          </p>`,
-          { tone: "attn" },
-        )
+      ? html`<p class="small">
+          ${dot("attn")} Nobody can administer this organization right now:
+          everyone on its Owners team is suspended or removed. What it holds
+          stays as it is; the forge's owner can unsuspend an owner or
+          <a href="/${owner.username}/-/teams/${OWNERS_TEAM}">add one</a>.
+        </p>`
       : null}
     ${apps.html}
     ${repos}

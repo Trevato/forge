@@ -385,8 +385,8 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     ).text();
     expect(occurrences(studio, 'href="/vega/anvil"')).toBe(1);
     expect(occurrences(studio, 'href="/vega/ledger"')).toBe(1);
-    expect(studio).toContain('<h2 class="mt">Members</h2>');
-    expect(studio).toContain('<h2 class="mt" id="teams">Teams</h2>');
+    expect(studio).toContain('<h2>Members</h2>');
+    expect(studio).toContain('<h2 id="teams">Teams</h2>');
 
     const dev = await (
       await fetch(`${base}/vega`, {
