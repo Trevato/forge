@@ -71,3 +71,15 @@ See `docs/features/absorb-review.md` for the findings of #9441.
 ## Not done yet
 
 The forge does not yet fire a feature's schedule, show its feed items, serve its MCP tools inside the forge's `/mcp`, keep `secret` settings or show its health on `/system`.
+
+## Findings
+
+Absorb was built by Ben (benjivers). The review of #9441 found:
+
+- **Security:** a push to the production branch can relabel an entry in every reader's menu (#9541).
+- **Without the crew:** it works with the crew off and no model credential, as `test/apps-features.test.ts` shows (#9441).
+- **Experience:** an admin has little to find Absorb by and no preview before it acts (#9544).
+- **Product:** a pack cannot say "absorb this app", so each needs a click-through (#9545).
+- **Speed:** the Features list reads git for every app on every request (#9543).
+
+This section is ready for the owner to share with Ben.
