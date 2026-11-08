@@ -69,7 +69,7 @@ export function trustedScreen(f: Session, ctx: Ctx): Screen {
           promptScreen(ctx, screen, {
             title: "Trust a source",
             label: "account forge until, e.g. jmoran git.open-platform.sh 2026-12-02",
-            hint: "account, forge, end date",
+            hint: "account (child:name for a downstream forge), forge, end date",
             onSubmit: (raw) => {
               const [account = "", host = "", until = ""] = raw.trim().split(/\s+/);
               const made = addTrust(f.app, user, { account, host, until });

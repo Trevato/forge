@@ -11,6 +11,7 @@ import type { Database } from "bun:sqlite";
 import { isSafeRef } from "../git/guard.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { createToken } from "./tokens.ts";
+import { foldsIn } from "./trusted_sources.ts";
 
 export interface Proposal {
   readonly tokenId: string;
@@ -96,8 +97,9 @@ export function proposalOf(db: Database, tokenId: string): Proposal | undefined 
 }
 
 /** The one line every surface says of a proposed pull. */
-export const proposedByText = (p: { child: string; origin: string }): string =>
-  `proposed by child ${p.child} from ${p.origin}`;
+export const proposedByText = (p: { child: string; origin: string; folds?: boolean }): string =>
+  `proposed by child ${p.child} from ${p.origin}` +
+  (p.folds === true ? `, trusted as child:${p.child} (trusted sources), so its checks run` : "");
 
 export function recordPullProposal(
   db: Database,
@@ -112,14 +114,13 @@ export function recordPullProposal(
 export function pullProposalOf(
   db: Database,
   issueId: string,
-): { child: string; origin: string } | undefined {
-  return (
-    db
-      .query<{ child: string; origin: string }, [string]>(
-        "SELECT child, origin FROM pull_proposal WHERE issue_id = ?1",
-      )
-      .get(issueId) ?? undefined
-  );
+): { child: string; origin: string; folds: boolean } | undefined {
+  const row = db
+    .query<{ child: string; origin: string }, [string]>(
+      "SELECT child, origin FROM pull_proposal WHERE issue_id = ?1",
+    )
+    .get(issueId);
+  return row === null ? undefined : { ...row, folds: foldsIn(db, issueId) };
 }
 
 export interface ProposalTokenInfo {

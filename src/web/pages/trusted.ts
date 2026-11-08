@@ -88,7 +88,8 @@ export function trustedPage(ctx: Ctx): Response {
     )}
     ${card(
       html`<form method="post" action="/settings/trusted" class="stack">
-        <label>Account <input class="input" name="account" required maxlength="64" autocomplete="off" /></label>
+        <label>Account <input class="input" name="account" required maxlength="64" autocomplete="off" aria-describedby="acct-hint" /></label>
+        <p id="acct-hint" class="muted small">For a downstream forge's proposals write <code>child:name</code>, the name its proposal token was minted for.</p>
         <label>Forge <input class="input" name="host" required maxlength="260" placeholder="git.open-platform.sh" autocomplete="off" /></label>
         <label>Until <input class="input" name="until" type="date" required /></label>
         ${btn("Trust", { icon: "check" })}

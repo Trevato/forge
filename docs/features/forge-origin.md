@@ -43,3 +43,21 @@ The preview of the pull was not exercised: the write-through is proven by `test/
 `/settings/origins/:id/repos` and `GET /api/v1/user/origins/:id/repos?group=yours|shared|public&q=&cursor=` show three groups, read live, searched and paged: repositories the account owns, ones it was let into, and what anyone may read on that forge. Owning nothing there is not an empty list. A forge is read by `GET /api/v1/repos` on every release, so "shared" means another account's private repository or anything in an organization the account belongs to; a public repository one person was given write on reads as public, since a forge's JSON carries no rights. Forgejo and Gitea use `/repos/search`. GitHub sorts the account's own list into yours and shared and has no public group.
 
 Any of them can be mirrored here, and a mirror follows the one there. Sending work back from a repository someone else owns takes a token that can write there: `contribute` forks it there and opens a pull, and a read-only connection is refused in words. Test: `test/origin-repo-groups.test.ts`.
+
+## A downstream forge as a peer (#9451)
+
+A child forge's proposal (`child/<name>/…` head, proposal token) used to wait for a person to approve the exact head even when that forge was trusted. Now a writer trusts the pair *(forge, `child:<name>`)* in the same trusted-sources list as an origin's account, on the same page (`/settings/trusted`) and in the same terminal screen: write `child:kid` as the account. The forge is the host of the origin the proposal token was minted for; the name is the one the writer chose when minting it. Its pulls then run their checks and fold in like a trusted origin's (`foldsIn`, `src/core/trusted_sources.ts`).
+
+**Why the two namespaces cannot cross.** Origin accounts are cleaned by `cleanAccount`, which refuses `:`, and `sourceOfUrl` and mirrored authors use it, so no origin account can ever be spelled `child:kid`. A child is looked up only as `child:<name>`. Trusting person `kid` on a host does not trust a child `kid` there, nor the reverse (test: "an origin account never trusts a child of the same name").
+
+**Why the origin is not an unchecked claim.** Only a person who can write this repository mints a proposal token, and they type the origin and name; the pull's proposal row is written only by a request carrying that token (`proposal_gate`). A claimed host is therefore the writer's own statement, and nothing is trusted until a writer also trusts that exact pair. Nothing here verifies the forge answers at that host; trust is "work pushed with the token I gave that forge".
+
+**Seeing why it ran.** The proposal line on a pull, in the web, terminal, API (`proposal.folds`) and MCP, says "trusted as child:<name> (trusted sources), so its checks run" when it does.
+
+What still protects this forge:
+- Trust is by date and ends on its own; a different name or a different forge is a stranger.
+- The same stop switch (`stopFoldIn`) ends it at once, for origins and children alike.
+- The same walls hold: `foldWall` still holds secrets, permissions and release machinery for a person, and `needsCrewReview` is unchanged (tests: "a trusted child's pull meets the same walls"). The token's gate still allows only reading, pushing under `child/<name>/` and opening a pull.
+- An untrusted child's proposals still wait for a person to approve the exact head.
+
+Tests: `test/trusted-downstream.test.ts`. The other limits of #9451 are separate issues linked to it.

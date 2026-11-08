@@ -59,6 +59,17 @@ export function cleanAccount(raw: string): string | undefined {
   return ACCOUNT.test(name) ? name : undefined;
 }
 
+/** A downstream forge's proposals are trusted under this prefix; no origin account can carry it (`cleanAccount` refuses ":"). */
+export const CHILD_PREFIX = "child:";
+
+/** The account a trust row is kept under: an origin's account, or `child:<name>` for a downstream forge's proposals. */
+export function cleanTrustAccount(raw: string): string | undefined {
+  const text = raw.trim().toLowerCase();
+  if (!text.startsWith(CHILD_PREFIX)) return cleanAccount(text);
+  const name = text.slice(CHILD_PREFIX.length);
+  return /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(name) ? text : undefined;
+}
+
 export type TrustError = "bad_host" | "bad_account" | "bad_date" | "in_the_past";
 
 /** Keep (or renew) a source. The end is a calendar date, read as the end of that UTC day. */
@@ -69,7 +80,7 @@ export function trustSource(
 ): TrustedSource | TrustError {
   const host = cleanHost(input.host);
   if (host === undefined) return "bad_host";
-  const account = cleanAccount(input.account);
+  const account = cleanTrustAccount(input.account);
   if (account === undefined) return "bad_account";
   const day = input.until.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return "bad_date";
@@ -276,7 +287,7 @@ export function pullIdsFrom(db: Database, host: string, account: string): string
  */
 export function foldsIn(db: Database, pullId: string, now: Date = new Date()): boolean {
   if (foldInStopped(db) !== undefined) return false;
-  const from = pullSourceOf(db, pullId);
+  const from = pullSourceOf(db, pullId) ?? proposerOf(db, pullId);
   if (from !== undefined) return isTrusted(db, from.host, from.account, now);
   return localSourceTrusted(db, pullId, now);
 }
@@ -310,6 +321,24 @@ function localSourceTrusted(db: Database, pullId: string, now: Date): boolean {
     )
     .get(pullId);
   return row !== null && isTrusted(db, self, row.account, now);
+}
+
+/**
+ * A downstream forge's proposal (#9451) is a source like any other: the
+ * forge is the host of the origin the proposal token was minted for, the
+ * account is `child:<name>`, the name a writer here chose when minting the
+ * token (the origin is typed by that writer too; only a writer can mint, and
+ * a proposal's pull is opened through that token). The prefix keeps it from
+ * ever equalling an origin's account. A writer trusts that pair exactly as they trust an origin's account, so it ends by
+ * date, the same walls apply and the same stop switch stops it.
+ */
+function proposerOf(db: Database, pullId: string): { host: string; account: string } | undefined {
+  const row = db
+    .query<{ child: string; origin: string }, [string]>("SELECT child, origin FROM pull_proposal WHERE issue_id = ?1")
+    .get(pullId);
+  if (row === null) return undefined;
+  const host = cleanHost(row.origin);
+  return host === undefined ? undefined : { host, account: `${CHILD_PREFIX}${row.child}` };
 }
 
 /**
