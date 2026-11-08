@@ -304,7 +304,17 @@ form.inline { display: inline; margin-left: auto; }
    than the phone rather than letting its own ellipsis do the work. A zero
    min-width is what makes truncation inside a grid actually truncate. */
 .split > * { min-width: 0; }
-.split { grid-template-columns: minmax(0, 1fr); }
+.split { grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+
+/* A repository's head page at 390 px: the head, the About rail and the body
+   wrap an unbroken name, description or branch; the branch picker shrinks and
+   its label truncates; README code and tables scroll inside their own box. */
+.repo-head, .split > aside { overflow-wrap: anywhere; }
+.bar > .menu { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.bar > .menu > summary { max-width: 100%; min-width: 0; }
+.bar > .menu > summary .truncate { min-width: 0; }
+.prose pre, .prose table { max-width: 100%; overflow-x: auto; }
+.prose table { display: block; }
 
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
