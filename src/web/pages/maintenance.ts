@@ -11,7 +11,7 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field as formField, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, field } from "../ui.ts";
+import { badge, btn, field } from "../ui.ts";
 
 function admin(ctx: Ctx): Response | undefined {
   if (!ctx.auth.user) return signInFirst(ctx);
@@ -38,7 +38,16 @@ export function maintenancePage(ctx: Ctx): Response {
             ${field({ name: "confirm", type: "checkbox", value: "yes", required: true, label: "I understand the crew and releases stop now" })}
             <div class="form-actions">${btn("Prepare for maintenance", { variant: "danger" })}</div>
           </form>
-          ${s.last ? html`<p id="maintenance-last" class="muted">${s.last.says}</p>` : null}`
+          ${s.last
+            ? html`<p id="maintenance-last" class="muted">${s.last.says}</p>
+                ${s.last.checks
+                  ? html`<dl id="maintenance-checks" class="status-rows">
+                      ${s.last.checks.map((c) =>
+                        fact(c.name, html`${c.ok ? badge("ok", { tone: "success" }) : badge("FAILED", { tone: "danger", icon: "x" })} ${c.says}`),
+                      )}
+                    </dl>`
+                  : html`<ul id="maintenance-checks" class="muted">${s.last.verified.map((v) => html`<li>${v}</li>`)}</ul>`}`
+            : null}`
       : html`<dl class="status-rows">
             ${fact("Since", s.since ?? "")} ${s.reason ? fact("Reason", s.reason) : null}
             ${fact("Backup", s.backup?.says ?? "")} ${fact("Still working", String(s.working))}

@@ -674,8 +674,12 @@ const processTick = (): void => {
 const stopClogTick = startClogTick(app.db, app.bus, (error) => app.log.warn("clog tick failed", { error: String(error) }), 60_000);
 // The throughput keeper (#7645) names what binds landings each minute and lifts what is its to lift.
 const stopKeeper = startKeeper(app, () => sweepAssigned(app));
-// A forge that went down prepared for maintenance comes back by itself.
-resumeAtBoot(app);
+// A forge that went down prepared for maintenance comes back by itself. The
+// listener is up (`serve` above) and the checks service started; the tunnel
+// is outside this process and may come up later, so its probe asks again.
+void resumeAtBoot(app, undefined, { forgeUrl, runner: checks?.lane }).catch((error) =>
+  app.log.warn("resume at boot failed", { error: String(error) }),
+);
 // An agent's hold that has stood 24 h is released each minute (#6918).
 const holdTimer = setInterval(() => {
   try {

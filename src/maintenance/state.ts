@@ -29,7 +29,14 @@ export interface Returned {
   readonly at: string;
   readonly downSince: string;
   readonly says: string;
+  /** One line per check: `ok name: says` or `FAILED name: says`. */
   readonly verified: readonly string[];
+  /** The same checks as data, for a page or screen that sets name and result apart. */
+  readonly checks?: readonly { readonly name: string; readonly ok: boolean; readonly says: string }[];
+  /** False when any check failed; absent in a record from before the checks. */
+  readonly healthy?: boolean;
+  /** What is healthy and what is not, in one line. */
+  readonly summary?: string;
 }
 
 export interface Stored {

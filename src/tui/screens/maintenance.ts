@@ -29,7 +29,16 @@ export function maintenanceLines(f: Session): string[] {
           ...wrap(`Backup: ${s.backup?.says ?? ""}`, INNER),
           `Still working: ${s.working}`,
         ];
-  return [...wrap(s.says, INNER), "", ...facts];
+  // After a return: each check on a line of its own, a failed one marked in words and by place (first).
+  const last = s.phase === "idle" ? s.last : undefined;
+  const checks = last?.checks
+    ? [
+        "",
+        last.healthy === false ? "NOT HEALTHY: a check failed" : "Healthy: every check passed",
+        ...[...last.checks].sort((a, b) => Number(a.ok) - Number(b.ok)).flatMap((c) => wrap(`${c.ok ? "ok    " : "FAILED"} ${c.name}: ${c.says}`, INNER)),
+      ]
+    : [];
+  return [...wrap(s.says, INNER), "", ...facts, ...checks];
 }
 
 export function maintenanceScreen(f: Session, ctx: Ctx): Screen {

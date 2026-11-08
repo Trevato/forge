@@ -3,16 +3,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { setNotifyUrl } from "../src/crew/notify.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { standingHolds } from "../src/keeper/hold.ts";
 import { maintenanceHtml, MAINTENANCE_HEADERS } from "../src/maintenance/page.ts";
-import { prepare, resume, resumeAtBoot, status } from "../src/maintenance/service.ts";
+import { prepare, resume, resumeAtBoot, resumeNow, status } from "../src/maintenance/service.ts";
 import { inMaintenance, readState, writeState } from "../src/maintenance/state.ts";
 import { HOLD_WORDS } from "../src/runs/held.ts";
 import { startSnapshots, type SnapshotsHandle } from "../src/snapshot/service.ts";
 import { dirStore } from "../src/snapshot/store.ts";
+import { runnerCheck, tunnelCheck } from "../src/maintenance/checks.ts";
+import { maintenanceLines } from "../src/tui/screens/maintenance.ts";
 import { entry, maintenanceScreen } from "../src/tui/screens/maintenance.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -175,11 +178,11 @@ describe("prepare and come back", () => {
     expect(screen.keys.map((k) => k.help).join(" ")).toContain("end maintenance");
   });
 
-  test("a restart of the process on the same host boot keeps what was prepared", () => {
+  test("a restart of the process on the same host boot keeps what was prepared", async () => {
     const boot = readState(dataDir).current?.bootId;
-    resumeAtBoot(app, boot ?? "same");
+    await resumeAtBoot(app, boot ?? "same");
     if (boot !== undefined) expect(inMaintenance(dataDir)).toBe(true);
-    resumeAtBoot(app, "another-boot-id");
+    await resumeAtBoot(app, "another-boot-id");
     expect(inMaintenance(dataDir)).toBe(false);
     expect(standingHolds(app.db)).toHaveLength(0);
     expect(status(app).last?.verified.length).toBeGreaterThan(0);
@@ -211,6 +214,167 @@ describe("standby", () => {
       expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
     } finally {
       proc.kill();
+    }
+  });
+});
+
+describe("the return proves the tunnel and the runner", () => {
+  const up = async () => ({ status: 200 });
+  const lane = { limit: 2, acquire: async () => () => {} };
+  const quick = { windowMs: 0, sleep: async () => {} };
+  const setup = async () => {
+    const dir = await mkdtemp(join(tmpdir(), "maint-checks-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    const made = await createUser(app.db, { origin: "seed", trusted: true, username: "carol", email: "c@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    if (!made.ok) throw new Error(`no admin: ${JSON.stringify(made.error)}`);
+    const admin = made.value;
+    expect(setNotifyUrl(app.db, admin.id, "https://ntfy.example.com/t").ok).toBe(true);
+    return { app, dir, admin };
+  };
+  const begin = async (app: App, admin: User) => {
+    await prepare(app, admin, "");
+    const cur = readState(app.config.dataDir).current!;
+    writeState(app.config.dataDir, { current: { ...cur, bootId: "old" } });
+  };
+
+  test("all passing reads as healthy, and the admin is told", async () => {
+    const { app, dir, admin } = await setup();
+    await begin(app, admin);
+    const sent: string[] = [];
+    await resumeAtBoot(app, "new", { forgeUrl: "https://forge.example.com", runner: lane, fetcher: up, tunnel: quick, send: async (_u, b) => (sent.push(b), true) });
+    const last = status(app).last!;
+    expect(last.healthy).toBe(true);
+    expect(last.verified.some((v) => v.startsWith("ok tunnel"))).toBe(true);
+    expect(last.verified.some((v) => v.startsWith("ok runner"))).toBe(true);
+    expect(sent[0]).toContain("all ");
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a failed tunnel probe shows on the line and in the notice", async () => {
+    const { app, dir, admin } = await setup();
+    await begin(app, admin);
+    const sent: string[] = [];
+    await resumeAtBoot(app, "new", {
+      forgeUrl: "https://forge.example.com",
+      runner: lane,
+      tunnel: quick,
+      fetcher: async () => {
+        throw new Error("boom");
+      },
+      send: async (_u, b) => (sent.push(b), true),
+    });
+    const last = status(app).last!;
+    expect(last.healthy).toBe(false);
+    expect(last.verified.some((v) => v.startsWith("FAILED tunnel"))).toBe(true);
+    expect(last.says).toContain("NOT healthy");
+    expect(status(app).healthy).toBe(false);
+    expect(inMaintenance(app.config.dataDir)).toBe(false);
+    expect(sent[0]).toContain("FAILED");
+    expect(sent[0]).toContain("tunnel");
+    expect(sent[0]).toContain("runner");
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a failed runner probe shows on the line and in the notice", async () => {
+    const { app, dir, admin } = await setup();
+    await begin(app, admin);
+    const sent: string[] = [];
+    await resumeAtBoot(app, "new", { forgeUrl: "https://forge.example.com", runner: undefined, fetcher: up, tunnel: quick, send: async (_u, b) => (sent.push(b), true) });
+    const last = status(app).last!;
+    expect(last.healthy).toBe(false);
+    expect(last.verified.some((v) => v.startsWith("FAILED runner"))).toBe(true);
+    expect(sent[0]).toContain("runner (the checks service is not running");
+    expect(sent[0]).toContain("Healthy:");
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("the probes and where the return is shown", () => {
+  const dirs: string[] = [];
+  const setup = async (name: string) => {
+    const dir = await mkdtemp(join(tmpdir(), "maint-show-"));
+    dirs.push(dir);
+    const app = createApp({ dataDir: dir, port: 0 });
+    const made = await createUser(app.db, { origin: "seed", trusted: true, username: name, email: `${name}@forge.local`, password: "a-good-passphrase", adminIfFirst: true });
+    if (!made.ok) throw new Error("admin");
+    return { app, admin: made.value };
+  };
+  afterAll(async () => {
+    for (const d of dirs) await rm(d, { recursive: true, force: true });
+  });
+
+  test("the tunnel is asked again within a window, and one late answer is healthy", async () => {
+    let calls = 0;
+    const c = await tunnelCheck("https://forge.example.com", async () => ({ status: ++calls < 3 ? 502 : 200 }), { windowMs: 30_000, everyMs: 3000, sleep: async () => {} });
+    expect(c.ok).toBe(true);
+    expect(calls).toBe(3);
+    expect(c.says).toContain("try 3");
+  });
+
+  test("a tunnel that never answers fails after a bounded number of asks", async () => {
+    let calls = 0;
+    const c = await tunnelCheck("https://forge.example.com", async () => ((calls++, Promise.reject(new Error("down")))), { windowMs: 9000, everyMs: 3000, sleep: async () => {} });
+    expect(c.ok).toBe(false);
+    expect(calls).toBe(4);
+    expect(c.says).toContain("asked 4 times");
+  });
+
+  test("the runner check takes and lets go a slot, and says what it does not prove", async () => {
+    let held = 0;
+    const c = await runnerCheck({ limit: 3, acquire: async () => (held++, () => void held--) });
+    expect(c.ok).toBe(true);
+    expect(held).toBe(0);
+    expect(c.says).toContain("no check was started");
+    expect((await runnerCheck(undefined)).ok).toBe(false);
+  });
+
+  test("ending by hand announces, and the event carries healthy", async () => {
+    const { app, admin } = await setup("dora");
+    expect(setNotifyUrl(app.db, admin.id, "https://ntfy.example.com/t").ok).toBe(true);
+    await prepare(app, admin, "");
+    const sent: string[] = [];
+    const r = resumeNow(app, admin, async (_u, b) => (sent.push(b), true));
+    expect(r.ok).toBe(true);
+    await Bun.sleep(50);
+    expect(sent.some((b) => b.includes("Maintenance ended"))).toBe(true);
+    const ended = app.db.query<{ payload: string }, []>("SELECT payload FROM event WHERE kind = 'maintenance.ended'").get();
+    expect(JSON.parse(ended!.payload).healthy).toBe(true);
+    app.close();
+  });
+
+  test("a failed check is a dl row marked FAILED on /maintenance, and on the terminal screen", async () => {
+    const { app, admin } = await setup("erin");
+    const servers = await serve(app);
+    try {
+      await prepare(app, admin, "");
+      resume(app, "test", [{ name: "tunnel", ok: false, says: "nobody home" }]);
+      const t = createToken(app.db, admin.id, "t", "admin").token;
+      const login = await fetch(`${servers.url}/signin`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url },
+        body: new URLSearchParams({ username: "erin", password: "a-good-passphrase" }),
+      });
+      const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+      const page = await (await fetch(`${servers.url}/maintenance`, { headers: { cookie } })).text();
+      expect(t).toBeTruthy();
+      expect(page).toMatch(/<dl id="maintenance-checks"/);
+      expect(page).toMatch(/<dt>tunnel<\/dt>\s*<dd>[\s\S]*?data-variant="danger"[\s\S]*?FAILED[\s\S]*?nobody home/);
+      expect(page).toMatch(/<dt>database<\/dt>\s*<dd>[\s\S]*?data-variant="success"/);
+      expect(page).not.toContain('<ul id="maintenance-checks"');
+      expect(status(app).healthy).toBe(false);
+      const lines = maintenanceLines({ app, db: app.db, user: admin } as never);
+      expect(lines.join("\n")).toContain("NOT HEALTHY");
+      const failed = lines.findIndex((l) => l.startsWith("FAILED tunnel"));
+      const good = lines.findIndex((l) => l.startsWith("ok     database"));
+      expect(failed).toBeGreaterThan(-1);
+      expect(good).toBeGreaterThan(failed);
+    } finally {
+      servers.stop();
+      app.close();
     }
   });
 });

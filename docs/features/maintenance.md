@@ -20,9 +20,16 @@ apps and previews when the host powers off.
 (`/proc/sys/kernel/random/boot_id` differs from the one stored); a release roll of the process on
 the same host boot keeps what the admin prepared. It then lifts the hold, unpauses the crew and
 records a line (shown on `/maintenance`, in the status, and as the
-`maintenance.ended` event) naming what was verified. An admin can also press
-"End maintenance now". The tunnel, runner and nightly timers are the forge's
-own boot: they start with the process, and the nightly jobs show on Resilience.
+`maintenance.ended` event) with every check and its result (`src/maintenance/checks.ts`,
+one plain function each: database, hold, dispatcher, apps, nightly lines, queue, and at boot
+the tunnel, which must answer `/healthz` on the public address (asked again every 3 s for up to
+30 s, since it often comes up after the process; the listener is already up when this runs), and the
+runner, whose checks lane must hand out a slot within 2 s: that proves the lane is not wedged, not that
+a check would run). A failed check reads `FAILED` as a badge on a `dl` row of `/maintenance`, first
+in the terminal screen; the status reads "Back, NOT healthy" with `healthy: false`; the hold is lifted
+regardless. Admins with a
+notification address are told what is healthy and what is not. An admin can also press
+"End maintenance now" (no outside probes then). The nightly jobs show on Resilience.
 No Kubernetes is asked anything; the state is one file.
 
 **While it is off.** `bun scripts/standby.ts 8080` serves the calm 503 page
@@ -39,6 +46,5 @@ forge alone, 8 GB with apps running. The 16 GB droplet cannot hold it.
   droplet can only show the page. That needs the snapshot mirror restored onto a
   machine of the size above, and is a separate issue.
 - The page is not pushed to Cloudflare automatically; `standby.ts` is started by hand.
-- The admin is told on the page, event and status; no mail or push.
+- The admin is told on the page, event and status, and by the notification address they saved (`/account`); no mail.
 - Where the kernel gives no boot id, any restart ends maintenance.
-- The return checks the database, hold, dispatcher, apps on record and nightly lines; it does not probe the tunnel or the runner.
