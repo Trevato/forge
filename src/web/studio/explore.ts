@@ -21,7 +21,7 @@ import { edgeLoginUrl } from "../../http/edge.ts";
 import { offersSignup, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, empty, listCard, nameMark, row as rowOf, seg, timeAgo } from "../ui.ts";
+import { btn, card, empty, nameMark, row as rowOf, seg, tabs, timeAgo } from "../ui.ts";
 
 const href = (query: ExploreQuery): string => {
   const line = exploreLine(query);
@@ -183,14 +183,17 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
             ? html``
             : html` Did you mean <a href="/explore?q=${encodeURIComponent(suggestion.line)}">${suggestion.fix}</a>?`
         }</p>`}
-    <div class="bar mb">
-      ${seg(
+    <div class="mb">
+      ${tabs(
         kinds.map((k) => ({
           label: k.label,
           href: href({ ...query, kind: k.kind }),
           current: query.kind === k.kind,
         })),
+        "Kind",
       )}
+    </div>
+    <div class="bar mb small">
       ${seg(
         sorts.map((s) => ({
           label: s.label,
@@ -206,7 +209,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
         })),
       )}
       <a
-        class="btn" data-size="sm"
+        class="muted home-doors"
         href="${href({ ...query, archived: !query.archived })}"
         aria-pressed="${query.archived ? "true" : "false"}"
         >Show archived</a
@@ -214,7 +217,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     </div>
     ${rows.length === 0
       ? emptyState(ctx, query)
-      : listCard(rows.map(rowHtml))}</div>`;
+      : card(html`<ul class="list">${rows.map(rowHtml)}</ul>`, { pad: false, extra: "bare" })}</div>`;
   const response = page({ ctx, title: "Explore", body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

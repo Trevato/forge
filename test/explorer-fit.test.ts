@@ -103,3 +103,13 @@ describe.skipIf(chromium === undefined)("/explore, measured at 390x844", () => {
     }, 30_000);
   }
 });
+
+describe("/explore speaks the home page's language (#9645)", () => {
+  test("kinds are tabs, rows sit on a bare card, filters and Make it yours remain", () => {
+    expect(pages[0]).toContain('<nav class="tabs"');
+    expect(pages[0]).toMatch(/class="card bare"/);
+    expect(pages[0]).not.toMatch(/class="card"/);
+    expect(pages[0]).toContain("Show archived");
+    expect(pages[0]).toContain("make-it-yours");
+  });
+});
