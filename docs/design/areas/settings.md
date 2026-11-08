@@ -94,6 +94,8 @@ accounts are `row()`s in `<ul class="list setting-list" id="accounts-list">` und
 (Sign-ins, Verify, Suspend, Remove) in the row's `after` slot; the mail, ownerless-organization, sign-in reach and
 confirm/refusal notices are plain `<section class="settings-block">` blocks with an `<h2>`. `test/accounts-rows.test.ts` holds the shape.
 
+Settings › Telemetry (`telemetryPage()` in `src/web/pages/telemetry.ts`, #9806) adds no class: two `<section class="settings-block">` blocks, Telemetry grants (one plain paragraph, then each agent a `row()` with its Grant/Revoke form in a `.setting-list`) and Reads; an empty list is one plain sentence. Pinned by `test/telemetry-blocks.test.ts`.
+
 Settings › Trusted (`trustedPage()` in `src/web/pages/trusted.ts`, #9792) adds no component class. As on the home page it is
 headings over rows: Fold-in, Trusted sources and Trust a source are each a `<section class="settings-block">` with an
 `<h2>`. Each trusted entry is a `row()` in `<ul class="list setting-list" id="trusted-list">`; its state is a badge in the
