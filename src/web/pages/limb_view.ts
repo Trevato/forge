@@ -4,7 +4,7 @@
  */
 
 import { html, type Html } from "../html.ts";
-import { card, row } from "../ui.ts";
+import { row } from "../ui.ts";
 
 /** An issue as a row: its title, its number, and whatever is known of it. */
 export function issueRow(
@@ -25,18 +25,15 @@ export function issueRow(
 export const list = (rows: Html[], wrap = false): Html =>
   html`<ul class="list${wrap ? " setting-list" : ""}">${rows}</ul>`;
 
-/** A card of rows, wrapping. */
-export const wrappedCard = (rows: Html[]): Html =>
-  card(list(rows, true), { pad: false });
+/** Wrapping rows under a heading: no box around them. */
+export const wrappedRows = (rows: Html[]): Html => list(rows, true);
 
-/** A card of wrapping rows that shows its first `shown` and folds the rest: a long title wraps on a phone rather than running past its edge. */
+/** Wrapping rows that show the first `shown` and fold the rest: a long title wraps on a phone rather than running past its edge. */
 export function folded(rows: Html[], what: string, shown: number): Html {
-  if (rows.length <= shown) return wrappedCard(rows);
-  return card(list(rows.slice(0, shown), true), {
-    pad: false,
-    foot: html`<details>
-      <summary class="small">${rows.length - shown} more ${what}</summary>
+  if (rows.length <= shown) return wrappedRows(rows);
+  return html`${list(rows.slice(0, shown), true)}
+    <details>
+      <summary class="small muted">${rows.length - shown} more ${what}</summary>
       ${list(rows.slice(shown), true)}
-    </details>`,
-  });
+    </details>`;
 }

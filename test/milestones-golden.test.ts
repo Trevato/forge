@@ -93,3 +93,25 @@ test("a guest is told nothing of a private repository's milestones", async () =>
   expect(res.status).toBe(404);
   expect(await res.text()).not.toContain("Milestone 0000");
 });
+
+test("the list and an opened milestone are headings over rows, with no card box around them (#9693)", async () => {
+  const signin = await fetch(`${servers.url}/signin`, {
+    method: "POST",
+    headers: { origin: servers.url },
+    body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+    redirect: "manual",
+  });
+  const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+  const list = await (await fetch(`${servers.url}/alice/forge/milestones`, { headers: { cookie } })).text();
+  const main = list.slice(list.indexOf('id="ms-limbs"'));
+  expect(main).toContain('<ul class="list setting-list">');
+  const section = main.slice(0, main.search(/\n\s*<div\s+id="live"/));
+  expect(section).not.toContain('class="card');
+  const href = /href="(\/alice\/forge\/milestones\/\d+)"/.exec(list)?.[1];
+  expect(href).toBeDefined();
+  const one = await (await fetch(`${servers.url}${href}`, { headers: { cookie } })).text();
+  const body = one.slice(one.indexOf("<h1>"), one.search(/\n\s*<div\s+id="live"/));
+  expect(body).not.toMatch(/class="card[ "]/);
+  expect(body).toContain('id="ms-progress"');
+  expect(body).toContain('<ul class="list setting-list">');
+});

@@ -16,3 +16,12 @@ unbroken word as the longest title that can exist; the estimate and trim notes
 are built from titles and counts, so no field takes 300. It is an attribute
 because the area adds no component class. Every preview of the forge takes
 `/preview-admin/sample/milestones` at desk and phone (`PREVIEW_OWNER_LOOKS`).
+
+## Rows under headings, not boxes (#9693)
+
+The milestone list, and every section of an opened milestone (limbs, building
+now, blocked, cost, merged, issues, re-planned), is a heading over plain rows:
+a `ul.list.setting-list` with no `.card` around it, and a folded tail is a
+`details` under the rows, not a card foot. How far it is stands as a plain
+`#ms-progress` stack. No new component class; `limb.ts` and the re-plan page
+share the same rows.

@@ -20,7 +20,8 @@ quietLogs();
 let root = "";
 let app: App;
 let servers: Servers;
-const NOW = Date.parse("2026-11-08T12:00:00Z");
+// The page reads the real clock, so the seed is offsets from it.
+const NOW = Date.now();
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "forge-flows-all-"));
