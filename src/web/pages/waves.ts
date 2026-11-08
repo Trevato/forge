@@ -42,6 +42,17 @@ export function waveLine(w: Wave, visible: number): string {
   return `${w.version} · ${w.date} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
 }
 
+/** One wave on the list: its headline, the first highlight's why as the one sentence under it, and version, date and pull count as a muted trail. */
+export function waveRow(w: Wave, href: string, visible: number) {
+  const why = w.highlights[0]?.why;
+  return row({
+    href,
+    title: w.headline,
+    ...(why === undefined || why === "" ? {} : { meta: html`${why}` }),
+    trail: html`<span class="muted small">${w.version} · ${w.date} · ${visible} ${visible === 1 ? "pull" : "pulls"}</span>`,
+  });
+}
+
 // GET /:owner/:name/waves
 export async function wavesPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -60,11 +71,12 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
 
   const rows = entries.map((e) =>
     e.ok
-      ? row({
-          href: fileHref(e.file),
+      ? waveRow(
+          e.wave,
+          fileHref(e.file),
           // The wave's own page lists these same pulls, so the two agree.
-          title: waveLine(e.wave, carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length),
-        })
+          carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length,
+        )
       : row({
           href: fileHref(e.file),
           title: e.file,
@@ -74,6 +86,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
 
   const body = html`${scopeHeader(ctx, scope, "none", { compact: true })}
     <div class="mt" data-waves>
+      <h1 class="sr-only">Waves</h1>
       ${entries.length === 0
         ? empty({
             title: "No waves yet",
@@ -86,7 +99,9 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
                 }
               : {}),
           })
-        : listCard(rows, { head: html`<h2>Waves</h2>` })}
+        : html`<ul class="list">
+            ${rows}
+          </ul>`}
     </div>`;
 
   const response = page({
