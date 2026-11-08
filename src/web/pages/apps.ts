@@ -166,6 +166,9 @@ function wakeForms(ctx: Ctx, repos: readonly Repo[]): Map<string, Html> {
   return out;
 }
 
+/** The one sentence the page opens with: what it is for. */
+const APPS_PURPOSE = "Every app you can reach, and whether it is serving.";
+
 /**
  * GET /apps: every app the viewer can land, for every viewer, drawn as the
  * shelf (`shelfRows`, `studio/shelf.ts`) — the same row the home's *Your
@@ -235,7 +238,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
   );
   const rendering = performance.now();
   const body = html`<div data-apps-page>${when(ctx.auth.user, (user) => homeTabs("apps", unshippedAsks(ctx.app.db, user)))}
-    ${pageHead("Apps", { actions: create })}
+    ${pageHead("Apps", { actions: create, sub: APPS_PURPOSE })}
     ${cost}
     ${filters}
     ${archivedView

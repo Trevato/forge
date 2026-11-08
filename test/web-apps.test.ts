@@ -313,6 +313,9 @@ describe("apps, runs and the crew on the web", () => {
     const list = await bodyOf(alice, "/apps");
     expect(list).toContain('class="list setting-list"');
     expect(list).not.toMatch(/class="card[ "]/);
+    expect(list).toMatch(
+      /<div class="page-head">[\s\S]*?<span class="page-head-sub[^"]*">Every app you can reach, and whether it is serving\.<\/span>/,
+    );
     const form = await bodyOf(alice, "/apps/new");
     expect(form).toContain('action="/apps/new"');
     expect(form).not.toMatch(/class="card[ "]/);
