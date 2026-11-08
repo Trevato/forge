@@ -46,3 +46,9 @@ frame, no tone and no icon before the heading. The state is a badge's word ("con
 their own headings, and the new-team form as a bare card: one background, no frame. The notice for an org with no
 owner keeps its tone. A person and an org share the template; team changes still go through `src/actions/orgs.ts`.
 No new class.
+
+/system (`src/web/pages/system.ts`) adds no component class. As on the home page it is headings over rows: each part (Machine,
+Disks and network, Processes, Main-thread stalls, Telemetry readers, Code page caches, Forge memory) is a
+`<section class="settings-block">` with one `<h2>`; the lines are `row()`s in a `.list`, the wide figures stay tables. With
+nothing to show a part says so in one plain sentence. The live regions (`summary`, `cores`, `mem`, `temps`, `sys-disks`,
+`sys-procs`, …) keep their ids, so `system-live.ts` still patches them. `test/system-parts.test.ts` holds the shape.

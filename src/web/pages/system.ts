@@ -36,7 +36,7 @@ import { systemLiveJs } from "../system-live.ts";
 import { RECENT_BYTES, recentEncodings } from "../../http/compress.ts";
 import { KEPT_PAGE_BYTES, keptPageStats } from "./kept_page.ts";
 import { COLUMN_BYTES, PARTS_BYTES, keptPartsStats, treeCacheStats } from "./tree_cache.ts";
-import { badge, card, chartBox, empty, meter, pill, row } from "../ui.ts";
+import { badge, chartBox, meter, pill, row } from "../ui.ts";
 
 /** A group's memory, and a cell's beside its cap and who holds the cap. */
 const memoryOf = (g: { rssBytes: number; capBytes: number | null; capBy: "kernel" | "watch" | null }): Html =>
@@ -68,6 +68,7 @@ const figureRow = (name: string, figure: string, data: Record<string, string> = 
 const KIND_ORDER = ["forge", "crew", "check", "app", "host"] as const;
 function procTable(v: SystemView): Html {
   const groups = KIND_ORDER.flatMap((k) => v.groups.filter((g) => g.kind === k));
+  if (groups.length === 0) return html`<p class="muted">No processes were read.</p>`;
   return html`<div class="table-scroll"><table class="table" data-dense aria-label="Processes by what launched them">
     <thead><tr><th scope="col">pid</th><th scope="col">command</th><th scope="col" class="num">cpu</th><th scope="col" class="num">mem</th><th scope="col" class="num">age</th></tr></thead>
     ${groups.map(
@@ -91,17 +92,14 @@ function memorySection(ctx: Ctx): Html {
   if (!canSeeMemory(ctx.auth.user)) return html``;
   const hours = timePhase(ctx.request, "memory", () => memoryHours(ctx.app.db, Date.now()));
   const series = (title: string, pick: (h: (typeof hours)[number]) => number) =>
-    card(
-      chartBox("line", hours.map((h) => ({ label: hhmm(h.at).slice(11), value: pick(h) / 1_048_576 })), title),
-      { head: html`<h2>${title}</h2>` },
-    );
-  return hours.length === 0
-    ? empty({ icon: "activity", title: "No samples yet", note: "The forge samples its memory every minute; the first hour appears shortly." })
+    html`<div><h3 class="small">${title}</h3>${chartBox("line", hours.map((h) => ({ label: hhmm(h.at).slice(11), value: pick(h) / 1_048_576 })), title)}</div>`;
+  return html`<section class="settings-block" id="sys-memory"><h2>Forge memory</h2>${hours.length === 0
+    ? html`<p class="muted">No samples yet: the forge samples its memory every minute, so the first hour appears shortly.</p>`
     : html`<div class="plots">${series("RSS (MiB, hourly mean)", (h) => h.rssMean)}${series("JS heap (MiB, hourly mean)", (h) => h.heapMean)}</div>
         <div class="table-scroll"><table class="table" aria-label="Forge memory by hour">
           <thead><tr><th scope="col">Hour (UTC)</th><th scope="col" class="num">RSS mean</th><th scope="col" class="num">RSS max</th><th scope="col" class="num">Heap mean</th><th scope="col" class="num">Heap max</th></tr></thead>
           <tbody>${hours.map((h) => html`<tr><td class="mono">${hhmm(h.at)}</td><td class="num mono">${mib(h.rssMean)}</td><td class="num mono">${mib(h.rssMax)}</td><td class="num mono">${mib(h.heapMean)}</td><td class="num mono">${mib(h.heapMax)}</td></tr>`)}</tbody>
-        </table></div>`;
+        </table></div>`}</section>`;
 }
 
 /** One in-process cache as it stands: what it is for, its byte cap, and `ViewCache.stats()`. */
@@ -126,40 +124,36 @@ export const pageCaches = (): CacheRow[] => [
 /** `pageCaches`' rows as a table; the hit rate is hits over hits and misses since the process started. */
 export function cachesSection(rows: readonly CacheRow[]): Html {
   const rate = (r: CacheRow) => (r.hits + r.misses === 0 ? "—" : `${((100 * r.hits) / (r.hits + r.misses)).toFixed(1)}%`);
-  return card(
-    html`<p class="small muted">In-process caches behind strangers' code pages, since this process started. Bytes are what each counts against its cap.</p>
+  return html`<section class="settings-block"><h2>Code page caches</h2>
+    <p class="small muted">Counts since this process started.</p>
       <div class="table-scroll"><table class="table" aria-label="Code page caches">
         <thead><tr><th scope="col">Cache</th><th scope="col">Holds</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Bytes</th><th scope="col" class="num">Cap</th><th scope="col" class="num">Hits</th><th scope="col" class="num">Misses</th><th scope="col" class="num">Hit rate</th></tr></thead>
         <tbody>${rows.map((r) => html`<tr data-cache="${r.name}" data-bytes="${String(r.bytes)}"><td>${r.name}</td><td class="small muted">${r.holds}</td><td class="num mono">${String(r.entries)}</td><td class="num mono">${mib(r.bytes)}</td><td class="num mono">${mib(r.capBytes)}</td><td class="num mono">${String(r.hits)}</td><td class="num mono">${String(r.misses)}</td><td class="num mono">${rate(r)}</td></tr>`)}</tbody>
-      </table></div>`,
-    { head: html`<h2>Code page caches</h2>` },
-  );
+      </table></div></section>`;
 }
 
 /** The last hour's stalls by route, most milliseconds first; the rows are `stallHour`'s. */
 export function stallSection(rows: readonly RouteStall[]): Html {
-  return card(
-    html`<p class="small muted">Milliseconds the main thread was held past 250 ms in the last hour, charged in full to every route running across the stall (<code>none</code>: no request was). As of this page's load; <code>/metrics</code> has the series.</p>
-      <div class="table-scroll"><table class="table" aria-label="Main-thread stalls by route, last hour">
+  return html`<section class="settings-block"><h2>Main-thread stalls, last hour</h2>
+    <p class="small muted">Past 250 ms, as of this page's load; <code>/metrics</code> has the series.</p>${
+    rows.length === 0
+      ? html`<p class="muted">No stalls in the last hour.</p>`
+      : html`<div class="table-scroll"><table class="table" aria-label="Main-thread stalls by route, last hour">
         <thead><tr><th scope="col">Route</th><th scope="col" class="num">Stall ms</th><th scope="col" class="num">Stalls</th></tr></thead>
         <tbody>${rows.map((r) => html`<tr data-route="${r.route}"><td class="mono">${r.route}</td><td class="num mono">${String(Math.round(r.ms))}</td><td class="num mono">${String(r.count)}</td></tr>`)}</tbody>
-      </table></div>`,
-    { head: html`<h2>Main-thread stalls, last hour</h2>` },
-  );
+      </table></div>`}</section>`;
 }
 
 /** Who read the telemetry routes in the last 10 minutes and how fast (#9069); `readerPaces`' rows. */
 export function readersSection(rows: readonly ReaderPace[]): Html {
   const secs = (ms: number | null): string => (ms === null ? "—" : `${(ms / 1000).toFixed(1)} s`);
-  return card(
+  return html`<section class="settings-block"><h2>Telemetry readers</h2>${
     rows.length === 0
       ? html`<p class="muted">No telemetry reads in the last 10 minutes.</p>`
       : html`<div class="table-scroll"><table class="table" aria-label="Telemetry readers, last 10 minutes">
           <thead><tr><th scope="col">Route</th><th scope="col">Reader</th><th scope="col" class="num">Reads, 10 min</th><th scope="col" class="num">Mean interval</th><th scope="col"></th></tr></thead>
           <tbody>${rows.map((r) => html`<tr data-route="${r.route}" data-reader="${r.reader}"><td class="mono">${r.route}</td><td class="mono">${r.reader}</td><td class="num mono">${String(r.reads)}</td><td class="num mono">${secs(r.meanIntervalMs)}</td><td>${r.tooFast ? badge("faster than the flow copy changes", { tone: "danger" }) : null}</td></tr>`)}</tbody>
-        </table></div>`,
-    { head: html`<h2>Telemetry readers</h2>` },
-  );
+        </table></div>`}</section>`;
 }
 
 /**
@@ -193,14 +187,12 @@ export function regions(v: SystemView): Record<string, string> {
         : null}
       ${v.load ? figureRow("load", v.load.map((l) => l.toFixed(2)).join("  ")) : null}`,
     temps: html`${v.temps.map((t) => `${t.chip} ${t.label} ${t.celsius.toFixed(0)}°C`).join(" · ")}`,
-    "sys-disks": card(
-      html`<ul class="list">
-        ${v.disks.map((d) => meterRow(d.mount, d.usedBytes, d.totalBytes, `${bytes(d.usedBytes)} / ${bytes(d.totalBytes)} ${d.fs}`))}
+    "sys-disks":
+      v.disks.length + v.io.length + v.net.length === 0
+        ? html`<li class="muted">No disks or network were read.</li>`
+        : html`${v.disks.map((d) => meterRow(d.mount, d.usedBytes, d.totalBytes, `${bytes(d.usedBytes)} / ${bytes(d.totalBytes)} ${d.fs}`))}
         ${v.io.map((d) => figureRow(d.name, `R ${rateOf(d.readBytesPerSecond)} W ${rateOf(d.writeBytesPerSecond)}`, { io: d.name }))}
-        ${v.net.map((n) => figureRow(n.name, `↓ ${rateOf(n.rxBytesPerSecond)} ↑ ${rateOf(n.txBytesPerSecond)}`, { net: n.name }))}
-      </ul>`,
-      { head: html`<h2>Disks and network</h2>`, pad: false },
-    ),
+        ${v.net.map((n) => figureRow(n.name, `↓ ${rateOf(n.rxBytesPerSecond)} ↑ ${rateOf(n.txBytesPerSecond)}`, { net: n.name }))}`,
     "sys-procs": procTable(v),
   };
   return Object.fromEntries(Object.entries(out).map(([k, h]) => [k, h.text]));
@@ -249,19 +241,18 @@ export function systemPage(ctx: Ctx): Response {
       </p>
     </div>
     <div id="sys-dup">${at("sys-dup")}</div>
-    ${card(
-      html`<div id="summary" class="row-meta">${at("summary")}</div>
+    <section class="settings-block"><h2>Machine</h2>
+      <div id="summary" class="row-meta">${at("summary")}</div>
         <ul class="list" id="cores" aria-label="Per-core CPU, percent, with its last readings">${at("cores")}</ul>
         <ul class="list" id="mem">${at("mem")}</ul>
         ${caps}
-        <p class="small mono" id="temps">${at("temps")}</p>`,
-      { head: html`<h2>Machine</h2>` },
-    )}
-    <div id="sys-disks">${at("sys-disks")}</div>
-    <div class="page-head"><h2>Processes</h2>
-      <p class="small muted"><span class="js-only">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
-        <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></span></p></div>
-    <div id="sys-procs">${at("sys-procs")}</div>
+        <p class="small mono" id="temps">${at("temps")}</p></section>
+    <section class="settings-block"><h2>Disks and network</h2>
+      <ul class="list" id="sys-disks">${at("sys-disks")}</ul></section>
+    <section class="settings-block"><h2>Processes</h2>
+      <div class="js-only small muted">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
+        <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
+      <div id="sys-procs">${at("sys-procs")}</div></section>
     <div id="sys-stalls">${stallSection(stalls)}</div>
     <div id="sys-readers">${readersSection(readerPaces())}</div>
     <div id="sys-caches">${cachesSection(pageCaches())}</div>

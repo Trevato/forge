@@ -93,8 +93,8 @@ describe("GET /system", () => {
     const body = await (await get("alice")).text();
     expect(body).not.toContain("sys-pair");
     expect(body).toContain('<div class="plots">');
-    expect(body).toContain("<h2>RSS (MiB, hourly mean)</h2>");
-    expect(body).toContain("<h2>JS heap (MiB, hourly mean)</h2>");
+    expect(body).toContain('<h3 class="small">RSS (MiB, hourly mean)</h3>');
+    expect(body).toContain('<h3 class="small">JS heap (MiB, hourly mean)</h3>');
     expect(body).toContain('aria-label="Forge memory by hour"');
     expect(body).toContain("Heap max");
   });
