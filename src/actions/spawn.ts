@@ -259,7 +259,7 @@ async function make(
     app.bus.append({ kind: "forge.spawn.started", payload: { ...(deps.drill === true ? { drill: 1 } : {}) } });
   } else {
     if (owner !== undefined) {
-      const many = personRefusal(app.config.dataDir, owner);
+      const many = personRefusal(app.db, app.config.dataDir, owner);
       if (many !== undefined) return err({ kind: "refused", reason: "quota", message: many });
     }
     const over = quotaRefusal(app.config.dataDir, plan.size ?? DEFAULT_SIZE);

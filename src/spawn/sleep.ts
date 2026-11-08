@@ -1,13 +1,20 @@
 /**
  * Hosted forges that scale to zero: how long a forge may be quiet before it
- * sleeps, how many may be awake at once, how often one may be woken, and how
- * many a person may own. Each limit is declared by an environment variable
- * with a default, and each refusal is a sentence a person can read. A sleeping
- * forge keeps its data on disk (`children/<bodyId>`); only its process goes.
+ * sleeps, how many may be awake at once, and how often one may be woken. Each
+ * is declared by an environment variable with a default. How many forges, and
+ * how much storage, a person may have are admin limits (`/admin/limits`), not
+ * environment. Each refusal is a sentence a person can read. A sleeping forge
+ * keeps its data on disk (`children/<bodyId>`); only its process goes.
+ *
+ * `heldByPerson` walks and stats the files of the person's forges
+ * synchronously on the spawn request; it runs only after the count check
+ * passes, and spawning is rare.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import type { Database } from "bun:sqlite";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { limitValue } from "../settings/limits.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -24,8 +31,6 @@ export const idleAfterMs = (env: Env = process.env): number => whole(env, "FORGE
 export const awakeCeiling = (env: Env = process.env): number => whole(env, "FORGE_CHILD_AWAKE_MAX", 8);
 /** Most wakes of one forge in an hour: FORGE_CHILD_WAKES_PER_HOUR. */
 export const wakesPerHour = (env: Env = process.env): number => whole(env, "FORGE_CHILD_WAKES_PER_HOUR", 20);
-/** Most forges one person may own: FORGE_FORGES_PER_PERSON. */
-export const forgesPerPerson = (env: Env = process.env): number => whole(env, "FORGE_FORGES_PER_PERSON", 3);
 
 const HOUR_MS = 3_600_000;
 
@@ -77,12 +82,63 @@ export function ownedBy(dataDir: string, ownerId: string): number {
   return n;
 }
 
-/** Why this person may not make another forge, or undefined. Site admins are not limited. */
-export function personRefusal(dataDir: string, owner: { id: string; isAdmin: boolean }, env: Env = process.env): string | undefined {
+/** The ledger lines this person made: the forge name and its body id. */
+function ownedLedgers(dataDir: string, ownerId: string): { name: string; bodyId: string }[] {
+  const found: { name: string; bodyId: string }[] = [];
+  let files: string[] = [];
+  try {
+    files = readdirSync(join(dataDir, "spawn"));
+  } catch {
+    return found;
+  }
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const l = JSON.parse(readFileSync(join(dataDir, "spawn", f), "utf8")) as { ownerId?: unknown; bodyId?: unknown };
+      if (l.ownerId === ownerId && typeof l.bodyId === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(l.bodyId))
+        found.push({ name: f.slice(0, -5), bodyId: l.bodyId });
+    } catch {
+      // a damaged ledger counts for no one
+    }
+  }
+  return found;
+}
+
+/** Bytes under a directory, files only. */
+function bytesUnder(dir: string): number {
+  let n = 0;
+  try {
+    for (const e of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+      if (e.isFile()) n += statSync(join(e.parentPath, e.name), { throwIfNoEntry: false })?.size ?? 0;
+    }
+  } catch {
+    // a forge with no data yet holds nothing
+  }
+  return n;
+}
+
+/** What this person's forges hold on disk, in bytes. */
+export function heldByPerson(dataDir: string, ownerId: string): number {
+  return ownedLedgers(dataDir, ownerId).reduce((sum, l) => sum + bytesUnder(join(dataDir, "children", l.bodyId)), 0);
+}
+
+const MB = 1_000_000;
+
+/**
+ * Why this person may not make another forge, or undefined: one sentence
+ * naming the limit (set in admin limits) and what they use. Site admins are
+ * not limited.
+ */
+export function personRefusal(db: Database, dataDir: string, owner: { id: string; isAdmin: boolean }): string | undefined {
   if (owner.isAdmin) return undefined;
-  const max = forgesPerPerson(env);
+  const max = limitValue(db, "forges.per_person");
   const has = ownedBy(dataDir, owner.id);
-  return has >= max ? `you already have ${has} forges, the most one person may have (${max}); remove one first` : undefined;
+  if (has >= max) return `you already have ${has} ${has === 1 ? "forge" : "forges"}, the most one person may have (${max}); remove one first`;
+  const maxMb = limitValue(db, "forges.storage_mb");
+  const held = heldByPerson(dataDir, owner.id);
+  if (held >= maxMb * MB)
+    return `your forges already hold ${Math.ceil(held / MB)} MB, the most one person's forges may hold (${maxMb} MB); remove one first`;
+  return undefined;
 }
 
 /** The plain-text "waking up" or refusal answer: for a git client or an API call (a page is `web/pages/waking.ts`). */

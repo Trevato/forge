@@ -41,6 +41,8 @@ export type LimitKey =
   | "guest.forks_per_day"
   | "guest.forks_forge_per_day"
   | "guest.pulls_per_day"
+  | "forges.per_person"
+  | "forges.storage_mb"
   | "guest.storage_mb"
   | "guest.fork_storage_mb"
   | "guest.cooldown_minutes"
@@ -210,6 +212,22 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 0,
     max: 1_000,
     reason: "Every pull asks a person to read it, so a guest's pulls have a daily count.",
+  },
+  "forges.per_person": {
+    label: "Hosted forges one person may own",
+    unit: "forges",
+    default: 3,
+    min: 1,
+    max: 1_000,
+    reason: "Every hosted forge holds a database and its repositories on this machine's disk; site admins are not counted.",
+  },
+  "forges.storage_mb": {
+    label: "Storage a person can hold in hosted forges",
+    unit: "MB",
+    default: 1_000,
+    min: 1,
+    max: 10_000_000,
+    reason: "A hosted forge keeps its data here even asleep, so what one person's forges hold in all has a ceiling.",
   },
   "guest.storage_mb": {
     label: "Storage one guest may hold in their forks",

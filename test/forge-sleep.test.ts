@@ -17,6 +17,7 @@ import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { awakeCount, childAwake, holdChild, resolveHostedChild, sleepIdleChildren, wakeGate } from "../src/spawn/host.ts";
 import { removeForge, stopForge } from "../src/spawn/manage.ts";
+import { setLimit } from "../src/settings/limits.ts";
 import { awakeRefusal, personRefusal, WakeRate } from "../src/spawn/sleep.ts";
 import { wakingResponse } from "../src/web/pages/waking.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
@@ -148,11 +149,15 @@ describe("a hosted forge scales to zero", () => {
 
   test("a person owns at most so many forges; a site admin is not limited", () => {
     // Alice made homie: with a ceiling of 1 she (an admin) is still free, a person is not.
-    const env = { FORGE_FORGES_PER_PERSON: "1" };
-    const owner = parent.db.query("SELECT id FROM user WHERE username = 'alice'").get() as { id: string };
-    expect(personRefusal(dir, { id: owner.id, isAdmin: true }, env)).toBeUndefined();
-    expect(personRefusal(dir, { id: owner.id, isAdmin: false }, env)).toContain("remove one first");
-    expect(personRefusal(dir, { id: "someone-else", isAdmin: false }, env)).toBeUndefined();
+    expect(setLimit(parent.db, "forges.per_person", 1, "seed").ok).toBe(true);
+    try {
+      const owner = parent.db.query("SELECT id FROM user WHERE username = 'alice'").get() as { id: string };
+      expect(personRefusal(parent.db, dir, { id: owner.id, isAdmin: true })).toBeUndefined();
+      expect(personRefusal(parent.db, dir, { id: owner.id, isAdmin: false })).toContain("1 forge, the most");
+      expect(personRefusal(parent.db, dir, { id: "someone-else", isAdmin: false })).toBeUndefined();
+    } finally {
+      setLimit(parent.db, "forges.per_person", null, "seed");
+    }
   });
 
   test("a waking page is plain for a browser, and the gate lets an awake forge through", async () => {
@@ -261,8 +266,7 @@ describe("a hosted forge scales to zero", () => {
   });
 
   test("a person's forge limit holds through spawnForge", async () => {
-    const was = process.env["FORGE_FORGES_PER_PERSON"];
-    process.env["FORGE_FORGES_PER_PERSON"] = "1";
+    expect(setLimit(parent.db, "forges.per_person", 1, "seed").ok).toBe(true);
     try {
       const carol = await createUser(parent.db, { origin: "seed", trusted: true, username: "carol", email: "c@x.invalid" });
       if (!carol.ok) throw new Error("carol");
@@ -283,8 +287,7 @@ describe("a hosted forge scales to zero", () => {
       expect(second.ok).toBe(false);
       if (!second.ok) expect(JSON.stringify(second.error)).toContain("remove one first");
     } finally {
-      if (was === undefined) delete process.env["FORGE_FORGES_PER_PERSON"];
-      else process.env["FORGE_FORGES_PER_PERSON"] = was;
+      setLimit(parent.db, "forges.per_person", null, "seed");
     }
   });
 

@@ -3,7 +3,7 @@
 A person (or their assistant, over the MCP `spawn` tool with their consent) makes a forge at `/forges/new`, the address `<name>--<this host>`. Free within the limits below; no payment path yet.
 
 - **Sleep.** A forge with no request for `FORGE_CHILD_IDLE_S` (600) sleeps: a hosted child's App and apps close, a cell child's process stops. Data stays under `children/<bodyId>`. The next page load, `git push` or API call wakes it. A page for a sleeping cell forge answers a plain "waking up" page at once (git and API calls wait up to 4 s) (503, `retry-after`, reloads itself); a hosted one opens in-process.
-- **Limits, each refused in words.** `FORGE_FORGES_PER_PERSON` (3; site admins exempt), `FORGE_CHILD_AWAKE_MAX` (8 awake at once; sleeping forges do not count), `FORGE_CHILD_WAKES_PER_HOUR` (20 per forge), plus the existing size/quota limits (`FORGE_CHILD_*_MIB`), and each cell's own disk cap.
+- **Limits, each refused in words.** The admin limits `forges.per_person` (3) and `forges.storage_mb` (1000 MB), set at `/admin/limits` (the same list is on the terminal's limits screen), each refused in a sentence naming the limit and the person's use (site admins exempt), `FORGE_CHILD_AWAKE_MAX` (8 awake at once; sleeping forges do not count), `FORGE_CHILD_WAKES_PER_HOUR` (20 per forge), plus the existing size/quota limits (`FORGE_CHILD_*_MIB`), and each cell's own disk cap.
 - **Owner.** `/forges` shows awake/asleep, size, last activity, with Stop (sleep now) and Remove (ledger and data).
 - **Secrets.** A child starts from `childEnv` and never sees this forge's model credential; the person brings their own or its crew stays off.
 
