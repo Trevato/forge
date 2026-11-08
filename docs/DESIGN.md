@@ -1,5 +1,26 @@
 # DESIGN.md — the forge's design system
 
+**The principles, in short.** (The numbered list in §1 is the long form.)
+
+1. One confident sentence says what the page is for; nothing explains itself twice.
+2. The real product is the visual: show the actual rows, not a picture of them.
+3. Generous rhythm: space between things, not lines.
+4. One background, one text colour (`--bg`, `--fg`), muted for the rest.
+5. At most one accent, `--accent`, for interaction alone. Enforced: `accent` in `scripts/design-lint.ts`.
+6. Few borders: a hairline where a thing ends, never a box around a thing.
+7. Rows over boxes: a list is rows, a fact is a `dl` row, not a card.
+8. Plain words, as in `docs/WRITING.md`.
+
+**Worked examples.**
+- `src/web/studio/home.ts`, `studioHome`: the `<h1 class="sr-only">Home</h1>` then `tellBox` is
+  one sentence of purpose (1) and the real composer, not a picture of one (2); `<section class="stack">`
+  gives the rhythm (3); the lines `<p class="small muted"><a href="/feed">The feed</a></p>` are
+  muted text, not buttons or boxes (4, 7).
+- `src/web/pages/security.ts`, `securityPage`: `<dl class="status-rows">` with one `statusRow`
+  per fact (Traffic, Backup, Admin accounts, …) is rows over boxes (7); a row that leads
+  anywhere ends in one `<a>` (Traffic, Backups), the only interactive colour (5); each row says
+  its state in a few plain words, with a toned `badge` for the verdict (Recent, Overdue) (8).
+
 One vocabulary, two surfaces. The web renders it as HTML and CSS; a terminal UI
 renders the same names as cells and boxes. If a component is not in these files,
 it does not exist — and if you find yourself hand-rolling markup a page already

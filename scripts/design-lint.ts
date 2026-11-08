@@ -33,8 +33,9 @@
  * The quiet-page rules (#8775, #8719) are held per file in `docs/design/quiet-debt.json`,
  * the same ratchet, and may only go down: `label` ("Status: Open"), `caps`
  * (`text-transform: uppercase`), `echo` (an icon's aria-label equal to its visible
- * text) and `inline-colour` (a colour name in a `style=""`). They match markup and
- * style, never a paragraph's words. Named in docs/design/areas/quiet.md.
+ * text), `inline-colour` (a colour name in a `style=""`) and `accent` (a second
+ * accent token such as `--accent-2`; only `--accent` and `--accent-fg` exist).
+ * They match markup and style, never a paragraph's words. Named in docs/design/areas/quiet.md.
  *
  * A red names the file:line, the literal and what to use instead, so one pass
  * fixes it; run `bun scripts/design-lint.ts` before pushing. A new class is named
@@ -315,9 +316,9 @@ export function compare(base: Baseline, now: Scan, design: string, areas: readon
 }
 
 /** The quiet-page rules a machine can check (#8775, from #8719): markup and style only, never prose. */
-export type QuietRule = "label" | "caps" | "echo" | "inline-colour" | "keyhint";
+export type QuietRule = "label" | "caps" | "echo" | "inline-colour" | "keyhint" | "accent";
 export type QuietFinding = { line: number; rule: QuietRule; text: string; use: string };
-export const QUIET_RULES: readonly QuietRule[] = ["label", "caps", "echo", "inline-colour", "keyhint"];
+export const QUIET_RULES: readonly QuietRule[] = ["label", "caps", "echo", "inline-colour", "keyhint", "accent"];
 const STATUS_WORD = "open|closed|merged|draft|done|failed|passing|failing|pending|running|queued|shipped|blocked|active|ready";
 
 /** Where `text` breaks a quiet-page rule: file line, the offence, and what to use instead. */
@@ -346,6 +347,10 @@ export function quiet(text: string): QuietFinding[] {
     if (!inMenuItem(code, m.index!) && !code.slice(Math.max(0, m.index! - 60), m.index!).includes("function keyHint")) {
       out.push({ line: at(m.index!), rule: "keyhint", text: m[0], use: "hintAttr(key): a tooltip on hover and an overlay on request; an inline hint only inside a menu item" });
     }
+  }
+  // At most one accent (docs/DESIGN.md, principles): `--accent` and `--accent-fg` exist; a second is a second voice.
+  for (const m of code.matchAll(/--accent(?!-fg\b)(?:[-_][a-z0-9_-]*|\d+)(?![\w-])/gi)) {
+    out.push({ line: at(m.index!), rule: "accent", text: m[0], use: "var(--accent) for interaction alone, and var(--fg) or var(--muted-fg) for emphasis; one accent per page" });
   }
   // A colour name in an inline style="": the stylesheet scan reads css templates only.
   for (const m of code.matchAll(/\bstyle="([^"]*)"/g)) {

@@ -234,6 +234,11 @@ describe("design check: the quiet-page rules (#8775)", () => {
     expect(rules('h = `<button aria-label="Merge">Merge</button>`')).toEqual([]);
   });
 
+  test("accent: a second accent token is a finding; --accent and --accent-fg are not", () => {
+    expect(rules("c = /* css */ `a{color:var(--accent);background:var(--accent-fg)}`")).toEqual([]);
+    expect(rules("c = /* css */ `a{color:var(--accent-2)} b{--accent-alt:#fff}`")).toEqual(["accent", "accent"]);
+  });
+
   test("inline-colour: a colour name in style, not a token", () => {
     expect(rules('h = `<i style="color: red"></i>`')).toEqual(["inline-colour"]);
     expect(rules('h = `<i style="color: var(--danger)"></i>`')).toEqual([]);
