@@ -786,6 +786,15 @@ export function codeBar(
 }
 
 /**
+ * One fact of the About column: a `dl` pair, the label over its value. The
+ * rail is narrower than `.status-row`'s 168px label column, so it stacks and
+ * separates the facts with space, not a rule per row.
+ */
+function fact(label: string, value: Html): Html {
+  return html`<div class="rail-fact"><dt>${label}</dt><dd>${value}</dd></div>`;
+}
+
+/**
  * The About rail: what this repo is, in one glance, plus how to clone it.
  *
  * On a mirror, everything about the origin sits in one "Where it lives"
@@ -857,82 +866,70 @@ function aboutCard(
         </p>
       </div>`,
   );
-  return html`${card(
-      html`${when(
-          repo.description !== "",
-          () => html`<p class="mb">${repo.description}</p>`,
-        )}
-        <ul class="list setting-list">
-          ${row({ title: "Visibility", trail: html`${repo.visibility}` })}
-          ${row({
-            title: "Default",
-            trail: html`<span class="mono">${repo.defaultBranch}</span>`,
-          })}
-          ${row({ title: "Protection", trail: html`${repo.protectDefault ? "on" : "off"}` })}
-          ${row({
-            title: "Branches",
-            trail: html`<span class="num">${refs.branches.length}</span>`,
-          })}
-          ${when(
-            refs.tags.length > 0,
-            () =>
-              row({
-                title: "Tags",
-                trail: html`<span class="num">${refs.tags.length}</span>`,
-              }),
-          )}
-          ${when(
-            parent,
-            (p) =>
-              // The standing and the one thing to do about it live in the
-              // Following card above the code; the rail only names the parent.
-              row({
-                title: "Fork of",
-                trail: html`<a href="/${p.ownerName}/${p.name}"
-                  >${p.ownerName}/${p.name}</a
-                >`,
-              }),
-          )}
-          ${when(
-            upstream,
-            (up) =>
-              row({
-                title: "Fork of",
-                trail:
-                  upstreamHref === undefined
-                    ? html`<span class="mono">${up}</span>`
-                    : html`<a href="${upstreamHref}">${up}</a>`,
-              }),
-          )}
-        </ul>
-        ${followingLine(ctx, repo)}
-        ${whereItLives}
-        ${when(
-          repo.visibility === "public" && repo.origin === null,
-          () =>
-            html`<p class="mt small muted">
-              ${icon("lock")} Found a security problem?
-              <a href="${repoBase(repo)}/issues/new?sealed=1"
-                >Report it sealed</a
-              >: only the people who keep this repository and its crew see it
-              until the fix is released.
-            </p>`,
-        )}
-        <p class="mt small muted">Clone over HTTPS</p>
-        ${copyField("clone-https", cloneUrl, "HTTPS clone address", "Copy clone URL")}
-        ${when(
-          sshUrl,
-          (url) =>
-            html`<p class="mt small muted">Clone over SSH</p>
-              ${copyField(
-                  "clone-ssh",
-                  url,
-                  "SSH clone address",
-                  "Copy SSH clone URL",
-                )}`,
-        )}`,
-      { head: html`<h2>About</h2>` },
-  )}`;
+  return html`<section class="settings-block">
+    <h2>About</h2>
+    ${when(
+      repo.description !== "",
+      () => html`<p class="mb">${repo.description}</p>`,
+    )}
+    <dl class="rail-facts">
+      ${fact("Visibility", html`${repo.visibility}`)}
+      ${fact("Default", html`<span class="mono">${repo.defaultBranch}</span>`)}
+      ${fact("Protection", html`${repo.protectDefault ? "on" : "off"}`)}
+      ${fact("Branches", html`<span class="num">${refs.branches.length}</span>`)}
+      ${when(
+        refs.tags.length > 0,
+        () =>
+          fact("Tags", html`<span class="num">${refs.tags.length}</span>`),
+      )}
+      ${when(
+        parent,
+        (p) =>
+          // The standing and the one thing to do about it live in the
+          // Following card above the code; the rail only names the parent.
+          fact(
+            "Fork of",
+            html`<a href="/${p.ownerName}/${p.name}">${p.ownerName}/${p.name}</a>`,
+          ),
+      )}
+      ${when(
+        upstream,
+        (up) =>
+          fact(
+            "Fork of",
+            upstreamHref === undefined
+              ? html`<span class="mono">${up}</span>`
+              : html`<a href="${upstreamHref}">${up}</a>`,
+          ),
+      )}
+    </dl>
+    ${followingLine(ctx, repo)}
+    ${whereItLives}
+    ${when(
+      repo.visibility === "public" && repo.origin === null,
+      () =>
+        html`<p class="mt small muted">
+          ${icon("lock")} Found a security problem?
+          <a href="${repoBase(repo)}/issues/new?sealed=1"
+            >Report it sealed</a
+          >: only the people who keep this repository and its crew see it
+          until the fix is released.
+        </p>`,
+    )}
+    <p class="mt small muted">Clone over HTTPS</p>
+    ${copyField("clone-https", cloneUrl, "HTTPS clone address", "Copy clone URL")}
+    ${when(
+      sshUrl,
+      (url) =>
+        html`<p class="mt small muted">Clone over SSH</p>
+          ${copyField(
+            "clone-ssh",
+            url,
+            "SSH clone address",
+            "Copy SSH clone URL",
+          )}`,
+    )}
+  </section>`;
 }
 
 // ---- pages ----
@@ -1316,18 +1313,15 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
           title: "An empty repository, ready for its first push",
           note: "Point a local repository at it and push — the first branch you push becomes the code you see here.",
         })}
-        ${card(
-          copyField(
+        <section class="settings-block">
+          <h2>Get started</h2>
+          ${copyField(
             "clone-https",
             `git remote add origin ${cloneUrl} && git push -u origin ${repo.defaultBranch}`,
             "Get started command",
             "Copy the get started command",
-          ),
-          {
-            head: html`${icon("command")}
-              <h2>Get started</h2>`,
-          },
-        )}
+          )}
+        </section>
       </div>`;
     const emptyResponse = page({
       ctx,

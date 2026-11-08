@@ -421,6 +421,9 @@ form.inline { display: inline; margin-left: auto; }
 
 /* A rendered Markdown blob wears the same frame its source does: one card,
    one path header, and the switch between the two views in it. */
+.rail-facts { margin: 12px 0 0; display: grid; gap: 12px; font-size: 13px; }
+.rail-fact > dt { color: var(--muted-fg); font-size: 12.5px; }
+.rail-fact > dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
 .blob-view { margin-left: 8px; }
 .blob-view .seg { font-size: 12.5px; }
 /* An audio or video file, played inline (render/player.ts). The video is as

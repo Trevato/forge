@@ -515,10 +515,9 @@ describe("origins on the web", () => {
     expect(html).toContain("Sync now");
     expect(html).toContain("Pushes here go through to");
     expect(html).not.toMatch(/class="about"/);
-    // The facts render as §5 rows inside a labelled complementary landmark.
+    // The facts render as `dl` rows inside a labelled complementary landmark.
     expect(html).toContain('<aside aria-label="About">');
-    expect(html).toMatch(/row-title"[^>]*>Visibility</);
-    expect(html).not.toContain("<dl");
+    expect(html).toMatch(/<dt>Visibility<\/dt>/);
   });
 
   test("an imported issue shows the origin's author, not the local one", async () => {
