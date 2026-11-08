@@ -81,6 +81,7 @@ import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { nextScreen } from "./screens/next.ts";
+import { findingsScreen } from "./screens/findings.ts";
 import { flowsScreen } from "./screens/flows.ts";
 import { weekScreen } from "./screens/week.ts";
 import { machinesScreen } from "./screens/machines.ts";
@@ -151,6 +152,12 @@ const REPO_VERBS: readonly {
     id: "flows",
     title: "Flows of a repository",
     open: (f, ctx, repo) => flowsScreen(f, ctx, repo),
+  },
+  {
+    // What code scanning found, and acceptance with a reason for a writer (#9593).
+    id: "findings",
+    title: "Findings in a repository",
+    open: (f, ctx, repo) => findingsScreen(f, ctx, repo),
   },
   {
     // Settings → Machines' other door: the machines and last shell sessions, writers only (#9471).

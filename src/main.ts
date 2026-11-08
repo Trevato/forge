@@ -4,6 +4,8 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { scanNightly } from "./checks/scan.ts";
+import { nightlyDue } from "./checks/scan_store.ts";
 import { runModelReview } from "./actions/model_review.ts";
 import { getRepoById } from "./core/repos.ts";
 import { plannedRepoIds, tickWeeks } from "./flow/retro.ts";
@@ -697,6 +699,15 @@ const weekTimer = setInterval(() => {
     app.log.warn("week retrospective failed", { error: String(error) });
   }
 }, 3_600_000);
+// Code scanning's nightly pass (#9593): each hour, the repositories whose last pass is a day old get secrets, advisories and static analysis over their default branch.
+const nightlyScanTimer = setInterval(() => {
+  void (async () => {
+    for (const id of nightlyDue(app.db, new Date(Date.now() - 24 * 3_600_000).toISOString(), 25)) {
+      const repo = getRepoById(app.db, id);
+      if (repo !== undefined) await scanNightly(app, repo);
+    }
+  })().catch((error) => app.log.warn("nightly scan failed", { error: String(error) }));
+}, 3_600_000);
 const processTimer = setInterval(processTick, 60_000);
 processTick();
 // A new version proves itself against the public URL; a failed one again, 5 min after and backing off to hourly (release/prove.ts).
@@ -837,6 +848,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   // process that replaced this one, not to this one while it finishes.
   drainStreams();
   clearInterval(deliveryTimer);
+  clearInterval(nightlyScanTimer);
   clearInterval(heartbeatTimer);
   clearInterval(upstreamTimer);
   clearInterval(reachTimer);

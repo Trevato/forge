@@ -20,6 +20,7 @@ import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
+import { queueScanPush } from "../checks/scan.ts";
 import { parentCallback, parentStart } from "./rp.ts";
 import { prerenderComments } from "../web/prerender.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
@@ -152,6 +153,7 @@ import { activityAtom, changelogAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
 import { flowsCheck, flowsPage, flowsProbe } from "../web/pages/flows.ts";
+import { findingAccept, findingsPage } from "../web/pages/findings.ts";
 import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
@@ -1152,6 +1154,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/flows", flowsPage);
   router.add("POST", "/:owner/:name/flows/check", flowsCheck);
   router.add("POST", "/:owner/:name/flows/probe", flowsProbe);
+  router.add("GET", "/:owner/:name/findings", findingsPage);
+  router.add("POST", "/:owner/:name/findings/:id/accept", findingAccept);
   router.add("GET", "/:owner/:name/bets", betsPage);
   router.add("POST", "/:owner/:name/bets/propose", betPropose);
   router.add("GET", "/:owner/:name/bets/:id", betPage);
@@ -2031,6 +2035,14 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     input.actorId ? getUserById(app.db, input.actorId) : undefined,
   ).catch((error) =>
     app.log.warn("could not unseal released reports", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      error: String(error),
+    }),
+  );
+  // Every push is scanned for secrets and advisories (`checks/scan.ts`,
+  // #9593). Off the hook's answer too: a finding is recorded, not refused.
+  void queueScanPush(app, repo, input.updates).catch((error) =>
+    app.log.warn("could not scan the push", {
       repo: `${repo.ownerName}/${repo.name}`,
       error: String(error),
     }),

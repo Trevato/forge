@@ -11,6 +11,7 @@ import { forkFollowMode } from "../core/fork_follow.ts";
 import { canRead, canWrite, getRepoById, repoDatesFor, visibleForks, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { aheadWords, parseAhead } from "../origins/ahead.ts";
+import { counts, lastScanAt } from "../checks/scan_store.ts";
 
 /** A followed link is stale when its last head comparison is older than this (three follow periods). */
 export const STALE_MS = 3 * 30 * 60_000;
@@ -26,7 +27,7 @@ export interface FlowAction {
 }
 
 export interface FlowLine {
-  readonly kind: "origin" | "source" | "upstream" | "fork" | "mirror" | "forge";
+  readonly kind: "origin" | "source" | "upstream" | "fork" | "mirror" | "forge" | "scan";
   readonly label: string;
   /** In-forge link, when the line is a repository here. */
   readonly href: string;
@@ -146,6 +147,7 @@ export function readFlows(db: Database, repo: Repo, viewer: User | undefined, no
       health: mirror.last_error !== "" ? "unread" : "ok",
     });
   }
+  inbound.push(scanLine(db, repo));
   // Forges that follow this one: a child forge holds a proposal token for it. Their names are for those who write here.
   if (writer) {
     for (const c of db
@@ -162,4 +164,21 @@ export function readFlows(db: Database, repo: Repo, viewer: User | undefined, no
     }
   }
   return { inbound, outbound };
+}
+
+/** Code scanning as one line (#9593): what the push and nightly passes found, open high first. */
+export function scanLine(db: Database, repo: Repo): FlowLine {
+  const c = counts(db, repo.id);
+  const push = lastScanAt(db, repo.id, "push");
+  const nightly = lastScanAt(db, repo.id, "nightly");
+  const at = push === null ? nightly : nightly === null || push > nightly ? push : nightly;
+  const state =
+    at === null ? "not scanned yet"
+    : c.openHigh > 0 ? `${c.openHigh} high ${c.openHigh === 1 ? "finding holds" : "findings hold"} releases`
+    : c.open > 0 ? `${c.open} open ${c.open === 1 ? "finding" : "findings"}`
+    : "no open findings";
+  return {
+    kind: "scan", label: "Code scanning", href: `${base(repo)}/findings`, state, at, problem: c.openHigh > 0,
+    health: at === null ? "none" : c.openHigh > 0 ? "unread" : c.open > 0 ? "behind" : "ok",
+  };
 }
