@@ -32,3 +32,15 @@ bun bench/code-phases.ts --url https://copy.example --repo owner/name --rate 500
 The numbers themselves are **not attached**: this run's sandbox reaches no copy holding production's repositories, and the load must not be aimed at production. Run the command per repository on such a copy and post the tables on #9503.
 
 Only 200 (and 206) answers are samples. A redirect, 401 or 404 is counted by status in the line printed under `answered N`, so a run that was all refusals says so. A private copy needs `--token` (or `FORGE_TOKEN`); the first pages answering non-200 stops the run with the status. Connection failures and requests the client itself could not send (2000 in flight) are counted, not hidden.
+
+## Signed-in pages under a stranger flood (#9513)
+
+Anonymous tree, blob, raw and media pages take a permit from `strangerCodeGate` (`src/http/stranger_code.ts`) before they do any work: at most half the plumbing pool (`gitGate`), `FORGE_STRANGER_CODE_CONCURRENCY` overrides, with at most 256 waiting before the next stranger gets 503 + `Retry-After`. Holding the permit, a page yields one turn of the event loop before it renders, so a queue of strangers' cached pages cannot run back to back while a person's request goes unread. A signed-in request never touches the gate. The admission limit in `strangers.ts` still answers 429 above its per-minute budget.
+
+`bench/signed-in-under-load.ts` boots a throwaway forge in-process with the Shield `open` (so the whole flood reaches the code pages), seeds a repository and a session, and runs `bench/load.ts` against it with `FORGE_LOAD_COOKIE` set: anonymous code pages open-loop at `--rate`, and a signed-in `/` and repository home every 50 ms beside them. It prints both streams' p50/p95, the event loop's lag and the `gitGate` waits. On a sandbox at 500/s for 15 s: signed-in p95 91 ms with the yield, 22.5 s without it.
+
+`bench/signed-in-under-load.ts` boots a throwaway forge in-process, floods it with anonymous code pages open-loop and times a signed-in `/` and repository home at the same time:
+
+```sh
+bun bench/signed-in-under-load.ts --rate 500 --seconds 15
+```
