@@ -27,6 +27,7 @@ import type { Reader } from "../actions/telemetry.ts";
 import { agentView, live } from "./live.ts";
 import type { SystemView } from "./view.ts";
 import { readerPaces, type ReaderPace } from "./telemetry_reads.ts";
+import { featureHealth, type FeatureHealth } from "./feature_health.ts";
 
 export function systemFor(app: App, reader: Reader): SystemView {
   const view = live().read();
@@ -38,8 +39,8 @@ export function systemFor(app: App, reader: Reader): SystemView {
  * rows /system draws (#9088). Names are accounts, so only a telemetry reader gets
  * here. Call it before `countRead` so the read does not count into its own answer.
  */
-export function systemWithReaders(app: App, reader: Reader): SystemView & { readers: ReaderPace[] } {
-  return { ...systemFor(app, reader), readers: readerPaces() };
+export function systemWithReaders(app: App, reader: Reader): SystemView & { readers: ReaderPace[]; features: FeatureHealth[] } {
+  return { ...systemFor(app, reader), readers: readerPaces(), features: featureHealth(app, reader) };
 }
 
 /**

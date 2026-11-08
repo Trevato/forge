@@ -34,6 +34,7 @@ import { dialog } from "../ui/widgets.ts";
 import { Scroll, confirmScreen, drawLines, hitScroll, later, pickerScreen } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
 import { readHealth } from "../../actions/health.ts";
+import { featureHealth } from "../../system/feature_health.ts";
 import { readerPaces } from "../../system/telemetry_reads.ts";
 import { live as liveMachine } from "../../system/live.ts";
 
@@ -170,6 +171,25 @@ export function readerLines(session: Session, now = Date.now()): string[] {
   ];
 }
 
+/**
+ * Absorbed features and their production health, as /system's "Features from
+ * apps" says it (#9887): one line each, the problem after it only when there
+ * is one. Empty for anyone but the owner, and when nothing is absorbed.
+ */
+export function featuresLines(session: Session): string[] {
+  const reader = telemetryReader(session.app, session.user);
+  if (reader?.kind !== "owner") return [];
+  const rows = featureHealth(session.app, reader);
+  if (rows.length === 0) return [];
+  return [
+    "Features from apps",
+    ...rows.slice(0, READER_ROWS).map((r) =>
+      truncate(`${pad(r.name, 20)} ${pad(r.state, 8)} ${[r.commit, r.since].filter((x) => x !== null).join(" · ")}${r.problem === null ? "" : `  ${r.problem}`}`.trimEnd(), WIDTH - 6),
+    ),
+    ...(rows.length > READER_ROWS ? [`… and ${rows.length - READER_ROWS} more`] : []),
+  ];
+}
+
 /** The agents holding the grant, in one line. */
 export function grantLine(session: Session): string {
   const held = grantable(session.db).filter((a) => a.granted).map((a) => a.username);
@@ -219,6 +239,7 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session: Sessio
     title: "System",
     keys: [binding(["h"], "window"), ...(offered ? [binding(["g"], "grant or take back telemetry")] : []), binding(["enter", "esc", "q"], "close")],
     render(area, s) {
+      const features = featuresLines(session);
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "System",
         body: [
@@ -226,6 +247,7 @@ export function systemScreen(ctx: Ctx, lines: readonly string[], session: Sessio
           "",
           ...history,
           ...(offered ? ["", ...readerLines(session)] : []),
+          ...(features.length === 0 ? [] : ["", ...features]),
           ...(offered ? ["", grantLine(session), "g: grant or take back telemetry:read"] : []),
         ],
         actions: [{ label: "Close" }],
