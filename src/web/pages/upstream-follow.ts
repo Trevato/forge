@@ -38,7 +38,7 @@ import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { isLocalPath } from "../flash.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, field as formField, row, timeAgo } from "../ui.ts";
+import { btn, field as formField, row, timeAgo } from "../ui.ts";
 
 /** Where to land: a validated same-origin path the form names as `back`, else the settings card. */
 function backTo(form: Awaited<ReturnType<typeof readForm>> & object, fallback: string): string {
@@ -130,8 +130,9 @@ export function followUpstreamCard(ctx: Ctx, repo: Repo): Html | null {
   if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return null;
   const follow = getFollow(ctx.app.db, repo.id);
   const base = repoBase(repo);
-  return card(
-    html`<form method="post" action="${base}/settings/upstream">
+  return html`<section class="settings-block" id="upstream">
+    <h2>Follow upstream</h2>
+    <form method="post" action="${base}/settings/upstream">
         <p class="muted">
           New upstream commits arrive as a pull; never a push to
           <span class="mono">${repo.defaultBranch}</span>. A check runs every 30 minutes.
@@ -172,9 +173,8 @@ export function followUpstreamCard(ctx: Ctx, repo: Repo): Html | null {
         () => html`<form method="post" action="${base}/settings/upstream/check" class="mt">
           ${btn("Check upstream now", { size: "sm", icon: "sync" })}
         </form>`,
-      )}`,
-    { head: html`${icon("sync")}<h2 id="upstream">Follow upstream</h2>` },
-  );
+      )}
+  </section>`;
 }
 
 // POST /:owner/:name/settings/upstream
@@ -241,8 +241,9 @@ export function followSourcesCard(ctx: Ctx, repo: Repo): Html | null {
   const base = repoBase(repo);
   // A migrated repository's link back to where it came from is offered as the first line (#3293).
   const from = sources.length === 0 ? getProvenance(ctx.app.db, repo.id)?.sourceUrl : undefined;
-  return card(
-    html`<ul class="list" data-follow-sources>
+  return html`<section class="settings-block" id="sources">
+    <h2>Followed sources</h2>
+    <ul class="list" data-follow-sources>
         ${sources.length === 0
           ? html`<li class="muted small">Following no other sources.</li>`
           : sources.map((s) => sourceLine(base, s))}
@@ -270,9 +271,8 @@ export function followSourcesCard(ctx: Ctx, repo: Repo): Html | null {
         () => html`<form method="post" action="${base}/settings/sources/check" class="mt">
           ${btn("Check sources now", { size: "sm", icon: "sync" })}
         </form>`,
-      )}`,
-    { head: html`${icon("sync")}<h2 id="sources">Followed sources</h2>`, pad: sources.length === 0 },
-  );
+      )}
+  </section>`;
 }
 
 // POST /:owner/:name/settings/sources

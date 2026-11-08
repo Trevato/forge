@@ -481,7 +481,7 @@ a.row:hover .row-title { color: var(--accent); }
 .setting-list > li.has-after > .row-after { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 @media (max-width: 640px) { .setting-list > li.has-after > .row-after { flex-basis: 100%; justify-content: flex-start; padding: 0 14px 10px; } }
 /* An origin's error, notes and acts (Settings › Origins): a block of their own under the row, at every width. */
-.setting-list[data-origins] > li.has-after > .row-after { flex-basis: 100%; display: block; min-width: 0; padding: 0 14px 12px; overflow-wrap: anywhere; }
+.setting-list[data-origins] > li.has-after > .row-after, .setting-list[data-bets] > li.has-after > .row-after { flex-basis: 100%; display: block; min-width: 0; padding: 0 14px 12px; overflow-wrap: anywhere; }
 .list > li.has-after > .row-children { flex-basis: 100%; }
 .archived-list .row-title, .archived-list .row-meta { white-space: normal; overflow-wrap: anywhere; }
 @media (max-width: 640px) {

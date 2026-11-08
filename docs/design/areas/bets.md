@@ -29,7 +29,11 @@ the worst case is on `/preview-admin/sample/bets`.
 
 ### Bounded body (#9321)
 
-`[data-bet-card]` also carries `max-height: 80vh` with `overflow-x: hidden; overflow-y: auto`, so
-no proposed bet card is taller than one phone screen (844 px) even with every
-disclosure open; the overflow scrolls inside the card, never the page. No new
+The bound is on what a disclosure opens (`[data-bet-card] details ul`, `max-height: 40vh`,
+`overflow-y: auto`), not on the row: the row never scrolls, the page does, and a long
+issue list scrolls inside its own details. No new
 class. `test/bets-card-fit.test.ts` fails if the bound is removed.
+
+## Rows, not boxes (#9859)
+
+The list on `/:owner/:name/bets` is one `row()` per bet in a `ul.list.setting-list[data-bets]`, no `card()`. A proposed bet's row carries its share and next action in the meta; its journeys (three, the rest in a "N more" `<details>`), issue count and actions sit in the row's `after` slot. `data-bet-card` is now on the row's `<li>` (the bounds above still scope to it). The one CSS change: `[data-bets]` joins `[data-origins]` in giving `.row-after` the full row width. A finished bet's "This is done. Try it." is a `settings-block` heading and a line. No new class.

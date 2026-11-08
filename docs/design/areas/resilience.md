@@ -1,7 +1,8 @@
 # Resilience
 
 `/resilience` (`src/web/pages/resilience.ts`) is a forge admin's: the backups line, the nightly jobs, a tally, and one
-`row()` per protection in THREATS.md inside a `card` `.list`, its standing a `badge` word in the trail.
+`row()` per protection in THREATS.md in a plain `<section>` under an `<h2>`, rows in the `.list` with no card around
+them (#9877), its standing a `badge` word in the trail.
 
 ## At 390 px (#9328)
 

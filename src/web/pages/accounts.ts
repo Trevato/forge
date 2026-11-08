@@ -36,7 +36,6 @@ import { flashTo, page } from "../layout.ts";
 import {
   badge,
   btn,
-  card,
   confirmAction,
   row,
   time,
@@ -278,40 +277,30 @@ export function personSignInsPage(ctx: Ctx): Response {
   const at = `/settings/accounts/${encodeURIComponent(user.username)}`;
   return shell(
     ctx,
-    html`${card(
-      tokens.length === 0
+    html`<section class="settings-block" id="tokens">
+      <h2>${userLink(user.username)}: where they are signed in</h2>
+      <p class="muted">
+        Revoking a token or signing out a browser ends it at once; the person
+        can sign in again. To stop them signing in, suspend the account.
+      </p>
+      <h3>Access tokens</h3>
+      ${tokens.length === 0
         ? html`<p class="muted">No access tokens.</p>`
-        : html`<ul class="rows">
-            ${tokens.map(
-              (t) =>
-                html`<li class="row">
-                  <div class="row-main">
-                    <strong>${t.name}</strong> ${badge(t.scope)}
-                    <div class="row-meta">
-                      made ${time(t.createdAt)} · last used
-                      ${t.lastUsedAt ? time(t.lastUsedAt) : "never"}
-                    </div>
-                  </div>
-                  <div class="row-actions">
-                    ${confirmAction({
-                      action: `${at}/tokens/${t.id}/delete`,
-                      verb: "Revoke",
-                      size: "sm",
-                    })}
-                  </div>
-                </li>`,
+        : html`<ul class="list setting-list">
+            ${tokens.map((t) =>
+              row({
+                title: html`${t.name} ${badge(t.scope)}`,
+                meta: html`made ${time(t.createdAt)} · last used
+                ${t.lastUsedAt ? time(t.lastUsedAt) : "never"}`,
+                after: confirmAction({
+                  action: `${at}/tokens/${t.id}/delete`,
+                  verb: "Revoke",
+                  size: "sm",
+                }),
+              }),
             )}
-          </ul>`,
-      {
-        head: html`<h2>${userLink(user.username)}: where they are signed in</h2>
-          <p class="muted">
-            Revoking a token or signing out a browser ends it at once; the
-            person can sign in again. To stop them signing in, suspend the
-            account.
-          </p>
-          <h3>Access tokens</h3>`,
-      },
-    )}
+          </ul>`}
+    </section>
     ${grantCard(ctx, user, at)}
     ${sessionsCard(sessions, at)}`,
   );

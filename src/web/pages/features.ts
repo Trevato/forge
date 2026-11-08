@@ -10,6 +10,7 @@ import {
   absorbApp,
   acceptDeclaration,
   changeFeatureSettings,
+  feedOf,
   getFeature,
   listFeatures,
   unabsorbApp,
@@ -18,13 +19,14 @@ import {
   provenanceFacts,
 } from "../../actions/features.ts";
 import { DAYS } from "../../apps/feature.ts";
+import type { FeedItem } from "../../feed/rank.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { readForm, type Form } from "../form.ts";
 import { html, raw, when } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, empty, row } from "../ui.ts";
+import { badge, btn, empty, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -101,11 +103,12 @@ export async function featuresPage(ctx: Ctx): Promise<Response> {
   const rendering = performance.now();
   const body = html`<section class="settings-block">
       <h2>Features</h2>
+      <p class="muted">An absorbed app is a menu link with its settings kept here.</p>
       ${listed.value.length === 0
         ? empty({
             icon: "rocket",
             title: "No app declares a feature yet",
-            note: 'An app declares one with a "feature" block in its forge.json: a name, a page and typed settings. Absorbing it puts it in the forge\'s nav and keeps its settings here.',
+            note: 'An app declares one with a "feature" block in its forge.json: a name, a page and typed settings.',
             action: html`<p><a href="${DOCS}">How an app declares a feature</a></p>`,
           })
         : html`<ul class="list setting-list">
@@ -141,6 +144,9 @@ function input(s: SettingView, invalid = false) {
     }
     case "list":
       return html`<textarea class="input mono" name="${name}" rows="3" aria-label="${s.label}" ${bad}>${s.value.split(",").filter(Boolean).join("\n")}</textarea>`;
+    case "secret":
+      return html`<input class="input mono" type="password" name="${name}" value="" autocomplete="new-password"
+        aria-label="${s.label}" aria-describedby="kept-${s.key}" ${bad} />`;
     default:
       return html`<input class="input" name="${name}" value="${s.value}" aria-label="${s.label}" ${bad} />`;
   }
@@ -154,7 +160,7 @@ export async function featurePage(ctx: Ctx): Promise<Response> {
   const found = await timePhase(ctx.request, "feature", () => getFeature(ctx.app, ctx.auth.user, ctx.params["slug"] ?? ""));
   if (!found.ok) return notFoundPage(ctx);
   const rendering = performance.now();
-  const response = featureView(ctx, found.value);
+  const response = featureView(ctx, found.value, undefined, feedOf(ctx.app, ctx.auth.user, found.value, 10));
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
@@ -175,15 +181,16 @@ function typedValue(s: SettingView, raw: unknown): string {
   return text;
 }
 
-function featureView(ctx: Ctx, f: FeatureView, refused?: Refused): Response {
+function featureView(ctx: Ctx, f: FeatureView, refused?: Refused, items: readonly FeedItem[] = []): Response {
   const base = `/settings/features/${encodeURIComponent(f.slug)}`;
   const settings = f.settings.map((shown) => {
     const bad = refused?.key === shown.key;
     const s = refused !== undefined && shown.key in refused.typed ? { ...shown, value: typedValue(shown, refused.typed[shown.key]) } : shown;
     return row({
       title: html`${s.label} <span class="muted small mono">${s.env}</span>`,
-      meta: html`${bad ? html`<span class="danger" role="alert">${refused.message}</span><br />` : null}${s.help ?? ""}${when(s.help !== null, () => html`<br />`)}Default
-        <span class="mono">${s.default === "" ? "empty" : s.default}</span>${s.set ? "" : " · not changed"}`,
+      meta: html`${bad ? html`<span class="danger" role="alert">${refused.message}</span><br />` : null}${s.help ?? ""}${when(s.help !== null, () => html`<br />`)}${s.type === "secret"
+        ? html`<span id="kept-${s.key}">${s.set ? "Kept" : "Not set"}. Typing replaces it; a blank field keeps it. Clear it through the API or MCP.</span>`
+        : html`Default <span class="mono">${s.default === "" ? "empty" : s.default}</span>${s.set ? "" : " · not changed"}`}`,
       trail: input(s, bad),
     });
   });
@@ -204,6 +211,16 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused): Response {
             </p>
           </form>`}
     </section>
+    <section class="settings-block">
+      <h3>In the feed</h3>
+      ${items.length === 0
+        ? html`<p class="muted small">Nothing yet.</p>`
+        : html`<ul class="list">${items.map((i) => row({
+            ...(i.link.startsWith("/") && !i.link.startsWith("//") ? { href: i.link } : {}),
+            title: i.what,
+            meta: html`${i.actor ?? i.app} · ${time(i.at)}`,
+          }))}</ul>`}
+    </section>
     <p class="muted small">
       Saving restarts ${f.name}: its process reads each setting as an environment variable, named on the right.
       <a href="/settings/features">All features</a>
@@ -219,6 +236,7 @@ export function settingsFromForm(form: Form, settings: readonly SettingView[]): 
     const name = `s.${s.key}`;
     const all = form.getAll(name).map(String);
     if (all.length === 0) continue;
+    if (s.type === "secret" && (all[all.length - 1] ?? "") === "") continue; // blank keeps what is kept
     if (s.type === "days") out[s.key] = all.filter((d) => d !== "");
     else if (s.type === "bool") out[s.key] = all.includes("on") ? "on" : "off";
     else out[s.key] = all[all.length - 1] ?? "";

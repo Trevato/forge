@@ -20,10 +20,13 @@
 import type { App } from "../app.ts";
 import { readFileAt } from "../apps/checkout.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName, type FeatureSpec } from "../apps/feature.ts";
+import { keptSettings as openSettings, sealSetting } from "../apps/feature_env.ts";
+import type { ToolSpec } from "../apps/feature_tools.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getAppByRepo, getAppById, getAppBySlug, listApps, type AppRecord } from "../core/apps.ts";
 import {
   absorb,
+  clearFeatureSettings,
   keepDeclaration,
   featureSettings,
   getAbsorbed,
@@ -31,8 +34,10 @@ import {
   setFeatureSettings as keepSettings,
   unabsorb,
 } from "../core/features.ts";
-import { canRead, getRepoById, type Repo } from "../core/repos.ts";
+import { canRead, getRepo, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import { readFeedPage } from "../feed/feed.ts";
+import type { FeedItem } from "../feed/rank.ts";
 import { resolveOid } from "../git/merge.ts";
 import { commitLog } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -81,6 +86,8 @@ export interface FeatureView {
   /** Why the declaration is not usable, when it is not; `settings` is then empty. */
   readonly problem: string | null;
   readonly settings: readonly SettingView[];
+  /** The MCP tools the app declares; the `features` tool calls them while it is absorbed. */
+  readonly tools: readonly ToolSpec[];
   /** Where the app comes from: the upstream only when the reader may read it. */
   readonly provenance: Provenance;
 }
@@ -210,7 +217,7 @@ function viewOf(
   problem: string | null,
   provenance: Provenance,
 ): FeatureView {
-  const kept = featureSettings(app.db, record.id);
+  const kept = spec === undefined ? featureSettings(app.db, record.id) : openSettings(app.db, app.config.dataDir, record.id, spec);
   const absorbed = getAbsorbed(app.db, record.id);
   const env = spec === undefined ? {} : featureEnv(spec, kept);
   return {
@@ -230,6 +237,7 @@ function viewOf(
     absorbedAt: absorbed?.absorbedAt ?? null,
     problem,
     provenance,
+    tools: spec?.tools ?? [],
     settings: (spec?.settings ?? []).map((s) => {
       const name = settingEnvName(s.key);
       return {
@@ -237,7 +245,8 @@ function viewOf(
         type: s.type,
         label: s.label,
         help: s.help ?? null,
-        value: env[name] ?? s.default,
+        // A secret is never shown again: only whether one is kept.
+        value: s.type === "secret" ? "" : (env[name] ?? s.default),
         default: s.default,
         set: kept.has(s.key),
         min: s.min ?? null,
@@ -250,7 +259,7 @@ function viewOf(
 }
 
 /** The app behind a slug, if the actor may read its repository. */
-function readable(app: App, actor: User | undefined, slug: string): { record: AppRecord; repo: Repo } | undefined {
+export function readable(app: App, actor: User | undefined, slug: string): { record: AppRecord; repo: Repo } | undefined {
   const record = getAppBySlug(app.db, slug);
   if (record === undefined) return undefined;
   const repo = getRepoById(app.db, record.repoId);
@@ -315,6 +324,24 @@ export async function getFeature(app: App, actor: User | undefined, slug: string
   const spec = declared.ok ? declared.value : undefined;
   const provenance = await provenanceOf(app, actor, found.repo);
   return ok(viewOf(found.record, found.repo, app, spec, declared.ok ? null : declared.error, provenance));
+}
+
+/**
+ * An app's own feed items, for a feature `getFeature` already returned (so
+ * its reader was checked there, once): what the viewer's feed holds about its
+ * repository, ranked as the feed ranks them. A guest has no feed, so none.
+ */
+export function feedOf(app: App, actor: User | undefined, view: FeatureView, limit = 20): FeedItem[] {
+  if (actor === undefined) return [];
+  const [owner = "", name = ""] = view.repo.split("/");
+  const repo = getRepo(app.db, owner, name);
+  return repo === undefined ? [] : readFeedPage(app.db, actor, { limit, repoId: repo.id }).items;
+}
+
+/** The same, from a slug, for the door that has not read the feature yet. */
+export async function featureFeed(app: App, actor: User | undefined, slug: string, limit = 20): Promise<Result<readonly FeedItem[], FeatureError>> {
+  const found = await getFeature(app, actor, slug);
+  return found.ok ? ok(feedOf(app, actor, found.value, limit)) : found;
 }
 
 async function redeployAll(app: App, record: AppRecord, repo: Repo): Promise<void> {
@@ -408,9 +435,15 @@ export async function changeFeatureSettings(
     if (!checked.ok) return refuse("invalid_setting", `${spec.label} ${checked.error}.`, key);
     changes.set(key, checked.value);
   }
-  const before = featureSettings(app.db, found.record.id);
+  const before = openSettings(app.db, app.config.dataDir, found.record.id, declared.value);
   const changed = [...changes].filter(([k, v]) => (before.get(k) ?? declared.value!.settings.find((s) => s.key === k)!.default) !== v);
-  if (changes.size > 0) keepSettings(app.db, found.record.id, changes, actor.id);
+  const isSecret = (k: string): boolean => declared.value!.settings.find((s) => s.key === k)?.type === "secret";
+  // A blank secret clears it: the row goes, so `set` says not set rather than a sealed empty string.
+  const cleared = [...changes].filter(([k, v]) => v === "" && isSecret(k)).map(([k]) => k);
+  const stored = new Map<string, string>();
+  for (const [k, v] of changes) if (!cleared.includes(k)) stored.set(k, isSecret(k) ? sealSetting(app.config.dataDir, found.record.id, k, v) : v);
+  if (stored.size > 0) keepSettings(app.db, found.record.id, stored, actor.id);
+  if (cleared.length > 0) clearFeatureSettings(app.db, found.record.id, cleared);
   if (changed.length > 0) {
     app.bus.append({
       kind: "app.feature_settings",

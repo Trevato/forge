@@ -36,6 +36,7 @@ import { systemLiveJs } from "../system-live.ts";
 import { RECENT_BYTES, recentEncodings } from "../../http/compress.ts";
 import { KEPT_PAGE_BYTES, keptPageStats } from "./kept_page.ts";
 import { COLUMN_BYTES, PARTS_BYTES, keptPartsStats, treeCacheStats } from "./tree_cache.ts";
+import { featureHealth, type FeatureHealth } from "../../system/feature_health.ts";
 import { badge, chartBox, meter, pill, row } from "../ui.ts";
 
 /** A group's memory, and a cell's beside its cap and who holds the cap. */
@@ -130,6 +131,15 @@ export function cachesSection(rows: readonly CacheRow[]): Html {
         <thead><tr><th scope="col">Cache</th><th scope="col">Holds</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Bytes</th><th scope="col" class="num">Cap</th><th scope="col" class="num">Hits</th><th scope="col" class="num">Misses</th><th scope="col" class="num">Hit rate</th></tr></thead>
         <tbody>${rows.map((r) => html`<tr data-cache="${r.name}" data-bytes="${String(r.bytes)}"><td>${r.name}</td><td class="small muted">${r.holds}</td><td class="num mono">${String(r.entries)}</td><td class="num mono">${mib(r.bytes)}</td><td class="num mono">${mib(r.capBytes)}</td><td class="num mono">${String(r.hits)}</td><td class="num mono">${String(r.misses)}</td><td class="num mono">${rate(r)}</td></tr>`)}</tbody>
       </table></div></section>`;
+}
+
+/** Absorbed apps and whether production is serving (#9887); `featureHealth`'s rows. Nothing absorbed, nothing drawn. */
+export function featuresSection(rows: readonly FeatureHealth[]): Html {
+  if (rows.length === 0) return html``;
+  return html`<section class="settings-block" id="sys-features"><h2>Features from apps</h2>
+    <ul class="list" aria-label="Absorbed features and their health">${rows.map((r) => html`<li data-feature="${r.slug}" data-healthy="${String(r.healthy)}"><strong>${r.name}</strong> ${r.healthy ? html`<span class="small muted">${r.state}</span>` : badge(r.state, { tone: "danger" })}
+      <span class="small muted mono">${[r.commit, r.since].filter((x) => x !== null).join(" · ")}</span>${r.problem === null ? null : html` <span class="small muted">${r.problem}</span>`}</li>`)}</ul>
+    <p class="small"><a href="/settings/features">Settings › Features</a></p></section>`;
 }
 
 /** The last hour's stalls by route, most milliseconds first; the rows are `stallHour`'s. */
@@ -253,6 +263,7 @@ export function systemPage(ctx: Ctx): Response {
       <div class="js-only small muted">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
         <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></div>
       <div id="sys-procs">${at("sys-procs")}</div></section>
+    ${featuresSection(timePhase(ctx.request, "features", () => featureHealth(ctx.app, reader)))}
     <div id="sys-stalls">${stallSection(stalls)}</div>
     <div id="sys-readers">${readersSection(readerPaces())}</div>
     <div id="sys-caches">${cachesSection(pageCaches())}</div>

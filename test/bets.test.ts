@@ -608,3 +608,21 @@ describe("a proposed bet card stays one screen tall (#8970)", () => {
     expect(await card("j1\nj2\nj3\nj4")).toContain("1 more journey</summary>");
   });
 });
+
+describe("the bets list and a bet's page are rows, not boxes", () => {
+  test("no class=\"card on the list (owner and reader) or on a finished bet's page", async () => {
+    app.db.query("DELETE FROM bet WHERE repo_id = ?1").run(repo.id);
+    const cookie = await signIn("alice");
+    fresh2("Boxless");
+    const d = fresh2("Finished");
+    app.db.query("UPDATE bet SET state = 'done' WHERE id = ?1").run(d.id);
+    const list = await (await fetch(`${servers.url}/alice/notes/bets`, { headers: { cookie } })).text();
+    expect(list).toContain("data-bet-card");
+    expect(list).toContain("Back it at");
+    expect(list).not.toContain('class="card');
+    expect(await (await fetch(`${servers.url}/alice/notes/bets`)).text()).not.toContain('class="card');
+    const one = await (await fetch(`${servers.url}/alice/notes/bets/${d.id}`, { headers: { cookie } })).text();
+    expect(one).toContain("This is done. Try it.");
+    expect(one).not.toContain('class="card');
+  });
+});

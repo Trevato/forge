@@ -105,8 +105,8 @@ the row at every width, so nothing squeezes beside the title on a 390 px phone. 
 
 Settings › Cloud (`src/web/pages/cloud.ts`) adds no component class. As on the home page it is headings over rows: Cloud accounts,
 Add an account and Every read are each a `<section class="settings-block">` with an `<h2>`; each account is a `row()` in
-`<ul class="list setting-list">`; with none, one plain sentence says how to add one. `/settings/cloud/audit` is unchanged.
-`test/cloud-page-shape.test.ts` holds the shape.
+`<ul class="list setting-list">`; with none, one plain sentence says how to add one. `/settings/cloud/audit` is one `settings-block`, Today's vendor calls,
+its rows in a `.list` or one plain sentence when there are none (#9878). `test/cloud-page-shape.test.ts` holds the shape.
 
 Settings › Telemetry (`telemetryPage()` in `src/web/pages/telemetry.ts`, #9806) adds no class: two `<section class="settings-block">` blocks, Telemetry grants (one plain paragraph, then each agent a `row()` with its Grant/Revoke form in a `.setting-list`) and Reads; an empty list is one plain sentence. Pinned by `test/telemetry-blocks.test.ts`.
 
@@ -149,3 +149,19 @@ Settings › Model (`modelPage()` in `src/web/pages/model.ts`, #9800) adds no cl
 ## Organizations
 
 `/organizations/new` is one muted sentence (what an organization is) over the single name field, whose hint says it becomes the URL; "first owner" is said once, in the landing flash. A team's page (`/:owner/-/teams/:team`) is three `<section class="settings-block">`s, each an `<h2>` — Members, Add a member, Delete this team (not on Owners) — over a `list setting-list` of `row()`s or a plain form. No card, no empty-state box (an empty team is one muted line), no new class. Every change stays a plain POST form or a confirm page, so it works with JavaScript off. `test/org-team-rows.test.ts` holds the shape.
+
+## An app's form, visitors and environment (#9854)
+
+On an app's Settings page, `appSettingsView()`, `appVisitorsView()` and `appEnvView()` are each a `.settings-block` (a heading, one sentence, then the form or rows; env names in a `.setting-list`), not a `card()`. No new class.
+
+## Accounts (#9870)
+
+Settings › Accounts (`accountsPage()` in `src/web/pages/accounts.ts`, #9870) has no card: who is on the forge is a `<section class="settings-block" id="accounts">` under an `<h2>`, rows in `.list`, and a person's sign-ins page is the same (an `<h2>`, an `<h3>` for tokens, rows). No new class. Pinned by `test/accounts-language.test.ts`.
+
+## Flags (#9872)
+
+Settings › Flags (`flagsPage()` in `src/web/pages/flags.ts`, #9872) has no card: one `<section class="settings-block">` under `<h2>Flags</h2>` holds the flags as `.list.setting-list` rows, or one plain sentence when none is declared. Pinned by `test/flags-language.test.ts`.
+
+## General (#9853)
+
+Settings › General (`settingsPage()` and `provenanceCard()` in `src/web/pages/settings.ts`, #9853) adds no class and holds no `.card`: About, Your team, On its own and Held files (`src/web/studio/crew.ts`, `file_holds.ts`), Branch and gates, Mirror, Show where this came from, Follow upstream and Followed sources (`upstream-follow.ts`), and Cut a wave and Archive are each a `<section class="settings-block">` with an `<h2>`, one plain sentence and the form. The crew-readiness notices (`crewReadiness()` in `src/web/pages/crew.ts`) are `.toast` rows with `data-tone="danger"`. Every form keeps its action, method, field names and ids. Pinned by `test/settings.test.ts`, which asserts the whole page has no `class="card`.

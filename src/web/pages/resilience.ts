@@ -19,7 +19,7 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { badge, card } from "../ui.ts";
+import { badge } from "../ui.ts";
 
 const TONE = { green: "success", red: "danger", untested: "default", "no test yet": "default" } as const;
 
@@ -72,10 +72,11 @@ export const RESILIENCE_CSS = `[data-resilience] { overflow-wrap: anywhere; }
 [data-resilience] .row-title, [data-resilience] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
 [data-resilience] .row { align-items: flex-start; }`;
 
-/** One row per protection, its standing a word in the trail. */
+/** One row per protection under its heading, its standing a word in the trail; no card (#9877). */
 export function protectionsHtml(rows: readonly Row[]): Html {
-  return card(
-    html`<ul class="list">
+  return html`<section class="stack" aria-labelledby="protections-h">
+    <h2 id="protections-h">Protections</h2>
+    <ul class="list">
       ${rows.map(
         ({ p, s }) =>
           html`<li class="row" data-standing="${s}">
@@ -86,9 +87,8 @@ export function protectionsHtml(rows: readonly Row[]): Html {
             <span class="row-trail">${badge(s, { tone: TONE[s] })}</span>
           </li>`,
       )}
-    </ul>`,
-    { pad: false },
-  );
+    </ul>
+  </section>`;
 }
 
 // GET /resilience: a forge admin's, since live red lines name what to attack.

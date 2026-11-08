@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { absorbApp } from "../src/actions/features.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
@@ -23,7 +24,7 @@ quietLogs();
 
 const FORGE_JSON = JSON.stringify({
   app: { run: "bun run src/server.ts" },
-  feature: { name: "Radar", page: "/", settings: { runHourUtc: { type: "int", default: 13, min: 0, max: 23, label: "Hour (UTC)" } } },
+  feature: { name: "Radar", page: "/", settings: { runHourUtc: { type: "int", default: 13, min: 0, max: 23, label: "Hour (UTC)" }, apiToken: { type: "secret", label: "API token" } } },
 });
 
 describe("features in the terminal", () => {
@@ -32,6 +33,7 @@ describe("features in the terminal", () => {
   let ada: User;
   let eve: User;
   let appId: string;
+  let repoId: string;
 
   function boot(user: User) {
     const terminal = headlessTerminal(120, 32);
@@ -48,11 +50,11 @@ describe("features in the terminal", () => {
       for (const ch of text) key(ch);
       await settleApp(app);
     };
-    const palette = async () => {
+    const palette = async (query = "Features") => {
       await settleApp(app);
       app.dispatch({ type: "key", key: "k", ctrl: true, alt: false, shift: false });
       await settleApp(app);
-      await type("Features");
+      await type(query);
     };
     return { text: () => app.screen.toText(), press, type, palette, stop: () => app.stop() };
   }
@@ -74,6 +76,7 @@ describe("features in the terminal", () => {
     const row = insertApp(forge.db, { repoId: repo.value.id, slug: "radar", access: "public" });
     if (!row.ok) throw new Error(row.error);
     appId = row.value.id;
+    repoId = repo.value.id;
   }, 60_000);
   afterAll(async () => {
     forge?.close();
@@ -110,6 +113,51 @@ describe("features in the terminal", () => {
     await t.press("esc");
     await t.press("a");
     expect(getAbsorbed(forge.db, appId)).toBeUndefined();
+    t.stop();
+  });
+
+  test("a secret is masked, shown as kept, and a blank submit leaves it", async () => {
+    const t = boot(ada);
+    await t.palette();
+    await t.press("enter");
+    await t.press("a");
+    await t.press("enter");
+    expect(t.text()).toContain("not set");
+    await t.press("j");
+    await t.press("enter");
+    await t.type("hunter2-value");
+    expect(t.text()).not.toContain("hunter2-value");
+    await t.press("enter");
+    const kept = featureSettings(forge.db, appId).get("apiToken") ?? "";
+    expect(kept).not.toBe("");
+    expect(kept).not.toContain("hunter2-value");
+    expect(t.text()).toContain("kept");
+    await t.press("enter");
+    await t.press("enter");
+    expect(featureSettings(forge.db, appId).get("apiToken")).toBe(kept);
+    await t.press("esc");
+    await t.press("a");
+    t.stop();
+  });
+
+  test("a reader opens an absorbed app's feed items from the palette", async () => {
+    const absorbed = await absorbApp(forge, ada, "radar");
+    if (!absorbed.ok) throw new Error(absorbed.error);
+    forge.bus.append({ kind: "run.finished", repoId, actorId: ada.id, payload: { kind: "agent", state: "ok", summary: "Radar misses Tuesday", runId: "r1" } });
+    const t = boot(ada);
+    await t.palette("Feature feeds");
+    await t.press("enter");
+    expect(t.text()).toContain("Radar");
+    await t.press("enter");
+    expect(t.text()).toContain("Radar misses Tuesday");
+    t.stop();
+  });
+
+  test("any signed-in reader is offered it, for the apps they may read", async () => {
+    const t = boot(eve);
+    await t.palette("Feature feeds");
+    await t.press("enter");
+    expect(t.text()).toContain("Radar");
     t.stop();
   });
 });

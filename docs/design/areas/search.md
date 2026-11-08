@@ -10,4 +10,4 @@ The owner's phone look of `/search?q=sample` is attached to the pull.
 
 ## Rows under a heading (#9689)
 
-Each section of the results (apps and repositories, issues and pull requests, code) is a heading over a `.list` of `.row`s in a `.card.bare` (#9588): rows on the page's one background, no box. No new class; `test/studio-search.test.ts` holds it.
+Each section of the results (apps and repositories, issues and pull requests, code) is a heading over a `.list` of `.row`s in a plain `<section>` (#9862): rows on the page's one background, no box; an empty query or section is one muted sentence. No new class; `test/studio-search.test.ts` holds it.

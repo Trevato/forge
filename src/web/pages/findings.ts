@@ -15,7 +15,7 @@ import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, repoHeader, repo
 import { field as formField, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, card, field, listCard, row, time } from "../ui.ts";
+import { badge, btn, field, row, time } from "../ui.ts";
 
 /** When a pass last ran, and whether it read everything: a partial pass says how many files it left out. */
 export function passWords(run: { at: string; skipped: number } | null): Html {
@@ -55,10 +55,14 @@ export function findingsPage(ctx: Ctx): Response {
   const body = html`${repoHeader(ctx, repo, "flows")}
     ${pageHead("Findings", { sub: "Every push is scanned for secrets and advisories; each night adds static analysis. An open high finding holds a release until a person accepts it." })}
     <p class="muted">Last push scan ${passWords(push)} · last nightly scan ${passWords(nightly)}</p>
-    ${card(rows.length === 0 ? html`<p class="muted">Nothing found.</p>` : listCard(rows.map((f) => findingRow(f, base, writer))), {
-      head: html`Findings`,
-      pad: rows.length === 0,
-    })}
+    <section class="mt">
+      <h2>Findings</h2>
+      ${rows.length === 0
+        ? html`<p class="muted">Nothing found.</p>`
+        : html`<ul class="list">
+            ${rows.map((f) => findingRow(f, base, writer))}
+          </ul>`}
+    </section>
     <p class="mt">${btn("Back to flows", { variant: "secondary", href: `${base}/flows` })}</p>`;
   const res = page({ ctx, title: `Findings · ${repo.name}`, crumbs: crumbsFor(repo), palette: repoPalette(ctx, repo), body });
   notePhase(ctx.request, "render", performance.now() - rendering);

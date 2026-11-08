@@ -55,15 +55,14 @@ function cards(page: string): { cls: string; heading: string | undefined }[] {
 /** A card the profile may keep: bare, an empty state, or a toned notice. */
 const allowed = (cls: string) => /\b(bare|empty)\b/.test(cls);
 
-test("an admin sees apps, repositories, members, teams and the new-team form as bare lists", async () => {
+test("an admin sees apps, repositories, members, teams and the new-team form as plain sections (#9890)", async () => {
   const page = await get("/acme");
-  const byHeading = new Map(cards(page).map((c) => [c.heading, c.cls]));
-  for (const heading of ["Apps", "Other repositories", "New team"]) expect(byHeading.get(heading)).toContain("bare");
+  expect(cards(page)).toEqual([]);
+  for (const heading of ["Apps", "Other repositories", "New team", "Members"])
+    expect(page).toMatch(new RegExp(`<section class="settings-block">\\s*<h2>${heading}</h2>`));
   expect(page).toContain('href="/acme/notes"');
   expect(page).toContain('href="/acme/shipped"');
-  // Members and Teams are headings straight over bare lists.
-  for (const heading of ["Members", "Teams"])
-    expect(page).toMatch(new RegExp(`<h2 class="mt"[^>]*>${heading}</h2>\\s*<div\\s+class="card bare"`));
+  expect(page).toMatch(/<section class="settings-block">\s*<h2 id="teams">Teams<\/h2>\s*<ul class="list setting-list"/);
 });
 
 test("no boxed card is left on an org's page, for an admin or a visitor", async () => {

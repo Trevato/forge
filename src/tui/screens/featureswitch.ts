@@ -40,7 +40,7 @@ function featureRow(f: FeatureView): ListRow {
 }
 
 function settingRow(s: SettingView): ListRow {
-  return { title: `${s.label}  ${s.env}`, meta: s.value === "" ? "empty" : s.value, note: `${s.help ?? s.type}${s.set ? "" : " · not changed"}` };
+  return { title: `${s.label}  ${s.env}`, meta: s.type === "secret" ? (s.set ? "kept" : "not set") : s.value === "" ? "empty" : s.value, note: `${s.help ?? s.type}${s.set ? "" : " · not changed"}` };
 }
 
 function settingsScreen(f: Session, ctx: Ctx, slug: string): Screen {
@@ -71,9 +71,15 @@ function settingsScreen(f: Session, ctx: Ctx, slug: string): Screen {
         promptScreen(ctx, screen, {
           title: setting.label,
           label: setting.type === "list" || setting.type === "days" ? "comma separated" : setting.type,
-          value: setting.value,
+          value: setting.type === "secret" ? "" : setting.value,
+          mask: setting.type === "secret",
           hint: setting.help ?? `${setting.env}; default ${setting.default === "" ? "empty" : setting.default}`,
           onSubmit: async (text) => {
+            // As on the page, a blank secret keeps what is kept; clearing is the API's.
+            if (setting.type === "secret" && text === "") {
+              ctx.toast(`${setting.label}: left as it was`);
+              return;
+            }
             const saved = await changeFeatureSettings(f.app, f.user, slug, { [setting.key]: text });
             if (!saved.ok) {
               ctx.toast(saved.error.message, "attn");

@@ -17,7 +17,7 @@ import { readForm } from "../form.ts";
 import { html, raw, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { pollJs } from "../client.ts";
-import { btn, card, icon, row } from "../ui.ts";
+import { btn, icon, row } from "../ui.ts";
 import {
   accountOnly,
   hostLabel,
@@ -64,25 +64,25 @@ export function originFlowPage(ctx: Ctx): Response {
     base === "" || flow.shortCode === "" ? "" : `${base}/go/${flow.shortCode}`;
   const body =
     flow.flow === "device"
-      ? html`${card(
-          html`<p class="muted small">
-              Type this code at
-              <a href="${flow.verificationUri}" rel="noreferrer noopener"
-                >${flow.verificationUri}</a
-              >. Any device with a browser will do — this page waits.
-            </p>
-            <div class="bar">
-              <p class="device-code" id="device-code">${flow.userCode}</p>
-              ${copyBtn("device-code", "Copy the code")}
-            </div>
-            ${handoff(flow.verificationUri, shortLink)}`,
-          {
-            head: html`${icon("github")}
-              <h2>Enter this code</h2>`,
-          },
-        )}`
-      : html`${card(
-          authorize === undefined
+      ? html`<section aria-labelledby="h-flow">
+          <h2 id="h-flow">Enter this code</h2>
+          <p class="muted">
+            Type it at
+            <a href="${flow.verificationUri}" rel="noreferrer noopener"
+              >${flow.verificationUri}</a
+            >. Any device with a browser will do — this page waits.
+          </p>
+          <div class="bar">
+            <p class="device-code" id="device-code">${flow.userCode}</p>
+            ${copyBtn("device-code", "Copy the code")}
+          </div>
+          ${handoff(flow.verificationUri, shortLink)}
+        </section>`
+      : html`<section aria-labelledby="h-flow">
+          ${forge
+            ? html`<h2 id="h-flow">Sign in at ${hostLabel(flow.webUrl)}</h2>`
+            : html`<h2 id="h-flow">Authorize on the instance</h2>`}
+          ${authorize === undefined
             ? html`<p>
                   This connect cannot be continued from here — the authorization
                   link was lost. Start it again from Origins.
@@ -98,15 +98,8 @@ export function originFlowPage(ctx: Ctx): Response {
                   <span class="mono">${hostLabel(flow.webUrl)}</span> and
                   ${forge ? "say yes" : "approve the application"}. You will come straight back here.
                 </p>
-                ${handoff(authorize, shortLink, forge ? `Continue to ${hostLabel(flow.webUrl)}` : "Continue to the instance")}`,
-          {
-            head: forge
-              ? html`${icon("globe")}
-                  <h2>Sign in at ${hostLabel(flow.webUrl)}</h2>`
-              : html`${icon("forgejo")}
-                  <h2>Authorize on the instance</h2>`,
-          },
-        )}`;
+                ${handoff(authorize, shortLink, forge ? `Continue to ${hostLabel(flow.webUrl)}` : "Continue to the instance")}`}
+        </section>`;
 
   const waiting = html`<form
     class="bar mt"
@@ -266,31 +259,28 @@ function expiredFlow(
     title: "Connecting an origin",
     body: html`<div class="page-head"><h1>Connecting an origin</h1></div>
       <div class="narrow-wide">
-        ${card(
-          html`<p class="mb">
-              This connect link expired. Nothing was connected. Start again:
-            </p>
-            <form method="post" action="/settings/origins/oauth">
-              <input type="hidden" name="host" value="${flow.webUrl}" />
-              ${flow.kind === "github"
-                ? html`<input type="hidden" name="kind" value="github" />`
-                : null}
-              ${then === undefined
-                ? null
-                : html`<input type="hidden" name="then" value="${then === "/bring" ? "bring" : "migrate"}" />`}
-              ${link === undefined
-                ? null
-                : html`<input type="hidden" name="link" value="${link}" />`}
-              ${btn(`Connect ${hostLabel(flow.webUrl)}`, {
-                variant: "primary",
-                icon: "external",
-              })}
-            </form>`,
-          {
-            head: html`${icon("alert")}
-              <h2>This connect link expired</h2>`,
-          },
-        )}
+        <section aria-labelledby="h-expired">
+          <h2 id="h-expired">This connect link expired</h2>
+          <p class="mb">
+            Nothing was connected. Start again:
+          </p>
+          <form method="post" action="/settings/origins/oauth">
+            <input type="hidden" name="host" value="${flow.webUrl}" />
+            ${flow.kind === "github"
+              ? html`<input type="hidden" name="kind" value="github" />`
+              : null}
+            ${then === undefined
+              ? null
+              : html`<input type="hidden" name="then" value="${then === "/bring" ? "bring" : "migrate"}" />`}
+            ${link === undefined
+              ? null
+              : html`<input type="hidden" name="link" value="${link}" />`}
+            ${btn(`Connect ${hostLabel(flow.webUrl)}`, {
+              variant: "primary",
+              icon: "external",
+            })}
+          </form>
+        </section>
       </div>`,
   });
 }

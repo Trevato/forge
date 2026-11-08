@@ -30,7 +30,7 @@ import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, confirmAction, icon, row, time } from "../ui.ts";
+import { btn, confirmAction, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const BACK = "/settings/cloud";
@@ -223,9 +223,10 @@ export function cloudAuditPage(ctx: Ctx): Response {
     body: html`<div class="page-head"><h1>Cloud audit</h1></div>
       ${settingsLayout(
         accountSections("cloud", { admin: true }),
-        card(
-          rows.length === 0
-            ? html`<p class="muted small card-body">No vendor call today. Rows are kept 90 days.</p>`
+        html`<section class="settings-block">
+          <h2>Today's vendor calls</h2>
+          ${rows.length === 0
+            ? html`<p class="muted small">No vendor call today. Rows are kept 90 days.</p>`
             : html`<ul class="list">
                 ${rows.map((r) =>
                   row({
@@ -235,9 +236,8 @@ export function cloudAuditPage(ctx: Ctx): Response {
                     meta: html`<span class="mono">${r.target}</span> · ${r.bytesOut} bytes out · ${time(r.at)}`,
                   }),
                 )}
-              </ul>`,
-          { head: html`${icon("eye")}<h2>Today's vendor calls</h2>`, pad: false },
-        ),
+              </ul>`}
+        </section>`,
         "Account settings",
       )}`,
   }));

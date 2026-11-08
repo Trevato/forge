@@ -23,10 +23,11 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
+import { parseTools, type ToolSpec } from "./feature_tools.ts";
 
-export type SettingType = "bool" | "int" | "string" | "choice" | "days" | "list";
+export type SettingType = "bool" | "int" | "string" | "choice" | "days" | "list" | "secret";
 
-export const SETTING_TYPES: readonly SettingType[] = ["bool", "int", "string", "choice", "days", "list"];
+export const SETTING_TYPES: readonly SettingType[] = ["bool", "int", "string", "choice", "days", "list", "secret"];
 
 /** The labels the forge's own menus use: a feature may not borrow one. */
 const BUILT_IN_MENU_LABELS = [
@@ -65,6 +66,8 @@ export interface FeatureSpec {
   /** The app path the forge's nav opens. */
   readonly page: string;
   readonly settings: readonly SettingSpec[];
+  /** MCP tools the app serves through the forge's `features` tool (`feature_tools.ts`). */
+  readonly tools: readonly ToolSpec[];
 }
 
 const KEY = /^[a-z][a-zA-Z0-9]{0,39}$/;
@@ -114,8 +117,10 @@ export function parseFeature(forgeJson: Raw): Result<FeatureSpec | undefined, st
   const envs = new Set(settings.map((s) => settingEnvName(s.key)));
   if (envs.size !== settings.length) return bad("two settings would share one FORGE_SETTING_ name");
   for (const extra of Object.keys(block))
-    if (!["name", "summary", "page", "settings"].includes(extra)) return bad(`unknown field ${extra}`);
-  return ok({ name: name.trim(), summary: typeof summary === "string" && summary.trim() !== "" ? summary.trim() : null, page, settings });
+    if (!["name", "summary", "page", "settings", "tools"].includes(extra)) return bad(`unknown field ${extra}`);
+  const tools = parseTools(block["tools"]);
+  if (!tools.ok) return tools;
+  return ok({ tools: tools.value, name: name.trim(), summary: typeof summary === "string" && summary.trim() !== "" ? summary.trim() : null, page, settings });
 }
 
 function parseSetting(key: string, raw: unknown): Result<SettingSpec, string> {
@@ -155,6 +160,8 @@ function parseSetting(key: string, raw: unknown): Result<SettingSpec, string> {
     return bad(`setting ${key}: only a choice has choices`);
   }
   const spec = { key, type: type as SettingType, label: label.trim(), help: typeof help === "string" ? help : undefined, min, max, choices, default: "" };
+  if (type === "secret" && raw["default"] !== undefined && raw["default"] !== "")
+    return bad(`setting ${key}: a secret has no default, forge.json is not a place for one`);
   const fallback = raw["default"] ?? emptyDefault(spec.type, choices);
   const checked = checkSetting(spec, fallback);
   if (!checked.ok) return bad(`setting ${key}: default ${checked.error}`);
@@ -173,6 +180,7 @@ function emptyDefault(type: SettingType, choices: readonly string[] | undefined)
     case "list":
       return [];
     case "string":
+    case "secret":
       return "";
   }
 }
@@ -198,6 +206,7 @@ export function checkSetting(spec: Pick<SettingSpec, "type" | "min" | "max" | "c
       if (spec.max !== undefined && n > spec.max) return err(`is at most ${spec.max}`);
       return ok(String(n));
     }
+    case "secret":
     case "string": {
       if (typeof value !== "string") return err("is text");
       if (value.length > STRING_MAX) return err(`is at most ${STRING_MAX} characters`);

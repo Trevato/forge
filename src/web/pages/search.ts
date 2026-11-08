@@ -42,9 +42,7 @@ import { changeHref, tellHref } from "../studio/nouns.ts";
 import {
   badge,
   btn,
-  card,
   dot,
-  empty,
   field as formField,
   repoCounts,
   row,
@@ -89,7 +87,7 @@ interface Apps {
 
 /** A section's rows on the page's one background: a heading over rows, no box. */
 const rowsUnderHeading = (rows: Html[]): Html =>
-  card(html`<ul class="list">${rows}</ul>`, { pad: false, extra: "bare" });
+  html`<ul class="list">${rows}</ul>`;
 
 const privateBadge = (yes: boolean): Html =>
   when(yes, () => badge("Private", { icon: "lock", variant: "secondary" }));
@@ -302,9 +300,8 @@ function section(
   truncated: boolean,
   after: Html | null = null,
 ): Html {
-  const emptyIcon =
-    kind === "repos" ? "repo" : kind === "issues" ? "issue" : "code";
-  return html`<h2 class="mt" id="${kind}">
+  return html`<section id="${kind}" aria-labelledby="h-${kind}">
+    <h2 class="mt" id="h-${kind}">
       ${title}${rows.length === 0
         ? null
         : html` <span class="muted small num"
@@ -312,18 +309,13 @@ function section(
           >`}
     </h2>
     ${rows.length === 0
-      ? empty({
-          icon: emptyIcon,
-          title: emptyText,
-          ...(a.kind === "all"
-            ? {}
-            : {
-                action: btn("Search everything", {
-                  href: searchHref(a, { kind: "all" }),
-                  size: "sm",
-                }),
-              }),
-        })
+      ? html`<p class="muted">
+          ${emptyText}${a.kind === "all"
+            ? null
+            : html` <a href="${searchHref(a, { kind: "all" })}"
+                >Search everything</a
+              >`}
+        </p>`
       : rowsUnderHeading(rows)}
     ${after}
     ${when(
@@ -335,7 +327,8 @@ function section(
             >Show only ${title.toLowerCase()}</a
           >.
         </p>`,
-    )}`;
+    )}
+  </section>`;
 }
 
 /** The same `search()` the API and the palette call, so the sources can
@@ -427,11 +420,8 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       title: "Search",
       styleCss: SEARCH_CSS,
       body: html`<div data-search>${pageHead("Search")} ${form}
-      ${empty({
-        icon: "search",
-        title: "Search this forge",
-        note: "An app or repository by name or description, a word from what was told or changed, or a line of the code itself — across everything you can see, here and on every origin you have connected.",
-      })}</div>`,
+      <p class="muted">Search this forge: an app or repository by name or description, a word from what was told or changed, or a line of the code itself — across everything you can see, here and on every origin you have connected.</p>
+      </div>`,
     });
     notePhase(ctx.request, "render", performance.now() - rendering);
     return blank;
@@ -535,12 +525,11 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       </p>`,
   )}
   ${nothing
-    ? empty({
-        icon: "search",
-        title: `Nothing matches “${a.query}”`,
-        note: "Search reads app and repository names and descriptions, issues, pull requests and the code you can see.",
-        action: btn("Explore", { href: "/explore", size: "sm" }),
-      })
+    ? html`<p class="muted">
+        Nothing matches “${a.query}”. Search reads app and repository names
+        and descriptions, issues, pull requests and the code you can see.
+        <a href="/explore">Explore</a> instead.
+      </p>`
     : WORDS
         .filter(
           ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),

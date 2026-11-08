@@ -269,8 +269,12 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
 
   // The lead's About card owns the description and visibility; this form
   // sends them back unchanged, as that one does the gates below.
-  const body = card(
-    html`<form method="post" action="${base}/settings">
+  const body = html`<section class="settings-block">
+    <h2>Branch and gates</h2>
+    <p class="muted">
+      Where the repository opens, and what must hold before a change lands on it.
+    </p>
+    <form method="post" action="${base}/settings">
       <input type="hidden" name="card" value="gates" />
       ${selectField({
         label: "Default branch",
@@ -372,14 +376,14 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
       <div class="form-actions">
         ${btn("Save changes", { variant: "primary" })}
       </div>
-    </form>`,
-    { head: html`${icon("branch")}<h2>Branch and gates</h2>` },
-  );
+    </form>
+  </section>`;
   const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
   const upstream = followUpstreamCard(ctx, repo);
   const sources = followSourcesCard(ctx, repo);
-  const wave = card(
-    html`<form method="post" action="${base}/settings/wave">
+  const wave = html`<section class="settings-block">
+    <h2>Cut a wave</h2>
+    <form method="post" action="${base}/settings/wave">
       <p class="muted">
         Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>,
         listing every pull merged since the last wave. The headline and
@@ -387,13 +391,13 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
         <a href="${base}/waves">See the waves so far</a>.
       </p>
       <div class="form-actions">${btn("Cut a wave", { variant: "primary" })}</div>
-    </form>`,
-    { head: html`${icon("rocket")}<h2>Cut a wave</h2>` },
-  );
+    </form>
+  </section>`;
   const proposals = proposalTokensSection(ctx, repo);
   const trail = provenanceCard(ctx, repo);
-  const archive = card(
-    html`<form method="post" action="${base}/settings/archive">
+  const archive = html`<section class="settings-block">
+    <h2>Archive</h2>
+    <form method="post" action="${base}/settings/archive">
       <input type="hidden" name="archived" value="${repo.archivedAt === null ? "1" : "0"}" />
       <p class="muted">
         ${repo.archivedAt === null
@@ -405,17 +409,17 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           variant: "primary",
         })}
       </div>
-    </form>`,
-    { head: html`${icon("folder")}<h2>Archive</h2>` },
-  );
+    </form>
+  </section>`;
   renderMs += performance.now() - since;
   const held = timePhase(ctx.request, "mirror", () => getMirrorTarget(ctx.app.db, repo.id));
   since = performance.now();
   const mirror =
     held === undefined
       ? null
-      : card(
-          html`<p class="muted" data-mirror-line>${mirrorLine(held)}</p>
+      : html`<section class="settings-block">
+          <h2>Mirror</h2>
+          <p class="muted" data-mirror-line>${mirrorLine(held)}</p>
             <p class="muted small">
               Stopping leaves ${held.fullName} as it is; nothing more is pushed.
             </p>
@@ -424,9 +428,8 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
                 action: `${base}/settings/mirror/stop`,
                 verb: "Stop mirroring",
               })}
-            </div>`,
-          { head: html`${icon("branch")}<h2>Mirror</h2>` },
-        );
+            </div>
+        </section>`;
   const response = settingsPageResponse(
     ctx,
     repo,
@@ -550,8 +553,9 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
   const trail = getProvenance(ctx.app.db, repo.id);
   if (trail === undefined) return null;
   const base = repoBase(repo);
-  return card(
-    html`<form method="post" action="${base}/settings/provenance">
+  return html`<section class="settings-block">
+    <h2>Show where this came from</h2>
+    <form method="post" action="${base}/settings/provenance">
       <input type="hidden" name="shown" value="${trail.shown ? "0" : "1"}" />
       <p class="muted">
         Migrated from
@@ -574,9 +578,8 @@ function provenanceCard(ctx: Ctx, repo: Repo): Html | null {
           variant: "outline",
         })}
       </div>
-    </form>`,
-    { head: html`${icon("fork")}<h2>Show where this came from</h2>` },
-  );
+    </form>
+  </section>`;
 }
 
 /** POST /:owner/:name/settings/provenance — show or hide the trail. */
@@ -665,8 +668,9 @@ function appSettingsView(
       ? undefined
       : readAppMembers(ctx.app, ctx.auth.user, repo);
   const named = listed?.ok === true ? listed.value.members : [];
-  const form = card(
-    html`${when(
+  const form = html`<section class="settings-block" id="app">
+    <h2>${record === undefined ? "Run as an app" : "App"}</h2>
+    ${when(
         record === undefined,
         () =>
           html`<p class="muted small mb">
@@ -741,12 +745,8 @@ function appSettingsView(
             }),
           )}
         </div>
-      </form>`,
-    {
-      head: html`${icon("rocket")}
-        <h2>${record === undefined ? "Run as an app" : "App"}</h2>`,
-    },
-  );
+      </form>
+  </section>`;
   if (record === undefined) return form;
   const domains = timePhase(ctx.request, "domains", () =>
     listAppDomains(ctx.app, ctx.auth.user, repo),
@@ -795,13 +795,12 @@ export function appVisitorsView(v: AppVitals): Html {
       ? "p75 load each day over the last 30 days"
       : `p75 load each day over the last 30 days, latest ${ms(latest ?? undefined)}, range ${ms(Math.min(...known))} to ${ms(Math.max(...known))}`,
   );
-  return card(
-    html`<p class="small mb"><a href="app/traffic">Where visitors come from and where they go</a></p>
-      <p class="muted small mb">
-        Counted by the beacon the template ships, through the forge: no
-        address is kept, and a visitor is the same only within a day, so the
-        7 day figure adds the days up.
-      </p>
+  return html`<section class="settings-block" id="visitors">
+    <h2>Visitors and speed</h2>
+    <p class="muted small mb">
+      Counted by the beacon, with no address kept; the 7 day figure adds
+      the days up. <a href="app/traffic">Where visitors come from</a>
+    </p>
       <dl class="stats">
         <div><dt>Visitors today</dt><dd>${v.today}</dd></div>
         <div><dt>Visitors, 7 days</dt><dd>${v.week}</dd></div>
@@ -811,9 +810,8 @@ export function appVisitorsView(v: AppVitals): Html {
         <div><dt>p75 INP</dt><dd>${ms(v.inpP75)}</dd></div>
         <div><dt>p75 CLS</dt><dd>${shiftText(v.clsP75)}</dd></div>
       </dl>
-      ${spark ? html`<div class="bar muted">${spark}</div>` : html`<p class="muted small mt">No load reports in the last 30 days</p>`}`,
-    { head: html`${icon("rocket")}<h2>Visitors and speed</h2>` },
-  );
+      ${spark ? html`<div class="bar muted">${spark}</div>` : html`<p class="muted small mt">No load reports in the last 30 days</p>`}
+  </section>`;
 }
 
 /**
@@ -821,7 +819,7 @@ export function appVisitorsView(v: AppVitals): Html {
  * Values are write-only — the page shows a name and when it was set, and
  * the value input forgets what was typed the moment the form is sent.
  */
-function appEnvView(base: string, names: AppEnvName[]): Html {
+export function appEnvView(base: string, names: AppEnvName[]): Html {
   const rows = names.map((v) =>
     row({
       lead: icon("key"),
@@ -841,21 +839,16 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
       </form>`,
     }),
   );
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
-          What the app reads from its environment at start-up — an admin
-          password, an API key. Values are write-only: set one, and it is never
-          shown again. A variable goes everywhere, to production only, or to
-          previews only; the same name may be set in each, and the narrower one
-          wins — a test key for previews, the live one for production. Changing
-          one redeploys what reads it, and nothing else.
-        </p>
-      </div>
+  return html`<section class="settings-block" id="environment">
+    <h2>Environment</h2>
+    <p class="muted small">
+      What the app reads at start-up; values are write-only, and one set
+      for production only or previews only wins there over one set everywhere.
+    </p>
       ${when(
         rows.length > 0,
         () =>
-          html`<ul class="list">
+          html`<ul class="list setting-list">
             ${rows}
           </ul>`,
       )}
@@ -887,13 +880,8 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
           <option value="preview">Previews only</option>
         </select>
         ${btn("Set", { variant: "primary", size: "sm", icon: "plus" })}
-      </form>`,
-    {
-      head: html`${icon("key")}
-        <h2>Environment</h2>`,
-      pad: false,
-    },
-  );
+      </form>
+  </section>`;
 }
 
 /**
@@ -914,8 +902,9 @@ function appMembersView(
   access: AppAccess,
   named: readonly string[],
 ): Html {
-  return card(
-    html`<form method="post" action="${base}/settings/app/members">
+  return html`<section class="settings-block" id="members">
+    <h2>${icon("users")} Who may enter</h2>
+    <form method="post" action="${base}/settings/app/members">
       <div class="field">
         <label for="f-members">People</label>
         <textarea
@@ -936,12 +925,8 @@ ${named.join("\n")}</textarea
         </p>
       </div>
       <div class="form-actions">${btn("Save people", { variant: "primary" })}</div>
-    </form>`,
-    {
-      head: html`${icon("users")}
-        <h2>Who may enter</h2>`,
-    },
-  );
+    </form>
+  </section>`;
 }
 
 function appDomainsView(
@@ -982,14 +967,13 @@ function appDomainsView(
         </div>
       </li>`,
   );
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
+  return html`<section class="settings-block" id="domains">
+    <h2>${icon("globe")} Domains</h2>
+        <p class="muted small mb">
           Serve the app at a name of your own —
           <span class="mono">app.example.com</span>, or an apex. Add it, publish
           the two records it shows, and press Check now.
         </p>
-      </div>
       ${when(
         rows.length > 0,
         () =>
@@ -998,19 +982,15 @@ function appDomainsView(
           </ul>`,
       )}
       ${domains === undefined
-        ? html`<div class="card-body">
-            <p class="muted small">
+        ? html`<p class="muted small">
               Nothing is serving apps on this forge, so a domain would have
               nowhere to point.
+            </p>`
+        : html`<p class="muted small mb">
+              The forge serves the app there as soon as the record is
+              verified. The app itself learns its new address at its next
+              deploy.
             </p>
-          </div>`
-        : html`<div class="card-body">
-              <p class="muted small">
-                The forge serves the app there as soon as the record is
-                verified. The app itself learns its new address at its next
-                deploy.
-              </p>
-            </div>
             <form
               class="edit-row"
               method="post"
@@ -1027,13 +1007,8 @@ function appDomainsView(
                 required
               />
               ${btn("Add", { variant: "primary", size: "sm", icon: "plus" })}
-            </form>`}`,
-    {
-      head: html`${icon("globe")}
-        <h2>Domains</h2>`,
-      pad: false,
-    },
-  );
+            </form>`}
+  </section>`;
 }
 
 /** The records as a person copies them into a zone: type, name, value. */

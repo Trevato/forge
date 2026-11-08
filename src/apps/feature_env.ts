@@ -7,11 +7,37 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { featureEnv, parseFeature } from "./feature.ts";
+import { featureEnv, parseFeature, type FeatureSpec } from "./feature.ts";
 import { featureSettings, getAbsorbed } from "../core/features.ts";
+import { open, seal } from "../kernel/secret.ts";
+
+/** A secret setting is kept sealed, bound to its app and name, so a copied row opens nowhere else. */
+const aad = (appId: string, key: string): string => `feature-setting:${appId}:${key}`;
+
+/** A secret's value sealed for keeping. */
+export const sealSetting = (dataDir: string, appId: string, key: string, plain: string): string =>
+  seal(dataDir, plain, aad(appId, key));
+
+/**
+ * The settings kept for an app as the process reads them: secrets opened.
+ * One that will not open (key lost, row altered) is left out, so it falls
+ * back to its empty default rather than to ciphertext.
+ */
+export function keptSettings(db: Database, dataDir: string, appId: string, spec: FeatureSpec): Map<string, string> {
+  const kept = featureSettings(db, appId);
+  for (const s of spec.settings) {
+    const sealed = kept.get(s.key);
+    if (s.type !== "secret" || sealed === undefined) continue;
+    const opened = open(dataDir, sealed, aad(appId, s.key));
+    if (opened.ok) kept.set(s.key, opened.value);
+    else kept.delete(s.key);
+  }
+  return kept;
+}
 
 export function featureVarsAt(
   db: Database,
+  dataDir: string,
   appId: string,
   forgeJson: string | undefined,
 ): Record<string, string> {
@@ -27,7 +53,7 @@ export function featureVarsAt(
   if (!spec.ok || spec.value === undefined) return {};
   // The menu keeps the name and page the admin saw at absorb; a changed
   // declaration waits for an admin to accept it (`acceptDeclaration`).
-  return featureEnv(spec.value, featureSettings(db, appId));
+  return featureEnv(spec.value, keptSettings(db, dataDir, appId, spec.value));
 }
 
 /** Only the names this feature owns: what `appEnv` lets through from `feature`. */

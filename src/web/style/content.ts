@@ -180,9 +180,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   [data-forges] .row { flex-wrap: wrap; }
   [data-forges] .row-trail { flex: 1 1 100%; justify-content: flex-start; }
 }
-[data-bet-card] h2, [data-bet-card] ul, [data-bet-card] p { margin-block: 8px; }
+[data-bet-card] ul, [data-bet-card] p { margin-block: 8px; }
 [data-bet-card] ul { padding-inline-start: 16px; }
-[data-bet-card] { max-height: 80vh; overflow-x: hidden; overflow-y: auto; }
+/* The bound is on what a disclosure opens, not on the row: the page scrolls, a long issue list scrolls inside its own details. */
+[data-bet-card] details ul { max-height: 40vh; overflow-y: auto; }
 [data-bet-actions] { align-items: flex-start; }
 
 .bar > .device-code { flex: 1 1 auto; }

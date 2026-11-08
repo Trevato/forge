@@ -433,6 +433,9 @@ describe("a private app names the people who may enter it", () => {
       })
     ).text();
     expect(page).toContain("Who may enter");
+    const members = page.slice(page.indexOf('id="members"'), page.indexOf("</section>", page.indexOf('id="members"')));
+    expect(members).toContain('action="/alice/game/settings/app/members"');
+    expect(members).not.toContain('class="card');
     expect(page).toContain("are named under Who may enter (carol)");
     // The form saves the whole list.
     const saved = await fetch(

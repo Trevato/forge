@@ -67,3 +67,11 @@ export function setFeatureSettings(db: Database, appId: string, values: Readonly
     for (const [key, value] of values) put.run(appId, key, value, by);
   })();
 }
+
+/** Forget these kept settings (a cleared secret): the row goes, so it reads as not set. */
+export function clearFeatureSettings(db: Database, appId: string, keys: readonly string[]): void {
+  const del = db.query("DELETE FROM app_feature_setting WHERE app_id = ?1 AND key = ?2");
+  db.transaction(() => {
+    for (const key of keys) del.run(appId, key);
+  })();
+}

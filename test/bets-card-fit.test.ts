@@ -38,7 +38,7 @@ beforeAll(async () => {
   const headers = { "x-forge-identity": said, "x-forge-signature": createHmac("sha256", KEY).update(said).digest("base64url") };
   const html = await (await fetch(`${servers.url}/${PREVIEW_ADMIN}/${PREVIEW_REPO}/bets`, { headers })).text();
   page = html;
-  cards = html.split("<div data-bet-card").slice(1).map((c) => c.slice(0, c.indexOf("Cut it") + 40));
+  cards = html.split(" data-bet-card=").slice(1).map((c) => c.slice(0, c.indexOf("Cut it") + 40));
 }, 30_000);
 afterAll(async () => {
   servers.stop();
@@ -53,8 +53,13 @@ describe("the owner's bets page, a proposed bet card at rest", () => {
     expect(cards.some((c) => c.includes("Make every long and winding"))).toBe(true);
   });
 
+  test("no box: the list is rows, not cards", () => {
+    expect(page).not.toContain('class="card');
+    expect(page).toContain("data-bet-card");
+  });
+
   test("one title line", () => {
-    for (const c of cards) expect(c.match(/<h2[ >]/g)?.length).toBe(1);
+    for (const c of cards) expect(c.match(/class="row-title"/g)?.length).toBe(1);
   });
 
   test("at most the journeys the page allows, the rest behind a disclosure", () => {
@@ -90,8 +95,9 @@ describe("the owner's bets page, a proposed bet card at rest", () => {
     for (const r of rules) expect(r).not.toMatch(/(?<![-\w])width\s*:\s*\d/);
   });
 
-  test("a proposed bet's body is bounded: a max-height under one 844 px screen, scrolling inside (#9321)", () => {
-    const rule = content.match(/\[data-bet-card\]\s*\{[^}]*max-height:\s*(\d+)(vh|px)[^}]*\}/);
+  test("a proposed bet's opened disclosures are bounded under one 844 px screen, scrolling inside them and never the row (#9321)", () => {
+    expect(content).not.toMatch(/\[data-bet-card\]\s*\{[^}]*max-height/);
+    const rule = content.match(/\[data-bet-card\] details ul\s*\{[^}]*max-height:\s*(\d+)(vh|px)[^}]*\}/);
     expect(rule).not.toBeNull();
     const px = rule![2] === "vh" ? (Number(rule![1]) / 100) * 844 : Number(rule![1]);
     expect(px).toBeLessThanOrEqual(844);
@@ -140,7 +146,7 @@ describe.skipIf(chromium === undefined)("the owner's bets page, measured at phon
   const measure = `(() => {
     const vw = document.documentElement.clientWidth;
     const cards = [...document.querySelectorAll("[data-bet-card]")].map((c) => {
-      const box = c.parentElement.getBoundingClientRect();
+      const box = c.getBoundingClientRect();
       const body = c.getBoundingClientRect();
       const actions = c.querySelector("[data-bet-actions]").getBoundingClientRect();
       return { height: Math.round(box.height), innerScroll: c.scrollHeight - c.clientHeight, sideways: c.scrollWidth - c.clientWidth, actionsInView: actions.bottom <= body.bottom + 1 };

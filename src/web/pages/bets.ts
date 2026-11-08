@@ -21,7 +21,7 @@ import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { badge, btn, card, field as fieldRow, listCard, row } from "../ui.ts";
+import { badge, btn, field as fieldRow, row } from "../ui.ts";
 
 const betHref = (repo: Repo, id: string) => `${repoBase(repo)}/bets/${id}`;
 
@@ -76,12 +76,13 @@ function oneButton(repo: Repo, b: Bet, verb: string, label: string, variant: "da
 export const SHOWN_JOURNEYS = 3;
 
 /**
- * A proposed bet as one card for the owner: name, journeys, its issues as a
- * count that opens the list, and one button that backs it at the proposed
- * share. When the cap or the week forbids it the button is disabled and the
- * reason sits beside it. Changing the share is one disclosure away.
+ * A proposed bet as one row for the owner: the name, its share and the next
+ * action in the row; beneath it the journeys, its issues as a count that
+ * opens the list, and one button that backs it at the proposed share. When
+ * the cap or the week forbids it the button is disabled and the reason sits
+ * beside it. Changing the share is one disclosure away.
  */
-function proposedCard(ctx: Ctx, repo: Repo, b: Bet, backed: readonly Bet[]): Html {
+function proposedRow(ctx: Ctx, repo: Repo, b: Bet, backed: readonly Bet[]): Html {
   const scopes = betScopes(ctx.app.db, b.id);
   const journeys = b.journeys.split("\n").filter((j) => j !== "");
   const why = mayBack(backed, b.appetite);
@@ -90,9 +91,13 @@ function proposedCard(ctx: Ctx, repo: Repo, b: Bet, backed: readonly Bet[]): Htm
     : html`<details><summary>${scopes.length} ${scopes.length === 1 ? "issue" : "issues"}</summary>
         <ul>${scopes.map((s) => html`<li><a href="${repoBase(repo)}/issues/${s.number}">#${s.number} ${s.title}</a></li>`)}</ul>
       </details>`;
-  return card(
-    html`<div data-bet-card><h2><a href="${betHref(repo, b.id)}">${b.name}</a></h2>
-      ${journeys.length === 0 ? null : html`<ul>${journeys.slice(0, SHOWN_JOURNEYS).map((j) => html`<li>${j}</li>`)}</ul>`}
+  return row({
+    href: betHref(repo, b.id),
+    title: html`${b.name}`,
+    meta: html`${b.appetite}% of the week · next: ${why === null ? "back it or cut it" : "cut it"}`,
+    trail: badge(STATE_WORDS[b.state]),
+    data: { "bet-card": "" },
+    after: html`${journeys.length === 0 ? null : html`<ul>${journeys.slice(0, SHOWN_JOURNEYS).map((j) => html`<li>${j}</li>`)}</ul>`}
       ${journeys.length <= SHOWN_JOURNEYS ? null : html`<details><summary>${journeys.length - SHOWN_JOURNEYS} more ${journeys.length - SHOWN_JOURNEYS === 1 ? "journey" : "journeys"}</summary>
         <ul>${journeys.slice(SHOWN_JOURNEYS).map((j) => html`<li>${j}</li>`)}</ul></details>`}
       ${issues}
@@ -103,9 +108,12 @@ function proposedCard(ctx: Ctx, repo: Repo, b: Bet, backed: readonly Bet[]): Htm
       </form>
       <details><summary>Change the share</summary>${backForm(repo, b, "Back it")}</details>
       ${oneButton(repo, b, "cut", "Cut it", "danger")}</div>
-      ${why === null ? null : html`<p class="muted" role="note">${why[0]!.toUpperCase() + why.slice(1)}.</p>`}</div>`,
-  );
+      ${why === null ? null : html`<p class="muted" role="note">${why[0]!.toUpperCase() + why.slice(1)}.</p>`}`,
+  });
 }
+
+/** Rows with no box around them. */
+const rows = (items: readonly Html[]): Html => html`<ul class="list setting-list" data-bets>${[...items]}</ul>`;
 
 /** What the owner can do with a bet, by where it is. */
 function ownerActions(repo: Repo, b: Bet): Html | null {
@@ -134,8 +142,7 @@ export function betsPage(ctx: Ctx): Response {
     ${pageHead("Bets", { sub: `A few named wholes, each with a share of the week. ${running} of ${MAX_BACKED} running. Builders pick only from running bets, the owner's own asks and small fixes.` })}
     ${bets.length === 0
       ? html`<p class="muted">No bets yet. The planner proposes them from the open work.</p>`
-      : html`${owner ? proposed.map((b) => proposedCard(ctx, repo, b, backed)) : null}
-        ${rest.length === 0 ? null : listCard(rest.map((b) => betRow(ctx, repo, b, now, owner)))}`}
+      : html`${rows([...(owner ? proposed.map((b) => proposedRow(ctx, repo, b, backed)) : []), ...rest.map((b) => betRow(ctx, repo, b, now, owner))])}`}
     ${owner
       ? html`<form method="post" action="${repoBase(repo)}/bets/propose" class="mt">${btn("Ask the planner to propose bets", { variant: "secondary" })}</form>`
       : null}
@@ -167,8 +174,7 @@ export function betPage(ctx: Ctx): Response {
   });
   const finished = bet.state === "done";
   const moment = finished
-    ? card(
-        html`<h2>This is done. Try it.</h2>
+    ? html`<section class="settings-block"><h2>This is done. Try it.</h2>
           <p><a href="${bet.tryUrl === "" ? repoBase(repo) : bet.tryUrl}">Open it and try it.</a></p>
           ${bet.verdict !== ""
             ? html`<p>${bet.verdict === "done" ? "The owner says it feels done." : owner ? `The owner says not yet: ${bet.verdictWhy}` : "The owner says not yet."}</p>`
@@ -182,8 +188,7 @@ export function betPage(ctx: Ctx): Response {
                     ${btn("Not yet", { name: "verdict", value: "not_yet" })}
                   </form>
                 </div>`
-              : null}`,
-      )
+              : null}</section>`
     : null;
   const leftBox =
     owner && (bet.state === "stopped" || bet.state === "backed")
@@ -201,7 +206,7 @@ export function betPage(ctx: Ctx): Response {
     ${owner ? html`<h2 class="mt">Done looks like</h2>
     <ul>${bet.journeys.split("\n").filter((j) => j !== "").map((j) => html`<li>${j}</li>`)}</ul>` : null}
     <h2 class="mt">Scopes</h2>
-    ${scopes.length === 0 ? html`<p class="muted">No scopes yet.</p>` : listCard(scopeRows)}
+    ${scopes.length === 0 ? html`<p class="muted">No scopes yet.</p>` : rows(scopeRows)}
     ${leftBox}
     ${owner ? html`<div class="mt">${ownerActions(repo, bet)}</div>` : null}
     ${liveMount({ repo: repoBase(repo) })}`;
