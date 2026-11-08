@@ -122,12 +122,12 @@ export async function familyPage(
   const response = page({
     ctx,
     title: "Family",
-    body: html`<div class="narrow-wide">
+    body: html`<div class="narrow-wide" data-family>
       ${pageHead("Family", {
         sub: "The forge this one came from, and the forges it sent. Children report in; nothing here reaches into one.",
       })}
       ${card(
-        html`<ul class="list" aria-label="Forges, by who sent whom">
+        html`<ul class="list setting-list" aria-label="Forges, by who sent whom">
             ${treeRow(root, 0)}
           </ul>
           ${kids.more > 0
