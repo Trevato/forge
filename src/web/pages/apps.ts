@@ -34,7 +34,7 @@ import { appNameJs } from "./apps-name.ts";
 import { STARTERS, starterFromQuery, starterHref } from "./apps-starters.ts";
 import { previewEnv, type EnvName } from "../../apps/data.ts";
 import { envRefusalText, redeployedText, stoppedText } from "../../actions/env_words.ts";
-import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
+import { appsRuntime, type EnvState, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { firstPreviews, goldenPath, goldenPathLine } from "../../apps/golden_path.ts";
 import { appHostSuffix } from "../../apps/host.ts";
 import { appsForRepos, getAppByRepo, type AppRecord } from "../../core/apps.ts";
@@ -567,6 +567,22 @@ export function testCopyLink(url: string): Html {
 }
 
 /**
+ * What the strip says of production's state: the badge while it runs or
+ * deploys; a plain sentence, with what to do, when it is stopped, asleep or
+ * failed. `envStateBadge` is shared, so it is not reworded here.
+ */
+export function productionStrip(state: EnvState, dormant = false): Html {
+  if (state === "running" || state === "deploying") return envStateBadge(state);
+  if (state === "failed")
+    return html`<span class="muted">Failed to start. Deploy main to try again.</span>`;
+  // `dormant` is only ever set on a stopped env: it stopped for want of
+  // visitors, not because anyone stopped it, so it wakes the same way.
+  if (state === "asleep" || (state === "stopped" && dormant))
+    return html`<span class="muted">Asleep. Deploy main to wake it.</span>`;
+  return html`<span class="muted">Not running. Deploy main to start it.</span>`;
+}
+
+/**
  * One line under the repo header, for a repository that runs: production's
  * state, the commit it serves, its URL, how many previews are up, and the
  * way to the app's page in the studio, where its environments are run.
@@ -584,7 +600,7 @@ export function appStrip(ctx: Ctx, repo: Repo, declares: boolean): Html {
   return html`<div class="app-strip">
     ${icon("rocket")}
     ${serving
-      ? envStateBadge(production?.state ?? "stopped")
+      ? productionStrip(production?.state ?? "stopped", production?.dormant !== undefined)
       : badge("Not serving", { variant: "outline" })}
     ${when(production !== undefined && production.commitOid !== "", () =>
       sha(production!.commitOid, `${base}/commit/${production!.commitOid}`),

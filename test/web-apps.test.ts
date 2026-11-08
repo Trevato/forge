@@ -18,7 +18,7 @@ import {
   STARTERS,
   starterHref,
 } from "../src/web/pages/apps-starters.ts";
-import { previewLook } from "../src/web/pages/apps.ts";
+import { previewLook, productionStrip } from "../src/web/pages/apps.ts";
 import type { EnvStatus } from "../src/apps/runtime.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -1072,5 +1072,28 @@ describe("apps, runs and the crew on the web", () => {
     expect(getAppByRepo(app.db, hello.id)?.slug).toBe("hello");
     expect(getAgentByName(app.db, "evil")).toBeUndefined();
     expect(getAgentByName(app.db, "bot")).toBeDefined();
+  });
+
+  test("the app page says in a sentence that production is not running, and what to do", async () => {
+    const stop = await web(alice, "/alice/hello/app/production/stop", { form: {} });
+    expect(stop.status).toBeLessThan(400);
+    try {
+      // /app is the app page's old address: it lands on the studio page.
+      const old = await web(alice, "/alice/hello/app");
+      expect(old.status).toBe(302);
+      const page = words(await (await web(alice, `${old.headers.get("location")!}/files`)).text());
+      const strip = page.slice(page.indexOf('class="app-strip"'));
+      expect(strip).toContain("Not running. Deploy main to start it.");
+    } finally {
+      // Leave production as found, so test order does not matter.
+      await web(alice, "/alice/hello/app/production/redeploy", { form: {} });
+    }
+    const say = (s: Parameters<typeof productionStrip>[0], d = false) =>
+      productionStrip(s, d).toString();
+    expect(say("failed")).toContain("Failed to start. Deploy main to try again.");
+    expect(say("stopped", true)).toContain("Asleep. Deploy main to wake it.");
+    expect(say("asleep")).toContain("Asleep. Deploy main to wake it.");
+    expect(say("running", true)).toContain("Running");
+    expect(say("failed", true)).toContain("Failed to start");
   });
 });
