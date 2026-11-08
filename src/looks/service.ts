@@ -69,6 +69,7 @@ import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { writeCommitLooks } from "../checks/looks.ts";
 import type { LookVitals } from "../checks/summary.ts";
+import { keepAsMain } from "./main_looks.ts";
 import { findChromium, isNoBrowser, takeLook, type Capture } from "./capture.ts";
 
 const log = createLog("looks");
@@ -277,6 +278,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         const number = payload["number"];
         const record = getAppByRepo(app.db, event.repoId);
         if (typeof number !== "number" || !record) return;
+        // Landed: its head's looks become main's before the sweep.
+        if (event.kind === "pull.merged") {
+          try {
+            keepAsMain(app.db, dataDir, record.id, previewEnv(number));
+          } catch (error) {
+            log.warn("main's looks not kept", { error: String(error) });
+          }
+        }
         forget(record.id, previewEnv(number));
         return;
       }
