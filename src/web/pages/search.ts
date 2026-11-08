@@ -935,30 +935,23 @@ function confirmBody(ctx: Ctx): Response {
 
   const body = html`<div class="narrow-wide">
     ${pageHead(title)}
-    ${card(
-      html`<p>${detail}</p>
-        <form method="post" action="${to}" class="mt">
-          ${when(phrase !== "", () =>
-            formField({
-              label: `Type ${phrase} to continue`,
-              name: "confirm",
-              required: true,
-              autofocus: true,
-              mono: true,
-              autocomplete: "off",
-            }),
-          )}
-          <div class="form-actions">
-            ${btn(verb, { variant: "danger" })}
-            ${btn("Cancel", { href: back, variant: "ghost" })}
-          </div>
-        </form>`,
-      {
-        tone: "danger",
-        head: html`${icon("alert")}
-          <h2>${verb}</h2>`,
-      },
-    )}
+    <p>${detail}</p>
+    <form method="post" action="${to}" class="mt">
+      ${when(phrase !== "", () =>
+        formField({
+          label: `Type ${phrase} to continue`,
+          name: "confirm",
+          required: true,
+          autofocus: true,
+          mono: true,
+          autocomplete: "off",
+        }),
+      )}
+      <div class="form-actions">
+        ${btn(verb, { variant: "danger" })}
+        ${btn("Cancel", { href: back, variant: "ghost" })}
+      </div>
+    </form>
   </div>`;
   return page({ ctx, title: `${verb} · forge`, body });
 }
