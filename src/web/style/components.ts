@@ -524,11 +524,11 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 8px 14px;
 }
-.edit-row > .preview { flex: none; }
+.row-trail > .edit-row, .settings-block > .edit-row { padding: 0; }
 .edit-row > .input { flex: 1 1 160px; width: auto; min-width: 0; }
 .edit-row .btn { flex: none; }
-.edit-row .label-open { color: var(--muted-fg); font-size: 13px; text-decoration: underline; text-underline-offset: 2px; }
-.edit-row .label-open:hover { color: var(--fg); }
+.label-open { color: var(--muted-fg); font-size: 13px; text-decoration: underline; text-underline-offset: 2px; }
+.label-open:hover { color: var(--fg); }
 /* A swatch and its hex, as one control-shaped thing. */
 .color-field {
   display: inline-flex; align-items: center; gap: 8px; flex: none;
@@ -550,7 +550,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   .edit-row { align-items: stretch; }
   .edit-row > .input { flex-basis: 100%; }
   .edit-row .color-field, .edit-row .btn { flex: 1 1 auto; justify-content: center; }
-  .edit-row .label-open { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; }
+  .label-open { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; }
 }
 
 /* ---- table ---- */

@@ -22,12 +22,11 @@ the text wrap and gives the control a place that is always visible. Use `.row-ac
 
 ## Labels
 
-- `.preview` — the label chip at the head of a label's edit row on a repository's Labels settings, kept from
-  shrinking. Written by `labelEditor()` in `src/web/pages/labels.ts`; styled in `src/web/style/components.ts` as
-  `.edit-row > .preview`.
+Each label is a `row()` in a `.setting-list`: its chip is the title, `N open` the meta, and a `.row-fields` form (name,
+colour, Save, Delete) the trail — `labelRow()` in `src/web/pages/labels.ts`. The new-label form sits in a `.settings-block`.
 
-- `.label-open` — a label's `N open` link beside its chip in `labelEditor()` (`unused` stays a `.muted` span). Underlined so it
-  reads as a link; at the phone breakpoint a 44px tap target. Styled under `.edit-row` in `src/web/style/components.ts`.
+- `.label-open` — a label's `N open` link in its row's meta (`unused` stays a `.muted` span). Underlined so it
+  reads as a link; at the phone breakpoint a 44px tap target. Styled in `src/web/style/components.ts`.
 
 The terminal's Labels screen (`src/tui/screens/labels.ts`) shows the same counts to a repository admin: `N open` or `unused` after each hex, and its delete confirm says how many open issues and pulls carry the label. A reader sees neither.
 
