@@ -307,6 +307,7 @@ export async function runView(
                   }),
                 }),
               ),
+              { extra: "bare" },
             )}
             ${known
               ? html`<progress aria-label="Test files started" max="${row.of ?? 0}" value="${row.started ?? 0}"></progress>`

@@ -891,6 +891,10 @@ describe("working: a run's own page in the studio", () => {
     expect(live).toBeGreaterThan(-1);
     expect(page.indexOf('id="check-pins"')).toBeGreaterThan(page.indexOf("Test files"));
     expect(page.slice(live, page.indexOf('id="check-pins"'))).not.toContain("a breaks");
+    // The steps are bare rows, not a boxed card (#9727).
+    expect(page.slice(page.indexOf('id="check-steps"'), page.indexOf('id="check-pins"'))).toMatch(
+      /<div\s+class="card bare"[^>]*>\s*<ul class="list">/,
+    );
     // The replaced element (#check-steps) closes before the pin slot, which is
     // patched in place so focus and scroll survive a refetch.
     const at = page.indexOf('id="check-steps"');

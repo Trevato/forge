@@ -95,6 +95,22 @@ describe("a crew run's page at 390 px", () => {
     const rule = content.match(/\.run-log \{[^}]*\}/)?.[0] ?? "";
     expect(rule).toMatch(/overflow-wrap:\s*anywhere/);
     expect(rule).toMatch(/overflow:\s*auto/);
+    // Space, not a frame (#9727).
+    expect(rule).toMatch(/border:\s*0/);
+    expect(rule).toMatch(/background:\s*none/);
     expect(content).toMatch(/\.run-log \.row-title \{[^}]*white-space:\s*pre-wrap/);
+  });
+
+  test("with the frame gone, a log row fixes no width beyond its 72px speaker column (#9727)", () => {
+    const rule = (sel: string) =>
+      [...content.matchAll(/([^{}]+)\{([^}]*)\}/g)].find((m) => m[1]!.trim() === sel)?.[2] ?? "";
+    // The log has no side padding and no border: its rows get the page's whole width.
+    expect(rule(".run-log")).toMatch(/padding:\s*8px 0;/);
+    // The speaker column is the only fixed width: 72px, well under 390.
+    expect(rule(".run-log .row-lead")).toMatch(/flex:\s*0 0 72px/);
+    // The words take what is left and may shrink below their content, wrapping in place.
+    expect(components).toMatch(/\.row-main \{[^}]*flex:\s*1;[^}]*min-width:\s*0/);
+    expect(rule(".run-log .row-title")).toMatch(/white-space:\s*pre-wrap/);
+    expect(rule(".run-log .row-title")).not.toMatch(/nowrap|min-width/);
   });
 });

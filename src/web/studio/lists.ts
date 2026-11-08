@@ -871,6 +871,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
               trail: wordBadge(info.word),
             });
           }),
+          { extra: "bare" },
         );
   const last = fetched[fetched.length - 1];
 

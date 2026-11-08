@@ -14,3 +14,18 @@ own bounds. No fixed width; the page does not scroll sideways. No new class.
 See it on a phone: `/preview-admin/sample/runs/<id>` renders a sample run's
 page; at 390 px the head and live region wrap in place. That is asserted from
 the HTML and CSS (`test/run-page-fit.test.ts`), not from a 390 px render.
+
+## Rows and space, not boxes (#9727)
+
+The runs list (`runsListPage`, `src/web/studio/lists.ts`) is a `.card.bare` list: one row per run, its state a
+badge, its agent and age in the row's meta, on the page's one background with no frame. A run's log (`.run-log`)
+has no box either: no fill, border or radius, just space around its rows, still wrapping and scrolling inside its
+own bounds; the steer form under it keeps one hairline above it. Filter, working tab, live tail, refresh, cancel and
+the `/runs/:id` door are unchanged. No new class.
+
+The app page's log tail (`.run-log.log-tail`, a peek at a running row's log) shares `.run-log`, so it loses its
+frame too. That is intended: a peek under a row reads as part of the row, not a box inside it.
+
+A check run's step list (`#check-steps`) is a `.card.bare` list too, so `/runs/:id` has no boxed card. At 390 px a
+log row's only fixed width is its 72px speaker column; the words (`.row-main`, `min-width: 0`) take the rest and
+wrap (`test/run-page-fit.test.ts`).

@@ -676,11 +676,10 @@ form.inline { display: inline; margin-left: auto; }
    head stays reachable, and a composer that sits under it. */
 #run-live { position: relative; }
 .run-log {
-  margin: 0; padding: 10px 14px 8px; max-height: calc(100dvh - 300px); min-height: 12em; overflow: auto;
-  background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius);
+  margin: 0; padding: 8px 0; max-height: calc(100dvh - 300px); min-height: 12em; overflow: auto;
+  background: none; border: 0; border-radius: 0;
   font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; tab-size: 4;
 }
-#run-live:has(#run-steer) .run-log { border-radius: var(--radius) var(--radius) 0 0; }
 .run-log .row { padding: 2px 0; min-height: 0; align-items: flex-start; }
 .run-log .row-lead { flex: 0 0 72px; justify-content: flex-start; overflow: hidden; }
 .run-log .row-lead .badge { overflow: hidden; text-overflow: ellipsis; }
@@ -697,7 +696,7 @@ form.inline { display: inline; margin-left: auto; }
 }
 #run-steer {
   position: sticky; bottom: 0; gap: 6px; padding: 10px 12px; background: var(--bg);
-  border-top: 0; border-radius: 0 0 var(--radius) var(--radius); box-shadow: none;
+  border: 0; border-top: 1px solid var(--border); border-radius: 0; box-shadow: none;
 }
 #run-steer textarea { min-height: 38px; max-height: 160px; resize: none; }
 #run-steer .bar .muted { flex: 1 1 200px; }

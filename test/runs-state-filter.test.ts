@@ -76,3 +76,9 @@ test("a private repository is still the one 404 to an outsider", async () => {
   expect(a.status).toBe(404);
   expect(b.status).toBe(404);
 });
+
+test("the runs list is bare rows, not a boxed card (#9727)", async () => {
+  const { body } = await get("/alice/notes/runs?state=failed");
+  expect(body).toMatch(/<div\s+class="card bare"[^>]*>\s*<ul class="list">/);
+  expect(body).toContain(`/alice/notes/runs/${failedId}`);
+});
