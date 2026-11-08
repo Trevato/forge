@@ -59,9 +59,11 @@ What the feed holds about an app's repository (runs, pulls, issues, looks) shows
 
 Absorbing, settings, the menu entry and the page use no model and start no agent run. They work with the crew off and no model credential on the forge. `test/apps-features.test.ts` runs the whole flow that way. The forge never hands an app the crew's credential. A feature's schedule is the app's own: the app reads `FORGE_SETTING_*` and runs its own timer. An app that wants a model's judgment on top, such as an issue written from what it found, must do its work without one and treat the model as optional.
 
-## Settings are not secrets
+## Settings are not secrets, except `secret`
 
-Settings are stored as plain values. Anyone who can read the app's repository can read them through `GET /api/v1/features/:slug`, and each preview of the app is given them. Put keys and passwords in the app's secrets (`/settings/secrets` or the app's variables), not in a setting.
+A setting of type `secret` is kept sealed (AES-GCM, bound to the app and the name), handed to the app as `FORGE_SETTING_*` and never shown again: pages, the API and the MCP say only whether one is kept. It has no default (forge.json is not a place for one); a blank in the page's form or the terminal's prompt keeps what is kept, while a blank sent through the API or MCP clears it (it then reads as not set). The terminal masks what is typed and shows `kept` or `not set`. Sealed is not hidden from the app: a secret reaches every preview of the app that gets settings, as a plain setting does, so code in a pull can read it. Keep one only for an app whose previews you trust. The page shows `Kept` or `Not set` as text tied to the field and says that clearing is the API's or the MCP's. Every other type is stored as a plain value.
+
+Other settings are stored as plain values. Anyone who can read the app's repository can read them through `GET /api/v1/features/:slug`, and each preview of the app is given them. Put keys and passwords in the app's secrets (`/settings/secrets` or the app's variables), not in a setting.
 
 ## Review
 
@@ -80,7 +82,7 @@ Settings stay behind on a fork. A fork of another forge's app carries its `featu
 
 ## Not done yet
 
-Until then an absorbed app is a menu link with kept settings (Settings › Features says so). The forge does not yet fire a feature's schedule (#9883) or keep `secret` settings (#9886).
+Until then an absorbed app is a menu link with kept settings (Settings › Features says so). The forge does not yet fire a feature's schedule (#9883).
 
 ## MCP tools
 

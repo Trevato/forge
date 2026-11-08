@@ -84,7 +84,7 @@ describe("the declaration", () => {
     expect(wrong({ name: "R", page: "//evil.example" })).toContain("page");
     expect(wrong({ name: "R", extra: 1 })).toContain("unknown field extra");
     expect(wrong({ name: "R", settings: { RunDays: { type: "days" } } })).toContain("camelCase");
-    expect(wrong({ name: "R", settings: { a: { type: "secret" } } })).toContain("type is one of");
+    expect(wrong({ name: "R", settings: { a: { type: "password" } } })).toContain("type is one of");
     expect(wrong({ name: "R", settings: { h: { type: "int", min: 5, max: 1 } } })).toContain("min is above max");
     expect(wrong({ name: "R", settings: { h: { type: "int", default: 30, max: 23 } } })).toContain("default is at most 23");
     expect(wrong({ name: "R", settings: { c: { type: "choice", choices: ["only"] } } })).toContain("choices");
@@ -226,7 +226,7 @@ describe("absorbing an app", () => {
   test("declaring is not absorbing: nothing is in the nav and the app is told nothing", async () => {
     expect(getAbsorbed(app.db, appId)).toBeUndefined();
     expect(absorbedForNav(app, ada)).toEqual([]);
-    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toEqual({});
+    expect(featureVarsAt(app.db, app.config.dataDir, appId, FORGE_JSON)).toEqual({});
     const seen = await getFeature(app, cy, "radar");
     expect(seen.ok && seen.value.absorbed).toBe(false);
   });
@@ -311,7 +311,7 @@ describe("absorbing an app", () => {
 
   test("a production push that renames the feature leaves the menu unchanged until an admin accepts", async () => {
     const renamed = JSON.stringify({ app: { run: "x" }, feature: { ...FEATURE, name: "Radar Pro", page: "/pro" } });
-    featureVarsAt(app.db, appId, renamed);
+    featureVarsAt(app.db, app.config.dataDir, appId, renamed);
     expect(absorbedForNav(app, ada).map((f) => [f.name, f.page])).toEqual([["Radar", "/"]]);
     const c = await commitToBranch(app, cy, repo, { message: "rename", files: [{ path: "forge.json", content: renamed }] });
     if (!c.ok) throw new Error(JSON.stringify(c.error));
@@ -533,7 +533,7 @@ describe("absorbing an app", () => {
   test("good values are kept and reach the app as FORGE_SETTING_*", async () => {
     const res = await api("PATCH", adaToken, "/radar/settings", { settings: { runDays: ["wed", "mon", "fri"], runHourUtc: 9 } });
     expect(res.status).toBe(200);
-    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toMatchObject({
+    expect(featureVarsAt(app.db, app.config.dataDir, appId, FORGE_JSON)).toMatchObject({
       FORGE_FEATURE: "1",
       FORGE_SETTING_RUN_DAYS: "mon,wed,fri",
       FORGE_SETTING_RUN_HOUR_UTC: "9",
@@ -552,7 +552,7 @@ describe("absorbing an app", () => {
     ]);
     const saved = await web(adaCookie, "/settings/features/radar", form);
     expect(saved.status).toBe(303);
-    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toMatchObject({
+    expect(featureVarsAt(app.db, app.config.dataDir, appId, FORGE_JSON)).toMatchObject({
       FORGE_SETTING_RUN_DAYS: "tue",
       FORGE_SETTING_CLAUDE_CODE: "stable",
       FORGE_SETTING_SCOUT: "false",
@@ -564,13 +564,13 @@ describe("absorbing an app", () => {
   test("un-absorbing puts it back as an ordinary app and keeps its values for the next absorb", async () => {
     const out = await unabsorbApp(app, ada, "radar");
     expect(out.ok && out.value.absorbed).toBe(false);
-    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toEqual({});
+    expect(featureVarsAt(app.db, app.config.dataDir, appId, FORGE_JSON)).toEqual({});
     expect(absorbedForNav(app, ada)).toEqual([]);
     expect((await api("DELETE", adaToken, "/radar")).status).toBe(409);
     const changeWhileOut = await changeFeatureSettings(app, ada, "radar", { runHourUtc: 1 });
     expect(!changeWhileOut.ok && changeWhileOut.error.error).toBe("not_absorbed");
     await absorbApp(app, ada, "radar");
-    expect(featureVarsAt(app.db, appId, FORGE_JSON)).toMatchObject({ FORGE_SETTING_RUN_DAYS: "tue", FORGE_SETTING_RUN_HOUR_UTC: "9" });
+    expect(featureVarsAt(app.db, app.config.dataDir, appId, FORGE_JSON)).toMatchObject({ FORGE_SETTING_RUN_DAYS: "tue", FORGE_SETTING_RUN_HOUR_UTC: "9" });
   });
 
   test("the MCP tool plans first, and applies only with an admin-scope token", async () => {
@@ -674,6 +674,38 @@ describe("absorbing an app", () => {
     const after = await declaredFeature(app, repo);
     expect(after).not.toBe(first);
     expect(after.ok && after.value?.name).toBe("Radar 2");
+  });
+
+  test("a secret setting is kept sealed, never shown again, and reaches the app", async () => {
+    expect(parseFeature({ feature: { name: "Z", settings: { token: { type: "secret", default: "x" } } } }).ok).toBe(false);
+    const withSecret = JSON.stringify({ app: { run: "bun run src/server.ts" }, feature: { ...FEATURE, settings: { ...FEATURE.settings, apiToken: { type: "secret", label: "API token" } } } });
+    const done = await commitToBranch(app, cy, repo, { message: "secret", files: [{ path: "forge.json", content: withSecret }] });
+    if (!done.ok) throw new Error(JSON.stringify(done.error));
+    const res = await api("PATCH", adaToken, "/radar/settings", { settings: { apiToken: "hunter2-value" } });
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(await res.json())).not.toContain("hunter2-value");
+    const stored = featureSettings(app.db, appId).get("apiToken") ?? "";
+    expect(stored).not.toContain("hunter2-value");
+    expect(featureVarsAt(app.db, app.config.dataDir, appId, withSecret)["FORGE_SETTING_API_TOKEN"]).toBe("hunter2-value");
+    const page = await (await web(adaCookie, "/settings/features/radar")).text();
+    expect(page).not.toContain("hunter2-value");
+    expect(page).toContain('type="password"');
+    expect(page).toContain('aria-describedby="kept-apiToken"');
+    expect(page).toMatch(/id="kept-apiToken">Kept\./);
+    // A blank form field keeps the secret.
+    const form = new URLSearchParams([["s.apiToken", ""], ["s.runHourUtc", "9"]]);
+    expect((await web(adaCookie, "/settings/features/radar", form)).status).toBe(303);
+    expect(featureVarsAt(app.db, app.config.dataDir, appId, withSecret)["FORGE_SETTING_API_TOKEN"]).toBe("hunter2-value");
+    // A blank through the API clears it: the view says not set.
+    const cleared = await api("PATCH", adaToken, "/radar/settings", { settings: { apiToken: "" } });
+    expect(cleared.status).toBe(200);
+    const view = (await cleared.json()) as { settings: { key: string; set: boolean }[] };
+    expect(view.settings.find((x) => x.key === "apiToken")?.set).toBe(false);
+    expect(featureSettings(app.db, appId).has("apiToken")).toBe(false);
+    expect(await (await web(adaCookie, "/settings/features/radar")).text()).toMatch(/id="kept-apiToken">Not set\./);
+    // The event names the key, not the value.
+    const events = listEvents(app.db, { repoId: repo.id }).filter((e) => e.kind === "app.feature_settings");
+    expect(JSON.stringify(events)).not.toContain("hunter2");
   });
 
   test("with 20 more absorbed apps the menu is built from one pass and renders within budget", async () => {

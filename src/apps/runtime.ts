@@ -1695,7 +1695,7 @@ export class AppsRuntime {
     } catch {
       forgeJson = undefined;
     }
-    return featureVarsAt(this.app.db, appId, forgeJson);
+    return featureVarsAt(this.app.db, this.app.config.dataDir, appId, forgeJson);
   }
 
   /**

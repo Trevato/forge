@@ -25,9 +25,9 @@
 import { err, ok, type Result } from "../kernel/result.ts";
 import { parseTools, type ToolSpec } from "./feature_tools.ts";
 
-export type SettingType = "bool" | "int" | "string" | "choice" | "days" | "list";
+export type SettingType = "bool" | "int" | "string" | "choice" | "days" | "list" | "secret";
 
-export const SETTING_TYPES: readonly SettingType[] = ["bool", "int", "string", "choice", "days", "list"];
+export const SETTING_TYPES: readonly SettingType[] = ["bool", "int", "string", "choice", "days", "list", "secret"];
 
 /** The labels the forge's own menus use: a feature may not borrow one. */
 const BUILT_IN_MENU_LABELS = [
@@ -160,6 +160,8 @@ function parseSetting(key: string, raw: unknown): Result<SettingSpec, string> {
     return bad(`setting ${key}: only a choice has choices`);
   }
   const spec = { key, type: type as SettingType, label: label.trim(), help: typeof help === "string" ? help : undefined, min, max, choices, default: "" };
+  if (type === "secret" && raw["default"] !== undefined && raw["default"] !== "")
+    return bad(`setting ${key}: a secret has no default, forge.json is not a place for one`);
   const fallback = raw["default"] ?? emptyDefault(spec.type, choices);
   const checked = checkSetting(spec, fallback);
   if (!checked.ok) return bad(`setting ${key}: default ${checked.error}`);
@@ -178,6 +180,7 @@ function emptyDefault(type: SettingType, choices: readonly string[] | undefined)
     case "list":
       return [];
     case "string":
+    case "secret":
       return "";
   }
 }
@@ -203,6 +206,7 @@ export function checkSetting(spec: Pick<SettingSpec, "type" | "min" | "max" | "c
       if (spec.max !== undefined && n > spec.max) return err(`is at most ${spec.max}`);
       return ok(String(n));
     }
+    case "secret":
     case "string": {
       if (typeof value !== "string") return err("is text");
       if (value.length > STRING_MAX) return err(`is at most ${STRING_MAX} characters`);

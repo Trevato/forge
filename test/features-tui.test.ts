@@ -24,7 +24,7 @@ quietLogs();
 
 const FORGE_JSON = JSON.stringify({
   app: { run: "bun run src/server.ts" },
-  feature: { name: "Radar", page: "/", settings: { runHourUtc: { type: "int", default: 13, min: 0, max: 23, label: "Hour (UTC)" } } },
+  feature: { name: "Radar", page: "/", settings: { runHourUtc: { type: "int", default: 13, min: 0, max: 23, label: "Hour (UTC)" }, apiToken: { type: "secret", label: "API token" } } },
 });
 
 describe("features in the terminal", () => {
@@ -113,6 +113,30 @@ describe("features in the terminal", () => {
     await t.press("esc");
     await t.press("a");
     expect(getAbsorbed(forge.db, appId)).toBeUndefined();
+    t.stop();
+  });
+
+  test("a secret is masked, shown as kept, and a blank submit leaves it", async () => {
+    const t = boot(ada);
+    await t.palette();
+    await t.press("enter");
+    await t.press("a");
+    await t.press("enter");
+    expect(t.text()).toContain("not set");
+    await t.press("j");
+    await t.press("enter");
+    await t.type("hunter2-value");
+    expect(t.text()).not.toContain("hunter2-value");
+    await t.press("enter");
+    const kept = featureSettings(forge.db, appId).get("apiToken") ?? "";
+    expect(kept).not.toBe("");
+    expect(kept).not.toContain("hunter2-value");
+    expect(t.text()).toContain("kept");
+    await t.press("enter");
+    await t.press("enter");
+    expect(featureSettings(forge.db, appId).get("apiToken")).toBe(kept);
+    await t.press("esc");
+    await t.press("a");
     t.stop();
   });
 

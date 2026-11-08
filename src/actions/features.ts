@@ -20,11 +20,13 @@
 import type { App } from "../app.ts";
 import { readFileAt } from "../apps/checkout.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName, type FeatureSpec } from "../apps/feature.ts";
+import { keptSettings as openSettings, sealSetting } from "../apps/feature_env.ts";
 import type { ToolSpec } from "../apps/feature_tools.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getAppByRepo, getAppById, getAppBySlug, listApps, type AppRecord } from "../core/apps.ts";
 import {
   absorb,
+  clearFeatureSettings,
   keepDeclaration,
   featureSettings,
   getAbsorbed,
@@ -215,7 +217,7 @@ function viewOf(
   problem: string | null,
   provenance: Provenance,
 ): FeatureView {
-  const kept = featureSettings(app.db, record.id);
+  const kept = spec === undefined ? featureSettings(app.db, record.id) : openSettings(app.db, app.config.dataDir, record.id, spec);
   const absorbed = getAbsorbed(app.db, record.id);
   const env = spec === undefined ? {} : featureEnv(spec, kept);
   return {
@@ -243,7 +245,8 @@ function viewOf(
         type: s.type,
         label: s.label,
         help: s.help ?? null,
-        value: env[name] ?? s.default,
+        // A secret is never shown again: only whether one is kept.
+        value: s.type === "secret" ? "" : (env[name] ?? s.default),
         default: s.default,
         set: kept.has(s.key),
         min: s.min ?? null,
@@ -432,9 +435,15 @@ export async function changeFeatureSettings(
     if (!checked.ok) return refuse("invalid_setting", `${spec.label} ${checked.error}.`, key);
     changes.set(key, checked.value);
   }
-  const before = featureSettings(app.db, found.record.id);
+  const before = openSettings(app.db, app.config.dataDir, found.record.id, declared.value);
   const changed = [...changes].filter(([k, v]) => (before.get(k) ?? declared.value!.settings.find((s) => s.key === k)!.default) !== v);
-  if (changes.size > 0) keepSettings(app.db, found.record.id, changes, actor.id);
+  const isSecret = (k: string): boolean => declared.value!.settings.find((s) => s.key === k)?.type === "secret";
+  // A blank secret clears it: the row goes, so `set` says not set rather than a sealed empty string.
+  const cleared = [...changes].filter(([k, v]) => v === "" && isSecret(k)).map(([k]) => k);
+  const stored = new Map<string, string>();
+  for (const [k, v] of changes) if (!cleared.includes(k)) stored.set(k, isSecret(k) ? sealSetting(app.config.dataDir, found.record.id, k, v) : v);
+  if (stored.size > 0) keepSettings(app.db, found.record.id, stored, actor.id);
+  if (cleared.length > 0) clearFeatureSettings(app.db, found.record.id, cleared);
   if (changed.length > 0) {
     app.bus.append({
       kind: "app.feature_settings",

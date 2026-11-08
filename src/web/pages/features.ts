@@ -144,6 +144,9 @@ function input(s: SettingView, invalid = false) {
     }
     case "list":
       return html`<textarea class="input mono" name="${name}" rows="3" aria-label="${s.label}" ${bad}>${s.value.split(",").filter(Boolean).join("\n")}</textarea>`;
+    case "secret":
+      return html`<input class="input mono" type="password" name="${name}" value="" autocomplete="new-password"
+        aria-label="${s.label}" aria-describedby="kept-${s.key}" ${bad} />`;
     default:
       return html`<input class="input" name="${name}" value="${s.value}" aria-label="${s.label}" ${bad} />`;
   }
@@ -185,8 +188,9 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused, items: readonl
     const s = refused !== undefined && shown.key in refused.typed ? { ...shown, value: typedValue(shown, refused.typed[shown.key]) } : shown;
     return row({
       title: html`${s.label} <span class="muted small mono">${s.env}</span>`,
-      meta: html`${bad ? html`<span class="danger" role="alert">${refused.message}</span><br />` : null}${s.help ?? ""}${when(s.help !== null, () => html`<br />`)}Default
-        <span class="mono">${s.default === "" ? "empty" : s.default}</span>${s.set ? "" : " · not changed"}`,
+      meta: html`${bad ? html`<span class="danger" role="alert">${refused.message}</span><br />` : null}${s.help ?? ""}${when(s.help !== null, () => html`<br />`)}${s.type === "secret"
+        ? html`<span id="kept-${s.key}">${s.set ? "Kept" : "Not set"}. Typing replaces it; a blank field keeps it. Clear it through the API or MCP.</span>`
+        : html`Default <span class="mono">${s.default === "" ? "empty" : s.default}</span>${s.set ? "" : " · not changed"}`}`,
       trail: input(s, bad),
     });
   });
@@ -232,6 +236,7 @@ export function settingsFromForm(form: Form, settings: readonly SettingView[]): 
     const name = `s.${s.key}`;
     const all = form.getAll(name).map(String);
     if (all.length === 0) continue;
+    if (s.type === "secret" && (all[all.length - 1] ?? "") === "") continue; // blank keeps what is kept
     if (s.type === "days") out[s.key] = all.filter((d) => d !== "");
     else if (s.type === "bool") out[s.key] = all.includes("on") ? "on" : "off";
     else out[s.key] = all[all.length - 1] ?? "";
