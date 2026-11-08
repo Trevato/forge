@@ -95,6 +95,7 @@ import {
   badge,
   btn,
   card,
+  dot,
   field as formField,
   icon,
   hintAttr,
@@ -431,7 +432,12 @@ function originCheckLine(ctx: Ctx, repo: Repo, pull: Pull): Html | "" {
   return html`<p class="muted">${originCheckLead(repo.origin.fullName, kept, pull.headOid)}, as of ${time(kept.checkedAt)}</p>`;
 }
 
-/** One §5 row in a toned card; `.setting-list` wraps the sentence and drops the action under it on a phone. */
+/**
+ * One §5 row on a bare card; `.setting-list` wraps the sentence and drops the
+ * action under it on a phone. A bare card draws no tone, so the state is the
+ * sentence's opening word ("Merged.", "Ready to merge", "Waiting on checks.")
+ * with the tone's dot beside it: a word, not colour alone (principle 6).
+ */
 function box(
   tone: Tone | undefined,
   lead: Html,
@@ -440,16 +446,17 @@ function box(
   meta: Html,
   trail: Html | null,
 ): Html {
+  const said = typeof title === "string" ? raw(title) : title;
   return card(
     html`<ul class="list setting-list">
       ${row({
         lead,
-        title: typeof title === "string" ? raw(title) : title,
+        title: html`${dot(tone)} ${said}`,
         meta,
         ...(trail ? { trail } : {}),
       })}
     </ul>`,
-    { ...(tone ? { tone } : {}), pad: false, extra: "mt" },
+    { pad: false, extra: "mt bare" },
   );
 }
 
@@ -709,17 +716,17 @@ const VERDICT_WORDS: Record<string, string> = {
 /** One line per team the closed issue names: whose verdict it is, or that it is awaited (#2681). */
 export function teamsCard(verdicts: readonly TeamVerdict[]): Html {
   if (verdicts.length === 0) return html``;
-  return html`<section class="card team-verdicts" aria-label="Team reviews">
-    <ul>
+  return html`<section class="team-verdicts mt" aria-label="Team reviews">
+    <ul class="list">
       ${verdicts.map(
-        (v) => html`<li>
+        (v) => html`<li class="row"><span>
           <strong>${v.name}</strong>:
           ${v.state === undefined
             ? html`<span class="muted">awaiting a reviewer</span>`
             : html`${VERDICT_WORDS[v.state] ?? v.state} by ${v.by ?? ""}${v.stale
                 ? html` <span class="muted">(on an older head)</span>`
                 : ""}`}
-        </li>`,
+        </span></li>`,
       )}
     </ul>
   </section>`;
@@ -744,7 +751,7 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
   const user = ctx.auth.user;
   if (user === undefined)
     return card(html`<a href="/signin">Sign in</a> to review this change.`, {
-      extra: "mt",
+      extra: "mt bare",
       head: html`${icon("eye")}
         <h2>Review</h2>`,
     });
@@ -829,7 +836,7 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
       </div>
     </form>`,
     {
-      extra: "mt review-card",
+      extra: "mt review-card bare",
       head: html`${icon("eye")}
         <h2>Review</h2>`,
     },
@@ -1011,6 +1018,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
           )}
         </ul>`,
     {
+      extra: "bare",
       pad: false,
       head: html`${icon("commit")}
         <h2>${commits.length} commit${commits.length === 1 ? "" : "s"}</h2>`,
@@ -1279,7 +1287,7 @@ export function approveHereCard(
       ${btn(proposed ? "Let it run here" : "Approve to run here", { size: "sm", icon: "check" })}
     </form>`,
     {
-      extra: "mb",
+      extra: "mb bare",
       head: html`${icon("eye")}
         <h2>Run this code?</h2>`,
     },
@@ -1506,7 +1514,7 @@ export async function pullSliceSubmit(ctx: Ctx): Promise<Response> {
  * left, and — for a writer — a form to land the author's commits up to one
  * of them as their own merge commit.
  */
-function slicesCard(
+export function slicesCard(
   base: string,
   thread: string,
   slices: readonly LandedSlice[],
@@ -1553,6 +1561,7 @@ function slicesCard(
         </form>`,
       )}`,
     {
+      extra: "bare",
       head: html`${icon("merge")}
         <h2>Slices</h2>`,
     },

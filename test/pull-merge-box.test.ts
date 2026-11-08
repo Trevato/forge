@@ -12,6 +12,8 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import type { TeamVerdict } from "../src/core/issue_teams.ts";
+import { teamsCard } from "../src/web/pages/pull.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -23,14 +25,26 @@ let alice: User;
 const numbers: Record<string, number> = {};
 const cells = process.env["FORGE_CELLS"];
 
-const boxOf = async (repo: string): Promise<string> => {
+const pageOf = async (repo: string): Promise<string> => {
   const res = await fetch(
     `${servers.url}/alice/${repo}/pulls/${numbers[repo]}/files`,
     { headers: { cookie: `forge_session=${createSession(app.db, alice.id).token}` } },
   );
-  const body = await res.text();
+  return res.text();
+};
+
+/** The class list of the card whose head names `heading`. */
+const cardClassOf = (body: string, heading: string): string => {
+  const at = body.indexOf(`<h2>${heading}`);
+  expect(at).toBeGreaterThan(-1);
+  const before = [...body.slice(0, at).matchAll(/class="(card(?: [^"]*)?)"/g)];
+  return before.at(-1)?.[1] ?? "";
+};
+
+const boxOf = async (repo: string): Promise<string> => {
+  const body = await pageOf(repo);
   expect(body).not.toMatch(/\bmerge-(?:box|form|headline|sub)\b/);
-  const at = body.search(/<div\s+class="card mt"[^>]*data-tone=/);
+  const at = body.search(/<div\s+class="card mt bare"\s*>\s*<ul class="list setting-list">/);
   expect(at).toBeGreaterThan(-1);
   return body.slice(at, body.indexOf("</ul>", at)).replace(/\s+/g, " ");
 };
@@ -50,7 +64,7 @@ beforeAll(async () => {
   });
   if (!made.ok) throw new Error(String(made.error));
   alice = made.value;
-  for (const name of ["ready", "checks", "merged"]) {
+  for (const name of ["ready", "checks", "merged", "closed", "sliced", "fork"]) {
     const repo = await createRepo(app, alice, { name, visibility: "public" });
     if (!repo.ok) throw new Error(String(repo.error));
     for (const [branch, file] of [[undefined, "forge.json"], ["topic", "t.txt"]] as const) {
@@ -60,6 +74,14 @@ beforeAll(async () => {
         files: [{ path: file, content: file === "forge.json" ? "{}" : "x" }],
       });
       if (!done.ok) throw new Error(JSON.stringify(done.error));
+    }
+    if (name === "sliced") {
+      const more = await commitToBranch(app, alice, repo.value, {
+        branch: "topic",
+        message: "a second change",
+        files: [{ path: "u.txt", content: "y" }],
+      });
+      if (!more.ok) throw new Error(JSON.stringify(more.error));
     }
     const pull = await openPull(app, alice, repo.value, {
       title: name,
@@ -71,6 +93,10 @@ beforeAll(async () => {
     numbers[name] = pull.value.number;
     if (name === "checks")
       app.db.run("UPDATE repo SET require_checks = 1 WHERE id = ?", [repo.value.id]);
+    if (name === "closed")
+      app.db.run("UPDATE issue SET state = 'closed' WHERE id = ?", [pull.value.id]);
+    if (name === "fork")
+      app.db.run("UPDATE pull SET origin_head_repo = 'bob/fork' WHERE issue_id = ?", [pull.value.id]);
     if (name === "merged") {
       const done = await mergePull(app, alice, repo.value, pull.value, "merge");
       if (!done.ok) throw new Error(JSON.stringify(done.error));
@@ -113,4 +139,35 @@ test("merged: the merged tone and the sentence", async () => {
   expect(box).toContain('data-tone="merged"');
   expect(box).toContain("Merged.");
   expect(box).toContain("was merged into");
+});
+
+
+test("the merge state is the sentence's opening word with its dot, the card bare (principle 6)", async () => {
+  expect(await boxOf("ready")).toMatch(/class="dot" data-tone="success" ><\/span> Ready to merge/);
+  expect(await boxOf("checks")).toMatch(/data-tone="attn" ><\/span> Waiting on checks\./);
+  expect(await boxOf("merged")).toMatch(/data-tone="merged" ><\/span> Merged\./);
+  // Closed has no tone: a plain dot, and the word still says it.
+  expect(await boxOf("closed")).toMatch(/class="dot" ><\/span> Closed without merging\./);
+  expect(await boxOf("fork")).toMatch(/data-tone="attn" ><\/span> Merge on the origin\./);
+});
+
+test("the review, commits, slices and run-this-code cards are bare", async () => {
+  const sliced = await pageOf("sliced");
+  expect(cardClassOf(sliced, "Review")).toMatch(/\bbare\b/);
+  expect(cardClassOf(sliced, "2 commits")).toMatch(/\bbare\b/);
+  expect(cardClassOf(sliced, "Slices")).toMatch(/\bbare\b/);
+  expect(cardClassOf(await pageOf("fork"), "Run this code?")).toMatch(/\bbare\b/);
+});
+
+test("the team verdicts are a plain list of rows, not a card (principle 7)", () => {
+  const verdicts: TeamVerdict[] = [
+    { team: "core", name: "Core", state: "approved", by: "bob", stale: false },
+    { team: "docs", name: "Docs", state: undefined, by: undefined, stale: false },
+  ];
+  const out = String(teamsCard(verdicts));
+  expect(out).toContain('class="team-verdicts mt"');
+  expect(out).toContain('<ul class="list">');
+  expect(out).not.toMatch(/class="[^"]*\bcard\b/);
+  expect(out).toContain("approved by bob");
+  expect(out).toContain("awaiting a reviewer");
 });
