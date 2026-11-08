@@ -78,7 +78,6 @@ import {
   badge,
   btn,
   card,
-  empty,
   envFacts,
   envStateBadge,
   icon,
@@ -247,19 +246,20 @@ export async function appsList(ctx: Ctx): Promise<Response> {
           </p>`
         : null}
     ${shown.length === 0
-      ? empty({
-          icon: "rocket",
-          title: archivedView
+      ? html`<section class="stack">
+          <p><strong>${archivedView
             ? "Nothing is archived"
             : live
               ? "Nothing is live"
-              : "Nothing runs here yet",
-          note: live
-            ? "Nothing is serving right now — clear the filter to see every app."
-            : "A new app is a repository with a small working app in it, served at its own hostname a few seconds later.",
-          action: create,
-        })
-      : card(html`<ul class="list setting-list">${rows}</ul>`, { pad: false })}</div>`;
+              : "Nothing runs here yet"}</strong></p>
+          <p class="muted small">${archivedView
+            ? "Apps you put away show up here."
+            : live
+              ? "Nothing is serving right now. Clear the filter to see every app."
+              : "A new app is a repository with a small working app in it. It is live at its own address seconds later."}</p>
+          ${archivedView ? null : create}
+        </section>`
+      : html`<ul class="list setting-list">${rows}</ul>`}</div>`;
   const response = page({ ctx, title: "Apps", body });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -313,10 +313,9 @@ function newAppForm(
 
   return html`<div class="narrow-wide">
     ${pageHead("New app", {
-      sub: "A repository with a small working app in it: a first issue from your sentence, a crew member on it, production at its hostname, and a preview for every change.",
+      sub: "Describe what it should do. You get a repository, a first issue, a crew member on it, a live app, and a preview for every change.",
     })}
-    ${card(
-      html`<form method="post" action="/apps/new">
+    ${html`<form method="post" action="/apps/new">
         ${formField({
           label: "What should it do?",
           name: "description",
@@ -355,14 +354,14 @@ function newAppForm(
           pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
           hint:
             domain === undefined
-              ? "Left blank, it's made from your sentence above. Letters, digits, dots, dashes and underscores; the hostname is made from it."
-              : `Left blank, it's made from your sentence above. Letters, digits, dots, dashes and underscores; it runs at <name>${appHostSuffix(domain)}.`,
+              ? "Left blank, it comes from your sentence. Use letters, digits, dots, dashes and underscores. The address comes from it."
+              : `Left blank, it comes from your sentence. Use letters, digits, dots, dashes and underscores. It runs at <name>${appHostSuffix(domain)}.`,
           ...(error ? { error } : {}),
         })}
         ${selectField({
           label: "Visibility",
           name: "visibility",
-          hint: "A private app answers only to people who can see its repository; the forge vouches for them on the way in.",
+          hint: "Only people who can see the repository can open a private app.",
           options: [
             {
               value: "private",
@@ -420,8 +419,7 @@ function newAppForm(
           ${btn("Create app", { variant: "primary", icon: "rocket" })}
           ${btn("Cancel", { href: "/apps", variant: "ghost" })}
         </div>
-      </form>`,
-    )}
+      </form>`}
     <p class="muted">Already have an app on another forge? <a href="/bring">Bring it here whole</a>.</p>
   </div>`;
 }
@@ -646,6 +644,21 @@ export function appPage(ctx: Ctx): Response {
 
 // ---- the pull page's preview card ----
 
+/**
+ * How the preview card looks: a quiet one is bare (heading over rows, no
+ * box); a failed one or one that needs attention keeps its tone and box,
+ * since a bare card draws no tone.
+ */
+export function previewLook(env: EnvStatus): {
+  extra: string;
+  tone?: "danger" | "attn";
+} {
+  if (env.state === "failed" || env.error !== undefined)
+    return { extra: "env-card", tone: "danger" };
+  if (env.failedDeploy !== undefined) return { extra: "env-card", tone: "attn" };
+  return { extra: "bare env-card" };
+}
+
 /** Where this pull's preview stands, with the way in. */
 export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
   const view = appView(ctx.app, ctx.auth.user, repo);
@@ -660,7 +673,7 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
   if (!view.value.serving)
     return card(
       html`<p class="muted small">Nothing is serving apps on this forge.</p>`,
-      { head },
+      { head, extra: "bare" },
     );
   if (env === undefined) {
     const why =
@@ -669,7 +682,7 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
         : pull.state === "closed"
           ? "The preview was removed when this closed. Reopen the pull request and it comes back."
           : "No preview yet — one starts when this pull request's head deploys.";
-    return card(html`<p class="muted small">${why}</p>`, { head });
+    return card(html`<p class="muted small">${why}</p>`, { head, extra: "bare" });
   }
   // A preview's terminal is a different login from production's — its own
   // command, shown only to a writer, same as the app page's.
@@ -698,12 +711,7 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
       </div>`,
     {
       head,
-      extra: "env-card",
-      ...(env.state === "failed" || env.error !== undefined
-        ? { tone: "danger" as const }
-        : env.failedDeploy !== undefined
-          ? { tone: "attn" as const }
-          : {}),
+      ...previewLook(env),
     },
   );
 }

@@ -18,6 +18,8 @@ import {
   STARTERS,
   starterHref,
 } from "../src/web/pages/apps-starters.ts";
+import { previewLook } from "../src/web/pages/apps.ts";
+import type { EnvStatus } from "../src/apps/runtime.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -305,6 +307,34 @@ describe("apps, runs and the crew on the web", () => {
     const anonymous = await bodyOf("", "/apps");
     expect(anonymous).toContain('href="/alice/hello"');
     expect(anonymous).toContain("Sign in");
+  });
+
+  test("the apps list is rows, not a box, and so is the new-app step", async () => {
+    const list = await bodyOf(alice, "/apps");
+    expect(list).toContain('class="list setting-list"');
+    expect(list).not.toMatch(/class="card[ "]/);
+    const form = await bodyOf(alice, "/apps/new");
+    expect(form).toContain('action="/apps/new"');
+    expect(form).not.toMatch(/class="card[ "]/);
+  });
+
+  test("an empty /apps says so in plain words, with no box", async () => {
+    const none = await bodyOf(alice, "/apps?archived=1");
+    expect(none).toContain("Nothing is archived");
+    expect(none).not.toMatch(/class="card[ "]/);
+  });
+
+  test("the preview card is bare when quiet and keeps its tone and box when failed", () => {
+    const env = { env: "pull-1", state: "ok" } as unknown as EnvStatus;
+    expect(previewLook(env)).toEqual({ extra: "bare env-card" });
+    expect(previewLook({ ...env, state: "failed" } as EnvStatus)).toEqual({
+      extra: "env-card",
+      tone: "danger",
+    });
+    expect(previewLook({ ...env, error: "boom" } as EnvStatus).tone).toBe("danger");
+    expect(
+      previewLook({ ...env, failedDeploy: {} } as unknown as EnvStatus),
+    ).toEqual({ extra: "env-card", tone: "attn" });
   });
 
   // ---- the app page and the runs ----
@@ -901,9 +931,9 @@ describe("apps, runs and the crew on the web", () => {
 
     // The preview is on the change; the assignee, the checks line and the
     // merge box are its Files step, one tab under it.
-    expect(await bodyOf(alice, `/alice/hello/pulls/${number}`)).toContain(
-      "<h2>Preview</h2>",
-    );
+    const change = await bodyOf(alice, `/alice/hello/pulls/${number}`);
+    expect(change).toContain("<h2>Preview</h2>");
+    expect(change).toMatch(/<div\s+class="card bare[ "][^>]*>\s*<div class="card-head">\s*<svg[^]*?<h2>Preview<\/h2>/);
     const page = await bodyOf(alice, `/alice/hello/pulls/${number}/files`);
     expect(page).toContain("<h2>Assignee</h2>");
     // Checks are required: the line says so, and the box waits for them

@@ -27,6 +27,10 @@ one-line ellipsis. No fixed width; the page does not scroll sideways. No new cla
 `/preview-admin/sample/pulls` is attached to the pull from its preview.
 - `.archived-list` — the rows of an origin's archived repositories: long names wrap, and on a phone each row's buttons drop below it.
 
+## The apps list and new-app step (#9711)
+
+`/apps` is the shelf's `.list.setting-list` of `.row`s straight on the page, no card around it; `/apps/new` is the form straight on the page. The pull page's preview card is `.card.bare` unless it is failed or needs attention, when it keeps its tone and box. No new class; `test/web-apps.test.ts` holds it.
+
 ## The audit as headings over rows (#9710)
 
 `/audit` (`auditPage` in `src/web/pages/audit.ts`) has no boxed card. Each app's standing (its policy table with the
