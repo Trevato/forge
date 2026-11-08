@@ -67,12 +67,13 @@ import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { afterVerify } from "./culprit.ts";
-import { redDetail, reportRed } from "./report.ts";
+import { redDetail, reportGreen, reportRed } from "./report.ts";
 import {
   bisectOrigin,
   failedFiles,
   inVerifyLane,
   onlyEnv,
+  passedFiles,
   VERIFY_ENV,
   VERIFY_EVERY_MS,
   VERIFY_REASON,
@@ -871,8 +872,11 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           log.error("revert proposal failed", { error: String(error) }),
         );
       // A red verification after landing names its culprit (#7786).
-      if (done && run.env === VERIFY_ENV)
+      if (done && run.env === VERIFY_ENV) {
         reportRed(app, repo, done).forEach(write);
+        // A file the run printed passing closes its open report issue (#9524).
+        reportGreen(app, repo, done, outcome.passed ?? []).forEach(write);
+      }
       if (done && inVerifyLane(run.env))
         await afterVerify(app, repo, done, (r, env, oid, reason) => request(r, env, oid, reason))
           .then((lines) => lines.forEach(write))
@@ -888,8 +892,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     write: (line: string) => void,
     signal: AbortSignal,
   ): Promise<
-    | { ok: true; proven?: string }
-    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean }
+    | { ok: true; proven?: string; passed?: readonly string[] }
+    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean; passed?: readonly string[] }
   > {
     const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
     // A pull's check is the fast tier, judged against where the pull left
@@ -967,11 +971,13 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   async function runTier(
     x: Execution,
   ): Promise<
-    | { ok: true; proven?: string }
+    | { ok: true; proven?: string; passed?: readonly string[] }
     | {
         ok: false;
         error: string;
         detail?: CheckDetail | undefined;
+        /** A whole verification: the files its log ran to the end green (#9524). */
+        passed?: readonly string[];
         infrastructure?: boolean;
         /** Where it stopped red (#5276); none is before any step ran. */
         stage?: GateStage;
@@ -1199,6 +1205,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       let ran: Result<void, string>;
       const checkLines: string[] = [];
+      // A bisection step runs only some files: what it shows green says nothing of the rest.
+      const wholeVerify = x.tier === "verify" && x.only === undefined;
       if (job !== undefined) {
         ran = await runJobStep(job, {
           runId: run.id,
@@ -1425,6 +1433,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           ok: false,
           error: killed ? ran.error : summary,
           detail: redDetail(detail, files, checkLines),
+          ...(wholeVerify ? { passed: passedFiles(checkLines) } : {}),
           stage: checkStage(ran.error),
           ...(killed ? { killed } : {}),
         };
@@ -1444,7 +1453,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         }
       }
       if (key !== undefined) recordProven(app.db, key, x.id);
-      return { ok: true };
+      return wholeVerify ? { ok: true, passed: passedFiles(checkLines) } : { ok: true };
     } finally {
       if (existsSync(dir)) await removeRunDir(dir);
       await removeRunDir(home);

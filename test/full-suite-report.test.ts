@@ -11,11 +11,11 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { flowLines } from "../src/tui/screens/flow.ts";
-import { MAX_FAILURES, redDetail, reportRed, reportTitle, REPORT_LABEL } from "../src/checks/report.ts";
+import { MAX_FAILURES, redDetail, reportGreen, reportRed, reportTitle, REPORT_LABEL } from "../src/checks/report.ts";
 import { failedTests } from "../src/checks/flake.ts";
 import { heldByRed, redMain } from "../src/checks/red_main.ts";
-import { failedFiles, VERIFY_ENV } from "../src/checks/verify.ts";
-import { listIssues, listComments, labelsFor } from "../src/core/issues.ts";
+import { failedFiles, passedFiles, VERIFY_ENV } from "../src/checks/verify.ts";
+import { createIssue, getLabel, listIssues, listComments, labelsFor, setIssueLabels } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createRun, getRun, type Run } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
@@ -87,6 +87,25 @@ describe("failedTests", () => {
       { file: "test/a.test.ts", name: "a > one" },
       { file: "test/b.test.ts", name: "b > two" },
     ]);
+  });
+});
+
+describe("passedFiles", () => {
+  test("only a file printed whole with passes and no failure", () => {
+    expect(passedFiles(BUN_LOG)).toEqual(["test/c.test.ts"]);
+  });
+
+  test("a file cut off before its block closed is not passed", () => {
+    expect(passedFiles(["test/a.test.ts:", "(pass) a", "test/b.test.ts:", "(pass) b"])).toEqual(["test/a.test.ts"]);
+  });
+
+  test("a file that failed in one block and passed in another is not passed", () => {
+    const lines = ["test/a.test.ts:", "(fail) a", " 0 pass", "test/a.test.ts:", "(pass) a", " 1 pass"];
+    expect(passedFiles(lines)).toEqual([]);
+  });
+
+  test("a file with no passing test, or a path that climbs out, is not passed", () => {
+    expect(passedFiles(["test/a.test.ts:", "(skip) a", "../x.test.ts:", "(pass) x", " 1 pass"])).toEqual([]);
   });
 });
 
@@ -206,6 +225,58 @@ describe("the report", () => {
     const b = issues.find((i) => i.title === reportTitle("test/b.test.ts"))!;
     expect(b.body).toContain("b > two");
     expect(b.body).not.toContain("a > one");
+  });
+
+  const green = (commit: string): Run => {
+    const run = createRun(app.db, { repoId: repo.id, kind: "check", env: VERIFY_ENV, commitOid: commit, reason: "schedule" });
+    app.db.query("UPDATE run SET state = 'ok', finished_at = ?2 WHERE id = ?1").run(run.id, new Date().toISOString());
+    return getRun(app.db, run.id)!;
+  };
+  const issueFor = (file: string) => reports().find((i) => i.title === reportTitle(file))!;
+
+  test("red, then a green run that passed the file closes its issue, then a run without the file leaves the other open (#9524)", () => {
+    reportRed(app, repo, red(VERIFY_ENV, "a".repeat(40)));
+    const ok = green("e".repeat(40));
+    expect(reportGreen(app, repo, ok, ["test/a.test.ts", "test/z.test.ts"])).toEqual([
+      `report: closed #${issueFor("test/a.test.ts").number}, test/a.test.ts green again`,
+    ]);
+    const a = issueFor("test/a.test.ts");
+    expect(a.state).toBe("closed");
+    expect(a.closeReason).toBe("done");
+    expect(listComments(app.db, a.id).map((c) => c.body)).toEqual([
+      `Green again in the full suite (check run ${ok.id}, eeeeeee).`,
+    ]);
+    // b's shard never ran in that run: its issue stays open, and stays open again.
+    expect(issueFor("test/b.test.ts").state).toBe("open");
+    expect(reportGreen(app, repo, green("f".repeat(40)), ["test/c.test.ts"])).toEqual([]);
+    expect(issueFor("test/b.test.ts").state).toBe("open");
+    expect(listComments(app.db, issueFor("test/b.test.ts").id)).toHaveLength(0);
+  });
+
+  test("a red run closes the issue of a file it passed, and keeps the one it failed", () => {
+    reportRed(app, repo, red(VERIFY_ENV, "a".repeat(40)));
+    const run = createRun(app.db, { repoId: repo.id, kind: "check", env: VERIFY_ENV, commitOid: "d".repeat(40) });
+    app.db.query("UPDATE run SET state = 'failed' WHERE id = ?1").run(run.id);
+    expect(reportGreen(app, repo, getRun(app.db, run.id)!, ["test/b.test.ts"])).toHaveLength(1);
+    expect(issueFor("test/a.test.ts").state).toBe("open");
+    expect(issueFor("test/b.test.ts").state).toBe("closed");
+  });
+
+  test("an issue a person wrote, with the report's label and title, is never closed", () => {
+    reportRed(app, repo, red(VERIFY_ENV, "a".repeat(40)));
+    const label = getLabel(app.db, repo.id, REPORT_LABEL)!;
+    const made = createIssue(app.db, { repoId: repo.id, authorId: repo.ownerId, title: reportTitle("test/p.test.ts"), body: "I saw this fail." });
+    if (!made.ok) throw new Error("issue");
+    setIssueLabels(app.db, made.value.id, [label.id]);
+    expect(reportGreen(app, repo, green("e".repeat(40)), ["test/p.test.ts"])).toEqual([]);
+    expect(issueFor("test/p.test.ts").state).toBe("open");
+  });
+
+  test("a run that is still going closes nothing", () => {
+    reportRed(app, repo, red(VERIFY_ENV, "a".repeat(40)));
+    const run = createRun(app.db, { repoId: repo.id, kind: "check", env: VERIFY_ENV, commitOid: "e".repeat(40) });
+    expect(reportGreen(app, repo, run, ["test/a.test.ts"])).toEqual([]);
+    expect(issueFor("test/a.test.ts").state).toBe("open");
   });
 
   test("the issue says only what the run recorded", () => {
