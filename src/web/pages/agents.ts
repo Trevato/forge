@@ -10,7 +10,7 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { pageHead } from "../chrome.ts";
 import { html } from "../html.ts";
-import { btn, card, field as formField } from "../ui.ts";
+import { btn, field as formField } from "../ui.ts";
 import { page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { llmsBody } from "../standards.ts";
@@ -51,12 +51,14 @@ export function agentsPage(ctx: Ctx): Response {
         sub: html`What this forge is, and the steps an assistant can take for you, or tell you to take. The same
           words as plain text: <a href="/llms.txt">/llms.txt</a>.`,
       })}
-      ${card(html`<form method="post" action="/forges/new" class="stack" id="agent-forge">
-        <h2>Get a forge of your own</h2>
+      <section class="stack" aria-labelledby="agent-forge-h">
+        <h2 id="agent-forge-h">Get a forge of your own</h2>
         <p class="muted small">Free within limits while hosting is not sold. It sleeps when idle and wakes on its next visit; bring your own model credential or its crew stays off.</p>
-        ${formField({ label: "Name", name: "name", required: true })}
-        ${btn("Make my forge", { variant: "primary" })}
-      </form>`)}
+        <form method="post" action="/forges/new" class="stack" id="agent-forge">
+          ${formField({ label: "Name", name: "name", required: true })}
+          ${btn("Make my forge", { variant: "primary" })}
+        </form>
+      </section>
       <article class="prose prose-page" id="agents-guide">${renderMarkdown(linkAddresses(withoutTitle(body)))}</article>`,
   }));
 }
