@@ -267,7 +267,14 @@ describe("what is kept", () => {
 
   test("the prune and the per-app reads use an index", () => {
     const plan = (sql: string) =>
-      app.db.query<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${sql}`).all().map((r) => r.detail).join("\n");
+      {
+        const q = app.db.prepare<{ detail: string }, []>(`EXPLAIN QUERY PLAN ${sql}`);
+        try {
+          return q.all().map((r) => r.detail).join("\n");
+        } finally {
+          q.finalize();
+        }
+      };
     expect(plan("DELETE FROM app_vital WHERE at < 1")).toContain("app_vital_at");
     expect(plan("SELECT COUNT(*) FROM app_vital WHERE app_id = 'a' AND day = 'd'")).toContain("app_vital_app_day");
   });

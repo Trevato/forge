@@ -20,7 +20,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName } from "../src/apps/feature.ts";
 import { featureVarsAt } from "../src/apps/feature_env.ts";
 import { appEnv } from "../src/apps/process.ts";
-import { createApp as insertApp } from "../src/core/apps.ts";
+import { createApp as insertApp, deleteApp } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
 import { absorb, featureSettings, getAbsorbed } from "../src/core/features.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -362,5 +362,15 @@ describe("absorbing an app", () => {
     expectWork(used, { max: 2 + 3 * n }); // one list, then at most three reads per absorbed app
     const page = await (await web(adaCookie, "/settings")).text();
     expect(page).toContain("Many 19");
+  });
+
+  test("deleting the app takes its feature row and settings with it", () => {
+    const rows = (table: string) =>
+      app.db.query(`SELECT 1 FROM ${table} WHERE app_id = ?1`).all(appId).length;
+    expect(rows("app_feature")).toBe(1);
+    expect(rows("app_feature_setting")).toBeGreaterThan(0);
+    expect(deleteApp(app.db, appId)).toBe(true);
+    expect(rows("app_feature")).toBe(0);
+    expect(rows("app_feature_setting")).toBe(0);
   });
 });
