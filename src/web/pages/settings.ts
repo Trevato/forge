@@ -668,8 +668,9 @@ function appSettingsView(
       ? undefined
       : readAppMembers(ctx.app, ctx.auth.user, repo);
   const named = listed?.ok === true ? listed.value.members : [];
-  const form = card(
-    html`${when(
+  const form = html`<section class="settings-block" id="app">
+    <h2>${record === undefined ? "Run as an app" : "App"}</h2>
+    ${when(
         record === undefined,
         () =>
           html`<p class="muted small mb">
@@ -744,12 +745,8 @@ function appSettingsView(
             }),
           )}
         </div>
-      </form>`,
-    {
-      head: html`${icon("rocket")}
-        <h2>${record === undefined ? "Run as an app" : "App"}</h2>`,
-    },
-  );
+      </form>
+  </section>`;
   if (record === undefined) return form;
   const domains = timePhase(ctx.request, "domains", () =>
     listAppDomains(ctx.app, ctx.auth.user, repo),
@@ -798,13 +795,12 @@ export function appVisitorsView(v: AppVitals): Html {
       ? "p75 load each day over the last 30 days"
       : `p75 load each day over the last 30 days, latest ${ms(latest ?? undefined)}, range ${ms(Math.min(...known))} to ${ms(Math.max(...known))}`,
   );
-  return card(
-    html`<p class="small mb"><a href="app/traffic">Where visitors come from and where they go</a></p>
-      <p class="muted small mb">
-        Counted by the beacon the template ships, through the forge: no
-        address is kept, and a visitor is the same only within a day, so the
-        7 day figure adds the days up.
-      </p>
+  return html`<section class="settings-block" id="visitors">
+    <h2>Visitors and speed</h2>
+    <p class="muted small mb">
+      Counted by the beacon, with no address kept; the 7 day figure adds
+      the days up. <a href="app/traffic">Where visitors come from</a>
+    </p>
       <dl class="stats">
         <div><dt>Visitors today</dt><dd>${v.today}</dd></div>
         <div><dt>Visitors, 7 days</dt><dd>${v.week}</dd></div>
@@ -814,9 +810,8 @@ export function appVisitorsView(v: AppVitals): Html {
         <div><dt>p75 INP</dt><dd>${ms(v.inpP75)}</dd></div>
         <div><dt>p75 CLS</dt><dd>${shiftText(v.clsP75)}</dd></div>
       </dl>
-      ${spark ? html`<div class="bar muted">${spark}</div>` : html`<p class="muted small mt">No load reports in the last 30 days</p>`}`,
-    { head: html`${icon("rocket")}<h2>Visitors and speed</h2>` },
-  );
+      ${spark ? html`<div class="bar muted">${spark}</div>` : html`<p class="muted small mt">No load reports in the last 30 days</p>`}
+  </section>`;
 }
 
 /**
@@ -824,7 +819,7 @@ export function appVisitorsView(v: AppVitals): Html {
  * Values are write-only — the page shows a name and when it was set, and
  * the value input forgets what was typed the moment the form is sent.
  */
-function appEnvView(base: string, names: AppEnvName[]): Html {
+export function appEnvView(base: string, names: AppEnvName[]): Html {
   const rows = names.map((v) =>
     row({
       lead: icon("key"),
@@ -844,21 +839,16 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
       </form>`,
     }),
   );
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
-          What the app reads from its environment at start-up — an admin
-          password, an API key. Values are write-only: set one, and it is never
-          shown again. A variable goes everywhere, to production only, or to
-          previews only; the same name may be set in each, and the narrower one
-          wins — a test key for previews, the live one for production. Changing
-          one redeploys what reads it, and nothing else.
-        </p>
-      </div>
+  return html`<section class="settings-block" id="environment">
+    <h2>Environment</h2>
+    <p class="muted small">
+      What the app reads at start-up; values are write-only, and one set
+      for production only or previews only wins there over one set everywhere.
+    </p>
       ${when(
         rows.length > 0,
         () =>
-          html`<ul class="list">
+          html`<ul class="list setting-list">
             ${rows}
           </ul>`,
       )}
@@ -890,13 +880,8 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
           <option value="preview">Previews only</option>
         </select>
         ${btn("Set", { variant: "primary", size: "sm", icon: "plus" })}
-      </form>`,
-    {
-      head: html`${icon("key")}
-        <h2>Environment</h2>`,
-      pad: false,
-    },
-  );
+      </form>
+  </section>`;
 }
 
 /**

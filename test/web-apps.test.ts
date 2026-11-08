@@ -609,7 +609,9 @@ describe("apps, runs and the crew on the web", () => {
       await (await web(alice, "/alice/hello/settings/app")).text(),
     );
     expect(before).toContain("Environment");
-    expect(before).toContain("never shown again");
+    expect(before).toContain("values are write-only");
+    expect(before).toContain("wins there over one set everywhere");
+    expect(before).not.toMatch(/name="scope"[^>]*title=/);
     expect(before).toContain('type="password"');
 
     const set = await web(alice, "/alice/hello/settings/app/env", {
