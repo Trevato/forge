@@ -195,6 +195,14 @@ describe("finding things in the studio: /search", () => {
     expect(html).toContain("Apps &amp; repos");
   });
 
+  test("results are rows under a heading, not a boxed card", async () => {
+    const html = mainOf(await (await asAlice("/search?q=chess")).text());
+    const lists = html.match(/<div\s+class="card bare"[^>]*>\s*<ul class="list">/g) ?? [];
+    expect(lists.length).toBeGreaterThanOrEqual(2);
+    expect(html).not.toMatch(/<div\s+class="card"[^>]*>\s*<ul class="list">/);
+    expect(html).toMatch(/<h2 class="mt" id="repos">/);
+  });
+
   test("an empty query is an empty result, not an error page", async () => {
     const res = await asAlice("/search");
     expect(res.status).toBe(200);

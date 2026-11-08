@@ -46,7 +46,6 @@ import {
   dot,
   empty,
   field as formField,
-  listCard,
   repoCounts,
   row,
   seg,
@@ -87,6 +86,10 @@ interface Apps {
   /** The app ids the viewer may enter (`enterableApps`), read once for the page. */
   readonly enterable: ReadonlySet<string>;
 }
+
+/** A section's rows on the page's one background: a heading over rows, no box. */
+const rowsUnderHeading = (rows: Html[]): Html =>
+  card(html`<ul class="list">${rows}</ul>`, { pad: false, extra: "bare" });
 
 const privateBadge = (yes: boolean): Html =>
   when(yes, () => badge("Private", { icon: "lock", variant: "secondary" }));
@@ -321,7 +324,7 @@ function section(
                 }),
               }),
         })
-      : listCard(rows)}
+      : rowsUnderHeading(rows)}
     ${after}
     ${when(
       truncated,
