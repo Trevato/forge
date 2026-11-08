@@ -108,6 +108,8 @@ export interface PageOptions {
   feed?: { href: string; title: string };
   /** This page's JSON twin, advertised in the head for agents. */
   json?: { href: string; title: string };
+  /** Structured data (JSON-LD) for the head, already escaped by `safeJson`. */
+  jsonLd?: string;
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
   crumbs?: { label: string; href: string }[];
   body: Html;
@@ -813,6 +815,7 @@ export function page(options: PageOptions, status = 200): Response {
           options.json,
           (j) => html`<link rel="alternate" type="application/json" title="${j.title}" href="${j.href}" />`,
         )}
+        ${when(options.jsonLd, (d) => html`<script type="application/ld+json">${raw(d)}</script>`)}
         <meta name="color-scheme" content="light dark" />
         ${theme
           ? html`<meta name="theme-color" content="${metaThemeColor(theme)}" />`

@@ -34,6 +34,8 @@ import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page, redirect } from "../layout.ts";
+import { siteStructuredData } from "../structured_data.ts";
+import { running } from "../../kernel/version.ts";
 import { liveClientJs } from "../live.ts";
 import {
   btn,
@@ -872,6 +874,7 @@ bun run src/main.ts</code></pre>
     title: "forge: software for what you're building, yours to keep",
     description: "Your own forge, with a private AI crew that builds your apps, games and business tools. Open source, and yours to keep.",
     body,
+    jsonLd: siteStructuredData(origin, running().version),
     ...(visitor
       ? {
           tools: html`<a class="small door-wide" href="#made">Made here</a>

@@ -8,7 +8,7 @@ Anything that is the same bytes for everyone and changes only when the code does
 
 ## What is HTML
 
-Markup only, and small. It names its assets; it never carries them. Budget: **home under 40 KB raw**, no inline `<script>` (a `type="application/json"` data block is data), no inline `<symbol>`. The two inline `<style>` blocks (the boot theme and a page's own) are admitted by hash in the policy, not by a nonce, so a page is the same bytes for every visitor and can be cached.
+Markup only, and small. It names its assets; it never carries them. Budget: **home under 40 KB raw**, no inline `<script>` (a `type="application/json"` or `application/ld+json` data block is data), no inline `<symbol>`. The two inline `<style>` blocks (the boot theme and a page's own) are admitted by hash in the policy, not by a nonce, so a page is the same bytes for every visitor and can be cached.
 
 ## How each is cached
 

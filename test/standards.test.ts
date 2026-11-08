@@ -514,4 +514,49 @@ describe("what the open web expects", () => {
     expect(html).toContain(`<meta property="og:description" content="${said}"`);
     expect(html).toContain(SITE_LINE);
   });
+
+  test("each web standard is served with its type and shape; the home page carries JSON-LD", async () => {
+    const get = (path: string) => fetch(`${base}${path}`);
+    const robots = await get("/robots.txt");
+    expect(robots.headers.get("content-type")).toContain("text/plain");
+    expect(await robots.text()).toContain(`Sitemap: ${base}/sitemap.xml`);
+    const sitemap = await get("/sitemap.xml");
+    expect(sitemap.headers.get("content-type")).toContain("xml");
+    expect(await sitemap.text()).toContain("<urlset");
+    const manifest = await get("/manifest.webmanifest");
+    expect(manifest.headers.get("content-type")).toMatch(/manifest\+json|json/);
+    expect(((await manifest.json()) as { icons: unknown[] }).icons.length).toBeGreaterThan(0);
+    const sec = await get("/.well-known/security.txt");
+    expect(sec.headers.get("content-type")).toContain("text/plain");
+    const secBody = await sec.text();
+    expect(secBody).toMatch(/^Contact: \S+/m);
+    const expires = /^Expires: (\S+)/m.exec(secBody)?.[1] ?? "";
+    expect(Date.parse(expires)).toBeGreaterThan(Date.now());
+    const llms = await get("/llms.txt");
+    expect(llms.headers.get("content-type")).toContain("text/plain");
+    expect((await llms.text()).startsWith("# ")).toBe(true);
+    expect((await get("/favicon.ico")).headers.get("content-type")).toContain("image/png");
+    expect((await get("/icons/forge-192.png")).headers.get("content-type")).toBe("image/png");
+    const home = await (await get("/")).text();
+    expect(home).toMatch(/name="theme-color"\s+media="\(prefers-color-scheme: light\)"/);
+    expect(home).toMatch(/name="theme-color"\s+media="\(prefers-color-scheme: dark\)"/);
+    const ld = /<script type="application\/ld\+json">([^<]*)<\/script>/.exec(home)?.[1];
+    expect(ld).toBeDefined();
+    const graph = (JSON.parse(ld ?? "{}") as { "@graph": { "@type": string; url: string }[] })["@graph"];
+    expect(graph.map((n) => n["@type"])).toEqual(["WebSite", "SoftwareApplication"]);
+    expect(graph[0]?.url).toBe(`${base}/`);
+  });
+
+  test("the JSON-LD origin is the configured canonical URL, not the request's Host", async () => {
+    app.config.url = "https://canon.example";
+    try {
+      const home = await fetch(`${base}/`, { headers: { host: "evil.example" } }).then((r) => r.text());
+      const ld = /<script type="application\/ld\+json">([^<]*)<\/script>/.exec(home)?.[1] ?? "";
+      expect(ld).toContain("https://canon.example/");
+      expect(ld).not.toContain("evil.example");
+      expect(ld).not.toContain(base);
+    } finally {
+      delete app.config.url;
+    }
+  });
 });
