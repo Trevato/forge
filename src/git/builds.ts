@@ -647,6 +647,15 @@ export async function storeCover(dir: string, label: string, bytes: Uint8Array):
   return kept.code === 0 ? ok(oid) : err("git_failed");
 }
 
+/** A stored cover's bytes, read only through a pin that names it. */
+export async function readCover(dir: string, oid: string): Promise<Uint8Array | undefined> {
+  if (!isSafeOid(oid)) return undefined;
+  const kind = await runGitCapture(["cat-file", "-t", oid], { cwd: dir });
+  if (kind.code !== 0 || kind.stdout.trim() !== "blob") return undefined;
+  const bytes = await runGitRaw(["cat-file", "blob", oid], { cwd: dir });
+  return bytes.ok ? bytes.value : undefined;
+}
+
 /**
  * Every pin, newest first, read in one `for-each-ref`; or the one `label`.
  * A pin's note is its notes file on `refs/forge/notes` when it has one,

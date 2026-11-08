@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser Arcade</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --night: #120a26;
+      --ink: #fff6e0;
+      --sun: #ffd200;
+      --lime: #9bbc0f;
+      --line: #08040f;
+      --pixel: "Press Start 2P", ui-monospace, Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; color: var(--ink); font: 11px/1.5 var(--pixel); overflow-x: hidden;
+      background-color: #4a2a16; }
+    /* A woodgrain tabletop: planks, with darker grain running along them. */
+    body { background-image:
+      repeating-linear-gradient(0deg, rgba(0,0,0,.35) 0 3px, transparent 3px 96px),
+      repeating-linear-gradient(0deg, rgba(255,210,150,.05) 0 2px, transparent 2px 9px, rgba(0,0,0,.08) 9px 11px, transparent 11px 23px),
+      linear-gradient(90deg, #4a2a16, #5a3420 30%, #4e2c18 55%, #5e3822 80%, #4a2a16); }
+    /* CRT scanlines over the whole shelf. */
+    body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 5; background: repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px); }
+    button, a { font: inherit; color: inherit; }
+    /* One line across the top: the producer, and for a snapshot file, its date. */
+    header { position: relative; padding: 10px 16px; background: rgba(8,4,15,.7); border-bottom: 4px solid var(--line); font-size: 10px; color: var(--sun);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+
+    /* Carts: chunky plastic with a black outline, bevels, screws, a deep grip and a big sticker. */
+    /* Carts turned to the sides must not widen the page. */
+    main { overflow-x: clip; }
+    .stage { position: relative; height: 330px; perspective: 1100px; margin-top: 22px; }
+    .cart { position: absolute; left: 50%; top: 14px; width: 210px; margin-left: -105px; cursor: pointer; border: 0; padding: 0; background: none;
+      transition: transform .45s cubic-bezier(.2,.9,.3,1.1), filter .45s, top .35s ease-in; }
+    .shell { position: relative; padding: 14px 14px 66px; background: var(--body); border: 5px solid var(--line);
+      box-shadow: inset 6px 6px 0 var(--hi), inset -6px -6px 0 var(--lo), 8px 8px 0 var(--line); }
+    .shell::before { content: ""; position: absolute; left: 50%; top: 4px; width: 46px; height: 5px; margin-left: -23px; background: var(--lo); box-shadow: 0 0 0 2px var(--line); }
+    .screw { position: absolute; bottom: 52px; width: 9px; height: 9px; border-radius: 50%; background: var(--hi); box-shadow: 0 0 0 2px var(--line), inset -2px -2px 0 var(--lo); }
+    .screw.l { left: 9px; } .screw.r { right: 9px; }
+    .grip { position: absolute; left: 14px; right: 14px; bottom: 10px; height: 38px; border: 3px solid var(--line);
+      background: repeating-linear-gradient(0deg, var(--lo) 0 5px, var(--hi) 5px 7px, var(--body) 7px 10px); }
+    .sticker { position: relative; aspect-ratio: 1; background: #000; border: 5px solid #fff; box-shadow: 0 0 0 4px var(--line); overflow: hidden; }
+    .sticker img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; display: block; }
+    .sticker .logo { position: absolute; left: 0; right: 0; bottom: 0; padding: 20px 6px 6px; font: 15px/1.05 "Bungee", sans-serif; color: #fff;
+      text-shadow: 2px 2px 0 var(--line), -1px -1px 0 var(--line); background: linear-gradient(transparent, rgba(0,0,0,.75)); text-align: left; }
+    .cart.loading { top: 230px; transform: translateZ(0) scale(.92) !important; }
+
+    /* The console: a heavy slab with a slot, switches, a readout, and big buttons. */
+    .console { position: relative; z-index: 2; max-width: 760px; margin: -6px auto 0; padding: 30px 26px 24px;
+      background: linear-gradient(#45405a, #2c283c); border: 6px solid var(--line);
+      box-shadow: inset 0 8px 0 #6a6488, inset 0 -10px 0 #1c1828, 10px 10px 0 var(--line); }
+    .console .slot { position: absolute; left: 50%; top: -6px; width: 250px; height: 22px; margin-left: -125px; background: #05030a; border: 6px solid var(--line); border-top: 0; }
+    .row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .row + .row { margin-top: 16px; }
+    .badge { font: 16px "Bungee", sans-serif; letter-spacing: 5px; color: #b8b0d8; text-shadow: 2px 2px 0 var(--line); }
+    .led { width: 14px; height: 14px; border-radius: 50%; background: #5a1010; box-shadow: 0 0 0 3px var(--line); }
+    .led.on { background: #ff3a3a; box-shadow: 0 0 0 3px var(--line), 0 0 14px #ff3a3a; }
+    .led.go { background: #3aff6a; box-shadow: 0 0 0 3px var(--line), 0 0 14px #3aff6a; }
+    .grille { flex: 1; min-width: 80px; height: 24px; background: repeating-linear-gradient(90deg, #1c1828 0 6px, #55507a 6px 9px); border: 3px solid var(--line); }
+    .lcd { flex: 1; min-width: 220px; background: #9bbc0f; color: #0f380f; border: 5px solid var(--line); box-shadow: inset 3px 3px 0 #306230; padding: 10px 12px; font-size: 10px; line-height: 1.7; }
+    .lcd b { display: block; font-size: 12px; }
+    .switches { display: flex; gap: 8px; flex-wrap: wrap; }
+    .switch { cursor: pointer; padding: 10px 10px; font-size: 9px; background: #2c283c; border: 4px solid var(--line); box-shadow: inset 3px 3px 0 #55507a, 4px 4px 0 var(--line); }
+    .switch[aria-pressed="true"] { background: var(--sun); color: var(--line); box-shadow: inset 3px 3px 0 #fff2a0, 2px 2px 0 var(--line); transform: translate(2px, 2px); }
+    .big { cursor: pointer; padding: 14px 18px; font-size: 12px; border: 5px solid var(--line); text-decoration: none; display: inline-block; }
+    .power { background: #ff3a3a; color: #fff; box-shadow: inset 4px 4px 0 #ff8a8a, inset -4px -4px 0 #9a1010, 5px 5px 0 var(--line); }
+    .eject { background: #c8c0e0; color: var(--line); box-shadow: inset 4px 4px 0 #fff, inset -4px -4px 0 #8a80a8, 5px 5px 0 var(--line); }
+    .big:active { transform: translate(4px, 4px); box-shadow: none; }
+    .switch:focus-visible, .big:focus-visible, .cart:focus-visible { outline: 4px solid var(--sun); outline-offset: 4px; }
+    footer { position: relative; text-align: center; color: var(--ink); font-size: 10px; padding: 22px 16px 30px; }
+    .hint-touch { display: none; }
+    @media (hover: none) { .hint-keys { display: none; } .hint-touch { display: inline; } }
+    .pager { display: flex; justify-content: center; gap: 12px; padding: 4px 0 10px; position: relative; z-index: 20; }
+    .pager button { cursor: pointer; padding: 10px 14px; font-size: 10px; background: #2c283c; color: var(--ink); border: 4px solid var(--line); box-shadow: 3px 3px 0 var(--line); }
+    .pager button:disabled { color: #b8b0d8; border-color: #55507a; cursor: default; }
+    .pager button:focus-visible { outline: 4px solid var(--sun); outline-offset: 4px; }
+    footer a { color: var(--sun); text-decoration: none; margin-left: 14px; }
+    footer a:hover, footer a:focus-visible { text-decoration: underline; }
+    .empty { color: var(--ink); text-align: center; padding-top: 80px; }
+    @media (max-width: 600px) { .stage { height: 290px; } .cart { width: 170px; margin-left: -85px; } .cart.loading { top: 200px; } }
+
+    /* The player: the game fills the screen, with a way back. */
+    #player { position: fixed; inset: 0; background: #000; display: none; z-index: 10; }
+    #player.on { display: block; }
+    #player iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+    #back { position: absolute; top: 10px; left: 10px; z-index: 4; cursor: pointer; font-size: 10px; color: var(--ink);
+      background: #2c283c; border: 4px solid var(--line); box-shadow: 3px 3px 0 var(--line); padding: 6px 9px; opacity: 1; }
+    #back:hover, #back:focus-visible { opacity: 1; }
+    /* The jbox boot tag plays over the screen while a cartridge loads. */
+    #boot { position: absolute; inset: 0; display: none; place-items: center; background: #1b1b25; z-index: 1; transition: opacity .25s; }
+    #boot.on { display: grid; }
+    #boot.out { opacity: 0; }
+    #boot canvas { display: block; image-rendering: pixelated; }
+    /* Opened from a link, the cartridge waits for a press so its power-on chord can play. */
+    #power { position: absolute; inset: 0; display: none; place-items: center; z-index: 3; background: #1b1b25; color: var(--lime); cursor: pointer; text-align: center; font-size: 11px; }
+    #power.on { display: grid; }
+    #power b { display: block; font-size: 32px; margin-bottom: 14px; }
+  </style>
+</head>
+<body>
+  <header id="topline">JBOX • BROWSER ARCADE</header>
+  <main id="games"><noscript><p class="empty">THE ARCADE NEEDS JAVASCRIPT TO SHOW ITS SHELF AND PLAY CARTS.</p></noscript></main>
+  <footer><span class="hint-keys">◀ ▶ CHOOSE · Z X BUILD · ENTER POWER</span><span class="hint-touch">TAP A CART TO CHOOSE · TAP AGAIN OR POWER TO PLAY · TAP A BUILD NAME TO SWITCH</span><a id="export" href="snapshot.html" download>⤓ EXPORT SNAPSHOT</a></footer>
+
+  <div id="player" aria-hidden="true">
+    <button id="back" type="button">◀ ARCADE</button>
+    <div id="boot"><canvas id="tag"></canvas></div>
+    <div id="power"><div><b>⏻</b>PRESS ANY KEY TO POWER ON</div></div>
+    <iframe id="screen" title="Game" allow="autoplay *; fullscreen *; gamepad *"></iframe>
+  </div>
+
+  <script type="module">
+    import { jboxScale, playJboxSpin } from './boot/jbox-spin.js';
+    const shelfEl = document.getElementById('games');
+    const player = document.getElementById('player');
+    const screen = document.getElementById('screen');
+    const bootEl = document.getElementById('boot');
+    const tag = document.getElementById('tag');
+    const powerEl = document.getElementById('power');
+    /** Bytes as a short size: 38 KB, 1.2 MB. */
+    const size = (n) => (!n ? '' : n < 1e6 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+    // A single-file bundle (a snapshot) carries the shelf, carts and covers inside the
+    // page as window.__ARCADE__; the forge's own display page carries the shelf with
+    // absolute addresses. Served as a folder, the arcade reads its files instead.
+    const BUNDLE = window.__ARCADE__;
+    const HOME = document.title;
+    const urls = new Map();
+    /** Where a cart or label lives: its path, or a blob or data URL from the bundle. */
+    const url = (path) => {
+      if (!BUNDLE || !path || /^(data:|https?:|\/)/.test(path)) return path;
+      if (!urls.has(path)) {
+        const label = BUNDLE.labels[path];
+        urls.set(path, label ?? URL.createObjectURL(new Blob([BUNDLE.carts[path] ?? ''], { type: 'text/html' })));
+      }
+      return urls.get(path);
+    };
+    if (BUNDLE?.snapshot) document.getElementById('topline').textContent = BUNDLE.snapshot;
+    // A snapshot is the export: it has nothing further to export.
+    if (BUNDLE?.exportHref) document.getElementById('export').href = BUNDLE.exportHref;
+    else if (BUNDLE) document.getElementById('export').remove();
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+    /** Cart plastic by game: body, highlight and shadow. Unknown games get grey. */
+    const PLASTIC = {
+      'krazy-karts': ['#e8322a', '#ff7a6a', '#8a1410'],
+      'nova-lantern': ['#5a3ab8', '#8a6ae8', '#2a1a68'],
+      ballistics: ['#f0a020', '#ffd870', '#9a5a0a'],
+      'krazy-karts-fiesta': ['#ff7a1a', '#ffb060', '#a83e00'],
+      'krazy-karts-london': ['#4a6a8a', '#7a9aba', '#24384c'],
+      'krazy-karts-chicago': ['#2a8ad8', '#6ac0ff', '#124a7a'],
+      'nova-moves': ['#1f8a6a', '#4ac89a', '#0e4a38'],
+    };
+    const plastic = (id) => PLASTIC[id] ?? ['#8a8a96', '#c0c0cc', '#4a4a56'];
+
+    /** Wait for a key or click: browsers only play sound after one. */
+    function powerPress() {
+      powerEl.classList.add('on');
+      return new Promise((done) => {
+        const go = (e) => {
+          e.preventDefault();
+          removeEventListener('keydown', go);
+          powerEl.removeEventListener('pointerdown', go);
+          powerEl.classList.remove('on');
+          done();
+        };
+        addEventListener('keydown', go);
+        powerEl.addEventListener('pointerdown', go);
+      });
+    }
+
+    /** The jbox tag spins up while the cartridge loads behind it. `sound` needs a click. */
+    async function bootCartridge(sound) {
+      bootEl.classList.remove('out');
+      bootEl.classList.add('on');
+      const s = jboxScale(innerWidth * 0.8, innerHeight * 0.8);
+      tag.style.width = `${160 * s}px`;
+      tag.style.height = `${144 * s}px`;
+      await playJboxSpin(tag, { sound });
+    }
+
+    async function play(game, build, push = true) {
+      if (push) history.pushState({ game: game.id, build: build.id }, '', `#${game.id}/${build.id}`);
+      player.classList.add('on');
+      player.setAttribute('aria-hidden', 'false');
+      document.getElementById('back').focus();
+      document.title = `${game.name} · ${build.name}`;
+      const ready = new Promise((r) => (screen.onload = r));
+      // Replace, so the frame's own loads never land in the browser's history.
+      screen.contentWindow.location.replace(BUNDLE ? url(build.file) : new URL(build.file, location.href).href);
+      // A click on a cartridge already counts as the press. A link has to ask for one.
+      if (!push) await powerPress();
+      await Promise.all([ready, bootCartridge(true)]);
+      bootEl.classList.add('out');
+      screen.focus();
+      setTimeout(() => bootEl.classList.remove('on', 'out'), 260);
+    }
+
+    function stop() {
+      const wasOn = player.classList.contains('on');
+      player.classList.remove('on');
+      player.setAttribute('aria-hidden', 'true');
+      screen.contentWindow.location.replace('about:blank');
+      document.title = HOME;
+      shelfEl.querySelector('.loading')?.classList.remove('loading');
+      shelfEl.querySelector('.led')?.classList.replace('go', 'on');
+      if (wasOn) shelfEl.querySelector(`.cart[data-i="${gi}"]`)?.focus();
+    }
+
+    document.getElementById('back').addEventListener('click', () => {
+      history.pushState(null, '', location.pathname);
+      stop();
+    });
+
+    const games = BUNDLE ? BUNDLE.games : await fetch('games.json').then((r) => r.json()).catch(() => []);
+    // Builds stand in the display's order.
+    // A build with no cover of its own gets the house cover, drawn from its page's picture.
+    /*COVER_JS*/
+    if (games.some((g) => g.builds.some((b) => !b.label))) {
+      const tpl = await loadImage(url('cover-template.png'));
+      for (const g of games) for (const b of g.builds) {
+        if (b.label) continue;
+        const c = document.createElement('canvas');
+        drawCover(c, b.art ? await loadImage(url(b.art)) : null, tpl, g.name, b.name);
+        b.label = c.toDataURL('image/png');
+        b.titled = true;
+      }
+    }
+    let gi = 0;
+    const bi = games.map(() => 0);
+    const find = (gid, bid) => {
+      const g = games.find((x) => x.id === gid);
+      const b = g?.builds.find((x) => x.id === bid);
+      return g && b ? [g, b] : null;
+    };
+
+    // The carousel of carts is built once; `draw` turns it and refreshes the console.
+    if (!games.length) shelfEl.innerHTML = '<p class="empty">THE SHELF IS EMPTY</p>';
+    else {
+      shelfEl.innerHTML = `
+        <div class="stage">${games.map((g, i) => {
+          const [body, hi, lo] = plastic(g.id);
+          return `<button type="button" class="cart" data-i="${i}" style="--body:${body};--hi:${hi};--lo:${lo}" aria-label="${esc(g.name)}">
+            <div class="shell"><div class="sticker"><img alt=""><div class="logo">${esc(g.name).toUpperCase()}</div></div>
+              <span class="screw l"></span><span class="screw r"></span><div class="grip"></div></div></button>`;
+        }).join('')}</div>
+        <nav class="pager" aria-label="Carts"><button type="button" id="prev">◀ PREV</button><button type="button" id="next">NEXT ▶</button></nav>
+        <section class="console" aria-label="Console">
+          <div class="slot"></div>
+          <div class="row"><span class="led on"></span><span class="badge">JBOX</span><span class="grille"></span></div>
+          <div class="row"><div class="lcd" id="lcd"></div><div class="switches" id="switches"></div></div>
+          <div class="row"><button type="button" class="big power" id="go">⏻ POWER</button><a class="big eject" id="save">⏏ SAVE</a><span class="grille"></span></div>
+        </section>`;
+    }
+
+    function draw() {
+      if (!games.length) return;
+      const g = games[gi];
+      const b = g.builds[bi[gi]];
+      shelfEl.querySelectorAll('.cart').forEach((c, i) => {
+        const d = i - gi;
+        const x = games[i];
+        const xb = x.builds[bi[i]];
+        const img = c.querySelector('img');
+        if (xb.label && img.dataset.label !== xb.label) {
+          img.dataset.label = xb.label;
+          img.src = url(xb.label);
+        }
+        // Cover art carries its own title; a plain snapshot gets the game's name.
+        c.querySelector('.logo').hidden = Boolean(xb.titled);
+        // Far carts turn no more than 70°, so none shows its back.
+        c.style.transform = `translateX(${d * 220}px) translateZ(${-Math.abs(d) * 230}px) rotateY(${-Math.sign(d) * Math.min(Math.abs(d) * 36, 70)}deg)`;
+        c.style.filter = d ? 'brightness(.5)' : 'none';
+        c.style.zIndex = 10 - Math.abs(d);
+        c.tabIndex = 0;
+      });
+      document.getElementById('prev').disabled = gi === 0;
+      document.getElementById('next').disabled = gi === games.length - 1;
+      document.getElementById('lcd').innerHTML = `<b>${esc(g.name).toUpperCase()}</b>${esc(b.name).toUpperCase()}${b.size ? ` · ${size(b.size)}` : ''}${g.producer ? `<br>BY ${esc(g.producer).toUpperCase()}` : ''}`;
+      document.getElementById('switches').innerHTML = g.builds.map((x, k) => `<button type="button" class="switch" data-build="${k}" aria-pressed="${k === bi[gi]}">${esc(x.name).toUpperCase()}</button>`).join('');
+      const save = document.getElementById('save');
+      // A page served elsewhere names where it downloads from.
+      save.href = url(b.save ?? b.file);
+      save.download = b.download ?? `${g.id}-${b.id}.html`;
+    }
+
+    /** Drop the front cart into the slot, light the LED, then boot it. */
+    function insert() {
+      const g = games[gi];
+      shelfEl.querySelector(`.cart[data-i="${gi}"]`).classList.add('loading');
+      shelfEl.querySelector('.led').classList.replace('on', 'go');
+      setTimeout(() => play(g, g.builds[bi[gi]]), 380);
+    }
+
+    shelfEl.addEventListener('click', (e) => {
+      const cart = e.target.closest('.cart');
+      const sw = e.target.closest('.switch');
+      if (cart) {
+        const i = Number(cart.dataset.i);
+        if (i === gi) insert();
+        else { gi = i; draw(); }
+      } else if (sw) {
+        bi[gi] = Number(sw.dataset.build);
+        draw();
+      } else if (e.target.closest('#prev')) { gi = Math.max(0, gi - 1); draw(); }
+      else if (e.target.closest('#next')) { gi = Math.min(games.length - 1, gi + 1); draw(); }
+      else if (e.target.closest('#go')) insert();
+    });
+
+    // Pad controls: left and right turn the carousel, Z and X flip the build, Enter powers on.
+    addEventListener('keydown', (e) => {
+      if (player.classList.contains('on') || !games.length) return;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        gi = Math.min(games.length - 1, Math.max(0, gi + (e.key === 'ArrowLeft' ? -1 : 1)));
+        draw();
+      } else if (e.key === 'z' || e.key === 'x') {
+        const n = games[gi].builds.length;
+        bi[gi] = (bi[gi] + (e.key === 'x' ? 1 : n - 1)) % n;
+        draw();
+      } else if (e.key === 'Enter' && !e.target.closest?.('a, button')) {
+        e.preventDefault();
+        insert();
+      }
+    });
+    draw();
+
+    // Links like #krazy-karts/alpha-1025 open a cartridge directly. Back returns to the shelf.
+    const route = () => {
+      const [gid, bid] = location.hash.slice(1).split('/');
+      const hit = gid && find(gid, bid);
+      if (hit) {
+        gi = games.indexOf(hit[0]);
+        bi[gi] = hit[0].builds.indexOf(hit[1]);
+        draw();
+        play(...hit, false);
+      } else stop();
+    };
+    addEventListener('popstate', route);
+    route();
+  </script>
+</body>
+</html>

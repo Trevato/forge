@@ -15,6 +15,7 @@ import { selectionKeys } from "../../display/items.ts";
 
 import { canRead, type Repo } from "../../core/repos.ts";
 import { displayItems, type DisplayItem } from "../../display/items.ts";
+import { launchUrl } from "../../arcade/host.ts";
 import { INVALID_TITLE, displayOf } from "../../display/known.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -39,6 +40,7 @@ export function displayScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let choices: string[] | undefined;
   const ticked = new Set<string>();
   let note = "";
+  let launch: string | undefined;
   const state = new ListState();
   // What each build reads as, by key, so a choice shows its name.
   const named = new Map<string, string>();
@@ -51,6 +53,7 @@ export function displayScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       lines = config.ok ? items.map(itemLine) : [config.error];
       named.clear();
       for (const it of items) named.set(it.key, itemLine(it));
+      launch = await launchUrl(f.app, repo, config);
       choices = undefined;
       if (config.ok && writesDisplay(f.app, repo, f.user)) {
         const chosen = await selectionKeys(f.app, config.value, f.user);
@@ -76,7 +79,7 @@ export function displayScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       const line = (y: number, text: string, fg = c.fg, x = 1) => s.text(area.x + x, area.y + y, truncate(text, Math.max(1, area.w - x)), style(fg, c.bg), right);
       if (missing) return void line(0, NO_DISPLAY_LINE);
       if (head === undefined) return void line(0, "Reading…");
-      line(0, head);
+      line(0, launch === undefined ? head : `${head} · Launch: ${launch}/`);
       const shown = choices === undefined ? lines : choices.map((k) => `[${ticked.has(k) ? "x" : " "}] ${named.get(k) ?? k}`);
       if (note !== "") line(1, note, c.mutedFg);
       if (shown.length === 0) return void line(1, NO_BUILDS_LINE, c.mutedFg);

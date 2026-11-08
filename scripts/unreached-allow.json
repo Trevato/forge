@@ -1,7 +1,5 @@
 [
   "src/apps/cloud.ts",
-  "src/arcade/cover.ts",
-  "src/arcade/shelf.ts",
   "src/boards/machine.ts",
   "src/crew/governor_log.ts",
   "src/crew/tries.ts",

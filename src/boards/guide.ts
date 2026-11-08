@@ -227,8 +227,7 @@ export function parseSentence(text: string, now: number): Record<string, string>
     else if (/\byesterday\b/.test(t)) {
       out.from = since(Date.parse(startOfToday(now)), 1);
       out.to = startOfToday(now);
-    }
-    else if (/\b(today|so far today)\b/.test(t)) out.from = startOfToday(now);
+    } else if (/\b(today|so far today)\b/.test(t)) out.from = startOfToday(now);
     else if (/\b(a week|weekly)\b/.test(t)) days = 7;
   }
   if (days !== undefined) out.from = since(now, days);

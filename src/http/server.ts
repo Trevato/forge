@@ -521,6 +521,7 @@ import { Router } from "./router.ts";
 import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { holdAppHost } from "../apps/holding.ts";
+import { isArcadeHost, serveArcade } from "../arcade/host.ts";
 import {
   appWebSocket,
   type AppSocket,
@@ -2406,6 +2407,10 @@ export async function serve(app: App): Promise<Servers> {
       // must not take `<app>--<n>--<parentHost>`. Only its `"unknown"` falls
       // through, since it reads every `--<its host>` label as its own slug.
       let ownUnknown = false;
+      // The Arcade's origin plays third-party carts; it is answered here, on
+      // its own host, and nothing of the forge's is served on it.
+      if (runtime !== undefined && isArcadeHost(request.headers.get("host"), runtime.options.domain))
+        return securityFloor(await serveArcade(app, request));
       if (runtime !== undefined) {
         const target = resolveAppHost(app, runtime.options.domain, request);
         // A preview's headers are the app's business: what `proxyApp`

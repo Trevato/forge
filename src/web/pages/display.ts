@@ -3,8 +3,9 @@
  * `display.json` holds (`display/config.ts`), as whoever is looking may read
  * them; a build whose repository the viewer cannot read shows its name and
  * version alone. A writer also gets a form to choose the builds, which works
- * without script (POST here) and, with script, sends the API's PUT. Editing
- * the title, covers and the player wait. A bad `display.json` shows its error.
+ * without script (POST here) and, with script, sends the API's PUT. Launch
+ * opens the Arcade host. Editing the title and covers wait. A bad
+ * `display.json` shows its error.
  */
 
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
@@ -14,6 +15,7 @@ import { writesDisplay } from "../../display/selections.ts";
 import { exactRefOid } from "../../git/branches.ts";
 import { repoDir } from "../../git/repos.ts";
 import { INVALID_TITLE, displayOf } from "../../display/known.ts";
+import { launchUrl } from "../../arcade/host.ts";
 import { repoShotsUrl } from "../../display/launch.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, forbiddenPage, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette } from "../chrome.ts";
@@ -44,6 +46,8 @@ export async function displayPage(ctx: Ctx): Promise<Response> {
   const config = await timePhaseAsync(ctx.request, "display", () => displayOf(ctx.app, repo));
   if (config === undefined) return timePhase(ctx.request, "render", () => notFoundPage(ctx));
   const items = config.ok ? await timePhaseAsync(ctx.request, "items", () => displayItems(ctx.app, repo, config.value, ctx.auth.user)) : [];
+  // The Arcade host plays only the display titled `arcade-builds`; Launch is offered on that one.
+  const launch = await launchUrl(ctx.app, repo, config);
   const writes = config.ok && writesDisplay(ctx.app, repo, ctx.auth.user);
   const chosen = writes && config.ok ? await selectionKeys(ctx.app, config.value, ctx.auth.user) : [];
   const choices = writes && config.ok ? await choosableBuilds(ctx.app, config.value, chosen, ctx.auth.user) : [];
@@ -52,6 +56,7 @@ export async function displayPage(ctx: Ctx): Promise<Response> {
   const body = html`${repoHeader(ctx, repo, "code", { compact: true })}
     <div class="page-head mt">
       <h2>${title}</h2>
+      ${launch === undefined ? "" : html`<a class="btn" data-by="display-launch" href="${launch}/">Launch</a>`}
       <a href="/displays">All displays</a>
     </div>
     ${!config.ok
