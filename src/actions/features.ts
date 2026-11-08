@@ -80,11 +80,28 @@ export interface FeatureView {
 const siteAdmin = (actor: User | undefined): actor is User =>
   actor !== undefined && actor.isAdmin && actor.kind !== "agent";
 
+/**
+ * The parsed declaration by commit oid. A commit never changes, so what its
+ * forge.json declares never does: only an app whose tip moved reads git again.
+ * Bounded by clearing whole when full; a refill costs one read per app.
+ */
+const declared = new Map<string, Result<FeatureSpec | undefined, string>>();
+const DECLARED_MAX = 2000;
+
 /** The feature an app's default branch declares, as `forge.json` says it at the tip. */
 export async function declaredFeature(app: App, repo: Repo): Promise<Result<FeatureSpec | undefined, string>> {
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const tip = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
   if (tip === undefined) return ok(undefined);
+  const known = declared.get(tip);
+  if (known !== undefined) return known;
+  const read = await readDeclaration(dir, tip);
+  if (declared.size >= DECLARED_MAX) declared.clear();
+  declared.set(tip, read);
+  return read;
+}
+
+async function readDeclaration(dir: string, tip: string): Promise<Result<FeatureSpec | undefined, string>> {
   const text = await readFileAt(dir, tip, "forge.json");
   if (text === undefined) return ok(undefined);
   let parsed: unknown;
@@ -165,6 +182,8 @@ export interface NavFeature {
   readonly name: string;
   /** The app path to open: the feature's page. */
   readonly page: string;
+  /** The app record already read, so the menu does not fetch it again. */
+  readonly record: AppRecord;
 }
 
 /** Absorbed apps the actor may read, for the forge's nav. Cheap enough for every page: no git reads. */
@@ -175,7 +194,7 @@ export function absorbedForNav(app: App, actor: User | undefined): NavFeature[] 
     if (record === undefined) continue;
     const repo = getRepoById(app.db, record.repoId);
     if (repo === undefined || !canRead(app.db, repo, actor)) continue;
-    out.push({ appId: record.id, slug: record.slug, repo: `${repo.ownerName}/${repo.name}`, name: row.name, page: row.page });
+    out.push({ appId: record.id, slug: record.slug, repo: `${repo.ownerName}/${repo.name}`, name: row.name, page: row.page, record });
   }
   return out;
 }

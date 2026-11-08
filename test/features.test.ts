@@ -12,15 +12,17 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { statements } from "./helpers/statements.ts";
+import { expectWork } from "./helpers/work.ts";
 import { createApp, type App } from "../src/app.ts";
-import { absorbApp, absorbedForNav, changeFeatureSettings, getFeature, unabsorbApp } from "../src/actions/features.ts";
+import { absorbApp, absorbedForNav, declaredFeature, changeFeatureSettings, getFeature, unabsorbApp } from "../src/actions/features.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName } from "../src/apps/feature.ts";
 import { featureVarsAt } from "../src/apps/feature_env.ts";
 import { appEnv } from "../src/apps/process.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
-import { featureSettings, getAbsorbed } from "../src/core/features.ts";
+import { absorb, featureSettings, getAbsorbed } from "../src/core/features.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -329,5 +331,36 @@ describe("absorbing an app", () => {
     expect(featureSettings(app.db, appId).get("runHourUtc")).toBe("14");
     const stranger = await mcpTool(servers.url, bobToken, "features", { slug: "radar" });
     expect(stranger.error).toBeDefined();
+  });
+
+  test("the declaration is cached by tip: the same tip is one read, a moved tip reads again", async () => {
+    const first = await declaredFeature(app, repo);
+    expect(await declaredFeature(app, repo)).toBe(first); // the very same parsed result
+    const moved = JSON.stringify({ app: { run: "bun run src/server.ts" }, feature: { ...FEATURE, name: "Radar 2" } });
+    const done = await commitToBranch(app, cy, repo, { message: "rename", files: [{ path: "forge.json", content: moved }] });
+    if (!done.ok) throw new Error(JSON.stringify(done.error));
+    const after = await declaredFeature(app, repo);
+    expect(after).not.toBe(first);
+    expect(after.ok && after.value?.name).toBe("Radar 2");
+  });
+
+  test("with 20 more absorbed apps the menu is built from one pass and renders within budget", async () => {
+    for (let i = 0; i < 20; i++) {
+      const r = await createRepo(app, cy, { name: `many-${i}`, visibility: "public", description: "" });
+      if (!r.ok) throw new Error(String(r.error));
+      const row = insertApp(app.db, { repoId: r.value.id, slug: `many-${i}`, access: "public" });
+      if (!row.ok) throw new Error(row.error);
+      absorb(app.db, row.value.id, ada.id, `Many ${i}`, "/");
+    }
+    let nav = absorbedForNav(app, ada);
+    expect(nav.length).toBeGreaterThanOrEqual(20);
+    expect(nav.every((f) => f.record.id === f.appId)).toBe(true); // the record rides along
+    const n = nav.length;
+    const used = await statements(app.db, async () => {
+      nav = absorbedForNav(app, ada);
+    });
+    expectWork(used, { max: 2 + 3 * n }); // one list, then at most three reads per absorbed app
+    const page = await (await web(adaCookie, "/settings")).text();
+    expect(page).toContain("Many 19");
   });
 });

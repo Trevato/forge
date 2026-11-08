@@ -16,7 +16,6 @@ import { appsForRepos } from "../core/apps.ts";
 import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { absorbedForNav } from "../actions/features.ts";
-import { getAppById } from "../core/apps.ts";
 import {
   enterableApps,
   getRepo,
@@ -273,12 +272,11 @@ function newMenu(ctx: Ctx): Html {
 function featureItems(ctx: Ctx, user: User): MenuItem[] {
   const runtime = appsRuntime(ctx.app);
   return absorbedForNav(ctx.app, user).map((f) => {
-    const record = getAppById(ctx.app.db, f.appId);
     // Without a runtime there is no host to open: the app's own page instead.
     const href =
-      runtime === undefined || record === undefined
+      runtime === undefined
         ? `/${f.repo}`
-        : `/apps/open?host=${encodeURIComponent(new URL(runtime.urlFor(record, "production")).host)}&to=${encodeURIComponent(f.page)}`;
+        : `/apps/open?host=${encodeURIComponent(new URL(runtime.urlFor(f.record, "production")).host)}&to=${encodeURIComponent(f.page)}`;
     return { label: f.name, href, icon: "rocket" as const };
   });
 }
