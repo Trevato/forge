@@ -8,3 +8,7 @@ A child forge that runs in a cell (`src/spawn/cell.ts`) could reach its parent a
 - **When it applies:** on the next child cell started. A running child keeps the list it started with.
 
 A hosted child (one that runs inside its parent's process) is not changed by this: it still has no crew runner.
+
+## The package registry
+
+A child cell could not reach `registry.npmjs.org` either, so its checks failed filling the install cache. `children.registryEgress` (`FORGE_CHILDREN_REGISTRY_EGRESS`) is `off` by default; `npm` lets every child cell reach `registry.npmjs.org` on port 443 and nothing more, enforced the same way and from the next child cell started.

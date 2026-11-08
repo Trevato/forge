@@ -24,6 +24,7 @@ export type CapacityKey =
   | "children.max"
   | "cells.egress"
   | "children.modelEgress"
+  | "children.registryEgress"
   | "guard_new_accounts"
   | "signin.edge"
   | "slots.smallShare"
@@ -104,6 +105,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "choice", values: ["off", "openrouter"] },
     fallback: "off",
     help: "off keeps a child forge's cell to its parent alone; openrouter also lets it reach openrouter.ai on 443, so the child's crew can call its model on the child's own key. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
+  },
+  "children.registryEgress": {
+    label: "Package registry a child forge cell may reach",
+    env: "FORGE_CHILDREN_REGISTRY_EGRESS",
+    kind: { type: "choice", values: ["off", "npm"] },
+    fallback: "off",
+    help: "off keeps a child forge's cell from the package registry, so its checks cannot fill their install cache; npm also lets it reach registry.npmjs.org on 443. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
   },
   "guard_new_accounts": {
     label: "New-account repository guard",
@@ -375,6 +383,11 @@ export function egressSetting(db: Database): "enforce" | "report" {
 /** The model provider hosts a child forge's cell may reach now: none unless an admin chose one. */
 export function childModelHosts(db: Database): readonly string[] {
   return capacityValue(db, "children.modelEgress") === "openrouter" ? ["openrouter.ai:443"] : [];
+}
+
+/** The package registry a child forge cell may reach (`children.registryEgress`); none by default. */
+export function childRegistryHosts(db: Database): readonly string[] {
+  return capacityValue(db, "children.registryEgress") === "npm" ? ["registry.npmjs.org:443"] : [];
 }
 
 /** How many merge-queue candidates of one repository gate at once (#4053). */

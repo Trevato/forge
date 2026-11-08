@@ -15,7 +15,7 @@ import type { App } from "../src/app.ts";
 import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 import { missing } from "./helpers/tools.ts";
 import { hostAllowed } from "../src/apps/egress.ts";
-import { childModelHosts, setCapacity } from "../src/core/capacity.ts";
+import { childModelHosts, childRegistryHosts, setCapacity } from "../src/core/capacity.ts";
 import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
 import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
 
@@ -75,6 +75,29 @@ describe("a child forge's cell", () => {
       expect(env["PORT"]).toBe("4100");
     } finally {
       delete process.env["FORGE_EDGE_TOKEN"];
+    }
+  });
+});
+
+describe("a child forge's checks reaching the package registry", () => {
+  test("off until an admin opens it, then registry.npmjs.org on 443 alone, enforced even in report mode", () => {
+    const app = createApp({ dataDir: join(tmp, "registry-egress"), url: "https://f.test" });
+    try {
+      expect(childRegistryHosts(app.db)).toEqual([]);
+      setCapacity(app.db, "cells.egress", "report", "system");
+      expect(childRegistryHosts(app.db)).toEqual([]);
+      setCapacity(app.db, "children.registryEgress", "npm", "system");
+      expect(childRegistryHosts(app.db)).toEqual(["registry.npmjs.org:443"]);
+      const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid", registryHosts: childRegistryHosts(app.db) });
+      expect(spec.egressMode).toBe("enforce");
+      expect(hostAllowed(spec.egress, "registry.npmjs.org", 443)).toBe(true);
+      expect(hostAllowed(spec.egress, "registry.npmjs.org", 80)).toBe(false);
+      expect(hostAllowed(spec.egress, "evil.registry.npmjs.org", 443)).toBe(false);
+      expect(hostAllowed(spec.egress, "openrouter.ai", 443)).toBe(false);
+      setCapacity(app.db, "children.registryEgress", "off", "system");
+      expect(childRegistryHosts(app.db)).toEqual([]);
+    } finally {
+      app.close();
     }
   });
 });
