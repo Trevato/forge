@@ -1,5 +1,5 @@
 /** The capacity settings page names its phases in Server-Timing (#3506). */
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,21 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { expectWork, requestStatements } from "./helpers/work.ts";
+
+/** The `app` phase of Server-Timing (the handler's own time, not the proxy's), or NaN. Reported, never judged (#4429). */
+function appMs(res: Response): number {
+  const part = (res.headers.get("server-timing") ?? "").split(",").map((p) => p.trim()).find((p) => p.startsWith("app;"));
+  return Number(/dur=([\d.]+)/.exec(part ?? "")?.[1] ?? "NaN");
+}
+
+/** The calls in a spawn spy that ran git, whatever the argv shape. */
+function gitCalls(calls: unknown[][]): number {
+  return calls.filter((c) => {
+    const first = c[0];
+    const argv = Array.isArray(first) ? first : (first as { cmd?: unknown } | undefined)?.cmd;
+    return Array.isArray(argv) && /(^|\/)git$/.test(String(argv[0]));
+  }).length;
+}
 
 let dataDir = "";
 let app: App, servers: Servers, bearer = "";
@@ -94,4 +109,29 @@ test("a warm capacity page costs a bounded number of statements, however many ch
   const more = await requestStatements(app.db, url, init);
   expectWork(some, { max: WARM_STATEMENTS });
   expect(more).toBe(some);
+});
+
+// The warm answer, read the way /search's is (#9740, #9715): the `app` phase
+// is sent and reported, never judged; the 50 ms bound is held as work — a
+// bounded statement count and no git spawned (#4429).
+test("a warm capacity page sends its app phase, stays under the statement ceiling and spawns no git", async () => {
+  const url = `${servers.url}/settings/capacity`;
+  const init = { headers: { authorization: `Bearer ${bearer}` } };
+  const first = await fetch(url, init);
+  expect(first.status).toBe(200);
+  await first.text();
+  const spawn = spyOn(Bun, "spawn");
+  const spawnSync = spyOn(Bun, "spawnSync");
+  try {
+    const second = await fetch(url, init);
+    const page = await second.text();
+    expect(second.status).toBe(200);
+    expect(page).toContain("Errors and refused calls");
+    expect(appMs(second)).not.toBeNaN();
+    expectWork(await requestStatements(app.db, url, init), { max: WARM_STATEMENTS });
+    expectWork(gitCalls(spawn.mock.calls) + gitCalls(spawnSync.mock.calls), { max: 0 });
+  } finally {
+    spawn.mockRestore();
+    spawnSync.mockRestore();
+  }
 });
