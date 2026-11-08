@@ -1,7 +1,7 @@
 /**
  * The looks every preview of the forge takes as its owner (#8974): home
  * with its pins, /flow, the seeded repository's head, its pull's page and
- * its Iterations page (#9182), the Later gate's proposal (#9212), its
+ * its Iterations page (#9182), the seeded app's page (#9782), the Later gate's proposal (#9212), its
  * milestones (#9326) and its waves (#9325), each at desk and phone width.
  * The looks service adds them to whatever forge.json lists for a preview
  * of the forge's own repository (`FORGE_REPO`), so no edit of forge.json can
@@ -26,6 +26,14 @@ export const PREVIEW_PULL = 3;
 /** The seeded repository's head, and its pull's page. */
 export const PREVIEW_REPO_HOME = `/${PREVIEW_ADMIN}/${PREVIEW_REPO}`;
 export const PREVIEW_PULL_PAGE = `${PREVIEW_REPO_HOME}/pulls/${String(PREVIEW_PULL)}`;
+
+/**
+ * The seeded app: a second repository whose only app fact is its record, so
+ * its home is the app page (#9782). Nothing runs: the page says so. The seed
+ * refuses to finish unless that page answers 200.
+ */
+export const PREVIEW_APP = "hello";
+export const PREVIEW_APP_PAGE = `/${PREVIEW_ADMIN}/${PREVIEW_APP}`;
 
 /** The Iterations page of the seeded fork family (#9182). */
 export const PREVIEW_ITERATIONS_PAGE = `${PREVIEW_REPO_HOME}/iterations`;
@@ -104,6 +112,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   "/",
   "/flow",
   PREVIEW_REPO_HOME,
+  PREVIEW_APP_PAGE,
   PREVIEW_PULL_PAGE,
   PREVIEW_ITERATIONS_PAGE,
   PREVIEW_HELD_PAGE,

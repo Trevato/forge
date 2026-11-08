@@ -15,6 +15,7 @@
  */
 
 import type { App } from "../app.ts";
+import type { Ctx } from "../http/context.ts";
 import type { Issue } from "../core/issues.ts";
 import { getRepo, type Repo } from "../core/repos.ts";
 import { pinPanel } from "../actions/board-pins.ts";
@@ -26,6 +27,8 @@ import { mergePull, openPull } from "../actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../actions/repos.ts";
 import { reviewGate } from "../actions/gate_review.ts";
 import { linkIssue } from "../actions/dependencies.ts";
+import { createApp as createAppRecord } from "../core/apps.ts";
+import { studioApp } from "../web/studio/app.ts";
 import { THEMES_AT_REST } from "../web/pages/gate.ts";
 import { iterationsOf } from "../core/iterations.ts";
 import { turnValveFor } from "../actions/valves.ts";
@@ -42,6 +45,8 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { PREVIEW_CONFIG_FILES } from "./preview-config.ts";
 import {
   PREVIEW_ADMIN,
+  PREVIEW_APP,
+  PREVIEW_APP_PAGE,
   PREVIEW_FORKS,
   PREVIEW_HELD_PAGE,
   PREVIEW_HELD_THEMES,
@@ -53,6 +58,8 @@ import {
 
 export {
   PREVIEW_ADMIN,
+  PREVIEW_APP,
+  PREVIEW_APP_PAGE,
   PREVIEW_FORKS,
   PREVIEW_HELD_PAGE,
   PREVIEW_HELD_THEMES,
@@ -244,6 +251,8 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   if (!family.ok) return family;
   const gated = seedLaterGate(app, admin, repo.value);
   if (!gated.ok) return gated;
+  const hosted = await seedApp(app, admin);
+  if (!hosted.ok) return hosted;
   const valve = turnValveFor(app, admin, `${PREVIEW_ADMIN}/${PREVIEW_REPO}`, 60);
   if (!valve.ok) return err(`the valve: ${valve.error}`);
 
@@ -483,4 +492,32 @@ function seedLaterGate(app: App, admin: User, repo: Repo): Result<void, string> 
   if (themes <= THEMES_AT_REST)
     return err(`${PREVIEW_HELD_PAGE} shows ${String(themes)} themes, not more than the ${String(THEMES_AT_REST)} drawn at rest`);
   return ok();
+}
+
+/**
+ * One app, for the app page's look (#9782): a repository and its record,
+ * nothing more. No process starts and no network is reached; the page says
+ * the app is not running. Refused when the page would answer anything but 200.
+ */
+async function seedApp(app: App, admin: User): Promise<Result<void, string>> {
+  const repo = await createRepo(app, admin, {
+    name: PREVIEW_APP,
+    visibility: "public",
+    description: "A preview's sample app",
+  });
+  if (!repo.ok) return err(`the sample app's repository: ${String(repo.error)}`);
+  const first = await commitToBranch(app, admin, repo.value, {
+    message: "Start",
+    files: [{ path: "README.md", content: "# hello\n\nA preview's sample app.\n" }],
+  });
+  if (!first.ok) return err(`the sample app's commit: ${JSON.stringify(first.error)}`);
+  const record = createAppRecord(app.db, { repoId: repo.value.id, slug: PREVIEW_APP, access: "public" });
+  if (!record.ok) return err(`the sample app's record: ${record.error}`);
+  const url = new URL(`https://preview.invalid${PREVIEW_APP_PAGE}`);
+  const answer = await studioApp(
+    { app, request: new Request(url.href), url, params: {}, auth: { user: admin }, theme: undefined } as Ctx,
+    repo.value,
+    record.value,
+  );
+  return answer.status === 200 ? ok() : err(`${PREVIEW_APP_PAGE} would answer ${String(answer.status)}, not 200`);
 }
