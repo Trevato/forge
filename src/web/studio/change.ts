@@ -65,7 +65,7 @@ import {
 import { previewCard } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
 import { approveHereCard, pullChecksLineFor, teamsCard } from "../pages/pull.ts";
-import { guestCard, guestWalls } from "../pages/pull-guest.ts";
+import { guestWalls, strangerCard } from "../pages/pull-guest.ts";
 import { combinedCard } from "../pages/pull-combined.ts";
 import { teamVerdicts } from "../../core/issue_teams.ts";
 import { liveRegionsJs } from "../client.ts";
@@ -680,12 +680,13 @@ async function changeConversation(
       ? null
       : await lap(spent, "diff", () => combinedCard(wordCtx.dir, pull, headOid, status.baseOid));
   const walls = status === undefined ? [] : await guestWalls(ctx, repo, pull, status.baseOid);
+  const next = await strangerCard(ctx, repo, pull, `${thread}/approve-guest`, walls);
   const gate = tick(
     spent,
     "gate",
     () => html`${held ? holdCard(ctx, repo, pull, { act: true }) : null}
     ${combined}
-    ${guestCard(ctx, repo, pull, `${thread}/approve-guest`, walls)}
+    ${next}
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
     ${when(wall, (w) => wallCard(w, writer ? thread : undefined))}`,

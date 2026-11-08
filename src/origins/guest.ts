@@ -3,7 +3,8 @@
  * from the origin (its issue names an `origin_author`) or its head lives in
  * a fork there (`originHeadRepo`), or whose head is a guest's contribution
  * fork on this forge (`core/contribute.ts`). Its check and preview run without the
- * repository's secrets, and the crew does not review it, until a person —
+ * repository's secrets, and the crew does not review it (but on an
+ * autonomous repository, `crew/stranger.ts`), until a person —
  * never an agent — who can write the repository approves it once. The
  * approval is for the pull, not a head: a later push by the same author
  * runs with the secrets too — except a head moved on a read-only mirror,

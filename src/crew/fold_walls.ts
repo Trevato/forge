@@ -32,12 +32,17 @@ const WALLS: readonly { readonly test: RegExp; readonly why: string }[] = [
  */
 const ALLOWED = /^(src\/|test\/|docs\/|examples\/|README\.md$)/;
 
+/** Why the walls hold `file`, each reason once; empty for a path no wall names. */
+export function pathWalls(file: string): string[] {
+  return [...new Set(WALLS.filter((w) => w.test.test(file)).map((w) => w.why))];
+}
+
 /** What the walls hold a set of files for, as plain sentences; empty when it touches none. */
 export function wallsTouched(files: readonly string[], who = "a trusted source's"): string[] {
   const reasons = new Set<string>();
   for (const file of files) {
-    const walled = WALLS.filter((w) => w.test.test(file));
-    for (const w of walled) reasons.add(w.why);
+    const walled = pathWalls(file);
+    for (const why of walled) reasons.add(why);
     if (walled.length === 0 && !ALLOWED.test(file)) reasons.add(`a path ${who} work may not change alone`);
   }
   return [...reasons].map((why) => `${who} pull touches ${why}`);

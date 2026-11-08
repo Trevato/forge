@@ -1061,10 +1061,20 @@ export async function pullMergeStates(
  * and a local merge would be overwritten by the next fetch. Merge there; the
  * next sync brings back the merge commit the origin actually made.
  */
+/** One path a stranger may not change, and why, as a person reads it (`crew/stranger.ts`). */
+export interface Guarded {
+  readonly path: string;
+  readonly why: string;
+}
+
 export type MergePullError =
   | MergeError
+  /** A stranger's pull changes guarded paths: it does not land, whatever its review says (#9575). */
+  | { readonly kind: "guarded"; readonly paths: readonly Guarded[] }
   | "already_merged"
   | "closed"
+  /** The head moved after it was judged (`headOid`): nothing landed (#9575). */
+  | "head_moved"
   | "mirrored"
   /** The repo requires an approval of this head, or a change was requested. */
   | "review_required"
@@ -1100,6 +1110,12 @@ export async function mergePull(
      * merge must write `treeOid`, or nothing lands (`base_moved`).
      */
     expect?: LandingExpect;
+    /**
+     * The head that was judged (a stranger's guard, #9575): the head merged
+     * must be this one, or nothing lands (`head_moved`). A fork can push
+     * between the judging and the landing.
+     */
+    headOid?: string;
   },
 ): Promise<Result<{ mergeOid: string; carried: boolean }, MergePullError>> {
   // The row, not the caller's copy: a landing reads its pull, runs a gate
@@ -1141,6 +1157,8 @@ export async function mergePull(
   const status = await pullStatus(dir, pull, input.gate);
   if (input.expect !== undefined && status.baseOid !== input.expect.baseOid)
     return err({ kind: "base_moved" });
+  if (input.headOid !== undefined && status.headOid !== input.headOid)
+    return err("head_moved");
   // What the pull proposes is already on the base: there is nothing to
   // land, so nothing is committed — the pull closes as merged into the
   // commit that carried it, and the base does not move.

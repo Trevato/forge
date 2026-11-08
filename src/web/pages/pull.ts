@@ -117,7 +117,8 @@ import { specFindings } from "./pull-spec.ts";
 import { pullPreviewFindings } from "../../core/preview_findings.ts";
 import { crewActivityCard } from "./runs.ts";
 import { holdCard } from "../studio/hold.ts";
-import { guestCard, guestWalls } from "./pull-guest.ts";
+import { guestWalls, strangerCard } from "./pull-guest.ts";
+import { guardedRefusal } from "../../crew/stranger.ts";
 import {
   changeHead,
   changeTabs,
@@ -1049,7 +1050,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${await combinedCard(dir, pull, status.headOid, status.baseOid)}
     <div class="split">
       <div>
-        ${guestCard(ctx, repo, pull, `${thread}/approve-guest`, await guestWalls(ctx, repo, pull, status.baseOid))}
+        ${await strangerCard(ctx, repo, pull, `${thread}/approve-guest`, await guestWalls(ctx, repo, pull, status.baseOid))}
         ${approveHereCard(ctx, repo, pull, status.headOid, `${thread}/approve-here`)}
         ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
       </div>
@@ -1220,6 +1221,7 @@ export function mergeFailure(error: AccessError | MergePullError): string {
     if (error.kind === "base_moved")
       return "The base branch moved while merging. Try again.";
     if (error.kind === "unsafe") return "That merge was refused as unsafe.";
+    if (error.kind === "guarded") return guardedRefusal(error.paths);
     return "Git refused the merge.";
   }
   const fromOrigin = originError(error);
@@ -1228,6 +1230,8 @@ export function mergeFailure(error: AccessError | MergePullError): string {
     return "This pull request was already merged.";
   if (error === "closed")
     return "A closed pull request cannot be merged. Reopen it first.";
+  if (error === "head_moved")
+    return "The pull's head moved while it was being checked. Nothing was merged; look again and retry.";
   // The gate races: the page was rendered with an approval that a push
   // dismissed a second later, or a reviewer asked for changes in between.
   if (error === "review_required")

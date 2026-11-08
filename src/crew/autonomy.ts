@@ -137,6 +137,7 @@ import {
 } from "./direct.ts";
 import { foldsIn, needsCrewReview } from "../core/trusted_sources.ts";
 import { foldWall } from "./fold_walls.ts";
+import { guardedList } from "./stranger.ts";
 import { warnExpiring } from "./fold_in.ts";
 import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
@@ -1626,6 +1627,8 @@ function mergeWhy(error: AccessError | MergePullError): string {
       return `conflict: ${error.files.join(", ")}`;
     case "git":
       return `git: ${error.message}`;
+    case "guarded":
+      return `guarded: ${guardedList(error.paths)}`;
     default:
       return error.kind;
   }
@@ -2032,7 +2035,8 @@ async function admit(
   if (getHold(app.db, pull.id) !== undefined) return err("held");
   // Only work the crew wrote, or a writer's, lands on green by itself: a
   // reader's pull — from a fork, say — waits for a person, outsiders
-  // switch or not, and is never sent to the crew's reviewer (#619).
+  // switch or not; not from here is it sent to the crew's reviewer (#619),
+  // only through `sendToReview` on an autonomous repository (#9575).
   if (!landsOnItsOwn(app.db, repo, pull, now)) return err("outsider");
   const by = getUserById(app.db, repo.autonomyBy);
   if (!by) return err("off");

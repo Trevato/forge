@@ -7,7 +7,9 @@ Until a person who can write the repository approves it once:
 
 - its preview starts with none of the app's variables and no forge token
   (`AppsRuntime.secretsFor` in `src/apps/runtime.ts`);
-- the crew does not send it to review (`src/crew/review.ts`).
+- the crew does not send it to review (`src/crew/review.ts`) — except on
+  an autonomous repository, where the crew's reviewer reads every stranger's
+  pull first ([stranger pulls](stranger-pulls.md)).
 
 Its check needs nothing here: a check never carries the repository's
 secrets, a guest's or anyone's (`src/checks/service.ts` builds its

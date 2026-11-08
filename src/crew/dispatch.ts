@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { crewFilters, isStrangerPull } from "./stranger.ts";
 import { TEMP_FULL } from "../checks/disk_full.ts";
 import { freshPullFor } from "./fresh_pull.ts";
 import { PRIORITY_REASONS, weekHold } from "./week_hold.ts";
@@ -835,6 +836,18 @@ export function route(app: App, event: ForgeEvent): void {
             error: String(error),
           }),
         );
+      return;
+    }
+    // A stranger's pull on an autonomous repository goes to the crew's
+    // reviewer as it opens, before its code has run (#9575); the review
+    // sweep is the net for a later head.
+    case "pull.opened": {
+      if (typeof number !== "number" || !crewFilters(repo)) return;
+      const pull = getPull(app.db, repo.id, number);
+      if (!pull || pull.authorIsAgent || !isStrangerPull(app.db, repo, pull)) return;
+      sendToReview(app, repo, pull).catch((error) =>
+        log.error("sending a stranger's pull to review failed", { pull: number, error: String(error) }),
+      );
       return;
     }
     case "pull.closed":

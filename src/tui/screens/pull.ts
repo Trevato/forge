@@ -26,6 +26,7 @@
  *   `n`/`p` walk the unsettled ones while the cursor is inside a thread.
  */
 
+import { crewFilters, guardedRefusal, isStrangerPull, strangerGuard, strangerNext } from "../../crew/stranger.ts";
 import { RED_ALONE_WAIT, redAloneAt, redMark } from "../../checks/queue.ts";
 import {
   addCommentThrough,
@@ -224,6 +225,8 @@ const CHECK_TICK_MS = 5000;
 
 /** A waiting guest's line on its screen; the page says it in full (`web/pages/pull-guest.ts`). */
 export const GUEST_NOTE = "a guest: no app variables, no crew, until a writer approves";
+/** The same on an autonomous repository, where the crew's reviewer reads it first (#9575). */
+export const GUEST_NOTE_FILTERED = "a guest: no app variables until a writer approves; the crew reviews it first";
 
 export function pullScreen(
   f: Session,
@@ -292,6 +295,8 @@ export function pullScreen(
   let hold: Hold | undefined;
   /** What the access wall holds this open pull for, read from git (#7847). */
   let wall: Wall | undefined;
+  /** What happens next to a stranger's open pull, the page's sentence (`crew/stranger.ts`); empty for anyone else's. */
+  let strangerLine = "";
   /** `h` is a person's key: an agent's hold is refused by the action, so it is not offered. */
   const mayHold = (): boolean =>
     mayWrite() && f.user?.kind === "user" && issueRow !== undefined;
@@ -334,6 +339,10 @@ export function pullScreen(
             return base === undefined ? undefined : wallOf(dir, base, facts.headOid);
           })()
         : undefined;
+    strangerLine =
+      repo !== undefined && row !== undefined && row.state === "open" && row.mergedAt === null && isStrangerPull(f.db, repo, row)
+        ? strangerNext(repo, await strangerGuard(f.app, repo, row))
+        : "";
     combined =
       repo !== undefined && row !== undefined && facts !== null
         ? await (async () => {
@@ -762,7 +771,8 @@ export function pullScreen(
     runAsync(ctx, async () => {
       const landed = await mergePull(f.app, f.user, target, row, strategy);
       if (!landed.ok) {
-        ctx.toast(errorText(String(landed.error)), "danger");
+        const why = landed.error;
+        ctx.toast(typeof why !== "string" && why.kind === "guarded" ? guardedRefusal(why.paths) : errorText(String(why)), "danger");
         return;
       }
       await reload();
@@ -1136,12 +1146,13 @@ export function pullScreen(
         (checksLine === "" ? 0 : 1) +
         (originCheckText === "" ? 0 : 1) +
         teams.length;
-      const [strip, head, previewRow, boxRow, tabRow, body, comp] = split(
+      const [strip, head, nextRow, previewRow, boxRow, tabRow, body, comp] = split(
         area,
         "v",
         [
           len(whereRows(src)),
           len(2),
+          len(strangerLine === "" ? 0 : 1),
           len(isApp ? 1 : 0),
           len(boxH),
           len(2),
@@ -1176,12 +1187,14 @@ export function pullScreen(
         x1,
         head!.y + 1,
         truncate(
-          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${guestWaiting() ? ` · ${GUEST_NOTE}` : ""}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${stepLine(step)}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${guestWaiting() ? ` · ${repo !== undefined && crewFilters(repo) ? GUEST_NOTE_FILTERED : GUEST_NOTE}` : ""}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}${hold === undefined ? "" : ` · held by ${hold.heldByName}: ${hold.why}`}${step === null ? "" : ` · step: ${stepLine(step)}`}${next === null ? "" : ` · next: ${next.who}, ${next.why}`}`,
           Math.max(0, edge - x1),
         ),
         style(c.mutedFg, c.bg),
         edge,
       );
+      if (strangerLine !== "" && nextRow!.h > 0)
+        s.text(nextRow!.x, nextRow!.y, truncate(`next: ${strangerLine}`, nextRow!.w), style(c.mutedFg, c.bg), nextRow!.x + nextRow!.w);
       if (isApp && previewRow!.h > 0)
         drawPreviewLine(s, previewRow!, c, preview);
       drawMergeBox(s, boxRow!, c, issue, facts, view.summary(), mirrored(), {

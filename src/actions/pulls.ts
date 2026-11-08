@@ -72,6 +72,7 @@ import { resolveOid, type MergeStrategy } from "../git/merge.ts";
 import { landingKind } from "../core/landing_kind.ts";
 import { thankAuthor } from "../origins/thanks.ts";
 import { repoDir } from "../git/repos.ts";
+import { isStrangerPull, strangerGuard } from "../crew/stranger.ts";
 import { importIssue, importReviewStates } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -498,6 +499,13 @@ export async function mergePull(
   // A fork may have pushed since the pull opened; merge what is being
   // proposed now, not the snapshot taken when it was.
   await refreshPullHead(app, repo, pull);
+  // A stranger's pull never lands while it changes a guarded path, whoever
+  // approved it and whoever presses (#9575): read from the diff, here, and
+  // the head read is the head that lands (`headOid` below), or nothing does.
+  const judged = getPull(app.db, repo.id, pull.number) ?? pull;
+  const stranger = isStrangerPull(app.db, repo, judged);
+  const guarded = stranger ? await strangerGuard(app, repo, judged) : [];
+  if (guarded.length > 0) return err({ kind: "guarded", paths: guarded });
   const lander = commitIdentity(app.config, writer.value);
   // The agent that wrote the change is the commit's author; the person who
   // asked is named in `Requested-by`, the person who landed it in
@@ -545,6 +553,7 @@ export async function mergePull(
       },
       strategy,
       ...(expect === undefined ? {} : { expect }),
+      ...(stranger ? { headOid: judged.headOid } : {}),
       message: `${
         strategy === "squash"
           ? `${pull.title} (#${pull.number})`

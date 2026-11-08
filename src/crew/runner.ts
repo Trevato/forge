@@ -11,6 +11,7 @@
  * what the forge has.
  */
 
+import { isStrangerPull } from "./stranger.ts";
 import { noteMeasure } from "../core/measure.ts";
 import { capacityEnv } from "../core/capacity.ts";
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -1138,6 +1139,7 @@ async function work(
       issue: voiceOf(brief.issue),
       reason,
       paused: run.attempt > 0,
+      stranger: reason === "review" && pull !== undefined ? isStrangerPull(app.db, repo, pull) : undefined,
       comments,
       labels: (labelsForIssues(app.db, [issue.id]).get(issue.id) ?? []).map(
         (label) => label.name,

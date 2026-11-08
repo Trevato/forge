@@ -12,6 +12,7 @@
  * slice is an ancestor of it: it lands only what that verdict covered.
  */
 
+import { strangerGuard } from "../crew/stranger.ts";
 import type { App } from "../app.ts";
 import { addComment as addIssueComment } from "../core/issues.ts";
 import { getHold } from "../core/holds.ts";
@@ -89,6 +90,9 @@ export async function landSlice(
     return whole.ok ? ok({ mergeOid: whole.value.mergeOid, last: true, left: 0 }) : whole;
   }
   if (!(await sliceEndOk(baseDir, status.baseOid, status.headOid, upTo))) return err("bad_slice");
+  // A stranger's slice is read against the guard as the whole pull is (#9575).
+  const guarded = await strangerGuard(app, repo, live, upTo);
+  if (guarded.length > 0) return err({ kind: "guarded", paths: guarded });
   const verdict = reviewGate({ db: app.db, requireReview: repo.requireReview }, live, status.headOid);
   if (!verdict.mergeable) return err("review_required");
   const check = checkSummary(app.db, live.id, status.headOid);

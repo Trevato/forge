@@ -25,6 +25,8 @@ import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";
+import { guardedRefusal } from "../../crew/stranger.ts";
+import type { Guarded } from "../../core/pulls.ts";
 import { backTo, field, readForm, type Form } from "../form.ts";
 import { html } from "../html.ts";
 import { flashOrJson, flashTo, page } from "../layout.ts";
@@ -37,6 +39,7 @@ function mergeWords(error: unknown): string {
   if (typeof error === "object" && error !== null && "kind" in error) {
     const e = error as { kind: string; message?: string };
     if (e.kind === "git") return `git said ${e.message ?? "no"}`;
+    if (e.kind === "guarded") return guardedRefusal((error as unknown as { paths: readonly Guarded[] }).paths);
     return e.kind.replace(/_/g, " ");
   }
   return String(error);

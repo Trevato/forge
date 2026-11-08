@@ -25,12 +25,13 @@ import { getIssueById, LIST_LIMIT_MAX } from "../core/issues.ts";
 import { listPulls, pullDiff, type Pull, pullDir} from "../core/pulls.ts";
 import { getRepoById, PILLAR_MAX, type Repo } from "../core/repos.ts";
 import { teamsOfPull, teamVerdicts } from "../core/issue_teams.ts";
-import { reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
+import { listReviews, reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
 import { getTeam } from "../core/teams.ts";
 import { createLog } from "../kernel/log.ts";
 import { guestWaits } from "../origins/guest.ts";
 import { reviewerPaused } from "./reviewer_paused.ts";
+import { crewFilters, isStrangerPull } from "./stranger.ts";
 import { queueAgentRun } from "./dispatch.ts";
 import { type Handover, handoverOf, handoversOf } from "./guard.ts";
 
@@ -452,11 +453,14 @@ export async function sendToReview(
   const reviewers = reviewersOf(app.db, repo.id);
   // A paused reviewer reads like an empty seat: the pull waits for a person, and says so.
   if (reviewers.length === 0 || reviewerPaused(repo)) return "none";
-  // A guest from another forge waits for a person's word before the crew
-  // touches it (`origins/guest.ts`).
-  if (guestWaits(app.db, pull)) return "held";
+  // A stranger's pull is the crew's to filter on an autonomous repository
+  // (#9575); anywhere else a guest waits for a person's word before the
+  // crew touches it (`origins/guest.ts`).
+  const filters = crewFilters(repo) && !pull.authorIsAgent && isStrangerPull(app.db, repo, pull);
+  if (!filters && guestWaits(app.db, pull)) return "held";
   // The reviewer's slots bound every route, the teams' too. The most (PILLAR_MAX) is no cap: the sweep already bounds what it sends.
   if (repo.reviewerSlots < PILLAR_MAX && reviewsInFlight(app.db, repo.id) >= repo.reviewerSlots) return "wait";
+  if (filters) return sendStrangerToReview(app, repo, reviewers, pull);
   if (teamsOfPull(app.db, pull).length > 0) {
     const sent = await sendToTeams(app, repo, reviewers, pull, now);
     if (sent !== undefined) return sent;
@@ -500,6 +504,53 @@ export async function sendToReview(
     reviewer: reviewer.user.username,
     attempt: history.attempts.length + 1,
     ...(late ? { late: true, checkMinutes: history.checkMinutes } : {}),
+  });
+  return "sent";
+}
+
+/** Review runs on a stranger's pull since the last verdict on it, before it waits for a person. */
+export const STRANGER_TRIES = 2;
+
+/**
+ * The crew's reviewer reads a stranger's pull before a person does, on an
+ * autonomous repository (#9575). Its code has not run here, so nothing
+ * waits for a green check: each head is sent once it is pushed. A verdict
+ * on this head is `done`; a review out is `wait`; `STRANGER_TRIES` runs
+ * since the last verdict with none is `lapsed`, and it waits for a person.
+ * Whatever the verdict, it lands only by a person (`crew/direct.ts`), and
+ * never while it touches a guarded path (`crew/stranger.ts`).
+ */
+async function sendStrangerToReview(
+  app: App,
+  repo: Repo,
+  reviewers: readonly Agent[],
+  pull: Pull,
+): Promise<"done" | "sent" | "wait" | "lapsed"> {
+  const seen = reviewSummary(app.db, pull.id, pull.headOid);
+  if (seen.approvals > 0 || seen.changesRequested > 0) return "done";
+  const runs = app.db
+    .query<{ created_at: string; state: string }, [string]>(
+      "SELECT created_at, state FROM run WHERE kind = 'agent' AND reason = 'review' AND issue_id = ?1",
+    )
+    .all(pull.id);
+  if (runs.some((r) => r.state === "queued" || r.state === "running")) return "wait";
+  const lastVerdict = listReviews(app.db, pull.id).reduce((at, r) => (r.createdAt > at ? r.createdAt : at), "");
+  if (runs.filter((r) => r.created_at > lastVerdict).length >= STRANGER_TRIES) return "lapsed";
+  const issue = getIssueById(app.db, pull.id);
+  if (!issue) return "wait";
+  const { diff } = await pullDiff(await pullDir(app.db, app.reposRoot, repo, pull), pull);
+  const reviewer = pickReviewer(
+    reviewers,
+    diff.files.map((f) => f.path),
+    getTeam(app.db, "design")?.members,
+    reviewLoad(app.db),
+  );
+  if (reviewer === undefined) return "wait";
+  if (queueAgentRun(app, repo, issue, reviewer, "review") === undefined) return "wait";
+  log.info("a stranger's pull; queued for the crew's review", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    pull: pull.number,
+    reviewer: reviewer.user.username,
   });
   return "sent";
 }
@@ -608,7 +659,11 @@ export async function sweepReviews(app: App): Promise<number> {
     if (!repo) continue;
     for (const pull of openPullsOldestFirst(app.db, repo.id)) {
       if (queued >= SWEEP_SENDS) return forgetSettled(stalled, queued);
-      if (!pull.authorIsAgent || !greenHead(app.db, pull)) continue;
+      // An agent's green pull, or a stranger's the crew filters (#9575).
+      const owed =
+        (pull.authorIsAgent && greenHead(app.db, pull)) ||
+        (!pull.authorIsAgent && crewFilters(repo) && isStrangerPull(app.db, repo, pull));
+      if (!owed) continue;
       const result = await sendToReview(app, repo, pull);
       if (result === "sent") queued++;
       else if (result === "lapsed" || result === "wait") {

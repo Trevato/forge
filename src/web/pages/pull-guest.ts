@@ -3,7 +3,8 @@
  * from another forge and its preview runs without the app's variables; a
  * person who can write the repository sees the one action that lifts that. The POST is
  * read through `readForm` (the `rw` floor and the same-origin check), and
- * `approveGuestPull` asks again who may.
+ * `approveGuestPull` asks again who may. Any stranger's pull (`crew/stranger.ts`)
+ * says what happens next in one sentence, read from the diff on the server.
  */
 
 import type { Ctx } from "../../http/context.ts";
@@ -15,6 +16,7 @@ import {
   mayApproveGuest,
 } from "../../origins/guest.ts";
 import { foldWall } from "../../crew/fold_walls.ts";
+import { isStrangerPull, strangerGuard, strangerNext } from "../../crew/stranger.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -23,17 +25,34 @@ import { pullContext } from "../studio/change.ts";
 import { btn, card, icon } from "../ui.ts";
 
 export const GUEST_WAITS =
-  "This pull comes from a guest: its preview runs without the app's variables or a forge token, and the crew leaves it alone, until a person who can write here approves it.";
+  "This pull comes from a guest: its preview runs without the app's variables or a forge token until a person who can write here approves it.";
 export const GUEST_APPROVED = "Approved as a guest: its preview starts again with the app's variables, and the crew takes it up.";
 
-/** The guest notice; empty for a pull from this forge, or one already approved. */
-export function guestCard(ctx: Ctx, repo: Repo, pull: Pull, action: string, walls: readonly string[] = []): Html {
+/**
+ * A stranger's open pull, as one notice (#9575): what happens next, in one
+ * sentence read from the diff on the server; for a guest nobody approved
+ * yet, the guest's words and the writer's approval in the same card, with
+ * the walls a person should weigh when nothing is guarded (a guarded path
+ * is named in the sentence already). Empty for anyone else's pull.
+ */
+export async function strangerCard(ctx: Ctx, repo: Repo, pull: Pull, action: string, walls: readonly string[] = []): Promise<Html> {
   if (pull.state !== "open" || pull.mergedAt !== null) return html``;
-  if (!guestWaits(ctx.app.db, pull)) return html``;
+  const stranger = isStrangerPull(ctx.app.db, repo, pull);
+  const waits = guestWaits(ctx.app.db, pull);
+  if (!stranger && !waits) return html``;
+  const guarded = await strangerGuard(ctx.app, repo, pull);
+  const next = stranger ? html`<p ${guarded.length > 0 ? html`role="alert"` : null}>${strangerNext(repo, guarded)}</p>` : null;
+  if (!waits && next !== null)
+    return card(next, {
+      extra: "mb",
+      head: html`${icon(guarded.length > 0 ? "ban" : "clock")}
+        <h2>What happens next</h2>`,
+    });
   const writer = mayApproveGuest(ctx.app.db, repo, ctx.auth.user);
   return card(
     html`<p>${GUEST_WAITS}</p>
-      ${walls.map((wall) => html`<p class="mt" role="alert">Look closely: ${wall}.</p>`)}
+      <div class="mt">${next}</div>
+      ${guarded.length > 0 ? null : walls.map((wall) => html`<p class="mt" role="alert">Look closely: ${wall}.</p>`)}
       ${writer
         ? html`<form method="post" action="${action}">
             ${btn("Approve this guest", { size: "sm", icon: "check" })}
