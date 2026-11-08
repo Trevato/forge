@@ -56,3 +56,35 @@ describe("the seeded held page", () => {
     for (const t of review.themes.slice(THEMES_AT_REST)) expect(rest).not.toContain(`${t.name} <`);
   });
 });
+
+describe("the seeded first issue", () => {
+  let dir: string;
+  let app: App;
+  let servers: Servers;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-preview-issue-"));
+    app = createApp({ dataDir: dir, port: 0 });
+    const seeded = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+    if (!seeded.ok) throw new Error(seeded.error);
+    servers = await serve(app);
+  }, 60_000);
+  afterAll(async () => {
+    await servers.stop();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("its page carries a Runs row and a Closes with row, and a second seed adds none", async () => {
+    const count = () =>
+      (app.db.query("SELECT COUNT(*) AS n FROM run").get() as { n: number }).n;
+    const before = count();
+    const again = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+    expect(again.ok && again.value.seeded).toBe(false);
+    expect(count()).toBe(before);
+    const res = await fetch(`${servers.url}/preview-admin/sample/issues/1`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<h2>Runs</h2>");
+    expect(html).toContain("<h2>Closes with</h2>");
+    expect(html).toContain("A seeded run");
+  });
+});

@@ -182,7 +182,8 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   const [milestone, held] = issues.flatMap((i) => (i.ok ? [i.value] : []));
   const pull = await openPull(app, admin, repo.value, {
     title: "Say hello",
-    body: "Adds a greeting.",
+    // Closes the first issue, so its page draws a Closes with row.
+    body: `Adds a greeting.\n\nCloses #${String(milestone!.number)}`,
     baseBranch: repo.value.defaultBranch,
     headBranch: "greeting",
   });
@@ -203,6 +204,18 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
     if (!i.ok) return err(`an issue: ${String(i.error)}`);
     open.push(i.value);
   }
+
+  // One finished agent run on the first issue, so its page draws a Runs row.
+  // Recorded only: createRun/claimRun/finishRun start no agent and spend nothing.
+  const recorded = createRun(app.db, {
+    repoId: repo.value.id,
+    kind: "agent",
+    issueId: milestone!.id,
+    actorId: admin.id,
+    reason: "seed",
+  });
+  claimRun(app.db, recorded.id);
+  finishRun(app.db, recorded.id, { state: "ok", summary: "A seeded run", costUsd: 0 });
 
   // A flow week: agent runs that started and spent this week, and a valve
   // turned part way, so /flow has a pipe to draw and one to turn.
