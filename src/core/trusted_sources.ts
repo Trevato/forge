@@ -275,8 +275,41 @@ export function pullIdsFrom(db: Database, host: string, account: string): string
  * person's review and nothing else.
  */
 export function foldsIn(db: Database, pullId: string, now: Date = new Date()): boolean {
+  if (foldInStopped(db) !== undefined) return false;
   const from = pullSourceOf(db, pullId);
-  return from !== undefined && foldInStopped(db) === undefined && isTrusted(db, from.host, from.account, now);
+  if (from !== undefined) return isTrusted(db, from.host, from.account, now);
+  return localSourceTrusted(db, pullId, now);
+}
+
+// --- trust for work opened on this same forge --------------------------------
+
+const selfHosts = new WeakMap<Database, string>();
+
+/** Tell the trust layer which name this forge goes by in trust lists (called once, where the app is made). */
+export function setOwnHost(db: Database, host: string): void {
+  selfHosts.set(db, host.toLowerCase());
+}
+
+/**
+ * A pull opened here, from the opener's own fork on this forge (not a
+ * mirror's), by an account trusted for this forge's own host. Trust is read
+ * now, so a lapse or a removal makes the next question answer no.
+ */
+function localSourceTrusted(db: Database, pullId: string, now: Date): boolean {
+  const self = selfHosts.get(db);
+  if (self === undefined) return false;
+  const row = db
+    .query<{ account: string }, [string]>(
+      `SELECT u.username AS account FROM issue i
+         JOIN pull p ON p.issue_id = i.id
+         JOIN user u ON u.id = i.author_id
+         JOIN repo h ON h.id = p.head_repo_id
+        WHERE i.id = ?1 AND i.kind = 'pull'
+          AND p.head_repo_id <> i.repo_id AND p.origin_head_repo IS NULL
+          AND h.owner_id = i.author_id AND h.fork_parent_id = i.repo_id`,
+    )
+    .get(pullId);
+  return row !== null && isTrusted(db, self, row.account, now);
 }
 
 /**

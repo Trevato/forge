@@ -4,6 +4,7 @@
  * side-effect-contained, so tests boot real forges by the dozen.
  */
 
+import { ownHost, setOwnHost } from "./core/trusted_sources.ts";
 import { commitIdentity } from "./core/commit_identity.ts";
 import { getUserById } from "./core/users.ts";
 import type { MailConfig, Mailer } from "./kernel/mail.ts";
@@ -239,6 +240,7 @@ export function createApp(config: ForgeConfig): App {
   const dbPath = join(dataDir, "forge.db");
   const fresh = !existsSync(dbPath);
   const db = openDb(dbPath, migrationFiles);
+  setOwnHost(db, ownHost(config));
   if (config.seedSignup === true) seedSignup(db, fresh);
   // Hand-installed new-account guards become the `guard_new_accounts`
   // setting (default off): drop the legacy triggers once, here, on boot.

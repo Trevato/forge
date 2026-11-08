@@ -9,16 +9,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openPull } from "../src/actions/pulls.ts";
-import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { addTrust, setFoldInStopped } from "../src/actions/trusted_sources.ts";
 import { createApp, type App } from "../src/app.ts";
 import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
 import { createSession } from "../src/core/sessions.ts";
+import { pullMayRun } from "../src/core/pull_trust.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
-import { ownHost, recordPullSource, takeable, viaOf } from "../src/core/trusted_sources.ts";
-import { createUser, type User } from "../src/core/users.ts";
+import { foldsIn, ownHost, recordPullSource, takeable, viaOf } from "../src/core/trusted_sources.ts";
+import { createUser, getUserById, type User } from "../src/core/users.ts";
 import { landingStrategy, sweepGreen } from "../src/crew/autonomy.ts";
 import { runGitCapture } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -287,5 +288,121 @@ describe("the landing reads the clock it is given", () => {
     const base = (await runGitCapture(["rev-parse", "refs/heads/main"], { cwd: dir })).stdout.trim();
     expect(await landingStrategy(f.app, f.repo, pull, base, new Date("2099-12-01T00:00:00Z"))).toBe("merge");
     expect(await landingStrategy(f.app, f.repo, pull, base, new Date("2099-12-03T00:00:00Z"))).toBe("squash");
+  });
+});
+
+describe("a trusted account working on this same forge (#9450)", () => {
+  let f: Forge;
+  let open: Repo;
+  let bot: User;
+  let carol: User;
+  let n = 0;
+  const HOME = "forge.test";
+
+  beforeAll(async () => {
+    f = await forge(HOME);
+    const made = await createRepo(f.app, f.alice, { name: "open", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(f.app, f.alice, made.value, {
+      message: "Start",
+      files: [
+        { path: "README.md", content: "# open\n" },
+        { path: "forge.json", content: JSON.stringify({ check: { run: "true", fast: "true" } }) },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    f.app.db.query("UPDATE repo SET autonomy = 'autonomous', autonomy_by = ?2 WHERE id = ?1").run(made.value.id, f.alice.id);
+    open = getRepoById(f.app.db, made.value.id)!;
+    const people: User[] = [];
+    for (const username of ["grokbot", "carol"]) {
+      const u = await createUser(f.app.db, {
+        origin: "seed",
+        trusted: true,
+        username,
+        email: `${username}@forge.local`,
+        password: "a-good-passphrase",
+      });
+      if (!u.ok) throw new Error(u.error);
+      f.app.db.query("UPDATE user SET created_at = ?2 WHERE id = ?1").run(u.value.id, "2020-01-01T00:00:00.000Z");
+      people.push(getUserById(f.app.db, u.value.id)!);
+    }
+    [bot, carol] = people as [User, User];
+    const t = addTrust(f.app, f.alice, { host: HOME, account: "grokbot", until: "2099-12-02" });
+    if (!t.ok) throw new Error(t.error);
+  });
+
+  /** `who`'s pull from their own fork of `open`, with a green check. */
+  async function forkPull(who: User, file = `src/x${++n}.ts`): Promise<Pull> {
+    const forks = f.app.db
+      .query<{ id: string }, [string, string]>("SELECT id FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2")
+      .get(who.id, open.id);
+    let fork = forks === null ? undefined : getRepoById(f.app.db, forks.id);
+    if (fork === undefined) {
+      const forked = await forkRepo(f.app, who, open, `${who.username}-open`);
+      if (!forked.ok) throw new Error(String(forked.error));
+      fork = forked.value;
+    }
+    const branch = `w${++n}`;
+    const pushed = await commitToBranch(f.app, who, fork, {
+      branch,
+      message: `Add ${file}`,
+      files: [{ path: file, content: "export const n = 1;\n" }],
+    });
+    if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
+    const opened = await openPull(f.app, who, open, { title: branch, baseBranch: "main", headBranch: branch, headRepo: fork });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = getPull(f.app.db, open.id, opened.value.number)!;
+    const run = createRun(f.app.db, {
+      repoId: open.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(f.app.db, run.id);
+    finishRun(f.app.db, run.id, { state: "ok", summary: "ok" });
+    return pull;
+  }
+
+  const landed = (pull: Pull): boolean => getPull(f.app.db, open.id, pull.number)!.mergedAt !== null;
+
+  test("its pull from its own fork runs its checks and folds in by true merge", async () => {
+    const pull = await forkPull(bot);
+    expect(pullMayRun(f.app.db, open, pull, pull.headOid)).toBe(true);
+    expect(await sweepGreen(f.app, open)).toBe(1);
+    expect(landed(pull)).toBe(true);
+    const dir = repoDir(f.app.reposRoot, open.ownerName, open.name);
+    const parents = (await runGitCapture(["log", "-1", "--format=%P", "refs/heads/main"], { cwd: dir })).stdout.trim().split(" ");
+    expect(parents.length).toBe(2);
+  });
+
+  test("the walls still hold it for a person", async () => {
+    const pull = await forkPull(bot, "src/crew/fold_walls.ts");
+    expect(await sweepGreen(f.app, open)).toBe(0);
+    expect(landed(pull)).toBe(false);
+  });
+
+  test("a guest's pull still waits for approval", async () => {
+    const pull = await forkPull(carol);
+    expect(pullMayRun(f.app.db, open, pull, pull.headOid)).toBe(false);
+    expect(await sweepGreen(f.app, open)).toBe(0);
+    expect(landed(pull)).toBe(false);
+  });
+
+  test("stopping fold-in makes the next pull wait again", async () => {
+    const pull = await forkPull(bot);
+    setFoldInStopped(f.app, f.alice, true);
+    expect(pullMayRun(f.app.db, open, pull, pull.headOid)).toBe(false);
+    expect(await sweepGreen(f.app, open)).toBe(0);
+    setFoldInStopped(f.app, f.alice, false);
+    expect(await sweepGreen(f.app, open)).toBe(1);
+  });
+
+  test("a lapsed trust makes the next pull wait again", async () => {
+    const pull = await forkPull(bot);
+    expect(await sweepGreen(f.app, open, new Date("2100-01-01T00:00:00Z"))).toBe(0);
+    expect(landed(pull)).toBe(false);
+    expect(foldsIn(f.app.db, pull.id, new Date("2100-01-01T00:00:00Z"))).toBe(false);
   });
 });
