@@ -101,11 +101,16 @@ export async function modelAdd(ctx: Ctx): Promise<Response> {
   );
 }
 
+/** A heading over its content, no box: `card` with a head, minus the box. */
+function settingsBlock(body: Html, opts: { head: Html }): Html {
+  return html`<section class="settings-block">${opts.head}${body}</section>`;
+}
+
 /** The admin's card for an account's spend ceilings, on a person's or an organization's page. */
-export function ceilingCard(ctx: Ctx, user: User, at: string): Html {
+export function ceilingCard(ctx: Ctx, user: User, at: string, plain = false): Html {
   const ceiling = getAccountCeiling(ctx.app.db, user.id);
   const left = dailyLeft(ctx.app.db, user.id, new Date());
-  return card(
+  return (plain ? settingsBlock : card)(
     html`<form class="stack" method="post" action="${at}/ceiling">
       <div class="field">
         <label for="f-daily">Daily ceiling, dollars</label>
@@ -136,8 +141,8 @@ export function ceilingCard(ctx: Ctx, user: User, at: string): Html {
 /** The admin's card on a person's page: what they have, and the grant form. */
 export function grantCard(ctx: Ctx, user: User, at: string): Html {
   const grant = getModelGrant(ctx.app.db, user.id);
-  const ceilings = ceilingCard(ctx, user, at);
-  const grantForm = card(
+  const ceilings = ceilingCard(ctx, user, at, true);
+  const grantForm = settingsBlock(
     html`<form class="stack" method="post" action="${at}/model">
       <div class="field">
         <label for="f-grant">Grant, dollars a month</label>
