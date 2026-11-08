@@ -1013,43 +1013,36 @@ export async function agentCreate(ctx: Ctx): Promise<Response> {
 
 function agentView(agent: Agent, values: AgentValues, error?: string): Html {
   const at = `/settings/crew/${encodeURIComponent(agent.user.username)}`;
-  return html`${card(
-    html`<form method="post" action="${at}">
-      <div class="field">
-        <label for="f-username">Username</label>
-        <input
-          class="input"
-          id="f-username"
-          value="${agent.user.username}"
-          readonly
-        />
-      </div>
-      ${agentFields(values, error)}
-      <div class="form-actions">
-        ${btn("Save changes", { variant: "primary" })}
-        ${btn("Back to the crew", { href: "/settings/crew", variant: "ghost" })}
-      </div>
-    </form>`,
-    {
-      head: html`${icon("bot")}
-        <h2>${agent.user.username}</h2>
-        <span class="muted small">added ${time(agent.createdAt)}</span>`,
-    },
-  )}
-  ${card(
-    html`<p>
+  return html`<section class="settings-block">
+      <h2>Settings</h2>
+      <p class="muted small">added ${time(agent.createdAt)}</p>
+      <form method="post" action="${at}">
+        <div class="field">
+          <label for="f-username">Username</label>
+          <input
+            class="input"
+            id="f-username"
+            value="${agent.user.username}"
+            readonly
+          />
+        </div>
+        ${agentFields(values, error)}
+        <div class="form-actions">
+          ${btn("Save changes", { variant: "primary" })}
+          ${btn("Back to the crew", { href: "/settings/crew", variant: "ghost" })}
+        </div>
+      </form>
+    </section>
+    <section class="settings-block">
+      <h2>Retire</h2>
+      <p>
         Retiring <strong>${agent.user.username}</strong> destroys its tokens and
         takes it off every crew. What it wrote stays, under its name.
       </p>
       <div class="form-actions">
         ${confirmAction({ action: `${at}/delete`, verb: "Retire this agent" })}
-      </div>`,
-    {
-      tone: "danger",
-      head: html`${icon("alert")}
-        <h2>Retire</h2>`,
-    },
-  )}`;
+      </div>
+    </section>`;
 }
 
 function loadAgent(ctx: Ctx): Agent | undefined {
