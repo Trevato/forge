@@ -13,6 +13,8 @@ keyboard. It does what the steward's `release.sh`, `verify-after.sh` and
    - no keeper release is rolling or verifying;
    - the newest tag is live, or the keeper rolled it back;
    - no merge-queue gate is running;
+   - no snapshot is being taken, unless it has run two hours and is stuck
+     (a release drains the process the snapshot runs in; #9653);
    - 30 minutes have passed since the last cut;
    - no hold stands.
 

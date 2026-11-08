@@ -595,4 +595,20 @@ describe("a snapshot's uploads", () => {
       await svc.stop();
     }
   }, 15_000);
+
+  test("the service says how long the snapshot in flight has run, for the release keeper to wait on (#9653)", async () => {
+    const { store } = slowStore(40);
+    const svc = startSnapshots(app, store, { version: "t", nightly: false });
+    try {
+      expect(svc.takingMs()).toBeUndefined();
+      const taking = svc.now();
+      await Bun.sleep(30);
+      const ms = svc.takingMs();
+      expect(ms).toBeGreaterThanOrEqual(0);
+      await taking;
+      expect(svc.takingMs()).toBeUndefined();
+    } finally {
+      await svc.stop();
+    }
+  }, 15_000);
 });

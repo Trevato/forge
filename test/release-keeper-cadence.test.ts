@@ -1,6 +1,6 @@
 // When the release keeper cuts (#7557): each rule refuses on its own, and a cut is a tag, never a commit to main.
 import { describe, expect, test } from "bun:test";
-import { decideCut, MIN_INTERVAL_MS, nextVersion, type CadenceInput } from "../src/keeper/cadence.ts";
+import { decideCut, MIN_INTERVAL_MS, nextVersion, SNAPSHOT_WAIT_MS, type CadenceInput } from "../src/keeper/cadence.ts";
 import { tick } from "../src/keeper/keeper.ts";
 import { listKeeperReleases, recordCut } from "../src/keeper/record.ts";
 import { A, B, keeperForge } from "./helpers/keeper.ts";
@@ -41,6 +41,19 @@ describe("cadence", () => {
     expect(why({ lastCutAt: NOW - MIN_INTERVAL_MS + 60_000 })).toBe("the last cut was 29 min ago; the interval is 30 min");
     expect(why({ hold: "owner: freeze for the demo" })).toBe("held: owner: freeze for the demo");
     expect(why({ newest: undefined })).toContain("no release tag");
+    expect(why({ snapshotMs: 42 * 60_000 })).toBe("a snapshot is being taken (42 min in); a release would cut it short");
+  });
+
+  test("a snapshot in flight holds the cut, until it has run long enough to be stuck (#9653)", async () => {
+    expect(decideCut({ ...ready, snapshotMs: 0 }).cut).toBe(false);
+    expect(decideCut({ ...ready, snapshotMs: SNAPSHOT_WAIT_MS - 1 }).cut).toBe(false);
+    expect(decideCut({ ...ready, snapshotMs: SNAPSHOT_WAIT_MS })).toEqual({ cut: true, version: "0.7.284" });
+    expect(decideCut({ ...ready, snapshotMs: undefined })).toEqual({ cut: true, version: "0.7.284" });
+    const f = await keeperForge();
+    const held = await tick({ ...f.ports, snapshotting: () => 10 * 60_000 });
+    expect(held).toBe("a snapshot is being taken (10 min in); a release would cut it short");
+    expect(f.world.tags).toEqual([]);
+    expect(await tick({ ...f.ports, snapshotting: () => undefined })).toContain("cut 0.7.284");
   });
 
   test("a tag the keeper rolled back is settled: the fix after it may be cut", () => {

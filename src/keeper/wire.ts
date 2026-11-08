@@ -30,6 +30,7 @@ import { running } from "../kernel/version.ts";
 import { compareVersions, readTags, recordFor } from "../release/shipped.ts";
 import { checkoutRelease, preflightRelease } from "../release/checkout.ts";
 import { handover } from "../release/swap.ts";
+import { snapshotsOf } from "../snapshot/service.ts";
 import { kubeDeployer } from "./deploy.ts";
 import { swapper } from "./swapper.ts";
 import type { KeeperPorts } from "./keeper.ts";
@@ -121,6 +122,7 @@ export function keeperPorts(app: App, input: { forgeUrl: string; deployment: str
       return sha.ok && OID.test(sha.value) ? { version: top.version, sha: sha.value } : undefined;
     },
     gating: gatesInFlight,
+    snapshotting: () => snapshotsOf(app)?.takingMs(),
     deployer,
     async tag(version, sha) {
       if (!VERSION.test(version) || !OID.test(sha)) return "not a version and a commit";

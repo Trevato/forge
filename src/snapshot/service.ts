@@ -65,6 +65,8 @@ export interface SnapshotsHandle {
   readonly now: () => Promise<Manifest>;
   /** How far the snapshot being taken is; undefined when none is. */
   readonly progress: () => Progress | undefined;
+  /** How long the snapshot being taken has run, ms; undefined when none is. The release keeper waits on it (#9653). */
+  readonly takingMs: () => number | undefined;
   /** The newest first, from the store. */
   readonly list: () => Promise<Manifest[]>;
   /** The last one taken by this process, and what it said. */
@@ -166,6 +168,7 @@ export function startSnapshots(
   let inFlight: Promise<Manifest> | undefined;
   let active = 0;
   let running: Progress | undefined;
+  let startedAt: number | undefined;
   let last: { manifest?: Manifest; error?: string; at?: string } = {};
 
   const take = (resume?: Date): Promise<Manifest> => {
@@ -180,6 +183,7 @@ export function startSnapshots(
       if (store === undefined) throw new Nowhere();
       offBox = isOffBox(store);
       running = { objects: 0, bytes: 0, elapsedMs: 0 };
+      startedAt = Date.now();
       // Admin-only, no repository, nothing /backups does not already show.
       app.bus.append({ kind: "backup.started" });
       let toldAt = Date.now();
@@ -202,6 +206,7 @@ export function startSnapshots(
         resume,
       ).finally(() => {
         running = undefined;
+        startedAt = undefined;
       });
       await pruneSnapshots(store, KEEP);
       return manifest;
@@ -470,6 +475,7 @@ export function startSnapshots(
     },
     last: () => last,
     progress: () => running,
+    takingMs: () => (startedAt === undefined ? undefined : Date.now() - startedAt),
     get mirror() {
       return currentMirror();
     },

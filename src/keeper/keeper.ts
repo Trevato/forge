@@ -53,6 +53,8 @@ export interface KeeperPorts {
   readonly newest: () => Promise<{ version: string; sha: string } | undefined>;
   /** Merge-queue gates running now. */
   readonly gating: () => number;
+  /** How long the snapshot being taken has run, ms; undefined when none is (#9653). */
+  readonly snapshotting?: () => number | undefined;
   readonly deployer: Deployer;
   /** Make the annotated tag `v<version>` on `sha` and send it where the release workflow starts; why not. */
   readonly tag: (version: string, sha: string) => Promise<string | undefined>;
@@ -199,6 +201,7 @@ export async function tick(p: KeeperPorts): Promise<string> {
     settled: newest !== undefined && rolledBack(p.db, newest.version),
     inFlight: false,
     gating: p.gating(),
+    snapshotMs: p.snapshotting?.(),
     lastCutAt: last === undefined ? undefined : Date.parse(last.cutAt),
     hold: blocking(standingHolds(p.db)),
     now: p.now(),
