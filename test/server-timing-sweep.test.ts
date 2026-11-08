@@ -29,6 +29,7 @@ const NOT_PAGES = new Set([
   "/system/stream",
   "/settings/teams/stream",
   "/fleet/graph/live",
+  "/settings/traffic/scrapes/export",
   "/settings/backups/live",
   "/:owner/:name/stream",
 ]);

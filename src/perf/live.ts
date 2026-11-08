@@ -3,6 +3,8 @@
 import { createBootStall } from "./boot_stall.ts";
 import { createGitRecord } from "./git.ts";
 import { createLoopWatch } from "./loop.ts";
+import { createCaptureStore } from "./capture.ts";
+import { createReadLedger } from "./reads.ts";
 import { createPerfRecord } from "./record.ts";
 
 export const perfRecord = createPerfRecord();
@@ -10,3 +12,6 @@ export const loopWatch = createLoopWatch();
 export const gitRecord = createGitRecord();
 /** The worst stall in this process's first five minutes, read by the release keeper (#8848). */
 export const bootStall = createBootStall();
+/** What was read from repositories (`reads.ts`), and the one bounded capture an admin may run (`capture.ts`). */
+export const readLedger = createReadLedger();
+export const captureStore = createCaptureStore();

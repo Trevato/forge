@@ -165,6 +165,8 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "issue.confirmed",
   "capacity.changed",
   "shield.changed",
+  "traffic.capture_started",
+  "traffic.networks_imported",
   "crew.governed",
 ]);
 

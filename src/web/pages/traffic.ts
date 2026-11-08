@@ -171,6 +171,9 @@ export function trafficPage(ctx: Ctx): Response {
           ${top("Address prefix", tops.prefixes, t)}
           ${top("Country", tops.countries, t)}
           ${top("Request signature", tops.signatures, t)}
+          <p class="mt">
+            <a href="/settings/traffic/scrapes">What was scraped, and who: reads, networks, captures</a>
+          </p>
           <p class="small muted mt">
             ${chosen === "15m"
               ? KPI_COUNTS.traffic

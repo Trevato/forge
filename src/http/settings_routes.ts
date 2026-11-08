@@ -20,6 +20,7 @@ import { usagePage } from "../web/pages/usage.ts";
 import { spendPage } from "../web/pages/spend-tab.ts";
 import { securityPage, securityShieldSet } from "../web/pages/security.ts";
 import { trafficPage } from "../web/pages/traffic.ts";
+import { captureStart, captureStop, networksImport, scrapesExport, scrapesPage } from "../web/pages/scrapes.ts";
 import {
   accountAct,
   retireAct,
@@ -189,6 +190,11 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
   router.add("GET", "/settings/spend", spendPage);
   router.add("GET", "/settings/traffic", trafficPage);
+  router.add("GET", "/settings/traffic/scrapes", scrapesPage);
+  router.add("GET", "/settings/traffic/scrapes/export", scrapesExport);
+  router.add("POST", "/settings/traffic/scrapes/capture", captureStart);
+  router.add("POST", "/settings/traffic/scrapes/stop", captureStop);
+  router.add("POST", "/settings/traffic/scrapes/networks", networksImport);
   router.add("GET", "/settings/security", securityPage);
   router.add("POST", "/settings/security/shield", securityShieldSet);
   router.add("GET", "/settings/backups", backupsPage);

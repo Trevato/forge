@@ -61,6 +61,7 @@ export function resolveClient(
 
 const clients = new WeakMap<Request, string>();
 const internals = new WeakSet<Request>();
+const edged = new WeakSet<Request>();
 
 /** Headers a proxy names a client in. The tunnel always sets its own, so no stranger can leave them all out. */
 const CLIENT_HEADERS = ["cf-connecting-ip", "x-forwarded-for", "x-real-ip", "forwarded"];
@@ -85,7 +86,12 @@ export const notePeer = (
 ): void => {
   clients.set(request, resolveClient(address, request.headers, trust));
   if (isInternalPeer(address, request.headers, trust)) internals.add(request);
+  else if (address !== undefined && (trust.proxies.length > 0 ? inCidrs(address, trust.proxies) : LOOPBACK.has(address)))
+    edged.add(request);
 };
+
+/** The request came through a proxy the operator trusts, so the headers an edge adds (bot score, country) are its, not the client's. */
+export const wasViaEdge = (request: Request): boolean => edged.has(request);
 
 export const wasInternal = (request: Request): boolean => internals.has(request);
 

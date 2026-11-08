@@ -458,14 +458,15 @@ import {
   takeDbTime,
   type RouteTiming,
 } from "../core/route_timing.ts";
-import { loopWatch, perfRecord } from "../perf/live.ts";
-import { countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
+import { captureStore, loopWatch, perfRecord, readLedger } from "../perf/live.ts";
+import { classOf, countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
 import { createTrafficWriter } from "../perf/traffic_store.ts";
+import { createReadWriter, readOf } from "../perf/reads.ts";
 import { parseServerTiming } from "../perf/record.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
-import { carryPeer, clientAddress, notePeer, wasInternal, type ProxyTrust } from "./peer.ts";
+import { carryPeer, clientAddress, notePeer, wasInternal, wasViaEdge, type ProxyTrust } from "./peer.ts";
 import { isProbe } from "../kernel/probe.ts";
 import { takeStrangerRead } from "./stranger_reads.ts";
 import { parseCidrs } from "../kernel/cidr.ts";
@@ -2229,6 +2230,7 @@ export async function serve(app: App): Promise<Servers> {
   const timings = new Map<Database, RouteTiming>();
   // The minute ledger's history: one write a minute, never on a request.
   const trafficWriter = createTrafficWriter(app.db, perfRecord.ledger, app.log);
+  const readWriter = createReadWriter(app.db, readLedger, app.log);
   const counted = (
     owner: App,
     request: Request,
@@ -2255,6 +2257,16 @@ export async function serve(app: App): Promise<Servers> {
         },
       );
       loopWatch.finished(tag.pattern, started, end);
+      // Evidence of what was read, and the running capture, if any (never a signed-in person's).
+      const signedIn = tag.role !== "anon" && tag.role !== "crawler";
+      const cls = classOf({ signedIn, crawler: wasCrawler(request), deepStranger: wasDeepStranger(request), internal: wasInternal(request) });
+      if (cls !== "internal" && response.status < 400) {
+        const read = readOf(tag.pattern, new URL(request.url).pathname);
+        if (read !== null) readLedger.note(Date.now(), read, !signedIn);
+      }
+      const at = Date.now();
+      if (captureStore.active(at))
+        captureStore.note(at, { request, address: clientAddress(request), viaEdge: wasViaEdge(request), status: response.status, ms, cls, pattern: tag.pattern });
     } catch {
       // A response the forge is only carrying keeps the headers it came with.
     }
@@ -2492,6 +2504,7 @@ export async function serve(app: App): Promise<Servers> {
       }
       timings.clear();
       trafficWriter.stop();
+      readWriter.stop();
       // A child's hooks stop answering before its database closes.
       for (const key of [...new Set([...childHttps.keys(), ...childInternals.keys()])]) letGo(key);
       closeHostedChildren(app);
