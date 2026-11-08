@@ -31,7 +31,7 @@ import {
   signInAct,
 } from "../web/pages/accounts.ts";
 import { confirmsList, confirmYes } from "../web/pages/confirms.ts";
-import { featurePage, featureSave, featuresPage, featureSwitch } from "../web/pages/features.ts";
+import { featureAccept, featurePage, featureSave, featuresPage, featureSwitch } from "../web/pages/features.ts";
 import { passkeyAdd, passkeyDelete, passkeyOptions, passkeysPage } from "../web/pages/passkeys.ts";
 import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
 import {
@@ -187,6 +187,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/features/:slug", featureSave);
   router.add("POST", "/settings/features/:slug/absorb", featureSwitch(true));
   router.add("POST", "/settings/features/:slug/unabsorb", featureSwitch(false));
+  router.add("POST", "/settings/features/:slug/accept", featureAccept);
   router.add("POST", "/settings/flags", flagsSet);
   router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
   router.add("GET", "/settings/spend", spendPage);

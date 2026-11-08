@@ -141,6 +141,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["origins", "Connected origins", "the hosts your mirrors come from"],
     ["domains", "Failure domains", "failure domains and their last drill"],
     ["feed", "Feed", "what happened, ranked; r replies on a post about an issue or pull, l likes"],
+    ["feature-review", "Menu entries to review", "absorbed apps whose declared name or page changed: accept them"],
     ["front", "Front page", "the apps a first visitor sees, ranked; an admin pins or hides"],
     ["owner", "Owner's needs", "what needs the owner, snapshots, failure domains"],
     ["forges", "Forges you sent", "each forge sent, claimed or not, and its apps"],

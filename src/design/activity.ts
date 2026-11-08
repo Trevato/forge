@@ -64,6 +64,10 @@ export function eventVerb(event: ForgeEvent): string {
     const name = payload["name"];
     return `absorbed ${typeof name === "string" ? name : "the app"} as a forge feature`;
   }
+  if (kind === "app.feature_declared") {
+    const name = payload["name"];
+    return `accepted the feature's declared name ${typeof name === "string" ? name : "and page"}`;
+  }
   if (kind === "app.unabsorbed") return "put the app back as an ordinary app";
   if (kind === "app.feature_settings") {
     const keys = payload["keys"];

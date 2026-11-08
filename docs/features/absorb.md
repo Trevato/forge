@@ -83,3 +83,17 @@ Absorb was built by Ben (benjivers). The review of #9441 found:
 - **Speed:** the Features list reads git for every app on every request (#9543).
 
 This section is ready for the owner to share with Ben.
+
+## The menu entry is the admin's, not the deploy's
+
+The name and page in the menu are the ones the admin saw when absorbing. If the production
+`forge.json` later declares others, the menu keeps serving the absorbed ones and Settings ›
+Features shows "declaration changed: review" with the new values; an admin accepts them
+(`POST /settings/features/:slug/accept` with the reviewed `name` and `page`; refused with a re-review flash when the app declares something else by now; event `app.feature_declared`). Feature entries sit under
+their own "Features from apps" heading, and a name equal to a built-in menu label is refused.
+
+### Accepting in the terminal
+
+Open the palette and choose "Menu entries to review" (site admins who are people only). It lists the
+absorbed apps whose declaration changed; `j`/`k` move, `a` accepts the selected row. The accept posts the
+name and page the screen showed, so one that changed since is refused ("review it again"), as on the page.

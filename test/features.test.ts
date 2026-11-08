@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { statements } from "./helpers/statements.ts";
 import { expectWork } from "./helpers/work.ts";
 import { createApp, type App } from "../src/app.ts";
-import { absorbApp, absorbedForNav, declaredFeature, changeFeatureSettings, getFeature, unabsorbApp } from "../src/actions/features.ts";
+import { absorbApp, acceptDeclaration, absorbedForNav, declaredFeature, changeFeatureSettings, getFeature, unabsorbApp } from "../src/actions/features.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName } from "../src/apps/feature.ts";
 import { featureVarsAt } from "../src/apps/feature_env.ts";
@@ -264,6 +264,99 @@ describe("absorbing an app", () => {
     expect(home).toMatch(/href="\/cy\/radar"[^>]*>[\s\S]{0,400}Radar/);
     const strangers = await (await web(await signIn("bob"), "/settings")).text();
     expect(strangers).not.toContain("Radar");
+  });
+
+  test("a production push that renames the feature leaves the menu unchanged until an admin accepts", async () => {
+    const renamed = JSON.stringify({ app: { run: "x" }, feature: { ...FEATURE, name: "Radar Pro", page: "/pro" } });
+    featureVarsAt(app.db, appId, renamed);
+    expect(absorbedForNav(app, ada).map((f) => [f.name, f.page])).toEqual([["Radar", "/"]]);
+    const c = await commitToBranch(app, cy, repo, { message: "rename", files: [{ path: "forge.json", content: renamed }] });
+    if (!c.ok) throw new Error(JSON.stringify(c.error));
+    const view = await getFeature(app, ada, "radar");
+    expect(view.ok && view.value.pending).toEqual({ name: "Radar Pro", page: "/pro" });
+    expect(view.ok && view.value.name).toBe("Radar");
+    const list = await (await web(adaCookie, "/settings/features")).text();
+    expect(list).toContain("declaration changed: review");
+    // The owner is not a site admin; only an admin accepts.
+    const refused = await acceptDeclaration(app, cy, "radar", { name: "Radar Pro", page: "/pro" });
+    expect(!refused.ok && refused.error).toBe("forbidden");
+    expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar");
+    expect((await web(adaCookie, "/settings/features/radar/accept", new URLSearchParams({ name: "Radar Pro", page: "/pro" }))).status).toBe(303);
+    expect(absorbedForNav(app, ada).map((f) => [f.name, f.page])).toEqual([["Radar Pro", "/pro"]]);
+    expect(listEvents(app.db, { repoId: repo.id }).filter((e) => e.kind === "app.feature_declared")).toHaveLength(1);
+    // Back to the original, accepted the same way.
+    await commitToBranch(app, cy, repo, { message: "back", files: [{ path: "forge.json", content: FORGE_JSON }] });
+    await acceptDeclaration(app, ada, "radar", { name: "Radar", page: "/" });
+    expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar");
+  });
+
+  test("accepting what the admin reviewed is refused when production declared something else since", async () => {
+    const declare = (name: string) =>
+      commitToBranch(app, cy, repo, { message: name, files: [{ path: "forge.json", content: JSON.stringify({ app: { run: "x" }, feature: { ...FEATURE, name } }) }] });
+    await declare("Reviewed");
+    await declare("Sneaky");
+    const stale = await acceptDeclaration(app, ada, "radar", { name: "Reviewed", page: FEATURE.page });
+    expect(!stale.ok && stale.error).toBe("declaration_changed");
+    expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar");
+    const res = await web(adaCookie, "/settings/features/radar/accept", new URLSearchParams({ name: "Reviewed", page: FEATURE.page }));
+    expect(res.status).toBe(303);
+    expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar");
+    const fresh = await acceptDeclaration(app, ada, "radar", { name: "Sneaky", page: FEATURE.page });
+    expect(fresh.ok).toBe(true);
+    await commitToBranch(app, cy, repo, { message: "back", files: [{ path: "forge.json", content: FORGE_JSON }] });
+    await acceptDeclaration(app, ada, "radar", { name: "Radar", page: "/" });
+  });
+
+  test("the terminal accepts under the page's rules: admin only, and what the screen showed", async () => {
+    const { featuresScreen, entry } = await import("../src/tui/screens/features.ts");
+    const { Screen: Surface } = await import("../src/tui/term/screen.ts");
+    const { theme } = await import("../src/tui/ui/theme.ts");
+    const declare = (name: string) =>
+      commitToBranch(app, cy, repo, { message: name, files: [{ path: "forge.json", content: JSON.stringify({ app: { run: "x" }, feature: { ...FEATURE, name } }) }] });
+    await declare("Radar TUI");
+    const toasts: string[] = [];
+    const ctx = { theme: theme("dark"), invalidate() {}, push() {}, pop() {}, copy() {}, toast: (m: string) => toasts.push(m) } as never;
+    const open = async (user: typeof ada | typeof cy) => {
+      const screen = featuresScreen({ app, db: app.db, user } as never, ctx);
+      await screen.busy();
+      return screen;
+    };
+    expect(entry.offered({ app, db: app.db, user: cy } as never)).toBe(false);
+    expect(entry.offered({ app, db: app.db, user: ada } as never)).toBe(true);
+    const shown = new Surface(110, 20);
+    (await open(ada)).render({ x: 0, y: 0, w: 110, h: 20 }, shown);
+    expect(shown.toText()).toContain("Radar TUI");
+    const denied = await open(cy);
+    expect(denied.key!({ key: "a" } as never)).toBe(false);
+    expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar");
+    const screen = await open(ada);
+    // The app declares something else after the screen was read.
+    await declare("Radar Later");
+    expect(screen.key!({ key: "a" } as never)).toBe(true);
+    await screen.busy();
+    expect(toasts.at(-1)).toContain("review it again");
+    expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar");
+    const again = await open(ada);
+    expect(again.key!({ key: "a" } as never)).toBe(true);
+    await again.busy();
+    expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar Later");
+    await commitToBranch(app, cy, repo, { message: "back", files: [{ path: "forge.json", content: FORGE_JSON }] });
+    await acceptDeclaration(app, ada, "radar", { name: "Radar", page: "/" });
+  });
+
+  test("every label in the forge's own menus is one a feature may not take", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../src/web/layout.ts", import.meta.url), "utf8");
+    const labels = [...src.matchAll(/\blabel: "([^"]+)"/g)].map((m) => m[1]!);
+    expect(labels.length).toBeGreaterThan(15);
+    for (const l of labels) expect({ l, refused: !parseFeature({ feature: { name: l } }).ok }).toEqual({ l, refused: true });
+  });
+
+  test("the menu groups feature entries under their own heading, and a built-in label is refused", async () => {
+    const home = await (await web(adaCookie, "/settings")).text();
+    expect(home).toMatch(/menu-title">Features from apps<\/span>[\s\S]*Radar/);
+    for (const name of ["Sign out", "admin", "  SIGN-OUT ", "Ｓettings"]) expect(parseFeature({ feature: { name } }).ok).toBe(false);
+    expect(parseFeature({ feature: { name: "Settings" } }).ok).toBe(false);
   });
 
   test("a value that does not fit changes nothing, and names the setting", async () => {

@@ -28,6 +28,21 @@ export type SettingType = "bool" | "int" | "string" | "choice" | "days" | "list"
 
 export const SETTING_TYPES: readonly SettingType[] = ["bool", "int", "string", "choice", "days", "list"];
 
+/** The labels the forge's own menus use: a feature may not borrow one. */
+const BUILT_IN_MENU_LABELS = [
+  "your profile", "repositories", "apps", "notes", "talk", "explore", "packs", "displays", "map", "features",
+  "new app", "new repository", "new issue", "new organization", "migrate", "settings", "access tokens", "ssh keys",
+  "origins", "boards", "crew", "system memory", "help", "sign out", "log out", "sign in", "admin", "administration",
+  "theme", "create", "new forge", "create new", "appearance and help", "features from apps", "keyboard shortcuts",
+];
+
+const menuForm = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/** True when `name` reads as one of the forge's own menu labels. */
+export function isBuiltInMenuLabel(name: string): boolean {
+  return BUILT_IN_MENU_LABELS.includes(menuForm(name));
+}
+
 /** The days a `days` setting can name, in the order they are kept and shown. */
 export const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
@@ -79,6 +94,7 @@ export function parseFeature(forgeJson: Raw): Result<FeatureSpec | undefined, st
   const name = block["name"];
   if (typeof name !== "string" || name.trim() === "" || name.length > NAME_MAX)
     return bad(`name is text of 1 to ${NAME_MAX} characters`);
+  if (isBuiltInMenuLabel(name)) return bad("name is already a label in the forge's own menu");
   const summary = block["summary"];
   if (summary !== undefined && (typeof summary !== "string" || summary.length > SUMMARY_MAX))
     return bad(`summary is text of at most ${SUMMARY_MAX} characters`);

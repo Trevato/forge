@@ -1099,6 +1099,8 @@ export interface MenuItem {
   icon?: IconName;
   current?: boolean;
   separator?: boolean;
+  /** A non-interactive group label. */
+  heading?: boolean;
   /** Renders as a submit button inside its own POST form. */
   post?: string;
   /** Shown but not usable: the reason, in words, under the label. */
@@ -1139,6 +1141,7 @@ export function menu(o: {
         if (item instanceof Html) return item;
         const i = item;
         if (i.separator) return html`<hr class="menu-sep" />`;
+        if (i.heading) return html`<span class="menu-title">${i.label}</span>`;
         if (i.disabled !== undefined) {
           return html`<span class="menu-item" aria-disabled="true" title="${i.disabled}"
             >${i.icon ? icon(i.icon) : null}<span class="grow"

@@ -8,6 +8,7 @@
 
 import {
   absorbApp,
+  acceptDeclaration,
   changeFeatureSettings,
   getFeature,
   listFeatures,
@@ -47,13 +48,21 @@ function featureRow(f: FeatureView) {
   return row({
     lead: icon("rocket"),
     title: html`${f.name} <span class="muted small mono">${f.repo}</span>
-      ${f.absorbed ? badge("absorbed", { tone: "success" }) : null}`,
-    meta: f.problem !== null
+      ${f.absorbed ? badge("absorbed", { tone: "success" }) : null}
+      ${f.pending !== null ? badge("declaration changed: review", { tone: "attn" }) : null}`,
+    meta: f.pending !== null
+      ? html`Menu: <strong>${f.name}</strong> at <span class="mono">${f.page}</span> → app: <strong>${f.pending.name}</strong> at
+          <span class="mono">${f.pending.page}</span>`
+      : f.problem !== null
       ? html`<span class="danger">${f.problem}</span>`
       : html`${f.summary ?? ""}${when(f.summary !== null, () => html`<br />`)}${f.settings.length} setting${f.settings.length === 1 ? "" : "s"}${f.absorbed
           ? html` · absorbed by ${f.absorbedBy ?? "someone"}`
           : html` · not absorbed: the app runs as an ordinary app`}`,
-    trail: html`<form class="row-fields" method="post" action="${base}/${f.absorbed ? "unabsorb" : "absorb"}">
+    trail: html`${when(f.pending !== null, () => html`<form class="row-fields" method="post" action="${base}/accept">
+        <input type="hidden" name="name" value="${f.pending?.name ?? ""}" />
+        <input type="hidden" name="page" value="${f.pending?.page ?? ""}" />
+        ${btn("Accept", { size: "sm", label: `Accept ${f.pending?.name ?? ""} as ${f.name}'s menu entry` })}
+      </form>`)}<form class="row-fields" method="post" action="${base}/${f.absorbed ? "unabsorb" : "absorb"}">
       ${when(f.absorbed, () => btn("Settings", { size: "sm", href: base }))}
       ${btn(f.absorbed ? "Un-absorb" : "Absorb", {
         size: "sm",
@@ -234,4 +243,28 @@ export function featureSwitch(absorbing: boolean) {
           },
     );
   };
+}
+
+// POST /settings/features/:slug/accept
+export async function featureAccept(ctx: Ctx): Promise<Response> {
+  const no = requireAdmin(ctx);
+  if (no) return no;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const reviewed = { name: String(form.get("name") ?? ""), page: String(form.get("page") ?? "") };
+  const done = await acceptDeclaration(ctx.app, ctx.auth.user, ctx.params["slug"] ?? "", reviewed);
+  if (!done.ok && done.error === "not_found") return notFoundPage(ctx);
+  return flashTo(
+    ctx,
+    "/settings/features",
+    done.ok
+      ? { message: `${done.value.name} is now the menu's entry for this app.` }
+      : {
+          tone: "danger",
+          message:
+            done.error === "declaration_changed"
+              ? "The app declared something else since you looked. Review the new declaration and accept again."
+              : "That app is not absorbed, or no longer declares a feature.",
+        },
+  );
 }

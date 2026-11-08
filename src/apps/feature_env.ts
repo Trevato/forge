@@ -8,13 +8,12 @@
 
 import type { Database } from "bun:sqlite";
 import { featureEnv, parseFeature } from "./feature.ts";
-import { featureSettings, getAbsorbed, refreshAbsorbed } from "../core/features.ts";
+import { featureSettings, getAbsorbed } from "../core/features.ts";
 
 export function featureVarsAt(
   db: Database,
   appId: string,
   forgeJson: string | undefined,
-  o: { production?: boolean } = {},
 ): Record<string, string> {
   if (forgeJson === undefined || getAbsorbed(db, appId) === undefined) return {};
   let parsed: unknown;
@@ -26,9 +25,8 @@ export function featureVarsAt(
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
   const spec = parseFeature(parsed as Record<string, unknown>);
   if (!spec.ok || spec.value === undefined) return {};
-  // The menu names it as the code production runs names it; a preview's
-  // forge.json is a pull's, and does not speak for the forge's menu.
-  if (o.production === true) refreshAbsorbed(db, appId, spec.value.name, spec.value.page);
+  // The menu keeps the name and page the admin saw at absorb; a changed
+  // declaration waits for an admin to accept it (`acceptDeclaration`).
   return featureEnv(spec.value, featureSettings(db, appId));
 }
 

@@ -1695,7 +1695,7 @@ export class AppsRuntime {
     } catch {
       forgeJson = undefined;
     }
-    return featureVarsAt(this.app.db, appId, forgeJson, { production: env === "production" });
+    return featureVarsAt(this.app.db, appId, forgeJson);
   }
 
   /**

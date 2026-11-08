@@ -271,7 +271,7 @@ function newMenu(ctx: Ctx): Html {
  */
 function featureItems(ctx: Ctx, user: User): MenuItem[] {
   const runtime = appsRuntime(ctx.app);
-  return absorbedForNav(ctx.app, user).map((f) => {
+  const entries = absorbedForNav(ctx.app, user).map((f) => {
     // Without a runtime there is no host to open: the app's own page instead.
     const href =
       runtime === undefined
@@ -279,6 +279,10 @@ function featureItems(ctx: Ctx, user: User): MenuItem[] {
         : `/apps/open?host=${encodeURIComponent(new URL(runtime.urlFor(f.record, "production")).host)}&to=${encodeURIComponent(f.page)}`;
     return { label: f.name, href, icon: "rocket" as const };
   });
+  // Under a heading of their own, so an app's chosen name cannot pass for a forge item.
+  return entries.length === 0
+    ? []
+    : [{ separator: true, label: "" }, { label: "Features from apps", heading: true }, ...entries];
 }
 
 function userMenu(

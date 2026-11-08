@@ -25,12 +25,13 @@ import type { Router } from "../router.ts";
 const WORDS: Record<Exclude<FeatureError, "not_found" | "forbidden" | "invalid_setting">, string> = {
   not_a_feature: "The app's forge.json declares no feature, or declares it wrongly.",
   not_absorbed: "The app is not absorbed.",
+  declaration_changed: "The app declares something else than was reviewed.",
 };
 
 function refused(error: FeatureError, message?: string): Response {
   if (error === "not_found" || error === "forbidden") return respondAccess(error, 403);
   if (error === "invalid_setting") return json({ error, message: message ?? "A setting does not fit." }, 422);
-  return json({ error, message: WORDS[error] }, error === "not_absorbed" ? 409 : 422);
+  return json({ error, message: WORDS[error] }, error === "not_absorbed" || error === "declaration_changed" ? 409 : 422);
 }
 
 export function featureRoutes(router: Router<Handler>): void {

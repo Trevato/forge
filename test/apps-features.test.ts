@@ -175,14 +175,11 @@ describe("absorbing a running app", () => {
   }, 60_000);
 
   test("a preview's forge.json does not rename the forge's menu entry", () => {
-    featureVarsAt(forge.app.db, record.id, forgeJson("Not Radar"), {
-      production: false,
-    });
+    featureVarsAt(forge.app.db, record.id, forgeJson("Not Radar"));
     expect(getAbsorbed(forge.app.db, record.id)?.name).toBe("Radar");
-    featureVarsAt(forge.app.db, record.id, forgeJson("Radar 2"), {
-      production: true,
-    });
-    expect(getAbsorbed(forge.app.db, record.id)?.name).toBe("Radar 2");
+    featureVarsAt(forge.app.db, record.id, forgeJson("Radar 2"));
+    // A production push does not rename it either: an admin accepts.
+    expect(getAbsorbed(forge.app.db, record.id)?.name).toBe("Radar");
   });
 
   test("un-absorbed, it restarts told nothing again", async () => {

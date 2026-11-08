@@ -24,6 +24,7 @@ import { appsRuntime } from "../apps/runtime.ts";
 import { getAppById, getAppBySlug, listApps, type AppRecord } from "../core/apps.ts";
 import {
   absorb,
+  keepDeclaration,
   featureSettings,
   getAbsorbed,
   listAbsorbed,
@@ -46,7 +47,9 @@ export type FeatureError =
   /** The app is not absorbed: its settings are not the forge's to change. */
   | "not_absorbed"
   /** A value that does not fit its declaration; `message` names it. */
-  | "invalid_setting";
+  | "invalid_setting"
+  /** What the admin reviewed is not what the app declares now: review again. */
+  | "declaration_changed";
 
 export interface SettingView {
   readonly key: string;
@@ -69,6 +72,8 @@ export interface FeatureView {
   readonly name: string;
   readonly summary: string | null;
   readonly page: string;
+  /** The name and page the app declares now, when they differ from the absorbed ones: waits for an admin. */
+  readonly pending: { readonly name: string; readonly page: string } | null;
   readonly absorbed: boolean;
   readonly absorbedBy: string | null;
   readonly absorbedAt: string | null;
@@ -121,9 +126,13 @@ function viewOf(record: AppRecord, repo: Repo, app: App, spec: FeatureSpec | und
   return {
     slug: record.slug,
     repo: `${repo.ownerName}/${repo.name}`,
-    name: spec?.name ?? record.slug,
+    name: absorbed?.name ?? spec?.name ?? record.slug,
     summary: spec?.summary ?? null,
-    page: spec?.page ?? "/",
+    page: absorbed?.page ?? spec?.page ?? "/",
+    pending:
+      absorbed !== undefined && spec !== undefined && (spec.name !== absorbed.name || spec.page !== absorbed.page)
+        ? { name: spec.name, page: spec.page }
+        : null,
     absorbed: absorbed !== undefined,
     absorbedBy: absorbed?.absorbedBy ?? null,
     absorbedAt: absorbed?.absorbedAt ?? null,
@@ -223,6 +232,38 @@ export async function absorbApp(app: App, actor: User | undefined, slug: string)
   if (absorb(app.db, found.record.id, actor.id, declared.value.name, declared.value.page)) {
     app.bus.append({ kind: "app.absorbed", repoId: found.repo.id, actorId: actor.id, payload: { slug, name: declared.value.name } });
     await redeployAll(app, found.record, found.repo);
+  }
+  return ok(viewOf(found.record, found.repo, app, declared.value, null));
+}
+
+/**
+ * Accept the name and page the admin reviewed as the menu's. Refused with
+ * `declaration_changed` when the app declares something else by now, so an
+ * admin never accepts values they did not see. An admin's act, and an event.
+ */
+export async function acceptDeclaration(
+  app: App,
+  actor: User | undefined,
+  slug: string,
+  reviewed: { readonly name: string; readonly page: string },
+): Promise<Result<FeatureView, FeatureError>> {
+  const found = readable(app, actor, slug);
+  if (found === undefined) return err("not_found");
+  if (!siteAdmin(actor)) return err("forbidden");
+  const before = getAbsorbed(app.db, found.record.id);
+  if (before === undefined) return err("not_absorbed");
+  const declared = await declaredFeature(app, found.repo);
+  if (!declared.ok || declared.value === undefined) return err("not_a_feature");
+  const { name, page } = declared.value;
+  if (name !== reviewed.name || page !== reviewed.page) return err("declaration_changed");
+  if (name !== before.name || page !== before.page) {
+    keepDeclaration(app.db, found.record.id, name, page);
+    app.bus.append({
+      kind: "app.feature_declared",
+      repoId: found.repo.id,
+      actorId: actor.id,
+      payload: { slug, name, page, was: { name: before.name, page: before.page } },
+    });
   }
   return ok(viewOf(found.record, found.repo, app, declared.value, null));
 }

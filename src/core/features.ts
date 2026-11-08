@@ -36,8 +36,8 @@ export function absorb(db: Database, appId: string, by: string, name: string, pa
   );
 }
 
-/** The declaration's name and page as last read, for the nav. */
-export function refreshAbsorbed(db: Database, appId: string, name: string, page: string): void {
+/** Keep this name and page for the nav: an admin's act (accepting a changed declaration), never a deploy's. */
+export function keepDeclaration(db: Database, appId: string, name: string, page: string): void {
   db.query("UPDATE app_feature SET name = ?2, page = ?3 WHERE app_id = ?1").run(appId, name, page);
 }
 
