@@ -107,7 +107,7 @@ describe("passkeys", () => {
 
     let page = await (await fetch(`${base}/settings/passkeys`, { headers: { cookie } })).text();
     expect(page).toContain("Laptop");
-    expect(page).toContain("<strong>Phone</strong>");
+    expect(page).toContain(`aria-label="Remove Phone"`);
     expect(page).toContain(`<div class="field"><span class="muted small" id="passkey-add-note" data-fail="error" role="status"></span></div>`);
     expect(page).not.toContain("error-note");
 
@@ -115,8 +115,8 @@ describe("passkeys", () => {
     const removed = await fetch(`${base}/settings/passkeys/${id}/delete`, { method: "POST", headers: { cookie }, redirect: "manual" });
     expect(removed.status).toBe(303);
     page = await (await fetch(`${base}/settings/passkeys`, { headers: { cookie } })).text();
-    expect(page).not.toContain("<strong>Laptop</strong>");
-    expect(page).toContain("<strong>Phone</strong>");
+    expect(page).not.toContain(`aria-label="Remove Laptop"`);
+    expect(page).toContain(`aria-label="Remove Phone"`);
 
     const refused = await signIn(one.d);
     expect(refused.status).toBe(401);
