@@ -38,6 +38,16 @@ arguments in a `messageText()` block, with the Yes form beside the row (`after`)
 
 Each seat row (`row`) holds one child row: its title says how much the seat may do at once ("2 builds at once", "Paused"), its meta says what it is doing and spending, and its trail holds a one-line form: a number `input input-sm` (the same small control as the Crew card's role select, in a `row-fields` form) and a small Set button. No new class. At phone width the row wraps as every row does; the form stays on one line because it is a number and a button.
 
+## People fits a 390 px phone (#9374)
+
+`/settings/people` is one table of four columns: account, role, allowance and the role form. On a phone it does not
+fit beside the settings nav, so the table sits in the existing `.table-scroll` box and scrolls inside it, never the
+page. The box carries the attribute `data-people` (not a class), which wraps long words anywhere
+(`overflow-wrap: anywhere`, the rule shared with `data-milestone` in `src/web/style/content.ts`), so an unbroken
+username shrinks its column instead of widening the table. The role form is a `.row-fields`, which already wraps its
+input over its button. Pinned by `test/people-fit.test.ts`, with a 250-character username written straight to the
+table, longer than the 100 a new account may take.
+
 ## The settings shell
 
 `settingsLayout()` in `src/web/chrome.ts` draws §5's settings shell. A section may name a group (`accountSections()` in

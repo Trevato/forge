@@ -3,6 +3,8 @@
  * An admin promotes a guest to member (with a starter model allowance, none
  * by default) or demotes a member, in one same-origin form post. The guards
  * refuse what `CAN` withholds; the card says so in `roleLimits` (`docs/ROLES.md`).
+ * On a phone the table scrolls inside its own `data-people` box and a long
+ * username wraps anywhere, so the page never scrolls sideways (#9374).
  */
 
 import { setRole } from "../../actions/roles.ts";
@@ -58,10 +60,12 @@ export function peoplePage(ctx: Ctx): Response {
         card(
           rows.length === 0
             ? empty({ icon: "users", title: "Nobody has joined yet." })
-            : html`<table class="table" id="people">
-                <thead><tr><th>Account</th><th>Role</th><th>Allowance</th><th></th></tr></thead>
-                <tbody>${rows.map(line)}</tbody>
-              </table>`,
+            : html`<div class="table-scroll" data-people>
+                <table class="table" id="people">
+                  <thead><tr><th>Account</th><th>Role</th><th>Allowance</th><th></th></tr></thead>
+                  <tbody>${rows.map(line)}</tbody>
+                </table>
+              </div>`,
           {
             head: html`<h2>Guests, members and admins</h2>
               <p class="muted">A member may be given a starter model allowance (up to
