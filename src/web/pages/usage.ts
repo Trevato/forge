@@ -14,11 +14,12 @@ import type { Ctx } from "../../http/context.ts";
 import { signInFirst } from "../chrome.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, empty, icon } from "../ui.ts";
+import { btn, empty } from "../ui.ts";
 import { usageShell } from "./usage-tabs.ts";
 
+/** Only the keys that were used: "user 5 · agent 2", or nothing. */
 const part = (counts: Readonly<Record<string, number>>, keys: readonly string[]) =>
-  keys.map((k) => `${k} ${counts[k] ?? 0}`).join(" · ");
+  keys.filter((k) => (counts[k] ?? 0) > 0).map((k) => `${k} ${counts[k]}`).join(" · ");
 
 // GET /settings/usage
 export function usagePage(ctx: Ctx, patterns: () => readonly string[]): Response {
@@ -44,22 +45,18 @@ export function usagePage(ctx: Ctx, patterns: () => readonly string[]): Response
   const rows = timePhase(ctx.request, "usage", () => routeUsage(ctx.app.db, known, new Date()));
   const rendering = performance.now();
   const unused = rows.filter((r) => r.total === 0).length;
-  const body = card(
-    html`<p class="muted small card-body">${String(unused)} of ${String(rows.length)} routes had no request in
-        ${String(WINDOW_DAYS)} days; they are listed first. Counted by <code>usage_count</code>; one pattern
-        covers every method.</p>
-      <table class="table" aria-label="Route usage">
-        <thead><tr><th scope="col">Pattern</th><th scope="col" class="num">${String(WINDOW_DAYS)} days</th>
-          <th scope="col">By role</th><th scope="col">By surface</th><th scope="col">Last use (UTC)</th></tr></thead>
-        <tbody>${rows.map(
-          (r) => html`<tr data-unused="${r.total === 0 ? "1" : "0"}">
-            <td class="mono">${r.pattern}</td><td class="num mono">${String(r.total)}</td>
-            <td class="mono small">${part(r.roles, ROLES)}</td><td class="mono small">${part(r.surfaces, SURFACES)}</td>
-            <td class="mono">${r.last === null ? "never" : r.last.replace("T", " ") + ":00"}</td></tr>`,
-        )}</tbody>
-      </table>`,
-    { head: html`${icon("activity")}<h2>Routes</h2>`, pad: false },
-  );
+  const body = html`<p class="muted small">${String(unused)} of ${String(rows.length)} routes had no request in
+      ${String(WINDOW_DAYS)} days; they come first.</p>
+    <div class="table-scroll"><table class="table" aria-label="Route usage">
+      <thead><tr><th scope="col">Pattern</th><th scope="col" class="num">${String(WINDOW_DAYS)} days</th>
+        <th scope="col">By role</th><th scope="col">By surface</th><th scope="col">Last use (UTC)</th></tr></thead>
+      <tbody>${rows.map(
+        (r) => html`<tr data-unused="${r.total === 0 ? "1" : "0"}">
+          <td class="mono">${r.pattern}</td><td class="num mono">${String(r.total)}</td>
+          <td class="small muted">${part(r.roles, ROLES)}</td><td class="small muted">${part(r.surfaces, SURFACES)}</td>
+          <td class="mono">${r.last === null ? "never" : r.last.replace("T", " ") + ":00"}</td></tr>`,
+      )}</tbody>
+    </table></div>`;
   const res = usageShell(ctx, "routes", body);
   notePhase(ctx.request, "render", performance.now() - rendering);
   return res;

@@ -50,18 +50,11 @@ import {
   btn,
   type Tone,
   card,
-  empty,
   field,
   row,
   selectField,
   userLink,
 } from "../ui.ts";
-
-const ROLE_WORD: Record<CrewRole, string> = {
-  builder: "builds",
-  reviewer: "reviews",
-  planner: "plans",
-};
 
 /**
  * The sentence and the ceiling the New app page asked for, editable again:
@@ -155,7 +148,9 @@ function teamCard(
   everyone: readonly Agent[],
 ): Html {
   const team = seatsOf(ctx.app.db, repo, crewOffInPreview());
-  const held = new Map(listCrewRoles(ctx.app.db, repo.id).map((c) => [c.agent.user.username, c.role]));
+  const crew = listCrewRoles(ctx.app.db, repo.id);
+  const held = new Map(crew.map((c) => [c.agent.user.username, c.role]));
+  const byName = new Map(crew.map((c) => [c.agent.user.username, c.agent]));
   const seatSlots = new Map(seatSlotsOf(ctx.app.db, repo).map((p) => [p.role, p]));
   const rows = team.seats.map((p) => {
     const slots = seatSlots.get(p.role)!;
@@ -185,10 +180,13 @@ function teamCard(
             min="0" max="${String(slots.max)}" value="${String(slots.slots)}" />
           ${btn("Set", { size: "sm" })}
         </form>`;
-    const members = p.by.map((u) =>
-      row({
+    const members = p.by.map((u) => {
+      const agent = byName.get(u);
+      const said = [agent?.model ?? "", agent?.brief ?? ""].filter((w) => w !== "").join(" · ");
+      return row({
         lead: icon("bot"),
-        title: userLink(u),
+        title: agent ? userLink(u, { mark: markOf(agent.user) }) : userLink(u),
+        ...(said === "" ? {} : { meta: html`<span title="${said}">${said}</span>` }),
         ...(admin
           ? {
               trail: html`<form class="row-actions" method="post" action="${base}/settings/crew/${encodeURIComponent(u)}/remove">
@@ -197,8 +195,8 @@ function teamCard(
             }
           : {}),
         data: { member: u, seat: p.role },
-      }),
-    );
+      });
+    });
     return row({
       lead: icon(SEAT_LEAD[p.state]),
       title: SEAT_TITLE[p.role],
@@ -217,14 +215,16 @@ function teamCard(
     });
   });
   const intro = crewOffInPreview()
-    ? "The crew is off in a preview, so nobody here is working."
+    ? "The crew is off in a preview."
     : team.auto
-      ? `Auto mode is on (${team.mode}): your team works on its own — a planner decides what is next, a builder builds it, a reviewer checks it.`
-      : "Auto mode is off: your team works only when you ask. Pick who fills each list, then turn auto mode on under On its own. The number beside a list is how many may work at once; 0 pauses it.";
+      ? `Auto mode is on (${team.mode}): the team works on its own.`
+      : "Auto mode is off: the team works when asked. Turn it on under On its own. A list's number is how many work at once; 0 pauses it.";
+  const nobody = crew.length > 0 ? null : nobodyLine(everyone.length > 0, ctx.auth.user?.isAdmin === true);
   return card(
     html`<p class="small" id="auto-mode" data-auto="${team.auto ? "on" : "off"}">
         ${intro}
       </p>
+      ${nobody}
       <ul class="list setting-list">
         ${rows}
       </ul>`,
@@ -236,69 +236,26 @@ function teamCard(
   );
 }
 
+/**
+ * What an empty crew is told, in one line: pick from a list above, or — when
+ * no agent exists on the forge — where one is made (a forge admin) or who
+ * can make one (anyone else).
+ */
+function nobodyLine(agentsExist: boolean, forgeAdmin: boolean): Html {
+  return html`<p class="small" id="crew-nobody">
+    <strong>Nobody yet.</strong>
+    ${agentsExist
+      ? "Pick an agent in a list below."
+      : forgeAdmin
+        ? html`No agents exist on this forge yet. <a href="/settings/crew">Add an agent</a>.`
+        : "No agents exist on this forge yet. An admin can add one."}
+  </p>`;
+}
+
+/** The team, what the crew still needs, and — for a forge admin — whose subscription it spends. */
 function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
-  const db = ctx.app.db;
-  const crew = listCrewRoles(db, repo.id);
-  const onCrew = new Set(crew.map((c) => c.agent.user.id));
   const allListed = listAllAgents(ctx.app, ctx.auth.user);
-  const available = (allListed.ok ? allListed.value : []).filter(
-    (agent) => !onCrew.has(agent.user.id),
-  );
-
   const forgeAdmin = ctx.auth.user?.isAdmin === true;
-  const rows =
-    crew.length === 0
-      ? empty(
-          available.length > 0
-            ? {
-                icon: "bot",
-                title: "Nobody yet",
-                note: "Add an agent below and tell it what you want.",
-              }
-            : forgeAdmin
-              ? {
-                  icon: "bot",
-                  title: "Nobody yet",
-                  note: "No agents exist on this forge yet.",
-                  action: btn("Add an agent", {
-                    href: "/settings/crew",
-                    variant: "primary",
-                    icon: "plus",
-                  }),
-                }
-              : {
-                  icon: "bot",
-                  title: "Nobody yet",
-                  note: "No agents exist on this forge yet. An admin can add one.",
-                },
-        )
-      : html`<ul class="list setting-list">${crew.map((c) =>
-            row({
-              lead: icon("bot"),
-              title: html`${userLink(c.agent.user.username, {
-                mark: markOf(c.agent.user),
-              })}`,
-              meta: html`<span title="${c.agent.brief}"
-                >${ROLE_WORD[c.role]}${c.agent.model === ""
-                  ? ""
-                  : ` · ${c.agent.model}`}${c.agent.brief === ""
-                  ? ""
-                  : ` · ${c.agent.brief}`}</span
-              >`,
-              ...(admin
-                ? {
-                    trail: html`<form
-                      class="row-actions"
-                      method="post"
-                      action="${base}/settings/crew/${encodeURIComponent(c.agent.user.username)}/remove"
-                    >
-                      ${btn("Remove", { size: "sm", icon: "x" })}
-                    </form>`,
-                  }
-                : {}),
-            }),
-          )}</ul>`;
-
   // Whose money the crew spends here is the forge admin's to say.
   const grants =
     admin && forgeAdmin
@@ -315,11 +272,6 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
   return html`<div id="crew" data-crew-settings>
     ${teamCard(ctx, repo, base, admin, allListed.ok ? allListed.value : [])}
     ${admin ? crewReadiness(ctx) : null}
-    ${card(html`${rows}`, {
-      head: html`${icon("bot")}
-        <h2>Crew</h2>`,
-      pad: false,
-    })}
     ${grants}
   </div>`;
 }

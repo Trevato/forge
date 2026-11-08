@@ -32,7 +32,7 @@ export async function crewSubscriptionsSave(ctx: Ctx): Promise<Response> {
   const crew = listCrew(ctx.app, ctx.auth.user, repo);
   saveGrants(ctx, form, repo.id, crew.ok ? crew.value : []);
   return flashTo(ctx, `${repoBase(repo)}/settings#crew`, {
-    message: "Saved. The next run here works on what is ticked.",
+    message: "Saved.",
   });
 }
 
@@ -52,15 +52,15 @@ export async function crewAdd(ctx: Ctx): Promise<Response> {
     `${repoBase(repo)}/settings#crew`,
     added.ok
       ? {
-          message: `${added.value.user.username} is on the crew. Assign it an issue and it starts.`,
+          message: `${added.value.user.username} is on the crew.`,
         }
       : {
           tone: "danger",
           message:
             added.error === "role_not_declared"
-              ? "That agent does not do that job. Change its roles first, under Settings → Crew."
+              ? "That agent does not do that job."
               : added.error === "not_an_agent"
-              ? "Only an agent can be on a crew; a person is given access through an organization's team."
+              ? "Only an agent can be on a crew."
               : "No such agent on this forge.",
         },
   );
@@ -111,7 +111,7 @@ export async function pillarUpdate(ctx: Ctx): Promise<Response> {
   if (checked === undefined)
     return flashTo(ctx, `${base}/settings#team`, {
       tone: "danger",
-      message: "A pillar may do a whole number at once, from 0 (paused) to 8; the planner 0 or 1.",
+      message: "Use a whole number from 0 (paused) to 8; the planner 0 or 1.",
     });
   const done = await setSeatSlots(ctx.app, ctx.auth.user, repo, checked.role, checked.slots);
   return flashTo(

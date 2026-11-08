@@ -468,7 +468,12 @@ describe("a stranger sees the app, not the owner's books", () => {
     const after = await (
       await get("/alice/beacon/settings", ownerCookie)
     ).text();
-    expect(after).toContain("reviews");
+    // Keeper declares only "builder", so the repository cannot widen it to
+    // reviewer: it is drawn once, under the seat it holds — the team lists
+    // are the crew, there is no second Crew card listing it again.
+    const keeperRows = after.match(/<li[^>]*data-member="keeper"[^>]*>/g) ?? [];
+    expect(keeperRows).toEqual(['<li data-member="keeper" data-seat="builder">']);
+    expect(after).not.toContain("<h2>Crew</h2>");
   });
 
   test("?mode=dev on the settings route is the same one page; dev's Crew and Autonomy addresses land on its cards", async () => {

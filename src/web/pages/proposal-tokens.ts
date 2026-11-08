@@ -12,7 +12,7 @@ import { loadRepo, repoBase, repoNotFound, NOT_YOURS_TO_DO, forbiddenPage } from
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, confirmAction, field as formField, icon, time } from "../ui.ts";
+import { btn, confirmAction, field as formField, time } from "../ui.ts";
 
 /** The section, or null for someone who cannot write here. */
 export function proposalTokensSection(ctx: Ctx, repo: Repo): Html | null {
@@ -20,46 +20,35 @@ export function proposalTokensSection(ctx: Ctx, repo: Repo): Html | null {
   const base = repoBase(repo);
   const listed = listProposals(ctx.app, ctx.auth.user, repo);
   const tokens = listed.ok ? listed.value : [];
-  return card(
-    html`<p class="muted">
-        A proposal token lets one named child forge read this repository's code (to fork it), push
-        <code>child/&lt;name&gt;/…</code> branches here and open pulls from
-        them — nothing else, and revoking it ends all of it. It lives 30 days.
-      </p>
-      ${tokens.length === 0
-        ? html`<p class="muted">No proposal tokens.</p>`
-        : html`<div class="table-scroll">
-            <table class="table">
-              <thead>
-                <tr><th>Child</th><th>Origin</th><th>Expires</th><th>Last used</th><th></th></tr>
-              </thead>
-              <tbody>
-                ${tokens.map(
-                  (t) =>
-                    html`<tr>
-                      <td><strong>${t.child}</strong></td>
-                      <td class="muted mono">${t.origin}</td>
-                      <td class="muted">${t.expiresAt ? time(t.expiresAt) : "never"}</td>
-                      <td class="muted">${t.lastUsedAt ? time(t.lastUsedAt) : "never"}</td>
-                      <td>
-                        ${confirmAction({
-                          action: `${base}/settings/proposal-tokens/${t.id}/delete`,
-                          verb: "Revoke",
-                          size: "sm",
-                        })}
-                      </td>
-                    </tr>`,
-                )}
-              </tbody>
-            </table>
-          </div>`}
-      <form method="post" action="${base}/settings/proposal-tokens">
-        ${formField({ label: "Child", name: "child", mono: true, required: true, hint: "Lowercase words and hyphens." })}
-        ${formField({ label: "Origin", name: "origin", mono: true, required: true, placeholder: "https://child.example.com/", hint: "Where the child lives." })}
-        <div class="form-actions">${btn("Mint token", { variant: "primary" })}</div>
-      </form>`,
-    { head: html`${icon("key")}<h2>Proposal tokens</h2>` },
-  );
+  return html`<section class="settings-block" id="proposal-tokens">
+    <h2>Proposal tokens</h2>
+    <p class="muted">Lets one child forge fork this code, push <code>child/&lt;name&gt;/…</code> branches and open pulls. Lasts 30 days.</p>
+    ${tokens.length === 0
+      ? null
+      : html`<dl class="status-rows">
+          ${tokens.map(
+            (t) => html`<div class="status-row">
+              <dt>${t.child}</dt>
+              <dd>
+                <span class="mono">${t.origin}</span>
+                <span class="muted">· expires ${t.expiresAt ? time(t.expiresAt) : "never"} · last used ${t.lastUsedAt ? time(t.lastUsedAt) : "never"}</span>
+              </dd>
+              <dd class="status-act">
+                ${confirmAction({
+                  action: `${base}/settings/proposal-tokens/${t.id}/delete`,
+                  verb: "Revoke",
+                  size: "sm",
+                })}
+              </dd>
+            </div>`,
+          )}
+        </dl>`}
+    <form method="post" action="${base}/settings/proposal-tokens" class="stack">
+      ${formField({ label: "Child", name: "child", mono: true, required: true, hint: "Lowercase words and hyphens." })}
+      ${formField({ label: "Origin", name: "origin", mono: true, required: true, placeholder: "https://child.example.com/" })}
+      <div class="form-actions">${btn("Mint token", { variant: "primary" })}</div>
+    </form>
+  </section>`;
 }
 
 /** The repository for a writer's POST, or the response that refuses it. */
