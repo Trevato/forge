@@ -13,8 +13,8 @@ import { html } from "../html.ts";
 import { page } from "../layout.ts";
 
 /** Waking (`why` undefined, 503) or refused (`why` a sentence, 429), as a page when the visitor asks for HTML. */
-export function wakingResponse(app: App, request: Request, name: string, why?: string): Response {
-  if (!(request.headers.get("accept") ?? "").includes("text/html")) return wakingText(name, why);
+export function wakingResponse(app: App, request: Request, name: string, why?: string, retryS = 5): Response {
+  if (!(request.headers.get("accept") ?? "").includes("text/html")) return wakingText(name, why, retryS);
   const url = new URL(request.url);
   const ctx: Ctx = { app, request, url, params: {}, auth: { user: undefined, scope: undefined, via: "none" }, theme: undefined };
   const response = page(
@@ -33,7 +33,7 @@ export function wakingResponse(app: App, request: Request, name: string, why?: s
     },
     why === undefined ? 503 : 429,
   );
-  response.headers.set("retry-after", "5");
+  response.headers.set("retry-after", String(retryS));
   response.headers.set("cache-control", "no-store");
   if (why === undefined) response.headers.set("refresh", "3");
   return response;

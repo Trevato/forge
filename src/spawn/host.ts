@@ -25,6 +25,7 @@ import {
 import { DEFAULT_SIZE, isSize, type Size } from "./sizes.ts";
 import { cellChildren, forward, forwardSocket, type CellChild } from "./cell.ts";
 import { cellsAvailable } from "../apps/contain.ts";
+import { limitValue } from "../settings/limits.ts";
 import { awakeRefusal, idleAfterMs, WakeRate } from "./sleep.ts";
 import { wakingResponse } from "../web/pages/waking.ts";
 import { takeDoor } from "../http/strangers.ts";
@@ -35,6 +36,7 @@ import { join } from "node:path";
 interface ChildLedger {
   readonly name: string;
   readonly bodyId: string;
+  readonly ownerId: string | undefined;
   readonly done: boolean;
   readonly placement: PlacementKind;
   readonly size: Size;
@@ -46,6 +48,7 @@ function readLedgerSync(app: App, name: string): ChildLedger | undefined {
     const parsed = JSON.parse(raw) as {
       name?: unknown;
       bodyId?: unknown;
+      ownerId?: unknown;
       done?: unknown;
       placement?: unknown;
       size?: unknown;
@@ -54,6 +57,7 @@ function readLedgerSync(app: App, name: string): ChildLedger | undefined {
     return {
       name: parsed.name,
       bodyId: parsed.bodyId,
+      ownerId: typeof parsed.ownerId === "string" ? parsed.ownerId : undefined,
       done: parsed.done === true,
       placement: parsed.placement === "cell" ? "cell" : "hosted",
       size: isSize(parsed.size) ? parsed.size : DEFAULT_SIZE,
@@ -102,6 +106,9 @@ export function hostedChildOpen(parent: App, child: App): boolean {
 /** When a request last reached each open hosted child, by body id, with the name it goes by. */
 const touched = new WeakMap<App, Map<string, { name: string; at: number }>>();
 const wakeRates = new WeakMap<App, WakeRate>();
+const personWakes = new WeakMap<App, WakeRate>();
+/** A clock the gate reads; a test sets it to a fake. */
+export const gateClock = { now: () => Date.now() };
 const sweepers = new WeakMap<App, ReturnType<typeof setInterval>>();
 
 function touch(parent: App, ledger: { bodyId: string; name: string }, now = Date.now()): void {
@@ -268,9 +275,15 @@ export function wakeGate(parent: App, request: Request): Response | undefined {
   if (!verdict.allowed) return wakingResponse(parent, request, name, "too many requests to sleeping forges from your address; try again in a minute");
   let rates = wakeRates.get(parent);
   if (!rates) wakeRates.set(parent, (rates = new WakeRate()));
-  const why = awakeRefusal(awakeCount(parent)) ?? (known ? undefined : rates.refusal(ledger.bodyId));
+  const at = gateClock.now();
+  let people = personWakes.get(parent);
+  if (!people) personWakes.set(parent, (people = new WakeRate()));
+  const wait = ledger.ownerId === undefined ? 0 : people.waitS(ledger.ownerId, limitValue(parent.db, "forges.wakes_per_person_hour"), at);
+  if (wait > 0) return wakingResponse(parent, request, name, `waking too often, try in ${wait} s`, wait);
+  const why = awakeRefusal(awakeCount(parent)) ?? (known ? undefined : rates.refusal(ledger.bodyId, at));
   if (why !== undefined) return wakingResponse(parent, request, name, why);
-  if (!known) rates.note(ledger.bodyId);
+  if (!known) rates.note(ledger.bodyId, at);
+  if (ledger.ownerId !== undefined) people.note(ledger.ownerId, at);
   reserved.set(ledger.bodyId, Date.now());
   touch(parent, ledger);
   return undefined;

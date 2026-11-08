@@ -42,6 +42,7 @@ export type LimitKey =
   | "guest.forks_forge_per_day"
   | "guest.pulls_per_day"
   | "forges.per_person"
+  | "forges.wakes_per_person_hour"
   | "forges.storage_mb"
   | "guest.storage_mb"
   | "guest.fork_storage_mb"
@@ -220,6 +221,14 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 1_000,
     reason: "Every hosted forge holds a database and its repositories on this machine's disk; site admins are not counted.",
+  },
+  "forges.wakes_per_person_hour": {
+    label: "Wakes per person per hour",
+    unit: "wakes",
+    default: 30,
+    min: 1,
+    max: 10_000,
+    reason: "Waking a sleeping forge starts a process on this machine; a person who wakes theirs too often is asked to wait.",
   },
   "forges.storage_mb": {
     label: "Storage a person can hold in hosted forges",

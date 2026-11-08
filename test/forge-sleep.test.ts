@@ -15,7 +15,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { awakeCount, childAwake, holdChild, resolveHostedChild, sleepIdleChildren, wakeGate } from "../src/spawn/host.ts";
+import { awakeCount, childAwake, gateClock, holdChild, resolveHostedChild, sleepIdleChildren, wakeGate } from "../src/spawn/host.ts";
 import { removeForge, stopForge } from "../src/spawn/manage.ts";
 import { setLimit } from "../src/settings/limits.ts";
 import { awakeRefusal, personRefusal, WakeRate } from "../src/spawn/sleep.ts";
@@ -135,7 +135,7 @@ describe("a hosted forge scales to zero", () => {
 
   test("a wake that would pass a limit is refused in plain words, and a sleeping forge is not counted", async () => {
     expect(awakeRefusal(1, { FORGE_CHILD_AWAKE_MAX: "2" })).toBeUndefined();
-    expect(awakeRefusal(2, { FORGE_CHILD_AWAKE_MAX: "2" })).toContain("try again in a minute");
+    expect(awakeRefusal(2, { FORGE_CHILD_AWAKE_MAX: "2" })).toContain("the forge is full, try again shortly");
     const rates = new WakeRate();
     const env = { FORGE_CHILD_WAKES_PER_HOUR: "2" };
     rates.note("b", 1000);
@@ -185,7 +185,7 @@ describe("a hosted forge scales to zero", () => {
       expect(gate()).toBeUndefined(); // the first wake is granted and holds the one slot
       expect(awakeCount(parent)).toBe(1);
       // Another forge's wake now would pass the ceiling: the slot is reserved though nothing is open yet.
-      expect(awakeRefusal(awakeCount(parent))).toContain("try again in a minute");
+      expect(awakeRefusal(awakeCount(parent))).toContain("the forge is full, try again shortly");
     } finally {
       if (was === undefined) delete process.env["FORGE_CHILD_AWAKE_MAX"];
       else process.env["FORGE_CHILD_AWAKE_MAX"] = was;
@@ -329,6 +329,56 @@ describe("a hosted forge scales to zero", () => {
     expect(made.status).toBeLessThan(300);
     expect(await made.text()).toContain("claim");
     expect(existsSync(join(dir, "spawn", "from-agents.json"))).toBe(true);
+  });
+
+  test("a person's wakes are rate limited with a fake clock: refused with a wait in seconds, freed as the hour passes", async () => {
+    const rates = new WakeRate();
+    rates.note("p", 1_000_000);
+    rates.note("p", 1_010_000);
+    expect(rates.waitS("p", 3, 1_020_000)).toBe(0);
+    expect(rates.waitS("p", 2, 1_020_000)).toBe(3_580); // the oldest leaves at 1_000_000 + 3_600_000
+    expect(rates.waitS("p", 2, 1_000_000 + 3_600_000)).toBe(0); // the first has left the window, one wake remains of two
+    expect(rates.waitS("q", 1, 1_020_000)).toBe(0);
+
+    await asleepAgain();
+    const t0 = Date.now() + 10_000_000;
+    expect(setLimit(parent.db, "forges.wakes_per_person_hour", 1, "seed").ok).toBe(true);
+    try {
+      gateClock.now = () => t0;
+      expect(gate()).toBeUndefined(); // the one wake this hour
+      await fetch(`${servers.url}/healthz`, { headers: { host: CHILD_HOST } });
+      await asleepAgain();
+      gateClock.now = () => t0 + 60_000;
+      const refused = gate({ accept: "text/html" });
+      expect(refused?.status).toBe(429);
+      expect(await refused?.text()).toContain("waking too often, try in 3540 s");
+      expect(refused?.headers.get("retry-after")).toBe("3540");
+      gateClock.now = () => t0 + 3_600_000;
+      expect(gate()).toBeUndefined();
+    } finally {
+      gateClock.now = () => Date.now();
+      setLimit(parent.db, "forges.wakes_per_person_hour", null, "seed");
+    }
+  });
+
+  test("a wake past the ceiling is told the forge is full; sleep frees the slot", async () => {
+    await fetch(`${servers.url}/healthz`, { headers: { host: CHILD_HOST } });
+    expect(childAwake(parent, "homie")).toBe(true);
+    const was = process.env["FORGE_CHILD_AWAKE_MAX"];
+    process.env["FORGE_CHILD_AWAKE_MAX"] = "1";
+    try {
+      const awake = awakeCount(parent);
+      expect(awake).toBeGreaterThanOrEqual(1);
+      expect(awakeRefusal(awake)).toBe("the forge is full, try again shortly");
+      await sleepIdleChildren(parent, 600_000, later());
+      expect(awakeCount(parent)).toBe(0);
+      expect(awakeRefusal(awakeCount(parent))).toBeUndefined();
+      process.env["FORGE_CHILD_AWAKE_MAX"] = "1";
+      expect(awakeRefusal(1)).toContain("the forge is full");
+    } finally {
+      if (was === undefined) delete process.env["FORGE_CHILD_AWAKE_MAX"];
+      else process.env["FORGE_CHILD_AWAKE_MAX"] = was;
+    }
   });
 
   test("the owner stops a forge, then removes it with its data", async () => {

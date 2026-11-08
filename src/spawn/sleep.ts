@@ -49,6 +49,16 @@ export class WakeRate {
       ? `this forge has been woken ${max} times in the last hour, the most it may be; try again in a little while`
       : undefined;
   }
+  /**
+   * Seconds until `key` (a person) may wake another forge, 0 when it may now:
+   * `max` wakes in any hour; the oldest leaves the window at its time + 1 h.
+   */
+  waitS(key: string, max: number, now = Date.now()): number {
+    const r = this.recent(key, now);
+    if (r.length < max) return 0;
+    const free = (r[r.length - max] as number) + HOUR_MS;
+    return Math.max(1, Math.ceil((free - now) / 1000));
+  }
   note(bodyId: string, now = Date.now()): void {
     this.recent(bodyId, now).push(now);
   }
@@ -58,7 +68,7 @@ export class WakeRate {
 export function awakeRefusal(awake: number, env: Env = process.env): string | undefined {
   const max = awakeCeiling(env);
   return awake >= max
-    ? `${awake} forges are awake on this host right now, the most it runs at once; try again in a minute`
+    ? "the forge is full, try again shortly"
     : undefined;
 }
 
@@ -142,10 +152,10 @@ export function personRefusal(db: Database, dataDir: string, owner: { id: string
 }
 
 /** The plain-text "waking up" or refusal answer: for a git client or an API call (a page is `web/pages/waking.ts`). */
-export function wakingText(name: string, why?: string): Response {
+export function wakingText(name: string, why?: string, retryS = 5): Response {
   const message = why ?? `${name} was asleep and is waking up; this takes a few seconds`;
   return new Response(message, {
     status: why === undefined ? 503 : 429,
-    headers: { "retry-after": "5", "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" },
+    headers: { "retry-after": String(retryS), "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" },
   });
 }
