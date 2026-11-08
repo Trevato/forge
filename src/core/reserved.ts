@@ -135,6 +135,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "ssh",
   "status",
   "changelog",
+  "displays",
   "docs",
   "open-platform",
 ];

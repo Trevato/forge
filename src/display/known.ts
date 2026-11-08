@@ -251,3 +251,8 @@ export async function withoutDisplay(app: App, repos: readonly Repo[]): Promise<
   const read = await inTurn(repos, (repo) => displayOf(app, repo));
   return repos.filter((_, i) => read[i] === undefined);
 }
+
+/** What a display is and where one comes from; the page and the terminal screen share it. */
+export const DISPLAYS_NOTE = "A display shows a repository's showcased demos. Add a display.json to a repository's default branch to make one.";
+/** The link text for a display whose file does not parse. */
+export const INVALID_TITLE = "display.json is invalid";

@@ -20,6 +20,7 @@ import { entry as cloud } from "./cloud.ts";
 import { entry as connections } from "./connections.ts";
 import { entry as crewHandover } from "./crewhandover.ts";
 import { entry as crewSplits } from "./crewsplits.ts";
+import { entry as displays } from "./displays.ts";
 import { entry as domains } from "./domains.ts";
 import { entry as edgeOnly } from "./edgeonly.ts";
 import { entry as feed } from "./feed.ts";
@@ -114,6 +115,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   now,
   forgeView,
   repos,
+  displays,
   newIssue,
 ];
 

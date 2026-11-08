@@ -35,6 +35,7 @@ import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit
 import { boardsHoldPost } from "../web/pages/boards-holds.ts";
 import { nowPage } from "../web/pages/now.ts";
 import { myReposPage } from "../web/pages/my-repos.ts";
+import { displaysPage } from "../web/pages/displays.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
 import { actingVia } from "../core/acting_via.ts";
 import {
@@ -833,6 +834,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/bring/:id/:job/env", bringEnvSubmit);
   router.add("GET", "/new/issue", newIssueAnywhere);
   router.add("GET", "/repos", myReposPage);
+  router.add("GET", "/displays", displaysPage);
   router.add("GET", "/now/:stage", nowPage);
   router.add("GET", "/audit", auditPage);
   router.add("GET", "/releases", releasesPage);
