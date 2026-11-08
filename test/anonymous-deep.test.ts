@@ -221,3 +221,70 @@ test("a made-up Authorization header buys nothing: it's counted like anyone with
   for (let i = 0; i <= STRANGER_BUDGET.address; i++) statuses.push((await get(deep, from("10.8.0.1", { authorization: "Bearer made-up" }))).status);
   expect(statuses.at(-1)).toBe(429);
 });
+
+test("a stranger's file page and raw bytes at a commit id are served after the first read with git gone (#9405)", async () => {
+  setCrawlClock(app, () => 15_000_000);
+  clearTreeCache();
+  const gitDir = join(dataDir, "repos", "alice", "open.git");
+  const anon = from("10.7.0.1");
+  const page = await get(`/alice/open/blob/${sha}/a.txt`, anon);
+  const raw = await get(`/alice/open/raw/${sha}/a.txt`, anon);
+  expect(page.status).toBe(200);
+  const first = await page.text();
+  expect(await raw.text()).toBe("hi\n");
+
+  await rename(join(gitDir, "objects"), join(gitDir, "objects.away"));
+  try {
+    const again = await get(`/alice/open/blob/${sha}/a.txt`, anon);
+    expect(again.status).toBe(200);
+    expect(again.headers.get("cache-control")).toContain("immutable");
+    expect(await again.text()).toContain("hi");
+    expect(first).toContain("hi");
+    const bytes = await get(`/alice/open/raw/${sha}/a.txt`, anon);
+    expect(bytes.status).toBe(200);
+    expect(await bytes.text()).toBe("hi\n");
+    // a path never read is not in the cache, so it is a miss, not a page
+    expect((await get(`/alice/open/blob/${sha}/never.txt`, anon)).status).toBe(404);
+  } finally {
+    await rename(join(gitDir, "objects.away"), join(gitDir, "objects"));
+  }
+});
+
+test("what is kept for a stranger is never handed to a signed-in reader, a private repository, a fragment or a branch name (#9405)", async () => {
+  setCrawlClock(app, () => 16_000_000);
+  clearTreeCache();
+  const gitDir = join(dataDir, "repos", "alice", "open.git");
+  const anon = from("10.7.1.1");
+  const cookie = { cookie: `forge_session=${createSession(app.db, alice.id).token}` };
+  for (const p of [`/alice/open/blob/${sha}/a.txt`, `/alice/open/raw/${sha}/a.txt`]) expect((await get(p, anon)).status).toBe(200);
+  // a branch-name ref is read afresh every time: never kept
+  expect((await get(`/alice/open/blob/main/a.txt`, anon)).status).toBe(200);
+  const fragment = `/alice/open/blob/${sha}/a.txt?fragment=1`;
+  expect((await get(fragment, anon)).status).toBe(200);
+
+  await rename(join(gitDir, "objects"), join(gitDir, "objects.away"));
+  try {
+    // (a) the blob page for a signed-in reader walks git (fails with it gone) instead of the stranger's page
+    const signedIn = await get(`/alice/open/blob/${sha}/a.txt`, { ...anon, ...cookie });
+    expect(signedIn.status).not.toBe(200);
+    // a fragment and a branch name are not kept
+    expect((await get(`/alice/open/blob/${sha}/a.txt?fragment=1`, from("10.7.1.2"))).status).not.toBe(200);
+    expect((await get(`/alice/open/blob/main/a.txt`, from("10.7.1.3"))).status).not.toBe(200);
+    // the stranger's own kept page still answers
+    expect((await get(`/alice/open/blob/${sha}/a.txt`, from("10.7.1.4"))).status).toBe(200);
+    expect((await get(`/alice/open/raw/${sha}/a.txt`, from("10.7.1.4"))).status).toBe(200);
+
+    // (b) once the repository is private, a stranger is refused for both
+    app.db.run(`UPDATE repo SET visibility = 'private' WHERE name = 'open'`);
+    for (const p of [`/alice/open/blob/${sha}/a.txt`, `/alice/open/raw/${sha}/a.txt`]) {
+      const refused = await get(p, from("10.7.1.5"));
+      expect([302, 303, 401, 403, 404]).toContain(refused.status);
+      const body = await refused.text();
+      expect(body).not.toBe("hi\n");
+      expect(body).not.toContain("class=\"blob");
+    }
+  } finally {
+    app.db.run(`UPDATE repo SET visibility = 'public' WHERE name = 'open'`);
+    await rename(join(gitDir, "objects.away"), join(gitDir, "objects"));
+  }
+});

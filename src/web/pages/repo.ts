@@ -11,7 +11,7 @@
 import { recordLook } from "../../flow/valve_store.ts";
 import { PINNED_PUBLIC, immutableWhenAddressed, mayShare } from "../../http/addressed.ts";
 import { EDGE_VARY } from "../../http/edge_cache.ts";
-import { cachedTree, keepTree, resolveCommit } from "./tree_cache.ts";
+import { cachedBlobPage, cachedRaw, cachedTree, keepBlobPage, keepRaw, keepTree, resolveCommit } from "./tree_cache.ts";
 import { behindLine, followingLine, originAheadLine } from "./upstream-follow.ts";
 import { CONFLICT_WORDS, UNREAD_WORDS } from "../../origins/ahead.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
@@ -1593,12 +1593,37 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const path = ctx.params.path ?? "";
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const git = gitClock(ctx.request);
+  // A stranger's page at a full commit id is kept under that id (#9405): the
+  // second read of it walks no git at all.
+  const kept =
+    ctx.auth.user === undefined && repo.visibility === "public" && FULL_OID.test(ref) && ctx.url.searchParams.get("fragment") !== "1";
+  const view = blobView(ctx.url.searchParams.get("view"));
+  const all = ctx.url.searchParams.get("all") === "1";
+  if (kept) {
+    const hit = cachedBlobPage(repo.id, ref, path, String(view), all);
+    if (hit !== undefined) {
+      git.done();
+      return immutableWhenAddressed(
+        ctx.request,
+        true,
+        repo,
+        ref,
+        codePage(ctx, scope, {
+          title: hit.title,
+          ref,
+          explorer: hit.explorer,
+          content: hit.content,
+          objectSrc: hit.objectSrc,
+          ...(hit.csv ? { extraJs: csvJs } : {}),
+        }),
+      );
+    }
+  }
   const blob = await git.read(() => scope.source.blob(ref, path));
   if (!blob.ok) return notFoundPage(ctx);
   const refs = await git.read(() => refSetFrom(scope.source));
   let highlightMs: number | undefined;
   const renderStart = performance.now();
-  const view = blobView(ctx.url.searchParams.get("view"));
   const shown = capped(blob.value);
   const pane = renderBlob(scope, {
     refs,
@@ -1607,7 +1632,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     blob: shown,
     view,
     highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
-    all: ctx.url.searchParams.get("all") === "1",
+    all,
   });
   if (highlightMs !== undefined) notePhase(ctx.request, "highlight", highlightMs);
   const paneMs = performance.now() - renderStart - (highlightMs ?? 0);
@@ -1626,19 +1651,29 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   git.done();
   const filename = path.split("/").pop() ?? path;
   const pageStart = performance.now();
+  const explorerHtml = explorerColumn(scope, explorer, {
+    finder: true,
+    actions: newFileAction(
+      scope,
+      ref,
+      path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "",
+    ),
+  });
+  const objectSrc = drawsPdf(scope, path, shown, view);
+  if (kept)
+    keepBlobPage(repo.id, ref, path, String(view), all, {
+      title: `${filename} · ${repo.name}`,
+      explorer: explorerHtml,
+      content: pane,
+      objectSrc,
+      csv: isCsvPath(path),
+    });
   const response = await codePage(ctx, scope, {
     title: `${filename} · ${repo.name}`,
     ref,
-    explorer: explorerColumn(scope, explorer, {
-      finder: true,
-      actions: newFileAction(
-        scope,
-        ref,
-        path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "",
-      ),
-    }),
+    explorer: explorerHtml,
     content: pane,
-    objectSrc: drawsPdf(scope, path, shown, view),
+    objectSrc,
     ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
   });
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
@@ -1691,9 +1726,13 @@ export async function rawBlob(ctx: Ctx): Promise<Response> {
   if (!isSafeRef(ref) || !isSafeTreePath(path)) return notFoundPage(ctx);
 
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const blob = await blobForRender(dir, ref, path, 25_000_000);
+  // At a full commit id the bytes never change: a small file is kept (#9405).
+  const pinned = FULL_OID.test(ref);
+  const held = pinned ? cachedRaw(repo.id, ref, path) : undefined;
+  const blob = held ?? (await blobForRender(dir, ref, path, 25_000_000));
   if (blob.kind === "missing" || blob.kind === "too_large")
     return notFoundPage(ctx);
+  if (pinned && held === undefined) keepRaw(repo.id, ref, path, blob);
   return rawResponse(blob, {
     oid: blob.oid,
     immutable: FULL_OID.test(ref),

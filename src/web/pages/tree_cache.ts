@@ -15,6 +15,7 @@
 import { isFullId } from "../../http/addressed.ts";
 import { refTip } from "../../git/read.ts";
 import { ViewCache } from "../../view/cache.ts";
+import type { BlobForRender } from "../../git/read.ts";
 import type { Html } from "../html.ts";
 
 export const TTL_MS = 60_000;
@@ -45,4 +46,41 @@ export function keepTree(repoId: string, commit: string, ref: string, path: stri
 export const treeCacheStats = () => cache.stats();
 
 /** Test seam: start from nothing. */
-export const clearTreeCache = (): void => cache.clear();
+export const clearTreeCache = (): void => {
+  cache.clear();
+  rawCache.clear();
+};
+
+/**
+ * A file's page at one full commit id (#9405). Same reasoning as the listing:
+ * a commit names its bytes forever, so an anonymous reader's markup depends on
+ * nothing but the commit, the path and the view; after the first read the page
+ * costs no git read at all.
+ */
+export interface RenderedBlob extends RenderedTree {
+  readonly title: string;
+  readonly objectSrc: boolean;
+  readonly csv: boolean;
+}
+
+const blobKey = (repoId: string, commit: string, path: string, view: string, all: boolean): string =>
+  ["blob", repoId, commit, path, view, all ? "all" : "window"].join("\0");
+
+export const cachedBlobPage = (repoId: string, commit: string, path: string, view: string, all: boolean) =>
+  cache.get<RenderedBlob>(blobKey(repoId, commit, path, view, all));
+
+export function keepBlobPage(repoId: string, commit: string, path: string, view: string, all: boolean, page: RenderedBlob): void {
+  cache.set(blobKey(repoId, commit, path, view, all), page, TTL_MS, page.explorer.text.length + page.content.text.length);
+}
+
+/** A file's bytes at a full commit id, for `/raw`: small bodies only, so a few big files cannot fill the cache. */
+const RAW_MAX = 1024 * 1024;
+const rawCache = new ViewCache({ maxEntries: 512, maxBytes: 32 * 1024 * 1024 });
+const rawKey = (repoId: string, commit: string, path: string): string => ["raw", repoId, commit, path].join("\0");
+
+export const cachedRaw = (repoId: string, commit: string, path: string) => rawCache.get<BlobForRender>(rawKey(repoId, commit, path));
+
+export function keepRaw(repoId: string, commit: string, path: string, blob: BlobForRender): void {
+  if (blob.kind === "missing" || blob.kind === "too_large") return;
+  if (blob.size <= RAW_MAX) rawCache.set(rawKey(repoId, commit, path), blob, TTL_MS, blob.size);
+}
