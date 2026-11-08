@@ -151,7 +151,7 @@ import { reconnectSubmit } from "../web/pages/frozen.ts";
 import { activityAtom, changelogAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { apiPage, appApiPage } from "../web/pages/api.ts";
-import { flowsCheck, flowsPage } from "../web/pages/flows.ts";
+import { flowsCheck, flowsPage, flowsProbe } from "../web/pages/flows.ts";
 import { betAct, betPage, betPropose, betsPage } from "../web/pages/bets.ts";
 import { changelogJson, changelogPage } from "../web/pages/changelog.ts";
 import { releaseHoldSubmit, liftSubmit, releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
@@ -1150,6 +1150,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/first", firstSubmit);
   router.add("GET", "/:owner/:name/flows", flowsPage);
   router.add("POST", "/:owner/:name/flows/check", flowsCheck);
+  router.add("POST", "/:owner/:name/flows/probe", flowsProbe);
   router.add("GET", "/:owner/:name/bets", betsPage);
   router.add("POST", "/:owner/:name/bets/propose", betPropose);
   router.add("GET", "/:owner/:name/bets/:id", betPage);

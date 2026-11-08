@@ -141,6 +141,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "repo.created",
   "repo.vision_kept",
   "repo.forked",
+  "repo.links_probed",
   "repo.detached",
   "repo.deleted",
   "label.updated",

@@ -78,6 +78,21 @@ describe("flows in the terminal", () => {
     reader.stop();
   });
 
+  test("compare heads is offered to an admin and not to a reader or a guest", async () => {
+    const admin = boot(ada);
+    await admin.open();
+    expect(admin.text()).toContain("compare heads now");
+    admin.stop();
+    for (const who of [eve, undefined]) {
+      const other = boot(who);
+      await other.open();
+      expect(other.text()).not.toContain("compare heads now");
+      await other.press("c");
+      expect(other.text()).not.toContain("Compared");
+      other.stop();
+    }
+  });
+
   test("a private repository shows a guest nothing", async () => {
     forge.db.query("UPDATE repo SET visibility = 'private' WHERE id = ?").run(repo.id);
     const guest = boot(undefined);

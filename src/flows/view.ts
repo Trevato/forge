@@ -6,8 +6,23 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { canRead, getRepoById, visibleForks, type Repo } from "../core/repos.ts";
+import { getCursor } from "../core/origins.ts";
+import { canRead, canWrite, getRepoById, visibleForks, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import { aheadWords, parseAhead } from "../origins/ahead.ts";
+
+/** A followed link is stale when its last head comparison is older than this (three follow periods). */
+export const STALE_MS = 3 * 30 * 60_000;
+
+/** How a link stands: `ok` level, `behind` has news, `diverged` both moved, `unread` could not be read, `stale` not read lately, `off` not following, `none` nothing to compare. */
+export type Health = "ok" | "behind" | "diverged" | "unread" | "stale" | "off" | "none";
+
+/** One thing a person may do about a link: a same-origin POST, or a link to a page. */
+export interface FlowAction {
+  readonly label: string;
+  readonly href: string;
+  readonly post: boolean;
+}
 
 export interface FlowLine {
   readonly kind: "origin" | "source" | "upstream" | "fork" | "mirror";
@@ -18,6 +33,8 @@ export interface FlowLine {
   /** When it last moved (ISO), or null. */
   readonly at: string | null;
   readonly problem: boolean;
+  readonly health: Health;
+  readonly action?: FlowAction;
 }
 
 export interface FlowView {
@@ -47,13 +64,28 @@ function behindWords(behind: number, error: string): string {
   return behind === 0 ? "up to date" : `${behind} ${behind === 1 ? "change" : "changes"} behind`;
 }
 
-export function readFlows(db: Database, repo: Repo, viewer: User | undefined): FlowView {
+/** Health of a followed link from its last comparison; `now` is injectable for tests. */
+export function followHealth(
+  r: { enabled: boolean; checkedAt: string | null; behind: number; error: string },
+  now: number,
+): Health {
+  if (!r.enabled) return "off";
+  if (r.error !== "") return "unread";
+  if (r.checkedAt === null || now - Date.parse(r.checkedAt) > STALE_MS) return "stale";
+  return r.behind > 0 ? "behind" : "ok";
+}
+
+export function readFlows(db: Database, repo: Repo, viewer: User | undefined, now = Date.now()): FlowView {
+  const writer = viewer !== undefined && viewer.kind !== "agent" && canWrite(db, repo, viewer);
   const inbound: FlowLine[] = [];
   const outbound: FlowLine[] = [];
   if (repo.forkParentId !== null) {
     const parent = getRepoById(db, repo.forkParentId);
     if (parent && canRead(db, parent, viewer)) {
-      inbound.push({ kind: "origin", label: `${parent.ownerName}/${parent.name}`, href: base(parent), state: "forked from", at: null, problem: false });
+      inbound.push({
+        kind: "origin", label: `${parent.ownerName}/${parent.name}`, href: base(parent), state: "forked from", at: null, problem: false, health: "none",
+        ...(writer ? { action: { label: `Offer what's useful to ${parent.ownerName}/${parent.name}`, href: `${base(repo)}/pulls/new`, post: false } } : {}),
+      });
     }
   }
   const up = db
@@ -64,6 +96,7 @@ export function readFlows(db: Database, repo: Repo, viewer: User | undefined): F
   if (up) {
     inbound.push({
       kind: "upstream", label: `${plainUrl(up.url)} (${up.branch})`, href: "", at: up.checked_at, problem: up.error !== "",
+      health: followHealth({ enabled: up.enabled !== 0, checkedAt: up.checked_at, behind: up.behind, error: up.error }, now),
       state: up.enabled === 0 ? "not following" : behindWords(up.behind, up.error),
     });
   }
@@ -74,11 +107,24 @@ export function readFlows(db: Database, repo: Repo, viewer: User | undefined): F
     .all(repo.id)) {
     inbound.push({
       kind: "source", label: `${plainUrl(s.url)} (${s.branch})`, href: "", at: s.checked_at, problem: s.error !== "",
+      health: followHealth({ enabled: s.enabled !== 0, checkedAt: s.checked_at, behind: s.behind, error: s.error }, now),
       state: s.enabled === 0 ? "not following" : behindWords(s.behind, s.error),
     });
   }
+  if (repo.origin !== null) {
+    const ahead = parseAhead(getCursor(db, repo.origin.originId, `repo:${repo.id}:ahead`));
+    const read = getCursor(db, repo.origin.originId, `repo:${repo.id}:ahead-read`);
+    const seenAt = ahead?.at ?? read ?? null;
+    const old = seenAt === null || now - Date.parse(seenAt) > STALE_MS;
+    const health: Health = old ? "stale" : ahead !== undefined ? (ahead.diverged ? "diverged" : "behind") : "ok";
+    inbound.push({
+      kind: "origin", label: "its origin", href: "", at: seenAt, problem: ahead?.diverged === true, health,
+      state: seenAt === null ? "not read yet" : old ? "not read lately" : ahead === undefined ? "up to date" : aheadWords(ahead),
+      ...(writer && health === "behind" ? { action: { label: "Pull in what's new", href: `${base(repo)}/sync/take`, post: true } } : {}),
+    });
+  }
   for (const f of visibleForks(db, repo.id, viewer)) {
-    outbound.push({ kind: "fork", label: `${f.ownerName}/${f.name}`, href: base(f), state: "fork", at: null, problem: false });
+    outbound.push({ kind: "fork", label: `${f.ownerName}/${f.name}`, href: base(f), state: "fork", at: null, problem: false, health: "none" });
   }
   const mirror = db
     .query<{ full_name: string; pushed_at: string | null; last_error: string }, [string]>(
@@ -89,6 +135,7 @@ export function readFlows(db: Database, repo: Repo, viewer: User | undefined): F
     outbound.push({
       kind: "mirror", label: mirror.full_name, href: "", at: mirror.pushed_at, problem: mirror.last_error !== "",
       state: mirror.last_error !== "" ? "last push failed" : "mirrored",
+      health: mirror.last_error !== "" ? "unread" : "ok",
     });
   }
   return { inbound, outbound };

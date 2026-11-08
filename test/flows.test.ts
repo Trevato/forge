@@ -11,8 +11,10 @@ import { readRadar, refreshRadar } from "../src/flows/radar.ts";
 import { compareSemver, gapOf, parseSemver } from "../src/flows/semver.ts";
 import { RateLimiter } from "../src/core/ratelimit.ts";
 import { getUserById, type User } from "../src/core/users.ts";
+import { createRepo } from "../src/actions/repos.ts";
+import { MAX_SOURCES, probeLinks, type Reads } from "../src/flows/probe.ts";
 import { startRadar } from "../src/flows/start.ts";
-import { plainUrl, readFlows } from "../src/flows/view.ts";
+import { followHealth, plainUrl, readFlows } from "../src/flows/view.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { PREVIEW_ADMIN, PREVIEW_REPO } from "../src/spawn/preview-looks.ts";
 import { seedPreview } from "../src/spawn/preview-seed.ts";
@@ -178,5 +180,165 @@ describe("the page", () => {
     } finally {
       app.db.query("UPDATE repo SET visibility = 'public' WHERE id = ?").run(repo.id);
     }
+  });
+});
+
+describe("link health and actions (#9561)", () => {
+  const repoNow = () => getRepo(app.db, PREVIEW_ADMIN, PREVIEW_REPO)!;
+  const admin = () => getUserById(app.db, app.db.query<{ id: string }, [string]>("SELECT id FROM user WHERE username = ?").get(PREVIEW_ADMIN)!.id)!;
+  const now = Date.parse("2026-11-08T12:00:00Z");
+
+  test("followHealth names each standing", () => {
+    const at = "2026-11-08T11:50:00Z";
+    expect(followHealth({ enabled: false, checkedAt: at, behind: 3, error: "" }, now)).toBe("off");
+    expect(followHealth({ enabled: true, checkedAt: at, behind: 0, error: "x" }, now)).toBe("unread");
+    expect(followHealth({ enabled: true, checkedAt: null, behind: 0, error: "" }, now)).toBe("stale");
+    expect(followHealth({ enabled: true, checkedAt: "2026-11-08T06:00:00Z", behind: 0, error: "" }, now)).toBe("stale");
+    expect(followHealth({ enabled: true, checkedAt: at, behind: 2, error: "" }, now)).toBe("behind");
+    expect(followHealth({ enabled: true, checkedAt: at, behind: 0, error: "" }, now)).toBe("ok");
+  });
+
+  test("a mirror behind its origin shows news and Pull in what's new, for a writer only", () => {
+    const repo = repoNow();
+    const mirrored = { ...repo, origin: { ...(repo.origin ?? {}), originId: "o9" } } as typeof repo;
+    app.db.exec("PRAGMA foreign_keys = OFF");
+    app.db.query("INSERT OR REPLACE INTO origin_cursor (origin_id, key, value) VALUES ('o9', ?1, ?2)").run(`repo:${repo.id}:ahead`, `3 ${"a".repeat(40)} 0 2026-11-08T11:00:00Z`);
+    const mine = readFlows(app.db, mirrored, admin(), now).inbound.find((l) => l.label === "its origin")!;
+    expect(mine.health).toBe("behind");
+    expect(mine.action).toEqual({ label: "Pull in what's new", href: `/${PREVIEW_ADMIN}/${PREVIEW_REPO}/sync/take`, post: true });
+    const guest = readFlows(app.db, mirrored, undefined, now).inbound.find((l) => l.label === "its origin")!;
+    expect(guest.health).toBe("behind");
+    expect(guest.action).toBeUndefined();
+    app.db.query(`UPDATE origin_cursor SET value = ?1 WHERE origin_id = 'o9'`).run(`3 ${"a".repeat(40)} 1 2026-11-08T11:00:00Z`);
+    const diverged = readFlows(app.db, mirrored, admin(), now).inbound.find((l) => l.label === "its origin")!;
+    expect(diverged.health).toBe("diverged");
+    expect(diverged.action).toBeUndefined();
+    app.db.query("DELETE FROM origin_cursor WHERE origin_id = 'o9'").run();
+    app.db.exec("PRAGMA foreign_keys = ON");
+  });
+
+  test("the probe is admin only and a cross-origin POST changes nothing", async () => {
+    const repo = repoNow();
+    const stranger = { ...admin(), id: "nobody", isAdmin: false } as User;
+    expect(await probeLinks(app, repo, stranger)).toEqual({ ok: false, why: "Only an admin of this repository can do this." });
+    expect(await probeLinks(app, repo, undefined)).toMatchObject({ ok: false });
+    const said = `u1|trevato|admin|${Date.now() + 60_000}`;
+    const headers = { "x-forge-identity": said, "x-forge-signature": createHmac("sha256", KEY).update(said).digest("base64url") };
+    const url = `${servers.url}/${PREVIEW_ADMIN}/${PREVIEW_REPO}/flows`;
+    const page = await (await fetch(url, { headers })).text();
+    expect(page).toContain("Compare heads now");
+    const post = await fetch(`${url}/probe`, { method: "POST", redirect: "manual", headers: { ...headers, origin: "https://evil.example" } });
+    expect(post.status).toBe(403);
+  });
+
+  test("a fork's writer is offered a pull to its parent; a guest is not", async () => {
+    const parent = repoNow();
+    const made = await createRepo(app, admin(), { name: "kid", owner: PREVIEW_ADMIN, visibility: "public", description: "" });
+    if (!made.ok) throw new Error(JSON.stringify(made.error));
+    app.db.query("UPDATE repo SET fork_parent_id = ?1 WHERE id = ?2").run(parent.id, made.value.id);
+    const fork = getRepo(app.db, PREVIEW_ADMIN, "kid")!;
+    const mine = readFlows(app.db, fork, admin(), now).inbound.find((l) => l.state === "forked from")!;
+    expect(mine.label).toBe(`${PREVIEW_ADMIN}/${PREVIEW_REPO}`);
+    expect(mine.action).toEqual({ label: `Offer what's useful to ${PREVIEW_ADMIN}/${PREVIEW_REPO}`, href: `/${PREVIEW_ADMIN}/kid/pulls/new`, post: false });
+    expect(readFlows(app.db, fork, undefined, now).inbound.find((l) => l.state === "forked from")!.action).toBeUndefined();
+    const agent = { ...admin(), kind: "agent" } as User;
+    expect(readFlows(app.db, fork, agent, now).inbound.find((l) => l.state === "forked from")!.action).toBeUndefined();
+  });
+
+  test("an origin line is ok when read lately, stale when read long ago, not read yet when never", () => {
+    const repo = repoNow();
+    const mirrored = { ...repo, origin: { ...(repo.origin ?? {}), originId: "o8" } } as typeof repo;
+    const line = () => readFlows(app.db, mirrored, undefined, now).inbound.find((l) => l.label === "its origin")!;
+    expect([line().health, line().state]).toEqual(["stale", "not read yet"]);
+    app.db.exec("PRAGMA foreign_keys = OFF");
+    const put = (at: string) => app.db.query("INSERT OR REPLACE INTO origin_cursor (origin_id, key, value) VALUES ('o8', ?1, ?2)").run(`repo:${repo.id}:ahead-read`, at);
+    put("2026-11-08T11:50:00Z");
+    expect([line().health, line().state]).toEqual(["ok", "up to date"]);
+    put("2026-11-08T06:00:00Z");
+    expect([line().health, line().state]).toEqual(["stale", "not read lately"]);
+    app.db.query("DELETE FROM origin_cursor WHERE origin_id = 'o8'").run();
+    app.db.exec("PRAGMA foreign_keys = ON");
+  });
+
+  describe("the probe", () => {
+    const reads = (log: string[], over: Partial<Reads> = {}): Reads => ({
+      origin: async () => (log.push("origin"), true),
+      upstream: async () => (log.push("upstream"), true),
+      source: async (_a, _r, s) => (log.push(`source:${s.id}`), true),
+      ...over,
+    });
+    const limiter = (n: number) => new RateLimiter({ perMinute: n, adminPerMinute: n, enabled: true });
+    const addSources = (repoId: string, n: number) => {
+      for (let i = 0; i < n; i++)
+        app.db.query("INSERT OR IGNORE INTO repo_source (id, repo_id, url, branch, by_id, enabled, created_at) VALUES (?1, ?2, 'https://example.com/p.git', 'main', 'u1', 1, '2026-11-03T00:00:00Z')").run(`p${i}`, repoId);
+    };
+
+    test("a successful probe reads the enabled sources and announces itself", async () => {
+      const repo = repoNow();
+      addSources(repo.id, 2);
+      const log: string[] = [];
+      const seen: string[] = [];
+      const off = app.bus.subscribe((e) => seen.push(e.kind));
+      const out = await probeLinks(app, repo, admin(), limiter(4), reads(log));
+      off();
+      expect(out.ok).toBe(true);
+      expect(log).toContain("source:p0");
+      expect(log).toContain("source:s1");
+      expect(seen).toContain("repo.links_probed");
+    });
+
+    test("an agent is refused and reads nothing", async () => {
+      const log: string[] = [];
+      const agent = { ...admin(), kind: "agent" } as User;
+      expect(await probeLinks(app, repoNow(), agent, limiter(4), reads(log))).toEqual({ ok: false, why: "Only an admin of this repository can do this." });
+      expect(log).toEqual([]);
+    });
+
+    test("one at a time, and four a minute", async () => {
+      const repo = repoNow();
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const slow = reads([], { source: async () => { await gate; return true; } });
+      const lim = limiter(4);
+      const first = probeLinks(app, repo, admin(), lim, slow);
+      await Promise.resolve();
+      expect(await probeLinks(app, repo, admin(), lim, slow)).toEqual({ ok: false, why: "A comparison is already running for this repository." });
+      release();
+      expect((await first).ok).toBe(true);
+      const tight = limiter(1);
+      await probeLinks(app, repo, admin(), tight, reads([]));
+      const third = await probeLinks(app, repo, admin(), tight, reads([]));
+      expect(!third.ok && third.why).toMatch(/^Too many comparisons/);
+    });
+
+    test("it is capped in sources and bounded in time", async () => {
+      const repo = repoNow();
+      addSources(repo.id, 12);
+      const log: string[] = [];
+      await probeLinks(app, repo, admin(), limiter(4), reads(log));
+      expect(log.filter((l) => l.startsWith("source:")).length).toBeLessThanOrEqual(MAX_SOURCES);
+      const hang = reads([], { source: () => new Promise<boolean>(() => {}) });
+      const t0 = Date.now();
+      const out = await probeLinks(app, repo, admin(), limiter(4), hang, 60);
+      expect(out.ok).toBe(true);
+      expect(Date.now() - t0).toBeLessThan(2000);
+    });
+
+    test("a failing read does not stop the others", async () => {
+      const repo = repoNow();
+      const log: string[] = [];
+      const out = await probeLinks(app, repo, admin(), limiter(4), reads(log, { upstream: async () => { throw new Error("boom"); } }));
+      expect(out.ok).toBe(true);
+      expect(log.some((l) => l.startsWith("source:"))).toBe(true);
+    });
+
+    test("the route flashes the result for an admin", async () => {
+      const said = `u1|trevato|admin|${Date.now() + 60_000}`;
+      const headers = { "x-forge-identity": said, "x-forge-signature": createHmac("sha256", KEY).update(said).digest("base64url") };
+      const url = `${servers.url}/${PREVIEW_ADMIN}/${PREVIEW_REPO}/flows`;
+      const post = await fetch(`${url}/probe`, { method: "POST", redirect: "manual", headers: { ...headers, origin: servers.url } });
+      expect(post.status).toBe(303);
+      expect(post.headers.get("location")).toBe(`/${PREVIEW_ADMIN}/${PREVIEW_REPO}/flows`);
+    });
   });
 });

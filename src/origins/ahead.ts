@@ -50,10 +50,10 @@ const aheadKey = (repoId: string): string => `repo:${repoId}:ahead`;
 /** The last reading of a mirror, or undefined when there is none or it is level. */
 export function aheadOf(app: App, repo: Repo): Ahead | undefined {
   if (repo.origin === null) return undefined;
-  return parse(getCursor(app.db, repo.origin.originId, aheadKey(repo.id)));
+  return parseAhead(getCursor(app.db, repo.origin.originId, aheadKey(repo.id)));
 }
 
-function parse(value: string | undefined): Ahead | undefined {
+export function parseAhead(value: string | undefined): Ahead | undefined {
   const [count, tip, diverged, at] = (value ?? "").split(" ");
   const n = Number(count);
   if (!Number.isInteger(n) || n < 1 || !isSafeOid(tip ?? "") || at === undefined) return undefined;
@@ -87,6 +87,7 @@ async function read(app: App, repo: Repo): Promise<Ahead | undefined> {
   const fetched = await fetchRefFrom(dir, link.cloneUrl, `refs/heads/${repo.defaultBranch}`, authEnv);
   if (!fetched.ok) return undefined;
   const tip = fetched.value;
+  setCursor(app.db, link.origin.id, `repo:${repo.id}:ahead-read`, new Date().toISOString());
   const count = tip === main ? 0 : await aheadCount(dir, main, tip);
   const key = aheadKey(repo.id);
   if (count === 0) {
@@ -185,7 +186,7 @@ export function mirrorsBehind(app: App, viewer: User | undefined): { repo: Repo;
   const out: { repo: Repo; ahead: Ahead }[] = [];
   for (const row of rows) {
     const repo = getRepoById(app.db, row.id);
-    const ahead = parse(row.value);
+    const ahead = parseAhead(row.value);
     if (repo !== undefined && ahead !== undefined && canRead(app.db, repo, viewer)) out.push({ repo, ahead });
   }
   return out;
