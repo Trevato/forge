@@ -39,6 +39,18 @@ const CACHE_KIB = 64 * 1024;
  */
 const MMAP_BYTES = 512 * 1024 * 1024;
 
+/**
+ * How many distinct SQL texts each connection keeps prepared (#9514).
+ * `db.query` caches its statements, but Bun keeps only the first 20 a
+ * connection sees and prepares every later one again on each call; one code
+ * page asks about thirty, so a cached page still spent ~1.4 ms of its ~4 ms
+ * preparing. The forge's queries are fixed texts (about 2,000 call sites), so
+ * this holds every one of them; a text past the cap is prepared per call as
+ * before, never wrong. Bun reads it on each `query`, so set once here.
+ */
+export const QUERY_CACHE = 4096;
+(Database as unknown as { MAX_QUERY_CACHE_SIZE: number }).MAX_QUERY_CACHE_SIZE = QUERY_CACHE;
+
 export function openDb(path: string, migrations: readonly Migration[]): Database {
   const memory = path === ":memory:";
   const fresh = memory || !existsSync(path);

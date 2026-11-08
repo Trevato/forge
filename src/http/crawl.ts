@@ -43,9 +43,13 @@ export const SHARED_BUDGET = { page: 240, deep: 24 } as const;
  *
  * Late isn't only the loop: a test at 100 pages a second (#9405) left the loop
  * on time while pages queued on git for seconds and people waited behind them.
- * So `inFlight` of these pages unanswered at once counts as behind too.
+ * So `inFlight` of these pages unanswered at once counts as behind too, once
+ * the oldest of them has waited `queuedMs`: a count alone is a rate times a
+ * latency (Little's law), and at 500 pages a second 32 in flight is 64 ms
+ * each, which is healthy; a 70 ms collector pause then throttled every
+ * stranger to `behindAll` (#9514). Waiting a quarter second is queuing.
  */
-export const STRANGER_BUDGET = { address: 30, behindAll: 60, inFlight: 32 } as const;
+export const STRANGER_BUDGET = { address: 30, behindAll: 60, inFlight: 32, queuedMs: 250 } as const;
 /** A page unanswered this long no longer counts, so a lost finish can't hold the forge "behind" for good. */
 const IN_FLIGHT_MAX_MS = 60_000;
 /** The budgets divide by this while the event loop runs late. */
@@ -259,13 +263,23 @@ function takeStrangerDeep(app: App, request: Request, pathname: string): CrawlVe
   return { retryAfter: all.retryAfter, agent: "browser", scope: "stranger" };
 }
 
-/** Whether strangers' deep pages are queued past their share, forgetting any too old to be real. */
+/**
+ * Whether strangers' deep pages are queued past their share: at least
+ * `inFlight` unanswered and the oldest waiting `queuedMs`. Any too old to be
+ * real are forgotten first. The map keeps arrival order, so the first entry
+ * is the oldest.
+ */
 function strangersQueued(state: State): boolean {
   const open = state.strangersInFlight;
   if (open.size < STRANGER_BUDGET.inFlight) return false;
-  const oldest = state.clock.now() - IN_FLIGHT_MAX_MS;
-  for (const [request, at] of open) if (at < oldest) open.delete(request);
-  return open.size >= STRANGER_BUDGET.inFlight;
+  const now = state.clock.now();
+  for (const [request, at] of open) {
+    if (at >= now - IN_FLIGHT_MAX_MS) break;
+    open.delete(request);
+  }
+  if (open.size < STRANGER_BUDGET.inFlight) return false;
+  const first = open.values().next();
+  return !first.done && now - first.value >= STRANGER_BUDGET.queuedMs;
 }
 
 /** The server has answered this request: if it was a stranger's deep page, it no longer counts as queued. */

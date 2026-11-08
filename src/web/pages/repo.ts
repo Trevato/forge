@@ -11,7 +11,8 @@
 import { recordLook } from "../../flow/valve_store.ts";
 import { PINNED_PUBLIC, immutableWhenAddressed, mayShare } from "../../http/addressed.ts";
 import { EDGE_VARY } from "../../http/edge_cache.ts";
-import { cachedBlobPage, cachedRaw, cachedTree, keepBlobPage, keepRaw, keepTree, resolveCommit } from "./tree_cache.ts";
+import { keepPage, keptPage, keptPageKey } from "./kept_page.ts";
+import { cachedBlobPage, cachedRaw, cachedTree, keepBlobPage, keepRaw, keepTree, keptRefs, resolveCommit, withKeptFolders } from "./tree_cache.ts";
 import { behindLine, followingLine, originAheadLine } from "./upstream-follow.ts";
 import { CONFLICT_WORDS, UNREAD_WORDS } from "../../origins/ahead.ts";
 import { upstreamOffer } from "../../actions/offer_upstream.ts";
@@ -1527,6 +1528,14 @@ export async function treePage(ctx: Ctx): Promise<Response> {
     anonymous && !fragmentOnly && isSafeRef(ref)
       ? await resolveCommit(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), ref)
       : undefined;
+  // The whole page as it last went out to a stranger, encoded (`kept_page.ts`).
+  const keptKey = commit === undefined ? undefined : keptPageKey(ctx, repo.id, commit);
+  const finished = keptKey === undefined ? undefined : keptPage(keptKey);
+  if (finished !== undefined) {
+    git.done();
+    return immutableWhenAddressed(ctx.request, true, repo, ref, finished);
+  }
+  const kept = (response: Response) => (keptKey === undefined ? response : keepPage(keptKey, response));
   if (commit !== undefined) {
     const hit = cachedTree(repo.id, commit, ref, path, all);
     if (hit !== undefined) {
@@ -1536,12 +1545,14 @@ export async function treePage(ctx: Ctx): Promise<Response> {
         true,
         repo,
         ref,
-        codePage(ctx, scope, { title: `${path || ref} · ${repo.name}`, ref, explorer: hit.explorer, content: hit.content }),
+        await kept(codePage(ctx, scope, { title: `${path || ref} · ${repo.name}`, ref, explorer: hit.explorer, content: hit.content })),
       );
     }
   }
 
-  const entries = await git.read(() => scope.source.tree(commit ?? ref, path));
+  // A stranger's listing reads its folders and ref names through what other strangers' pages kept (#9514).
+  const source = commit === undefined ? scope.source : withKeptFolders(repo.id, scope.source);
+  const entries = await git.read(() => source.tree(commit ?? ref, path));
   if (!entries.ok) return notFoundPage(ctx);
 
   // The explorer's lazy expansion asks for exactly one directory.
@@ -1554,8 +1565,8 @@ export async function treePage(ctx: Ctx): Promise<Response> {
 
   const [refs, explorer] = await git.read(() =>
     Promise.all([
-      refSetFrom(scope.source),
-      loadExplorer(scope.source, ref, path, false),
+      commit === undefined ? refSetFrom(scope.source) : keptRefs(repo.id, () => refSetFrom(scope.source)),
+      loadExplorer(source, ref, path, false),
     ]),
   );
   git.done();
@@ -1574,12 +1585,14 @@ export async function treePage(ctx: Ctx): Promise<Response> {
     ...(commit === undefined ? {} : { linkRef: commit }),
   });
   if (commit !== undefined) keepTree(repo.id, commit, ref, path, all, { explorer: explorerHtml, content });
-  const response = codePage(ctx, scope, {
-    title: `${path || ref} · ${repo.name}`,
-    ref,
-    explorer: explorerHtml,
-    content,
-  });
+  const response = await kept(
+    codePage(ctx, scope, {
+      title: `${path || ref} · ${repo.name}`,
+      ref,
+      explorer: explorerHtml,
+      content,
+    }),
+  );
   notePhase(ctx.request, "render", performance.now() - began);
   return immutableWhenAddressed(ctx.request, anonymous, repo, ref, response);
 }
@@ -1599,6 +1612,14 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ctx.auth.user === undefined && repo.visibility === "public" && FULL_OID.test(ref) && ctx.url.searchParams.get("fragment") !== "1";
   const view = blobView(ctx.url.searchParams.get("view"));
   const all = ctx.url.searchParams.get("all") === "1";
+  // The whole page as it last went out to a stranger, encoded (`kept_page.ts`).
+  const keptKey = kept ? keptPageKey(ctx, repo.id) : undefined;
+  const finished = keptKey === undefined ? undefined : keptPage(keptKey);
+  if (finished !== undefined) {
+    git.done();
+    return immutableWhenAddressed(ctx.request, true, repo, ref, finished);
+  }
+  const keepFinished = (response: Response) => (keptKey === undefined ? response : keepPage(keptKey, response));
   if (kept) {
     const hit = cachedBlobPage(repo.id, ref, path, String(view), all);
     if (hit !== undefined) {
@@ -1608,20 +1629,22 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
         true,
         repo,
         ref,
-        codePage(ctx, scope, {
+        await keepFinished(codePage(ctx, scope, {
           title: hit.title,
           ref,
           explorer: hit.explorer,
           content: hit.content,
           objectSrc: hit.objectSrc,
           ...(hit.csv ? { extraJs: csvJs } : {}),
-        }),
+        })),
       );
     }
   }
   const blob = await git.read(() => scope.source.blob(ref, path));
   if (!blob.ok) return notFoundPage(ctx);
-  const refs = await git.read(() => refSetFrom(scope.source));
+  // A stranger's file page reads its folders and ref names through what other strangers' pages kept (#9514).
+  const source = kept ? withKeptFolders(repo.id, scope.source) : scope.source;
+  const refs = await git.read(() => (kept ? keptRefs(repo.id, () => refSetFrom(scope.source)) : refSetFrom(scope.source)));
   let highlightMs: number | undefined;
   const renderStart = performance.now();
   const shown = capped(blob.value);
@@ -1646,7 +1669,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   }
 
   const explorer = await git.read(() =>
-    loadExplorer(scope.source, ref, path, true),
+    loadExplorer(source, ref, path, true),
   );
   git.done();
   const filename = path.split("/").pop() ?? path;
@@ -1668,14 +1691,14 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
       objectSrc,
       csv: isCsvPath(path),
     });
-  const response = await codePage(ctx, scope, {
+  const response = await keepFinished(codePage(ctx, scope, {
     title: `${filename} · ${repo.name}`,
     ref,
     explorer: explorerHtml,
     content: pane,
     objectSrc,
     ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
-  });
+  }));
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
   return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, ref, response);
 }

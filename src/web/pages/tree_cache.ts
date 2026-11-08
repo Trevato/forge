@@ -15,7 +15,10 @@
 import { isFullId } from "../../http/addressed.ts";
 import { refTip } from "../../git/read.ts";
 import { ViewCache } from "../../view/cache.ts";
+import { clearKeptPages } from "./kept_page.ts";
 import type { BlobForRender } from "../../git/read.ts";
+import type { RepoSource } from "../../view/source.ts";
+import type { RefSet } from "./refs.ts";
 import type { Html } from "../html.ts";
 
 export const TTL_MS = 60_000;
@@ -25,7 +28,9 @@ export interface RenderedTree {
   readonly content: Html;
 }
 
-const cache = new ViewCache({ maxEntries: 512, maxBytes: 32 * 1024 * 1024 });
+/** Bytes the page columns may hold; shown on /system. */
+export const COLUMN_BYTES = 32 * 1024 * 1024;
+const cache = new ViewCache({ maxEntries: 512, maxBytes: COLUMN_BYTES });
 
 /** The commit `ref` names: a full id itself, a branch by its ref file; undefined for anything else (the caller reads git). */
 export async function resolveCommit(dir: string, ref: string): Promise<string | undefined> {
@@ -49,7 +54,54 @@ export const treeCacheStats = () => cache.stats();
 export const clearTreeCache = (): void => {
   cache.clear();
   rawCache.clear();
+  parts.clear();
+  clearKeptPages();
 };
+
+/**
+ * The parts a stranger's page is built from, kept between pages (#9514).
+ * A file's page reads its folder and every folder above it for the explorer,
+ * and the branch and tag names for the ref switcher: five git runs for
+ * `src/web/x.ts`, ~16 ms of the git pool, while the rendered pages above only
+ * help the second reader of that same file. A folder's listing at a full
+ * commit id never changes, and the files of one folder share it, so a wide
+ * crawl of a repository reads each folder once. The ref names are kept
+ * `TTL_MS`, the staleness the kept pages already allow their switcher.
+ */
+/** Bytes the folders and ref names may hold; shown on /system. */
+export const PARTS_BYTES = 16 * 1024 * 1024;
+const parts = new ViewCache({ maxEntries: 8192, maxBytes: PARTS_BYTES });
+/** A folder at a commit cannot change: kept for as long as it fits. */
+const FOLDER_TTL_MS = 10 * 60_000;
+
+/** `source` with `tree` at a full commit id read once and kept: the explorer's folders for a stranger's page. */
+export function withKeptFolders(repoId: string, source: RepoSource): RepoSource {
+  const kept: RepoSource = Object.create(source);
+  return Object.assign(kept, {
+    tree: async (ref: string, path: string) => {
+      if (!isFullId(ref)) return source.tree(ref, path);
+      const key = ["folder", repoId, ref, path].join("\0");
+      const hit = parts.get<Awaited<ReturnType<RepoSource["tree"]>>>(key);
+      if (hit !== undefined) return hit;
+      const read = await source.tree(ref, path);
+      if (read.ok) parts.set(key, read, FOLDER_TTL_MS, 64 + read.value.reduce((n, e) => n + 64 + e.name.length * 2, 0));
+      return read;
+    },
+  });
+}
+
+/** The branch and tag names for a stranger's ref switcher, read at most once per `TTL_MS` a repository. */
+export async function keptRefs(repoId: string, read: () => Promise<RefSet>): Promise<RefSet> {
+  const key = ["refs", repoId].join("\0");
+  const hit = parts.get<RefSet>(key);
+  if (hit !== undefined) return hit;
+  const refs = await read();
+  const bytes = [...refs.branches, ...refs.tags].reduce((n, r) => n + 32 + r.length * 2, 64);
+  parts.set(key, refs, TTL_MS, bytes);
+  return refs;
+}
+
+export const keptPartsStats = () => parts.stats();
 
 /**
  * A file's page at one full commit id (#9405). Same reasoning as the listing:

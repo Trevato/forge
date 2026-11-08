@@ -20,6 +20,24 @@ export interface LoadResult {
   readonly servedPerSecond: number;
   readonly p50: number;
   readonly p95: number;
+  /** Read through the edge cache, or past it with a query no one else asks (#9514). Absent in results kept before. */
+  readonly cache?: "edge" | "bypass";
+  /** The refusals by status (`"429"`, `"503"`, …) or `"failed"` for no answer at all. */
+  readonly refusedBy?: Readonly<Record<string, number>>;
+  /** `"target met"`, or `missed()`'s words, as the run that wrote it judged (#9548). Absent in results kept before. */
+  readonly verdict?: string;
+}
+
+/** The goal a release is held to (#9514): at the asked rate, no refusal and p95 under this, ms. */
+export const TARGET_P95_MS = 100;
+
+/** Words for how a run fell short of the goal, or undefined when it refused none and its p95 was under `TARGET_P95_MS`. */
+export function missed(r: LoadResult): string | undefined {
+  const why: string[] = [];
+  if (r.refused > 0) why.push(`${r.refused} refused`);
+  if (r.served === 0) why.push("none served");
+  else if (r.p95 >= TARGET_P95_MS) why.push(`p95 ${r.p95} ms, not under ${TARGET_P95_MS} ms`);
+  return why.length === 0 ? undefined : why.join("; ");
 }
 
 /** The share of the last release's served rate a release may lose (20%). */
@@ -54,6 +72,9 @@ export function summarize(
 
 /** Words for a failed comparison, or undefined when `now` holds within `ALLOWED_FALL` of `last`. */
 export function fell(last: LoadResult, now: LoadResult): string | undefined {
+  // An edge run serves from the edge's copies; a bypass run from the forge. They answer different questions.
+  if ((last.cache ?? "edge") !== (now.cache ?? "edge"))
+    return `compared a ${now.cache ?? "edge"} run with a ${last.cache ?? "edge"} result: keep one of each and compare like with like`;
   const floor = last.servedPerSecond * (1 - ALLOWED_FALL);
   if (now.servedPerSecond >= floor) return undefined;
   return `served ${now.servedPerSecond}/s at ${now.version}, under ${Math.round(floor * 10) / 10}/s (80% of ${last.servedPerSecond}/s at ${last.version})`;

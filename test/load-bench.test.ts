@@ -32,3 +32,43 @@ test("--compare exits 1 when the served rate fell more than 20%, 0 when it held"
   expect(fell.err).toContain("LOAD REGRESSION");
   expect((await run(last(10))).code).toBe(0);
 });
+
+test("the goal is no refusal and p95 under 100 ms; an edge result is never compared with a bypass one (#9514)", async () => {
+  const { fell, missed } = await import("../src/perf/load_verdict.ts");
+  const r = (o: object) => ({ version: "1", asked: 500, seconds: 20, served: 10_000, refused: 0, servedPerSecond: 500, p50: 3, p95: 40, ...o });
+  expect(missed(r({}))).toBeUndefined();
+  expect(missed(r({ refused: 3 }))).toContain("3 refused");
+  expect(missed(r({ p95: 100 }))).toContain("p95 100 ms");
+  expect(missed(r({ served: 0, servedPerSecond: 0 }))).toContain("none served");
+  expect(fell(r({ cache: "bypass" }), r({ cache: "bypass" }))).toBeUndefined();
+  expect(fell(r({}), r({ cache: "bypass" }))).toContain("like with like");
+  // A result kept before #9514 has no cache field and reads as an edge run.
+  expect(fell(r({}), r({ cache: "edge" }))).toBeUndefined();
+});
+
+test("--bypass sends every request with a cookie the edge must pass, --warm is not counted, and the result names its kind (#9514)", async () => {
+  let withCookie = 0;
+  let without = 0;
+  const server = Bun.serve({
+    port: 0,
+    fetch: (req) => {
+      if (/\/(blob|raw)\//.test(new URL(req.url).pathname)) req.headers.get("cookie") === "forge_load=bypass" ? withCookie++ : without++;
+      return new Response(`<a href="/o/r/blob/${oid}/f.txt">f</a>`, { headers: { "content-type": "text/html" } });
+    },
+  });
+  try {
+    const p = Bun.spawn(["bun", "bench/load.ts", "--url", `http://127.0.0.1:${server.port}`, "--repo", "o/r", "--rate", "40", "--seconds", "1", "--warm", "1", "--bypass"], { stdout: "pipe", stderr: "pipe" });
+    const [code, out] = await Promise.all([p.exited, new Response(p.stdout).text()]);
+    expect(code).toBe(0);
+    const result = JSON.parse(out.slice(out.indexOf("{"), out.indexOf("\n}") + 2));
+    expect(result.cache).toBe("bypass");
+    expect(without).toBe(0);
+    // Both phases asked; only the measured second is in the result.
+    expect(withCookie).toBeGreaterThan(result.served);
+    expect(result.served).toBeLessThanOrEqual(41);
+    expect(out).toContain("warm-up, per second");
+    expect(out).toContain("target met");
+  } finally {
+    server.stop(true);
+  }
+});

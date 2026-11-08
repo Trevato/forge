@@ -14,6 +14,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { crawlerShare, createPerfRecord } from "../src/perf/record.ts";
 import { crawlReport } from "../src/perf/crawlers.ts";
 import { clearTreeCache, treeCacheStats } from "../src/web/pages/tree_cache.ts";
+import { keptPageStats } from "../src/web/pages/kept_page.ts";
 
 let dataDir: string;
 let app: App;
@@ -114,7 +115,8 @@ test("a branch page resolves to its commit once, serves from the cache, links by
   expect(treeCacheStats().entries).toBe(1);
   const second = await get("/alice/open/tree/main", from("10.3.0.1"));
   expect(await second.text()).toContain(`/alice/open/blob/${sha}/a.txt`);
-  expect(treeCacheStats().hits).toBeGreaterThanOrEqual(1);
+  // served whole from the kept page (#9514), or from the kept columns
+  expect(treeCacheStats().hits + keptPageStats().hits).toBeGreaterThanOrEqual(1);
   // a commit-addressed listing is immutable for the edge
   const addressed = await get(`/alice/open/tree/${sha}`, from("10.3.0.1"));
   expect(addressed.headers.get("cache-control")).toContain("immutable");
@@ -200,6 +202,14 @@ test("pages queued past their share count as behind even with the loop on time, 
     expect(a.verdict).toBeUndefined();
     open.push(a.request);
   }
+  // In flight but not yet waiting: a busy forge answering fast is not behind (#9514),
+  // so more than the shared budget gets through.
+  for (let i = 0; i <= STRANGER_BUDGET.behindAll; i++) {
+    const a = ask();
+    expect(a.verdict).toBeUndefined();
+    open.push(a.request);
+  }
+  now += STRANGER_BUDGET.queuedMs;
   for (let i = 0; i < STRANGER_BUDGET.behindAll; i++) {
     const a = ask();
     expect(a.verdict).toBeUndefined();
@@ -212,6 +222,63 @@ test("pages queued past their share count as behind even with the loop on time, 
   for (let i = 0; i < STRANGER_BUDGET.inFlight; i++) ask();
   now += 61_000;
   for (let i = 0; i < 90; i++) expect(ask().verdict).toBeUndefined();
+});
+
+/** A fresh app on its own clock, and a stranger's deep page asked from a new address each time. */
+function strangers(start: number) {
+  const fresh = {} as App;
+  const clock = { now: start };
+  setCrawlClock(fresh, () => clock.now, false);
+  let n = 0;
+  const ask = () => {
+    n++;
+    const request = new Request("http://forge.test/alice/open/blob/c/a.txt", { headers: { "user-agent": "Mozilla/5.0 Chrome/150.0" } });
+    notePeer(request, `10.7.${n >> 8}.${(n & 255) + 1}`);
+    return takeCrawl(fresh, request, "/alice/open/blob/c/a.txt");
+  };
+  /** How many are let through, asking until the first refusal (bounded). */
+  const throughBeforeRefused = () => {
+    for (let i = 0; i < 1000; i++) if (ask() !== undefined) return i;
+    return Infinity;
+  };
+  return { clock, ask, throughBeforeRefused };
+}
+
+// Sentinel on #9548: the guard was relaxed to need a wait, so a real queue must still cut.
+test("a real queue still cuts strangers to the shared budget after lost finishes are forgotten and the queue refills", () => {
+  const { clock, ask, throughBeforeRefused } = strangers(9_000_000);
+  // A full queue whose finishes never come...
+  for (let i = 0; i < STRANGER_BUDGET.inFlight; i++) expect(ask()).toBeUndefined();
+  // ...is forgotten after a minute, so the forge is not behind for good.
+  clock.now += 61_000;
+  for (let i = 0; i < STRANGER_BUDGET.inFlight; i++) expect(ask()).toBeUndefined();
+  // Refilled: 32 in flight, none waiting yet, is a busy forge on time.
+  expect(ask()).toBeUndefined();
+  // The oldest has now waited `queuedMs`: that is queuing, and strangers
+  // together get exactly the shared ceiling and no more.
+  clock.now += STRANGER_BUDGET.queuedMs;
+  const through = throughBeforeRefused();
+  expect(through).toBe(STRANGER_BUDGET.behindAll);
+});
+
+test("only the pages older than a minute are forgotten: the fresh ones behind them still count", () => {
+  const { clock, ask, throughBeforeRefused } = strangers(10_000_000);
+  const old = 20;
+  for (let i = 0; i < old; i++) expect(ask()).toBeUndefined();
+  clock.now += 59_000;
+  const fresh = STRANGER_BUDGET.inFlight - old - 1;
+  for (let i = 0; i < fresh; i++) expect(ask()).toBeUndefined();
+  // The first `old` are now past a minute; the `fresh` behind them are 1 s old.
+  clock.now += 1_001;
+  // The 32nd in flight; the next check forgets the 20 old and keeps the
+  // fresh ones, so it is not behind until the queue is full again.
+  expect(ask()).toBeUndefined();
+  const refill = STRANGER_BUDGET.inFlight - (fresh + 1);
+  // Had the old been kept, every one of these would spend the shared ceiling;
+  // had the fresh been dropped too, the queue would take `fresh` more to fill.
+  // Exactly `refill` go free, then the oldest fresh page (waited 1 s) makes it
+  // a queue and the shared ceiling applies.
+  expect(throughBeforeRefused()).toBe(refill + STRANGER_BUDGET.behindAll);
 });
 
 test("a made-up Authorization header buys nothing: it's counted like anyone with no account", async () => {
@@ -283,6 +350,45 @@ test("what is kept for a stranger is never handed to a signed-in reader, a priva
       expect(body).not.toBe("hi\n");
       expect(body).not.toContain("class=\"blob");
     }
+  } finally {
+    app.db.run(`UPDATE repo SET visibility = 'public' WHERE name = 'open'`);
+    await rename(join(gitDir, "objects.away"), join(gitDir, "objects"));
+  }
+});
+
+test("a stranger's pinned page is kept whole and encoded; a session, a theme cookie or a private repository never gets it (#9514)", async () => {
+  setCrawlClock(app, () => 17_000_000);
+  clearTreeCache();
+  const gitDir = join(dataDir, "repos", "alice", "open.git");
+  const page = `/alice/open/blob/${sha}/a.txt`;
+  const br = { "accept-encoding": "br" };
+  const first = await get(page, from("10.7.2.1", br));
+  expect(first.status).toBe(200);
+  const firstBody = await first.text();
+  expect(keptPageStats().entries).toBe(1);
+  await rename(join(gitDir, "objects"), join(gitDir, "objects.away"));
+  try {
+    const hits = keptPageStats().hits;
+    const second = await get(page, from("10.7.2.2", br));
+    expect(second.status).toBe(200);
+    expect(second.headers.get("content-encoding")).toBe("br");
+    expect(second.headers.get("cache-control")).toContain("immutable");
+    expect(second.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(await second.text()).toBe(firstBody);
+    expect(keptPageStats().hits).toBe(hits + 1);
+    // a theme cookie changes the page: not the kept one, and not shared
+    const themed = await get(page, from("10.7.2.3", { ...br, cookie: "forge_theme=dark" }));
+    expect(themed.headers.get("cache-control") ?? "").not.toContain("public");
+    // a signed-in reader walks git (gone here) instead
+    const cookie = `forge_session=${createSession(app.db, alice.id).token}`;
+    expect((await get(page, from("10.7.2.4", { ...br, cookie }))).status).not.toBe(200);
+    expect(keptPageStats().hits).toBe(hits + 1);
+    // turned private: refused at once, though the page is still kept
+    app.db.run(`UPDATE repo SET visibility = 'private' WHERE name = 'open'`);
+    const refused = await get(page, from("10.7.2.5", br));
+    expect(refused.status).not.toBe(200);
+    expect(await refused.text()).not.toBe(firstBody);
+    expect(keptPageStats().hits).toBe(hits + 1);
   } finally {
     app.db.run(`UPDATE repo SET visibility = 'public' WHERE name = 'open'`);
     await rename(join(gitDir, "objects.away"), join(gitDir, "objects"));

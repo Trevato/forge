@@ -12,6 +12,9 @@
  * Between them, the main-thread stalls of the last hour by route (#9016),
  * read once at first paint from the loop watch: the top routes plus
  * /api/v1/telemetry/flow always, as /metrics exports them.
+ * Then the in-process caches that answer strangers' code pages (#9514), each
+ * with its entries, bytes held beside its cap, and hits and misses: together
+ * they may hold ~128 MB, so what they hold is shown where memory is.
  */
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
@@ -30,6 +33,9 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { systemLiveJs } from "../system-live.ts";
+import { RECENT_BYTES, recentEncodings } from "../../http/compress.ts";
+import { KEPT_PAGE_BYTES, keptPageStats } from "./kept_page.ts";
+import { COLUMN_BYTES, PARTS_BYTES, keptPartsStats, treeCacheStats } from "./tree_cache.ts";
 import { badge, card, chartBox, empty, meter, pill, row } from "../ui.ts";
 
 /** A group's memory, and a cell's beside its cap and who holds the cap. */
@@ -96,6 +102,38 @@ function memorySection(ctx: Ctx): Html {
           <thead><tr><th scope="col">Hour (UTC)</th><th scope="col" class="num">RSS mean</th><th scope="col" class="num">RSS max</th><th scope="col" class="num">Heap mean</th><th scope="col" class="num">Heap max</th></tr></thead>
           <tbody>${hours.map((h) => html`<tr><td class="mono">${hhmm(h.at)}</td><td class="num mono">${mib(h.rssMean)}</td><td class="num mono">${mib(h.rssMax)}</td><td class="num mono">${mib(h.heapMean)}</td><td class="num mono">${mib(h.heapMax)}</td></tr>`)}</tbody>
         </table></div>`;
+}
+
+/** One in-process cache as it stands: what it is for, its byte cap, and `ViewCache.stats()`. */
+export interface CacheRow {
+  readonly name: string;
+  readonly holds: string;
+  readonly capBytes: number;
+  readonly entries: number;
+  readonly bytes: number;
+  readonly hits: number;
+  readonly misses: number;
+}
+
+/** The caches behind strangers' code pages, now, each beside its own byte cap. */
+export const pageCaches = (): CacheRow[] => [
+  { name: "kept pages", holds: "a stranger's finished pinned page, encoded (kept_page.ts)", capBytes: KEPT_PAGE_BYTES, ...keptPageStats() },
+  { name: "encoded bodies", holds: "identity-free bodies, brotli or gzip (compress.ts)", capBytes: RECENT_BYTES, ...recentEncodings() },
+  { name: "page columns", holds: "rendered tree and blob columns (tree_cache.ts)", capBytes: COLUMN_BYTES, ...treeCacheStats() },
+  { name: "folders and refs", holds: "folder listings at a commit, ref names (tree_cache.ts)", capBytes: PARTS_BYTES, ...keptPartsStats() },
+];
+
+/** `pageCaches`' rows as a table; the hit rate is hits over hits and misses since the process started. */
+export function cachesSection(rows: readonly CacheRow[]): Html {
+  const rate = (r: CacheRow) => (r.hits + r.misses === 0 ? "—" : `${((100 * r.hits) / (r.hits + r.misses)).toFixed(1)}%`);
+  return card(
+    html`<p class="small muted">In-process caches behind strangers' code pages, since this process started. Bytes are what each counts against its cap.</p>
+      <div class="table-scroll"><table class="table" aria-label="Code page caches">
+        <thead><tr><th scope="col">Cache</th><th scope="col">Holds</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Bytes</th><th scope="col" class="num">Cap</th><th scope="col" class="num">Hits</th><th scope="col" class="num">Misses</th><th scope="col" class="num">Hit rate</th></tr></thead>
+        <tbody>${rows.map((r) => html`<tr data-cache="${r.name}" data-bytes="${String(r.bytes)}"><td>${r.name}</td><td class="small muted">${r.holds}</td><td class="num mono">${String(r.entries)}</td><td class="num mono">${mib(r.bytes)}</td><td class="num mono">${mib(r.capBytes)}</td><td class="num mono">${String(r.hits)}</td><td class="num mono">${String(r.misses)}</td><td class="num mono">${rate(r)}</td></tr>`)}</tbody>
+      </table></div>`,
+    { head: html`<h2>Code page caches</h2>` },
+  );
 }
 
 /** The last hour's stalls by route, most milliseconds first; the rows are `stallHour`'s. */
@@ -226,6 +264,7 @@ export function systemPage(ctx: Ctx): Response {
     <div id="sys-procs">${at("sys-procs")}</div>
     <div id="sys-stalls">${stallSection(stalls)}</div>
     <div id="sys-readers">${readersSection(readerPaces())}</div>
+    <div id="sys-caches">${cachesSection(pageCaches())}</div>
     ${memory}`;
   const response = page({ ctx, title: "System", body, wide: true, scriptJs: systemLiveJs });
   notePhase(ctx.request, "render", performance.now() - rendering);

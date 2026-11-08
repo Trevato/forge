@@ -1,0 +1,14 @@
+{
+  "version": "in-process",
+  "asked": 500,
+  "seconds": 20,
+  "served": 2069,
+  "refused": 7930,
+  "servedPerSecond": 103.5,
+  "p50": 314,
+  "p95": 457.5,
+  "cache": "bypass",
+  "refusedBy": {
+    "429": 7930
+  }
+}
