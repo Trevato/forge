@@ -36,8 +36,15 @@ import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
+import { isLocalPath } from "../flash.ts";
 import { flashTo } from "../layout.ts";
 import { btn, card, field as formField, row, timeAgo } from "../ui.ts";
+
+/** Where to land: a validated same-origin path the form names as `back`, else the settings card. */
+function backTo(form: Awaited<ReturnType<typeof readForm>> & object, fallback: string): string {
+  const back = (form as FormData).get("back");
+  return typeof back === "string" && isLocalPath(back) ? back : fallback;
+}
 
 /** HH:MM in UTC, with the instant for machines and the title for people. */
 function clock(iso: string): Html {
@@ -183,7 +190,7 @@ export async function followUpstreamUpdate(ctx: Ctx): Promise<Response> {
   });
   return flashTo(
     ctx,
-    `${repoBase(repo)}/settings#upstream`,
+    backTo(form, `${repoBase(repo)}/settings#upstream`),
     saved.ok
       ? {
           message: saved.value.enabled
@@ -298,7 +305,7 @@ export async function followSourceRemove(ctx: Ctx): Promise<Response> {
   const gone = removeFollowSource(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
   return flashTo(
     ctx,
-    `${repoBase(repo)}/settings#sources`,
+    backTo(form, `${repoBase(repo)}/settings#sources`),
     gone.ok
       ? { message: `No longer following ${upstreamShort(gone.value.url)}.` }
       : { tone: "danger", message: SOURCE_REFUSALS.not_found },

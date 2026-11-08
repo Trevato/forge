@@ -129,4 +129,25 @@ describe("flows in the terminal", () => {
     guest.stop();
     forge.db.query("UPDATE repo SET visibility = 'public' WHERE id = ?").run(repo.id);
   });
+
+  test("stop following and update a dependency work for an admin and are refused for a reader", async () => {
+    const sources = () => forge.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM repo_source WHERE repo_id = ?").get(repo.id)!.n;
+    const updates = () => forge.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM issue WHERE repo_id = ? AND title LIKE 'Update leftish to %'").get(repo.id)!.n;
+    const reader = boot(eve);
+    await reader.open();
+    expect(reader.text()).not.toContain("stop or resume following");
+    await reader.press("s");
+    await reader.press("j", "j", "u");
+    expect(sources()).toBe(1);
+    expect(updates()).toBe(0);
+    reader.stop();
+    const admin = boot(ada);
+    await admin.open();
+    expect(admin.text()).toContain("stop or resume following");
+    await admin.press("s");
+    expect(sources()).toBe(0);
+    await admin.press("j", "u");
+    expect(updates()).toBe(1);
+    admin.stop();
+  });
 });

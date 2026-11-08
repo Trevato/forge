@@ -8,7 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { getCursor } from "../core/origins.ts";
 import { forkFollowMode } from "../core/fork_follow.ts";
-import { canRead, canWrite, getRepoById, repoDatesFor, visibleForks, type Repo } from "../core/repos.ts";
+import { canAdmin, canRead, canWrite, getRepoById, repoDatesFor, visibleForks, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { aheadWords, parseAhead } from "../origins/ahead.ts";
 import { counts, lastScanAt } from "../checks/scan_store.ts";
@@ -24,6 +24,8 @@ export interface FlowAction {
   readonly label: string;
   readonly href: string;
   readonly post: boolean;
+  /** Hidden fields the POST carries (a form needs them to reach an existing action). */
+  readonly fields?: Readonly<Record<string, string>>;
 }
 
 export interface FlowLine {
@@ -36,6 +38,8 @@ export interface FlowLine {
   readonly at: string | null;
   readonly problem: boolean;
   readonly health: Health;
+  /** The followed source's id, for the line that stops it. */
+  readonly id?: string;
   readonly action?: FlowAction;
 }
 
@@ -79,6 +83,7 @@ export function followHealth(
 
 export function readFlows(db: Database, repo: Repo, viewer: User | undefined, now = Date.now()): FlowView {
   const writer = viewer !== undefined && viewer.kind !== "agent" && canWrite(db, repo, viewer);
+  const admin = viewer !== undefined && viewer.kind !== "agent" && canAdmin(db, repo, viewer);
   const inbound: FlowLine[] = [];
   const outbound: FlowLine[] = [];
   if (repo.forkParentId !== null) {
@@ -100,17 +105,30 @@ export function readFlows(db: Database, repo: Repo, viewer: User | undefined, no
       kind: "upstream", label: `${plainUrl(up.url)} (${up.branch})`, href: "", at: up.checked_at, problem: up.error !== "",
       health: followHealth({ enabled: up.enabled !== 0, checkedAt: up.checked_at, behind: up.behind, error: up.error }, now),
       state: up.enabled === 0 ? "not following" : behindWords(up.behind, up.error),
+      ...(admin
+        ? {
+            action: {
+              label: up.enabled === 0 ? "Follow again" : "Stop following",
+              href: `${base(repo)}/settings/upstream`,
+              post: true,
+              fields: { url: up.url, branch: up.branch, ...(up.enabled === 0 ? { enabled: "on" } : {}), back: `${base(repo)}/flows` },
+            },
+          }
+        : {}),
     });
   }
   for (const s of db
-    .query<{ url: string; branch: string; enabled: number; checked_at: string | null; behind: number; error: string }, [string]>(
-      "SELECT url, branch, enabled, checked_at, behind, error FROM repo_source WHERE repo_id = ?1 ORDER BY created_at",
+    .query<{ id: string; url: string; branch: string; enabled: number; checked_at: string | null; behind: number; error: string }, [string]>(
+      "SELECT id, url, branch, enabled, checked_at, behind, error FROM repo_source WHERE repo_id = ?1 ORDER BY created_at",
     )
     .all(repo.id)) {
     inbound.push({
-      kind: "source", label: `${plainUrl(s.url)} (${s.branch})`, href: "", at: s.checked_at, problem: s.error !== "",
+      kind: "source", id: s.id, label: `${plainUrl(s.url)} (${s.branch})`, href: "", at: s.checked_at, problem: s.error !== "",
       health: followHealth({ enabled: s.enabled !== 0, checkedAt: s.checked_at, behind: s.behind, error: s.error }, now),
       state: s.enabled === 0 ? "not following" : behindWords(s.behind, s.error),
+      ...(admin
+        ? { action: { label: "Stop following", href: `${base(repo)}/settings/sources/${s.id}/remove`, post: true, fields: { back: `${base(repo)}/flows` } } }
+        : {}),
     });
   }
   if (repo.origin !== null) {
@@ -133,6 +151,9 @@ export function readFlows(db: Database, repo: Repo, viewer: User | undefined, no
     outbound.push({
       kind: "fork", label: `${f.ownerName}/${f.name}`, href: base(f), at: d?.pushedAt ?? d?.createdAt ?? null, problem: false, health: "none",
       state: mode === "take-updates" ? "fork, takes updates" : "fork, told of updates",
+      ...(viewer !== undefined && viewer.kind !== "agent" && canAdmin(db, f, viewer)
+        ? { action: { label: "Follow mode", href: `${base(f)}/following`, post: false } }
+        : {}),
     });
   }
   const mirror = db

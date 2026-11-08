@@ -11,6 +11,8 @@ import { depState, readRadar, type DepLine } from "../../flows/radar.ts";
 import { pinsOf } from "../../flows/run.ts";
 import { probeLinks } from "../../flows/probe.ts";
 import { mayStartRadar, startRadar } from "../../flows/start.ts";
+import { actOnFollow } from "../../flows/act.ts";
+import { askUpdate, worthTaking } from "../../flows/file.ts";
 import { readFlows, type FlowLine, type Health } from "../../flows/view.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -37,21 +39,29 @@ export function flowsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const state = new ListState();
   let deps: DepLine[] = [];
   const visible = (): boolean => canRead(f.db, repo, f.user);
-  const rows = (): ListRow[] => {
+  /** Rows in draw order, each with the line or package it stands for. */
+  const items = (): { row: ListRow; line?: FlowLine; dep?: DepLine }[] => {
     if (!visible()) return [];
     const view = readFlows(f.db, repo, f.user);
-    return [...view.inbound.map(flowRow("in ")), ...deps.map(depRow), ...view.outbound.map(flowRow("out"))];
+    return [
+      ...view.inbound.map((line) => ({ row: flowRow("in ")(line), line })),
+      ...deps.map((dep) => ({ row: depRow(dep), dep })),
+      ...view.outbound.map((line) => ({ row: flowRow("out")(line), line })),
+    ];
   };
+  const rows = (): ListRow[] => items().map((i) => i.row);
+  const selected = () => items()[state.index];
   /** The actions the page would offer this person: the same reads decide. */
-  const actions = () => (visible() ? readFlows(f.db, repo, f.user).inbound.flatMap((l) => (l.action ? [l.action] : [])) : []);
+  const actions = () => (visible() ? readFlows(f.db, repo, f.user).inbound.flatMap((l) => (l.action && l.kind === "origin" ? [l.action] : [])) : []);
+  const mayFollow = () => (visible() ? readFlows(f.db, repo, f.user).inbound.some((l) => l.action?.post && (l.kind === "source" || l.kind === "upstream")) : false);
   const load = async (signal?: AbortSignal): Promise<void> => {
-    if (signal) live(f, signal, { repoId: repo.id, kinds: ["repo.links_probed", "repo.upstream_checked"] }, () => ctx.invalidate());
+    if (signal) live(f, signal, { repoId: repo.id, kinds: ["repo.links_probed", "repo.upstream_checked", "issue.opened"] }, () => ctx.invalidate());
     deps = visible() ? readRadar(f.db, repo.id, await pinsOf(f.app, repo)) : [];
     ctx.invalidate();
   };
   return {
     title: "Flows",
-    keys: [binding(["j", "k"], "move cursor"), ...(mayStartRadar(f.app, repo, f.user) ? [binding(["r"], "read upstream now"), binding(["c"], "compare heads now")] : []), ...(actions().some((a) => a.post) ? [binding(["p"], "pull in what's new")] : []), ...(actions().some((a) => !a.post) ? [binding(["o"], "offer what's useful")] : []), binding(["esc"], "back")],
+    keys: [binding(["j", "k"], "move cursor"), ...(mayStartRadar(f.app, repo, f.user) ? [binding(["r"], "read upstream now"), binding(["c"], "compare heads now")] : []), ...(actions().some((a) => a.post) ? [binding(["p"], "pull in what's new")] : []), ...(actions().some((a) => !a.post) ? [binding(["o"], "offer what's useful")] : []), ...(mayFollow() ? [binding(["s"], "stop or resume following")] : []), ...(f.user !== undefined && f.user.kind !== "agent" ? [binding(["u"], "update this dependency")] : []), binding(["esc"], "back")],
     load,
     render(area, s) {
       drawList(s, area, ctx.theme.c, state, rows());
@@ -78,8 +88,26 @@ export function flowsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         });
         return true;
       }
+      if (e.key === "s") {
+        const line = selected()?.line;
+        if (!line?.action?.post || (line.kind !== "source" && line.kind !== "upstream")) return false;
+        const done = actOnFollow(f.app, repo, f.user, line);
+        ctx.toast(done.ok ? done.message : done.why, done.ok ? undefined : "danger");
+        ctx.invalidate();
+        return true;
+      }
+      if (e.key === "u") {
+        const dep = selected()?.dep;
+        if (dep === undefined || !worthTaking(dep)) return false;
+        const asked = askUpdate(f.app, repo, f.user, deps, dep.name);
+        if (!asked.ok) ctx.toast(asked.why, "danger");
+        else ctx.toast(asked.filed === null ? "An update is already open." : `Filed issue #${asked.filed}.`);
+        ctx.invalidate();
+        return true;
+      }
       if (e.key === "o") {
-        const offer = actions().find((a) => !a.post);
+        const own = selected()?.line?.action;
+        const offer = own && !own.post ? own : actions().find((a) => !a.post);
         if (!offer) return false;
         ctx.toast(`Open ${offer.href} on the web to offer it.`);
         return true;

@@ -11,7 +11,8 @@ import { assignIssue } from "../actions/issues.ts";
 import { crewWithRole } from "../core/agents.ts";
 import { createIssue, type Issue } from "../core/issues.ts";
 import { getUserById } from "../core/users.ts";
-import type { Repo } from "../core/repos.ts";
+import { canWrite, type Repo } from "../core/repos.ts";
+import type { User } from "../core/users.ts";
 import type { Gap } from "./semver.ts";
 import { parseSemver } from "./semver.ts";
 import type { DepLine } from "./radar.ts";
@@ -99,4 +100,19 @@ export function fileUpdates(app: App, repo: Repo, lines: readonly DepLine[]): nu
     filed.push(made.value.number);
   }
   return filed;
+}
+
+export type Asked = { ok: true; filed: number | null } | { ok: false; why: string };
+
+/**
+ * "Update this dependency" for one named package: a writer (never an agent)
+ * files the same issue the radar would, routed the same way, so an autonomous
+ * repository's crew proposes the pull. `filed` is null when nothing is worth
+ * taking or one is already open.
+ */
+export function askUpdate(app: App, repo: Repo, user: User | undefined, lines: readonly DepLine[], name: string): Asked {
+  if (user === undefined || user.kind === "agent" || !canWrite(app.db, repo, user)) return { ok: false, why: "Only a writer of this repository can do this." };
+  const line = lines.find((l) => l.name === name);
+  if (line === undefined) return { ok: false, why: "That package is not pinned here." };
+  return { ok: true, filed: fileUpdates(app, repo, [line])[0] ?? null };
 }
