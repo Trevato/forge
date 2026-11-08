@@ -55,6 +55,17 @@ export function heldCard(rows: readonly HeldRow[]): Html {
                       <td>${heldCount("startable", r.startable)} ${startableMeter(r)}</td>
                       <td>
                         ${HOLDS.filter((h) => r.counts[h] > 0).map((h) => html`${heldCount(h, r.counts[h])} `)}
+                        ${r.hot.length === 0
+                          ? null
+                          : html`<ul class="small" data-held-hot>
+                              ${r.hot.map(
+                                (h) =>
+                                  html`<li data-held-hot-issue="${String(h.number)}">
+                                    #${String(h.number)} waits: ${h.detail}
+                                    <span class="held-pulls">${h.pulls.map((n) => html`<a class="mono" href="/${r.repo}/pulls/${String(n)}">#${String(n)}</a>`)}</span>
+                                  </li>`,
+                              )}
+                            </ul>`}
                       </td>
                     </tr>`,
                 )}

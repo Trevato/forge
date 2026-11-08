@@ -6,6 +6,7 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
+import { diffMemoryKey, recalled, remember } from "./diff-memory.ts";
 import { runGitRaw, type GitFailure } from "./env.ts";
 import { isSafeOid, isSafeRef } from "./guard.ts";
 
@@ -77,8 +78,26 @@ export async function diffRange(
 ): Promise<Result<Diff, GitFailure | "unsafe_rev">> {
   if (!safeRange(base, head)) return err("unsafe_rev");
   // `git diff A B` compares two tree-ish and needs no work tree.
-  return runDiff(dir, ["diff", ...DIFF_FLAGS, base, head, "--"], laps);
+  const run = () => runDiff(dir, ["diff", ...DIFF_FLAGS, base, head, "--"], laps);
+  // A ref can move; two object ids cannot, so only their diff is remembered.
+  if (!isSafeOid(base) || !isSafeOid(head)) return run();
+  const key = diffMemoryKey(dir, base, head);
+  const known = recalled(key);
+  if (known !== undefined) return ok(known);
+  // Readers arriving while git runs wait for that run rather than start one.
+  const pending = running.get(key);
+  if (pending !== undefined) return pending;
+  const started = run().then((result) => (result.ok ? ok(remember(key, result.value)) : result));
+  running.set(key, started);
+  try {
+    return await started;
+  } finally {
+    running.delete(key);
+  }
 }
+
+/** Range diffs git is producing right now, by memory key. */
+const running = new Map<string, Promise<Result<Diff, GitFailure>>>();
 
 /** Diff a commit against its first parent (or the empty tree for a root). */
 export async function diffCommit(

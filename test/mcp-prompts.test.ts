@@ -18,6 +18,7 @@ import { startPromptRoutine, type PromptRoutineHandle } from "../src/crew/prompt
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listVia } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -151,7 +152,7 @@ describe("MCP prompts", () => {
   });
 
   test("only an admin-scope token sees the tool or may call it", async () => {
-    const names = async (t: string) => (await rpc(t, "tools/list", {})).result.tools.map((x: any) => x.name);
+    const names = async (t: string) => (await listVia((p) => rpc(t, "tools/list", p))).result.tools.map((x: any) => x.name);
     expect(await names(admin)).toContain("prompts");
     expect(await names(rw)).not.toContain("prompts");
     const direct = await rpc(rw, "tools/call", { name: "prompts", arguments: { repo: "alice/game", action: "list" } });

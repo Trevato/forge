@@ -1,8 +1,7 @@
 /**
  * Runs, as rows: the vocabulary a screen borrows to show one — a pull's
  * checks, an issue's crew activity. One place decides what "failed" looks
- * like so it looks the same everywhere. A run's live log is a web page
- * (`/:owner/:name/runs/:id`); `openRunLog` hands its address over.
+ * like so it looks the same everywhere. `openRunLog` opens a run's log screen.
  *
  * A run row says four things in order: its state (a dot in the tone and the
  * word), what it was (`deploy production`, `agent robo`), why (the reason),
@@ -11,42 +10,29 @@
  * the summary that says what failed.
  */
 
+import { STEER_SAYS, steerRepoRun } from "../../actions/runs.ts";
+import { steerRefusedWords } from "../../actions/steer_words.ts";
 import { placementWords } from "../../checks/placement.ts";
 import { getIssuesByIds, type Issue } from "../../core/issues.ts";
-import type { Repo } from "../../core/repos.ts";
+import { canWrite, type Repo } from "../../core/repos.ts";
 import type { Run, RunState } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import type { Ctx } from "../app/app.ts";
+import type { Ctx, Screen } from "../app/app.ts";
 import type { Rect, Screen as Surface } from "../term/screen.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { icon, type IconSet } from "../ui/icons.ts";
-import type { Tone } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
   ListState,
   drawList,
   hitList,
   metaOf,
+  promptScreen,
   relTime,
   type ListRow,
-  openOnWeb,
 } from "./common.ts";
-
-/** The tone a run's state wears — the same reading on every surface. */
-export function runTone(state: RunState): Tone | undefined {
-  switch (state) {
-    case "ok":
-      return "success";
-    case "failed":
-      return "danger";
-    case "running":
-      return "attn";
-    case "cancelled":
-      return "secondary";
-    case "queued":
-      return undefined;
-  }
-}
+import { runLogScreen } from "./runlog.ts";
+import { costText, envLabel, runTone } from "./runwords.ts";
 
 /** Whether the dot is hollow: nothing has happened yet, or nothing will. */
 export const runHollow = (state: RunState): boolean =>
@@ -68,16 +54,6 @@ export function runTitle(
       ? "an agent"
       : (names.get(run.actorId)?.username ?? "an agent");
   return set === "nerd" ? `${icon("bot", set)} ${who}` : `agent ${who}`;
-}
-
-/** `production`, or `pull #4` — the environment as a person says it. */
-export function envLabel(env: string): string {
-  return env.startsWith("pull-") ? `pull #${env.slice(5)}` : env || "—";
-}
-
-/** The dollars a run spent, or nothing when it spent none. */
-export function costText(costUsd: number): string {
-  return costUsd > 0 ? `$${costUsd.toFixed(2)}` : "";
 }
 
 /** The moment a run is best dated by: when it finished, started, or was made. */
@@ -193,21 +169,63 @@ export class RunList {
   }
 }
 
-/**
- * `enter` on a run: its log, cancel and steer live on the web page, so the
- * terminal hands over the address. With no public URL configured the path
- * is still the answer, said as one.
- */
+/** `enter` on a run: its log, in the terminal; `o` there prints the web address. */
 export function openRunLog(
   f: Session,
   ctx: Ctx,
   repo: Repo,
   run: Run,
 ): void {
-  openOnWeb(
-    f,
-    ctx,
-    `/${repo.ownerName}/${repo.name}/runs/${run.id}`,
-    "the run's log",
+  ctx.push(runLogScreen(f, ctx, repo, run.id));
+}
+
+/**
+ * Whether the viewer may say a word to this run: an agent's run that is
+ * running, and a person who may write here. An agent session is never
+ * offered it — a run costs money, and steering one is a person's call, as
+ * `steerRepoRun` refuses it too.
+ */
+export function maySteer(f: Session, repo: Repo, run: Run | undefined): boolean {
+  return (
+    run !== undefined &&
+    run.kind === "agent" &&
+    run.state === "running" &&
+    f.user !== undefined &&
+    f.user.kind !== "agent" &&
+    canWrite(f.db, repo, f.user)
+  );
+}
+
+/**
+ * Steer: a one-line composer whose enter sends the words through
+ * `steerRepoRun`, as the run page's steer box and MCP `steer` do. Empty text
+ * keeps the composer open with the refusal; the outcome is a toast in the
+ * words MCP answers with.
+ */
+export function steerPrompt(
+  f: Session,
+  ctx: Ctx,
+  parent: Screen,
+  repo: Repo,
+  run: Run,
+  after: () => void = () => {},
+): void {
+  ctx.push(
+    promptScreen(ctx, parent, {
+      title: "Steer the run",
+      label: `Say a word to ${runTitle(run, runActors(f, [run]))}`,
+      placeholder: "One sentence the agent hears next",
+      onSubmit: (text) => {
+        const steered = steerRepoRun(f.app, f.user, repo, run.id, text);
+        if (!steered.ok) {
+          if (steered.error === "empty") return steerRefusedWords("empty");
+          ctx.toast(steerRefusedWords(steered.error), "danger");
+          return undefined;
+        }
+        ctx.toast(`${steered.value === "sent" ? "Sent" : "Commented"}. ${STEER_SAYS[steered.value]}`);
+        after();
+        return undefined;
+      },
+    }),
   );
 }

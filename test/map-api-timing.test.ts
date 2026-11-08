@@ -52,6 +52,6 @@ test("the repository map names its phases in order, with durations", async () =>
   expect(body.ready.length).toBeGreaterThan(0);
   const parts = (res.headers.get("server-timing") ?? "").split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
-  expect(names.filter((n) => n !== "app")).toEqual(["session", "graph", "marks", "pillars", "asktolive", "render"]);
+  expect(names.filter((n) => n !== "app")).toEqual(["session", "graph", "marks", "pillars", "asktolive", "held", "render"]);
   for (const p of parts) expect(Number(/dur=([\d.]+)/.exec(p)?.[1])).not.toBeNaN();
 });

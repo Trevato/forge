@@ -75,7 +75,7 @@ export type GateSummary = {
   memory: CgroupMemory;
   /** Spawn of the first file to exit of the last, in seconds. */
   wallSeconds: number;
-  /** Every file that ran, alone in its own `bun test`, and how long it took; fewer than `files` when fail-fast skipped some. */
+  /** Every file that ran, alone in its own `bun test`, and how long it took. */
   times: readonly { file: string; seconds: number }[];
 };
 
@@ -106,14 +106,12 @@ export function summaryLines(s: GateSummary): string[] {
     ? `${gib(s.memory.peak.bytes)}${s.memory.limit ? ` of ${gib(s.memory.limit.bytes)}` : ""} (${s.memory.peak.from})`
     : "unknown here";
   const top = slowest.slice(0, SLOWEST);
-  // Fail-fast leaves files unstarted: the list is of the files that ran.
-  const skipped = s.files - s.times.length;
   return [
     GATE_SUMMARY_HEADING,
     `test-shards: shards: ${why(s)}`,
     `test-shards: wall: ${s.wallSeconds.toFixed(1)}s`,
     `test-shards: peak memory: ${peak}`,
-    `test-shards: slowest ${top.length} of ${s.times.length} files${skipped > 0 ? ` (${skipped} of ${s.files} skipped after a red file)` : ""}:`,
+    `test-shards: slowest ${top.length} of ${s.times.length} files:`,
     ...top.map((t) => `  ${t.seconds.toFixed(1).padStart(6)}s ${t.file}`),
     ...slowest
       .filter((t) => t.seconds > SLOW_SECONDS)

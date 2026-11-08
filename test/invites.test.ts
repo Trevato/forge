@@ -142,7 +142,16 @@ describe("invites: the settings form", () => {
     expect(page).not.toContain("invite_");
     const [item] = listInvites(app.db);
     expect(item!.state).toBe("open");
-    expect(page).toContain(`/admin/invites/${item!.id}/revoke`);
+    const to = `/admin/invites/${item!.id}/revoke`;
+    expect(page).toContain(`href="/-/confirm?to=${encodeURIComponent(to)}"`);
+    expect(page).not.toContain(`action="${to}"`);
+    expect(page).not.toContain("Nothing reads these yet.");
+    const confirm = await fetch(`${servers.url}/-/confirm?to=${encodeURIComponent(to)}`, { headers: { cookie: alice } });
+    expect(confirm.status).toBe(200);
+    const words = await confirm.text();
+    expect(words).toContain(`Revoke invite ${item!.id}?`);
+    expect(words).toContain("Whoever holds this link can no longer sign up with it.");
+    expect(words).toContain(`action="${to}"`);
     expect((await post(alice, `/admin/invites/${item!.id}/revoke`, {})).status).toBe(303);
     expect(listInvites(app.db)[0]!.state).toBe("revoked");
   });

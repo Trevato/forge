@@ -20,7 +20,7 @@ import {
   revokeAccountToken,
 } from "../../actions/signins.ts";
 import { mailConfigured } from "../../actions/verify.ts";
-import { originOf, type AccountRow } from "../../core/accounts.ts";
+import { originOf, signinReach, type AccountRow } from "../../core/accounts.ts";
 import {
   OWNERS_TEAM,
   ownerlessOrgs,
@@ -181,6 +181,30 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
           </p>`,
           { tone: "attn" },
         );
+  const reach = timePhase(ctx.request, "edge-only", () => signinReach(ctx.app.db));
+  const stranded = reach.stranded;
+  const edgeOnly =
+    stranded.length === 0
+      ? card(
+          html`<p id="signin-reach">All ${reach.total} accounts can sign in without the platform edge.</p>`,
+        )
+      : card(
+          html`<p id="signin-reach">${reach.own} of ${reach.total} accounts can sign in without the platform edge.</p>
+          <p>
+            ${stranded.length === 1 ? "This account signs" : "These accounts sign"}
+            in only through the platform edge, so switching
+            <code>signin.edge</code> off would lock
+            ${stranded.length === 1 ? "it" : "them"} out. Ask each to add a
+            passkey at <a href="/settings/passkeys">Settings → Passkeys</a>:
+            ${stranded.map(
+              (a, i) =>
+                html`${i > 0 ? ", " : ""}${userLink(a.username)}${a.isAdmin
+                  ? " (admin)"
+                  : ""}`,
+            )}.
+          </p>`,
+          { tone: "attn" },
+        );
   const sole = timePhase(ctx.request, "owned", () =>
     people.map((a) => {
       const u = getUserByName(ctx.app.db, a.username);
@@ -192,7 +216,7 @@ function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
   const rendering = performance.now();
   const response = shell(
     ctx,
-    html`${notice ?? null}${ownerless}${noMail}${card(
+    html`${notice ?? null}${ownerless}${edgeOnly}${noMail}${card(
       people.length === 0
         ? empty({ icon: "users", title: "Nobody has joined yet." })
         : html`<ul class="rows">

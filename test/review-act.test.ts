@@ -16,6 +16,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";
 import { orderedAsks, rowId } from "../src/web/studio/review_act.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 quietLogs();
 
@@ -201,10 +202,11 @@ test("a cross-origin post, a stranger, and a bad verb change nothing", async () 
 test("the key script ships only when there are asks, and sanitises the hash it focuses", async () => {
   const n = seeded("Keyed");
   const withAsks = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
-  expect(withAsks).toContain("m: 'merge'");
-  expect(withAsks).toContain("location.hash.replace(/[^#a-z0-9-]/g, '')");
+  const asksAll = await withScripts(servers.url, withAsks);
+  expect(asksAll).toContain("m: 'merge'");
+  expect(asksAll).toContain("location.hash.replace(/[^#a-z0-9-]/g, '')");
   for (const a of orderedAsks(app.db, alice)) await act({ number: String(numberOf(a)), verb: "close" });
   expect(n).toBeGreaterThan(0);
   const empty = await (await fetch(`${servers.url}/review`, { headers: { cookie } })).text();
-  expect(empty).not.toContain("m: 'merge'");
+  expect(await withScripts(servers.url, empty)).not.toContain("m: 'merge'");
 });

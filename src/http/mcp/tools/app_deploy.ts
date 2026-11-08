@@ -1,3 +1,4 @@
+import { envRefusalText } from "../../../actions/env_words.ts";
 import { redeployEnv, stopEnv } from "../../../actions/apps.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
@@ -27,11 +28,11 @@ export const tool: Tool = {
       const stopped = await stopEnv(ctx.app, user, repo, env);
       return stopped.ok
         ? good({ stopped: true })
-        : bad(stopped.error, `refused: ${stopped.error}`);
+        : bad(stopped.error, envRefusalText(stopped.error));
     }
     const queued = await redeployEnv(ctx.app, user, repo, env);
     return queued.ok
       ? good({ queued: true, run: queued.value?.id ?? null })
-      : bad(queued.error, `refused: ${queued.error}`);
+      : bad(queued.error, envRefusalText(queued.error));
   },
 };

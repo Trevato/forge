@@ -5,7 +5,10 @@
  * read, and never adds a NOT NULL column they would not fill.
  */
 import { describe, expect, test } from "bun:test";
-import releases from "../src/core/releases.json" with { type: "json" };
+import { Glob } from "bun";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import releases from "../src/core/releases-before-tags.json" with { type: "json" };
 import {
   migrationFiles,
   migrations,
@@ -68,9 +71,39 @@ describe("migrations are additive across a roll", () => {
     expect(inPlay.length).toBeGreaterThan(0);
     const offenders = migrationFiles
       .filter((m) => inPlay.some((ids) => !ids.has(m.name)))
+      .filter((m) => !(m.name in RETIRED) && !(m.name in REBUILT))
       .map((m) => ({ name: m.name, problems: notAdditive(m.sql) }))
       .filter((m) => m.problems.length > 0);
     expect(offenders).toEqual([]);
+  });
+
+  test("a retired drop removes only what no file in src still names", () => {
+    // The release that stopped reading a table or column has rolled out
+    // (each entry says which); what keeps it true is that nothing since
+    // names the dropped thing again, outside the migrations that made it.
+    const named: string[] = [];
+    for (const path of new Glob("**/*.ts").scanSync(src)) {
+      if (path.startsWith("core/migrations/")) continue;
+      const text = readFileSync(join(src, path), "utf8");
+      for (const [migration, { drops }] of Object.entries(RETIRED))
+        for (const name of drops)
+          // `name.` is an event kind (`flow_only.cleared`), not the schema.
+          if (new RegExp(`\\b${name}\\b(?!\\.)`).test(text)) named.push(`${path} names ${name} (${migration})`);
+    }
+    expect(named).toEqual([]);
+    for (const [migration, { drops }] of Object.entries(RETIRED)) {
+      const file = migrationFiles.find((m) => m.name === migration);
+      expect(file).toBeDefined();
+      for (const name of drops) expect(file!.sql).toContain(name);
+    }
+  });
+
+  test("a release cut moves no branch: its record is a tag, not a file in the tree", () => {
+    // The releases before #6642 stay frozen beside the code; one cut since
+    // lives on its tag (release/shipped.ts). A check runs on the tree
+    // alone, so it reads the frozen list: a migration landed since is held
+    // to additive, as it was when it landed.
+    expect(existsSync(join(import.meta.dir, "../src/core/releases.json"))).toBe(false);
   });
 
   test("the release record is newest first and never ahead of the schema", () => {
@@ -106,6 +139,31 @@ describe("migrations are additive across a roll", () => {
     expect(shipped({ migrations: 2 })).toEqual(new Set(numbered.slice(0, 2)));
   });
 });
+
+/**
+ * Migrations that drop on purpose, each after the release that stopped
+ * reading what it drops has rolled out: the migration, the names it drops,
+ * and where the readers left.
+ */
+const RETIRED: Record<string, { readonly drops: readonly string[]; readonly since: string }> = {
+  "20261103100000-drop-flow-only": {
+    drops: ["flow_only_watch", "flow_only"],
+    since: "d34910d4 (#7771), shipped from v0.7.302 (#8731)",
+  },
+};
+
+/**
+ * Migrations that rebuild a table under its own name, in one transaction, with
+ * every column the old release reads kept and only columns added: an old
+ * process sees the same table before and after. SQLite cannot drop a UNIQUE
+ * constraint in place, so a rebuild is the only way to lift one.
+ */
+const REBUILT: Record<string, string> = {
+  "20261103120000-conversations-many": "conversation loses UNIQUE(user_id) (#8814); same columns, plus title and archived_at",
+  "20261104100000-conversation-run-stopped-state": "conversation_run widens its state CHECK to admit stopped (#8972); same columns, same rows, the stopped column kept",
+};
+
+const src = join(import.meta.dir, "../src");
 
 interface Release {
   readonly migrations: number;

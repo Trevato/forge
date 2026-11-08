@@ -36,12 +36,12 @@ const get = (path: string) => fetch(servers.url + path, { headers: { authorizati
 const phases = (res: Response) =>
   (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
 
-test("a search names session, search, apps and render once each, with durations", async () => {
+test("a search names session, repos, issues, code, apps and render once each, with durations", async () => {
   const res = await get("/search?q=forge");
   expect(res.status).toBe(200);
   expect(await res.text()).toContain("Results for");
   const header = res.headers.get("server-timing") ?? "";
-  for (const n of ["session", "search", "apps", "render"]) {
+  for (const n of ["session", "repos", "issues", "code", "apps", "render"]) {
     expect(phases(res).filter((x) => x === n).length).toBe(1);
     const part = header.split(", ").find((p) => p.startsWith(`${n};`))!;
     expect(Number(/dur=([\d.]+)/.exec(part)?.[1])).not.toBeNaN();

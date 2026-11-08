@@ -31,7 +31,9 @@ import { requestedPulls, verdictIsStale, type RequestedPull } from "../core/requ
 import { reviewSummary } from "../core/reviews.ts";
 import { activeRunFor } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
+import { sliced } from "../kernel/breathe.ts";
 import { createLog } from "../kernel/log.ts";
+import { authorsInRepoPull, BACK_WITH_AUTHOR } from "./authors_pull.ts";
 import { queueAgentRun } from "./dispatch.ts";
 import { HANDOVER_NOTE, handoverOf } from "./guard.ts";
 import { greenHead, sendToReview } from "./review.ts";
@@ -111,12 +113,13 @@ export async function moveRequested(
   const crew = listCrewRoles(app.db, repo.id);
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   let slots = free;
+  const slice = sliced();
   for (const requested of requestedPulls(app.db, repo.id)) {
-    const move = verdictIsStale(requested)
-      ? await askAgain(app, repo, requested, now)
-      : slots <= 0
-        ? notMoved(requested, WAITS_FOR_BUILDER_SLOT)
-        : followUp(app, repo, requested, builders);
+    if (slice.due()) await slice.breathe();
+    let move: RequestedMove;
+    if (verdictIsStale(requested)) move = await askAgain(app, repo, requested, now);
+    else if (slots <= 0) move = notMoved(requested, WAITS_FOR_BUILDER_SLOT);
+    else move = followUp(app, repo, requested, builders);
     if (move.did === "queued feedback") slots--;
     moves.push(move);
     say(repo, requested, move);
@@ -175,6 +178,8 @@ function followUp(
   // Past the rounds the verdict is advice, and the pull lands as it is.
   if (reviewSummary(app.db, pull.id, pull.headOid).changesRequested === 0)
     return notMoved(requested, "past the review rounds; the verdict is advice");
+  // No builder can push a branch of the repository itself (#7572).
+  if (authorsInRepoPull(pull)) return handBack(app, repo, requested, issue);
   if (activeRunFor(app.db, "agent", pull.id) !== undefined)
     return notMoved(requested, "a run is in flight");
   // A push ends the verdict's turn (the reviewer reads the new head), so every
@@ -213,6 +218,22 @@ function followUp(
     builder: builder.user.username,
     assigned,
   };
+}
+
+/**
+ * A person's in-repo pull with changes asked for is theirs to answer: it is
+ * assigned back to its author, once, and no builder is sent — its run could
+ * only fail, and the failure would park the pull.
+ */
+function handBack(app: App, repo: Repo, requested: RequestedPull, issue: Issue): RequestedMove {
+  if (issue.assigneeId !== issue.authorId) {
+    const author = getUserById(app.db, issue.authorId);
+    const by = (repo.autonomyBy === null ? undefined : getUserById(app.db, repo.autonomyBy)) ?? author;
+    if (author === undefined || by === undefined) return notMoved(requested, "nobody to hand it back to");
+    const done = assignIssue(app, by, repo, issue, author);
+    if (!done.ok) return notMoved(requested, `could not hand it back to ${author.username}: ${done.error}`);
+  }
+  return notMoved(requested, BACK_WITH_AUTHOR);
 }
 
 /** How many runs other than a review started on the pull after the verdict. */

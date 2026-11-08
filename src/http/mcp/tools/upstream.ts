@@ -3,6 +3,7 @@ import { getFollow } from "../../../core/upstream_follow.ts";
 import { canAdmin } from "../../../core/repos.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
+import { ENABLED_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "upstream",
@@ -41,7 +42,7 @@ export const tool: Tool = {
       return checked.ok ? good(checked.value) : refuse(checked.error);
     }
     const { enabled, url, branch } = args;
-    if (typeof enabled !== "boolean") return bad("bad_enabled", "enabled is true or false");
+    if (typeof enabled !== "boolean") return bad("bad_enabled", ENABLED_WORDS);
     if ((url !== undefined && typeof url !== "string") || (branch !== undefined && typeof branch !== "string"))
       return bad("invalid", "url and branch are text");
     const saved = setFollowUpstream(ctx.app, user, repo, { url: str(url), branch: str(branch), enabled });

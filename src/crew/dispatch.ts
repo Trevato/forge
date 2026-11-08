@@ -8,17 +8,25 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { TEMP_FULL } from "../checks/disk_full.ts";
+import { freshPullFor } from "./fresh_pull.ts";
+import { PRIORITY_REASONS, weekHold } from "./week_hold.ts";
+import { weekFor } from "./week_read.ts";
+import { twinNote, twinOf, type Twin } from "./twin.ts";
 import { NO_MERGE } from "../checks/merged.ts";
+import { resolveListConflicts } from "../actions/list-conflicts.ts";
 import { markHeard } from "../core/issues.ts";
-import { capacityCount, noteBooted } from "../core/capacity.ts";
+import { capacityCount, noteBooted, paceFloor } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
 import { transact } from "../kernel/db.ts";
 import { addComment } from "../actions/issues.ts";
+import { planAnotherRound } from "../actions/give_back.ts";
 import { announceRun } from "../actions/runs.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
+import { LANDED_LEAD } from "../core/done_on_main.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import {
   getIssue,
@@ -27,16 +35,19 @@ import {
   listComments,
   type Issue,
 } from "../core/issues.ts";
-import { getPull, type Pull } from "../core/pulls.ts";
+import { closesFromBody, getPull, pullDir, type Pull } from "../core/pulls.ts";
 import { claimedClones, sweepOrphanClones } from "./orphans.ts";
 import { pruneRunFiles } from "../runs/prune.ts";
-import { crewRoot } from "./workdir.ts";
+import { crewRoot, isClaimed } from "./workdir.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
+import { noteHeld, type HoldCause } from "../runs/held.ts";
 import { decideAndRecord } from "./ledger.ts";
+import { bugsFirst } from "../flow/bugs.ts";
 import { byDials } from "./team_share.ts";
+import { gateQueue } from "../flow/valve_gate.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
@@ -54,15 +65,18 @@ import {
   leaseLapsed,
   listActive,
   listQueued,
+  PULL_STOPPED,
   type Run,
 } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
+import { isContributionFork } from "../core/contribute.ts";
 import { guestSql, lacks } from "../core/roles.ts";
 import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence, settleAll, settleOnPush } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
+import { REPEAT_NOTE, repeatTripped } from "./repeat.ts";
 import { unstickOwed } from "./stalls.ts";
 import {
   CAP_NOTE,
@@ -93,6 +107,15 @@ import { checksFor } from "../checks/service.ts";
 import { redMain, sharedWithMain } from "../checks/red_main.ts";
 import { diskRecovered, diskRed } from "../checks/disk_red.ts";
 import { sharedWithPulls } from "../checks/shared_red.ts";
+import type { Impact } from "../checks/impact.ts";
+import {
+  OUTSIDE_DIFF,
+  outsideDiffCandidate,
+  pullChanged,
+  recheckedHead,
+  recheckLine,
+  redOutsideDiff,
+} from "../checks/outside_diff.ts";
 import { certain } from "./decide.ts";
 import { readRunLog } from "../runs/log.ts";
 import { whenText } from "./limits.ts";
@@ -111,6 +134,30 @@ const log = createLog("crew");
 /** Automatic follow-ups after a failed check, before a person must speak. */
 export const CHECK_FAILED_LIMIT = 2;
 const TICK_MS = 5_000;
+
+/** Whether the check run's red is a pull that does not merge into its base. */
+function conflictSummary(app: App, runId: unknown): boolean {
+  if (typeof runId !== "string") return false;
+  return getRun(app.db, runId)?.summary.includes(NO_MERGE) === true;
+}
+
+/**
+ * A pull's check could not start for a conflict: the forge keeps both sides
+ * of a list-doc clash itself, else queues one bring-up-to-date run. Neither
+ * is a try (`automaticRunsSince` counts failed checks only); one in flight is
+ * enough.
+ */
+async function bringUpAfterNoMerge(app: App, repo: Repo, issue: Issue, agent: Agent): Promise<void> {
+  const pull = getPull(app.db, repo.id, issue.number);
+  if (!pull) return;
+  if (await resolveListConflicts(app, repo, pull)) return;
+  if (activeRunFor(app.db, "agent", issue.id) !== undefined) return;
+  queueAgentRun(app, repo, issue, agent, "conflict", undefined, {
+    notBefore: new Date().toISOString(),
+    attempt: 0,
+    summary: "main moved: the pull does not merge into its base",
+  });
+}
 
 export interface CrewHandle {
   /** Whether a usable Claude Code was found at start. */
@@ -225,7 +272,7 @@ export async function startCrew(
   }, options.tickMs ?? TICK_MS);
   // Clones no open issue, pull or run claims fill the volume (#5697).
   const sweepClones = (): void => {
-    sweepOrphanClones(crewRoot(app.config.dataDir), claimedClones(app.db))
+    sweepOrphanClones(crewRoot(app.config.dataDir), claimedClones(app.db), isClaimed)
       .then((count) => {
         if (count > 0) log.info("removed clones nothing claims", { count });
       })
@@ -279,6 +326,13 @@ export async function startCrew(
   return handle;
 }
 
+/** Tell the issue's thread why nothing started, once per twin and standing. */
+function tellTwin(app: App, repo: Repo, issue: Issue, by: User, twin: Twin): void {
+  const note = twinNote(twin);
+  if (listComments(app.db, issue.id).some((c) => c.body === note)) return;
+  addComment(app, by, repo, issue, note);
+}
+
 /** Say the hand-over on the pull's thread, once per hand-over. */
 function handOver(
   app: App,
@@ -314,6 +368,44 @@ function unstickDue(app: App, repo: Repo, issue: Issue): boolean {
   return unstickOwed(app.db, repo, last?.at ?? "");
 }
 
+/** Whether `spentUsd` has reached the repository's daily ceiling: the test that stops a run being queued. */
+export function atCeiling(
+  repo: Pick<Repo, "autonomyCeilingUsd">,
+  spentUsd: number,
+): boolean {
+  return spentUsd >= repo.autonomyCeilingUsd;
+}
+
+/**
+ * Whether this run is a job outside the agent's seat here: a build for one
+ * that is not a builder (the direction issue is the planner's), a review for
+ * one that is not a reviewer. On the crew the seat is the repository's; off
+ * it, what the agent declares.
+ */
+export function outsideSeat(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  agent: Agent,
+  reason: RunReason,
+): boolean {
+  // Every reason but a review is building work: a first go, feedback, a red check, a conflict, a converge.
+  const seat =
+    reason === "review"
+      ? "reviewer"
+      : issue.id === repo.directionIssueId
+        ? "planner"
+        : "builder";
+  const held = crewRole(app.db, repo.id, agent.user.id);
+  // A pull assigned to its reviewer is asked for a look, a builder's for a fix: only a planner is outside.
+  if (reason !== "review" && issue.kind === "pull")
+    return (held ?? agent.roles[0]) === "planner";
+  return held === undefined ? !agent.roles.includes(seat) : held !== seat;
+}
+
+export const NOT_A_BUILDER_NOTE =
+  "I am not a builder here, so I have not started on this. Assign it to a builder on the crew, or change my roles in Settings.";
+
 /** Queue a run about an issue for an agent, unless one is already waiting. */
 export function queueAgentRun(
   app: App,
@@ -329,7 +421,9 @@ export function queueAgentRun(
   own = false,
 ): Run | undefined {
   // A suspended or removed owner's repositories run nothing, whoever asks.
-  if (!accountActive(app.db, repo.ownerId)) return undefined;
+  if (!accountActive(app.db, repo.ownerId) || isContributionFork(app.db, repo.id)) return undefined;
+  // Never a job outside the agent's seat: building is a builder's, reviewing a reviewer's.
+  if (outsideSeat(app, repo, issue, agent, reason)) return undefined;
   // An archived repository starts nothing new; a run carrying on (`again`)
   // is one already going, and finishes. A first run
   // (`attempt` 0, as a conflict or converge run is queued) is new.
@@ -346,7 +440,7 @@ export function queueAgentRun(
   if (
     reason !== "assigned" &&
     repo.autonomy === "autonomous" &&
-    spentToday(app.db, repo.id) >= repo.autonomyCeilingUsd
+    atCeiling(repo, spentToday(app.db, repo.id))
   ) {
     log.info("at the ceiling; not queued", {
       repo: `${repo.ownerName}/${repo.name}`,
@@ -358,6 +452,11 @@ export function queueAgentRun(
   // Three failed or declined runs in an hour: parked, until a person speaks.
   if (breakerTripped(app.db, repo, issue.id)) {
     parkForBreaker(app, repo, issue, agent);
+    return undefined;
+  }
+  // The same issue run again and again within minutes: a loop, parked once.
+  if (repeatTripped(app.db, repo, issue.id)) {
+    parkForBreaker(app, repo, issue, agent, REPEAT_NOTE);
     return undefined;
   }
   // A day's share of runs on one issue without a person's word: a loop,
@@ -381,6 +480,7 @@ export function queueAgentRun(
   // forge processes share this database, and both may react to the same
   // thing — a run checked for by one and inserted by the other would be the
   // same work twice (docs/ARCHITECTURE.md, "Two processes at once").
+  let refusedAsTwin: Twin | undefined;
   const run = transact(app.db, () => {
     // A follow-up is the builder's: a reviewer's own run on the pull, still
     // running as it posts its verdict, is not the run that hears it.
@@ -406,7 +506,37 @@ export function queueAgentRun(
         hasQueuedRun(app.db, "agent", issue.id, mine))
     )
       return undefined;
+    // One build run per issue: a pull opened a moment ago is that run's
+    // answer, and a second build beside it is the same work twice.
+    if (reason === "assigned") {
+      const fresh = freshPullFor(app.db, repo.id, issue.number, [agent.user.username]);
+      if (fresh !== undefined) {
+        log.info("build run refused: a pull opened in the last 10 minutes", {
+          repo: `${repo.ownerName}/${repo.name}`,
+          issue: issue.number,
+          pull: fresh.number,
+        });
+        return undefined;
+      }
+    }
+    // The same title is the same work: while a twin has a run going or a
+    // pull open, or its pull landed since this issue was opened, a build
+    // here only repeats it. Variants are the exception: they share a title
+    // on purpose, several tries in one group.
     const group = variantGroup ?? variantGroupOf(app.db, issue.id);
+    if (reason === "assigned" && group === undefined) {
+      const twin = twinOf(app.db, issue);
+      if (twin !== undefined) {
+        log.info("build run refused: a twin holds the work", {
+          repo: `${repo.ownerName}/${repo.name}`,
+          issue: issue.number,
+          twin: twin.number,
+          standing: twin.standing,
+        });
+        refusedAsTwin = twin;
+        return undefined;
+      }
+    }
     return createRun(app.db, {
       repoId: repo.id,
       kind: "agent",
@@ -421,6 +551,7 @@ export function queueAgentRun(
     });
   });
   if (run !== undefined) announceRun(app, run, actorId);
+  else if (refusedAsTwin !== undefined) tellTwin(app, repo, issue, agent.user, refusedAsTwin);
   return run;
 }
 
@@ -467,7 +598,7 @@ function releaseOtherRuns(
   });
 }
 
-function route(app: App, event: ForgeEvent): void {
+export function route(app: App, event: ForgeEvent): void {
   if (event.repoId === null) return;
   const number = event.payload["number"];
   const repo = getRepoById(app.db, event.repoId);
@@ -485,6 +616,12 @@ function route(app: App, event: ForgeEvent): void {
         ? getAgent(app.db, issue.assigneeId)
         : undefined;
       if (!agent || issue.state !== "open") return;
+      // Assigned to a planner or a reviewer: said once, never silently run.
+      if (outsideSeat(app, repo, issue, agent, "assigned")) {
+        if (!listComments(app.db, issue.id).some((c) => c.body === NOT_A_BUILDER_NOTE))
+          addComment(app, agent.user, repo, issue, NOT_A_BUILDER_NOTE);
+        return;
+      }
       queueAgentRun(
         app,
         repo,
@@ -504,6 +641,11 @@ function route(app: App, event: ForgeEvent): void {
     case "pull.reviewed": {
       if (typeof number !== "number") return;
       if (event.payload["via"] === "origin") return;
+      // The landing's own note goes to a person. Heard as the merger's word it
+      // sends the builder back, whose push opens a pull that closes as already
+      // on the base and writes the note again.
+      const spoken = event.payload["body"];
+      if (typeof spoken === "string" && spoken.startsWith(LANDED_LEAD)) return;
       const actor =
         event.actorId === null ? undefined : getUserById(app.db, event.actorId);
       if (!actor) return;
@@ -518,6 +660,10 @@ function route(app: App, event: ForgeEvent): void {
         event.kind === "pull.reviewed" &&
         typeof event.payload["state"] === "string" &&
         crewRole(app.db, repo.id, actor.id) === "reviewer";
+      if (actor.kind === "agent" && event.kind === "pull.commented") {
+        const pull = typeof number === "number" ? getIssue(app.db, repo.id, number) : undefined;
+        if (pull && planAnotherRound(app, actor, repo, pull, event.payload["body"])) return;
+      }
       if (actor.kind === "agent" && !reviewerVerdict) return;
       // A reader's words stay on the thread and do nothing more: on a
       // public repository anyone may comment, and a run spends the owner's
@@ -595,6 +741,7 @@ function route(app: App, event: ForgeEvent): void {
             reason: String(event.payload["reason"] ?? ""),
             actorId: finished?.actorId ?? null,
           });
+        decideDeferred(app, repo);
         return;
       }
       if (
@@ -645,51 +792,49 @@ function route(app: App, event: ForgeEvent): void {
       // is the agent's to look at.
       const agent = agentFor(app, issue);
       if (!agent) return;
-      // A red that main shares (#1971), or that three pulls share within
-      // the hour (#2266), is not the pull's: no rework, no park, no
-      // strike; it waits and is checked again when main is green.
-      if (waitOnMain(app, repo, issue, event.payload)) return;
-      // Bounded: after a few failed checks in a row the agent stops and a
-      // person must speak (docs/APPS.md, rule 7).
-      const since = lastHumanWord(app, issue, agent);
-      if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
-        const pull = getPull(app.db, repo.id, issue.number);
-        if (
-          pull &&
-          parkPull(
-            app,
-            repo,
-            pull,
-            `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
-          )
-        )
-          return;
-        log.info("check failed again; waiting for a person", {
+      // The builder's run is still at work on it: nothing is decided now,
+      // and the failure is decided again when that run ends.
+      if (builderAtWork(app, repo, issue)) {
+        deferredFailures.set(issue.id, event);
+        log.info("check failed while the builder's run is at work; deciding when it ends", {
           issue: issue.number,
         });
         return;
       }
-      const runId = event.payload["runId"];
-      // Without a decider the rule answers at once, and the rework queues
-      // in the same tick the event landed — nothing waits on a promise.
-      if (app.config.decider === undefined || typeof runId !== "string") {
-        queueAgentRun(app, repo, issue, agent, "check_failed");
+      // A pull that does not merge is no failed try: the forge settles a
+      // list-doc clash itself, else a bring-up-to-date run is queued. It
+      // counts towards no limit and parks nothing (#7909).
+      if (conflictSummary(app, event.payload["runId"])) {
+        void bringUpAfterNoMerge(app, repo, issue, agent).catch((error) =>
+          log.error("bringing a conflicted pull up to date failed", {
+            issue: issue.number,
+            error: String(error),
+          }),
+        );
         return;
       }
-      const commitOid = event.payload["commitOid"];
-      const env = event.payload["env"];
-      void answerFailedCheck(app, repo, issue, agent, {
-        runId,
-        kind: String(event.payload["kind"] ?? ""),
-        commitOid: typeof commitOid === "string" ? commitOid : undefined,
-        env: typeof env === "string" ? env : undefined,
-        since,
-      }).catch((error) =>
-        log.error("a failed check went unanswered", {
-          issue: issue.number,
-          error: String(error),
-        }),
-      );
+      // A red that main shares (#1971), or that three pulls share within
+      // the hour (#2266), is not the pull's: no rework, no park, no
+      // strike; it waits and is checked again when main is green.
+      if (waitOnMain(app, repo, issue, event.payload)) return;
+      // A red only on tests the diff does not reach (#7630) is checked once
+      // more on the same head before a try is spent on it.
+      const failedRun = typeof event.payload["runId"] === "string" ? getRun(app.db, event.payload["runId"]) : undefined;
+      const outside = outsideDiffCandidate(app.db, app.config.dataDir, failedRun);
+      if (outside === undefined) {
+        answerRed(app, repo, issue, agent, event.payload);
+        return;
+      }
+      void recheckOutsideDiff(app, repo, issue, event.payload, outside)
+        .then((rechecked) => {
+          if (!rechecked) answerRed(app, repo, issue, agent, event.payload);
+        })
+        .catch((error) =>
+          log.error("a red outside the diff went unanswered", {
+            issue: issue.number,
+            error: String(error),
+          }),
+        );
       return;
     }
     case "pull.closed":
@@ -715,7 +860,7 @@ function route(app: App, event: ForgeEvent): void {
         const cancelled = cancelRun(
           app.db,
           live.id,
-          event.kind === "pull.merged" ? "the pull landed" : "the pull closed",
+          event.kind === "pull.merged" ? PULL_STOPPED[1] : PULL_STOPPED[0],
         );
         if (cancelled) announceRun(app, cancelled);
         if (live.state === "running") {
@@ -728,6 +873,134 @@ function route(app: App, event: ForgeEvent): void {
     }
     default:
       return;
+  }
+}
+
+/**
+ * A red that is the pull's to answer: parked once the automatic tries are
+ * spent, else reworked — through the decider, when there is one.
+ */
+function answerRed(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  agent: Agent,
+  payload: Record<string, unknown>,
+): void {
+  // Bounded: after a few failed checks in a row the agent stops and a
+  // person must speak (docs/APPS.md, rule 7).
+  const since = lastHumanWord(app, issue, agent);
+  if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
+    const pull = getPull(app.db, repo.id, issue.number);
+    if (
+      pull &&
+      parkPull(
+        app,
+        repo,
+        pull,
+        `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
+      )
+    )
+      return;
+    log.info("check failed again; waiting for a person", {
+      issue: issue.number,
+    });
+    return;
+  }
+  const runId = payload["runId"];
+  // Without a decider the rule answers at once, and the rework queues
+  // in the same tick the event landed — nothing waits on a promise.
+  if (app.config.decider === undefined || typeof runId !== "string") {
+    queueAgentRun(app, repo, issue, agent, "check_failed");
+    return;
+  }
+  const commitOid = payload["commitOid"];
+  const env = payload["env"];
+  void answerFailedCheck(app, repo, issue, agent, {
+    runId,
+    kind: String(payload["kind"] ?? ""),
+    commitOid: typeof commitOid === "string" ? commitOid : undefined,
+    env: typeof env === "string" ? env : undefined,
+    since,
+  }).catch((error) =>
+    log.error("a failed check went unanswered", {
+      issue: issue.number,
+      error: String(error),
+    }),
+  );
+}
+
+/**
+ * The re-check of a red outside the diff, when the diff says it is one:
+ * whether it was asked for (or the head moved on and the red is history).
+ * `false` is today's answer: the red is the pull's.
+ */
+async function recheckOutsideDiff(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  payload: Record<string, unknown>,
+  outside: { impact: Impact; failing: string[] },
+): Promise<boolean> {
+  const { commitOid, env } = payload;
+  const checks = checksFor(app);
+  const pull = getPull(app.db, repo.id, issue.number);
+  if (checks === undefined || !pull || typeof commitOid !== "string" || typeof env !== "string")
+    return false;
+  const dir = await pullDir(app.db, app.reposRoot, repo, pull);
+  const changed = await pullChanged(dir, pull, commitOid);
+  const files = changed && redOutsideDiff(outside.failing, changed, outside.impact);
+  if (files === undefined) return false;
+  const now = getPull(app.db, repo.id, issue.number);
+  // A push since then made a newer check; this red is history.
+  if (!now || now.state !== "open" || now.headOid !== commitOid) return true;
+  if (recheckedHead(app.db, issue.id, commitOid)) return false;
+  const run = await checks.request(repo, env, commitOid, OUTSIDE_DIFF, issue.id);
+  if (run === undefined) return false;
+  if (run.reason === OUTSIDE_DIFF) appendRunLog(app.config.dataDir, run.id, recheckLine(files));
+  log.info("check failed only outside the diff; checking the head once more", {
+    issue: issue.number,
+    files: files.join(", "),
+  });
+  return true;
+}
+
+/**
+ * Failures that arrived while the builder's run was still at work on the
+ * pull, by pull. Memory only: a restart forgets them, and the pull's next
+ * push or a person's ask checks it again.
+ */
+const deferredFailures = new Map<string, ForgeEvent>();
+
+/** Whether a build run on the pull's issue, or on an issue it closes, is queued or running. */
+function builderAtWork(app: App, repo: Repo, pull: Issue): boolean {
+  if (activeRunFor(app.db, "agent", pull.id) !== undefined) return true;
+  const row = getPull(app.db, repo.id, pull.number);
+  if (!row) return false;
+  for (const number of closesFromBody(row.body)) {
+    const about = getIssue(app.db, repo.id, number);
+    if (about && activeRunFor(app.db, "agent", about.id) !== undefined)
+      return true;
+  }
+  return false;
+}
+
+/** A run ended: decide again on the failures that waited for it, when they still stand. */
+function decideDeferred(app: App, repo: Repo): void {
+  for (const [issueId, event] of [...deferredFailures]) {
+    if (event.repoId !== repo.id) continue;
+    const issue = getIssueById(app.db, issueId);
+    if (!issue || issue.state !== "open") {
+      deferredFailures.delete(issueId);
+      continue;
+    }
+    if (builderAtWork(app, repo, issue)) continue;
+    deferredFailures.delete(issueId);
+    const pull = getPull(app.db, repo.id, issue.number);
+    const oid = event.payload["commitOid"];
+    // A push since then made a newer check; this one is history.
+    if (!pull || (typeof oid === "string" && oid !== pull.headOid)) continue;
+    route(app, event);
   }
 }
 
@@ -752,9 +1025,9 @@ function waitOnMain(
   // The check machine's disk was full when it failed (#5453): the machine's red.
   if (diskRed(run)) {
     if (typeof commitOid === "string" && typeof env === "string") {
-      const waiting = waitingOnDisk.get(repo.id) ?? new Map();
+      const waiting = waitingOnDisk.get(app.db) ?? new Map();
       waiting.set(issue.id, { env, commitOid, repo });
-      waitingOnDisk.set(repo.id, waiting);
+      waitingOnDisk.set(app.db, waiting);
     }
     log.info("check failed while the check machine's disk was full; waiting for the disk", {
       issue: issue.number,
@@ -777,27 +1050,26 @@ function waitOnMain(
   return true;
 }
 
-/** Pulls whose check failed on a full disk, per repository; memory only, like {@link waitingOnMain}. */
-const waitingOnDisk = new Map<string, Map<string, { env: string; commitOid: string; repo: Repo }>>();
+/** Pulls whose check failed on a full disk, per forge (database), so one forge's recheck never drops another's; memory only. */
+const waitingOnDisk = new WeakMap<object, Map<string, { env: string; commitOid: string; repo: Repo }>>();
 
 /** Once the disk is back above its floor, the pulls that waited for it are checked again. */
 export function recheckForDisk(app: App): void {
-  if (waitingOnDisk.size === 0 || !diskRecovered(app.config.dataDir)) return;
+  const waiting = waitingOnDisk.get(app.db);
+  if (waiting === undefined || waiting.size === 0 || !diskRecovered(app.config.dataDir)) return;
   const checks = checksFor(app);
   if (checks === undefined) return;
-  const all = [...waitingOnDisk.values()];
-  waitingOnDisk.clear();
-  for (const waiting of all)
-    for (const [issueId, head] of waiting) {
-      const issue = getIssueById(app.db, issueId);
-      const pull = issue ? getPull(app.db, head.repo.id, issue.number) : undefined;
-      if (!pull || pull.state !== "open" || pull.headOid !== head.commitOid) continue;
-      void checks
-        .request(head.repo, head.env, head.commitOid, "retry", issueId)
-        .catch((error) =>
-          log.warn("a pull waiting for the disk could not be checked again", { issue: issue?.number, error: String(error) }),
-        );
-    }
+  waitingOnDisk.delete(app.db);
+  for (const [issueId, head] of waiting) {
+    const issue = getIssueById(app.db, issueId);
+    const pull = issue ? getPull(app.db, head.repo.id, issue.number) : undefined;
+    if (!pull || pull.state !== "open" || pull.headOid !== head.commitOid) continue;
+    void checks
+      .request(head.repo, head.env, head.commitOid, "retry", issueId)
+      .catch((error) =>
+        log.warn("a pull waiting for the disk could not be checked again", { issue: issue?.number, error: String(error) }),
+      );
+  }
 }
 
 /** Main's check finished: when it passed, the pulls that waited are checked again. */
@@ -833,11 +1105,8 @@ export type CheckAnswer = "reran" | "reworked" | "parked" | "waiting";
  *   the check runs again, once for that commit, without spending the
  *   agent's tries. A stop on that would throw away a change nobody has
  *   found fault with.
- * - `stop` — the pull is parked, with a reason that says which of the two
- *   it was, so the next reader (and the planner) can tell a change that
- *   failed from a change that was unlucky. The re-run is bounded by
- *   `retriedChecks`: a permanently broken runner parks on the second red.
- * - `again` — the agent reworks it, as ever.
+ * - otherwise the agent reworks it. The try limit (`CHECK_FAILED_LIMIT`) is
+ *   what parks a pull: one red, or one model's guess, never does.
  */
 export async function answerFailedCheck(
   app: App,
@@ -885,41 +1154,8 @@ export async function answerFailedCheck(
       );
     return "reran";
   }
-  if (judged.retry === "stop") {
-    // The decider's stop is the crew's stop: parked, never waiting, in a
-    // repository on its own.
-    const pull = getPull(app.db, repo.id, issue.number);
-    if (
-      pull &&
-      parkPull(app, repo, pull, parkedReason(judged, failed.kind, head))
-    )
-      return "parked";
-    log.info("check failed; waiting for a person", { issue: issue.number });
-    return "waiting";
-  }
   queueAgentRun(app, repo, issue, agent, "check_failed");
   return "reworked";
-}
-
-/**
- * Why a parked pull was parked, in the two cases a reader must tell apart:
- * a change that failed, and a change that was unlucky. It names what
- * failed too — a preview that would not boot is not a red test.
- */
-function parkedReason(
-  judged: CheckJudgement,
-  kind: string,
-  head: string,
-): string {
-  const what = kind === "deploy" ? "the preview's deploy" : "the check";
-  if (judged.cause !== "environment") {
-    const named =
-      judged.failingTest === undefined ? "" : ` ("${judged.failingTest}")`;
-    return `${what} failed${named} and the decider saw no point in another try`;
-  }
-  return retriedChecks.has(head)
-    ? `${what} failed in the place it ran, not in the change, and failed the same way when it was run again`
-    : `${what} failed in the place it ran, not in the change, and it could not be run again`;
 }
 
 export function agentFor(app: App, issue: Issue): Agent | undefined {
@@ -964,6 +1200,10 @@ export async function judgeFailedCheck(
 ): Promise<CheckJudgement> {
   const run = getRun(app.db, runId);
   const failingTest = run?.checkDetail?.names[0];
+  // A shard that ran out of temp space is the machine's, whatever a decider
+  // might guess: the check runs again without spending the agent's tries.
+  if (run?.checkDetail?.environment === TEMP_FULL)
+    return { retry: "again", cause: "environment", failingTest };
   if (app.config.decider === undefined)
     return { retry: "again", cause: "change", failingTest };
   // A pull that does not merge is the change's, whatever a decider might
@@ -1159,6 +1399,30 @@ export function taskOf(
 }
 
 /**
+ * Who last assigned it: the newest `issue.assigned` or `pull.assigned`. The
+ * `+ 0` drops the column's affinity so the event expression index
+ * (`event_repo_kind_number_at`) answers it, never a scan of `event`. `INDEXED BY` makes
+ * the plan a promise: if that index is dropped or renamed this query fails to prepare
+ * (test/stall-scans.test.ts catches it) instead of quietly scanning.
+ */
+const ASSIGNER_SQL = `(SELECT e.actor_id FROM event e INDEXED BY event_repo_kind_number_at
+                WHERE e.repo_id = issue.repo_id AND e.kind = issue.kind || '.assigned'
+                  AND json_extract(e.payload, '$.number') = issue.number + 0
+                ORDER BY e.id DESC LIMIT 1)`;
+
+export const SWEEP_ASSIGNED_SQL = `SELECT issue.id, issue.repo_id FROM user
+       CROSS JOIN issue ON issue.assignee_id = user.id AND issue.state = 'open'
+       WHERE user.is_agent = 1
+         -- A pull an agent opened starts assigned to it; that is its own
+         -- work landing, not a task waiting for a run.
+         AND NOT (issue.kind = 'pull' AND issue.author_id = issue.assignee_id)
+         AND NOT EXISTS (SELECT 1 FROM run WHERE run.issue_id = issue.id AND run.kind = 'agent')
+         -- In the query, not after it: a guest's issues never take one of
+         -- the hundred places, however many of them wait.
+         AND NOT ${guestSql(ASSIGNER_SQL)}
+       ORDER BY issue.id LIMIT 100`;
+
+/**
  * The sweep behind the wake-up: an open issue assigned to an agent that
  * has never had a run (assigned while the crew was off) gets one now —
  * unless the person who last assigned it is a guest. The assignment is
@@ -1167,26 +1431,7 @@ export function taskOf(
  * no event (made by the crew itself) is the crew's, as before.
  */
 export function sweepAssigned(app: App): void {
-  // Who last assigned it: the newest `issue.assigned` or `pull.assigned`.
-  const assigner = `(SELECT e.actor_id FROM event e
-                WHERE e.repo_id = issue.repo_id AND e.kind = issue.kind || '.assigned'
-                  AND json_extract(e.payload, '$.number') = issue.number
-                ORDER BY e.id DESC LIMIT 1)`;
-  const rows = app.db
-    .query<{ id: string; repo_id: string }, []>(
-      `SELECT issue.id, issue.repo_id FROM issue
-       JOIN user ON user.id = issue.assignee_id AND user.is_agent = 1
-       WHERE issue.state = 'open'
-         -- A pull an agent opened starts assigned to it; that is its own
-         -- work landing, not a task waiting for a run.
-         AND NOT (issue.kind = 'pull' AND issue.author_id = issue.assignee_id)
-         AND NOT EXISTS (SELECT 1 FROM run WHERE run.issue_id = issue.id AND run.kind = 'agent')
-         -- In the query, not after it: a guest's issues never take one of
-         -- the hundred places, however many of them wait.
-         AND NOT ${guestSql(assigner)}
-       ORDER BY issue.id LIMIT 100`,
-    )
-    .all();
+  const rows = app.db.query<{ id: string; repo_id: string }, []>(SWEEP_ASSIGNED_SQL).all();
   for (const row of rows) {
     const issue = getIssueById(app.db, row.id);
     const repo = getRepoById(app.db, row.repo_id);
@@ -1198,8 +1443,50 @@ export function sweepAssigned(app: App): void {
   }
 }
 
+/**
+ * Whether the run's newest assignment was a person's (`assignIssue` marks it
+ * `person`; the tick's own pick says `pick`). An assignment event without
+ * either mark was written before the marks existed and counts as a pick.
+ */
+export function assignedByPerson(app: App, run: Run): boolean {
+  if (run.issueId === null) return false;
+  const row = app.db
+    .query<{ person: number | null }, [string]>(
+      `SELECT json_extract(e.payload, '$.person') AS person FROM event e INDEXED BY event_repo_kind_number_at
+         JOIN issue ON issue.repo_id = e.repo_id AND e.kind = issue.kind || '.assigned'
+          AND json_extract(e.payload, '$.number') = issue.number + 0
+        WHERE issue.id = ? ORDER BY e.id DESC LIMIT 1`,
+    )
+    .get(run.issueId);
+  return row?.person === 1;
+}
+
+/**
+ * A review, or work a person assigned: the runs the pace leaves a floor for.
+ * `memo` holds the answer per run for one pump pass, so the events are read
+ * once for each run, and only for `assigned` ones.
+ */
+export function isPriorityRun(app: App, run: Run, memo?: Map<string, boolean>): boolean {
+  if (!PRIORITY_REASONS.includes(run.reason)) return false;
+  if (run.reason !== "assigned") return true;
+  const known = memo?.get(run.id);
+  if (known !== undefined) return known;
+  const person = assignedByPerson(app, run);
+  memo?.set(run.id, person);
+  return person;
+}
+
 /** Per app, the runs already told why they wait, so the log says it once. */
 const notedBy = new WeakMap<App, Set<string>>();
+
+/**
+ * The order queued agent runs are started in: the team dials first, then bugs
+ * ahead of everything (#8709), then the valves a person turned. A bug outranks the dials by policy: the clock
+ * is a promise, the dials a share of the rest.
+ */
+export function startOrder(app: App): ReturnType<typeof gateQueue> {
+  return gateQueue(app.db, bugsFirst(app.db, byDials(app.db, listQueued(app.db, "agent", 50))));
+}
 
 /** Take queued runs, oldest first, up to the limit — one per issue at a time. */
 function pump(
@@ -1217,10 +1504,23 @@ function pump(
     capacityCount(app.db, "crew.concurrency", options.concurrency) -
     runningIssues.size;
   const started: string[] = [];
+  const goingIn = new Map<string, number>();
+  const priorityIn = new Map<string, number>();
+  const priorityMemo = new Map<string, boolean>();
   const noted = notedBy.get(app) ?? new Set<string>();
   notedBy.set(app, noted);
-  // Builder starts go to teams in proportion to their dials (`team_share.ts`).
-  for (const queued of byDials(app.db, listQueued(app.db, "agent", 50))) {
+  // Builder starts go to teams in proportion to their dials (`team_share.ts`),
+  // then through the valves a person turned (`flow/valve_gate.ts`).
+  const gated = startOrder(app);
+  // What this pass holds by policy, for vitals (`runs/held.ts`, #9403).
+  const held = new Map<string, HoldCause>();
+  for (const shut of gated.held) {
+    held.set(shut.id, "valve");
+    if (noted.has(shut.id)) continue;
+    noted.add(shut.id);
+    appendRunLog(app.config.dataDir, shut.id, "queued, not started: its repository's valve is shut (/flow)");
+  }
+  for (const queued of gated.order) {
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;
     const fresh = getRun(app.db, queued.id);
     if (!fresh || fresh.state !== "queued") continue;
@@ -1237,6 +1537,23 @@ function pump(
       continue;
     }
     if (slots <= 0) break;
+    // The week's pace holds every path that starts a run in an autonomous
+    // repository: assigned, review, feedback and check runs as much as picks (#8873).
+    if (home !== undefined && home.autonomy === "autonomous") {
+      const going = (goingIn.get(home.id) ?? 0) + active.filter((r) => r.state === "running" && r.repoId === home.id).length;
+      const priorityGoing =
+        (priorityIn.get(home.id) ?? 0) +
+        active.filter((r) => r.state === "running" && r.repoId === home.id && isPriorityRun(app, r, priorityMemo)).length;
+      const paced = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, paceFloor(app.db));
+      if (paced !== null) {
+        held.set(fresh.id, "pace");
+        if (!noted.has(fresh.id)) {
+          noted.add(fresh.id);
+          appendRunLog(app.config.dataDir, fresh.id, paced);
+        }
+        continue;
+      }
+    }
     // An account at its concurrent-runs limit keeps this run queued, with
     // the count in its log once, until one of its runs ends.
     const owner = getRepoById(app.db, fresh.repoId)?.ownerId;
@@ -1247,6 +1564,7 @@ function pump(
             runningRuns(app.db, "agent", owner, [...inFlight.keys(), ...started]),
           );
     if (full !== undefined) {
+      held.set(fresh.id, "limit");
       if (!noted.has(fresh.id)) {
         noted.add(fresh.id);
         appendRunLog(app.config.dataDir, fresh.id, `queued, not started: ${full}`);
@@ -1254,6 +1572,8 @@ function pump(
       continue;
     }
     started.push(fresh.id);
+    goingIn.set(fresh.repoId, (goingIn.get(fresh.repoId) ?? 0) + 1);
+    if (isPriorityRun(app, fresh, priorityMemo)) priorityIn.set(fresh.repoId, (priorityIn.get(fresh.repoId) ?? 0) + 1);
     noted.delete(fresh.id);
     slots--;
     if (queued.issueId !== null) runningIssues.add(queued.issueId);
@@ -1270,4 +1590,5 @@ function pump(
       .finally(() => inFlight.delete(queued.id));
     inFlight.set(queued.id, running);
   }
+  noteHeld(app.db, held);
 }

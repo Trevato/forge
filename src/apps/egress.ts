@@ -109,6 +109,198 @@ export function egressSnapshot(): EgressRow[] {
   return rows.sort((a, b) => b.open - a.open || a.label.localeCompare(b.label));
 }
 
+/**
+ * Bytes moved since the forge started, per destination alone (#7546): the
+ * counters `/metrics` serves, and a minute-by-minute ring of the last hour,
+ * so a cold bun cache shows as registry bytes without a packet capture.
+ * Keyed by `host:port` and never by run label, so it holds one entry per
+ * host the apps reach, not one per run; past `MOVED_MAX` destinations the
+ * rest are counted under `other`, save the registry, which always keeps its
+ * own entry so the headline figure is never lost there.
+ */
+interface Moved {
+  bytesIn: number;
+  bytesOut: number;
+  /** Minute `m` (ms since epoch / 60 000) lands in slot `m % 60`. */
+  readonly minute: number[];
+  readonly minuteIn: number[];
+}
+
+const MOVED_MAX = 256;
+const HOUR_MINUTES = 60;
+const moved = new Map<string, Moved>();
+/**
+ * label -> bytes in, for the labels someone is metering now (`meterEgress`),
+ * and the repository whose cell the label is: the one thing that says whose
+ * registry bytes these are (#8382), set by the caller that opened the cell.
+ */
+const meters = new Map<string, { bytesIn: number; npmIn: number; holders: number; repoId: string | undefined }>();
+/**
+ * Registry bytes per repository, minute by minute over the last hour
+ * (#8382). Only a metered install with a repository lands here; past
+ * `NPM_REPOS_MAX` repositories the quietest is dropped first.
+ */
+const npmByRepo = new Map<string, Moved>();
+const NPM_REPOS_MAX = 256;
+
+function ring(): Moved {
+  return { bytesIn: 0, bytesOut: 0, minute: Array(HOUR_MINUTES).fill(-1), minuteIn: Array(HOUR_MINUTES).fill(0) };
+}
+
+/** Add `bytesIn` to `m` at minute `minute`. */
+function addMinute(m: Moved, minute: number, bytesIn: number): void {
+  const slot = minute % HOUR_MINUTES;
+  if (m.minute[slot] !== minute) {
+    m.minute[slot] = minute;
+    m.minuteIn[slot] = 0;
+  }
+  m.minuteIn[slot] = (m.minuteIn[slot] ?? 0) + bytesIn;
+}
+
+function recordNpmRepo(repoId: string, bytesIn: number, minute: number): void {
+  let m = npmByRepo.get(repoId);
+  if (m === undefined) {
+    if (npmByRepo.size >= NPM_REPOS_MAX) {
+      let quietest: string | undefined;
+      let least = Infinity;
+      for (const [id, r] of npmByRepo) {
+        const hour = lastHour(r, minute);
+        if (hour < least) [quietest, least] = [id, hour];
+      }
+      if (quietest !== undefined) npmByRepo.delete(quietest);
+    }
+    npmByRepo.set(repoId, (m = ring()));
+  }
+  m.bytesIn += bytesIn;
+  addMinute(m, minute, bytesIn);
+}
+
+/** Count `bytesIn` received from and `bytesOut` sent to `destination`. */
+export function recordEgress(
+  label: string,
+  destination: string,
+  bytesIn: number,
+  bytesOut: number,
+  now = Date.now(),
+): void {
+  const key =
+    destination === NPM_REGISTRY || moved.has(destination) || moved.size < MOVED_MAX
+      ? destination
+      : "other";
+  let m = moved.get(key);
+  if (m === undefined) moved.set(key, (m = ring()));
+  m.bytesIn += bytesIn;
+  m.bytesOut += bytesOut;
+  const minute = Math.floor(now / 60_000);
+  addMinute(m, minute, bytesIn);
+  const meter = meters.get(label);
+  if (meter === undefined) return;
+  meter.bytesIn += bytesIn;
+  if (destination !== NPM_REGISTRY || bytesIn === 0) return;
+  meter.npmIn += bytesIn;
+  if (meter.repoId !== undefined) recordNpmRepo(meter.repoId, bytesIn, minute);
+}
+
+export interface EgressTotal {
+  readonly destination: string;
+  /** Bytes received from it since the forge started. */
+  readonly bytesIn: number;
+  /** Bytes sent to it since the forge started. */
+  readonly bytesOut: number;
+  /** Bytes received from it in the 60 minutes up to `now`, this minute included. */
+  readonly bytesInLastHour: number;
+}
+
+/** Bytes `m` received in the 60 minutes up to `minute`, that minute included. */
+function lastHour(m: Moved, minute: number): number {
+  let hour = 0;
+  for (let i = 0; i < HOUR_MINUTES; i++) {
+    const at = m.minute[i] ?? -1;
+    if (at > minute - HOUR_MINUTES && at <= minute) hour += m.minuteIn[i] ?? 0;
+  }
+  return hour;
+}
+
+/** Every destination reached since the forge started, most received this hour first. */
+export function egressTotals(now = Date.now()): EgressTotal[] {
+  const minute = Math.floor(now / 60_000);
+  const rows: EgressTotal[] = [];
+  for (const [destination, m] of moved)
+    rows.push({ destination, bytesIn: m.bytesIn, bytesOut: m.bytesOut, bytesInLastHour: lastHour(m, minute) });
+  return rows.sort((a, b) => b.bytesInLastHour - a.bytesInLastHour || a.destination.localeCompare(b.destination));
+}
+
+/** The package registry every install step reaches (`apps/contain.ts` STEP_HOSTS). */
+export const NPM_REGISTRY = "registry.npmjs.org:443";
+
+/** Bytes received from the npm registry over the last hour, across every app and check. */
+export function npmBytesLastHour(now = Date.now()): number {
+  const m = moved.get(NPM_REGISTRY);
+  return m === undefined ? 0 : lastHour(m, Math.floor(now / 60_000));
+}
+
+/** The repository that received most from the npm registry over the last hour, by id. */
+export interface NpmTopRepo {
+  readonly repoId: string;
+  readonly bytes: number;
+}
+
+/** The metered repository the registry sent most to in the last hour; none when no metered install fetched. */
+export function npmTopRepoLastHour(now = Date.now()): NpmTopRepo | undefined {
+  const minute = Math.floor(now / 60_000);
+  let top: NpmTopRepo | undefined;
+  for (const [repoId, m] of npmByRepo) {
+    const bytes = lastHour(m, minute);
+    if (bytes > 0 && (top === undefined || bytes > top.bytes || (bytes === top.bytes && repoId < top.repoId)))
+      top = { repoId, bytes };
+  }
+  return top;
+}
+
+export interface EgressMeter {
+  /** Stop counting; answers the bytes received from every destination. */
+  stop(): number;
+  /** Bytes received from the npm registry alone, up to `stop()`. */
+  npm(): number;
+}
+
+/**
+ * Count what `label`'s proxy receives from now until `stop()`, which answers
+ * the bytes in. Only labels being metered are kept, and each goes with its
+ * last holder, so a run label never outlives the step that asked. `repoId`
+ * is the repository whose cell `label` names, from the caller that opened
+ * it: the registry bytes are attributed to it, never to anything the
+ * install printed.
+ */
+export function meterEgress(label: string, repoId?: string): EgressMeter {
+  const meter = meters.get(label) ?? { bytesIn: 0, npmIn: 0, holders: 0, repoId };
+  // An earlier holder that knew no repository must not lose a later one's.
+  meter.repoId ??= repoId;
+  meters.set(label, meter);
+  meter.holders++;
+  const start = meter.bytesIn;
+  const npmStart = meter.npmIn;
+  let stopped: { bytes: number; npm: number } | undefined;
+  return {
+    stop() {
+      if (stopped === undefined) {
+        stopped = { bytes: meter.bytesIn - start, npm: meter.npmIn - npmStart };
+        if (--meter.holders === 0) meters.delete(label);
+      }
+      return stopped.bytes;
+    },
+    npm() {
+      return stopped?.npm ?? meter.npmIn - npmStart;
+    },
+  };
+}
+
+/** For tests: forget every cumulative count. */
+export function resetEgressTotals(): void {
+  moved.clear();
+  npmByRepo.clear();
+}
+
 /** The ports a declared host may be reached on when its entry names none. */
 export const WEB_PORTS: readonly number[] = [80, 443];
 
@@ -230,6 +422,9 @@ interface Conn {
   done: boolean;
   /** The destination's counts once dialled; the data path adds to it directly. */
   tally?: Tally;
+  /** Whose proxy and where to, once dialled, for the cumulative counts. */
+  label: string;
+  destination?: string;
   /** When bytes last moved either way (ms). */
   last: number;
   /** Frees the destination's slot and counts it closed; set once dialled. */
@@ -394,6 +589,7 @@ async function open(
   count.open++;
   client.data.tally = count;
   const label = policy.label ?? "";
+  client.data.destination = destination;
   client.data.release = () => untally(label, destination);
   const ended = () => {
     if (!client.data.done) {
@@ -410,6 +606,7 @@ async function open(
           if (client.data.done) return;
           client.data.last = Date.now();
           count.bytesIn += chunk.length;
+          recordEgress(label, destination, chunk.length, 0);
           send(client, client.data.toClient, chunk);
           if (queued(client.data.toClient) > (policy.queueMax ?? QUEUE_MAX)) {
             drop(client);
@@ -443,6 +640,7 @@ async function open(
     const first = concat(prefix, client.data.head.subarray(end));
     if (first.length > 0) {
       count.bytesOut += first.length;
+      recordEgress(label, destination, 0, first.length);
       send(peer, client.data.toPeer, first);
     }
   } catch {
@@ -471,6 +669,7 @@ export function startEgress(
         toPeer: [],
         toClient: [],
         done: false,
+        label: policy.label ?? "",
         last: Date.now(),
         release: undefined,
       };
@@ -481,6 +680,7 @@ export function startEgress(
       if (conn.peer !== undefined) {
         if (conn.done) return;
         if (conn.tally !== undefined) conn.tally.bytesOut += chunk.length;
+        if (conn.destination !== undefined) recordEgress(conn.label, conn.destination, 0, chunk.length);
         send(conn.peer, conn.toPeer, chunk);
         return;
       }

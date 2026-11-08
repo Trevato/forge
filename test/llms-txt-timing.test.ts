@@ -45,7 +45,7 @@ test("GET /llms.txt names its phases and lists only public repositories", async 
   const res = await fetch(`${servers.url}/llms.txt`);
   const body = await res.text();
   expect(res.status).toBe(200);
-  expect(res.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+  expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
   const timing = res.headers.get("server-timing") ?? "";
   expect(timing).toContain("repos;");
   expect(timing).toContain("render;");

@@ -13,10 +13,11 @@ import { listReposVisibleTo } from "./repos.ts";
 const LISTING_MS = 60_000;
 export const SITEMAP_ROWS = 5000;
 export const LLMS_ROWS = 200;
+export const LLMS_LINES = 50;
 
 interface Kept {
   readonly sitemap: Fresh<readonly SitemapRepo[]>;
-  readonly llms: Fresh<readonly string[]>;
+  readonly llms: Fresh<LlmsListing>;
 }
 const kept = new WeakMap<Database, Kept>();
 
@@ -75,19 +76,45 @@ export function sitemapRepos(db: Database): readonly SitemapRepo[] {
   });
 }
 
-/** `owner/name` of the newest public repositories, at most `LLMS_ROWS`. */
-export function llmsRepos(db: Database): readonly string[] {
-  return holders(db).llms.get("", () => {
-    listingBuilds.llms++;
-    return names(db, LLMS_ROWS);
-  });
+/** One line of llms.txt: a repository and how many visible forks fold under it. */
+export interface LlmsLine {
+  readonly path: string;
+  readonly forks: number;
 }
 
-function names(db: Database, limit: number): string[] {
-  return listReposVisibleTo(db, undefined, {
-    limit,
-    withoutArchived: true,
-  }).map(
-    (r) => `${r.ownerName}/${r.name}`,
-  );
+/** The lines shown, and whether more public repositories exist than they name. */
+export interface LlmsListing {
+  readonly lines: readonly LlmsLine[];
+  readonly more: boolean;
+}
+
+/**
+ * The newest public repositories as at most `LLMS_LINES` lines. A fork whose
+ * parent is itself in the visible set folds into the parent's line; a fork
+ * whose parent is not (private, archived, suspended) stands as itself. The
+ * grouping reads only the visible set, so nothing outside it is named or counted.
+ */
+export function llmsRepos(db: Database): LlmsListing {
+  return holders(db).llms.get("", () => {
+    listingBuilds.llms++;
+    const repos = listReposVisibleTo(db, undefined, {
+      limit: LLMS_ROWS,
+      withoutArchived: true,
+    });
+    const ids = new Set(repos.map((r) => r.id));
+    const forks = new Map<string, number>();
+    for (const r of repos)
+      if (r.forkParentId !== null && ids.has(r.forkParentId))
+        forks.set(r.forkParentId, (forks.get(r.forkParentId) ?? 0) + 1);
+    const lines = repos
+      .filter((r) => r.forkParentId === null || !ids.has(r.forkParentId))
+      .map((r) => ({
+        path: `${r.ownerName}/${r.name}`,
+        forks: forks.get(r.id) ?? 0,
+      }));
+    return {
+      lines: lines.slice(0, LLMS_LINES),
+      more: lines.length > LLMS_LINES || repos.length >= LLMS_ROWS,
+    };
+  });
 }

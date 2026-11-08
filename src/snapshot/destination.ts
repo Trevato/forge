@@ -43,6 +43,8 @@ export interface Sources {
   readonly dataDir?: string | undefined;
   readonly bus?: EventBus | undefined;
   readonly env?: Record<string, string | undefined>;
+  /** Tries per store call; a status read asks for one so a dead store answers at once, not after the backoff. */
+  readonly attempts?: number;
 }
 
 /** The sealed target, or undefined when the four required fields are not all set. */
@@ -67,11 +69,11 @@ export function sealedTarget(s: Sources): S3Target | undefined {
 export function resolveDestination(s: Sources = {}): Destination | undefined {
   const env = s.env ?? process.env;
   const sealed = sealedTarget(s);
-  if (sealed) return { source: "sealed", store: s3Store(sealed) };
+  if (sealed) return { source: "sealed", store: s3Store(sealed, s.attempts) };
   const dir = env["FORGE_SNAPSHOT_DIR"]?.trim();
   if (dir) return { source: "dir", store: dirStore(dir) };
   const fromEnv = s3FromEnv(env);
-  if (fromEnv) return { source: "env", store: s3Store(fromEnv) };
+  if (fromEnv) return { source: "env", store: s3Store(fromEnv, s.attempts) };
   return undefined;
 }
 
@@ -91,16 +93,22 @@ export function clearSealed(db: Database): void {
   for (const name of SEALED_NAMES) deleteSecret(db, "forge", "", name);
 }
 
+/** An error as one short sentence: the target's keys struck out, at most 200 characters. */
+export function scrubReason(target: S3Target | undefined, error: unknown): string {
+  let reason = error instanceof Error ? error.message : String(error);
+  for (const secret of target ? [target.accessKeyId, target.secretAccessKey] : [])
+    if (secret) reason = reason.split(secret).join("…");
+  return reason.slice(0, 200);
+}
+
 /** Does this target answer? One sentence either way, never a key in it. */
 export async function testTarget(target: S3Target): Promise<string> {
-  const store = s3Store(target);
+  // One attempt: a test that retries a refused port makes the answer wait on backoff.
+  const store = s3Store(target, 1);
   try {
     const keys = await store.list("");
     return `Reached ${store.where}: ${keys.length === 1 ? "1 object" : `${keys.length} objects`} listed.`;
   } catch (error) {
-    let reason = error instanceof Error ? error.message : String(error);
-    for (const secret of [target.accessKeyId, target.secretAccessKey])
-      reason = reason.split(secret).join("…");
-    return `Could not list ${store.where}: ${reason.slice(0, 200)}`;
+    return `Could not list ${store.where}: ${scrubReason(target, error)}`;
   }
 }

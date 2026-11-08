@@ -16,7 +16,7 @@ import {
 } from "../../core/oauth.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { pageHead } from "../chrome.ts";
+import { pageHead, SIGN_IN_TO_DO, forbiddenPage } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
@@ -36,7 +36,9 @@ const PARAMS = [
 /** Nothing here is cacheable, and nothing here may be sent on as a referrer. */
 const guard = (response: Response): Response => {
   response.headers.set("cache-control", "no-store");
-  response.headers.set("referrer-policy", "no-referrer");
+  // same-origin, not no-referrer: no-referrer makes the browser send `Origin: null` on the consent form's
+  // own POST, and the CSRF gate refused every consent (2026-10-27). Other sites still get no referrer.
+  response.headers.set("referrer-policy", "same-origin");
   return response;
 };
 
@@ -200,7 +202,7 @@ export async function authorizeSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   if (ctx.auth.user === undefined || ctx.auth.via === "token")
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, SIGN_IN_TO_DO);
   const request = parseAuthRequest(ctx.app.db, (n) => field(form, n));
   if (!request.ok) return refused(ctx, request.error);
   const { redirectUri, state } = request.value;

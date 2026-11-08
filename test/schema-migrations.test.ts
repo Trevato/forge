@@ -29,13 +29,16 @@ import {
   migrate,
   migrationId,
   pinBreaks,
-  pinned,
   readMigrations,
+  readPins,
   statements,
 } from "../src/kernel/migrate.ts";
 import { migrationFiles, migrations, NUMBERED } from "../src/core/schema.ts";
 import { failureReason } from "../src/apps/process.ts";
-import pins from "../src/core/migration-pins.json" with { type: "json" };
+import { breaches } from "./helpers/rule.ts";
+import legacyPins from "../src/core/migration-pins.json" with { type: "json" };
+
+const pins = readPins(join(import.meta.dir, "../src/core/migration-pins"), legacyPins);
 
 const root = mkdtempSync(join(tmpdir(), "forge-schema-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -301,6 +304,36 @@ describe("statements", () => {
   });
 });
 
+describe("the retired FLOW ONLY switch leaves no schema behind (#8731)", () => {
+  const DROP = "20261103100000-drop-flow-only";
+  const columns = (db: Database, table: string): string[] =>
+    db.query<{ name: string }, []>(`SELECT name FROM pragma_table_info('${table}')`).all().map((c) => c.name);
+
+  test("a database that had the switch on loses the column and the table, and keeps its repositories", () => {
+    const path = fresh();
+    const old = openDb(path, migrationFiles.filter((m) => m.name !== DROP).map((m) => m.sql));
+    expect(columns(old, "repo")).toContain("flow_only");
+    expect(has(old, "flow_only_watch")).toBe(true);
+    old.exec("INSERT INTO user (id, username, email, password_hash) VALUES ('u1', 'ada', 'ada@example.com', 'x')");
+    old.exec("INSERT INTO repo (id, owner_id, name, flow_only) VALUES ('r1', 'u1', 'lab', 1)");
+    old.exec("INSERT INTO flow_only_watch (repo_id, alarm_at) VALUES ('r1', 1)");
+    old.close();
+
+    const db = openDb(path, migrations);
+    expect(columns(db, "repo")).not.toContain("flow_only");
+    expect(has(db, "flow_only_watch")).toBe(false);
+    expect(db.query("SELECT id, name FROM repo").all()).toEqual([{ id: "r1", name: "lab" }]);
+    db.close();
+  });
+
+  test("a fresh database never keeps either", () => {
+    const db = openDb(":memory:", migrations);
+    expect(columns(db, "repo")).not.toContain("flow_only");
+    expect(has(db, "flow_only_watch")).toBe(false);
+    db.close();
+  });
+});
+
 describe("a migration is a file named by a sortable id (#1837)", () => {
   const source = join(import.meta.dir, "../src/core/migrations");
 
@@ -425,8 +458,24 @@ describe("a migration on main is never edited (#783)", () => {
     expect(pinBreaks(migrationFiles, pins)).toEqual([]);
   });
 
-  test("every numbered migration is pinned", () => {
-    for (const m of migrationFiles.slice(0, NUMBERED)) expect(Object.hasOwn(pins, m.name)).toBe(true);
+  breaches(
+    "every migration is pinned by its own pull: run bun scripts/pin-migrations.ts",
+    migrationFiles
+      .filter((m) => !Object.hasOwn(pins, m.name))
+      .map((m) => `src/core/migrations/${m.name}.ts is not pinned: run bun scripts/pin-migrations.ts`),
+  );
+
+  test("pin files are read beside the frozen list, and a bad one is a defect", () => {
+    const dir = join(root, "pins");
+    mkdirSync(dir);
+    const id = migrationId("CREATE TABLE a (x INTEGER)");
+    writeFileSync(join(dir, "20261015110000-a.pin"), `${id}\n`);
+    expect(readPins(dir, { "0001-x": "f".repeat(64) })).toEqual({ "0001-x": "f".repeat(64), "20261015110000-a": id });
+    writeFileSync(join(dir, "20261015120000-b.pin"), "nope");
+    expect(() => readPins(dir, {})).toThrow(ForgeError);
+    // A pin file cannot re-pin a frozen migration.
+    rmSync(join(dir, "20261015120000-b.pin"));
+    expect(() => readPins(dir, { "20261015110000-a": "f".repeat(64) })).toThrow(ForgeError);
   });
 
   test("an edit after its pin is named, a removal too; re-indenting is not an edit", () => {
@@ -434,7 +483,7 @@ describe("a migration on main is never edited (#783)", () => {
       { name: "20261015110000-a", sql: "CREATE TABLE a (x INTEGER)" },
       { name: "20261015120000-b", sql: "CREATE TABLE b (y INTEGER)" },
     ];
-    const pin = pinned(files, {});
+    const pin = Object.fromEntries(files.map((f) => [f.name, migrationId(f.sql)]));
     expect(pinBreaks(files, pin)).toEqual([]);
     expect(pinBreaks([files[0]!, { name: "20261015120000-b", sql: "CREATE TABLE b (y TEXT)" }], pin)).toEqual([
       "20261015120000-b was edited after it was pinned — add a new migration instead",
@@ -443,14 +492,4 @@ describe("a migration on main is never edited (#783)", () => {
     expect(pinBreaks([{ name: "20261015110000-a", sql: "\n  CREATE TABLE a\n    (x INTEGER)\n" }, files[1]!], pin)).toEqual([]);
   });
 
-  test("pinning adds what is new and never rewrites a pin", () => {
-    const a = { name: "20261015110000-a", sql: "CREATE TABLE a (x INTEGER)" };
-    const b = { name: "20261015120000-b", sql: "CREATE TABLE b (y INTEGER)" };
-    const pin = pinned([b], {});
-    const edited = { ...b, sql: "CREATE TABLE b (y TEXT)" };
-    const next = pinned([a, edited], pin);
-    expect(Object.keys(next)).toEqual([a.name, b.name]);
-    expect(next[b.name]).toBe(pin[b.name]!);
-    expect(next[a.name]).toBe(migrationId(a.sql));
-  });
 });

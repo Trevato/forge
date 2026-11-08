@@ -19,11 +19,15 @@ import {
   leaseLapsed,
   listRunning,
   queueDepth,
+  queuedApart,
 } from "../core/runs.ts";
+import { HOLD_WORDS, heldRuns, type HoldCause } from "../runs/held.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { ownRepoPath } from "./own_repo.ts";
 import { BUDGETS } from "./budgets.ts";
 import { openDbFiles } from "./file_modes.ts";
+import { backupVerdict, isWatched } from "../snapshot/bucket.ts";
+import { lastDrill } from "../snapshot/drills.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
@@ -32,10 +36,12 @@ import { rollbackNeed } from "../release/launch.ts";
 import { behindStanding } from "../release/behind.ts";
 import { newestDrills } from "../core/domain_drills.ts";
 import { capacityValue } from "../core/capacity.ts";
+import { unwrittenFor, SILENT_AFTER_S } from "../http/access_log.ts";
 import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
 import { freeChecks, heldChecks, redHref, redSentence } from "../checks/red_main.ts";
 import { diskRedSentence, diskReds } from "../checks/disk_red.ts";
+import { flakeList, type FlakeRow } from "../checks/flake.ts";
 import { flakeHref, sharedCause, sharedSentence, sharedTests } from "../checks/shared_red.ts";
 
 /** A red in a repository other than the forge's own is not fixable from here: say so, so it reads as known. */
@@ -106,6 +112,10 @@ export interface Vitals {
   }[];
   readonly apps: { serving: number; asleep: number; previews: number };
   readonly errors: { lastHour: number; latest: ErrorLine[] };
+  /** Tests that failed in main's check and passed alone this week: a list, never a need (#6643). */
+  readonly flakes: FlakeRow[];
+  /** Seconds the oldest recorded access line has waited to reach disk; null when none waits. */
+  readonly accessLog: { unwrittenSecondsAgo: number | null };
   readonly at: string;
 }
 
@@ -253,6 +263,26 @@ export interface LaneRun {
   readonly since: string;
 }
 
+
+/** Agent slots are held per issue (`pump` in crew/dispatch.ts); any other kind holds one per run. */
+function holders(issues: (string | null)[], perIssue: boolean): number {
+  return perIssue ? new Set(issues).size : issues.length;
+}
+
+/** What a long queue is waiting behind: how many wait, how many run, and the slots in force. */
+function queueSentence(
+  kind: string,
+  queued: number,
+  running: number,
+  slots: number | null,
+  held: ReadonlyMap<HoldCause, number> = new Map(),
+): string {
+  const behind = slots === null ? `${running} running` : `${running} of ${slots} slots running`;
+  const parts = [...held].map(([cause, n]) => `${n} by ${HOLD_WORDS[cause]}`);
+  const more = parts.length > 0 ? `; held on purpose: ${parts.join(", ")}` : "";
+  return `The ${kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes: ${queued} queued, ${behind}${more}.`;
+}
+
 /**
  * The lane's one sentence, with its cause: how many wait, since when, and
  * what runs. With one slot: "22 checks wait behind one lane; the oldest since
@@ -363,12 +393,35 @@ export function vitals(input: VitalsInput): Vitals {
         );
       continue;
     }
-    const waited = now - new Date(row.oldest).getTime();
+    // Agent runs the dispatcher holds on purpose (a shut valve, the week's
+    // pace, an account limit) are not waiting for a slot (#9403): age and
+    // "since" come from the rest, and the sentence names how many are held.
+    let waiting = row.queued;
+    let oldest: string | null = row.oldest;
+    const byCause = new Map<HoldCause, number>();
+    const holds = row.kind === "agent" ? heldRuns(input.db, now) : new Map<string, HoldCause>();
+    if (holds.size > 0) {
+      const apart = queuedApart(input.db, "agent", [...holds.keys()], now);
+      waiting = apart.waiting;
+      oldest = apart.oldest;
+      for (const id of apart.held) {
+        const cause = holds.get(id)!;
+        byCause.set(cause, (byCause.get(cause) ?? 0) + 1);
+      }
+    }
+    if (oldest === null) continue;
+    const waited = now - new Date(oldest).getTime();
     if (waited > QUEUE_WAIT_MAX_MS)
       need(
         `queue:${row.kind}`,
-        `The ${row.kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes.`,
-        new Date(row.oldest).toISOString(),
+        queueSentence(
+          row.kind,
+          waiting,
+          holders(running.filter((r) => r.run.kind === row.kind).map((r) => r.run.issueId), row.kind === "agent"),
+          row.kind === "agent" ? Number(capacityValue(input.db, "crew.concurrency")) : null,
+          byCause,
+        ),
+        new Date(oldest).toISOString(),
         "/settings/capacity",
       );
   }
@@ -451,6 +504,12 @@ export function vitals(input: VitalsInput): Vitals {
   const failing = snapshotNeed(lastSnapshotOutcome(input.dataDir));
   if (failing !== undefined) need("snapshot-failed", failing.sentence, failing.since, "/settings/backups");
 
+  // The bucket itself, read by this process: late, unreadable, a failed drill, or a check that stopped is one card.
+  if (isWatched(input.dataDir)) {
+    const backup = backupVerdict(input.dataDir, lastDrill(input.db), now);
+    if (backup.state === "red") need("backup", [...backup.reasons, ...(backup.reasons.some((r) => r.includes("last ran")) ? [] : [backup.checkLine])].join(" "), backup.checkedAt ?? undefined, "/settings/backups");
+  }
+
   // A snapshot that did not land off the box, or a mirror a day behind, is a card until it does.
   const behind = mirrorNeed(lastMirror(input.dataDir), now);
   if (behind !== undefined) need("mirror", behind.sentence, behind.since, "/settings/backups");
@@ -466,6 +525,16 @@ export function vitals(input: VitalsInput): Vitals {
   // Production serving a version older than a release main has had over an hour is a card until they match.
   const lagging = behindStanding(now);
   if (lagging !== undefined) need("release:behind", `${lagging.sentence}.`, lagging.since, "/board");
+
+  // Lines recorded and not landed for five minutes: the writer is failing, however quiet the site.
+  const quiet = unwrittenFor(now);
+  if (quiet !== undefined && quiet > SILENT_AFTER_S)
+    need(
+      "access-log",
+      `The access log is not writing: a recorded line has waited ${quiet} s to reach disk (limit ${SILENT_AFTER_S / 60} min).`,
+      new Date(now - quiet * 1000).toISOString(),
+      "/settings/capacity",
+    );
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {
@@ -510,6 +579,8 @@ export function vitals(input: VitalsInput): Vitals {
     stuck,
     apps,
     errors: { lastHour: seen.lastHour, latest: seen.latest },
+    flakes: flakeList(input.db, now),
+    accessLog: { unwrittenSecondsAgo: quiet ?? null },
     at,
   };
 }

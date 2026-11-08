@@ -30,12 +30,20 @@ import { studioDoor, studioHome } from "../studio/home.ts";
 import { parentIssuerOf } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { hostOf, pageHead, signInFirst } from "../chrome.ts";
+import {
+  CAME_FROM_ELSEWHERE,
+  forbiddenPage,
+  hostOf,
+  NOT_YOURS_TO_DO,
+  pageHead,
+  SENT_FROM_ELSEWHERE,
+  signInFirst,
+} from "../chrome.ts";
 import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
 import { signinWindow } from "../../core/signin-window.ts";
 import { field, readForm } from "../form.ts";
 import { passkeyJs } from "../passkey-client.ts";
-import { passkeyNote, passkeyState } from "../passkey-state.ts";
+import { passkeyNote } from "../passkey-state.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
@@ -53,6 +61,7 @@ import {
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { secureFor } from "../../http/cookie_secure.ts";
+import { SIGNUP_OWN_FORGE, SIGNUP_YOU_GET } from "../../core/contribute.ts";
 import { hasAdmin } from "../../spawn/claim.ts";
 import { getSignup, type SignupMode } from "../../settings/signup.ts";
 import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
@@ -155,7 +164,7 @@ export function downloadsCard(ctx: Ctx, user: User): Html {
             ${copyField("forge-sync", "forge sync", "Sync command", "Copy the sync command")}
             <span class="row-meta"
               >Clones what is missing, fetches the rest, and reports
-              ahead/behind/dirty. See "Origins" in the README.</span
+              ahead/behind/dirty. See docs/ON-YOUR-MACHINE.md.</span
             >
           </span>
         </div>
@@ -285,20 +294,20 @@ function authForm(
   // Sign-in leads with the passkey: one press, nothing typed; the password
   // form below stays for accounts that were given one. The button needs a
   // script and a browser with passkeys, so the block is `data-passkey="on"`: shown
-  // only once `passkey-client.ts` marks `:root.passkey`. The form's Sign in
-  // comes in both variants, outline beside the lead and primary everywhere
-  // else, so the page always has one primary action. The sentence tells a
-  // newcomer before they look for a door that is not there.
+  // only once `passkey-client.ts` marks `:root.passkey`. No "Passkey off"
+  // badge here: a visitor signing in did not ask about passkeys, and with no
+  // script the page is the password form alone, its margin included (#7921).
+  // The form's Sign in comes in both variants, outline beside the lead and
+  // primary everywhere else, so the page always has one primary action. The
+  // sentence tells a newcomer before they look for a door that is not there.
+  const mode = kind === "signin" ? timePhase(ctx.request, "settings", () => getSignup(ctx.app.db)) : undefined;
   const passkeyFirst = when(
     kind === "signin",
-    () => html`<div class="stack stack-tight mb">
-      ${passkeyState()}
-      <div class="stack stack-tight" data-passkey="on" hidden>
+    () => html`<div class="stack stack-tight mb" data-passkey="on" hidden>
       <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
       ${passkeyNote("passkey-signin-note")}
-      </div>
     </div>
-    ${when(SIGNUP_SENTENCES[timePhase(ctx.request, "settings", () => getSignup(ctx.app.db))], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
+    ${when(mode === undefined ? undefined : SIGNUP_SENTENCES[mode], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
   );
 
   const body = html`${unknownLink}
@@ -329,7 +338,7 @@ function authForm(
           type: "email",
           value: values.email ?? "",
           autocomplete: "email",
-          hint: "Optional. Given, we send a link to prove it.",
+          hint: "Optional. If you add one, we send a link to confirm it. You need a confirmed email to send changes.",
           // A pinned name is not editable, so the keyboard goes to the email.
           ...(vouched !== undefined ? { autofocus: true } : {}),
           ...(errors.email ? { error: errors.email } : {}),
@@ -366,8 +375,8 @@ function authForm(
         kind === "signup" && !byPasskey,
         () => html`<div data-passkey="on" hidden>
           <p class="muted small mb">
-            Or skip the password: a passkey signs you in with a fingerprint,
-            face or device PIN. An email address above is optional.
+            Or skip the password and use a passkey: your fingerprint, face or
+            device PIN.
           </p>
           ${passkeyNote("passkey-signup-note")}
           <button type="button" id="passkey-signup" class="btn" data-variant="outline">Create account with a passkey</button>
@@ -393,7 +402,10 @@ function authForm(
             : btn("Create account", { variant: "primary" })}
         <span class="spacer"></span>
         ${kind === "signin"
-          ? btn("Need an account? Sign up", {
+          ? // A closed forge has no door to point at: the sentence above says so.
+            mode === "closed"
+            ? null
+            : btn("Need an account? Sign up", {
               href: "/signup",
               variant: "link",
               size: "sm",
@@ -413,6 +425,10 @@ function authForm(
     existsSync(join(ctx.app.config.dataDir, "parent.json")) && unowned;
   return html`<div class="narrow">
     ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
+    ${when(
+      kind === "signup",
+      () => html`<p class="mb" id="signup-you-get">${SIGNUP_YOU_GET} <a href="/forges/new">${SIGNUP_OWN_FORGE}</a></p>`,
+    )}
     ${card(body)}
     ${when(
       kind === "signin",
@@ -459,7 +475,15 @@ function signupClosedPage(ctx: Ctx): Response {
     {
       ctx,
       title: "Sign up",
-      body: html`<div class="stack"><h1>Sign up</h1><p>${said}</p><p><a href="/signin">Sign in</a></p></div>`,
+      body: html`<div class="narrow stack">
+        ${pageHead("Sign up")}
+        <p>${said}</p>
+        <p class="muted">You can still run a forge of your own, with no account here, and suggest a change to any public app here without one.</p>
+        <div class="form-actions">
+          ${btn("Get your own forge", { href: "/#yours", variant: "primary" })}
+          ${btn("Sign in", { href: "/signin", variant: "outline" })}
+        </div>
+      </div>`,
     },
     403,
   );
@@ -713,7 +737,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
 
 export function logoutSubmit(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, SENT_FROM_ELSEWHERE, CAME_FROM_ELSEWHERE);
   signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
   return redirect("/", sessionCookie("", new Date(0), ctx.url, ctx.app.config.url));
 }
@@ -836,7 +860,7 @@ export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
   });
   if (!created.ok) {
     if (created.error === "forbidden_owner" || created.error === "unauthorized")
-      return new Response("forbidden", { status: 403 });
+      return forbiddenPage(ctx, NOT_YOURS_TO_DO);
     const messages: Record<string, string> = {
       not_member: `Not made: ${NOT_A_MEMBER}.`,
       repository_limit: `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user)}.`,

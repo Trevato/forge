@@ -11,12 +11,14 @@
 import { dirname, join } from "node:path";
 import { clientAddress } from "../http/peer.ts";
 import type { App } from "../app.ts";
+import { connectUpstream, offeredProtocols, type AppSocket } from "../apps/proxy.ts";
 import { cellsAvailable, killTree, openCell, type Cell, type CellSpec, type Limits } from "../apps/contain.ts";
 import { childEnv, freePort } from "../apps/process.ts";
 import { childDirOf } from "../actions/spawn.ts";
 import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
 import { SIZES, type Size } from "./sizes.ts";
+import { childModelHosts } from "../core/capacity.ts";
 
 export const CELL_PREFIX = "cell-";
 export const ownsBody = (bodyId: string): boolean => bodyId.startsWith(CELL_PREFIX);
@@ -43,6 +45,8 @@ export function cellSpecFor(input: {
   size: Size;
   port: number;
   label: string;
+  /** The model provider hosts an admin let children reach (`children.modelEgress`); none by default. */
+  modelHosts?: readonly string[];
 }): CellSpec {
   return {
     dir: input.dir,
@@ -53,7 +57,10 @@ export function cellSpecFor(input: {
     hide: [input.parentDataDir],
     // The forge's own code may live under the parent's data (a release checkout).
     reveal: [CODE],
-    egress: [],
+    egress: [...(input.modelHosts ?? [])],
+    // A child's cell is held to this list whatever cells.egress says: report
+    // mode is for apps still declaring hosts, not for a whole forge.
+    egressMode: "enforce",
     reach: input.parentPort === undefined ? [input.parentUrl] : [input.parentUrl, parentLocal(input.parentPort)],
     limits: cellLimits(input.size),
     listen: input.port,
@@ -152,6 +159,7 @@ function makeRegistry(parent: App): CellChildren {
       size: input.size,
       port,
       label: `forge:${input.name}`,
+      modelHosts: childModelHosts(parent.db),
     });
     const log = (line: string): void => {
       recent.push(line);
@@ -311,4 +319,38 @@ export async function forward(
   } catch {
     return new Response("this forge is not answering", { status: 502 });
   }
+}
+
+/**
+ * Carry a websocket handshake to the child's loopback port: the child's side
+ * is opened first, and only then is the visitor's answered, as `proxyApp`
+ * does for an app (`apps/proxy.ts`). Frames then go through `appWebSocket`,
+ * the forge's one pump. `undefined` means the request became a socket.
+ */
+export async function forwardSocket(
+  child: Pick<CellChild, "port">,
+  request: Request,
+  server: Bun.Server<AppSocket>,
+  db: AppSocket["db"],
+  clientHeader?: string,
+): Promise<Response | undefined> {
+  const at = new URL(request.url);
+  const headers: Record<string, string> = {};
+  const named = clientHeader?.toLowerCase();
+  for (const [k, v] of request.headers) {
+    // The client writes its own handshake; the visitor's key, version and extensions end here.
+    if (!HOP.has(k) && !WHO.has(k) && k !== named && !k.startsWith("sec-websocket-")) headers[k] = v;
+  }
+  headers["x-forwarded-for"] = clientAddress(request);
+  const url = new URL(`ws://127.0.0.1:${child.port}${at.pathname}${at.search}`);
+  const opened = await connectUpstream(url, headers, offeredProtocols(request));
+  if (!opened.ok) return new Response("this forge is not answering", { status: 502 });
+  const upstream = opened.value;
+  const upgraded = server.upgrade(request, {
+    data: { upstream, userId: undefined, db, port: child.port },
+    ...(upstream.protocol === "" ? {} : { headers: { "sec-websocket-protocol": upstream.protocol } }),
+  });
+  if (upgraded) return undefined;
+  upstream.close(1000);
+  return new Response("bad websocket handshake", { status: 400 });
 }

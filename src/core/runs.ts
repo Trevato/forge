@@ -25,7 +25,9 @@ export const STOPPED_SUMMARY = "the forge stopped";
 /** The kinds that pass judgement on a commit: a preview's deploy, or a repository's own check. */
 export const CHECK_KINDS: readonly RunKind[] = ["deploy", "check"];
 export const RUN_KINDS: readonly RunKind[] = ["deploy", "agent", "check"];
-export type RunState = "queued" | "running" | "ok" | "failed" | "cancelled";
+/** Every state a run can be in — the type is read off this list, so a new state is named here once. */
+export const RUN_STATES = ["queued", "running", "ok", "failed", "cancelled"] as const;
+export type RunState = (typeof RUN_STATES)[number];
 
 export const RUN_TERMINAL: readonly RunState[] = ["ok", "failed", "cancelled"];
 export const isTerminal = (state: RunState): boolean =>
@@ -41,8 +43,14 @@ export interface CheckDetail {
   readonly passed: number;
   readonly failed: number;
   readonly names: readonly string[];
+  /** The test files the failures printed under, when a verification after landing failed (#7786). */
+  readonly files?: readonly string[];
+  /** The failing tests under those files, at most forty, for the report that files them (#7780). */
+  readonly failures?: readonly { readonly file: string; readonly name: string }[];
   /** The check machine's free disk share (0..1) when a red finished (#5453). */
   readonly diskFree?: number;
+  /** `temp_full`: a shard ran out of temp space, the environment's fault, not the change's (#8679). */
+  readonly environment?: "temp_full";
 }
 
 export interface Run {
@@ -310,6 +318,31 @@ export function finishRun(
   return changes > 0 ? getRun(db, runId) : undefined;
 }
 
+/** The summaries a run is cancelled with when its pull closes or lands under it. */
+export const PULL_STOPPED = ["the pull closed", "the pull landed"] as const;
+
+/**
+ * A run its pull closed under it, which had in fact reached its own answer
+ * (already done on main): that answer replaces the pull's
+ * summary, so the park or the note says what the builder said and not
+ * "the pull closed". Only such a cancelled run is touched: one its pull
+ * landed under keeps "the pull landed", which is no stall (#8481).
+ */
+export function answerCancelled(
+  db: Database,
+  runId: string,
+  outcome: { state: "ok" | "failed"; summary: string },
+): Run | undefined {
+  const changes = db
+    .query(
+      `UPDATE run SET state = ?2, summary = ?3
+       WHERE id = ?1 AND state = 'cancelled' AND summary = ?4`,
+    )
+    .run(runId, outcome.state, outcome.summary.slice(0, 500), PULL_STOPPED[0])
+    .changes;
+  return changes > 0 ? getRun(db, runId) : undefined;
+}
+
 /** Record the base tip a pull's check merged with. */
 export function setRunBase(db: Database, runId: string, baseOid: string): void {
   db.query(`UPDATE run SET base_oid = ?2 WHERE id = ?1`).run(runId, baseOid);
@@ -376,6 +409,8 @@ export function noteRunProgress(
     node?: string | undefined;
     /** The model an agent run ran on (empty: the runner's default), and its prompt version. */
     model?: string | undefined;
+    /** Why that model: the agent's own, or what escalated the run to Opus. */
+    modelReason?: string | undefined;
     promptVersion?: string | undefined;
   },
 ): void {
@@ -387,7 +422,8 @@ export function noteRunProgress(
        placement = COALESCE(?8, placement),
        node = COALESCE(?9, node),
        model = COALESCE(?10, model),
-       prompt_version = COALESCE(?11, prompt_version)
+       prompt_version = COALESCE(?11, prompt_version),
+       model_reason = COALESCE(?12, model_reason)
      WHERE id = ?1`,
   ).run(
     runId,
@@ -401,6 +437,7 @@ export function noteRunProgress(
     progress.node?.slice(0, 253) ?? null,
     progress.model?.slice(0, 100) ?? null,
     progress.promptVersion?.slice(0, 40) ?? null,
+    progress.modelReason?.slice(0, 60) ?? null,
   );
 }
 
@@ -660,11 +697,8 @@ export interface ListRunsOptions {
   cursor?: string | undefined;
 }
 
-export function listRuns(
-  db: Database,
-  repoId: string,
-  options: ListRunsOptions = {},
-): Run[] {
+function runsWhere(repoId: string, options: ListRunsOptions): { where: string; params: (string | number)[]; limit: number } {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
   const params: (string | number)[] = [repoId];
   let where = "repo_id = ?1";
   if (options.kind !== undefined) {
@@ -687,13 +721,46 @@ export function listRuns(
     params.push(options.cursor);
     where += ` AND id < ?${params.length}`;
   }
-  params.push(Math.min(Math.max(options.limit ?? 50, 1), 200));
+  return { where, params, limit };
+}
+
+export function listRuns(
+  db: Database,
+  repoId: string,
+  options: ListRunsOptions = {},
+): Run[] {
+  const { where, params, limit } = runsWhere(repoId, options);
+  params.push(limit);
   return db
     .query<RunRow, (string | number)[]>(
       `SELECT * FROM run WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRun);
+}
+
+/**
+ * A cheap marker over the page `listRuns` would give: each row's id and every
+ * field a client sees move (state, timestamps, turns, cost, summary, error,
+ * attempt), plus the title of the pull or issue it is about. The same page
+ * gives the same marker; a run that starts, moves, finishes or spends more
+ * changes it. One indexed read, no rows built.
+ */
+export function runsMarker(db: Database, repoId: string, options: ListRunsOptions = {}): string {
+  const { where, params, limit } = runsWhere(repoId, options);
+  params.push(limit);
+  const rows = db
+    .query<{ m: string }, (string | number)[]>(
+      `SELECT r.id || '|' || COALESCE(r.state, '') || '|' || COALESCE(r.started_at, '') || '|' || COALESCE(r.finished_at, '')
+          || '|' || COALESCE(r.serving_at, '') || '|' || COALESCE(r.turns, '') || '|' || COALESCE(r.cost_usd, '') || '|' || COALESCE(r.attempt, '')
+          || '|' || COALESCE(r.not_before, '') || '|' || COALESCE(r.summary, '') || '|' || COALESCE(r.error_line, '') || '|' || COALESCE(r.error_at, '')
+          || '|' || COALESCE(r.check_detail, '') || '|' || COALESCE(i.title, '') AS m
+         FROM (SELECT * FROM run WHERE ${where} ORDER BY id DESC LIMIT ?${params.length}) r
+         LEFT JOIN issue i ON i.id = r.issue_id
+        ORDER BY r.id DESC`,
+    )
+    .all(...params);
+  return `${rows.length}\n${rows.map((r) => r.m).join("\n")}`;
 }
 
 /** Queued runs of one kind, oldest first — what a worker takes from. */
@@ -953,8 +1020,10 @@ export function latestRunsForIssues(
 }
 
 /**
- * How many automatic follow-ups an agent has had on a pull since a person
- * last spoke: the bound behind rule 7 in docs/APPS.md. `since` is the
+ * How many automatic follow-ups for a failed check an agent has had on a
+ * pull since a person last spoke: the bound behind rule 7 in docs/APPS.md.
+ * A bring-up-to-date run (`conflict`) is no try: main moving is not the
+ * change's failing, and those runs are bounded where they are queued. `since` is the
  * moment of the last human comment or review, or the pull's creation.
  */
 export function automaticRunsSince(
@@ -966,7 +1035,7 @@ export function automaticRunsSince(
     .query<{ n: number }, [string, string]>(
       `SELECT COUNT(*) AS n FROM run
        WHERE kind = 'agent' AND issue_id = ?1 AND created_at > ?2
-         AND reason IN ('check_failed','conflict')`,
+         AND reason = 'check_failed'`,
     )
     .get(issueId, since);
   return row?.n ?? 0;
@@ -990,7 +1059,7 @@ export function automaticRunsSinceFor(
         `WITH since (issue_id, at) AS (VALUES ${batch.map((_, n) => `(?${2 * n + 1}, ?${2 * n + 2})`).join(",")})
          SELECT run.issue_id, COUNT(*) AS n FROM run JOIN since ON since.issue_id = run.issue_id
          WHERE run.kind = 'agent' AND run.created_at > since.at
-           AND run.reason IN ('check_failed','conflict')
+           AND run.reason = 'check_failed'
          GROUP BY run.issue_id`,
       )
       .all(...batch.flat());
@@ -1134,26 +1203,33 @@ export function agentRunTotals(
   return { runs: row?.runs ?? 0, spentUsd: row?.spent ?? 0 };
 }
 
-/** The newest agent run of each repository, in one query. */
+/**
+ * The one statement behind `latestAgentRunsForRepos`, exported so its test
+ * explains this exact text and fails when it stops seeking `run_agent_latest`.
+ * `?1` is a JSON array of repository ids.
+ */
+export const LATEST_AGENT_RUNS_SQL = `SELECT run.* FROM run WHERE run.id IN (
+  SELECT (SELECT r.id FROM run r
+           WHERE r.repo_id = ids.value AND r.kind = 'agent'
+           ORDER BY r.created_at DESC, r.id DESC LIMIT 1)
+    FROM json_each(?1) AS ids)`;
+
+/**
+ * The newest agent run of each repository, in one query: per repository one
+ * seek into `run_agent_latest`, never a window over every agent run (#8379).
+ * Ties on `created_at` break by the larger id, as they always have.
+ */
 export function latestAgentRunsForRepos(
   db: Database,
   repoIds: readonly string[],
 ): Map<string, Run> {
   const out = new Map<string, Run>();
   const unique = [...new Set(repoIds)];
-  const CHUNK = 400;
-  for (let i = 0; i < unique.length; i += CHUNK) {
-    const batch = unique.slice(i, i + CHUNK);
-    const rows = db
-      .query<RunRow, string[]>(
-        `SELECT * FROM (
-           SELECT run.*, ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY created_at DESC, id DESC) AS rn
-           FROM run WHERE kind = 'agent' AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
-         ) WHERE rn = 1`,
-      )
-      .all(...batch);
-    for (const row of rows) out.set(row.repo_id, toRun(row));
-  }
+  if (unique.length === 0) return out;
+  const rows = db
+    .query<RunRow, [string]>(LATEST_AGENT_RUNS_SQL)
+    .all(JSON.stringify(unique));
+  for (const row of rows) out.set(row.repo_id, toRun(row));
   return out;
 }
 
@@ -1305,6 +1381,37 @@ export function queueDepth(
     .all(new Date(now).toISOString());
 }
 
+/**
+ * The queued runs of one kind that may start now, weighed against the ids the
+ * dispatcher holds on purpose (#9403): which held ids are still queued, and the
+ * count and oldest of the rest. Two queries, however deep the queue, both on
+ * `run_queue`: the `state IN` repeats the partial index's own condition so
+ * SQLite may use it, and `+kind` keeps it off the per-repository agent index.
+ */
+export function queuedApart(
+  db: Database,
+  kind: RunKind,
+  heldIds: readonly string[],
+  now = Date.now(),
+): { held: string[]; waiting: number; oldest: string | null } {
+  const ids = JSON.stringify(heldIds);
+  const at = new Date(now).toISOString();
+  const eligible = "state IN ('queued','running') AND state = 'queued' AND +kind = ?1 AND (not_before IS NULL OR not_before <= ?2)";
+  const held = db
+    .query<{ id: string }, [RunKind, string, string]>(
+      `SELECT id FROM run WHERE ${eligible} AND id IN (SELECT value FROM json_each(?3))`,
+    )
+    .all(kind, at, ids)
+    .map((r) => r.id);
+  const rest = db
+    .query<{ waiting: number; oldest: string | null }, [RunKind, string, string]>(
+      `SELECT COUNT(*) AS waiting, MIN(created_at) AS oldest FROM run
+       WHERE ${eligible} AND id NOT IN (SELECT value FROM json_each(?3))`,
+    )
+    .get(kind, at, ids)!;
+  return { held, waiting: rest.waiting, oldest: rest.oldest };
+}
+
 /** Every running run with the repository and issue number it is about, in one query. */
 export function listRunning(
   db: Database,
@@ -1340,4 +1447,21 @@ export function getRunErrorLine(db: Database, runId: string): { text: string; at
     )
     .get(runId);
   return row === null || row === undefined || row.error_line === "" ? undefined : { text: row.error_line, at: row.error_at };
+}
+
+/**
+ * How many runs of a repository are really going: agent runs and checks in
+ * the `running` state, the pipeline's `building`, `review` and `checking`
+ * stages added (`flow/pipeline.ts`). Queued, paused and finished runs are
+ * not running, and a deploy is no work of the crew's.
+ */
+export function runningCount(db: Database, repoId: string): number {
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        `SELECT COUNT(*) AS n FROM run
+          WHERE state = 'running' AND repo_id = ?1 AND kind IN ('agent','check')`,
+      )
+      .get(repoId)?.n ?? 0
+  );
 }

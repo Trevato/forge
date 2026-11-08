@@ -8,6 +8,7 @@
  * keys to change it, a guest sees nothing private, and a move reaches the
  * outbox (and so a milestones page open on the web) as `limb.moved`.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import { linkIssue } from "../src/actions/dependencies.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { pendingReplans } from "../src/core/limb_replan.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
@@ -31,6 +32,7 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 quietLogs();
 
@@ -229,6 +231,16 @@ describe("raise and lower a limb in the terminal", () => {
     }
   });
 
+  test("the limb under the cursor says its pace, to a guest as to an owner", async () => {
+    for (const who of [alice, undefined]) {
+      const h = boot(who);
+      await h.toMilestones("alice/order");
+      // Nothing under Trust has closed.
+      expect(h.text()).toContain("no movement in 7 days");
+      h.stop();
+    }
+  });
+
   test("a guest sees a public order, never a private one, and moves nothing", async () => {
     const h = boot(undefined);
     await h.toMilestones("alice/vault");
@@ -248,7 +260,7 @@ describe("raise and lower a limb in the terminal", () => {
 
   test("the milestones page carries the live client and hears limb.moved", async () => {
     const res = await fetch(`${servers.url}/alice/order/milestones`);
-    const body = await res.text();
+    const body = await withScripts(servers.url, await res.text());
     expect(body).toContain('id="live"');
     expect(body).toContain("limb.moved");
     // A hand-over to the planner, or taking it back, reaches an open page too.
@@ -263,7 +275,7 @@ describe("raise and lower a limb in the terminal", () => {
     const agent = await createAgent(forge, alice, { username: "atlas" });
     if (!agent.ok) throw new Error(String(agent.error));
     addToCrew(forge, alice, r, "atlas");
-    setCrewRole(forge.db, r.id, getUserByName(forge.db, "atlas")!.id, "planner");
+    seatAs(forge.db, r.id, getUserByName(forge.db, "atlas")!.id, "planner");
     await updateRepoSettings(forge, alice, r, {
       autonomy: "autonomous",
       autonomyDirection: "Keep it small.",

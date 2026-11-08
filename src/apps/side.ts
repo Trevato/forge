@@ -25,9 +25,20 @@ export interface Side {
 /** A preview someone can open: up now, or waking on request. */
 const OPENABLE = new Set(["running", "asleep"]);
 
+/** A title short enough to keep the button on one line on a phone. */
+function clip(title: string): string {
+  const chars = [...title];
+  return chars.length <= 32 ? title : `${chars.slice(0, 31).join("")}…`;
+}
+
 export function sideOf(app: SideApp, environment: string, previews: readonly SidePreview[]): Side | null {
   if (environment !== "production") return { label: "Open on production", url: app.url };
   let newest: SidePreview | undefined;
   for (const p of previews) if (OPENABLE.has(p.state) && (newest === undefined || p.number > newest.number)) newest = p;
-  return newest === undefined ? null : { label: `Newest preview: #${newest.number} ${newest.title}`, url: newest.url };
+  return newest === undefined ? null : { label: `Newest preview: #${newest.number} ${clip(newest.title)}`, url: newest.url };
+}
+
+/** A line for a terminal as plain text: control characters gone. */
+export function plainLine(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, "");
 }

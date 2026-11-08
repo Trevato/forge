@@ -12,6 +12,11 @@
  *
  * `FORGE_URL` / `FORGE_TOKEN` override both, so a script or a test never has
  * to write a config at all.
+ *
+ * Plain http to another machine is refused (#7377): every request carries
+ * the token, and over http it crosses the network in clear. Loopback is
+ * fine — it never leaves the machine. `forge login --insecure` is the one
+ * way past it, and it is remembered with that workbench only.
  */
 
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
@@ -28,7 +33,32 @@ interface StoredConfig {
   url: string;
   token?: string;
   keychain?: boolean;
+  /** `forge login --insecure`: plain http to this one workbench is allowed. */
+  insecure?: boolean;
 }
+
+/** The one line every refusal of a plain-http workbench prints. */
+export const PLAIN_HTTP_REFUSAL =
+  "plain http sends your token in clear; use https, or --insecure for a host you trust";
+
+/**
+ * True when `url` is `http://` to a host other than this machine. Hosts are
+ * compared as `URL` parses them, so `LOCALHOST` and `127.0.0.1:3000` are
+ * loopback and `localhost.evil.example` is not. An address that does not
+ * parse is not plain http; the request itself will say what is wrong.
+ */
+export function plainHttpRemote(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:") return false;
+  return !LOOPBACK.has(parsed.hostname);
+}
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 const SERVICE = "forge-cli";
 
@@ -108,7 +138,7 @@ async function keychainDelete(url: string): Promise<void> {
   await security(["delete-generic-password", "-a", url, "-s", SERVICE]);
 }
 
-export type ConfigError = "no_config" | "no_token";
+export type ConfigError = "no_config" | "no_token" | "plain_http";
 
 export interface Loaded {
   readonly config: Config;
@@ -116,21 +146,27 @@ export interface Loaded {
   readonly fromKeychain: boolean;
 }
 
-/** Read the config, with the environment winning over the file. */
+/**
+ * Read the config, with the environment winning over the file. A plain-http
+ * remote address is refused here, before any request is made, unless the
+ * stored workbench is that same address and was signed in with `--insecure`.
+ */
 export async function loadConfig(): Promise<Loaded | ConfigError> {
   const envUrl = process.env["FORGE_URL"];
   const envToken = process.env["FORGE_TOKEN"];
-  if (envUrl !== undefined && envUrl !== "" && envToken !== undefined)
-    return {
-      config: { url: normalizeUrl(envUrl), token: envToken },
-      fromKeychain: false,
-    };
-
+  const hasEnvUrl = envUrl !== undefined && envUrl !== "";
   const stored = await readStored();
+  if (hasEnvUrl && envToken !== undefined) {
+    const url = normalizeUrl(envUrl);
+    if (plainHttpRemote(url) && !allowedInsecure(stored, url))
+      return "plain_http";
+    return { config: { url, token: envToken }, fromKeychain: false };
+  }
+
   if (stored === null) return "no_config";
-  const url = normalizeUrl(
-    envUrl !== undefined && envUrl !== "" ? envUrl : stored.url,
-  );
+  const url = normalizeUrl(hasEnvUrl ? envUrl : stored.url);
+  if (plainHttpRemote(url) && !allowedInsecure(stored, url))
+    return "plain_http";
 
   if (envToken !== undefined && envToken !== "")
     return { config: { url, token: envToken }, fromKeychain: false };
@@ -144,6 +180,14 @@ export async function loadConfig(): Promise<Loaded | ConfigError> {
   return { config: { url, token: stored.token }, fromKeychain: false };
 }
 
+function allowedInsecure(stored: StoredConfig | null, url: string): boolean {
+  return (
+    stored !== null &&
+    stored.insecure === true &&
+    normalizeUrl(stored.url) === url
+  );
+}
+
 async function readStored(): Promise<StoredConfig | null> {
   const file = Bun.file(configPath());
   if (!(await file.exists())) return null;
@@ -155,15 +199,21 @@ async function readStored(): Promise<StoredConfig | null> {
     const out: StoredConfig = { url: record["url"] };
     if (typeof record["token"] === "string") out.token = record["token"];
     if (record["keychain"] === true) out.keychain = true;
+    if (record["insecure"] === true) out.insecure = true;
     return out;
   } catch {
     return null;
   }
 }
 
-/** Write the config, putting the token in the keychain where there is one. */
+/**
+ * Write the config, putting the token in the keychain where there is one.
+ * `insecure` is stored only for a plain-http remote, the one place it means
+ * anything, so the file never claims an exception it does not need.
+ */
 export async function saveConfig(
   config: Config,
+  opts: { insecure?: boolean } = {},
 ): Promise<{ keychain: boolean }> {
   const url = normalizeUrl(config.url);
   const path = configPath();
@@ -173,6 +223,7 @@ export async function saveConfig(
   const stored: StoredConfig = keychain
     ? { url, keychain: true }
     : { url, token: config.token };
+  if (opts.insecure === true && plainHttpRemote(url)) stored.insecure = true;
   // Create the file before the secret goes in it: a chmod after the write is
   // a window, however short, where the token is world-readable.
   await writeFile(path, "", { mode: 0o600 });

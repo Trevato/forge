@@ -3,12 +3,13 @@ import { mayView } from "../../../core/sealed.ts";
 import { getPull } from "../../../core/pulls.ts";
 import { VOTE_NOT_RECORDED } from "../../../actions/board_words.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
+import { ANSWER_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "variant",
   doc: "`{ repo, number, answer, reason? }`: like or dislike one pull among its variants (`answer` like or dislike); a later vote replaces the earlier; a dislike closes the pull with `reason`",
   description:
-    "Like or dislike a pull among its variants; a later vote replaces it; dislike closes it (`reason`).",
+    "Like or dislike a pull among its variants; a later vote replaces; dislike closes it.",
   inputSchema: {
     type: "object",
     properties: {
@@ -32,7 +33,7 @@ export const tool: Tool = {
       return bad("no_such_pull", `no pull #${String(n)}`);
     const answer = args["answer"];
     if (answer !== "like" && answer !== "dislike")
-      return bad("invalid_answer", "answer is like or dislike");
+      return bad("invalid_answer", ANSWER_WORDS);
     const voted = voteVariant(
       ctx.app,
       user,

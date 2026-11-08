@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { askUntilBelieved, cellsAvailable, openCell } from "../src/apps/contain.ts";
-import { closeHostedChildren, resolveHostedChild } from "../src/spawn/host.ts";
+import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/spawn/host.ts";
 import { createApp } from "../src/app.ts";
 import { cellChildren, stopCellChildren, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
@@ -11,6 +11,10 @@ import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
 import { notePeer } from "../src/http/peer.ts";
 import type { App } from "../src/app.ts";
+import { portInsteadOfSocket } from "../src/git/hook-address.ts";
+import { missing } from "./helpers/tools.ts";
+import { hostAllowed } from "../src/apps/egress.ts";
+import { childModelHosts, setCapacity } from "../src/core/capacity.ts";
 import { openBeatDoor, parentLocal } from "../src/spawn/beat-door.ts";
 import { lastHeard, sendBeat } from "../src/spawn/heartbeat.ts";
 
@@ -28,6 +32,36 @@ describe("a child forge's cell", () => {
     expect(spec.hide).toEqual(["/d"]);
     expect(spec.listen).toBe(4100);
     expect(spec.dir).toBe("/d/children/c1");
+  });
+
+  test("reaches no outside host unless an admin names a model provider, and always enforces", () => {
+    const base = { dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" } as const;
+    const shut = cellSpecFor(base);
+    expect(shut.egress).toEqual([]);
+    expect(shut.egressMode).toBe("enforce");
+    const open = cellSpecFor({ ...base, modelHosts: ["openrouter.ai:443"] });
+    expect(open.egress).toEqual(["openrouter.ai:443"]);
+    expect(open.egressMode).toBe("enforce");
+    expect(open.reach).toEqual(["https://f.test"]);
+    expect(hostAllowed(open.egress, "openrouter.ai", 443)).toBe(true);
+    expect(hostAllowed(open.egress, "openrouter.ai", 80)).toBe(false);
+    expect(hostAllowed(open.egress, "evil.openrouter.ai", 443)).toBe(false);
+    expect(hostAllowed(open.egress, "api.anthropic.com", 443)).toBe(false);
+  });
+
+  test("the model provider is the admin's choice, off until set, and ignores report mode", () => {
+    const app = createApp({ dataDir: join(tmp, "model-egress"), url: "https://f.test" });
+    try {
+      expect(childModelHosts(app.db)).toEqual([]);
+      setCapacity(app.db, "cells.egress", "report", "system");
+      expect(childModelHosts(app.db)).toEqual([]);
+      setCapacity(app.db, "children.modelEgress", "openrouter", "system");
+      expect(childModelHosts(app.db)).toEqual(["openrouter.ai:443"]);
+      setCapacity(app.db, "children.modelEgress", "off", "system");
+      expect(childModelHosts(app.db)).toEqual([]);
+    } finally {
+      app.close();
+    }
   });
 
   test("starts from childEnv: the parent's secrets are not handed on", () => {
@@ -251,23 +285,36 @@ describe("a child that will not start", () => {
   });
 });
 
+// Where bwrap and socat are here, whatever FORGE_CELLS says: a check turns
+// cells off for the forges its tests boot, and this is the one test that
+// must boot a child in a cell anyway (#6023). In its own process, without it.
+const cellTools = process.platform === "linux" && !portInsteadOfSocket() && !missing("bwrap", "socat");
+
 describe("a real child forge", () => {
-  test.skipIf(!cells.ok)("boots in its cell and answers /healthz through the forward", async () => {
-    const parent = createApp({ dataDir: join(tmp, "real-parent"), url: "https://f.test" });
+  test.skipIf(!cellTools)("boots in its own forge:<name> cell and answers / through the forward; its first request does not wait for it", async () => {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "FORGE_CELLS") env[k] = v;
+    const proc = Bun.spawn([process.execPath, join(import.meta.dir, "helpers", "real-child-forge.ts")], { env, stdout: "pipe", stderr: "pipe" });
+    const [out, errText] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    const line = out.trim().split("\n").pop() ?? "";
+    let seen: Record<string, unknown>;
     try {
-      const children = cellChildren(parent);
-      const child = await children.start({ bodyId: "cell-real", name: "kid", size: "small" });
-      expect(children.failure("cell-real")).toBeUndefined();
-      if (child === undefined) throw new Error(`the child did not start: ${children.failure("cell-real")}`);
-      expect(child.limits).toEqual({ memoryMiB: 512, cpus: 1, diskMiB: 2048 });
-      const res = await forward(child, new Request("http://kid--f.test/healthz", { headers: { host: "kid--f.test" } }));
-      expect(res.status).toBe(200);
-      await children.stop("cell-real");
-    } finally {
-      await stopCellChildren(parent);
-      parent.close();
+      seen = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      throw new Error(`the child forge run printed no result: ${out.slice(-800)} ${errText.slice(-800)}`);
     }
-  }, 60_000);
+    if (typeof seen["skipped"] === "string") {
+      console.log(`SKIPPING: this host refuses a cell inside the test (${seen["skipped"]}), so no child forge was booted in one`);
+      return;
+    }
+    expect(seen["failure"]).toBeNull();
+    expect(seen["first"]).toBe(503);
+    expect(seen["firstMs"] as number).toBeLessThan(1_000);
+    expect(seen["limits"]).toEqual({ memoryMiB: 512, cpus: 1, diskMiB: 2048 });
+    expect(seen["root"] as number).toBeLessThan(400);
+    expect(seen["health"]).toBe(200);
+    expect(seen["labelled"]).toBe(true);
+  }, 90_000);
 
   test.skipIf(!cells.ok)("its heartbeat reaches the parent through the cell, with no public address", async () => {
     // The parent's public url is not reachable from here, as in a preview's cell.
@@ -308,6 +355,31 @@ describe("a child whose cell will not come up", () => {
       const ledger = JSON.parse(readFileSync(file, "utf8"));
       expect(ledger.placement).toBe("hosted");
       expect(ledger.placementNote).toStartWith("hosted: ");
+    } finally {
+      await closeHostedChildren(parent);
+      parent.close();
+    }
+  });
+
+  test.skipIf(cells.ok)("its first request is answered 503 at once, and once the cell has failed the next is hosted", async () => {
+    const dataDir = join(tmp, "fast-parent");
+    const parent = createApp({ dataDir, url: "https://f.test" });
+    const request = () => new Request("https://kid--f.test/", { headers: { host: "kid--f.test" } });
+    try {
+      mkdirSync(join(dataDir, "spawn"), { recursive: true });
+      const file = join(dataDir, "spawn", "kid.json");
+      writeFileSync(file, JSON.stringify({ name: "kid", bodyId: "cell-f", done: true, placement: "cell", size: "small" }));
+      expect((await answerFromCell(parent, new Request("https://nobody--f.test/", { headers: { host: "nobody--f.test" } }))).status).toBe(404);
+      // A first request that waited on the cell's start would come back hosted, not 503.
+      const first = await answerFromCell(parent, request());
+      expect(first.status).toBe(503);
+      expect(first.headers.get("retry-after")).toBe("5");
+      // The start it set off fails here (no cells), and the ledger turns hosted.
+      for (let i = 0; i < 50 && JSON.parse(readFileSync(file, "utf8")).placement !== "hosted"; i++) await Bun.sleep(10);
+      expect(JSON.parse(readFileSync(file, "utf8")).placement).toBe("hosted");
+      const next = await resolveHostedChild(parent, request());
+      expect(next).not.toBe("cell");
+      expect(next).not.toBe("unknown");
     } finally {
       await closeHostedChildren(parent);
       parent.close();

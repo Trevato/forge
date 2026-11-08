@@ -203,11 +203,15 @@ describe("reviews, threads and the merge gate", () => {
       email: "alice@forge.test",
       password: "a-long-passphrase",
     });
-    const two = await signUp(forge, {
-      username: "bob",
-      email: "bob@forge.test",
-      password: "another-long-passphrase",
-    }, { slot: fixtureSlot(forge) });
+    const two = await signUp(
+      forge,
+      {
+        username: "bob",
+        email: "bob@forge.test",
+        password: "another-long-passphrase",
+      },
+      { slot: fixtureSlot(forge) },
+    );
     if (!one.ok || !two.ok) throw new Error("signup failed");
     alice = one.value;
     bob = two.value;
@@ -325,10 +329,14 @@ describe("reviews, threads and the merge gate", () => {
       await admin.until("Tweak the lamp");
       await admin.press("enter");
       await admin.until("#1");
-      // The box says what is missing, and `m` says it out loud.
-      await admin.until("review");
+      // The footer wears "review" from the first paint, before the setting
+      // has loaded; settle() waits for the pull's own load, so the gate's
+      // line is read once, not polled for.
+      await admin.settle();
+      expect(admin.text()).toContain("Needs an approval of this head");
+      // `m` while it is unread is a no-op, never a merge; loaded, it speaks.
       await admin.press("m");
-      await admin.until("approval");
+      expect(admin.text()).toContain("needs an approval of its current head first");
       expect(getPull(forge.db, repo.id, 1)?.mergedAt).toBeNull();
     } finally {
       admin.stop();
@@ -342,11 +350,14 @@ describe("reviews, threads and the merge gate", () => {
       await reviewer.press("R");
       await reviewer.until("Review #1");
       await reviewer.press("ctrl+d");
-      await reviewer.until("1 approval", 30_000);
+      await reviewer.settle();
+      expect(reviewer.text()).toContain("1 approval");
 
       // The list wears the same verdict, in one tabular column.
       await reviewer.press("q");
-      await reviewer.until("Tweak the lamp", 30_000);
+      // The title paints before the verdict column loads: settle waits for it.
+      await reviewer.settle();
+      expect(reviewer.text()).toContain("Tweak the lamp");
       expect(reviewer.text()).toContain("✓");
     } finally {
       reviewer.stop();
@@ -473,7 +484,6 @@ describe("reviews, threads and the merge gate", () => {
       await h.click(4, row);
       await h.click(4, row);
       await h.until("fix", 30_000);
-
     } finally {
       h.stop();
     }
@@ -520,4 +530,57 @@ describe("reviews, threads and the merge gate", () => {
       h.stop();
     }
   });
+  test("p on a sealed issue shows the private repository and its clone URL, with the same refusals", async () => {
+    const sealed = openIssue(forge, alice, repo, {
+      title: "Token leak",
+      sealed: true,
+    });
+    const plain = openIssue(forge, alice, repo, { title: "A typo" });
+    if (!sealed.ok || !plain.ok) throw new Error("issues");
+    const open = (user: User) => boot(forge, identityFor(user));
+
+    const h = open(alice);
+    try {
+      await h.settle();
+      await h.push((s, ctx) =>
+        issueScreen(s, ctx, local(s, repo), sealed.value.number),
+      );
+      await h.until("private repo");
+      await h.press("p");
+      await h.until("private repository alice/");
+      expect(h.text()).toContain("-sealed.git");
+      expect(h.text()).toContain("http://localhost");
+    } finally {
+      h.stop();
+    }
+
+    // An issue that is not sealed has nothing to hide, and no key for it.
+    const g = open(alice);
+    try {
+      await g.settle();
+      await g.push((s, ctx) =>
+        issueScreen(s, ctx, local(s, repo), plain.value.number),
+      );
+      await g.until("A typo");
+      expect(g.text()).not.toContain("private repo");
+      await g.press("p");
+      expect(g.text()).not.toContain("private repository alice/");
+    } finally {
+      g.stop();
+    }
+
+    // A writer whose email is not verified is refused.
+    const b = open(bob);
+    try {
+      await b.settle();
+      await b.push((s, ctx) =>
+        issueScreen(s, ctx, local(s, repo), sealed.value.number),
+      );
+      await b.until("Token leak");
+      await b.press("p");
+      await b.until("Verify your email first");
+    } finally {
+      b.stop();
+    }
+  }, 60_000);
 });

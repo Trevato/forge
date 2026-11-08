@@ -20,7 +20,11 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
-import { canRead, type Repo } from "../../core/repos.ts";
+import { stepsOfStored, type PathStep } from "../../flow/path.ts";
+import { canRead, canWrite, type Repo } from "../../core/repos.ts";
+import { FLOW_LABEL } from "../../core/flow_label.ts";
+import { flowButton } from "../flow_button.ts";
+import { stepLink } from "./step_link.ts";
 import { waitingCount } from "../../actions/reports.ts";
 
 import { listRepoRuns } from "../../actions/runs.ts";
@@ -42,6 +46,7 @@ import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
   btn,
+  disclosure,
   empty,
   icon,
   labelChip,
@@ -53,16 +58,18 @@ import {
   seg,
   time,
 } from "../ui.ts";
-import type { Run } from "../../core/runs.ts";
+import type { Run, RunState } from "../../core/runs.ts";
 import { actorsFor, durationText, issuesFor, runTitleFrom } from "../pages/runs.ts";
 import { originGlyph } from "../pages/thread.ts";
 import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { knowMergeClosings, tellWords } from "./tell.ts";
 import {
-  pullWord,
+  pullWords,
   runWord,
   wordBadge,
+  wordDot,
+  wordText,
   type Word,
   servingHistory,
   type WordCtx,
@@ -85,7 +92,8 @@ const WORD_FILTERS: readonly WordFilter[] = [
 ];
 
 function listBucket(word: Word): WordFilter {
-  if (word === "waiting" || word === "planned") return "working";
+  if (word === "waiting" || word === "planned" || word === "silent" || word === "needs input")
+    return "working";
   if (word === "done") return "shipped";
   if (word === "cancelled") return "stopped";
   return word;
@@ -227,7 +235,12 @@ function shown(word: Word, f: ListFacets): boolean {
 
 /** The narrowings in force as chips, each ✕ clearing itself, then the
  * repository's labels to narrow by. Nothing at all when there is neither. */
-function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html {
+function facetChips(
+  base: string,
+  f: ListFacets,
+  labels: readonly Label[],
+  fold = false,
+): Html {
   const active = (
     [
       ["assignee", "has it"],
@@ -250,6 +263,9 @@ function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html
       : null;
   if (active.length === 0 && labels.length === 0 && state === null)
     return html``;
+  const chosen = f.label.toLowerCase();
+  const rest = labels.filter((l) => l.name.toLowerCase() !== chosen);
+  const picked = labels.find((l) => l.name.toLowerCase() === chosen);
   return html`<div class="bar mb">
     ${state}
     ${active.map(
@@ -262,17 +278,27 @@ function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html
           >${f[name]} ${says} ✕</a
         >`,
     )}
-    ${labels.map((l) =>
-      f.label.toLowerCase() === l.name.toLowerCase()
-        ? html`<a
-            class="label lc-${l.color}"
-            href="${facetHref(base, f, { label: "" })}"
-            aria-current="true"
-            title="Remove this filter"
-            >${l.name} ✕</a
-          >`
-        : labelChip(l, facetHref(base, f, { label: l.name })),
+    ${when(
+      picked,
+      (l) => html`<a
+        class="label lc-${l.color}"
+        href="${facetHref(base, f, { label: "" })}"
+        aria-current="true"
+        title="Remove this filter"
+        >${l.name} ✕</a
+      >`,
     )}
+    ${rest.length === 0
+      ? null
+      : !fold
+        ? rest.map((l) => labelChip(l, facetHref(base, f, { label: l.name })))
+        : disclosure(
+          "Labels",
+          html`<div class="bar">
+            ${rest.map((l) => labelChip(l, facetHref(base, f, { label: l.name })))}
+          </div>`,
+          { small: true },
+        )}
   </div>`;
 }
 
@@ -322,6 +348,48 @@ function listRead(ctx: Ctx, repo: Repo, f: ListFacets) {
 }
 
 /**
+ * Every action the issues list offers, as palette entries (Cmd-K): the
+ * filters, the compose page and the outside reports. What the page shows
+ * quietly is still one keystroke away.
+ */
+export function tellsListActions(o: {
+  base: string;
+  name: string;
+  word: readonly WordFilter[];
+  signedIn: boolean;
+  reports: number;
+  labels?: readonly string[];
+}): { t: string; h: string; c: string }[] {
+  const c = "This list";
+  return [
+    { t: `${o.name} — Open issues`, h: `${o.base}/issues`, c },
+    ...o.word.map((w) => ({
+      t: `${o.name} — Issues: ${w === "told" ? "Not started" : w}`,
+      h: `${o.base}/issues?word=${w}`,
+      c,
+    })),
+    ...(o.labels ?? []).map((l) => ({
+      t: `${o.name} — Issues labelled ${l}`,
+      h: `${o.base}/issues?label=${encodeURIComponent(l)}`,
+      c,
+    })),
+    ...(o.signedIn ? [{ t: `${o.name} — New issue`, h: `${o.base}/issues/new`, c }] : []),
+    ...(o.reports > 0
+      ? [{ t: `${o.name} — Reports from outside`, h: `${o.base}/reports`, c }]
+      : []),
+  ];
+}
+
+/**
+ * An issue's title is the writer's words, so inside `[data-tells]` a row wraps
+ * them (a long word breaks anywhere) in place of the one-line ellipsis, and the
+ * page never scrolls sideways at 390 px. No new class.
+ */
+export const TELLS_CSS = `[data-tells] { overflow-wrap: anywhere; }
+[data-tells] .row-title, [data-tells] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-tells] .row { align-items: flex-start; }`;
+
+/**
  * GET /:owner/:name/issues: every issue, for every
  * repository and every viewer — one row per issue in its studio word, who
  * has it, its labels, when it last moved, and the tell itself as the row's
@@ -369,6 +437,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     .map((issue, i) => ({ issue, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
 
+  const mayLabel = canWrite(db, repo, ctx.auth.user);
   const list =
     rows.length === 0
       ? empty({
@@ -387,16 +456,24 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
             row({
               href: tellHref(base, issue.number),
               nav: true,
-              lead: avatar(issue.assigneeName ?? "crew"),
+              lead: wordDot(info.word, info.note),
               title: titled(issue.title, labels.get(issue.id)),
               titleAttr: issue.title,
-              meta: html`${when(
+              meta: html`${wordText(info.word)}${when(
                 issue.originAuthor,
                 (login) => html`${originTag(login, originGlyph(repo))} · `,
               )}${issue.assigneeName
                 ? html`${issue.assigneeName} · `
-                : null}${info.note} · ${time(issue.updatedAt)}`,
-              trail: wordBadge(info.word),
+                : null}${time(issue.updatedAt)}`,
+              ...(mayLabel && issue.state === "open"
+                ? {
+                    after: flowButton(
+                      `${base}/issues/${issue.number}/flow`,
+                      (labels.get(issue.id) ?? []).some((l) => l.name.toLowerCase() === FLOW_LABEL),
+                      `${ctx.url.pathname}${ctx.url.search}`,
+                    ),
+                  }
+                : {}),
             }),
           ),
         );
@@ -409,8 +486,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     btn(PAGE_TITLES.compose, {
       href: `${base}/issues/new`,
       size: "sm",
-      variant: "outline",
-      icon: "plus",
+      variant: "primary",
       shortcut: "c",
     }),
   );
@@ -427,7 +503,11 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   const waiting = waitingCount(ctx.app, ctx.auth.user, repo);
   const reports =
     waiting > 0
-      ? btn(`${waiting} from outside`, { href: `${base}/reports`, size: "sm" })
+      ? btn(`${waiting} from outside`, {
+          href: `${base}/reports`,
+          size: "sm",
+          variant: "ghost",
+        })
       : undefined;
   // Signed out, the way in: sign in to open one, or report a problem
   // without an account where the repository is public.
@@ -444,7 +524,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
       : html`${reports ?? null} ${compose} ${outside ?? null} ${signIn}`;
 
   const body = html`${repoHeader(ctx, repo, "issues")}
-    <div class="mt">
+    <div class="mt" data-tells>
       ${wordFilterBar(
         (word) => facetHref(listBase, f, { word }),
         f.word,
@@ -465,14 +545,38 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     ctx,
     title: pageTitle("tells", repo, record !== undefined),
     crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
+    palette: [
+      ...repoPalette(ctx, repo),
+      ...tellsListActions({
+        base,
+        word: record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
+        name: `${repo.ownerName}/${repo.name}`,
+        signedIn: ctx.auth.user !== undefined,
+        reports: waiting,
+        labels: repoLabels.map((l) => l.name),
+      }),
+    ],
     body,
-    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
+    styleCss: `${TELLS_CSS}\n${labelCss([...repoLabels, ...[...labels.values()].flat()])}`,
     scriptJs: liveClientJs,
   });
   notePhase(ctx.request, "render", performance.now() - at);
   return response;
 }
+
+/** The pull's step beside its row, as a sibling of the row's link: `after`. */
+function stepAfter(step: PathStep | null | undefined): { after?: Html } {
+  return step == null ? {} : { after: stepLink(step) };
+}
+
+/**
+ * A pull's title and branch are the writer's words, so inside `[data-pulls]`
+ * a row wraps them (a long word breaks anywhere) in place of the list's
+ * one-line ellipsis, and the page never scrolls sideways at 390 px. No new class.
+ */
+export const PULLS_CSS = `[data-pulls] { overflow-wrap: anywhere; }
+[data-pulls] .row-title, [data-pulls] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-pulls] .row { align-items: flex-start; }`;
 
 /**
  * GET /:owner/:name/pulls: every pull request, for every
@@ -503,9 +607,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
     ...sealedScope(db, repo, ctx.auth.user),
   });
   lap("pulls");
-  const words = await Promise.all(
-    fetched.map((pull) => pullWord(wordCtx, pull)),
-  );
+  const words = await pullWords(wordCtx, fetched);
   lap("words");
   const answered = tellsAnswered(db, repo.id, fetched);
   lap("tells");
@@ -515,6 +617,8 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
+  const steps = stepsOfStored(db, repo, rows.map((r) => r.pull));
+  lap("steps");
 
   const list =
     rows.length === 0
@@ -534,14 +638,14 @@ export async function changesList(ctx: Ctx): Promise<Response> {
             row({
               href: changeHref(base, pull.number),
               nav: true,
-              lead: avatar(pull.authorName),
+              lead: wordDot(info.word, info.note),
               title: titled(pull.title, labels.get(pull.id)),
               titleAttr: pull.title,
-              meta: html`${pull.originAuthor
+              meta: html`${wordText(info.word)}${pull.originAuthor
                 ? originTag(pull.originAuthor, originGlyph(repo))
-                : pull.authorName} · ${info.note} ·
+                : pull.authorName} ·
               ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
-              trail: wordBadge(info.word),
+              ...stepAfter(steps.get(pull.id)),
             }),
           ),
         );
@@ -550,7 +654,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   const listBase = ctx.url.pathname;
 
   const body = html`${repoHeader(ctx, repo, "pulls")}
-    <div class="mt">
+    <div class="mt" data-pulls>
       ${wordFilterBar(
         (word) => facetHref(listBase, f, { word }),
         f.word,
@@ -573,7 +677,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
+    styleCss: `${PULLS_CSS}\n${labelCss([...repoLabels, ...[...labels.values()].flat()])}`,
     scriptJs: liveClientJs,
   });
   lap("render");
@@ -592,24 +696,87 @@ function readRunsKind(ctx: Ctx): RunsKind | undefined {
     : undefined;
 }
 
-/** The runs list's own address with a word, a kind and a cursor. */
+/** The states `?state=` narrows to; anything else is ignored. */
+const RUN_STATES: readonly RunState[] = [
+  "queued",
+  "running",
+  "ok",
+  "failed",
+  "cancelled",
+];
+
+function readRunsState(ctx: Ctx): RunState | undefined {
+  const raw = ctx.url.searchParams.get("state");
+  return RUN_STATES.find((s) => s === raw);
+}
+
+/** The row of state links above the list, in the words the badges use. */
+const STATE_LINKS: readonly [RunState | undefined, string][] = [
+  [undefined, "All"],
+  ["failed", "Failed"],
+  ["running", "Running"],
+  ["ok", "Succeeded"],
+];
+
+/** The runs list's own address with a word, a kind, a state and a cursor. */
 function runsHref(
   base: string,
   kind: RunsKind | undefined,
   word: WordFilter | undefined,
   cursor?: string,
+  state?: RunState,
 ): string {
   const params = new URLSearchParams();
   if (kind !== undefined) params.set("kind", kind);
+  if (state !== undefined) params.set("state", state);
   if (word !== undefined) params.set("word", word);
   if (cursor !== undefined) params.set("cursor", cursor);
   const text = params.toString();
   return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
 }
 
+/** What a queued run waits on, in the words its row says it by: a builder
+ * for an agent run, a slot for a check, the deploy lane for a deploy; a run
+ * paused on a limit says it resumes later. */
+export function whatRunWaitsOn(run: Run): string {
+  if (run.notBefore !== null) return "paused on a limit, resumes soon";
+  return run.kind === "agent"
+    ? "waiting for a builder"
+    : run.kind === "check"
+      ? "waiting for a check slot"
+      : "waiting for the deploy lane";
+}
+
+/** Whether a run is doing something at this moment — the only runs under
+ * Working. A deploy is not counted: the flow report's stages are builders,
+ * reviewers and checks, and the tab's count is held to theirs. */
+export function isWorkingNow(run: Run): boolean {
+  return run.state === "running" && run.kind !== "deploy";
+}
+
+/** Whether a run belongs on the page asked for. Working is exactly the
+ * runs running now. With no word chosen a check or a deploy that finished
+ * is news too, and an explicit `?state=` shows every run it fetched: the
+ * default list is the whole story, newest first. Otherwise the word rules. */
+export function onRunsList(
+  run: Run,
+  word: Word,
+  filter: WordFilter | undefined,
+  state: RunState | undefined,
+): boolean {
+  if (filter === "working") return isWorkingNow(run);
+  if (filter === undefined && (run.kind !== "agent" || state !== undefined))
+    return true;
+  return inWordFilter(word, filter);
+}
+
 /** A check's state in the words its row names it by. */
 const checkState = (run: Run): string =>
-  run.state === "ok" ? "passed" : run.state;
+  run.state === "ok"
+    ? "passed"
+    : run.state === "queued"
+      ? whatRunWaitsOn(run)
+      : run.state;
 
 const RUNS_KIND_WORDS: Record<RunsKind, string> = {
   agent: "Agent runs",
@@ -629,6 +796,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const base = repoBase(repo);
   const filter = readWordFilter(ctx);
   const kind = readRunsKind(ctx);
+  const state = readRunsState(ctx);
   const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
 
@@ -637,6 +805,9 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const reading = performance.now();
   const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
     kind,
+    // Working is what runs now: read only the running ones, so the page
+    // is not spent on finished rows it would drop.
+    state: state ?? (filter === "working" ? "running" : undefined),
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
   });
@@ -656,11 +827,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const rows = fetched
     .map((run, i) => ({ run, info: words[i]! }))
     .filter(
-      // With no word chosen a check or a deploy that finished is news too:
-      // the default list is the whole story, newest first.
-      (r) =>
-        (filter === undefined && r.run.kind !== "agent") ||
-        inWordFilter(r.info.word, filter),
+      (r) => onRunsList(r.run, r.info.word, filter, state),
     );
 
   notePhase(ctx.request, "runs", performance.now() - reading);
@@ -698,7 +865,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                   ? html`${run.commitOid.slice(0, 7)} · ${checkState(run)}
                     ${when(durationText(run), (d) => html` · took ${d}`)} ·
                     ${time(run.finishedAt ?? run.createdAt)}`
-                  : html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
+                  : html`${run.kind === "agent" ? html`${who} · ` : null}${run.state === "queued" ? whatRunWaitsOn(run) : info.note}
               · ${time(run.finishedAt ?? run.createdAt)}`,
               trail: wordBadge(info.word),
             });
@@ -708,15 +875,24 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
 
   const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
     <div class="mt">
+      <nav aria-label="Run state">
+        ${seg(
+          STATE_LINKS.map(([s, label]) => ({
+            label,
+            href: runsHref(base, kind, filter, undefined, s),
+            current: s === state,
+          })),
+        )}
+      </nav>
       ${wordFilterBar(
-        (word) => runsHref(base, kind, word),
+        (word) => runsHref(base, kind, word, undefined, state),
         filter,
         filter === undefined,
       )}
       ${list}
       ${pager(
         fetched.length === LIST_PAGE && last !== undefined
-          ? { next: runsHref(base, kind, filter, last.id) }
+          ? { next: runsHref(base, kind, filter, last.id, state) }
           : {},
       )}
     </div>

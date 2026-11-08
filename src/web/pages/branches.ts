@@ -18,8 +18,9 @@
 import { createBranch, deleteBranch } from "../../actions/branches.ts";
 import type { Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhaseAsync } from "../../core/route_timing.ts";
-import { listBranches, type BranchInfo } from "../../git/branches.ts";
-import { commitLog, type Commit } from "../../git/read.ts";
+import { listBranches, tipCommits, type BranchInfo } from "../../git/branches.ts";
+import { headsState } from "../../git/heads.ts";
+import type { Commit } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { RepoScope } from "../scope.ts";
@@ -51,7 +52,6 @@ import { refSetFrom } from "./refs.ts";
  * cap, so a repository with a thousand branches still renders one page.
  */
 const TIP_COMMITS = 40;
-const TIP_CONCURRENCY = 8;
 
 export interface BranchRow {
   readonly name: string;
@@ -63,26 +63,19 @@ export interface BranchRow {
   readonly tip: Commit | undefined;
 }
 
-/** The tip commit of the first `TIP_COMMITS` rows, a few at a time. */
+/** The tip commit of the first `TIP_COMMITS` rows, from one git call. */
 async function withTips(
   dir: string,
   rows: readonly Omit<BranchRow, "tip">[],
 ): Promise<BranchRow[]> {
-  const out: BranchRow[] = rows.map((r) => ({ ...r, tip: undefined }));
-  const wanted = out.slice(0, TIP_COMMITS);
-  for (let i = 0; i < wanted.length; i += TIP_CONCURRENCY) {
-    const slice = wanted.slice(i, i + TIP_CONCURRENCY);
-    const logs = await Promise.all(
-      slice.map((row) => commitLog(dir, row.oid, { limit: 1 })),
-    );
-    slice.forEach((row, j) => {
-      const log = logs[j];
-      const at = out.indexOf(row);
-      if (log?.ok === true && log.value[0] !== undefined && at !== -1)
-        out[at] = { ...row, tip: log.value[0] };
-    });
-  }
-  return out;
+  const tips = await tipCommits(
+    dir,
+    rows.slice(0, TIP_COMMITS).map((r) => r.oid),
+  );
+  return rows.map((r, i) => ({
+    ...r,
+    tip: i < TIP_COMMITS ? tips.get(r.oid) : undefined,
+  }));
 }
 
 /** Every branch this scope can see, however it has to ask. */
@@ -112,20 +105,61 @@ async function branchRows(
     return { rows, compared: false };
   }
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const listed = await listBranches(dir, repo.defaultBranch);
-  if (!listed.ok) return { rows: [], compared: false };
+  const listing = await timePhaseAsync(ctx.request, "compare", () =>
+    compareBranches(dir, repo.defaultBranch),
+  );
+  if (listing === undefined) return { rows: [], compared: false };
+  return {
+    rows: listing.rows.map((r) => ({
+      ...r,
+      protected: r.isDefault && repo.protectDefault,
+    })),
+    compared: listing.compared,
+  };
+}
+
+interface Compared {
+  readonly rows: readonly BranchRow[];
+  readonly compared: boolean;
+}
+
+/** How many repositories keep their last listing in memory. */
+const KEPT_LISTINGS = 64;
+
+/** The last listing per repository directory, with the branch state it was read at. */
+const kept = new Map<string, { readonly state: string; readonly listing: Compared }>();
+
+/**
+ * Every branch with its divergence and tip. The answer depends only on where
+ * each branch points (commits never change), so while `headsState` reads the
+ * same, the last listing is the answer and no git process runs.
+ */
+async function compareBranches(
+  dir: string,
+  defaultBranch: string,
+): Promise<Compared | undefined> {
+  const heads = headsState(dir);
+  const state = heads === undefined ? undefined : `${defaultBranch}\n${heads}`;
+  const hit = kept.get(dir);
+  if (state !== undefined && hit?.state === state) return hit.listing;
+  const listed = await listBranches(dir, defaultBranch);
+  if (!listed.ok) return undefined;
   const bare = listed.value.branches.map((b: BranchInfo) => ({
     name: b.name,
     oid: b.oid,
     isDefault: b.isDefault,
-    protected: b.isDefault && repo.protectDefault,
+    protected: false,
     ahead: b.ahead,
     behind: b.behind,
   }));
-  return {
-    rows: await withTips(dir, bare),
-    compared: listed.value.compared,
-  };
+  const listing = { rows: await withTips(dir, bare), compared: listed.value.compared };
+  kept.delete(dir);
+  // Read again after git answered: a push meanwhile means this listing may be stale.
+  if (state !== undefined && headsState(dir) === heads) {
+    kept.set(dir, { state, listing });
+    if (kept.size > KEPT_LISTINGS) kept.delete(kept.keys().next().value!);
+  }
+  return listing;
 }
 
 function divergence(row: BranchRow): Html {
@@ -176,6 +210,15 @@ function branchRow(
       </span>
       <span class="row-trail">
         ${divergence(row)}
+        ${when(canWrite, () =>
+          btn("Pin", {
+            href: `${base}/builds/new?sha=${row.oid}&source=${encodeURIComponent(`branch ${row.name}`)}`,
+            size: "sm",
+            variant: "outline",
+            icon: "pin",
+            label: `Pin a build of ${row.name}`,
+          }),
+        )}
         ${when(!row.isDefault && canWrite, () =>
           btn("New pull", {
             href: `${base}/pulls/new?head=${encoded}`,
@@ -277,6 +320,7 @@ export async function renderBranches(
               head: html`<h2>
                   ${rows.length} branch${rows.length === 1 ? "" : "es"}
                 </h2>
+                ${when(scope.kind === "local", () => html`<span class="spacer"></span>${btn("Builds", { href: `${scope.base}/builds`, size: "sm", variant: "ghost", icon: "pin" })}`)}
                 ${when(
                   !compared && scope.kind === "local",
                   () =>
@@ -315,6 +359,10 @@ export const CREATE_ERRORS: Record<string, string> = {
     "The origin could not be reached, so nothing was created.",
   origin_refused:
     "The origin refused that branch, so nothing was created here.",
+  origin_protected:
+    "The operator protects this repository at its origin, so no branch is pushed to it from here. Propose the change from your fork.",
+  origin_paused:
+    "This connection is not verified yet, so writes through it are paused. Nothing was created. Check it again under Settings → Origins.",
   forbidden: "You need write access to create a branch.",
   unauthorized: "You need write access to create a branch.",
   not_found: "You need write access to create a branch.",

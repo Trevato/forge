@@ -8,6 +8,8 @@
  * it needs.
  */
 
+import { pullRoster } from "../studio/pull_roster.ts";
+import { originCheckLead, originCheckOf } from "../../origins/pull-check.ts";
 import { askCheck } from "../../checks/again.ts";
 import { addCommentThrough } from "../../actions/issues.ts";
 import { COMMENT_EMPTY, COMMENT_NOT_POSTED } from "../../actions/comment_words.ts";
@@ -25,7 +27,10 @@ import { CHECK_ASKED } from "../../actions/pull_ask_words.ts";
 import { reviewWords } from "../../actions/review_words.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
+import { RED_ALONE_WAIT, redAloneAt, redMark, type RedMark } from "../../checks/queue.ts";
 import { tierLine, type TierState } from "../../checks/tiers.ts";
+import { fromKeptFork } from "../../core/landing_kind.ts";
+import { combinedCard } from "./pull-combined.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import { marksByName } from "../../core/marks.ts";
@@ -53,7 +58,8 @@ import {
   type Side,
 } from "../../core/reviews.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { canAdmin, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { bypassOffered, landPastGate, type BypassError } from "../../checks/bypass.ts";
 import { commitLog, readerFor } from "../../git/read.ts";
 import { wallOf } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -64,11 +70,14 @@ import {
   repoHeader,
   repoPalette,
   signInFirst,
+  forbiddenPage,
 } from "../chrome.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { DiffLaps } from "../../git/diff.ts";
 import { diffCacheCounts, diffKey, keptDiff, keptRender } from "../diff-cache.ts";
 import { keptRead } from "../head-reads.ts";
+import { landedSlices, sliceEnds, type LandedSlice } from "../../git/slices.ts";
+import { landSlice } from "../../actions/pull_slices.ts";
 import { diffSyntax } from "../diff-syntax.ts";
 import {
   renderDiff,
@@ -86,10 +95,13 @@ import {
   badge,
   btn,
   card,
+  field as formField,
   icon,
+  hintAttr,
   labelCss,
   queuedPhrase,
   row,
+  selectField,
   sha,
   time,
   type Tone,
@@ -105,6 +117,7 @@ import { specFindings } from "./pull-spec.ts";
 import { pullPreviewFindings } from "../../core/preview_findings.ts";
 import { crewActivityCard } from "./runs.ts";
 import { holdCard } from "../studio/hold.ts";
+import { guestCard, guestWalls } from "./pull-guest.ts";
 import {
   changeHead,
   changeTabs,
@@ -303,6 +316,17 @@ export function checksLine(
   </p>`;
 }
 
+/** One muted line when the merge queue holds the pull as red alone; nothing otherwise. */
+export function redAloneLine(mark: RedMark | undefined): Html {
+  if (mark === undefined) return html``;
+  const exact = redAloneAt(mark);
+  if (exact === "") return html``;
+  return html`<p class="muted small">
+    ${icon("clock")}red alone at
+    <time datetime="${new Date(mark.at).toISOString()}">${exact}</time>, ${RED_ALONE_WAIT}
+  </p>`;
+}
+
 /** Whether a head declares a fast tier: a commit's files never change. */
 const fastByHead = new Map<string, boolean>();
 export async function declaresFast(dir: string, head: string): Promise<boolean> {
@@ -391,7 +415,19 @@ function pullChecksLine(
     `${thread}/checks-line`,
   );
   const found = !isApp ? null : pullPreviewFindings(ctx.app.db, repo.id, previewEnv(pull.number));
-  return html`${line}${found === null ? "" : specFindings(found)}`;
+  const red = redAloneLine(redMark(repo.id, pull.id, status.headOid));
+  return html`${originCheckLine(ctx, repo, pull)}${line}${red}${found === null ? "" : specFindings(found)}`;
+}
+
+/**
+ * How the origin's own check stands on a mirrored pull, as it last said and
+ * when. Empty for a pull the origin has never reported on.
+ */
+function originCheckLine(ctx: Ctx, repo: Repo, pull: Pull): Html | "" {
+  if (repo.origin === null) return "";
+  const kept = originCheckOf(ctx.app.db, pull.id);
+  if (kept === undefined) return "";
+  return html`<p class="muted">${originCheckLead(repo.origin.fullName, kept, pull.headOid)}, as of ${time(kept.checkedAt)}</p>`;
 }
 
 /** One §5 row in a toned card; `.setting-list` wraps the sentence and drops the action under it on a phone. */
@@ -436,7 +472,7 @@ function mergeBox(
   // A reader's head runs nothing until a writer approves it; say so rather
   // than leave "no checks yet" waiting for something that will not come.
   const checks = pullChecksLine(ctx, repo, pull, status, check, isApp, tier, stale);
-  const reopen = html`<form method="post" action="${thread}/state">
+  const reopen = html`<form method="post" action="${thread}/state" data-now="Reopened" data-now-once>
     <input type="hidden" name="state" value="open" />
     ${btn("Reopen", { size: "sm", icon: "pull" })}
   </form>`;
@@ -461,7 +497,8 @@ function mergeBox(
       icon("x"),
       "Closed without merging.",
       html`Nothing was applied to <span class="mono">${pull.baseBranch}</span>.`,
-      when(ctx.auth.user !== undefined, () => reopen),
+      // Reopening is its author's or a writer's (`setIssueState`), as in the palette.
+      when(ctx.auth.user !== undefined && (ctx.auth.user.id === pull.authorId || mayMerge), () => reopen),
     );
   }
 
@@ -573,12 +610,25 @@ function mergeBox(
       "Waiting on checks.",
       html`${why} ${reviewsChip(status.reviews, by)} ${checks}`,
       when(mayMerge, () =>
-        btn("Merge pull request", {
+        html`${btn("Merge pull request", {
           variant: "primary",
           icon: "merge",
           disabled: true,
           title: "A passing deploy of this head is required first",
-        }),
+        })}${when(
+          bypassOffered(ctx.app, ctx.auth.user, repo),
+          () => html`<form method="post" action="${thread}/land-past">
+            ${formField({
+              name: "reason",
+              label: "Land past the gate",
+              hint: "Landing has stopped. Say why this pull lands without its checks; it goes on the pull's trail. Review and conflicts still count.",
+              required: true,
+              minlength: 8,
+              maxlength: 500,
+            })}
+            <div class="form-actions">${btn("Land past the gate", { variant: "danger", icon: "merge" })}</div>
+          </form>`,
+        )}`,
       ),
     );
   }
@@ -593,11 +643,14 @@ function mergeBox(
       ${checks}`,
     mayMerge
       ? html`<form method="post" action="${thread}/merge" class="row-fields">
-          <label class="sr-only" for="strategy">Merge strategy</label>
-          <select class="input" id="strategy" name="strategy">
-            <option value="merge">Merge commit</option>
-            <option value="squash">Squash and merge</option>
-          </select>
+          ${fromKeptFork(ctx.app.db, pull)
+            ? html`<input type="hidden" name="strategy" value="merge" />
+                <span class="muted small">Lands as a merge commit: a kept fork's commits keep their authors.</span>`
+            : html`<label class="sr-only" for="strategy">Merge strategy</label>
+                <select class="input" id="strategy" name="strategy">
+                  <option value="merge">Merge commit</option>
+                  <option value="squash">Squash and merge</option>
+                </select>`}
           ${btn("Merge pull request", {
             variant: "primary",
             icon: "merge",
@@ -731,7 +784,7 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
         <legend class="sr-only">Your verdict</legend>
         ${options.map(
           (option, i) =>
-            html`<label class="check">
+            html`<label class="check" ${hintAttr(option.key)}>
               <input
                 type="radio"
                 name="state"
@@ -916,6 +969,24 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ),
   );
   const commits = log.ok ? log.value : [];
+  // A fork's pull may land in slices; which did is read from the base (#9010).
+  // A person lands them: the crew proposes (rule 1 in docs/APPS.md).
+  const mayLand = mayMerge && ctx.auth.user?.kind !== "agent";
+  const slices = pull.crossRepo
+    ? await lap("git", () =>
+        keptRead(`slices:${repo.id}:${pull.number}:${status.baseOid}`, () =>
+          landedSlices(dir, status.baseOid, pull.number, pull.createdAt),
+        ),
+      )
+    : [];
+  const ends =
+    pull.crossRepo && mayLand && pull.state === "open" && pull.mergedAt === null && status.ahead > 1
+      ? await lap("git", () =>
+          keptRead(`slice-ends:${repo.id}:${status.baseOid}:${status.headOid}`, () =>
+            sliceEnds(dir, status.baseOid, status.headOid),
+          ),
+        )
+      : [];
   const commitsCard = card(
     commits.length === 0
       ? html`<p class="muted small">No commits to show.</p>`
@@ -949,7 +1020,8 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
       compact: true,
       ownTitle: true,
     })}
-    ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "files")}
+    ${changeHead(ctx, repo, pull, { headOid: status.headOid, conflicts: status.conflicts.length })}
+    ${changeTabs(repo, pull, "files")}
     <p class="files-where muted small" id="files">
       <span class="mono">${headLabel} → ${pull.baseBranch}</span>
       <span class="sep" aria-hidden="true">·</span>
@@ -969,12 +1041,15 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
             >`,
       )}
     </p>
-    ${when(wall, (w) => wallCard(w))}
+    ${when(wall, (w) => wallCard(w, mayMerge ? thread : undefined))}
     ${holdCard(ctx, repo, pull, { act: false })}
     ${teamsCard(teamVerdicts(ctx.app.db, { ...pull, headOid: status.headOid }))}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}
+    ${slicesCard(base, thread, slices, status.ahead, ends, pull.state === "open" && pull.mergedAt === null, mayLand)}
+    ${await combinedCard(dir, pull, status.headOid, status.baseOid)}
     <div class="split">
       <div>
+        ${guestCard(ctx, repo, pull, `${thread}/approve-guest`, await guestWalls(ctx, repo, pull, status.baseOid))}
         ${approveHereCard(ctx, repo, pull, status.headOid, `${thread}/approve-here`)}
         ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
       </div>
@@ -992,7 +1067,31 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: `Files · ${pull.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
+    palette: [
+      ...repoPalette(ctx, repo),
+      ...pullRoster({
+        base,
+        number: pull.number,
+        headBranch: pull.headBranch,
+        crossRepo: pull.crossRepo,
+        signedIn: ctx.auth.user !== undefined,
+        writer: mayMerge,
+        state: pull.state === "closed" ? "closed" : "open",
+        merged: pull.mergedAt !== null,
+        // The merge box's enabled button, by the same gates in the same order.
+        labels: allLabels.length > 0,
+        mayState: ctx.auth.user !== undefined && (ctx.auth.user.id === pull.authorId || mayMerge),
+        mergeReady:
+          mayMerge &&
+          pull.state === "open" &&
+          pull.mergedAt === null &&
+          repo.origin === null &&
+          pull.originHeadRepo === null &&
+          status.mergeable &&
+          !(status.reviews !== null && !status.reviews.mergeable) &&
+          !checksHold(repo.requireChecks, check.state, stale),
+      }),
+    ],
     body,
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
@@ -1027,9 +1126,11 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
 
   const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  // A reply from the feed returns there: a fixed word, never a URL from the form.
+  const fromFeed = field(form, "back") === "feed";
   const bodyText = field(form, "body");
   if (bodyText.trim() === "")
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, fromFeed ? "/feed" : dest, {
       tone: "danger",
       message: COMMENT_EMPTY,
     });
@@ -1041,11 +1142,13 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
     bodyText,
   );
   if (!added.ok)
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, fromFeed ? "/feed" : dest, {
       tone: "danger",
       message: originError(added.error) ?? COMMENT_NOT_POSTED,
     });
-  return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
+  return fromFeed
+    ? flashTo(ctx, "/feed", { message: "Reply posted." })
+    : flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }
 
 /** Match the diff viewer's per-file anchor id, so the redirect lands there. */
@@ -1167,7 +1270,7 @@ export function approveHereCard(
       <p>
         ${proposed
           ? "A child forge proposed this head, so its check and preview wait for you. Letting it run is not a review and does not count toward one; it runs this exact code here, holding the repository owner's app token. A new push waits again."
-          : "This head is from a fork on the origin, so its check and preview wait for you. Approving lets them run this exact code here, holding the repository owner's app token. A new push waits again."}
+          : "This head is from a fork on the origin, so its check and preview wait for you. Approving lets them run this exact code here; it holds the repository's secrets only once it is approved as a guest too. A new push waits again."}
       </p>
       ${btn(proposed ? "Let it run here" : "Approve to run here", { size: "sm", icon: "check" })}
     </form>`,
@@ -1318,7 +1421,7 @@ export async function pullChecksSubmit(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   // The home's card asks to come back to the home (only "/" is honoured).
@@ -1339,7 +1442,7 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
@@ -1359,6 +1462,125 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
     });
   }
   return flashTo(ctx, dest, { message: "Pull request merged." });
+}
+
+// POST /:owner/:name/pulls/:number/slice — land the author's commits up to one (#9010).
+export async function pullSliceSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const landed = await landSlice(ctx.app, ctx.auth.user, found.repo, found.pull, field(form, "upTo") ?? "");
+  if (!landed.ok)
+    return flashTo(ctx, `${dest}/files`, {
+      tone: "danger",
+      message:
+        landed.error === "bad_slice"
+          ? "That commit is not one of this pull's that the base still lacks. Nothing landed."
+          : landed.error === "sealed"
+            ? "This pull's work is sealed apart from the base; it lands whole."
+            : landed.error === "not_fork"
+              ? "Only a pull from a fork lands in slices; this one lands whole."
+              : landed.error === "held"
+                ? "A hold stands on this pull: nothing of it lands until it is released."
+                : landed.error === "forbidden" && ctx.auth.user.kind === "agent"
+                  ? "The crew proposes and a person lands: an agent cannot land a slice."
+                  : mergeFailure(landed.error),
+    });
+  return flashTo(ctx, landed.value.last ? dest : `${dest}/files`, {
+    message: landed.value.last
+      ? "Last slice landed: the pull is merged."
+      : `Slice landed. ${landed.value.left} commit${landed.value.left === 1 ? "" : "s"} left.`,
+  });
+}
+
+/**
+ * The slices card (#9010): which slices of a fork's pull landed, what is
+ * left, and — for a writer — a form to land the author's commits up to one
+ * of them as their own merge commit.
+ */
+function slicesCard(
+  base: string,
+  thread: string,
+  slices: readonly LandedSlice[],
+  left: number,
+  commits: readonly { oid: string; subject: string }[],
+  open: boolean,
+  mayMerge: boolean,
+): Html {
+  if (slices.length === 0 && !(open && mayMerge && left > 1)) return html``;
+  return card(
+    html`${when(
+        slices.length > 0,
+        () => html`<ul class="list">
+          ${slices.map(
+            (s, i) => html`<li>
+              <a class="row" href="${base}/commit/${s.mergeOid}">
+                <span class="row-main">
+                  <span class="row-title">Slice ${i + 1}: up to ${sha(s.upTo)}</span>
+                  <span class="row-meta">merged as they are</span>
+                </span>
+                <span class="row-trail">${sha(s.mergeOid)}</span>
+              </a>
+            </li>`,
+          )}
+        </ul>`,
+      )}
+      <p class="muted small">
+        ${open ? html`${left} commit${left === 1 ? "" : "s"} left to land.` : html`Nothing left: the last slice was the author's head.`}
+      </p>
+      ${when(
+        open && mayMerge && commits.length > 1,
+        () => html`<form method="post" action="${thread}/slice">
+          ${selectField({
+            label: "Land the author's commits up to",
+            name: "upTo",
+            id: "slice-up-to",
+            hint: "Each slice is its own merge of the author's commits as they are. It lands only while the head's review and check would let the whole pull land.",
+            options: commits.map((c, i) => ({
+              value: c.oid,
+              label: `${c.oid.slice(0, 7)} ${c.subject}${i === commits.length - 1 ? " (head: the last slice)" : ""}`,
+            })),
+          })}
+          ${btn("Land slice", { icon: "merge" })}
+        </form>`,
+      )}`,
+    {
+      head: html`${icon("merge")}
+        <h2>Slices</h2>`,
+    },
+  );
+}
+
+// POST /:owner/:name/pulls/:number/land-past — the owner's break-glass (#7790).
+export async function pullLandPastSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  const user = ctx.auth.user;
+  if (!user || user.kind === "agent" || !canAdmin(ctx.app.db, found.repo, user))
+    return forbiddenPage(ctx, "Only a person who administers this repository can do this.");
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const landed = await landPastGate(ctx.app, user, found.repo, found.pull, field(form, "reason") ?? "");
+  if (!landed.ok) return flashTo(ctx, dest, { tone: "danger", message: bypassWords(landed.error) });
+  return flashTo(ctx, dest, { message: "Landed past the gate; the reason is on the trail." });
+}
+
+function bypassWords(e: BypassError): string {
+  switch (e.kind) {
+    case "reason":
+      return "Say why in 8 to 500 characters: it goes on the pull's trail.";
+    case "not_stopped":
+      return "Landing has not stopped, so there is no way past the gate: wait for the checks.";
+    case "merge":
+      return `Not landed: ${mergeFailure(e.error)}`;
+    default:
+      return "Only an owner can land a pull past the gate.";
+  }
 }
 
 /**

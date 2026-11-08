@@ -8,7 +8,7 @@ export const tool: Tool = {
   name: "migrate",
   doc: "`{ url, name?, crew? }` brings a public repository in by URL (history only; nothing reaches back) and answers `{ job, state, url }`; `{ job }` alone reads that job. Same validation, scope (`rw`) and private-address refusal as `POST /api/v1/migrate`",
   description:
-    "Bring a repository in by public `url` (`name`, `crew`), history and all. With `job`, its state.",
+    "Bring a repo in by public `url` (`name`, `crew`), history and all. With `job`, its state.",
   inputSchema: {
     type: "object",
     properties: {

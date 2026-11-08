@@ -8,11 +8,14 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { adminCookie } from "./helpers/admin.ts";
 
+const LONG = "x".repeat(300);
+
 let dataDir = "";
 let work = "";
 let app: App;
 let servers: Servers;
 let oid = "";
+let bodyOid = "";
 
 const env = gitClientEnv({
   GIT_AUTHOR_NAME: "Ada",
@@ -68,6 +71,11 @@ beforeAll(async () => {
   await sh(["git", "commit", "-m", "add a"], dir);
   await sh(["git", "push", "origin", "main"], dir);
   oid = await sh(["git", "rev-parse", "HEAD"], dir);
+  await Bun.write(join(dir, "b.ts"), "export const b = 2;\n");
+  await sh(["git", "add", "."], dir);
+  await sh(["git", "commit", "-m", "add b", "-m", "Why b <exists>:\n  because a needs it\n" + LONG], dir);
+  await sh(["git", "push", "origin", "main"], dir);
+  bodyOid = await sh(["git", "rev-parse", "HEAD"], dir);
 });
 
 afterAll(async () => {
@@ -94,4 +102,33 @@ test("a commit's head draws §5's bar, not .issue-meta", async () => {
   expect(body).toContain("Ada committed");
   expect(body).toContain("Browse files");
   expect(body).toContain(oid.slice(0, 7));
+});
+
+test("a commit's head and body draw §5's card-head and prose, not commit-head/commit-body", async () => {
+  const body = await (await fetch(`${servers.url}/ada/engine/commit/${oid}`)).text();
+  expect(body).not.toContain("commit-head");
+  expect(body).not.toContain("commit-body");
+  expect(body).toContain('<div class="card-head"><h2>add a</h2></div>');
+});
+
+test("a commit with a body shows it, escaped, inside the prose message div", async () => {
+  const page = await (await fetch(`${servers.url}/ada/engine/commit/${bodyOid}`)).text();
+  expect(page).toContain(
+    `<div class="prose" data-text="message"><pre>Why b &lt;exists&gt;:\n  because a needs it\n${LONG}</pre></div>`,
+  );
+  const bare = await (await fetch(`${servers.url}/ada/engine/commit/${oid}`)).text();
+  expect(bare).not.toContain('data-text="message"');
+});
+
+test("the message rule drops the code box and padding, and wraps a long line instead of scrolling", async () => {
+  const page = await (await fetch(`${servers.url}/ada/engine/commit/${oid}`)).text();
+  const href = page.match(/href="(\/assets\/[^"]+\.css)"/)?.[1] ?? "";
+  const css = await (await fetch(`${servers.url}${href}`)).text();
+  const pre = css.match(/\.prose\[data-text="message"\] pre\s*\{[^}]*\}/)?.[0] ?? "";
+  expect(pre).toMatch(/background:\s*none/);
+  expect(pre).toMatch(/border:\s*0/);
+  expect(pre).toMatch(/padding:\s*0/);
+  expect(pre).toMatch(/white-space:\s*pre-wrap/);
+  expect(pre).toMatch(/overflow-wrap:\s*anywhere/);
+  expect(css).toMatch(/\.prose\[data-text="message"\]\s*\{[^}]*padding:\s*0/);
 });

@@ -76,6 +76,7 @@ import {
 import { tell, toldWords } from "./tell.ts";
 import { putFollow, upstreamUrl } from "../core/upstream_follow.ts";
 import { pinFor, remoteGitEnv, type Pin } from "../git/remote-env.ts";
+import { AT_REPOSITORY_LIMIT, NO_SUCH_AGENT } from "./crew_limit_words.ts";
 
 /** The whole clone — the HEAD probe and the fetch — gets this long. */
 export const MIGRATE_TIMEOUT_MS = 120_000;
@@ -132,7 +133,8 @@ export type MigrateError =
   | "no_such_origin"
   | "unreachable"
   | "invalid_branch"
-  | "no_such_agent";
+  | "no_such_agent"
+  | "not_a_builder";
 
 /** What the clone reads from, resolved: where, and how to authenticate. */
 interface Resolved {
@@ -190,8 +192,11 @@ export async function migrateRepo(
 
   const source = await resolveSource(app, user.value, input.source, input.resolve);
   if (!source.ok) return source;
-  if (input.crew !== undefined && !getAgentByName(app.db, input.crew.agent))
-    return err("no_such_agent");
+  if (input.crew !== undefined) {
+    const asked = getAgentByName(app.db, input.crew.agent);
+    if (!asked) return err("no_such_agent");
+    if (!asked.roles.includes("builder")) return err("not_a_builder");
+  }
   const branch = (input.branch ?? "").trim();
   if (branch !== "" && !isSafeRef(branch)) return err("invalid_branch");
 
@@ -255,7 +260,7 @@ export function migrationJobFor(
 }
 
 /** A refusal in words a person can act on. */
-export function migrateMessage(error: MigrateError, limit = "at the repositories limit"): string {
+export function migrateMessage(error: MigrateError, limit = AT_REPOSITORY_LIMIT): string {
   switch (error) {
     case "invalid_url":
       return "That is not a URL this forge will clone from. Paste an https:// (or http://) address of a public repository, with no password in it. A git:// address is not supported: use its https:// address.";
@@ -266,7 +271,9 @@ export function migrateMessage(error: MigrateError, limit = "at the repositories
     case "unreachable":
       return "The origin could not be reached. Try again, or reconnect it under Settings → Origins.";
     case "no_such_agent":
-      return "That agent is not on this forge.";
+      return NO_SUCH_AGENT;
+    case "not_a_builder":
+      return "That agent is not a builder, so it cannot take a migration. Pick a builder, or change its roles under Settings → Crew.";
     case "invalid_branch":
       return "That is not a branch name git would take.";
     case "name_taken":
@@ -835,7 +842,7 @@ async function putCrewOn(
   work: WorkBranch | undefined,
 ): Promise<string> {
   const said: string[] = [];
-  const added = addToCrew(app, user, repo, crew.agent);
+  const added = addToCrew(app, user, repo, crew.agent, "builder");
   if (!added.ok) return `${crew.agent} could not join the crew.`;
   const made = enableApp(app, user, repo, {});
   if (!made.ok)

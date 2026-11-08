@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "account_role",
   doc: "`{ username, role, usdPerMonth?, dryRun? }`: make a person a `member`, or a `guest` again, with an optional starter allowance (`usdPerMonth`, 0.01 to 10000, promoting only); planned first (`dryRun` is true unless `false`)",
   description:
-    "Make a person a member, or a guest again; promoting may grant a monthly `usdPerMonth`.",
+    "Make a person a member or a guest; promoting may grant `usdPerMonth`.",
   inputSchema: {
     type: "object",
     properties: {

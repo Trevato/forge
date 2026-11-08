@@ -140,3 +140,35 @@ describe("the app loop", () => {
     app.stop();
   });
 });
+
+describe("the palette's search", () => {
+  test("is not settled until its live re-run has landed", async () => {
+    const asked: boolean[] = [];
+    const app = new App({
+      terminal: headlessTerminal(80, 24),
+      theme: "dark",
+      root: () => ({ title: "Root", keys: [], render() {}, key: () => false }),
+      search: () => async (_query, live) => {
+        asked.push(live);
+        return [];
+      },
+    });
+    app.start();
+    try {
+      expect(app.paletteSettled).toBe(true);
+      const key = (k: string) => app.dispatch({ type: "key", key: k, ctrl: false, alt: false, shift: false });
+      key(":");
+      key("a");
+      expect(app.paletteSettled).toBe(false);
+      await Bun.sleep(200);
+      expect(asked).toEqual([false]);
+      expect(app.paletteSettled).toBe(false);
+      const deadline = Date.now() + 5_000;
+      while (!app.paletteSettled && Date.now() < deadline) await Bun.sleep(10);
+      expect(asked).toEqual([false, true]);
+      expect(app.paletteSettled).toBe(true);
+    } finally {
+      app.stop();
+    }
+  });
+});

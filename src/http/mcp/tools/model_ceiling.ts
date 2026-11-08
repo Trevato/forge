@@ -18,6 +18,7 @@ export const tool: Tool = {
     required: ["username", "dailyUsd", "perRunUsd"],
   },
   writes: true,
+  doc: "`{ username, dailyUsd, perRunUsd, dryRun? }` (a forge admin who is a person): cap an account's daily and per-run model spend in dollars (both `null` clears); planned unless `dryRun` is false, applying takes an admin token",
   dryByDefault: true,
   run(ctx, user, args) {
     const { username, dailyUsd, perRunUsd } = args;

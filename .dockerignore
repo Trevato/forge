@@ -4,5 +4,6 @@ bench/
 data/
 dist/
 docs/
+!docs/PRINCIPLES.md
 node_modules/
 test/

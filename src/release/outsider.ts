@@ -118,13 +118,25 @@ export async function outsider(base: string, options: OutsiderOptions = {}): Pro
       return { error: false, text };
     }
   };
-  const toolList = await doFetch(new URL("/mcp", root).href, {
-    method: "POST",
-    signal: AbortSignal.timeout(10_000),
-    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-  });
-  const toolsText = await toolList.text();
+  // tools/list is paged: follow nextCursor, so a tool on a later page still counts.
+  let toolsText = "";
+  for (let cursor: string | undefined, pages = 0; pages < 10; pages++) {
+    const toolList = await doFetch(new URL("/mcp", root).href, {
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: cursor === undefined ? {} : { cursor } }),
+    });
+    const text = await toolList.text();
+    toolsText += text;
+    try {
+      const next = (JSON.parse(text) as { result?: { nextCursor?: unknown } }).result?.nextCursor;
+      cursor = typeof next === "string" ? next : undefined;
+    } catch {
+      cursor = undefined;
+    }
+    if (cursor === undefined) break;
+  }
   for (const tool of ["tell", "make_it_yours", "repo", "usage", "apps", "signup"])
     if (!toolsText.includes(`"${tool}"`)) bad.push({ check: "MCP tools", why: `tools/list does not name ${tool}; the suite's doors may have moved` });
 

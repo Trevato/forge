@@ -5,7 +5,7 @@
  * to unfurl.
  */
 import { MAX_RELEASES, parseReleases } from "../src/core/parent_releases.ts";
-import releasesFile from "../src/core/releases.json" with { type: "json" };
+import { setTagged, shippedReleases } from "../src/release/shipped.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -84,6 +84,62 @@ describe("what the open web expects", () => {
     }
   });
 
+  test("security.txt's contact is the sealed form of the forge's public repository", async () => {
+    app.config.forgeRepo = "alice/open";
+    try {
+      const body = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+      expect(body).toContain(`Contact: ${base}/alice/open/issues/new?sealed=1\n`);
+      // The no-account report is not sealed: it is never offered beside
+      // the contact, and the footer names it for what is not a vulnerability.
+      expect(body).not.toContain(`${base}/alice/open/report`);
+      expect(body.indexOf("/report")).toBeGreaterThan(body.indexOf("Not a vulnerability?"));
+      // The configured contact still wins.
+      process.env["FORGE_SECURITY_CONTACT"] = "mailto:security@example.org";
+      try {
+        const set = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+        expect(set).toContain("Contact: mailto:security@example.org\n");
+        expect(set).not.toContain("alice/open");
+      } finally {
+        delete process.env["FORGE_SECURITY_CONTACT"];
+      }
+    } finally {
+      delete app.config.forgeRepo;
+    }
+  });
+
+  test("the sealed form, signed out, offers the account only and comes back sealed", async () => {
+    const form = await fetch(`${base}/alice/open/issues/new?sealed=1`).then((r) => r.text());
+    expect(form).toContain("A sealed security report needs an account");
+    expect(form).not.toContain(">Report a problem</a");
+    // The password form brings the stranger back to the sealed form.
+    const next = encodeURIComponent("/alice/open/issues/new?sealed=1");
+    expect(form).toContain(`href="/signin?next=${next}"`);
+    const plain = await fetch(`${base}/alice/open/issues/new`).then((r) => r.text());
+    expect(plain).toContain("Opening an issue needs an account");
+    expect(plain).toContain(">Report a problem</a");
+    // Behind a platform edge, the edge's login comes back sealed too.
+    app.config.edgeToken = "edge-secret-0123456789";
+    try {
+      const edge = await fetch(`${base}/alice/open/issues/new?sealed=1`).then((r) => r.text());
+      expect(edge).toContain(`href="/_plat/login?rd=${next}"`);
+    } finally {
+      delete app.config.edgeToken;
+    }
+  });
+
+  test("security.txt names a profile for a private or malformed forge repository", async () => {
+    for (const named of ["alice/closed", "alice"]) {
+      app.config.forgeRepo = named;
+      try {
+        const body = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+        expect(body).toContain(`Contact: ${base}/alice\n`);
+        expect(body).not.toContain("issues/new?sealed=1\n");
+      } finally {
+        delete app.config.forgeRepo;
+      }
+    }
+  });
+
   test("change-password sends a password manager to the right page", async () => {
     const res = await fetch(`${base}/.well-known/change-password`, {
       redirect: "manual",
@@ -97,7 +153,7 @@ describe("what the open web expects", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
     const doc = (await res.json()) as { releases: unknown[] };
-    expect(doc.releases.length).toBe(releasesFile.releases.length);
+    expect(doc.releases.length).toBe(shippedReleases().length);
     const read = parseReleases(doc, true);
     // A child reads the newest MAX_RELEASES; the record itself keeps every release,
     // and every entry, past those too, is in the child's shape.
@@ -108,7 +164,7 @@ describe("what the open web expects", () => {
       const page = doc.releases.slice(at, at + MAX_RELEASES);
       expect(parseReleases({ releases: page }, true)!.length).toBe(page.length);
     }
-    expect(read![0]!.name).toBe(releasesFile.releases[0]!.version);
+    expect(read![0]!.name).toBe(shippedReleases()[0]!.version);
     expect(read![0]!.url).toStartWith(`${base}/releases.json#`);
     // The verdict is the document's shape, not the machine's speed: a loaded
     // check machine gets a generous bound rather than a red lane (#5966).
@@ -132,6 +188,22 @@ describe("what the open web expects", () => {
       headers: { "if-none-match": '"nope"' },
     });
     expect(other.status).toBe(200);
+  });
+
+  test("a release tag read since is in releases.json at once, with a new ETag", async () => {
+    const before = await fetch(`${base}/releases.json`);
+    const etag = before.headers.get("etag")!;
+    await before.text();
+    setTagged([{ version: "9.9.9", migrations: 1, at: Date.now() }]);
+    try {
+      const after = await fetch(`${base}/releases.json`, { headers: { "if-none-match": etag } });
+      expect(after.status).toBe(200);
+      expect(after.headers.get("etag")).not.toBe(etag);
+      const doc = (await after.json()) as { releases: { name: string }[] };
+      expect(doc.releases[0]!.name).toBe("9.9.9");
+    } finally {
+      setTagged([]);
+    }
   });
 
   test("robots keeps crawlers out of accounts and points at the sitemap", async () => {
@@ -158,8 +230,9 @@ describe("what the open web expects", () => {
     expect(section).toContain(`${base}/mcp`);
     expect(section).toContain(`${base}/.well-known/oauth-protected-resource`);
     expect(section).toContain("streamable HTTP");
-    expect(section).toContain("Claude Code plugin");
-    expect(section).toContain("OpenCode plugin");
+    // trevato/forge is not here, so no install line is printed that could not work.
+    expect(section).toContain("Harness plugins: not offered on this forge (their source is private)");
+    expect(section).not.toContain("needs that repository to be public");
   });
 
   test("sitemap and llms.txt are each built once for 50 requests, and a repository made private drops out at once", async () => {
@@ -185,6 +258,49 @@ describe("what the open web expects", () => {
       const body = await fetch(`${base}${path}`).then((r) => r.text());
       expect(body).not.toContain("alice/midway");
       expect(body).toContain("alice/open");
+    }
+  });
+
+  test("llms.txt answers a strong ETag and a 304, and a new public repository changes the ETag", async () => {
+    const first = await fetch(`${base}/llms.txt`);
+    const etag = first.headers.get("etag")!;
+    expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
+    await first.text();
+    const again = await fetch(`${base}/llms.txt`, { headers: { "if-none-match": etag } });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+    expect(again.headers.get("etag")).toBe(etag);
+    expect(first.headers.get("cache-control")).toBe("private, no-cache");
+    expect(again.headers.get("cache-control")).toBe("private, no-cache");
+    expect(again.headers.get("vary")).toContain("Cookie");
+    expect(again.headers.get("x-content-type-options")).toBe("nosniff");
+    const made = await createRepo(app, alice, { name: "etagged", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    // A new repository reaches the listing when its minute is up.
+    forgetListings(app.db);
+    const after = await fetch(`${base}/llms.txt`, { headers: { "if-none-match": etag } });
+    expect(after.status).toBe(200);
+    expect(after.headers.get("etag")).not.toBe(etag);
+    expect(await after.text()).toContain("alice/etagged");
+  });
+
+  test("llms.txt changes its ETag when the running commit changes", async () => {
+    const saved = { c: process.env["FORGE_COMMIT"], a: process.env["FORGE_APP_COMMIT"] };
+    try {
+      delete process.env["FORGE_COMMIT"];
+      process.env["FORGE_APP_COMMIT"] = "aaaaaaa1111111";
+      const one = await fetch(`${base}/llms.txt`);
+      await one.text();
+      process.env["FORGE_APP_COMMIT"] = "bbbbbbb2222222";
+      const two = await fetch(`${base}/llms.txt`, { headers: { "if-none-match": one.headers.get("etag")! } });
+      expect(two.status).toBe(200);
+      expect(two.headers.get("etag")).not.toBe(one.headers.get("etag"));
+      expect(await two.text()).toContain("at bbbbbbb");
+    } finally {
+      for (const [k, v] of [["FORGE_COMMIT", saved.c], ["FORGE_APP_COMMIT", saved.a]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
   });
 
@@ -329,6 +445,23 @@ describe("what the open web expects", () => {
     expect((await fetch(`${base}/icons/forge-64.png`)).status).toBe(404);
   });
 
+  test("/favicon.ico answers with the 32px mark instead of a 404", async () => {
+    const icon = await fetch(`${base}/icons/forge-32.png`);
+    const fav = await fetch(`${base}/favicon.ico`);
+    expect(fav.status).toBe(200);
+    expect(fav.headers.get("content-type")).toBe("image/png");
+    expect(fav.headers.get("cache-control")).toBe(icon.headers.get("cache-control"));
+    expect(fav.headers.get("cache-control")).toContain("immutable");
+    const bytes = new Uint8Array(await fav.arrayBuffer());
+    expect(bytes).toEqual(new Uint8Array(await icon.arrayBuffer()));
+    const header = pngHeader(bytes);
+    expect(header.ok && `${header.value.width}x${header.value.height}`).toBe("32x32");
+    // The security floor is on it like on every response.
+    expect(fav.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(fav.headers.get("referrer-policy")).not.toBeNull();
+    expect(fav.headers.get("content-security-policy")).not.toBeNull();
+  });
+
   test("the mark is painted, not pasted: gradient inside, nothing outside", () => {
     const decoded = decodePng(markPng(64, "icon"));
     expect(decoded.ok).toBe(true);
@@ -375,8 +508,10 @@ describe("what the open web expects", () => {
     const manifest = (await (await fetch(`${base}/manifest.webmanifest`)).json()) as { description: string };
     const html = await (await fetch(`${base}/`)).text();
     expect(manifest.description).toBe(SITE_LINE);
-    expect(html).toContain(`<meta name="description" content="${SITE_LINE}"`);
-    expect(html).toContain(`<meta property="og:description" content="${SITE_LINE}"`);
+    // The front page's share line is its own; the sentence is in its body.
+    const said = /<meta name="description" content="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(said).not.toBe("");
+    expect(html).toContain(`<meta property="og:description" content="${said}"`);
     expect(html).toContain(SITE_LINE);
   });
 });

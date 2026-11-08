@@ -47,7 +47,7 @@ describe("a member and the crew's standing instructions", () => {
     fetch(`${servers.url}/settings/crew/robin`, {
       method: "POST",
       headers: { cookie, origin: FORGE_URL },
-      body: new URLSearchParams({ model: "", brief: text, budgetUsd: "1" }),
+      body: new URLSearchParams({ model: "", brief: text, budgetUsd: "1", roles: "builder" }),
       redirect: "manual",
     });
 

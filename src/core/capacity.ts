@@ -20,10 +20,15 @@ export type CapacityKey =
   | "checks.concurrency"
   | "checks.shards"
   | "queue.depth"
+  | "queue.batch"
   | "children.max"
   | "cells.egress"
+  | "children.modelEgress"
   | "guard_new_accounts"
-  | "signin.edge";
+  | "signin.edge"
+  | "slots.smallShare"
+  | "polish.capMinutes"
+  | "pace.floor";
 
 interface Definition {
   /** What the settings page and the API call it. */
@@ -72,6 +77,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     fallback: "2",
     help: "How many merge-queue candidates of one repository gate at once, each on top of the one before: while one gates on main the next gates on it, and lands right after it if both are green. 1 gates one candidate at a time. A gate beyond the first takes a free check slot only, never one of the two kept for pull checks.",
   },
+  "queue.batch": {
+    label: "Merge queue batch size",
+    env: "FORGE_QUEUE_BATCH",
+    kind: { type: "count", min: 1, max: 32 },
+    fallback: "8",
+    help: "The most pulls one merge-queue candidate carries. A bigger batch lands more pulls per green gate; a red one costs more search gates to find its culprit (one bad pull in 16 is found in two rounds, at most √16 = 4 gates each). The queue starts each line here, halves the batch after a red gate and doubles it back after two green gates in a row, never past this. Read on every sweep.",
+  },
   "children.max": {
     label: "Forges this one may send",
     env: "FORGE_CHILDREN_MAX",
@@ -86,6 +98,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     fallback: "enforce",
     help: "enforce refuses a host an app or check did not declare; report lets it through on 80 and 443 and lists it on the app's page. Takes effect on the next cell started.",
   },
+  "children.modelEgress": {
+    label: "Model provider a child forge cell may reach",
+    env: "FORGE_CHILDREN_MODEL_EGRESS",
+    kind: { type: "choice", values: ["off", "openrouter"] },
+    fallback: "off",
+    help: "off keeps a child forge's cell to its parent alone; openrouter also lets it reach openrouter.ai on 443, so the child's crew can call its model on the child's own key. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
+  },
   "guard_new_accounts": {
     label: "New-account repository guard",
     env: "FORGE_GUARD_NEW_ACCOUNTS",
@@ -99,6 +118,27 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "choice", values: ["on", "off"] },
     fallback: "on",
     help: "on reads the platform edge's identity headers (when the forge has an edge secret) and offers its sign-in; off ignores them on every door, so people sign in with the forge's own methods — password and passkey. Accounts the edge made keep their names but have no password until they set one. Takes effect on the next request.",
+  },
+  "slots.smallShare": {
+    label: "Builder slots small issues may hold (%)",
+    env: "FORGE_SLOTS_SMALL_SHARE",
+    kind: { type: "count", min: 0, max: 100 },
+    fallback: "30",
+    help: "The most of a repository's builder slots that tests-only and small-addition issues (\"A test pins …\", or a label test, tests, tests-only or small) hold at once, as a percent rounded up: 30 lets 2 of 5 slots go to them. At the cap a small issue is skipped and the slot goes to the next issue in the Next up order; a ranked small issue is still taken. 100 lifts the cap; 0 starts none. Read on every pick.",
+  },
+  "polish.capMinutes": {
+    label: "Run time a polish issue may take (minutes)",
+    env: "FORGE_POLISH_CAP_MINUTES",
+    kind: { type: "count", min: 1, max: 1440 },
+    fallback: "60",
+    help: "An issue labelled polish is small work: a builder run on it that has gone this many minutes is stopped, not extended, and the issue gets one comment saying what is left. Read on every tick.",
+  },
+  "pace.floor": {
+    label: "Slots the pace always leaves reviews and assigned work",
+    env: "FORGE_PACE_FLOOR",
+    kind: { type: "count", min: 1, max: 16 },
+    fallback: "2",
+    help: "While the week's pace allows any slots, this many reviews and issues a person assigned may run at once, apart from the crew's own picks, however hard the pace slows them; also the fewest slots a fast burn slows a repository to. At the reserve's wall everything waits. Read on every pump.",
   },
 };
 
@@ -290,6 +330,20 @@ export function bootDefault(db: Database, key: CapacityKey): string {
 }
 
 /**
+ * The ceiling `key` is held under: its default in force, when an admin's
+ * stored count is below it; null for a choice, an unset key or a value at
+ * or above the ceiling. A crew concurrency lowered at runtime holds the
+ * crew back, and this is how a page can say so.
+ */
+export function belowCeiling(db: Database, key: CapacityKey): { value: number; ceiling: number } | null {
+  if (CAPACITY[key].kind.type !== "count") return null;
+  const stored = storedCapacity(db, key);
+  const ceiling = Number(bootDefault(db, key));
+  if (stored === undefined || !Number.isFinite(ceiling) || ceiling <= 0) return null;
+  return Number(stored) < ceiling ? { value: Number(stored), ceiling } : null;
+}
+
+/**
  * A count setting as a number: an admin's value, else `fallback` — the
  * value the calling service booted with, which is the default in force.
  */
@@ -303,6 +357,11 @@ export function capacityCount(
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
+/** The slots the pace leaves reviews and assigned work (`pace.floor`). */
+export function paceFloor(db: Database): number {
+  return Number(capacityValue(db, "pace.floor"));
+}
+
 /** How many hosted children this forge may hold now; read on every use. */
 export function maxChildren(db: Database): number {
   return Number(capacityValue(db, "children.max"));
@@ -313,9 +372,29 @@ export function egressSetting(db: Database): "enforce" | "report" {
   return capacityValue(db, "cells.egress") === "report" ? "report" : "enforce";
 }
 
+/** The model provider hosts a child forge's cell may reach now: none unless an admin chose one. */
+export function childModelHosts(db: Database): readonly string[] {
+  return capacityValue(db, "children.modelEgress") === "openrouter" ? ["openrouter.ai:443"] : [];
+}
+
 /** How many merge-queue candidates of one repository gate at once (#4053). */
 export function queueDepth(db: Database): number {
   return Number(capacityValue(db, "queue.depth"));
+}
+
+/** The most pulls one merge-queue candidate carries (#6674); the line adapts below it. */
+export function queueBatch(db: Database): number {
+  return Number(capacityValue(db, "queue.batch"));
+}
+
+/** The percent of builder slots small issues may hold (#7571). */
+export function smallShare(db: Database): number {
+  return Number(capacityValue(db, "slots.smallShare"));
+}
+
+/** The minutes of run time a polish issue may take before its run is stopped (#8852). */
+export function polishCapMinutes(db: Database): number {
+  return Number(capacityValue(db, "polish.capMinutes"));
 }
 
 /** Whether the platform edge's identity is read at all; on every request. */

@@ -7,8 +7,8 @@
 
 import { defect } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { gitEnv, runGit, runGitRaw, type GitFailure } from "./env.ts";
-import { isSafeRef } from "./guard.ts";
+import { gitEnv, mediaGate, runGit, runGitRaw, type GitFailure } from "./env.ts";
+import { isSafeOid, isSafeRef } from "./guard.ts";
 
 export type ObjectType = "blob" | "tree" | "commit" | "tag";
 
@@ -372,6 +372,44 @@ async function viaReader(
   }
 }
 
+/**
+ * A blob's first `bytes` bytes, and never one more off the pipe: `cat-file`
+ * is stopped once they are in, so a 4 GB file costs what its head does. For
+ * a page that must say what a file too large to read is.
+ */
+export async function blobHead(
+  dir: string,
+  rev: string,
+  path: string,
+  bytes: number,
+): Promise<Uint8Array | undefined> {
+  const spec = `${rev}:${path}`;
+  assertBatchSafe(spec);
+  const proc = Bun.spawn(["git", "cat-file", "blob", spec], {
+    cwd: dir,
+    env: gitEnv(),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const reader = proc.stdout.getReader();
+  const head = new Uint8Array(bytes);
+  let filled = 0;
+  try {
+    while (filled < bytes) {
+      const next = await reader.read();
+      if (next.done || next.value === undefined) break;
+      const take = Math.min(next.value.length, bytes - filled);
+      head.set(next.value.subarray(0, take), filled);
+      filled += take;
+    }
+  } finally {
+    proc.kill("SIGKILL");
+  }
+  if (filled === 0 && (await proc.exited) !== 0) return undefined;
+  return head.subarray(0, filled);
+}
+
 function classify(body: Uint8Array, size: number, oid: string): BlobForRender {
   // NUL in the first 8KB is git's own binary heuristic.
   if (body.subarray(0, 8000).includes(0))
@@ -389,10 +427,12 @@ export interface Ref {
 export async function listRefs(
   dir: string,
   prefix = "refs/",
+  newestFirst = false,
 ): Promise<Result<Ref[], GitFailure>> {
   const result = await runGit(
     [
       "for-each-ref",
+      ...(newestFirst ? ["--sort=-refname", "--sort=-creatordate"] : []),
       "--format=%(refname)%00%(objectname)%00%(*objectname)",
       "--",
       prefix,
@@ -490,32 +530,26 @@ export interface LogOptions {
   skip?: number;
   /** Restrict to commits touching this tree path. */
   path?: string;
+  /** Only commits whose message matches this extended regular expression. */
+  grep?: string;
 }
 
-export async function commitLog(
-  dir: string,
-  rev: string,
-  options: LogOptions = {},
-): Promise<Result<Commit[], GitFailure>> {
-  assertBatchSafe(rev);
-  const args = [
-    "log",
-    "-z",
-    "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%s%x00%b",
-    `--max-count=${options.limit ?? 50}`,
-    `--skip=${options.skip ?? 0}`,
-    rev,
-    "--",
-  ];
-  if (options.path !== undefined) args.push(options.path);
-  const result = await runGitRaw(args, { cwd: dir });
-  if (!result.ok) return result;
+/** When `oid` was committed, as an ISO time; undefined when git cannot say. */
+export async function committedAt(dir: string, oid: string): Promise<string | undefined> {
+  assertBatchSafe(oid);
+  const result = await runGitRaw(["show", "-s", "--format=%cI", oid, "--"], { cwd: dir });
+  if (!result.ok) return undefined;
+  const when = new Date(new TextDecoder().decode(result.value).trim());
+  return Number.isNaN(when.getTime()) ? undefined : when.toISOString();
+}
 
-  const text = new TextDecoder().decode(result.value);
+/** The `git log -z` format `parseLogRecords` reads: seven NUL-separated fields. */
+export const LOG_FORMAT = "%H%x00%P%x00%an%x00%ae%x00%aI%x00%s%x00%b";
+
+/** Records of `git log -z --format=LOG_FORMAT`: groups of 7 NUL-separated fields. */
+export function parseLogRecords(bytes: Uint8Array): Commit[] {
   const commits: Commit[] = [];
-  // -z terminates each record with NUL; fields inside are NUL-separated too,
-  // so records are groups of 7 fields.
-  const fields = text.split("\0");
+  const fields = new TextDecoder().decode(bytes).split("\0");
   for (let i = 0; i + 6 < fields.length; i += 7) {
     commits.push({
       oid: fields[i]!,
@@ -527,7 +561,30 @@ export async function commitLog(
       body: fields[i + 6]!.replace(/\n$/, ""),
     });
   }
-  return ok(commits);
+  return commits;
+}
+
+export async function commitLog(
+  dir: string,
+  rev: string,
+  options: LogOptions = {},
+): Promise<Result<Commit[], GitFailure>> {
+  assertBatchSafe(rev);
+  const args = [
+    "log",
+    "-z",
+    `--format=${LOG_FORMAT}`,
+    `--max-count=${options.limit ?? 50}`,
+    `--skip=${options.skip ?? 0}`,
+    ...(options.grep === undefined ? [] : ["--extended-regexp", `--grep=${options.grep}`]),
+    rev,
+    "--",
+  ];
+  if (options.path !== undefined) args.push(options.path);
+  const result = await runGitRaw(args, { cwd: dir });
+  if (!result.ok) return result;
+
+  return ok(parseLogRecords(result.value));
 }
 
 export interface PathListing {
@@ -583,4 +640,96 @@ export async function refTip(dir: string, ref: string): Promise<string | undefin
     // no packed-refs
   }
   return undefined;
+}
+
+/** How many requests may wait for a media permit before the next is turned away. */
+export const MEDIA_QUEUE_MAX = 32;
+/** A stream nobody has pulled from for this long is ended and its permit returned. */
+export const MEDIA_IDLE_MS = 30_000;
+
+/**
+ * Bytes `start`..`end` (inclusive) of the blob `oid`, streamed straight off
+ * `git cat-file` and never held whole: a 2 GB video costs a pipe, not 2 GB
+ * of memory. Git cannot seek inside a blob, so the bytes before `start` are
+ * read and dropped; past `end` the process is killed.
+ *
+ * The permit is taken before the stream exists, so there is no stream to
+ * cancel while it is waiting; a reader whose `signal` aborts in the queue
+ * gets `"gone"` and the permit goes back unspent. With `MEDIA_QUEUE_MAX`
+ * already waiting, the answer is `"busy"` (a 503) rather than one more
+ * waiter. Once open, the stream gives its permit back when it ends, when its
+ * reader hangs up or its signal aborts, or when nothing has pulled from it
+ * for `idleMs`, which keeps a reader that never reads from holding a permit
+ * for good.
+ */
+export async function blobStream(
+  dir: string,
+  oid: string,
+  start: number,
+  end: number,
+  limits: { idleMs?: number; queueMax?: number; signal?: AbortSignal } = {},
+): Promise<ReadableStream<Uint8Array> | "busy" | "gone"> {
+  if (!isSafeOid(oid)) defect("git.unsafe_oid", `unsafe oid: ${JSON.stringify(oid)}`);
+  const free = mediaGate.stats();
+  if (free.active >= free.limit && free.waiting >= (limits.queueMax ?? MEDIA_QUEUE_MAX))
+    return "busy";
+  const release = await mediaGate.acquire();
+  // The reader left while it waited: the permit goes straight back, unspent.
+  if (limits.signal?.aborted) {
+    release();
+    return "gone";
+  }
+  const proc = Bun.spawn(["git", "cat-file", "blob", oid], {
+    cwd: dir,
+    env: gitEnv(),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const source = proc.stdout.getReader();
+  const idleMs = limits.idleMs ?? MEDIA_IDLE_MS;
+  let idle: ReturnType<typeof setTimeout> | undefined;
+  let offset = 0;
+  let ended = false;
+  const finish = (): void => {
+    if (ended) return;
+    ended = true;
+    clearTimeout(idle);
+    limits.signal?.removeEventListener("abort", finish);
+    proc.kill("SIGKILL");
+    release();
+  };
+  limits.signal?.addEventListener("abort", finish, { once: true });
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      // Armed from the first moment, so a response nobody ever reads ends too.
+      idle = setTimeout(() => {
+        finish();
+        controller.error(new Error("media stream idle"));
+      }, idleMs);
+    },
+    async pull(controller) {
+      idle?.refresh();
+      while (true) {
+        const next = await source.read();
+        const chunk = next.value;
+        if (next.done || chunk === undefined) break;
+        const from = offset;
+        offset += chunk.length;
+        if (offset <= start) continue;
+        // A copy, not a view: Bun may recycle the pipe's buffer.
+        controller.enqueue(
+          chunk.slice(Math.max(0, start - from), Math.min(chunk.length, end + 1 - from)),
+        );
+        if (offset > end) break;
+        return;
+      }
+      if (ended) return;
+      finish();
+      controller.close();
+    },
+    cancel() {
+      finish();
+    },
+  });
 }

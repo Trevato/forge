@@ -1,6 +1,6 @@
 /** The OpenAPI document names every route the manifest names. */
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,12 +13,18 @@ test("every http route the manifest names is described", () => {
   const named = [...src.matchAll(/http: [`"]([^`"]+)[`"]/g)].flatMap((m) =>
     m[1]!.split(", then ").map((one) => {
       const [method, path] = one.replace(" {headRepo}", "").replace(/\?.*/, "").split(" ");
-      return [method!.toLowerCase(), path!.replaceAll("${r}", "/api/v1/repos/{owner}/{name}")] as const;
+      return [method!.toLowerCase(), path!
+        .replaceAll("${r}", "/api/v1/repos/{owner}/{name}")
+        .replace("/orgs/${account.username}/", "/orgs/{org}/")
+        .replace("/users/${account.username}/", "/users/{username}/")] as const;
     }),
   );
   expect(named.length).toBeGreaterThan(5);
   const doc = openapi("https://f.test", "1") as any;
+  // The sign-up and sign-in pages are HTML for a person, not part of the API.
+  const pages = new Set(["/signup", "/signin"]);
   for (const [method, path] of named) {
+    if (pages.has(path)) continue;
     const p = path.replace(/\{(\w+)\}/g, "{$1}");
     expect(doc.paths[p]?.[method], `${method} ${p}`).toBeDefined();
   }
@@ -27,7 +33,8 @@ test("every http route the manifest names is described", () => {
 });
 
 test("every described route is registered in the router", () => {
-  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts"]
+  const src = ["src/http/server.ts", "src/http/api.ts", "src/http/mcp.ts", "src/http/passport_edge.ts", "src/http/feed.ts", "src/http/checks_recheck.ts", "src/contract/served.ts",
+    ...readdirSync("src/http/api").map((f) => `src/http/api/${f}`)]
     .map((f) => readFileSync(f, "utf8"))
     .join("\n")
     // A route registered in a loop over issues and pulls is two routes.
@@ -36,8 +43,8 @@ test("every described route is registered in the router", () => {
     .replace(/"(PUT)",\s*`([^`]*)\$\{kind\}([^`]*)`/g, (_, m, a, b) => `"${m}", "${a}issues${b}"\n"${m}", "${a}pulls${b}"`);
   const browse = /const BROWSE = "([^"]+)"/.exec(src)![1]!;
   const registered = new Set(
-    [...src.matchAll(/"(GET|POST|PATCH|DELETE|PUT)",\s*(?:"([^"]+)"|`\$\{BROWSE\}([^`]*)`)/g)].map(
-      (m) => `${m[1]} ${m[2] ?? browse + m[3]}`,
+    [...src.matchAll(/"(GET|POST|PATCH|DELETE|PUT)",\s*(?:"([^"]+)"|`\$\{BROWSE\}([^`]*)`|(BROWSE)\s*,)/g)].map(
+      (m) => `${m[1]} ${m[2] ?? browse + (m[3] ?? "")}`,
     ),
   );
   const shape = (p: string) => p.replace(/\{\w+\}|[:*]\w+/g, ":");
@@ -126,6 +133,44 @@ test("making and listing apps is described with every field the route reads", ()
   for (const field of described) expect([...read], `described ${field}`).toContain(field);
   for (const code of ["unverified", "app_limit", "no_such_agent", "name_taken"])
     expect(post.responses.default.description).toContain(`\`${code}\``);
+});
+
+test("the caller's own routes are described, pinning included", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const want: Record<string, string[]> = {
+    "/api/v1/user": ["get", "patch"],
+    "/api/v1/user/keys": ["get", "post"],
+    "/api/v1/user/keys/{id}": ["delete"],
+    "/api/v1/user/pins": ["get"],
+    "/api/v1/user/pins/{owner}/{name}": ["put", "delete"],
+    "/api/v1/user/assigned": ["get"],
+    "/api/v1/user/orgs": ["get"],
+  };
+  for (const [path, methods] of Object.entries(want))
+    for (const m of methods) {
+      expect(doc.paths[path]?.[m], `${m} ${path}`).toBeDefined();
+      expect(doc.paths[path][m].security).toBeDefined();
+    }
+  expect(doc.paths["/api/v1/user/keys"].post.summary).toContain("scope rw");
+  const refusals = (path: string, m: string): string => doc.paths[path][m].responses.default.description;
+  for (const code of ["forbidden", "invalid_commit_email", "invalid_email", "email_taken", "display_name_reserved", "display_name_mixed_script"])
+    expect(refusals("/api/v1/user", "patch")).toContain(`\`${code}\``);
+  for (const code of ["invalid_key", "key_exists"]) expect(refusals("/api/v1/user/keys", "post")).toContain(`\`${code}\``);
+  expect(refusals("/api/v1/user/keys/{id}", "delete")).toContain("`not_found`");
+  expect(refusals("/api/v1/user/keys/{id}", "delete")).toContain("404");
+  for (const m of ["put", "delete"]) expect(refusals("/api/v1/user/pins/{owner}/{name}", m)).toContain("`not_found`");
+  for (const [path, m] of [["/api/v1/user/keys", "post"], ["/api/v1/user/keys/{id}", "delete"], ["/api/v1/user/pins/{owner}/{name}", "put"], ["/api/v1/user/pins/{owner}/{name}", "delete"]] as [string, string][])
+    for (const code of ["unauthorized", "forbidden"]) expect(refusals(path, m), `${m} ${path}`).toContain(`\`${code}\``);
+  const assigned = doc.paths["/api/v1/user/assigned"].get;
+  expect(assigned.summary).toContain("next_cursor is always null");
+  expect(assigned.parameters?.map((p: any) => p.name) ?? []).not.toContain("limit");
+  for (const path of ["/api/v1/user/keys", "/api/v1/user/orgs", "/api/v1/user/pins"]) {
+    const get = doc.paths[path].get;
+    expect(get.summary, path).toContain("{ items");
+    expect(get.summary, path).toContain("next_cursor");
+    expect(get.summary, path).not.toContain("array");
+    expect(get.parameters.map((p: any) => p.name), path).toEqual(expect.arrayContaining(["limit", "cursor"]));
+  }
 });
 
 test("the boards routes are described", () => {
@@ -250,6 +295,27 @@ test("an app's routes are described, and env values are never read back", () => 
   expect(doc.paths[`${A}/{env}/redeploy`].post.responses["202"]).toBeDefined();
 });
 
+test("triage, confirming a wait, a limb and proposal tokens are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  for (const [path, status] of [
+    [`${R}/reports/{id}/accept`, "201"],
+    [`${R}/reports/{id}/dismiss`, "200"],
+    [`${R}/issues/{number}/dependencies/{blocker}/confirm`, "204"],
+    [`${R}/milestones/{number}/limb`, "200"],
+    [`${R}/proposal-tokens`, "201"],
+  ] as const) {
+    const op = doc.paths[path]?.post;
+    expect(op, path).toBeDefined();
+    expect(op.security, path).toBeDefined();
+    expect(op.responses[status], `${path} ${status}`).toBeDefined();
+  }
+  expect(doc.paths[`${R}/milestones/{number}/limb`].post.responses["201"]).toBeDefined();
+  const confirm = doc.paths[`${R}/issues/{number}/dependencies/{blocker}/confirm`].post.responses.default.description;
+  expect(confirm).toContain("no account (401)");
+  expect(confirm).not.toContain("422");
+});
+
 test("browsing an origin's code is described, and a refusal matches what the route answers", async () => {
   const doc = openapi("https://f.test", "1") as any;
   const B = "/api/v1/user/origins/{id}/browse/{owner}/{name}";
@@ -302,6 +368,24 @@ test("mirroring and forking from an origin, its job and stream, and origin apps 
   const row = ROUTES.find((r: any) => r.path === "/api/v1/user/origins/{id}/mirror/{job}/stream") as any;
   expect(row.summary).toContain("text/event-stream");
   expect(row.summary).toContain("mirror.done");
+});
+
+test("the caller's origins are described, from listing to removal, with no token in the document", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const O = "/api/v1/user/origins";
+  const want: Record<string, string[]> = {
+    [O]: ["get", "post"],
+    [`${O}/oauth`]: ["post"],
+    [`${O}/oauth/{id}`]: ["get"],
+    [`${O}/{id}`]: ["delete"],
+    [`${O}/{id}/sync`]: ["post"],
+    [`${O}/{id}/repos`]: ["get"],
+  };
+  for (const [path, methods] of Object.entries(want))
+    for (const m of methods) expect(doc.paths[path]?.[m], `${m} ${path}`).toBeDefined();
+  expect(doc.paths[O].post.responses["201"]).toBeDefined();
+  expect(doc.paths[`${O}/oauth`].post.responses["201"]).toBeDefined();
+  expect(JSON.stringify(doc.paths[O])).not.toMatch(/ghp_|github_pat_/);
 });
 
 test("the admin's writes are described: a capacity setting, a limit and a team", () => {
@@ -386,6 +470,58 @@ test("the origin applications are described, and a client secret is written, nev
   expect(list.get.summary).toContain("bare array [{ id,");
   expect(list.get.summary).toContain("hasSecret");
   expect(JSON.stringify(add.responses["201"])).not.toContain("clientSecret");
+});
+
+test("labels made and removed, a commit's check and a file read by path are described", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  const make = doc.paths[`${R}/labels`].post;
+  expect(make.security).toBeDefined();
+  expect(Object.keys(make.requestBody.content["application/json"].schema.properties)).toEqual(["name", "color"]);
+  expect(make.responses["201"]).toBeDefined();
+  const del = doc.paths[`${R}/labels/{id}`].delete;
+  expect(del.security).toBeDefined();
+  expect(del.responses["204"]).toBeDefined();
+  const check = doc.paths[`${R}/commits/{oid}/check`].get;
+  expect(check.security).toBeUndefined();
+  expect(check.parameters.find((p: any) => p.name === "oid").in).toBe("path");
+  const read = doc.paths[`${R}/contents/{path}`].get;
+  expect(read.security).toBeUndefined();
+  expect(read.parameters.map((p: any) => p.name)).toEqual(["owner", "name", "path", "ref"]);
+});
+
+test("the feed, chips and asks routes are described, and the bulk default is a preview", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const want: Record<string, string[]> = {
+    "/api/v1/feed": ["get"],
+    "/api/v1/feed/chips": ["get", "post"],
+    "/api/v1/feed/interactions": ["post"],
+    "/api/v1/feed/tells": ["post"],
+    "/api/v1/asks": ["get"],
+    "/api/v1/asks/bulk": ["post"],
+    "/api/v1/asks/bulk/{id}/undo": ["post"],
+    "/api/v1/asks/decide": ["post"],
+    "/api/v1/asks/decide/{id}/undo": ["post"],
+    "/api/v1/asks/proposal/{id}/{verb}": ["post"],
+  };
+  for (const [path, methods] of Object.entries(want))
+    for (const m of methods) expect(doc.paths[path]?.[m]?.security, `${m} ${path}`).toBeDefined();
+  const bulk = doc.paths["/api/v1/asks/bulk"].post;
+  expect(bulk.summary).toContain("default is a preview");
+  expect(bulk.responses["201"]).toBeDefined();
+  expect(bulk.responses["200"]).toBeDefined();
+  expect(Object.keys(bulk.requestBody.content["application/json"].schema.properties)).toEqual(["action", "items", "reason", "preview"]);
+  expect(bulk.responses.default.description).toContain("too_many");
+  expect(doc.paths["/api/v1/asks/decide"].post.responses.default.description).toContain("too_many");
+});
+
+test("every feed and asks route src/http/feed.ts registers is described", () => {
+  const src = readFileSync("src/http/feed.ts", "utf8");
+  const doc = openapi("https://f.test", "1") as any;
+  const registered = [...src.matchAll(/router\.add\("(\w+)",\s*"([^"]+)"/g)].filter((m) => /^\/api\/v1\/(feed|asks)\b/.test(m[2]!))
+    .map((m) => [m[1]!.toLowerCase(), m[2]!.replace(/:(\w+)/g, "{$1}")] as const);
+  expect(registered.length).toBeGreaterThan(8);
+  for (const [method, path] of registered) expect(doc.paths[path]?.[method], `${method} ${path}`).toBeDefined();
 });
 
 test("the served document is tagged by version and origin and answers 304 to its tag", async () => {

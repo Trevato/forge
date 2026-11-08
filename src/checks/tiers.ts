@@ -9,6 +9,8 @@
  * only decides.
  */
 
+import type { GateReason } from "./gate_reason.ts";
+import type { GateTests } from "./gate_tests.ts";
 import { GATE_FILE, needsFull, reach, reachLine, type Impact } from "./impact.ts";
 
 /** A test under this many seconds is always in the fast tier. */
@@ -16,6 +18,26 @@ export const QUICK_SECONDS = 1;
 
 /** The fast tier's budget, in seconds; a plan over it is said, not hidden. */
 export const FAST_BUDGET_SECONDS = 5 * 60;
+
+/**
+ * The repo-wide rule tests (#7138): each reads every test file, every
+ * migration or the whole README, so no diff "touches" them by coverage,
+ * import or name, yet any file can break them. They run in every fast
+ * tier, whatever else the diff holds (a diff of only the check's own
+ * timing and impact tables breaks no rule), so a rule breaker is red on its own pull and
+ * not in a merge batch. Each is a second or two.
+ */
+export const RULE_TESTS: readonly string[] = [
+  // No raw wall-clock budget (#4429), no tight wall-clock bound, no retry.
+  "test/flake.test.ts",
+  // Every migration is pinned by its own pull, and no pinned one is edited.
+  "test/schema-migrations.test.ts",
+  // The README budget: its size, its line cap, and its index into docs/.
+  "test/readme-front-door.test.ts",
+  "test/readme-cap.test.ts",
+  // The page audit: docs/design/audit.md names every top-level page.
+  "test/design-audit.test.ts",
+];
 
 /** What a test the times table does not name is assumed to take. */
 const UNKNOWN_SECONDS = 5;
@@ -97,8 +119,8 @@ export interface FastPlan {
 /**
  * The fast tier for a diff: a changed test; a test importing a changed file
  * directly or through up to two hops of source; a test whose name matches a
- * changed source path; whatever the pull learned; and every test known to
- * take under a second. A test with no recorded time is not known to be quick, so it runs only when
+ * changed source path; every repo-wide rule test; whatever the pull
+ * learned; and every test known to take under a second. A test with no recorded time is not known to be quick, so it runs only when
  * something above picks it.
  */
 export function fastSet(input: FastInput): FastPlan {
@@ -145,6 +167,9 @@ export function fastSet(input: FastInput): FastPlan {
   };
   const changed = new Set(diffed);
   for (const file of changed) take(file, "changed");
+  // The check's own tables can break no rule: a diff of only those runs none (#3579).
+  if (diffed.some((f) => !f.endsWith("test-times.json") && !f.endsWith("test-impact.json")))
+    for (const test of RULE_TESTS) take(test, "repo-wide rule");
   // What a guess looks for. A test the map has measured already answered
   // for every change the map can see, by what it executes; it is guessed
   // only against the changes the map cannot see, so one unreached file
@@ -250,6 +275,10 @@ export type Judged =
       readonly comment: string;
       /** Joins the pull's fast set. */
       readonly learn: readonly string[];
+      /** Why the gate went red (#5276); a red read without one is the code's. */
+      readonly reason?: GateReason;
+      /** What its tests said: the counts and the failing tests by name (#6739). */
+      readonly tests?: GateTests;
     };
 
 /**
@@ -270,16 +299,22 @@ export function landVerdict(
   green: boolean,
   failedTests: readonly string[],
   failedFiles: readonly string[] = [],
+  logLink?: string,
+  reason?: GateReason,
+  tests?: GateTests,
 ): Judged {
   if (green) return { lands: true };
   const names = failedTests.map((name) => `- ${name}`).join("\n");
+  const kept = logLink === undefined ? "" : `\n\nThe gate's log: ${logLink}`;
   return {
     lands: false,
     reopen: true,
     comment:
       failedTests.length === 0
-        ? "The full gate on land was red and named no test; the pull is open again."
-        : `The full gate on land was red; the pull is open again. Red tests:\n${names}`,
+        ? `The full gate on land was red and named no test; the pull is open again.${kept}`
+        : `The full gate on land was red; the pull is open again. Red tests:\n${names}${kept}`,
     learn: [...new Set(failedFiles)],
+    ...(reason === undefined ? {} : { reason }),
+    ...(tests === undefined ? {} : { tests }),
   };
 }

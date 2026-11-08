@@ -33,6 +33,13 @@ describe("feed card markup", () => {
     expect(out).toContain('class="small muted break"');
   });
 
+  test("a long actor and app name carry break", () => {
+    const long = "a".repeat(120);
+    const out = feedCard(item({ actor: long, app: `alice/${long}` })).text;
+    expect(out).toContain(`<strong class="break">${long}</strong`);
+    expect(out).toContain(`<span class="muted small break">alice/${long} · `);
+  });
+
   test("a tell form posts to the app's own tell", () => {
     const out = feedCard(item({ kind: "pull", link: "/alice/notes/pulls/1" })).text;
     expect(out).toContain('action="/alice/notes/tell"');

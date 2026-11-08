@@ -15,6 +15,8 @@ const outcome = (over: Partial<ClaudeOutcome>): ClaudeOutcome => ({
   turns: 1,
   tokensIn: 0,
   tokensOut: 0,
+  contextTokens: 0,
+  contextWindow: 0,
   reason: "error",
   ...over,
 });

@@ -16,6 +16,7 @@
  * One answer for the API (`GET /api/v1/health`) and the MCP `health` tool.
  */
 
+import { flakeLine, flakeList, flakeNeeds } from "../checks/flake.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { listApps } from "../core/apps.ts";
@@ -95,6 +96,7 @@ export function forgeNeeds(app: App, actor: User | undefined): string[] | undefi
     ...(rollout === null ? [] : [rollout]),
     ...h.incidents.map((i) => `${i.key}: ${i.message}`),
     ...h.degraded.map(needLine),
+    ...flakeNeeds(h.flakes),
   ];
 }
 
@@ -105,6 +107,11 @@ export function needLine(d: Degraded, now: number = Date.now()): string {
   return d.cause.startsWith("stuck:")
     ? d.sentence
     : `${d.sentence} Since ${sinceWords(d.since, now)}.`;
+}
+
+/** The week's flaky tests as one line for a site admin; `null` for anyone else, and when none flaked. */
+export function forgeFlakes(app: App, actor: User | undefined): string | null {
+  return actor?.isAdmin === true ? flakeLine(flakeList(app.db, Date.now())) : null;
 }
 
 /**

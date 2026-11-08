@@ -174,9 +174,11 @@ describe("/boards", () => {
     expect(body).toContain('class="row-trail bar"');
     expect(body).toContain('class="list setting-list"');
     expect(body).toContain('action="/boards/pin-panel"');
-    for (const op of ["move", "remove", "rename", "settings", "duplicate", "delete"]) {
+    for (const op of ["move", "rename", "settings", "duplicate"]) {
       expect(body).toContain(`action="/boards/fleet-health/${op}"`);
     }
+    expect(body).toContain(`href="/-/confirm?to=${encodeURIComponent("/boards/fleet-health/delete")}"`);
+    expect(body).toContain(`href="/-/confirm?to=${encodeURIComponent("/boards/fleet-health/remove?index=0")}`);
     for (const word of ["Panels", "Add a panel", "Up", "Down", "Remove", "Pin to home", "Save settings", "Duplicate", "Delete this board"]) {
       expect(body).toContain(word);
     }
@@ -268,7 +270,10 @@ describe("/boards", () => {
   test("a non-admin and a stranger get 404 on every board route", async () => {
     for (const path of ["/boards", "/boards/fleet-health", "/boards/fleet-health/live"]) {
       expect((await fetch(servers.url + path, { headers: { authorization: `Bearer ${tok.bob}` } })).status).toBe(404);
-      expect((await fetch(servers.url + path)).status).toBe(404);
+      const stranger = await fetch(servers.url + path, { redirect: "manual" });
+      // The list sends a stranger to sign in (#6733, so /flow is no dead end); a board itself stays a 404.
+      if (path === "/boards") expect(stranger.headers.get("location")).toContain("next=%2Fboards");
+      else expect(stranger.status).toBe(404);
     }
     expect((await post("/boards/fleet-health/delete", {}, "bob")).status).toBe(404);
     expect((await post("/boards/new", { title: "x" }, "bob")).status).toBe(404);

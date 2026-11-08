@@ -262,4 +262,48 @@ describe("attaching a look to a pull", () => {
     expect(done.value.url).toContain("/alice/garden/looks/");
     expect(kept().length).toBe(before + 1);
   });
+
+  test("MCP pull carries the looks of its pull, newest first; a pull with none has []", async () => {
+    const call = async (token: string, number: number) => {
+      const res = await fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "pull", arguments: { repo: "alice/garden", number } },
+        }),
+      });
+      const body = (await res.json()) as any;
+      return JSON.parse(body.result.content[0].text);
+    };
+    const done = await mcp(tokens["alice"]!, { ...good, says: "seen over MCP", dryRun: false });
+    const seen = await call(tokens["alice"]!, pull.number);
+    expect(seen.looks[0]).toMatchObject({
+      width: "phone",
+      says: "seen over MCP",
+      by: "alice",
+      commit: pull.headOid,
+      url: done.value.url,
+    });
+    expect(seen.looks.length).toBe(kept().length);
+    const ats = seen.looks.map((l: any) => l.at);
+    expect(ats).toEqual([...ats].sort().reverse());
+    // Not a writer: none.
+    expect((await call(tokens["bob"]!, pull.number)).looks).toEqual([]);
+    // A pull with no looks.
+    await commitToBranch(app, alice, repo, {
+      branch: "two", base: "main", message: "two", files: [{ path: "two.md", content: "x\n" }],
+    });
+    const second = await openPull(app, alice, repo, {
+      title: "Change two", body: "", baseBranch: "main", headBranch: "two",
+    });
+    if (!second.ok) throw new Error(String(second.error));
+    expect((await call(tokens["alice"]!, second.value.number)).looks).toEqual([]);
+  });
 });

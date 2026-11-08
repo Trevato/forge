@@ -171,6 +171,23 @@ export function transact<T>(db: Database, work: () => T): T {
   return withRetry(() => tx.immediate());
 }
 
+/**
+ * A write not worth the thread (#6957): telemetry that keeps its rows and
+ * tries again. `busy_timeout` waits on the one thread every request is
+ * served from, so a write behind another process's lock (a draining forge
+ * on the same data) stops /healthz with it. Here the lock is tried once and
+ * SQLITE_BUSY comes back at once; the handle's own timeout is put back after.
+ */
+export function withoutWaiting<T>(db: Database, work: () => T): T {
+  const was = db.query<{ timeout: number }, []>("PRAGMA busy_timeout").get()?.timeout ?? BUSY_TIMEOUT_MS;
+  db.exec("PRAGMA busy_timeout = 0");
+  try {
+    return work();
+  } finally {
+    db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(was))}`);
+  }
+}
+
 export function isBusy(error: unknown): boolean {
   if (error === null || typeof error !== "object") return false;
   const code = (error as { code?: unknown }).code;

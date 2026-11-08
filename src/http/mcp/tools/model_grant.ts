@@ -6,7 +6,7 @@ import { good, bad, type Tool, mayBoards } from "../shared.ts";
 export const tool: Tool = {
   name: "model_grant",
   description:
-    "Give a person a capped monthly model grant (`usdPerMonth`, 0 takes it back). Person admins.",
+    "Give a person a monthly model grant (`usdPerMonth`, 0 takes it back). Person admins.",
   inputSchema: {
     type: "object",
     properties: {
@@ -17,6 +17,7 @@ export const tool: Tool = {
     required: ["username", "usdPerMonth"],
   },
   writes: true,
+  doc: "`{ username, usdPerMonth, dryRun? }` (a forge admin who is a person): give an account a capped monthly model grant in dollars (0 takes it back); planned unless `dryRun` is false, applying takes an admin token",
   dryByDefault: true,
   run(ctx, user, args) {
     const usd = args["usdPerMonth"];

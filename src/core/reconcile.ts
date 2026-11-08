@@ -36,6 +36,8 @@ export async function reconcile(app: App): Promise<void> {
       const row = rows[index];
       if (row === undefined) return;
       const dir = repoDir(app.reposRoot, row.owner_name, row.name);
+      // HEAD, not the directory: hooks can only be installed into a usable
+      // repository, and a half-removed one (no HEAD) is not that.
       if (await repoExists(dir)) {
         await installHooks(dir);
         refreshed++;

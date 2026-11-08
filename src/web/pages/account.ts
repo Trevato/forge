@@ -9,16 +9,17 @@
  * has been read once.
  */
 
-import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { resendVerification } from "../../actions/verify.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { emailVerified } from "../../core/verify.ts";
 import {
   addSshKey,
+  CHANGE_PASSWORD_WORDS,
   changePassword,
   createToken,
   deleteSshKey,
   deleteToken,
+  PASSWORD_CHANGED_WORDS,
   updateProfile,
 } from "../../actions/users.ts";
 import {
@@ -33,18 +34,25 @@ import { linkEdgeLogin, linkedLogin, unlinkEdgeLogin } from "../../core/edge_lin
 import { LAST_WAY_IN, linkedParent, parentIssuerOf, unlinkParent } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { listKeys } from "../../core/keys.ts";
+import { listTokensWithClients } from "../../core/oauth.ts";
+import {
+  PROFILE_FALLBACK,
+  PROFILE_REFUSAL_FIELD,
+  PROFILE_REFUSALS,
+} from "../../actions/profile_words.ts";
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
-import { ADMIN_TOKEN_WORDS, listTokens, type TokenScope } from "../../core/tokens.ts";
+import { ADMIN_TOKEN_WORDS, type TokenScope } from "../../core/tokens.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
 import { isStandInEmail } from "../../core/users.ts";
-import { cookieValue, type Ctx } from "../../http/context.ts";
+import { cookieValue, isAccountItself, type Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
   settingsLayout,
   signInFirst,
   type SettingsSection,
+  forbiddenPage,
 } from "../chrome.ts";
 import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
@@ -62,6 +70,7 @@ import {
   terminalCommand,
   time,
   field as uiField,
+  icon,
 } from "../ui.ts";
 import { everydayLine } from "./everyday.ts";
 import { passkeyJs } from "../passkey-client.ts";
@@ -100,7 +109,7 @@ interface ProfileForm {
   displayName: string;
   email: string;
   commitEmail: CommitEmail;
-  errors?: { displayName?: string; email?: string };
+  errors?: { displayName?: string; email?: string; form?: string };
 }
 
 /** The profile form as the account stands now. */
@@ -110,11 +119,24 @@ const currentProfile = (user: User): ProfileForm => ({
   commitEmail: user.commitEmail,
 });
 
+/**
+ * A refused submit, in the shared danger toast (as a failed mirror is): under
+ * the form's actions, where the toast's own top margin sits, so nothing above
+ * it moves when it appears.
+ */
+const refusal = (message: string | undefined): Html =>
+  when(
+    message,
+    (m) => html`<div class="toast" data-tone="danger" role="alert">
+      ${icon("alert")}
+      <div class="toast-body">${m}</div>
+    </div>`,
+  );
+
 function notifyView(ctx: Ctx, error?: string): Html {
   const host = notifyHost(notifyUrlOf(ctx.app.db, ctx.auth.user!.id));
   return card(
     html`<form method="post" action="/settings/notify">
-      ${when(error, (m) => html`<p class="error-note">${m}</p>`)}
       ${uiField({
         label: "Notify URL",
         name: "url",
@@ -129,6 +151,7 @@ function notifyView(ctx: Ctx, error?: string): Html {
       <div class="form-actions">
         ${btn("Save notify URL", { variant: "primary" })}
       </div>
+      ${refusal(error)}
     </form>`,
     { head: html`<h3>Phone notifications</h3>` },
   );
@@ -143,9 +166,7 @@ function edgeLinkView(ctx: Ctx): Html {
   return card(
     linked !== undefined
       ? html`<p>open-platform.sh: linked as <strong>${linked}</strong></p>
-          <form method="post" action="/settings/edge/unlink">
-            ${btn("Unlink", { type: "submit" })}
-          </form>`
+          ${confirmAction({ action: "/settings/edge/unlink", verb: "Unlink" })}`
       : html`<p>open-platform.sh: not linked</p>
           ${carried === undefined
             ? html`<p class="hint">Sign in through open-platform.sh, then come back here to link that login.</p>`
@@ -165,9 +186,7 @@ function parentLinkView(ctx: Ctx): Html {
   return card(
     linked
       ? html`<p>${host}: linked</p>
-          <form method="post" action="/settings/parent/unlink">
-            ${btn("Unlink", { type: "submit" })}
-          </form>`
+          ${confirmAction({ action: "/settings/parent/unlink", verb: "Unlink" })}`
       : html`<p>${host}: not linked</p>
           <form method="post" action="/settings/parent/link">
             ${btn(`Link ${host}`, { type: "submit" })}
@@ -246,6 +265,7 @@ function unverifiedNotice(ctx: Ctx): Html {
 
 // POST /settings/email/verify
 export async function resendVerifyLink(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const sent = await resendVerification(ctx.app, ctx.auth.user);
@@ -334,6 +354,7 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
       <div class="form-actions">
         ${btn("Save profile", { variant: "primary" })}
       </div>
+      ${refusal(values.errors?.form)}
     </form>`,
     { head: html`<h3>Public profile</h3>` },
   )}`;
@@ -407,16 +428,10 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
     commitEmail,
   });
   if (!updated.ok) {
+    const words = PROFILE_REFUSALS[updated.error];
+    const at = PROFILE_REFUSAL_FIELD[updated.error];
     const errors: ProfileForm["errors"] =
-      updated.error === "email_taken"
-        ? { email: "Another account already uses that address." }
-        : updated.error === "invalid_email"
-          ? { email: "That doesn't look like an email address." }
-          : updated.error === "display_name_reserved"
-            ? { displayName: "That name belongs to the crew, the owner or the forge." }
-            : updated.error === "display_name_mixed_script"
-              ? { displayName: "Write it in one alphabet: letters from different scripts can pass for other names." }
-              : {};
+      words === undefined || at === undefined ? { form: PROFILE_FALLBACK } : { [at]: words };
     return accountShell(
       ctx,
       "profile",
@@ -512,29 +527,14 @@ export async function passwordUpdate(ctx: Ctx): Promise<Response> {
     source: clientAddress(ctx.request),
   });
   if (!changed.ok) {
-    const error =
-      changed.error === "bad_credentials"
-        ? {
-            field: "current" as const,
-            text: "That isn't your current password.",
-          }
-        : changed.error === "throttled"
-          ? {
-              field: "current" as const,
-              text: "Too many attempts. Try again in a minute.",
-            }
-          : changed.error === "password_too_long"
-          ? { field: "next" as const, text: PASSWORD_TOO_LONG }
-          : changed.error === "weak_password"
-          ? {
-              field: "next" as const,
-              text: "Passwords need at least 10 characters.",
-            }
-          : { field: "current" as const, text: "Something went wrong." };
+    const error = {
+      field: changed.error === "weak_password" || changed.error === "password_too_long" ? ("next" as const) : ("current" as const),
+      text: CHANGE_PASSWORD_WORDS[changed.error],
+    };
     return accountShell(ctx, "password", "Password", passwordView(error), 422);
   }
   return flashTo(ctx, "/settings/password", {
-    message: "Password changed. Existing sessions stay signed in.",
+    message: PASSWORD_CHANGED_WORDS,
   });
 }
 
@@ -600,6 +600,7 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
         See plugins/claude-code and plugins/opencode.
       </p>
       <p class="small">Claude Code</p>
+      <p class="muted small mb">Start it with only FORGE_URL and sign in through /mcp (the forge server): nothing to copy. For scripts, use this command and the forge-token server, which sends the token.</p>
       ${copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command")}
       <p class="small">OpenCode</p>
       ${copyField(
@@ -613,7 +614,7 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
 }
 
 function tokensView(ctx: Ctx): Html {
-  const tokens = timePhase(ctx.request, "tokens", () => listTokens(ctx.app.db, ctx.auth.user!.id));
+  const tokens = timePhase(ctx.request, "tokens", () => listTokensWithClients(ctx.app.db, ctx.auth.user!.id));
   const sessions = timePhase(ctx.request, "sessions", () =>
     listSessions(ctx.app.db, ctx.auth.user!.id, cookieValue(ctx.request, "forge_session")),
   );
@@ -645,7 +646,15 @@ function tokensView(ctx: Ctx): Html {
                 ${tokens.map(
                   (t) =>
                     html`<tr>
-                      <td><strong>${t.name}</strong></td>
+                      <td>
+                        <strong>${t.name}</strong>
+                        ${when(
+                          t.oauthClient,
+                          (client) => html`<div class="muted small" data-oauth-client>
+                            ${client} · Signed in through OAuth; renews itself until you delete it
+                          </div>`,
+                        )}
+                      </td>
                       <td>${badge(t.scope)}</td>
                       <td class="muted">${time(t.createdAt)}</td>
                       <td class="muted">
@@ -716,10 +725,11 @@ export function tokensPage(ctx: Ctx): Response {
 // POST /settings/tokens
 export async function tokenCreate(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
-  // Minting a token must come from a browser session or the password — never
-  // from another token (no privilege bootstrapping).
-  if (ctx.auth.via !== "session" && ctx.auth.via !== "password") {
-    return new Response("forbidden", { status: 403 });
+  // Minting a token must come from the account itself — a browser session,
+  // the platform edge's sign-in, or the password — never from another token
+  // (no privilege bootstrapping). readForm below refuses a cross-site post.
+  if (!isAccountItself(ctx.auth)) {
+    return forbiddenPage(ctx, "A token is made from your own signed-in account, never by another token.");
   }
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
@@ -847,10 +857,6 @@ function keysView(
         )}
     ${card(
       html`<form method="post" action="/settings/keys">
-        ${when(
-          values.error,
-          (message) => html`<p class="error-note">${message}</p>`,
-        )}
         ${uiField({
           label: "Name",
           name: "name",
@@ -870,6 +876,7 @@ function keysView(
         <div class="form-actions">
           ${btn("Add key", { variant: "primary" })}
         </div>
+        ${refusal(values.error)}
       </form>`,
       { head: html`<h3>New SSH key</h3>` },
     )}`;

@@ -8,7 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { createRepo } from "../src/actions/repos.ts";
+import { createRepo, setArchived } from "../src/actions/repos.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { SEARCH_LIMIT } from "../src/actions/search.ts";
@@ -83,6 +83,14 @@ describe("MCP search", () => {
     expect(repos.value.repos.map((x: any) => x.name)).toEqual(["pebble"]);
   });
 
+  test("a blank q answers the empty shape with a note saying what to send", async () => {
+    const r = await tool(aliceRo, { q: "  " });
+    expect(r.value.repos).toEqual([]);
+    expect(r.value.note).toContain("q is empty");
+    expect(r.value.note).toContain("kind=all|repos|issues|code");
+    expect((await tool(aliceRo, { q: "glow", kind: "issues" })).value.note).toBeUndefined();
+  });
+
   test("a caller who cannot read a private repository finds nothing of it", async () => {
     const r = await tool(bobRo, { q: "glow", kind: "issues" });
     expect(r.value.issues.map((i: any) => i.repo.name)).toEqual(["pebble"]);
@@ -102,9 +110,95 @@ describe("MCP search", () => {
     expect(scoped.value.issues.map((i: any) => i.repo.name)).toEqual(["pebble"]);
   });
 
+  test("an unknown kind or a bad limit is refused in the API's words; every kind answers", async () => {
+    expect((await tool(aliceRo, { q: "a", kind: "bogus" })).error).toContain("invalid_kind");
+    expect((await tool(aliceRo, { q: "a", kind: "bogus" })).error).toContain("all, repos, issues or code");
+    for (const limit of [0, 101, 1.5, "5"]) {
+      const r = await tool(aliceRo, { q: "a", limit });
+      expect(r.error).toContain("invalid_limit");
+      expect(r.error).toContain("1 to 100");
+    }
+    for (const kind of ["all", "repos", "issues", "code"]) expect((await tool(aliceRo, { q: "a", kind, limit: 5 })).error).toBeUndefined();
+  });
+
   test("bad arguments are refused", async () => {
-    for (const args of [{}, { q: "" }, { q: "x".repeat(201) }, { q: 5 }, { q: "a", kind: "all" }, { q: "a", repo: 3 }]) {
+    for (const args of [{}, { q: "x".repeat(201) }, { q: 5 }, { q: "a", repo: 3 }]) {
       expect((await tool(aliceRo, args)).error).toBeDefined();
     }
   });
+});
+
+describe("search marks an archived repository", () => {
+  test("the flag in MCP rows and the badge on the page, for repos and code", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-search-archived-"));
+    const app = createApp({ dataDir, port: 0 });
+    const servers = await serve(app);
+    try {
+      const u = await createUser(app.db, {
+        origin: "seed", trusted: true, username: "alice", email: "alice@forge.local",
+        password: "a-good-passphrase", adminIfFirst: true,
+      });
+      if (!u.ok) throw new Error(u.error);
+      const made = await createRepo(app, u.value, { name: "shelved", visibility: "public" });
+      if (!made.ok) throw new Error(String(made.error));
+      const live = await createRepo(app, u.value, { name: "shelvedlive", visibility: "public" });
+      if (!live.ok) throw new Error(String(live.error));
+      const token = createToken(app.db, u.value.id, "ro", "ro").token;
+      const rw = createToken(app.db, u.value.id, "rw", "rw").token;
+      for (const name of ["shelved", "shelvedlive"]) {
+        const pushed = await fetch(`${servers.url}/api/v1/repos/alice/${name}/contents`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${rw}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            branch: "main", message: "needle",
+            files: [{ path: "src/a-rather-long-path/to/needle.txt", content: "a quixotic needle\n" }],
+          }),
+        });
+        expect(pushed.status).toBeLessThan(300);
+      }
+      const call = async (kind = "repos") => {
+        const res = await fetch(`${servers.url}/mcp`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "tools/call",
+            params: { name: "search", arguments: { q: kind === "repos" ? "shelved" : "quixotic", kind } },
+          }),
+        });
+        const body: any = await res.json();
+        return JSON.parse(body.result.content[0].text)[kind] as any[];
+      };
+      const before = await call();
+      expect(before.map((r) => r.archived)).toEqual([false, false]);
+      const done = await setArchived(app, u.value, made.value, true, false);
+      expect(done.ok).toBe(true);
+      const repoRows = await call();
+      expect(repoRows.find((r) => r.name === "shelved").archived).toBe(true);
+      expect(repoRows.find((r) => r.name === "shelvedlive").archived).toBe(false);
+
+      const hits = await call("code");
+      expect(hits.find((h) => h.repo.name === "shelved").archived).toBe(true);
+      expect(hits.find((h) => h.repo.name === "shelvedlive").archived).toBe(false);
+      const codePage = await (await fetch(`${servers.url}/search?q=quixotic&kind=code`)).text();
+      const rows = codePage.split('<li>').filter((r) => r.includes("code-hit"));
+      const hitRow = (name: string) => rows.find((r) => r.includes(`/alice/${name}/blob`))!.split("</li>")[0]!;
+      expect(hitRow("shelved")).toContain("Archived");
+      expect(hitRow("shelvedlive")).not.toContain("Archived");
+
+      const page = await (await fetch(`${servers.url}/search?q=shelved&kind=repos`)).text();
+      const parts = page.split('href="/alice/');
+      const archivedRow = parts.find((p) => p.startsWith("shelved\""))!;
+      const liveRow = parts.find((p) => p.startsWith("shelvedlive\""))!;
+      expect(archivedRow).toContain("Archived");
+      expect(liveRow.split("</li>")[0]).not.toContain("Archived");
+    } finally {
+      servers.stop();
+      app.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

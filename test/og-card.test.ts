@@ -25,6 +25,9 @@ describe("og card", () => {
       expect(svg).toContain('width="1200" height="630"');
       expect(svg).toContain("Fast forge");
       expect(svg).toContain("12 open");
+      // As plain as the home page: no kind label, no edge strip.
+      expect(svg).not.toContain(`>${kind.toUpperCase()}<`);
+      expect(svg).not.toContain(`width="12"`);
     });
   }
 
@@ -52,7 +55,9 @@ describe("og card", () => {
     const svg = renderCard({ kind: "nope" as never, title: "a\u0000b\u0001c" });
     wellFormed(svg);
     expect(svg).toContain("abc");
-    expect(svg).toContain("PAGE");
+    // The fallback is the plain page card: no kind badge, no edge strip.
+    expect(svg).not.toContain("PAGE");
+    expect(svg).not.toContain(`width="12"`);
     wellFormed(renderCard({ kind: "app", title: "" }));
   });
 

@@ -2,11 +2,11 @@
  * Live triage (#3242). Two rules, no run, no spend.
  *
  * Filing (#3266): an open issue an hour old that serves no pillar gets one —
- * the pillar its title, else its body, names — or else waits behind the
- * Later gate, with a one-line comment saying so. A person undoes it by
- * naming a pillar, or by unlinking the gate: the note stays, so it is not
- * done twice. Directions, umbrellas and the gate itself are left alone, and
- * a repository with no pillars and no gate has nothing to file under.
+ * the pillar its title, else its body, names. One that names no pillar is
+ * left as it is: nothing is held for lacking a pillar (#7791). The note
+ * stays on a filed issue, so it is not done twice. Directions, umbrellas
+ * and the gate itself are left alone, and a repository with no pillars has
+ * nothing to file under.
  *
  * Closing: an issue the crew found already done on
  * the base branch stops waiting for a person to close it. Rules only, no
@@ -31,7 +31,7 @@
 import type { App } from "../app.ts";
 import { linkIssue } from "../actions/dependencies.ts";
 import { addComment, setIssueState } from "../actions/issues.ts";
-import { alreadyDone, CLOSED_NOTE, DONE_LIKE } from "../core/done_on_main.ts";
+import { alreadyDone, CLOSED_NOTE, DONE_LIKE, reopenedByPerson } from "../core/done_on_main.ts";
 import { getIssueById, getIssuesByIds, type Issue } from "../core/issues.ts";
 import { addDependency, removeDependency } from "../core/dependencies.ts";
 import { isStructural, pillarsOf, servedBy, type Pillar, type Pillars } from "../core/pillars.ts";
@@ -51,9 +51,9 @@ export const MOST_CHANGES = 25;
 export interface Triaged {
   closed: number;
   folded: number;
-  /** Issues given a pillar or put behind the Later gate. */
+  /** Issues given the pillar they name. */
   labelled: number;
-  /** Open issues over an hour old that serve no pillar and that triage has yet to file. */
+  /** Open issues over an hour old that name a pillar and that triage has yet to file. */
   missed: number;
 }
 
@@ -122,35 +122,25 @@ function unfiled(app: App, repo: Repo, set: Pillars, now: Date): Issue[] {
 }
 
 /**
- * File old, unplaced issues; returns how many were, and how many were left
- * unplaced. The link comes first: if the note then fails the issue is still
+ * File old, unplaced issues that name a pillar; returns how many were, and how
+ * many that name one were left for the next tick by the cap. The link comes first: if the note then fails the issue is still
  * placed, which is the part that matters, and the failure is logged.
  */
 function file(app: App, repo: Repo, by: User, now: Date): [number, number] {
   const set = pillarsOf(app.db, repo);
-  if (set.pillars.length === 0 && set.gate === undefined) return [0, 0];
-  const todo = unfiled(app, repo, set, now);
-  let filed = 0;
-  for (const issue of todo) {
-    if (filed >= MOST_CHANGES) break;
+  if (set.pillars.length === 0) return [0, 0];
+  const todo = unfiled(app, repo, set, now).flatMap((issue) => {
     const pillar = namedPillar(set, issue);
-    if (pillar === undefined && set.gate === undefined) continue;
+    return pillar === undefined ? [] : [{ issue, pillar }];
+  });
+  let filed = 0;
+  for (const { issue, pillar } of todo) {
+    if (filed >= MOST_CHANGES) break;
     try {
-      const linked =
-        pillar !== undefined
-          ? linkIssue(app, by, repo, pillar.umbrella, issue)
-          : linkIssue(app, by, repo, issue, set.gate!);
+      const linked = linkIssue(app, by, repo, pillar.umbrella, issue);
       if (!linked.ok) continue;
       filed++;
-      addComment(
-        app,
-        by,
-        repo,
-        issue,
-        pillar !== undefined
-          ? `${FILED_NOTE} filed under ${pillar.name}, which it names.`
-          : `${FILED_NOTE} no pillar named, so it waits behind the Later gate; name a pillar to move it.`,
-      );
+      addComment(app, by, repo, issue, `${FILED_NOTE} filed under ${pillar.name}, which it names.`);
     } catch (error) {
       log.error("filing failed", {
         repo: `${repo.ownerName}/${repo.name}`,
@@ -415,6 +405,7 @@ export async function liveTriage(
     if (did.closed >= MOST_CHANGES) break;
     const issue = getIssueById(app.db, id);
     if (!issue || issue.state !== "open") continue;
+    if (reopenedByPerson(app.db, repo.id, issue.number)) continue;
     const there = await onBase(dir, repo.defaultBranch, oids);
     if (there.length !== oids.length) continue;
     try {

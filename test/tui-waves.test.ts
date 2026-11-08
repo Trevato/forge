@@ -4,9 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
+import { listOpenPulls } from "../src/core/pulls.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { refTip } from "../src/git/read.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { serve } from "../src/http/server.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
+import { linkIssue } from "../src/actions/dependencies.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { getIssueById, setIssueState } from "../src/core/issues.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { waveLines, wavesScreen } from "../src/tui/screens/waves.ts";
@@ -46,6 +54,7 @@ const remoteOf = (src: RepoSource): RepoSource => ({
       authKind: "pat",
       expiresAt: null,
       needsReauth: false,
+      software: "",
     },
     fullName: "someone/else",
     htmlUrl: "https://github.test/someone/else",
@@ -176,6 +185,41 @@ describe("waves in the terminal", () => {
     expect(outsider.text).not.toContain("/alice/priv/pulls/");
   });
 
+  test("the wave screen names the milestones it moved, as the page does, and not one the viewer may not see", async () => {
+    const r = await createRepo(forge, alice, { name: "ms", visibility: "public" });
+    if (!r.ok) throw new Error("repo failed");
+    const repo = r.value;
+    await commitToBranch(forge, alice, repo, { message: "init", files: [{ path: "README.md", content: "hi\n" }] });
+    const issue = (title: string, sealed = false) => {
+      const o = openIssue(forge, alice, repo, { title, sealed });
+      if (!o.ok) throw new Error("issue failed");
+      return o.value;
+    };
+    const goal = issue("Open goal");
+    const hidden = issue("Hidden goal", true);
+    const a = issue("Part A");
+    const b = issue("Part B");
+    for (const [up, down] of [[goal, a], [goal, b], [hidden, a]] as const)
+      linkIssue(forge, alice, repo, getIssueById(forge.db, up.id)!, getIssueById(forge.db, down.id)!);
+    setIssueState(forge.db, a.id, "closed", "done");
+    const n = await mergedPull(forge, alice, repo, "Part A work");
+    forge.db.query("UPDATE issue SET body = ? WHERE repo_id = ? AND number = ?").run(`Closes #${a.number}`, repo.id, n);
+    await commitToBranch(forge, alice, repo, {
+      message: "wave",
+      files: [{ path: "waves/0.1.0.md", content: waveNaming("0.1.0", [{ owner: "alice", name: "ms", number: n }]) }],
+    });
+    const owner = await open(alice, repo, ["enter"]);
+    owner.stop();
+    expect(owner.text).toContain("Moved");
+    expect(owner.text).toContain("Open goal - 1 of 2 done");
+    expect(owner.text).toContain(`/alice/ms/milestones/${goal.number}`);
+    expect(owner.text).not.toContain("Hidden goal");
+    const outsider = await open(bob, repo, ["enter"]);
+    outsider.stop();
+    expect(outsider.text).toContain("Open goal - 1 of 2 done");
+    expect(outsider.text).not.toContain("Hidden goal");
+  });
+
   test("enter on an unparsable row shows its reason", async () => {
     const h = await open(alice, pub, ["j", "j", "enter"]);
     h.stop();
@@ -199,6 +243,84 @@ describe("waves in the terminal", () => {
     [{ owner: "o", name: "r", number: 1, title: "P\u001b[2J", mergedAt: null, state: "open" }],
     );
     expect(lines.join("\n")).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/);
+  });
+
+  /** A fresh public repository with one merged pull and no waves. */
+  const cuttable = async (name: string): Promise<Repo> => {
+    const r = await createRepo(forge, alice, { name, visibility: "public" });
+    if (!r.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, r.value, { message: "init", files: [{ path: "README.md", content: "hi\n" }] });
+    await mergedPull(forge, alice, r.value, "Cut this work");
+    return r.value;
+  };
+  const pullCount = (repo: Repo): number =>
+    forge.db.query<{ n: number }, [string]>("SELECT count(*) AS n FROM issue WHERE repo_id = ? AND kind = 'pull'").get(repo.id)!.n;
+  const hasBranch = async (repo: Repo): Promise<boolean> =>
+    (await refTip(repoDir(forge.reposRoot, repo.ownerName, repo.name), "refs/heads/wave/0.1.0")) !== undefined;
+
+  test("c asks, y cuts a wave as a draft pull the web sees, and Enter opens it", async () => {
+    const repo = await cuttable("cutme");
+    const before = pullCount(repo);
+    const ask = await open(alice, repo, ["c"]);
+    ask.stop();
+    expect(ask.text).toContain("1 pull since the last wave");
+    expect(ask.text).toContain("cut wave 0.1.0? y/n");
+    expect(pullCount(repo)).toBe(before);
+    const opened = await open(alice, repo, ["c", "y", "enter"]);
+    opened.stop();
+    expect(opened.text).toContain("Wave 0.1.0");
+    expect(pullCount(repo)).toBe(before + 1);
+    const draft = listOpenPulls(forge.db, repo.id).find((p) => p.headBranch === "wave/0.1.0");
+    expect(draft).toBeDefined();
+    expect(draft!.state).toBe("open");
+    expect(draft!.body).toContain("A draft of waves/0.1.0.md, listing 1 merged pull.");
+    expect(await hasBranch(repo)).toBe(true);
+    // The web sees the same pull, and the file it adds lists the merged one.
+    const servers = await serve(forge);
+    try {
+      const cookie = `forge_session=${createSession(forge.db, alice.id).token}`;
+      const page = await fetch(`${servers.url}/alice/cutme/pulls/${draft!.number}`, { headers: { cookie } });
+      expect(page.status).toBe(200);
+      const html = await page.text();
+      expect(html).toContain("Wave 0.1.0");
+    } finally {
+      servers.stop();
+    }
+    const file = await Bun.$`git -C ${repoDir(forge.reposRoot, repo.ownerName, repo.name)} show wave/0.1.0:waves/0.1.0.md`.text();
+    expect(file).toContain("Cut this work");
+  });
+
+  test("n and Esc write nothing, and y after moving to Cancel still cuts", async () => {
+    const repo = await cuttable("cutno");
+    const before = pullCount(repo);
+    for (const keys of [["c", "n"], ["c", "esc"], ["c", "tab", "n"]]) {
+      const h = await open(alice, repo, keys);
+      h.stop();
+      expect(pullCount(repo)).toBe(before);
+      expect(await hasBranch(repo)).toBe(false);
+    }
+    const h = await open(alice, repo, ["c", "tab", "y"]);
+    h.stop();
+    expect(pullCount(repo)).toBe(before + 1);
+    expect(await hasBranch(repo)).toBe(true);
+  });
+
+  test("nothing to cut, an unparsable wave, and a non-admin are refused with nothing written", async () => {
+    const counts = [pub, mix].map(pullCount);
+    const none = await open(alice, mix, ["c"]);
+    none.stop();
+    expect(none.text).toContain("Nothing has been merged since the last wave");
+    const broken = await open(alice, pub, ["c"]);
+    broken.stop();
+    expect(broken.text).toContain("broken.md");
+    expect(broken.text).not.toContain("cut wave");
+    const viewer = await open(bob, mix, ["c", "y"]);
+    viewer.stop();
+    expect(viewer.text).toContain("Only a repository admin can cut a wave.");
+    expect(viewer.text).not.toContain("cut wave");
+    expect([pub, mix].map(pullCount)).toEqual(counts);
+    expect(await hasBranch(mix)).toBe(false);
+    expect(await hasBranch(pub)).toBe(false);
   });
 
   test("a live browse says waves are only read on this forge", async () => {

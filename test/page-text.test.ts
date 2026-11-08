@@ -56,11 +56,11 @@ test("the real home reads as text: heading and waiting count, no CSS, script or 
       .query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id) VALUES (?1, 'main', ?2, ?3, ?3, ?4)`)
       .run(issueId, `b/${i}`, "0".repeat(40), repo.value.id);
   }
-  const raw = await get("/");
+  const raw = await get("/feed");
   expect(raw).toContain("<script");
   expect(raw).toContain("<style");
   const text = pageText(raw);
-  expect(text).toContain("What you asked for");
+  expect(text).toContain("Feed Your apps Asked");
   expect(text).toMatch(/3 waiting on you, oldest 5\d h/);
   expect(text).not.toMatch(/<\/?[a-z]/i);
   expect(text).not.toMatch(/[{};]\s*$|:root|@media|function\s*\(|=>|var\(--/m);
@@ -92,10 +92,10 @@ const run = async (args: string[], env: Record<string, string> = {}) => {
 };
 
 test("scripts/home-read.ts prints the text and the stats line, sends FORGE_COOKIE and never prints it", async () => {
-  const r = await run([`${servers.url}/`], { FORGE_COOKIE: cookie });
+  const r = await run([`${servers.url}/feed`], { FORGE_COOKIE: cookie });
   expect(r.code).toBe(0);
   expect(r.out.trimEnd().split("\n").pop()).toMatch(/^chars \d+ · words \d+ · fetched in \d+ ms$/);
-  expect(r.out).toContain("What you asked for");
+  expect(r.out).toContain("Feed Your apps Asked");
   const token = cookie.match(/forge_session=([^;]+)/)![1]!;
   expect(r.out).not.toContain(token);
   expect(r.err).not.toContain(token);

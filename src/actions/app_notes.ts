@@ -5,6 +5,7 @@
  * (`apps/feedback.ts`) and the terminal's palette (`tui/screens/notes.ts`)
  * both go through here, so the limits and the gating are one set.
  */
+import { dropHiddenPictures } from "../core/note_pictures.ts";
 import type { App } from "../app.ts";
 import { banVisitor, bannedNotes, unbanVisitor, markSender, getNote, hideNote, insertNote, isBanned, notesOf, notesOfApp, type AppNote } from "../core/app_notes.ts";
 import type { AppRecord } from "../core/apps.ts";
@@ -228,7 +229,7 @@ export async function sendNote(
     // Without its label the crew's warning would not show: take it back.
     console.error(`app note: issue #${opened.value.number} could not take the ${FROM_APP_LABEL} label: ${labelled.error}`);
     // Through the action layer, as the owner: the bus, the webhooks and a mirror's origin see it.
-    const closed = await setIssueStateThrough(app, owner, repo, opened.value, "closed", { reason: "dropped" });
+    const closed = await setIssueStateThrough(app, owner, repo, opened.value, "closed", { reason: "dropped", system: true });
     if (!closed.ok) console.error(`app note: issue #${opened.value.number} could not be closed: ${closed.error}`);
     return unavailable;
   }
@@ -257,7 +258,7 @@ export async function moderateNote(
   const issue = getIssue(app.db, repo.id, note.issueNumber);
   // Close first: a note is hidden only once its issue is, wherever the issue lives.
   if (issue !== undefined && issue.state === "open") {
-    const closed = await setIssueStateThrough(app, actor, repo, issue, "closed", { reason: "dropped" });
+    const closed = await setIssueStateThrough(app, actor, repo, issue, "closed", { reason: "dropped", system: true });
     if (!closed.ok) {
       console.error(`app note: issue #${issue.number} could not be closed: ${closed.error}`);
       return err("unavailable");
@@ -265,6 +266,8 @@ export async function moderateNote(
   }
   hideNote(app.db, note.id);
   if (action === "ban") banVisitor(app.db, record.id, note.visitor);
+  // A hidden note keeps no picture: the owner's take-down reaches the bytes.
+  dropHiddenPictures(app.db, app.config.dataDir);
   return ok(true);
 }
 
@@ -314,4 +317,11 @@ export function unbanSender(app: App, record: AppRecord, repo: Repo, actor: User
   if (note === undefined) return err("not_found");
   unbanVisitor(app.db, record.id, note.visitor);
   return ok(true);
+}
+
+/** One note as the owner sees it, hidden or not: what a moderation answers. Admins only. */
+export function ownerNote(app: App, record: AppRecord, repo: Repo, actor: User | undefined, noteId: string): OwnerNote | undefined {
+  if (actor === undefined || !canAdmin(app.db, repo, actor)) return undefined;
+  const note = getNote(app.db, record.id, noteId);
+  return note === undefined ? undefined : ownerView(app, repo, note, isBanned(app.db, record.id, note.visitor));
 }

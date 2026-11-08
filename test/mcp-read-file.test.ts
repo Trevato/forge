@@ -10,6 +10,8 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { box, concat, ftyp, mvhd0, tkhd } from "./helpers/mp4-boxes.ts";
+import { asciiBox, binaryBox } from "./helpers/stl.ts";
 
 quietLogs();
 
@@ -60,7 +62,24 @@ beforeAll(async () => {
   const pub = ok(await createRepo(app.db, app.reposRoot, { ownerId: owner.id, name: "pub", visibility: "public" }));
   const priv = ok(await createRepo(app.db, app.reposRoot, { ownerId: owner.id, name: "priv", visibility: "private" }));
   for (const r of [pub, priv])
-    ok(await commitToBranch(app, owner, r, { message: "seed", files: [{ path: "src/a.txt", content: "hello\n" }] }));
+    ok(await commitToBranch(app, owner, r, { message: "seed", files: [
+          { path: "src/a.txt", content: "hello\n" },
+          { path: "bad.json", content: '{\n "a": }' },
+          { path: "good.json", content: "{}" },
+        ] }));
+  const movie = concat(ftyp(), box("moov", mvhd0(600, 600 * 92), box("trak", tkhd(0, 1920, 1080))));
+  ok(await commitToBranch(app, owner, pub, { message: "movie", files: [{ path: "clip.mp4", content: movie }] }));
+  ok(
+    await commitToBranch(app, owner, pub, {
+      message: "models",
+      files: [
+        { path: "cube.stl", content: binaryBox(40, 20, 10) },
+        { path: "cube-ascii.STL", content: asciiBox(40, 20, 10) },
+        { path: "broken.stl", content: binaryBox(1, 1, 1).subarray(0, 100) },
+        { path: "huge.stl", content: asciiBox(1, 1, 1).repeat(1_000_000 / 1400 + 1) },
+      ],
+    }),
+  );
   tok["owner"] = createToken(app.db, owner.id, "o", "ro").token;
   tok["stranger"] = createToken(app.db, stranger.id, "s", "ro").token;
 }, 30_000);
@@ -91,4 +110,40 @@ test("bad arguments are refused", async () => {
   expect((await read(t, { repo: "ada/pub", path: "src/a.txt", ref: "--upload-pack=x" })).error).toContain("not_found");
   expect((await read(t, { repo: "ada/pub", path: 7 })).error).toContain("invalid");
   expect((await read(t, { repo: "ada/pub", path: "nope.txt" })).error).toContain("not_found");
+});
+
+test("an MP4 file is described in words beside its base64; a text file has no about", async () => {
+  const file = (await read(tok["stranger"]!, { repo: "ada/pub", path: "clip.mp4" })).value;
+  expect(file.encoding).toBe("base64");
+  expect(file.about).toEqual({ kind: "video", seconds: 92, width: 1920, height: 1080, says: "video · 1:32 · 1920×1080" });
+  expect((await read(tok["stranger"]!, { repo: "ada/pub", path: "src/a.txt" })).value.about).toBeUndefined();
+});
+
+test("an STL file is described in words", async () => {
+  const t = tok["stranger"]!;
+  const bin = (await read(t, { repo: "ada/pub", path: "cube.stl" })).value;
+  expect(bin.encoding).toBe("base64");
+  expect(bin.about).toEqual({
+    kind: "stl",
+    format: "binary",
+    triangles: 12,
+    size: [40, 20, 10],
+    says: "STL (binary) · 12 triangles · 40.0 × 20.0 × 10.0",
+  });
+  const txt = (await read(t, { repo: "ada/pub", path: "cube-ascii.STL" })).value;
+  expect(txt.about.says).toBe("STL (ascii) · 12 triangles · 40.0 × 20.0 × 10.0");
+  const broken = (await read(t, { repo: "ada/pub", path: "broken.stl" })).value;
+  expect(broken.about.kind).toBe("stl");
+  expect(broken.about.says).toContain("truncated");
+  const huge = (await read(t, { repo: "ada/pub", path: "huge.stl" })).value;
+  expect(huge.size).toBeGreaterThan(1_000_000);
+  expect(huge.about).toEqual({ kind: "stl", says: "STL, too large to describe here" });
+});
+
+test("a config file says whether it parses; other files carry no about", async () => {
+  const t = tok["owner"]!;
+  const bad = await read(t, { repo: "ada/pub", path: "bad.json" });
+  expect(bad.value.about).toMatchObject({ kind: "json", parses: false, line: 2 });
+  expect((await read(t, { repo: "ada/pub", path: "good.json" })).value.about).toEqual({ kind: "json", parses: true });
+  expect((await read(t, { repo: "ada/pub", path: "src/a.txt" })).value.about).toBeUndefined();
 });

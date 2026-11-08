@@ -15,8 +15,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import type { ForgeApi, Pin } from "../src/cli/api.ts";
 import { hostDir } from "../src/cli/config.ts";
-import { changesBetween, type RepoReport, type SyncReport } from "../src/cli/sync.ts";
+import { changesBetween, syncOnce, tokenRefusal, type RepoReport, type SyncReport } from "../src/cli/sync.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 
@@ -375,5 +376,116 @@ describe("the local client, against a real forge", () => {
     });
     expect(result.code).toBe(3);
     expect(result.err).toContain("forge login");
+  });
+});
+
+describe("tokenRefusal", () => {
+  const wb = "https://forge.example";
+  test("only the workbench's own origin over https, or loopback http, gets the token", () => {
+    expect(tokenRefusal("https://forge.example/a/b.git", wb)).toBeNull();
+    expect(tokenRefusal("http://127.0.0.1:3000/a/b.git", "http://127.0.0.1:3000")).toBeNull();
+    expect(tokenRefusal("http://other.example/a/b.git", wb)).toContain("token withheld");
+    expect(tokenRefusal("https://other.example/a/b.git", wb)).toContain("token withheld");
+    expect(tokenRefusal("http://forge.example/a/b.git", wb)).toContain("token withheld");
+    expect(tokenRefusal("https://forge.example:8443/a/b.git", wb)).toContain("token withheld");
+    expect(tokenRefusal("http://10.0.0.5/a.git", "http://10.0.0.5")).toContain("token withheld");
+    expect(tokenRefusal(null, wb)).toContain("token withheld");
+  });
+});
+
+describe("the token reaches git only for the workbench's own origin", () => {
+  const secret = "tok-secret-7400";
+  let tmp = "";
+  const seen: { port: number; auth: string | null }[] = [];
+  const listeners: ReturnType<typeof Bun.serve>[] = [];
+
+  /** A local listener that records Authorization and refuses every request. */
+  function listen(): ReturnType<typeof Bun.serve> {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req) => {
+        seen.push({ port: server.port ?? 0, auth: req.headers.get("authorization") });
+        return new Response("no", { status: 404 });
+      },
+    });
+    listeners.push(server);
+    return server;
+  }
+  const stubApi = (url: string, pins: Pin[]): ForgeApi =>
+    ({
+      url,
+      pinsUnavailable: false,
+      pins: async () => ({ ok: true, value: pins }),
+    }) as unknown as ForgeApi;
+  const pin = (cloneUrl: string): Pin => ({
+    owner: "alice",
+    name: "one",
+    cloneUrl,
+    sshUrl: null,
+    defaultBranch: "main",
+    origin: null,
+  });
+
+  beforeAll(async () => {
+    tmp = await mkdtemp(join(tmpdir(), "forge-token-"));
+  });
+  afterAll(async () => {
+    for (const l of listeners) l.stop(true);
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  test("a clone from a foreign cloneUrl is sent without the token", async () => {
+    const own = listen();
+    const other = listen();
+    seen.length = 0;
+    const root = join(tmp, "clone");
+    const report = await syncOnce({
+      api: stubApi(`http://127.0.0.1:${own.port}`, [pin(`http://127.0.0.1:${other.port}/alice/one.git`)]),
+      token: secret,
+      root,
+      fetch: true,
+    });
+    const one = report.repos[0]!;
+    expect(one.note).toContain("token withheld");
+    expect(one.error).not.toBeNull();
+    const hits = seen.filter((h) => h.port === other.port);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.some((h) => (h.auth ?? "").startsWith("Bearer"))).toBe(false);
+  });
+
+  test("a fetch of an edited origin is sent without the token", async () => {
+    const own = listen();
+    const other = listen();
+    const api = stubApi(`http://127.0.0.1:${own.port}`, []);
+    const root = join(tmp, "fetch");
+    const dir = join(root, hostDir(api.url), "alice", "one");
+    await sh(["git", "init", "-q", dir], tmp);
+    await sh(["git", "remote", "add", "origin", `http://127.0.0.1:${other.port}/alice/one.git`], dir);
+    seen.length = 0;
+    const report = await syncOnce({ api, token: secret, root, fetch: true });
+    const one = report.repos[0]!;
+    expect(one.note).toContain("token withheld");
+    const hits = seen.filter((h) => h.port === other.port);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.some((h) => (h.auth ?? "").startsWith("Bearer"))).toBe(false);
+  });
+
+  test("the workbench's own origin still gets the token, on clone and on fetch", async () => {
+    const own = listen();
+    const api = stubApi(`http://127.0.0.1:${own.port}`, [pin(`http://127.0.0.1:${own.port}/alice/one.git`)]);
+    const root = join(tmp, "own");
+    seen.length = 0;
+    const first = await syncOnce({ api, token: secret, root, fetch: true });
+    expect(first.repos[0]!.note).toBeUndefined();
+    expect(seen.some((h) => h.auth === `Bearer ${secret}`)).toBe(true);
+    // Not cloned (the listener refuses), so make it a clone to exercise fetch.
+    const dir = join(root, hostDir(api.url), "alice", "one");
+    await sh(["git", "init", "-q", dir], tmp);
+    await sh(["git", "remote", "add", "origin", `http://127.0.0.1:${own.port}/alice/one.git`], dir);
+    seen.length = 0;
+    const second = await syncOnce({ api, token: secret, root, fetch: true });
+    expect(second.repos[0]!.note).toBeUndefined();
+    expect(seen.some((h) => h.auth === `Bearer ${secret}`)).toBe(true);
   });
 });

@@ -6,7 +6,8 @@
  * Anyone else is told 403, and an agent is never an admin here.
  */
 
-import { checkInput, FLAGS_ADMIN_ONLY, flagRegistry, usesLine, winnerOffer, mayManageFlags, useFlagRegistry, type FlagDecl, type FlagValue } from "../../core/flags.ts";
+import { readFlags } from "../../actions/flags_view.ts";
+import { checkInput, FLAGS_ADMIN_ONLY, flagRegistry, usesLine, winnerOffer, mayManageFlags, useFlagRegistry, type FlagValue } from "../../core/flags.ts";
 import { makeWinnerDefault } from "../../actions/flag_winner.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
@@ -65,20 +66,18 @@ export function flagsPage(ctx: Ctx): Response {
   if (no) return no;
   const registry = timePhase(ctx.request, "registry", flagRegistry);
   const repo = ctx.app.config.forgeRepo;
-  const names = Object.keys(registry.decls);
+  const read = timePhase(ctx.request, "values", () => readFlags(ctx.auth.user));
+  const flags = read.ok ? read.flags : [];
+  const names = flags.map((f) => f.name);
   // The per-flag reads are interleaved with building each row: sum each.
-  let valuesMs = 0;
   let usesMs = 0;
   const rendering = performance.now();
-  const rows = names.map((name) => {
-    const decl = (registry.decls as Record<string, FlagDecl>)[name]!;
-    const t0 = performance.now();
-    const v = registry.value(name as never);
+  const rows = flags.map((decl) => {
+    const { name, value: v } = decl;
     const t1 = performance.now();
     const week = registry.uses(ctx.app.db, name, 7);
     const month = registry.uses(ctx.app.db, name, 30);
     const t2 = performance.now();
-    valuesMs += t1 - t0;
     usesMs += t2 - t1;
     const lead = winnerOffer(month, v);
     return row({
@@ -126,9 +125,8 @@ export function flagsPage(ctx: Ctx): Response {
     body: html`<div class="page-head"><h1>Flags</h1></div>
       ${settingsLayout(accountSections("flags", { admin: true }), body, "Account settings")}`,
   });
-  notePhase(ctx.request, "values", valuesMs);
   notePhase(ctx.request, "uses", usesMs);
-  notePhase(ctx.request, "render", Math.max(performance.now() - rendering - valuesMs - usesMs, 0));
+  notePhase(ctx.request, "render", Math.max(performance.now() - rendering - usesMs, 0));
   return response;
 }
 

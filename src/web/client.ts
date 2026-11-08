@@ -10,8 +10,12 @@
  * behaviour that a page depends on to be usable.
  */
 
+import { actNowJs } from "./act_now.ts";
+import { pickJs } from "./pick.ts";
+import { imageViewJs } from "./render/image.ts";
 import { STAGE_BADGE_JS } from "./stage-row.ts";
 import { paletteHelpersJs } from "./palette.ts";
+import { MEDIA_PLAY_JS } from "./render/player.ts";
 import { NOT_TOLD_WORDS } from "../actions/tell_words.ts";
 
 /**
@@ -148,7 +152,7 @@ export const mirrorJs = /* js */ `
       paint(job.stage, job.detail);
       if (job.stage === 'done' && job.repo) {
         source.close();
-        location.href = '/' + job.repo.ownerName + '/' + job.repo.name;
+        location.href = list.getAttribute('data-landing') || '/' + job.repo.ownerName + '/' + job.repo.name;
       } else if (job.stage === 'failed') {
         // The page for a failed job carries the reason and a way to retry,
         // and does not stream — so this loads it once, and stops.
@@ -1270,14 +1274,18 @@ export const editorJs = /* js */ `
 })();
 `;
 
-export const shellJs = /* js */ `
+const shellCore = /* js */ `
 (function () {
   var doc = document;
   ${modalJs}
+  ${imageViewJs}
 
   // Controls that only mean something with a script running stay hidden
   // until one is: no dead buttons on a page with JavaScript switched off.
   doc.documentElement.classList.add('js');
+
+  // ---- a file the browser cannot play: its note, with Download ----
+  ${MEDIA_PLAY_JS}
 
   // ---- menus (details) ----
   function closeMenus(except) {
@@ -1387,6 +1395,9 @@ export const shellJs = /* js */ `
       var lo = Number(m[1]); var hi = Number(m[2] || m[1]);
       if (hi < lo) { var t = lo; lo = hi; hi = t; }
       anchor = lo;
+      // An anchor past the cut: the page that draws every line.
+      var cut = doc.getElementById('code-cut');
+      if (cut && !doc.getElementById('L' + lo)) { location.replace(cut.getAttribute('href') + location.hash); return; }
       for (var n = lo; n <= hi; n++) {
         var row = doc.getElementById('L' + n);
         if (row) row.setAttribute('data-hl', '');
@@ -1406,6 +1417,24 @@ export const shellJs = /* js */ `
     doc.addEventListener('code:swap', function () { anchor = 0; paint(); });
     paint();
   }
+
+  // ---- settings: the section list narrows as you type ----
+  doc.addEventListener('input', function (e) {
+    var f = e.target;
+    if (!f || !f.hasAttribute || !f.hasAttribute('data-settings-filter')) return;
+    var q = f.value.trim().toLowerCase();
+    var nav = f.closest('.settings-nav');
+    Array.prototype.forEach.call(nav.querySelectorAll('.settings-group'), function (g) {
+      var name = (g.getAttribute('aria-label') || '').toLowerCase();
+      var shown = 0;
+      Array.prototype.forEach.call(g.querySelectorAll('a'), function (a) {
+        var hit = q === '' || name.indexOf(q) >= 0 || a.textContent.toLowerCase().indexOf(q) >= 0;
+        a.hidden = !hit;
+        if (hit) shown++;
+      });
+      g.hidden = shown === 0;
+    });
+  });
 
   // ---- keyboard: sequences from the DOM, so the help can never drift ----
   var seq = []; var last = 0;
@@ -1444,6 +1473,19 @@ export const shellJs = /* js */ `
     if (f.tagName === 'TEXTAREA') { var n = f.value.length; f.setSelectionRange(n, n); }
     return true;
   }
+  // The "new issue from here" door: c on a page with no box of
+  // its own, Shift C on any page.
+  function openNewIssue(e) {
+    var p = location.pathname;
+    seq.length = 0; e.preventDefault();
+    location.assign(p.indexOf('/new/issue') === 0 ? '/new/issue' : '/new/issue?from=' + encodeURIComponent(p));
+  }
+  // Holding Option (Alt) lays each action's key over it; nothing moves (#8930).
+  function hints(on) { if (on) doc.documentElement.setAttribute('data-hints', ''); else doc.documentElement.removeAttribute('data-hints'); }
+  doc.addEventListener('keydown', function (e) { if (e.key === 'Alt') hints(true); });
+  doc.addEventListener('keyup', function (e) { if (e.key === 'Alt') hints(false); });
+  doc.addEventListener('keydown', function (e) { if (e.key === 'Escape') hints(false); });
+  window.addEventListener('blur', function () { hints(false); });
   doc.addEventListener('keydown', function (e) {
     var t = e.target;
     // Inside an open dialog the dialog owns the keys; none of these apply.
@@ -1483,17 +1525,24 @@ export const shellJs = /* js */ `
     if (e.key === 'j') { seq.length = 0; e.preventDefault(); move(1); }
     else if (e.key === 'k') { seq.length = 0; e.preventDefault(); move(-1); }
     else if (e.key === 'o' || e.key === 'Enter') { seq.length = 0; openFocused(); }
-    else if (e.key === 'c') { if (focusBox()) { seq.length = 0; e.preventDefault(); } }
+    else if (e.key === 'c') {
+      if (focusBox()) { seq.length = 0; e.preventDefault(); } else openNewIssue(e);
+    } else if (e.key === 'C') openNewIssue(e);
     else if (e.key === '/') {
       var box = doc.querySelector('[data-search-input]');
       if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
-    } else if (e.key === '?') { seq.length = 0; e.preventDefault(); openHelp(); }
+    } else if (e.key === '?') {
+      seq.length = 0; e.preventDefault();
+      // First press lays the keys over the page; the second clears them and opens the help.
+      if (doc.documentElement.hasAttribute('data-hints')) { hints(false); openHelp(); } else hints(true);
+    }
+    else if (e.key === ':') { seq.length = 0; e.preventDefault(); openPalette(); }
   });
 
   // ---- help overlay, generated from the shortcuts actually on the page ----
   var STATIC_KEYS = [
     ['j / k', 'Move between rows'], ['o or Enter', 'Open the focused row'],
-    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], ['?', 'This help'],
+    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], [':', 'Command palette'], ['?', 'This help'],
     ['Esc', 'Leave a box, close a menu or dialog'],
   ];
   // The rows a page earns by what it carries: a box to type in, a form
@@ -1501,6 +1550,10 @@ export const shellJs = /* js */ `
   function pageKeys() {
     var out = [];
     if (pageBox() && !doc.querySelector('[data-shortcut="c"]')) out.push(['c', doc.querySelector('[data-box]').getAttribute('data-box') || 'Write here']);
+    // A page that keeps c for its own box shows Shift C alone; any other
+    // page opens the new issue on either.
+    var ownC = pageBox() || doc.querySelector('[data-shortcut="c"]');
+    out.push([ownC ? 'Shift C' : 'c / Shift C', 'New issue from this page']);
     if (doc.querySelector('form[data-submit-key]')) out.push(['Cmd/Ctrl Enter', 'Submit the box you are typing in']);
     return out;
   }
@@ -1604,7 +1657,12 @@ export const shellJs = /* js */ `
       rows.push(r.source === 'origin'
         ? { t: r.fullName, h: '/origins/' + r.originId + '/r/' + r.fullName, g: 'Repositories',
             d: r.originKind ? 'on ' + r.originKind : 'on an origin' }
-        : { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories' });
+        : (function () {
+            var row = { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories', n: r.name };
+            if (r.owner === loadIndex().me) row.m = 1;
+            if (r.app) { row.x = 'App'; row.o = row.h + '/app/production/open'; }
+            return row;
+          })());
     });
     // An issue lives at /issues/:n and a pull request at /pulls/:n in every
     // mode (\`tellHref\`/\`changeHref\`, src/web/studio/nouns.ts).
@@ -1677,6 +1735,56 @@ export const shellJs = /* js */ `
     }).catch(function () { location.href = href; });
   }
 
+  // The palette's tell: the feed composer's own POST (same action, same
+  // same-origin check), with this page's path as where it was said. The
+  // answer is one line at the top of the page, in the flash's own classes.
+  function tellFromHere(app, text) {
+    var main = doc.getElementById('main');
+    function say(tone, message, href) {
+      if (!main) return;
+      var old = main.querySelector('.toast[data-palette-tell]');
+      if (old) old.remove();
+      var t = doc.createElement('div');
+      t.className = 'toast';
+      t.setAttribute('data-tone', tone);
+      t.setAttribute('data-palette-tell', '');
+      t.setAttribute('role', 'status');
+      var b = doc.createElement('div');
+      b.className = 'toast-body';
+      b.appendChild(doc.createTextNode(message));
+      if (href && href.charAt(0) === '/' && href.charAt(1) !== '/') {
+        b.appendChild(doc.createTextNode(' \u00b7 '));
+        var a = doc.createElement('a');
+        a.setAttribute('href', href);
+        a.textContent = 'See it';
+        b.appendChild(a);
+      }
+      t.appendChild(b);
+      var x = doc.createElement('button');
+      x.type = 'button';
+      x.className = 'btn';
+      x.setAttribute('data-variant', 'link');
+      x.setAttribute('data-size', 'sm');
+      x.setAttribute('aria-label', 'Dismiss');
+      x.textContent = '\u00d7';
+      x.onclick = function () { t.remove(); };
+      t.appendChild(x);
+      t.tabIndex = -1;
+      main.insertBefore(t, main.firstChild);
+      // The palette has just closed: the answer takes the focus, then clears itself.
+      t.focus({ preventScroll: false });
+      window.setTimeout(function () { if (t.parentNode) t.remove(); }, 12000);
+    }
+    fetch('/tell', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+      body: new URLSearchParams({ app: app, text: text, from: location.pathname })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.ok) say('success', d.flash, d.href);
+      else say('danger', d.error || '${NOT_TOLD_WORDS}');
+    }).catch(function () { say('danger', '${NOT_TOLD_WORDS}'); });
+  }
+
   var closePalette = null;
   function openPalette() {
     var dlg = doc.getElementById('palette');
@@ -1685,8 +1793,15 @@ export const shellJs = /* js */ `
     var input = dlg.querySelector('.palette-input');
     var list = dlg.querySelector('.palette-list');
     var items = (loadIndex().items || []).map(function (i) {
-      return { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
+      var r = { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
+      if (i.n) r.n = String(i.n);
+      if (i.m === 1) r.m = 1;
+      if (i.x) r.x = String(i.x);
+      if (i.o && String(i.o).charAt(0) === '/') r.o = String(i.o);
+      if (i.p && typeof i.p === 'object' && r.h.charAt(0) === '/') r.p = i.p;
+      return r;
     });
+    var tellApp = (loadIndex().tell || {}).app;
     var recent = readRecent().map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
     var recentHrefs = recent.map(function (r) { return r.h; });
     var served = [];       // rows the server found, for the query servedFor
@@ -1709,10 +1824,17 @@ export const shellJs = /* js */ `
       a.setAttribute('aria-selected', 'false');
       // Same-origin paths only: the index is ours, and this keeps it so.
       a.setAttribute('href', r.h.charAt(0) === '/' ? r.h : '/');
+      if (r.p) a.setAttribute('data-post', JSON.stringify(r.p));
       var t = doc.createElement('span');
       t.className = 'grow';
       t.textContent = r.t;
       a.appendChild(t);
+      if (r.x) {
+        var x = doc.createElement('span');
+        x.className = 'cat';
+        x.textContent = r.x;
+        a.appendChild(x);
+      }
       if (r.d) {
         var d = doc.createElement('span');
         d.className = 'cat';
@@ -1766,9 +1888,47 @@ export const shellJs = /* js */ `
           var a = row(r, 'palette-o' + nodes.length);
           nodes.push(a); shown.push(r);
           box.appendChild(a);
+          // The app is its own option under its repository: reachable by
+          // arrow, touch and screen reader, not only by Cmd/Ctrl+Enter.
+          if (r.o) {
+            var ar = { t: 'Open the app of ' + r.t, h: r.o, g: g.title };
+            var aa = row(ar, 'palette-o' + nodes.length);
+            nodes.push(aa); shown.push(ar);
+            box.appendChild(aa);
+          }
         });
         frag.appendChild(box);
       });
+      // Tell from anywhere: once there are words, the last row says them to the crew.
+      if (tellApp && q.length >= 3) {
+        var tbox = doc.createElement('div');
+        tbox.className = 'palette-group';
+        tbox.setAttribute('role', 'group');
+        // A mutation is a button in a POST form, as /tell takes it without
+        // script too; the click is caught below and sent in place.
+        var tf = doc.createElement('form');
+        tf.method = 'post'; tf.action = '/tell';
+        [['app', tellApp], ['text', q], ['from', location.pathname]].forEach(function (kv) {
+          var hid = doc.createElement('input');
+          hid.type = 'hidden'; hid.name = kv[0]; hid.value = kv[1];
+          tf.appendChild(hid);
+        });
+        var ta = doc.createElement('button');
+        ta.type = 'submit';
+        ta.className = 'palette-item';
+        ta.id = 'palette-o' + nodes.length;
+        ta.setAttribute('role', 'option');
+        ta.setAttribute('aria-selected', 'false');
+        ta.setAttribute('data-tell', q);
+        var tt = doc.createElement('span');
+        tt.className = 'grow';
+        tt.textContent = 'Tell the crew: ' + q;
+        ta.appendChild(tt);
+        tf.appendChild(ta);
+        nodes.push(ta); shown.push({ t: tt.textContent, h: '#tell', g: 'Tell' });
+        tbox.appendChild(tf);
+        frag.appendChild(tbox);
+      }
       if (nodes.length === 0) frag.appendChild(emptyLine(q));
       list.textContent = '';
       list.appendChild(frag);
@@ -1816,6 +1976,11 @@ export const shellJs = /* js */ `
       else if (k === 'ArrowUp') { e.preventDefault(); select(at - 1); }
       else if (k === 'Home') { e.preventDefault(); select(0); }
       else if (k === 'End') { e.preventDefault(); select(nodes.length - 1); }
+      else if (k === 'Enter' && (e.metaKey || e.ctrlKey) && shown[at] && shown[at].o) {
+        e.preventDefault();
+        remember(shown[at]);
+        location.href = shown[at].o;
+      }
       else if (k === 'Enter') {
         e.preventDefault();
         var q = input.value.trim();
@@ -1853,6 +2018,33 @@ export const shellJs = /* js */ `
       var a = e.target && e.target.closest ? e.target.closest('.palette-item') : null;
       var i = a ? nodes.indexOf(a) : -1;
       if (i === -1) return;
+      if (a.hasAttribute('data-tell')) {
+        e.preventDefault();
+        close();
+        tellFromHere(tellApp, a.getAttribute('data-tell'));
+        return;
+      }
+      if (a.hasAttribute('data-post')) {
+        // A mutation posts the page's own form; it is never followed as a GET.
+        e.preventDefault();
+        close();
+        var pf = doc.createElement('form');
+        pf.method = 'post'; pf.action = a.getAttribute('href') || '/';
+        var fields = {};
+        try { fields = JSON.parse(a.getAttribute('data-post') || '{}'); } catch (_) {}
+        Object.keys(fields).forEach(function (k) {
+          var hid = doc.createElement('input');
+          hid.type = 'hidden'; hid.name = k; hid.value = String(fields[k]);
+          pf.appendChild(hid);
+        });
+        var go = doc.createElement('button');
+        go.type = 'submit';
+        pf.appendChild(go);
+        pf.hidden = true;
+        doc.body.appendChild(pf);
+        go.click();
+        return;
+      }
       remember(shown[i]);
       var h = a.getAttribute('href') || '';
       if (/^\\/[^\\/?#]+\\/[^\\/?#]+\\/tell\\?from=/.test(h) && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
@@ -1878,6 +2070,9 @@ export const shellJs = /* js */ `
   });
 })();
 `;
+
+/** The shell and the one script that makes actions answer at once (`act_now.ts`). */
+export const shellJs = `${shellCore}\n${actNowJs}\n${pickJs}`;
 
 /**
  * Live regions. A page marks the parts of itself that change while it is
@@ -1998,6 +2193,10 @@ export const liveRegionsJs = /* js */ `
   var timer = null;
   var last = 0;
   var MIN_GAP = 1500;
+  // A region with no address of its own is the whole page: one render of
+  // everything. That is never fetched per event, only once per PAGE_GAP.
+  var PAGE_GAP = 30000;
+  var lastPage = 0;
   // What each address last answered with, so the next ask is conditional:
   // a region that did not change comes back 304 and paints nothing.
   var tags = {};
@@ -2090,12 +2289,16 @@ export const liveRegionsJs = /* js */ `
     if (ids.length === 0) return;
     last = Date.now();
     var groups = {};
+    var held = false;
     ids.forEach(function (id) {
       var region = document.getElementById(id);
       if (!region) return;
       var src = region.getAttribute('data-live-src') || location.href;
+      if (src === location.href && last - lastPage < PAGE_GAP) { due[id] = true; held = true; return; }
       (groups[src] = groups[src] || []).push(id);
     });
+    if (groups[location.href]) lastPage = last;
+    if (held && timer === null) timer = setTimeout(refresh, lastPage + PAGE_GAP - Date.now());
     Object.keys(groups).forEach(function (src) { pull(src, groups[src]); });
   }
   var source = null;

@@ -1,6 +1,7 @@
 /**
  * Every GET page names its Server-Timing phases (#3387). The routes come from
- * `src/http/server.ts` itself, so a new page is swept the day it is added.
+ * `src/http/server.ts` and `settings_routes.ts` themselves, so a new page is
+ * swept the day it is added.
  * `UNNAMED` is the debt: each page that still answers with `app` alone, and
  * the issue that will fix it. The list may not outlive its pages: a page that
  * starts naming `session` and `render` must come off it.
@@ -12,17 +13,15 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
-import { buildRouter, serve, type Servers } from "../src/http/server.ts";
+import { buildApiRouter, buildRouter, serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { collectTimings } from "./helpers/timing-sweep.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
 
 /** Pages without named phases yet → the issue that will name them. */
 const UNNAMED: Array<[path: string, issue: string]> = [
-  ["/-/confirm", "#3390"],
-  ["/signin/parent", "#3390"],
-  ["/signin/parent/callback", "#3390"],
 ];
 
 /** Long-lived streams and live fragments: no page, no phases to name. */
@@ -31,6 +30,7 @@ const NOT_PAGES = new Set([
   "/system/stream",
   "/settings/teams/stream",
   "/fleet/graph/live",
+  "/settings/traffic/scrapes/export",
   "/settings/backups/live",
   "/:owner/:name/stream",
 ]);
@@ -46,14 +46,18 @@ const REDIRECTS = new Set([
   "/alice/forge/tells",
   "/alice/forge/tells/new",
   "/big",
-  "/flow",
+  "/login",
+  "/openapi.json",
   "/settings/origins/callback",
   "/settings/resilience",
+  "/sign-in",
 ]);
 
 /** Every GET pattern the router source registers, one-line or wrapped. */
 function registeredGets(): Set<string> {
-  const source = readFileSync(join(import.meta.dir, "../src/http/server.ts"), "utf8");
+  const source = ["server.ts", "settings_routes.ts"]
+    .map((file) => readFileSync(join(import.meta.dir, "../src/http", file), "utf8"))
+    .join("\n");
   const found = new Set<string>();
   for (const m of source.matchAll(/router\.add\(\s*"GET",\s*"([^"]+)"/g)) found.add(m[1]!);
   return found;
@@ -61,7 +65,7 @@ function registeredGets(): Set<string> {
 
 /** Parameter-free GET patterns, plus `/:owner/:name/<literal>…` ones. */
 function sweptPatterns(): string[] {
-  const registered = new Set(buildRouter().patterns());
+  const registered = new Set([...buildRouter().patterns(), ...buildApiRouter().patterns()]);
   return [...registeredGets()]
     .filter((p) => registered.has(p) && !NOT_PAGES.has(p) && !p.startsWith("/assets/"))
     .filter((p) => !p.replace(/^\/:owner\/:name/, "").includes(":") && !p.includes("*"))
@@ -107,31 +111,16 @@ test("every GET page names session and render in Server-Timing, bar the listed d
   const paths = sweptPatterns().map((p) => p.replace(":owner", "alice").replace(":name", "forge"));
   expect(paths.length).toBeGreaterThan(20);
 
-  const named: string[] = [];
-  const bare: string[] = [];
-  const redirected: string[] = [];
-  // A few at a time with a generous abort: the verdict is about headers, not
-  // about how fast a loaded check machine answers every page at once.
-  const queue = [...paths];
-  const worker = async () => {
-    for (let path = queue.shift(); path !== undefined; path = queue.shift()) {
-      const res = await fetch(`${servers.url}${path}`, {
-        headers: { cookie },
-        redirect: "manual",
-        signal: AbortSignal.timeout(60_000),
-      });
-      await res.arrayBuffer();
-      if (res.status >= 300 && res.status < 400) {
-        redirected.push(path);
-        continue;
-      }
-      if (!(res.headers.get("content-type") ?? "").startsWith("text/html")) continue;
-      const names = (res.headers.get("server-timing") ?? "").split(",").map((p) => p.trim().split(";")[0]);
-      expect(names).toContain("app");
-      (names.includes("session") && names.includes("render") ? named : bare).push(path);
-    }
-  };
-  await Promise.all(Array.from({ length: 4 }, worker));
+  // Four at a time. Each request aborts after 20 s, well under the test's
+  // 120 s cap: a slow page then fails as a named entry in `failures` rather
+  // than as a whole-test timeout that says nothing about which route (#9500).
+  const { named, bare, redirected, failures, missingApp } = await collectTimings(
+    paths,
+    (path, signal) => fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "manual", signal }),
+    { concurrency: 4, perRequestMs: 20_000 },
+  );
+  expect(failures).toEqual([]);
+  expect(missingApp).toEqual([]);
 
   const started = redirected.filter((p) => !REDIRECTS.has(p)).sort();
   const stopped = [...REDIRECTS].filter((p) => !redirected.includes(p)).sort();
@@ -147,6 +136,37 @@ test("the sweep reads wrapped router.add registrations, so a reformat cannot shr
   const found = registeredGets();
   expect(found.has("/origins/:id/r/:owner/:name/commit/:oid")).toBe(true); // wrapped over four lines
   expect(found.has("/robots.txt")).toBe(true); // one line
-  const registered = new Set(buildRouter().patterns());
+  const registered = new Set([...buildRouter().patterns(), ...buildApiRouter().patterns()]);
   expect([...found].filter((p) => !registered.has(p))).toEqual([]);
+});
+
+test("the sweep's collection names each page that throws, answers 5xx or leaves out app", async () => {
+  const html = (serverTiming: string) =>
+    new Response("<p>", { headers: { "content-type": "text/html", "server-timing": serverTiming } });
+  const pages: Record<string, () => Promise<Response>> = {
+    "/throws": () => Promise.reject(new Error("connection reset")),
+    "/broken": async () => new Response("no", { status: 500 }),
+    "/no-app": async () => html("session;dur=1, render;dur=2"),
+    "/named": async () => html("app;dur=3, session;dur=1, render;dur=2"),
+    "/bare": async () => html("app;dur=3"),
+    "/moved": async () => new Response(null, { status: 303, headers: { location: "/" } }),
+  };
+  const r = await collectTimings(Object.keys(pages), (path) => pages[path]!());
+  expect(r.failures).toEqual([
+    { path: "/broken", status: 500 },
+    { path: "/throws", error: "Error: connection reset" },
+  ]);
+  expect(r.missingApp).toEqual([{ path: "/no-app", serverTiming: "session;dur=1, render;dur=2" }]);
+  expect(r.named).toEqual(["/named"]);
+  expect(r.bare).toEqual(["/bare"]);
+  expect(r.redirected).toEqual(["/moved"]);
+});
+
+test("a page slower than the per-request abort fails by name, not as a test timeout", async () => {
+  const hang = (signal: AbortSignal) =>
+    new Promise<Response>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+  const r = await collectTimings(["/slow"], (_path, signal) => hang(signal), { perRequestMs: 20 });
+  expect(r.failures).toHaveLength(1);
+  expect(r.failures[0]!.path).toBe("/slow");
+  expect("error" in r.failures[0]! && r.failures[0].error).toMatch(/Timeout/);
 });

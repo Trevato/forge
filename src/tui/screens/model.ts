@@ -22,7 +22,8 @@ import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
-import { later, promptScreen } from "./common.ts";
+import { blank, later, promptScreen } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 /** The signed-in person's budget line, and `a` to add their own subscription. */
 export function modelScreen(f: Session, ctx: Ctx): Screen {
@@ -131,3 +132,23 @@ export function modelCeilingPrompt(f: Session, ctx: Ctx, parent: Screen): Screen
       ),
   });
 }
+
+/** A capped monthly grant to an account: a forge admin who is a person (#1145). */
+export const modelGrantEntry: PaletteEntry = {
+  id: "model-grant",
+  title: "Model grant",
+  hint: "give an account dollars a month, or take it back",
+  after: ["model"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind === "user",
+  run: (session, ctx) => ctx.push(modelGrantPrompt(session, ctx, blank("Model grant"))),
+};
+
+/** An account's dollars a day and a run: a forge admin who is a person (#1145). */
+export const modelCeilingEntry: PaletteEntry = {
+  id: "model-ceiling",
+  title: "Model ceiling",
+  hint: "set an account's dollars a day and a run",
+  after: ["model-grant"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind === "user",
+  run: (session, ctx) => ctx.push(modelCeilingPrompt(session, ctx, blank("Model ceiling"))),
+};

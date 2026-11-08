@@ -81,6 +81,6 @@ test("the closed list shows the newest page in order, each row worded by how it 
   // Issues are numbered with their pulls between them: the newest is 3000's.
   expect(shown[0]).toBe(CLOSED);
   // Odd ones were closed by hand, even ones by a merged pull.
-  expect(text.match(/closed as done/g)?.length).toBe(shown.filter((n) => n % 2 === 1).length);
-  expect(text.match(/merged · /g)?.length).toBe(shown.filter((n) => n % 2 === 0).length);
+  expect(text.match(/aria-label="[^"]*closed as done/g)?.length).toBe(shown.filter((n) => n % 2 === 1).length);
+  expect(text.match(/aria-label="shipped — merged"/g)?.length).toBe(shown.filter((n) => n % 2 === 0).length);
 });

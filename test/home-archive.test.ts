@@ -82,7 +82,7 @@ describe("home archive", () => {
 
   const body = (...ids: string[]) => ids.map((id) => `repo=${id}`).join("&");
   const home = async (cookie: string) => (await get("/live/apps", cookie)).text();
-  const full = async (cookie: string) => (await get("/", cookie)).text();
+  const full = async (cookie: string) => (await get("/feed", cookie)).text();
 
   test("an admin archives two, the answer lists them, Undo brings them back", async () => {
     const before = await full(rootCookie);
@@ -114,6 +114,19 @@ describe("home archive", () => {
     const twice = await post(`${receipt}/undo`, rootCookie, "");
     expect(twice.status).toBe(303);
     expect(twice.headers.get("location")).toBe("/");
+  });
+
+  test("the rail ends with `N archived` once something is put away, and it leads there", async () => {
+    expect(await full(rootCookie)).not.toMatch(/\d+ archived<\/a>/);
+    const res = await post("/home/archive", rootCookie, body(repos[2]!.id));
+    const receipt = res.headers.get("location")!;
+    const page = await full(rootCookie);
+    expect(page).toContain('<a href="/apps?archived=1">1 archived</a>');
+    const listed = await (await get("/apps?archived=1", rootCookie)).text();
+    expect(listed).toContain("keeper/gamma");
+    expect(await full(bobCookie)).toContain("1 archived</a>"); // public, so bob can see it too
+    await post(`${receipt}/undo`, rootCookie, "");
+    expect(await full(rootCookie)).not.toMatch(/\d+ archived<\/a>/);
   });
 
   test("a cross-origin post is refused and archives nothing", async () => {

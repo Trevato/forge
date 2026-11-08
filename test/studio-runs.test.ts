@@ -5,6 +5,7 @@
  * test/studio*.test.ts. It runs in about 2.5 s with no waits (#3578).
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import {
   afterAll,
   afterEach,
@@ -34,7 +35,7 @@ import {
   createRepo,
   updateRepoSettings,
 } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import type { Issue } from "../src/core/issues.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -57,6 +58,7 @@ import {
 } from "../src/web/studio/words.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { appendRunLog } from "../src/runs/log.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("the studio's slot count", () => {
   let dataDir: string;
@@ -111,8 +113,8 @@ describe("the studio's slot count", () => {
     }
     const reviewer = getUserByName(app.db, "quill")!;
     const planner = getUserByName(app.db, "chart")!;
-    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
-    setCrewRole(app.db, repo.id, planner.id, "planner");
+    seatAs(app.db, repo.id, reviewer.id, "reviewer");
+    seatAs(app.db, repo.id, planner.id, "planner");
     const on = await updateRepoSettings(app, alice, repo, {
       autonomy: "autonomous",
       autonomyDirection: "",
@@ -155,6 +157,8 @@ describe("the studio's slot count", () => {
       })
     ).text();
     expect(page).toContain("1 of 2 in use");
+    // The crew card says the governor's reason in one line (#7644).
+    expect(page).toContain("Builders 2: a quiet hour, 0 of 0 open pulls moving");
     expect(page).not.toContain("3 of 2");
     expect(page).not.toContain("2 of 2");
     // The runs that take no slot are not hidden: Now has all of them.
@@ -601,9 +605,10 @@ describe("working: a run's own page in the studio", () => {
     appendRunLog(app.config.dataDir, run.id, "first");
     appendRunLog(app.config.dataDir, run.id, "second");
 
-    const page = await (
-      await get(`/alice/engine/runs/${run.id}`, writerCookie)
-    ).text();
+    const page = await withScripts(
+      base,
+      await (await get(`/alice/engine/runs/${run.id}`, writerCookie)).text(),
+    );
     // Every EventSource the page's HTML and script open is /events.
     const opened = [...page.matchAll(/new EventSource\(([^,;]*)/g)].map(
       (m) => m[1]!,
@@ -955,9 +960,10 @@ describe("working: a run's own page in the studio", () => {
         writerCookie,
       )
     ).text();
-    expect(script).toContain("getElementById('check-steps')");
-    expect(script).toContain("\\(fail\\) ");
-    expect(script).toContain("['role', 'tabindex', 'aria-label']");
+    const scripts = await withScripts(base, script);
+    expect(scripts).toContain("getElementById('check-steps')");
+    expect(scripts).toContain("\\(fail\\) ");
+    expect(scripts).toContain("['role', 'tabindex', 'aria-label']");
     const plain = await createRepo(app, alice, {
       name: "plain",
       visibility: "public",

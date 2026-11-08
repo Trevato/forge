@@ -1,9 +1,11 @@
 {
   "egress": [
-    "api.anthropic.com"
+    "api.anthropic.com",
+    "api.github.com"
   ],
   "app": {
-    "looks": ["/", "/forges", "/family", "/front", "/explore", "/board", "/boards", "/asked", "/review", "/search", "/new", "/audit", "/releases", "/apps", "/migrate", "/map", "/system", "/contribute", "/resilience", "/settings"],
+    "looks": ["/", "/front", "/explore", "/board", "/notes", "/feed", "/review", "/new", "/audit", "/releases", "/apps", "/repos", "/map", "/system", "/talk", "/flow", "/resilience", "/settings", "/preview-admin/sample", "/preview-admin/sample/pulls/3", "/preview-admin/sample/next", "/preview-admin/sample/bets", "/preview-admin/sample/waves", "/preview-admin/sample/milestones"],
+    "looksAsOwner": ["/", "/flow", "/talk", "/system", "/resilience", "/preview-admin/sample", "/preview-admin/sample/pulls/3", "/preview-admin/sample/next", "/preview-admin/sample/bets", "/preview-admin/sample/waves", "/preview-admin/sample/milestones"],
     "run": "bun run src/main.ts",
     "install": "",
     "health": "/healthz",
@@ -16,7 +18,8 @@
   },
   "check": {
     "fast": "bun scripts/gate.ts && mkdir -p .forge-cache && GOMEMLIMIT=2GiB ./node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile .forge-cache/tsc.tsbuildinfo && bun scripts/test-shards.ts --timeout 60000 --tier fast --diff $FORGE_CHECK_BASE..HEAD --learned \"$FORGE_CHECK_LEARNED\"",
-    "run": "bun scripts/gate.ts && mkdir -p .forge-cache && GOMEMLIMIT=2GiB ./node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile .forge-cache/tsc.tsbuildinfo && bun scripts/test-shards.ts --timeout 60000 --gate --impact",
+    "run": "bun scripts/gate.ts && mkdir -p .forge-cache && GOMEMLIMIT=2GiB ./node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile .forge-cache/tsc.tsbuildinfo",
+    "verify": "bun scripts/gate.ts && bun scripts/test-shards.ts --timeout 60000 --gate --impact --keep-going --nice",
     "timeout": 7200,
     "limits": {
       "memory": 8192,

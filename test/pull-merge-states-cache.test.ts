@@ -3,11 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readTips } from "../src/git/tips.ts";
-import { pullMergeStates, type Pull } from "../src/core/pulls.ts";
+import { mergeReadingsSettled, pullMergeStates, type Pull } from "../src/core/pulls.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 const env = gitClientEnv();
-const N = 50;
+const N = 130;
 let root: string;
 let dir: string;
 
@@ -54,16 +54,18 @@ beforeEach(async () => {
 
 afterEach(() => rm(root, { recursive: true, force: true }));
 
-test("a second read of 50 pulls does no git work; a moved head recomputes only its pull", async () => {
+test("a second read of 130 pulls does no git work and spawns nothing; a moved head recomputes only its pull", async () => {
   const items = Array.from({ length: N }, (_, i) => ({ dir, pull: pullOf(i) }));
   const spawn = spyOn(Bun, "spawn");
   try {
-    const first = await pullMergeStates(items);
+    const first = await pullMergeStates(items, { budgetMs: Infinity });
     expect(first.every((m) => m?.mergeable === true)).toBe(true);
     expect(spawn.mock.calls.length).toBeGreaterThan(0);
 
     spawn.mockClear();
-    const second = await pullMergeStates(items);
+    // Counted, not timed: cached reads spawn no git at all.
+    let second = first;
+    for (let k = 0; k < 5; k++) second = await pullMergeStates(items);
     expect(spawn.mock.calls.length).toBe(0);
     expect(second).toEqual(first);
 
@@ -76,6 +78,7 @@ test("a second read of 50 pulls does no git work; a moved head recomputes only i
     await git(work, "push", "-q", dir, "b7:b7");
     spawn.mockClear();
     await pullMergeStates(items);
+    await mergeReadingsSettled();
     const verbs = spawn.mock.calls.map((c) => (c[0] as string[]).filter((a) => !a.startsWith("-"))[1]);
     expect(verbs.filter((v) => v === "rev-list").length).toBe(1);
     expect(verbs.filter((v) => v === "merge-tree").length).toBe(1);
@@ -95,6 +98,7 @@ test("a base that moves recomputes every pull", async () => {
   const spawn = spyOn(Bun, "spawn");
   try {
     await pullMergeStates(items);
+    await mergeReadingsSettled();
     const revLists = spawn.mock.calls.filter((c) => (c[0] as string[]).includes("rev-list"));
     expect(revLists.length).toBe(N);
   } finally {

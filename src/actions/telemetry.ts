@@ -10,12 +10,12 @@ import { grant, hasGrant, logRead, revoke } from "../core/telemetry.ts";
 import { getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
-export type Reader = { kind: "owner" } | { kind: "agent" };
+export type Reader = { kind: "owner" } | { kind: "agent"; spend?: boolean };
 
 /** Whether `user` reads telemetry, and as what (the agent's view has private repositories cut out). */
 export function telemetryReader(app: App, user: User | undefined): Reader | undefined {
   if (!user) return undefined;
-  if (user.kind === "agent") return hasGrant(app.db, user.id) ? { kind: "agent" } : undefined;
+  if (user.kind === "agent") return hasGrant(app.db, user.id) ? { kind: "agent", spend: true } : undefined;
   return user.isAdmin ? { kind: "owner" } : undefined;
 }
 

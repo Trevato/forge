@@ -33,7 +33,6 @@ import {
   headroomPct,
   setHeadroom,
   standings,
-  type Figure,
   type WindowStanding,
 } from "../../core/standing.ts";
 import { getUserById } from "../../core/users.ts";
@@ -57,6 +56,7 @@ import {
   tokenCount,
   userLink,
 } from "../ui.ts";
+import { windowParts } from "../../actions/standing_words.ts";
 import { whenText } from "../../crew/limits.ts";
 import { accountSections } from "./origins.ts";
 import { liveRegionsJs } from "../client.ts";
@@ -80,37 +80,10 @@ const kindText = (s: Subscription): string =>
         ? `API key via ${s.apiBase}`
         : "API key";
 
-const usd = (n: number): string => `$${n.toFixed(2)}`;
-const mark = (f: Figure<unknown>): string => (f.source === "read" ? "" : "~");
-
-/**
- * `5-hour: ~$3.20 used of ~$10.00 (32%) · 1.2M tok · resets 12:04 UTC` — one
- * window, plainly: the dollars, the share of the cap when it is known, and
- * beside them the tokens the crew's runs read and wrote in it, so the money
- * and the context intuitions meet in one line.
- */
+/** One window's sentence (`actions/standing_words.ts`), as the terminal says it too. */
 function windowText(w: WindowStanding): Html {
-  const name = w.window === "5h" ? "5-hour" : "weekly";
-  const used = `${mark(w.used)}${usd(w.used.value)} used`;
-  const of =
-    w.cap === null
-      ? ""
-      : ` of ${mark(w.cap)}${usd(w.cap.value)}${
-          w.cap.value > 0
-            ? ` (${Math.min(100, Math.round((w.used.value / w.cap.value) * 100))}%)`
-            : ""
-        }`;
-  const full =
-    w.remaining?.source === "read" && w.remaining.value === 0 ? " · full" : "";
-  const resets =
-    w.resetsAt === null
-      ? " · opens on next use"
-      : ` · resets ${w.resetsAt.source === "read" ? "" : "~"}${whenText(new Date(w.resetsAt.value))}`;
-  const tokens = w.tokensIn + w.tokensOut;
-  return html`${name}: ${used}${of}${when(
-    tokens > 0,
-    () => html` · ${tokenCount(tokens, "counted")}`,
-  )}${full}${resets}`;
+  const { head, tokens, tail } = windowParts(w);
+  return html`${head}${when(tokens > 0, () => html` · ${tokenCount(tokens, "counted")}`)}${tail}`;
 }
 
 const resting = (s: Subscription, now: Date): boolean =>
@@ -443,8 +416,7 @@ export async function subscriptionDelete(ctx: Ctx): Promise<Response> {
     POOL,
     removed
       ? {
-          message:
-            "Removed, with its grants. Runs it paid for keep it in their history.",
+          message: SUBSCRIPTION_WORDS.removed,
         }
       : { tone: "danger", message: SUBSCRIPTION_WORDS.not_found },
   );

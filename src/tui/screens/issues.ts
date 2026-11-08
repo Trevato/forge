@@ -11,6 +11,9 @@
 
 import { openIssueThrough } from "../../actions/issues.ts";
 import type { IssueKind, Label } from "../../core/issues.ts";
+import { getIssuesByNumbers, numberKey } from "../../core/issues.ts";
+import { LATER, pillarsOf, servedBy, type Pillar } from "../../core/pillars.ts";
+import { stepLine, stepOfNumber } from "../../flow/path.ts";
 import { mergedPullNumbers } from "../../core/pulls.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Repo } from "../../core/repos.ts";
@@ -41,6 +44,8 @@ import {
 } from "./common.ts";
 import { issueScreen } from "./issue.ts";
 import { newPullScreen } from "./newpull.ts";
+import { heldScreen } from "./held.ts";
+import { planScreen } from "./plan.ts";
 import { pullScreen } from "./pull.ts";
 import { verdictsForPulls, type Verdict } from "./verdicts.ts";
 import {
@@ -53,6 +58,8 @@ import {
 
 const STATES = ["open", "closed", "all"] as const;
 const PAGE = 40;
+/** Rows a narrowed list should have before it stops reading ahead. */
+const FILLS = 20;
 
 export function issuesScreen(
   f: Session,
@@ -88,6 +95,48 @@ export function issuesScreen(
    * set: one grouped query for the whole page, never one per row.
    */
   const verdicts = new Map<number, Verdict>();
+  /** Which of check, review, land, live each open pull is at, and why: the web row's step. */
+  const steps = new Map<number, string>();
+  /**
+   * The pillars of this repository and the one each row's issue serves,
+   * read once per reload: `servedBy` answers for the whole repository in two
+   * queries, so a row costs a map lookup. Empty on a live browse, on a pull
+   * list, and where no umbrella exists — and then there is no tag and no `P`.
+   */
+  let pillars: readonly Pillar[] = [];
+  const tags = new Map<number, string>();
+  /** Whether the repository defers work: then `later` is a stop of its own. */
+  let defers = false;
+  /** 0 is `all`; n is `pillars[n - 1]`; one past the pillars is `later`. */
+  let pillar = 0;
+  const stops = (): number => pillars.length + (defers ? 1 : 0);
+  /** The tag a stop keeps: a pillar's short name, or `later`; undefined for `all`. */
+  const stopTag = (): string | undefined =>
+    pillar === 0 ? undefined : (pillars[pillar - 1]?.short ?? "later");
+  const readPillars = (rows: readonly IssueSummary[]): void => {
+    if (repo === undefined || kind !== "issue") return;
+    const set = pillarsOf(f.db, repo);
+    pillars = set.pillars;
+    defers = set.gate !== undefined || set.later !== undefined;
+    if (pillar > stops()) pillar = 0;
+    if (pillars.length === 0) return;
+    const served = servedBy(f.db, set);
+    const byNumber = getIssuesByNumbers(
+      f.db,
+      rows.map((row) => ({ repoId: repo.id, number: row.number })),
+    );
+    for (const row of rows) {
+      const id = byNumber.get(numberKey(repo.id, row.number))?.id;
+      const name = id === undefined ? undefined : served.get(id);
+      if (name === undefined) continue;
+      tags.set(
+        row.number,
+        name === LATER
+          ? "later"
+          : (set.pillars.find((p) => p.name === name)?.short ?? ""),
+      );
+    }
+  };
   const markMerged = async (rows: readonly IssueSummary[]): Promise<void> => {
     if (repo === undefined || kind !== "pull") return;
     // One query for the page, addressed the way the list has them: by
@@ -102,6 +151,11 @@ export function issuesScreen(
       numbers,
     ))
       verdicts.set(number, verdict);
+    if (repo === undefined) return;
+    for (const row of rows) {
+      const step = stepOfNumber(f.db, repo, row.number);
+      if (step !== null) steps.set(row.number, stepLine(step));
+    }
     ctx.invalidate();
   };
 
@@ -129,8 +183,12 @@ export function issuesScreen(
   const reload = async (): Promise<void> => {
     merged.clear();
     verdicts.clear();
+    steps.clear();
+    tags.clear();
     items = await take();
     loaded = true;
+    readPillars(items);
+    await topUp();
     await markMerged(items);
     if (!more) counted.set(STATES[segment]!, items.length);
     state.clamp(items.length);
@@ -148,21 +206,35 @@ export function issuesScreen(
     ctx.invalidate();
   };
 
-  const loadMore = (): void => {
+  const nextPage = async (): Promise<void> => {
     const at = cursor;
     if (at === undefined) return;
-    runAsync(ctx, async () => {
-      const page = await take(at);
-      await markMerged(page);
-      items = [...items, ...page];
-      if (!more) counted.set(STATES[segment]!, items.length);
-      ctx.invalidate();
-    });
+    const page = await take(at);
+    readPillars(page);
+    await markMerged(page);
+    items = [...items, ...page];
+    if (!more) counted.set(STATES[segment]!, items.length);
+    ctx.invalidate();
+  };
+
+  /**
+   * A pillar narrows only what is loaded, so with one on the pages keep
+   * coming until the narrowed list fills a screen or the pages run out;
+   * a short list never hides matches waiting on the next page.
+   */
+  const topUp = async (): Promise<void> => {
+    while (pillar !== 0 && more && shown().length < FILLS) await nextPage();
+  };
+
+  const loadMore = (): void => {
+    runAsync(ctx, nextPage);
   };
 
   const shown = (): IssueSummary[] =>
     items.filter(
-      (i) => search.matches(i.title) || search.matches(`#${i.number}`),
+      (i) =>
+        (pillar === 0 || tags.get(i.number) === stopTag()) &&
+        (search.matches(i.title) || search.matches(`#${i.number}`)),
     );
 
   const noun = kind === "pull" ? "pull request" : "issue";
@@ -198,8 +270,10 @@ export function issuesScreen(
         binding(["enter"], "open"),
         binding(["tab"], "open/closed/all"),
         binding(["l"], "label"),
+        ...(stops() > 0 ? [binding(["P"], "pillar")] : []),
         binding(["a"], mine ? "all authors" : "only mine"),
         ...(mayWrite() ? [binding(["c"], `new ${noun}`)] : []),
+        ...(kind === "issue" && repo !== undefined ? [binding(["m"], "plan"), binding(["h"], "held")] : []),
         binding(["/"], "search"),
         binding(["r"], "refresh"),
       ];
@@ -236,6 +310,8 @@ export function issuesScreen(
       const chips = [
         label === undefined ? "" : `label:${label}`,
         mine ? "author:me" : "",
+        pillar === 0 ? "" : `pillar:${stopTag()}`,
+        pillar !== 0 && more ? "(more not loaded)" : "",
       ]
         .filter((t) => t !== "")
         .join("  ");
@@ -279,10 +355,12 @@ export function issuesScreen(
               ? ("open" as const)
               : ("closed" as const),
           secondary: item.labels.map((l) => l.name).join(" "),
+          ...(steps.has(item.number) ? { note: steps.get(item.number)! } : {}),
           // An imported row is the origin's author, marked as upstream: a
           // login from another forge must never read as an account here.
           meta: metaOf(
             verdictMark(item),
+            tags.get(item.number) ?? "",
             `#${item.number} ${
               item.originAuthor === null || item.originAuthor === ""
                 ? item.authorName
@@ -321,6 +399,12 @@ export function issuesScreen(
         runAsync(ctx, reload);
         return true;
       }
+      if (e.key === "P" && stops() > 0) {
+        pillar = (pillar + 1) % (stops() + 1);
+        state.clamp(shown().length);
+        runAsync(ctx, topUp);
+        return true;
+      }
       if (e.key === "l") {
         ctx.push(
           pickerScreen(ctx, screen, {
@@ -337,6 +421,14 @@ export function issuesScreen(
             },
           }),
         );
+        return true;
+      }
+      if (e.key === "m" && kind === "issue" && repo !== undefined) {
+        ctx.push(planScreen(f, ctx, repo));
+        return true;
+      }
+      if (e.key === "h" && kind === "issue" && repo !== undefined) {
+        ctx.push(heldScreen(f, ctx, repo));
         return true;
       }
       if (e.key === "enter") {

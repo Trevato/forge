@@ -17,7 +17,10 @@ import { getUserById, type User } from "../core/users.ts";
 import { candidatesFor, quietRunsFor, type Candidate } from "./items.ts";
 import { writeStamp } from "../core/write_clock.ts";
 import { Stamped } from "../kernel/stamped.ts";
+import { foldBursts } from "./fold.ts";
 import { rank, type FeedItem } from "./rank.ts";
+import { likesOf } from "./likes.ts";
+import { stepsOf } from "./step.ts";
 import { settledOf } from "./settled.ts";
 
 export const FEED_LIMIT_DEFAULT = 20;
@@ -176,8 +179,10 @@ export function readFeedPage(
           c.kind === "choose" ||
           !muted.has(c.repoId)),
   );
-  const pageable =
-    options.withoutAsks === true ? candidates.filter((c) => c.kind !== "ask") : candidates;
+  // After every filter, so a burst folds only what the viewer would see.
+  const pageable = foldBursts(
+    options.withoutAsks === true ? candidates.filter((c) => c.kind !== "ask") : candidates,
+  ).filter((c) => !dismissed.has(c.id)); // a folded post is dismissed under its own id
   const cursor = options.cursor;
   // Without a cursor only the page and one more (to know there is a next) are placed.
   let ranked = rank(
@@ -197,9 +202,18 @@ export function readFeedPage(
   const started = performance.now();
   const settled = settledOf(db, page);
   options.phase?.("settled", performance.now() - started);
+  const steps = stepsOf(db, page);
+  const likes = likesOf(db, viewer.id, page.map((i) => i.id));
   const items = page.map((i) => {
     const state = settled.get(i.id);
-    return state === undefined ? i : { ...i, settled: state };
+    const step = steps.get(i.id);
+    const liked = likes.get(i.id)!;
+    return {
+      ...i,
+      ...(state === undefined ? {} : { settled: state }),
+      ...(step === undefined ? {} : { step }),
+      ...(liked.likes === 0 ? {} : liked),
+    };
   });
   const last = items[items.length - 1];
   return {

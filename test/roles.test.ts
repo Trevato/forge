@@ -95,7 +95,7 @@ describe("roles on /settings/people", () => {
     expect(bob).toMatch(/Administer the forge: <strong>no<\/strong>/);
     setMember(app.db, (getUserByName(app.db, "bob"))!.id, true, "x", new Date());
     const member = await page(await signIn("bob"));
-    expect(member).toMatch(/Make an app their own: <strong>yes<\/strong>/);
+    expect(member).toMatch(/Create a repository or copy an app: <strong>yes<\/strong>/);
     expect(member).toMatch(/Administer the forge: <strong>no<\/strong>/);
     setMember(app.db, getUserByName(app.db, "bob")!.id, false, "x", new Date());
     const alice = await page(await signIn("alice"));

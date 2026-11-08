@@ -22,9 +22,22 @@ import {
   type CapacityChange,
   type CapacityKey,
 } from "../core/capacity.ts";
-import { passkeyIds } from "../core/passkeys.ts";
+import { egressTotals, npmBytesLastHour, npmTopRepoLastHour, type EgressTotal } from "../apps/egress.ts";
+import { getRepoById } from "../core/repos.ts";
+import { selfSwapState, type SelfSwap } from "../release/swap.ts";
+import { signinReach, signsInWithoutEdge } from "../core/accounts.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+
+/** The six guards a caller may set by `key`: the MCP tool's enum and the terminal's `e`. */
+export const SETTABLE_CAPACITY = [
+  "crew.concurrency",
+  "checks.concurrency",
+  "checks.shards",
+  "cells.egress",
+  "guard_new_accounts",
+  "signin.edge",
+] as const satisfies readonly CapacityKey[];
 
 export interface CapacityRow {
   readonly key: CapacityKey;
@@ -37,6 +50,34 @@ export interface CapacityRow {
   readonly env: string;
   /** For a setting away from its default: when and by whom it was set. */
   readonly changed?: { readonly at: string; readonly by: string };
+}
+
+/**
+ * What the egress proxies received over the last hour (#7546), the npm
+ * registry first: a warm bun cache keeps `npmBytesLastHour` near zero, so a
+ * figure in the hundreds of megabytes is the cache gone cold again (#7541).
+ */
+export interface EgressHour {
+  readonly npmBytesLastHour: number;
+  /**
+   * The repository whose contained installs the registry sent most this
+   * hour (#8382), as `owner/name`, attributed by the cell that fetched;
+   * null when no metered install fetched, or its repository is gone.
+   */
+  readonly npmTopRepoLastHour: { readonly repo: string; readonly bytes: number } | null;
+  /** The ten destinations that sent most this hour, with their totals since boot. */
+  readonly destinations: readonly EgressTotal[];
+}
+
+export function egressHour(db: Database, now = Date.now()): EgressHour {
+  const top = npmTopRepoLastHour(now);
+  const repo = top === undefined ? undefined : getRepoById(db, top.repoId);
+  return {
+    npmBytesLastHour: npmBytesLastHour(now),
+    npmTopRepoLastHour:
+      top === undefined || repo === undefined ? null : { repo: `${repo.ownerName}/${repo.name}`, bytes: top.bytes },
+    destinations: egressTotals(now).slice(0, 10),
+  };
 }
 
 function admin(actor: User | undefined): Result<User, "not_found"> {
@@ -60,7 +101,10 @@ export function changedOf(db: Database, key: CapacityKey): { changed?: { at: str
 export function listCapacity(
   app: App,
   actor: User | undefined,
-): Result<{ settings: CapacityRow[]; changes: CapacityChange[] }, "not_found"> {
+): Result<
+  { settings: CapacityRow[]; changes: CapacityChange[]; egress: EgressHour; selfSwap: SelfSwap },
+  "not_found"
+> {
   const who = admin(actor);
   if (!who.ok) return who;
   return ok({
@@ -75,18 +119,34 @@ export function listCapacity(
       ...changedOf(app.db, key),
     })),
     changes: capacityChanges(app.db),
+    egress: egressHour(app.db),
+    selfSwap: selfSwapState(app.config.selfSwap === true),
   });
 }
 
 /**
- * Whether the account can sign in without the platform edge: a password or
- * a passkey. Turning the edge off for an admin who has neither locks them out.
+ * A dry run of switching `signin.edge` off: who could no longer sign in, and
+ * whether that includes the admin asking (which refuses the switch). Changes
+ * nothing.
  */
-function hasOwnCredential(app: App, userId: string): boolean {
-  const row = app.db
-    .query<{ password_hash: string }, [string]>("SELECT password_hash FROM user WHERE id = ?1")
-    .get(userId);
-  return (row?.password_hash ?? "") !== "" || passkeyIds(app.db, userId).length > 0;
+export function edgeOffDryRun(
+  db: Database,
+  actor: User | undefined,
+): Result<
+  { total: number; own: number; lockedOut: { username: string; isAdmin: boolean }[]; youLockedOut: boolean; allowed: boolean },
+  "not_found"
+> {
+  const who = admin(actor);
+  if (!who.ok) return who;
+  const reach = signinReach(db);
+  const youLockedOut = !signsInWithoutEdge(db, who.value.id);
+  return ok({
+    total: reach.total,
+    own: reach.own,
+    lockedOut: reach.stranded.map((a) => ({ username: a.username, isAdmin: a.isAdmin })),
+    youLockedOut,
+    allowed: !youLockedOut,
+  });
 }
 
 /** Set `key` to `value`; `null` or `""` goes back to the boot default. */
@@ -105,7 +165,7 @@ export function changeCapacity(
   const next = value === null ? null : value.trim();
   if (next !== null && next !== "" && !validCapacity(key, next))
     return err("invalid_value");
-  if (key === "signin.edge" && next === "off" && !hasOwnCredential(app, who.value.id))
+  if (key === "signin.edge" && next === "off" && !signsInWithoutEdge(app.db, who.value.id))
     return err("no_credential");
   const changed = setCapacity(
     app.db,

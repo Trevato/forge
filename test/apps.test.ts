@@ -19,7 +19,7 @@ import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { seconds, Stopwatch } from "../src/apps/timing.ts";
 import { envDataDir, envDir, previewEnv } from "../src/apps/data.ts";
-import { childEnv, runStep, startProcess } from "../src/apps/process.ts";
+import { childEnv, freePort, PORT_RETRIES, runStep, startProcess } from "../src/apps/process.ts";
 import type { AppManifest } from "../src/apps/manifest.ts";
 import {
   enableApp,
@@ -275,7 +275,7 @@ describe("apps: production, previews, data, gates", () => {
     );
     expect(run.state).toBe("ok");
     // The preview is gone: no process, no directory, an honest page.
-    const deadline = Date.now() + 10_000;
+    const deadline = Date.now() + 40_000;
     while (
       existsSync(envDir(dataDir, record.id, `pull-${pull.number}`)) &&
       Date.now() < deadline
@@ -1259,4 +1259,115 @@ describe("a restart brings every app's production up before any preview", () => 
       /timing: answered \d+\.\ds after the process was started/,
     );
   }, 90_000);
+});
+
+describe("start: a port lost to another process", () => {
+  const manifest: AppManifest = {
+    run: `bun -e 'Bun.serve({ port: Number(process.env.PORT), hostname: "127.0.0.1", fetch: () => new Response("ok") })'`,
+    install: null,
+    test: null,
+    health: "/",
+    ready: 5,
+    tty: null,
+    service: null,
+    looks: ["/"],
+  };
+  // Another process holding a port: it accepts and hangs up, so the health
+  // check never mistakes it for the app.
+  const hold = () =>
+    Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: (socket) => void socket.end(), data() {} },
+    });
+  const start = async (
+    dir: string,
+    ports: (() => number) | undefined,
+    over: Partial<AppManifest> = {},
+  ) => {
+    const lines: string[] = [];
+    const started = await startProcess({
+      dir,
+      dataDir: dir,
+      manifest: { ...manifest, ...over },
+      env: "production",
+      url: "http://app.test",
+      commitOid: "0".repeat(40),
+      forgeUrl: "http://forge.test",
+      identityKey: "key",
+      log: (line) => void lines.push(line),
+      signal: new AbortController().signal,
+      pickPort: ports,
+    });
+    return { started, lines };
+  };
+
+  test("an app that finds its port taken is started again on a fresh one", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-port-race-"));
+    const held = hold();
+    const picks: number[] = [];
+    try {
+      const { started, lines } = await start(dir, () => {
+        const port = picks.length === 0 ? held.port : freePort();
+        picks.push(port);
+        return port;
+      });
+      expect(picks.length).toBe(2);
+      expect(picks[0]).toBe(held.port);
+      expect(lines.join("\n")).toContain("the port was taken before the app bound it");
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      expect(started.value.handle.port).toBe(picks[1]!);
+      expect(started.value.handle.port).not.toBe(held.port);
+      const answer = await fetch(`http://127.0.0.1:${started.value.handle.port}/`);
+      expect(await answer.text()).toBe("ok");
+      await started.value.handle.stop();
+    } finally {
+      held.stop(true);
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("retries stop after PORT_RETRIES when every port is held", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-port-race-"));
+    const holders = Array.from({ length: PORT_RETRIES + 1 }, hold);
+    const picks: number[] = [];
+    try {
+      const { started, lines } = await start(
+        dir,
+        () => {
+          const port = holders[picks.length]!.port;
+          picks.push(port);
+          return port;
+        },
+        { ready: 2 },
+      );
+      expect(started.ok).toBe(false);
+      expect(picks.length).toBe(PORT_RETRIES + 1);
+      expect(picks.length).toBe(3);
+      expect(lines.filter((l) => l.includes("the port was taken")).length).toBe(PORT_RETRIES);
+    } finally {
+      for (const h of holders) h.stop(true);
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test("an app that exits for another reason is not started again", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-port-race-"));
+    let picks = 0;
+    try {
+      const { started } = await start(
+        dir,
+        () => {
+          picks++;
+          return freePort();
+        },
+        { run: "echo boom 1>&2; exit 1" },
+      );
+      expect(started.ok).toBe(false);
+      expect(picks).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

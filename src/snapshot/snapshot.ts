@@ -25,6 +25,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { vacuumFile, vacuumInto } from "./vacuum.ts";
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -170,6 +171,59 @@ export interface Snapshotter {
   readonly progressEvery?: { objects?: number; ms?: number } | undefined;
   /** Override of the database's part size, for tests. */
   readonly partBytes?: number | undefined;
+  /**
+   * Carry on a snapshot a release cut short: `at` is its start, and the
+   * repository bundles and run bundles its journal says landed are not put
+   * again. Everything else (the database, the key, live files) is taken anew.
+   */
+  readonly resume?: boolean | undefined;
+  /** Override of how often a changed journal is written, for tests. */
+  readonly journalEveryMs?: number | undefined;
+}
+
+/** The journal of what landed of a snapshot still being taken; gone once its manifest is. */
+export const JOURNAL = "partial.json";
+/** The journal is rewritten after this many more objects have landed. */
+export const JOURNAL_EVERY = 100;
+/** And no later than this after something landed: a release kills the process between writes. */
+export const JOURNAL_MS = 15_000;
+/** A snapshot cut short is carried on, not retaken, if it began within this long. */
+export const RESUME_WINDOW_MS = 24 * 3_600_000;
+
+/** The start a snapshot's name stands for: the inverse of `snapshotName`. */
+export function snapshotStart(name: string): Date | undefined {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})Z$/.exec(name);
+  if (m === null) return undefined;
+  const at = new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`);
+  return Number.isNaN(at.getTime()) ? undefined : at;
+}
+
+/** Whether a path is written once and never changed after, so a resume may skip it. */
+const resumable = (path: string): boolean => path.startsWith("repos/") || isRunBundle(path);
+
+/** What the journal remembers of an object: its size and the digest of its bytes. */
+interface Landed {
+  readonly bytes: number;
+  readonly sha256: string;
+}
+
+const digest = (body: Uint8Array | string): string =>
+  new Bun.CryptoHasher("sha256").update(body).digest("hex");
+
+async function readJournal(store: Store, prefix: string): Promise<Map<string, Landed>> {
+  const out = new Map<string, Landed>();
+  try {
+    const body = await store.get(prefix + JOURNAL);
+    if (body === undefined) return out;
+    const list = JSON.parse(new TextDecoder().decode(body)) as unknown;
+    if (!Array.isArray(list)) return out;
+    for (const e of list as { path?: unknown; bytes?: unknown; sha256?: unknown }[])
+      if (typeof e?.path === "string" && typeof e.bytes === "number" && typeof e.sha256 === "string")
+        out.set(e.path, { bytes: e.bytes, sha256: e.sha256 });
+  } catch {
+    // An unreadable journal is no journal: everything goes up again.
+  }
+  return out;
 }
 
 /** `2026-09-22T09-00-00Z`: sortable, and a name a bucket allows. */
@@ -181,17 +235,6 @@ export const snapshotName = (at: Date): string =>
 
 const SQLITE = /\.(db|sqlite|sqlite3)$/;
 const SIDE_FILE = /\.(db|sqlite|sqlite3)-(wal|shm|journal)$/;
-
-/** A consistent copy of a SQLite file, made by SQLite itself. */
-async function vacuumInto(source: string, target: string): Promise<void> {
-  const { Database } = await import("bun:sqlite");
-  const db = new Database(source, { readonly: true });
-  try {
-    db.run("VACUUM INTO ?1", [target]);
-  } finally {
-    db.close();
-  }
-}
 
 /** Every file under `dir`, relative to it. */
 function filesUnder(dir: string): string[] {
@@ -250,6 +293,30 @@ export async function takeSnapshot(
   };
   const ticker = setInterval(say, everyMs);
   const pending = new Set<Promise<void>>();
+  const before = forge.resume ? await readJournal(store, prefix) : new Map<string, Landed>();
+  const journal = new Map<string, Landed>();
+  let journaled = 0;
+  let unwritten = false;
+  let writing: Promise<void> = Promise.resolve();
+  let finished = false;
+  // Best effort: a journal not written costs a retake of some objects.
+  const writeJournal = (): void => {
+    journaled = 0;
+    unwritten = false;
+    const body = JSON.stringify([...journal].map(([path, l]) => ({ path, ...l })));
+    writing = writing.then(() => store.put(prefix + JOURNAL, body)).catch(() => {});
+  };
+  // A release kills the process without running a `finally`: what landed must
+  // already be written, so a changed journal goes out on a clock too.
+  const journalTicker = setInterval(() => {
+    if (unwritten) writeJournal();
+  }, forge.journalEveryMs ?? JOURNAL_MS);
+  const remember = (path: string, l: Landed): void => {
+    journal.set(path, l);
+    unwritten = true;
+    // The first object landed is journaled at once; then every N more.
+    if (journal.size === 1 || ++journaled >= JOURNAL_EVERY) writeJournal();
+  };
   let failure: Error | undefined;
   let held = 0;
   // Hands an object to the queue: waits for a free slot, then lets the put
@@ -267,8 +334,16 @@ export async function takeSnapshot(
     )
       await Promise.race(pending);
     if (failure !== undefined) throw failure;
-    held += bytes;
     files.push({ path, bytes });
+    const sha256 = resumable(path) ? digest(body) : "";
+    const had = before.get(path);
+    if (had !== undefined && had.bytes === bytes && had.sha256 === sha256) {
+      journal.set(path, had);
+      landed++;
+      landedBytes += bytes;
+      return;
+    }
+    held += bytes;
     const run: Promise<void> = withRetries(prefix + path, () =>
       store.put(prefix + path, body),
     )
@@ -276,6 +351,7 @@ export async function takeSnapshot(
         () => {
           landed++;
           landedBytes += bytes;
+          if (resumable(path)) remember(path, { bytes, sha256 });
           forge.onLand?.({
             objects: landed,
             bytes: landedBytes,
@@ -305,7 +381,7 @@ export async function takeSnapshot(
   try {
     // The database, consistently, from the live connection.
     const dbCopy = join(scratch, "forge.db");
-    forge.db.run("VACUUM INTO ?1", [dbCopy]);
+    await vacuumInto(forge.db, dbCopy);
     const copy = new Database(dbCopy, { readonly: true });
     try {
       dbCounts = countRows(copy);
@@ -386,7 +462,7 @@ export async function takeSnapshot(
             `app-${app.id}-${f.replace(/[\/\\]/g, "__")}`,
           );
           try {
-            await vacuumInto(source, copy);
+            await vacuumFile(source, copy);
             await putFile(`apps/${app.id}/production/data/${f}`, copy);
           } catch (error) {
             log.warn("app database not copied consistently; copied as a file", {
@@ -465,7 +541,11 @@ export async function takeSnapshot(
       `${prefix}manifest.json`,
       JSON.stringify(manifest, null, 2),
     );
+    finished = true;
+    await writing;
+    await store.delete(prefix + JOURNAL).catch(() => {});
     log.info("snapshot taken", {
+      resumed: before.size,
       name,
       where: store.where,
       repos: bundled,
@@ -477,8 +557,11 @@ export async function takeSnapshot(
     return manifest;
   } finally {
     clearInterval(ticker);
+    clearInterval(journalTicker);
     // Puts still running when one failed must not outlive the scratch.
     await Promise.allSettled([...pending]);
+    if (!finished && journal.size > 0) writeJournal();
+    await writing;
     rmSync(scratch, { recursive: true, force: true });
   }
 }
@@ -508,13 +591,29 @@ export async function listSnapshots(store: Store): Promise<Manifest[]> {
   return out.sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
 }
 
-/** Delete every snapshot past the newest `keep`. Returns what went. */
+/**
+ * Delete every snapshot past the newest `keep`, and every prefix a release
+ * cut short that nothing will resume: one with no manifest that is older
+ * than the newest whole snapshot, or began more than a resume window ago.
+ * Returns what went.
+ */
 export async function pruneSnapshots(
   store: Store,
   keep = KEEP,
+  now = Date.now(),
 ): Promise<string[]> {
   const names = (await store.names(SNAPSHOT_PREFIX)).sort().reverse();
-  const gone = names.slice(keep);
+  const whole: string[] = [];
+  const cut: string[] = [];
+  for (const name of names)
+    ((await store.get(`${SNAPSHOT_PREFIX}${name}/manifest.json`)) === undefined ? cut : whole).push(name);
+  const newest = whole[0];
+  const stale = cut.filter((name) => {
+    const at = snapshotStart(name);
+    if (at === undefined) return false;
+    return (newest !== undefined && name < newest) || now - at.getTime() > RESUME_WINDOW_MS;
+  });
+  const gone = [...whole.slice(keep), ...stale];
   for (const name of gone)
     for (const key of await store.list(`${SNAPSHOT_PREFIX}${name}/`))
       await store.delete(key);

@@ -21,6 +21,11 @@ remains is where the work is reviewed:
   the summary. `enter` on one hands over its web page,
   `/:owner/:name/runs/:id`, where the live log, cancel and steer are — as a
   link when the forge knows its public URL, as the path otherwise.
+- **Steer** a running agent run from the terminal: `S` on the runs list, `s`
+  on an issue's Crew card and on a pull's Crew tab. Offered to a writer who
+  is a person, never an agent, on a running agent run only; it sends through
+  the same action as the run page's steer box and MCP `steer`, and the toast
+  says whether the agent heard it or it became a comment.
 - **Settings** — the App tab (enable with slug, access and preview data; edit;
   `D` to stop running as an app behind a confirm), `C` for require checks on
   General, the Crew tab (`a` adds an agent from the forge's, `d` removes).

@@ -29,6 +29,7 @@ import { appForLogin, attachAppTty } from "../apps/tty.ts";
 import { servePulls } from "../apps/tty_pulls.ts";
 import type { Terminal } from "./term/terminal.ts";
 import type { TuiIdentity } from "./session.ts";
+import { parseTalkAgain, parseTalkCommand, serveTalk, serveTalkAgain } from "./ssh-talk.ts";
 import { parseTellCommand, serveTell } from "./ssh-tell.ts";
 
 const CRLF = "\r\n";
@@ -238,6 +239,17 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
         );
         return;
       }
+      // `talk <words>`: the forge's own agent, as the person.
+      const talked = parseTalkCommand(session.command);
+      if (talked !== undefined && door === undefined) {
+        serveTalk(forge, session, identity.user, talked);
+        return;
+      }
+      const again = parseTalkAgain(session.command);
+      if (again !== undefined && door === undefined) {
+        serveTalkAgain(forge, session, identity.user, again.how, again.words);
+        return;
+      }
       void serveGitCommand(forge, session, identity.user).catch(
         (error: unknown) => {
           forge.log.error("git over ssh failed", { error: String(error) });
@@ -322,7 +334,7 @@ export async function serveGitCommand(
   const dir = repoDir(forge.reposRoot, repo.ownerName, repo.name);
   // The storage limit: a git error before anything is written (#919).
   const refused =
-    write && user ? await storageRefusal(forge, user, repo.ownerId) : undefined;
+    write && user ? await storageRefusal(forge, user, repo.ownerId, repo) : undefined;
   if (refused !== undefined) {
     session.writeStderr(
       `forge: ${storageRefusedText(refused)}${CRLF}`,
@@ -338,7 +350,7 @@ export async function serveGitCommand(
           repoId: repo.id,
           actorId: user?.id ?? "",
         }),
-        ...(user ? await pushCap(forge, user, repo.ownerId) : {}),
+        ...(user ? await pushCap(forge, user, repo.ownerId, repo) : {}),
       }
     : {};
   // The client asks for protocol v2 by sending GIT_PROTOCOL through the

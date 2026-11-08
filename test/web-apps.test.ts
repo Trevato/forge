@@ -291,7 +291,7 @@ describe("apps, runs and the crew on the web", () => {
 
   test("the dashboard and /apps list the app with its state and URL", async () => {
     // The home's rail names your apps and offers New app (#625).
-    const dash = await bodyOf(alice, "/");
+    const dash = await bodyOf(alice, "/feed");
     expect(dash).toContain("<h2>Your apps</h2>");
     expect(dash).toContain("alice/hello");
     expect(dash).toContain('href="/apps/new"');
@@ -732,7 +732,7 @@ describe("apps, runs and the crew on the web", () => {
     expect(await bodyOf(alice, "/settings")).toContain('href="/settings/crew"');
 
     const bad = await web(alice, "/settings/crew", {
-      form: { username: "bot", budgetUsd: "-4" },
+      form: { username: "bot", budgetUsd: "-4", roles: "builder" },
     });
     expect(bad.status).toBe(422);
     const badPage = words(await bad.text());
@@ -751,6 +751,7 @@ describe("apps, runs and the crew on the web", () => {
         model: "",
         brief: "Be brief.",
         budgetUsd: "2",
+        roles: "builder",
       },
     });
     expect(made.status).toBe(303);
@@ -765,14 +766,14 @@ describe("apps, runs and the crew on the web", () => {
     expect(edit).toContain('value="bot"');
     expect(edit).toContain("Retire this agent");
     const updated = await web(alice, "/settings/crew/bot", {
-      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "3" },
+      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "3", roles: "builder" },
     });
     expect(updated.status).toBe(303);
     expect(getAgentByName(app.db, "bot")?.model).toBe("sonnet");
     expect(getAgentByName(app.db, "bot")?.budgetUsd).toBe(3);
     // A refused edit shows the error beside its field.
     const refused = await web(alice, "/settings/crew/bot", {
-      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "-4" },
+      form: { model: "sonnet", brief: "Be brief.", budgetUsd: "-4", roles: "builder" },
     });
     expect(refused.status).toBe(422);
     const refusedPage = words(await refused.text());
@@ -977,6 +978,7 @@ describe("apps, runs and the crew on the web", () => {
     const open = () =>
       app.db.query("SELECT 1 FROM run WHERE state IN ('queued','running') LIMIT 1").get();
     for (let i = 0; i < 200 && open() !== null; i++) await Bun.sleep(25);
+    if (open() !== null) throw new Error(`never came: still waiting while open() !== null`);
     app.db.query("UPDATE run SET serving_at = NULL WHERE env LIKE 'pull-%'").run();
   };
 

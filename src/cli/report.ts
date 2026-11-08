@@ -109,6 +109,7 @@ function row(out: Out, r: RepoReport): Cell[] {
   if (r.fastForwarded) state.push("fast-forwarded");
   if (r.cloned) state.push("cloned");
   if (r.upstream === null) state.push("no upstream");
+  if (r.note !== undefined) state.push("no token sent");
   if (r.error !== null) state.push("failed");
 
   const tone =

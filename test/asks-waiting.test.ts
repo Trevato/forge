@@ -4,12 +4,13 @@
  * pull still young stays the crew's.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { addComment } from "../src/core/issues.ts";
 import { setHold } from "../src/core/holds.ts";
 import { createRepo, type Repo } from "../src/core/repos.ts";
@@ -109,7 +110,7 @@ describe("asks that wait on a person", () => {
     if (!made.ok) throw new Error(`seed repo: ${made.error}`);
     repo = made.value;
     for (const agent of [builder, reviewer]) addCrew(app.db, repo.id, agent.id, owner.id);
-    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
+    seatAs(app.db, repo.id, reviewer.id, "reviewer");
     token = createToken(app.db, owner.id, "ro", "ro").token;
 
     handed = pull(builder, "Handed over", 3);

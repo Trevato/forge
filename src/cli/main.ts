@@ -6,6 +6,14 @@
  *   forge login <url>         remember a workbench and a token
  *   forge sync                clone what is missing, fetch the rest, report
  *   forge status              the same report without touching the network
+ *   forge asks                what waits on you, most important first
+ *   forge tell "words"        tell the crew about this folder's repository
+ *   forge search <words>      code, issues, pulls and repos you can read
+ *   forge asks --ship 1 3     decide asks by their numbers: planned, then a y/N
+ *   forge asks --undo <id>    take back what that decided
+ *   forge new <name> [words]  make an app and clone it into your forge folder
+ *   forge map                 the plan: being built, ready now, what waits
+ *   forge ship <number>       land a pull after a y/N, as its Merge button does
  *
  * Everything here is a thin shell around three modules: `api.ts` talks to the
  * workbench, `sync.ts` decides what should be on disk, `report.ts` prints it.
@@ -13,47 +21,27 @@
  * an exit code — so a script can branch on the result without parsing text.
  */
 
-import { parseArgs, parseDuration, parseRepoRef, type Args } from "./args.ts";
-import { ForgeApi } from "./api.ts";
-import {
-  clearConfig,
-  configPath,
-  loadConfig,
-  normalizeUrl,
-  rootDir,
-  saveConfig,
-  type Config,
-} from "./config.ts";
-import { systemNotifier } from "./notify.ts";
-import { cell, createOut, type Out } from "./out.ts";
-import { dirtyCount, printReport, settled, since } from "./report.ts";
-import {
-  changesBetween,
-  syncOnce,
-  type RepoReport,
-  type SyncReport,
-} from "./sync.ts";
-import { G } from "../tui/term/screen.ts";
-import { trackText } from "../tui/local/common.ts";
+import { parseArgs } from "./args.ts";
+import { commands } from "./commands/index.ts";
+import { EXIT } from "./exit.ts";
+import { printUsage, VERSION } from "./help.ts";
+import { askLine, type Io } from "./io.ts";
+import { createOut } from "./out.ts";
 
-/**
- * The CLI's own number, kept by hand: it ships compiled, to machines no
- * release stamps. The server's comes from its build (`kernel/version.ts`).
- */
-const VERSION = "0.0.1";
+// Callers (and tests) have always reached these through this file.
+export { asks, askLines, type Confirm } from "./commands/asks.ts";
+export { searchLines, narrowConversations, type SearchFor } from "./commands/search.ts";
+export { EXIT };
 
-export const EXIT = {
-  ok: 0,
-  failed: 1,
-  usage: 2,
-  notConfigured: 3,
-  /** The run completed, but at least one repo did not. */
-  partial: 4,
-} as const;
+/** Every command by name, built once from `commands/index.ts`. */
+const TABLE = new Map(commands.map((c) => [c.name, c]));
 
-const VALUE_FLAGS = ["token", "interval", "root", "url", "limit"];
+const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo", "kind", "reason", "owner", "variants", "from"];
 
-export async function main(argv: readonly string[]): Promise<number> {
+export async function main(
+  argv: readonly string[],
+  io: Io = { ask: askLine },
+): Promise<number> {
   const args = parseArgs(argv, { values: VALUE_FLAGS });
   const out = createOut();
 
@@ -61,421 +49,19 @@ export async function main(argv: readonly string[]): Promise<number> {
     out.line(`forge ${VERSION}`);
     return EXIT.ok;
   }
-  if (args.command === undefined) {
-    if (args.flag("help") || args.flag("h")) {
-      usage(out);
-      return EXIT.ok;
-    }
-    return openTui(out, args);
-  }
-  if (args.flag("help") || args.flag("h")) {
-    usage(out);
+  if (args.flag("help") || args.flag("h") || args.command === "help") {
+    printUsage(out);
     return EXIT.ok;
   }
 
-  switch (args.command) {
-    case "help":
-      usage(out);
-      return EXIT.ok;
-    case "login":
-      return login(out, args);
-    case "logout":
-      return logout(out);
-    case "whoami":
-      return whoami(out);
-    case "sync":
-      return sync(out, args, true);
-    case "status":
-      return sync(out, args, false);
-    case "ls":
-      return list(out, args);
-    case "pin":
-      return setPin(out, args, true);
-    case "unpin":
-      return setPin(out, args, false);
-    case "open":
-      return openRepo(out, args);
-    case "ui":
-      return openTui(out, args);
-    default:
-      out.err(`forge: unknown command "${args.command}"`);
-      usage(out);
-      return EXIT.usage;
-  }
-}
-
-function usage(out: Out): void {
-  const b = (text: string): string => out.paint(text, out.c.fg);
-  out.line(`forge ${VERSION} — your workbench, on this machine`);
-  out.line();
-  out.line(b("  forge") + "                        the local terminal UI");
-  out.line(b("  forge login <url>") + "            [--token T]");
-  out.line(b("  forge logout"));
-  out.line(b("  forge whoami"));
-  out.line(
-    b("  forge sync") +
-      "                   [--watch] [--interval 5m] [--ff] [--root DIR]",
-  );
-  out.line(b("  forge status") + "                 [--root DIR] [--json]");
-  out.line(b("  forge ls") + "                     [--json]");
-  out.line(b("  forge pin <owner/name>"));
-  out.line(b("  forge unpin <owner/name>"));
-  out.line(b("  forge open <owner/name>") + "      [--web]");
-  out.line();
-  out.line(
-    out.paint(`  config ${configPath()}   root ${rootDir()}`, out.c.faint),
-  );
-  out.line(
-    out.paint(
-      "  FORGE_URL, FORGE_TOKEN, FORGE_ROOT and NO_COLOR are honoured.",
-      out.c.faint,
-    ),
-  );
-}
-
-// ── account ──────────────────────────────────────────────────────────────
-
-async function login(out: Out, args: Args): Promise<number> {
-  const raw = args.positional[0] ?? args.value("url");
-  if (raw === undefined) {
-    out.err("forge login: which forge? e.g. forge login forge.example.com");
+  // No command is the terminal UI.
+  const command = TABLE.get(args.command ?? "ui");
+  if (command === undefined) {
+    out.err(`forge: unknown command "${args.command}"`);
+    printUsage(out);
     return EXIT.usage;
   }
-  const url = normalizeUrl(raw);
-  const token = args.value("token") ?? (await askSecret(`Token for ${url}: `));
-  if (token === "") {
-    out.err("forge login: no token given");
-    return EXIT.usage;
-  }
-
-  // Verify before storing: a config that does not work is worse than none.
-  const api = new ForgeApi(url, token);
-  const me = await api.whoami();
-  if (!me.ok) {
-    out.err(`forge login: ${me.error.message}`);
-    return me.error.status === 401 ? EXIT.notConfigured : EXIT.failed;
-  }
-  const stored = await saveConfig({ url, token });
-  out.line(
-    `${out.paint(G.check, out.c.success)} signed in to ${url} as ${me.value.username}`,
-  );
-  out.line(
-    out.paint(
-      stored.keychain
-        ? `  token in your login keychain; ${configPath()} holds only the URL`
-        : `  token in ${configPath()} (0600)`,
-      out.c.faint,
-    ),
-  );
-  return EXIT.ok;
-}
-
-async function logout(out: Out): Promise<number> {
-  await clearConfig();
-  out.line("signed out");
-  return EXIT.ok;
-}
-
-async function whoami(out: Out): Promise<number> {
-  const loaded = await requireConfig(out);
-  if (typeof loaded === "number") return loaded;
-  const api = new ForgeApi(loaded.url, loaded.token);
-  const me = await api.whoami();
-  if (!me.ok) {
-    out.err(`forge whoami: ${me.error.message}`);
-    return EXIT.failed;
-  }
-  out.line(`${me.value.username} at ${loaded.url}`);
-  return EXIT.ok;
-}
-
-// ── sync and status ──────────────────────────────────────────────────────
-
-async function sync(out: Out, args: Args, network: boolean): Promise<number> {
-  const loaded = await requireConfig(out);
-  if (typeof loaded === "number") return loaded;
-  const api = new ForgeApi(loaded.url, loaded.token);
-  const root = rootDir(args.value("root"));
-  const ff = args.flag("ff");
-
-  const json = args.flag("json");
-
-  const once = async (
-    previous: SyncReport | null,
-    quiet: boolean,
-  ): Promise<SyncReport> => {
-    const report = await syncOnce({
-      api,
-      token: loaded.token,
-      root,
-      fetch: network,
-      ff,
-      ...(quiet || json || !out.color
-        ? {}
-        : { onProgress: (repo, text) => status(out, `${repo}: ${text}`) }),
-    });
-    if (!quiet && !json && out.color) status(out, "");
-    if (previous === null || !quiet) {
-      if (json) out.line(JSON.stringify(asJson(report)));
-      else printReport(out, report);
-    }
-    return report;
-  };
-
-  if (!args.flag("watch")) {
-    const report = await once(null, false);
-    return report.failures > 0 ? EXIT.partial : EXIT.ok;
-  }
-
-  const interval = parseDuration(args.value("interval")) ?? 300_000;
-  const notify = systemNotifier();
-  let previous = await once(null, false);
-  if (!json) {
-    out.line();
-    out.line(
-      out.paint(
-        `watching ${previous.repos.length} repos every ${args.value("interval") ?? "5m"} — ctrl+c to stop`,
-        out.c.faint,
-      ),
-    );
-  }
-  for (;;) {
-    await sleep(interval);
-    const report = await once(previous, true);
-    const changes = changesBetween(previous, report);
-    previous = report;
-    // Only a real transition reaches the user; everything else is the
-    // report, which is there when they choose to look at it. A watch that
-    // notified on every pass would be muted within the hour.
-    if (changes.length === 0) continue;
-    if (json) out.line(JSON.stringify({ ...asJson(report), changes }));
-    else {
-      out.line();
-      out.line(new Date().toLocaleTimeString());
-      printReport(out, report);
-    }
-    await notify("forge", changes.slice(0, 4).join("\n"));
-  }
-}
-
-async function list(out: Out, args: Args): Promise<number> {
-  const loaded = await requireConfig(out);
-  if (typeof loaded === "number") return loaded;
-  // `ls` answers from disk, so it keeps working when the forge does not.
-  const report = await syncOnce({
-    api: new ForgeApi(loaded.url, loaded.token),
-    token: loaded.token,
-    root: rootDir(args.value("root")),
-    fetch: false,
-  });
-  if (args.flag("json")) {
-    out.line(JSON.stringify(asJson(report)));
-    return EXIT.ok;
-  }
-  out.line(out.paint(report.root, out.c.faint));
-  out.table(
-    [
-      { header: "REPO", max: 44 },
-      { header: "BRANCH", max: 24 },
-      { header: "SYNC", align: "right" },
-      { header: "STATE", max: 28 },
-      { header: "FETCHED", align: "right" },
-    ],
-    report.repos.map((r) => [
-      cell(`${r.owner}/${r.name}`, r.present ? out.c.fg : out.c.mutedFg),
-      cell(r.present ? (r.branch ?? "detached") : "—", out.c.mutedFg),
-      cell(trackText(r.ahead, r.behind), out.c.attn),
-      lsState(out, r),
-      cell(r.present ? since(r.lastFetch) : "", out.c.faint),
-    ]),
-  );
-  return EXIT.ok;
-}
-
-function lsState(out: Out, r: RepoReport): ReturnType<typeof cell> {
-  if (!r.present) return cell("not cloned", out.c.attn);
-  const dirty = dirtyCount(r);
-  if (dirty > 0) return cell(`${dirty} dirty`, out.c.accent);
-  if (settled(r)) return cell(G.check, out.c.success);
-  return cell(r.upstream === null ? "no upstream" : "", out.c.faint);
-}
-
-/**
- * The report as data. `--json` exists so a script can branch on the same
- * facts the table shows without parsing columns — so every field the table
- * draws from is here, spelled the way the rest of the client spells it.
- */
-function asJson(report: SyncReport): Record<string, unknown> {
-  return {
-    root: report.root,
-    pinsUnavailable: report.pinsUnavailable,
-    failures: report.failures,
-    repos: report.repos.map((r: RepoReport) => ({
-      owner: r.owner,
-      name: r.name,
-      path: r.dir,
-      present: r.present,
-      cloned: r.cloned,
-      pinned: r.pinned,
-      branch: r.branch,
-      upstream: r.upstream,
-      ahead: r.ahead,
-      behind: r.behind,
-      staged: r.staged,
-      changed: r.changed,
-      untracked: r.untracked,
-      conflicted: r.conflicted,
-      dirty: dirtyCount(r),
-      stashes: r.stashes,
-      unpushed: r.unpushed,
-      fastForwarded: r.fastForwarded,
-      lastFetch: r.lastFetch === null ? null : r.lastFetch.toISOString(),
-      error: r.error,
-    })),
-  };
-}
-
-// ── pins ─────────────────────────────────────────────────────────────────
-
-async function setPin(out: Out, args: Args, on: boolean): Promise<number> {
-  const verb = on ? "pin" : "unpin";
-  const ref = parseRepoRef(args.positional[0]);
-  if (ref === undefined) {
-    out.err(`forge ${verb}: expected owner/name`);
-    return EXIT.usage;
-  }
-  const loaded = await requireConfig(out);
-  if (typeof loaded === "number") return loaded;
-  const api = new ForgeApi(loaded.url, loaded.token);
-  const result = on
-    ? await api.pin(ref.owner, ref.name)
-    : await api.unpin(ref.owner, ref.name);
-  if (!result.ok) {
-    out.err(
-      result.error.status === 404
-        ? `forge ${verb}: this forge does not support pins yet`
-        : `forge ${verb}: ${result.error.message}`,
-    );
-    return EXIT.failed;
-  }
-  out.line(
-    `${out.paint(G.check, out.c.success)} ${on ? "pinned" : "unpinned"} ${ref.owner}/${ref.name}`,
-  );
-  if (on)
-    out.line(out.paint("  run `forge sync` to bring it down", out.c.faint));
-  return EXIT.ok;
-}
-
-async function openRepo(out: Out, args: Args): Promise<number> {
-  const ref = parseRepoRef(args.positional[0]);
-  if (ref === undefined) {
-    out.err("forge open: expected owner/name");
-    return EXIT.usage;
-  }
-  const loaded = await requireConfig(out);
-  if (typeof loaded === "number") return loaded;
-  const url = new ForgeApi(loaded.url, loaded.token).webUrl(
-    ref.owner,
-    ref.name,
-  );
-  out.line(url);
-  if (!args.flag("web")) return EXIT.ok;
-  const opener = process.platform === "darwin" ? "open" : "xdg-open";
-  try {
-    const proc = Bun.spawn([opener, url], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    await proc.exited;
-  } catch {
-    out.err(`forge open: could not run ${opener}`);
-    return EXIT.failed;
-  }
-  return EXIT.ok;
-}
-
-// ── the terminal UI ──────────────────────────────────────────────────────
-
-async function openTui(out: Out, args: Args): Promise<number> {
-  if (process.stdout.isTTY !== true) {
-    usage(out);
-    return EXIT.usage;
-  }
-  const loaded = await loadConfig();
-  const config = typeof loaded === "string" ? null : loaded.config;
-  const { runLocalTui } = await import("../tui/local/app.ts");
-  await runLocalTui({
-    root: rootDir(args.value("root")),
-    ...(config === null ? {} : { config }),
-  });
-  return EXIT.ok;
-}
-
-// ── plumbing ─────────────────────────────────────────────────────────────
-
-async function requireConfig(out: Out): Promise<Config | number> {
-  const loaded = await loadConfig();
-  if (loaded === "no_config") {
-    out.err("forge: not signed in — run `forge login <url>`");
-    return EXIT.notConfigured;
-  }
-  if (loaded === "no_token") {
-    out.err(`forge: ${configPath()} has no usable token — run \`forge login\``);
-    return EXIT.notConfigured;
-  }
-  return loaded.config;
-}
-
-/** One transient line, overwritten in place. Never printed to a pipe. */
-function status(out: Out, text: string): void {
-  if (!out.color) return;
-  const room = Math.max(0, out.width - 1);
-  process.stdout.write(`\r\x1b[K${text.slice(0, room)}`);
-  if (text === "") process.stdout.write("\r");
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * A secret, read without echo. Raw mode is the only way to stop the terminal
- * printing it, and it is restored on every path — including ctrl+c, which
- * here means "no token", not "leave the tty broken".
- */
-async function askSecret(prompt: string): Promise<string> {
-  const stdin = process.stdin;
-  if (stdin.isTTY !== true) {
-    // Piped input: read one line. `echo $TOKEN | forge login url` is a
-    // legitimate way to do this from a script.
-    const text = await new Response(Bun.stdin.stream()).text();
-    return text.split("\n")[0]?.trim() ?? "";
-  }
-  process.stdout.write(prompt);
-  stdin.setRawMode(true);
-  stdin.resume();
-  return new Promise<string>((resolve) => {
-    let value = "";
-    const finish = (result: string): void => {
-      stdin.off("data", onData);
-      stdin.setRawMode(false);
-      stdin.pause();
-      process.stdout.write("\n");
-      resolve(result);
-    };
-    const onData = (chunk: Buffer): void => {
-      for (const byte of chunk) {
-        if (byte === 3) return finish(""); // ctrl+c
-        if (byte === 13 || byte === 10) return finish(value.trim());
-        if (byte === 127 || byte === 8) {
-          value = value.slice(0, -1);
-          continue;
-        }
-        if (byte >= 0x20) value += String.fromCharCode(byte);
-      }
-    };
-    stdin.on("data", onData);
-  });
+  return command.run(out, args, printUsage, io, argv.slice(1));
 }
 
 // `import.meta.main` is false when a test imports `main` directly, which is

@@ -1,0 +1,18 @@
+{
+  "about": "Reconstructed by hand from the 0.5.x API shape (health 0.5.29), not captured from a live 0.5.x forge; answers by path. Absent paths answer 404, as that release does: no /api/v1/version, no /.well-known/nodeinfo, no /api/v1/user/repos, no `check` on a pull.",
+  "token": "friend-token",
+  "open": {
+    "/api/v1/health": { "ok": true, "version": "0.5.29", "commit": "2d910c08", "draining": false },
+    "/api/v1/here": { "here": { "kind": "forge", "name": "/" }, "you": null, "actions": [], "mcp": {}, "docs": [] }
+  },
+  "authed": {
+    "/api/v1/user": { "username": "ben", "displayName": "Ben" },
+    "/api/v1/repos/ben/notes/pulls/1": { "number": 1, "title": "Tidy", "state": "open", "headOid": "abc" }
+  },
+  "repos": [
+    { "id": "1", "ownerName": "zed", "name": "other", "description": "other app", "visibility": "public", "forkParentId": null, "defaultBranch": "main" },
+    { "id": "2", "ownerName": "ben", "name": "notes", "description": "notes app", "visibility": "public", "forkParentId": null, "defaultBranch": "main" },
+    { "id": "3", "ownerName": "ben", "name": "secret", "description": "secret app", "visibility": "private", "forkParentId": null, "defaultBranch": "main" },
+    { "id": "4", "ownerName": "zed", "name": "more", "description": "more app", "visibility": "public", "forkParentId": null, "defaultBranch": "main" }
+  ]
+}

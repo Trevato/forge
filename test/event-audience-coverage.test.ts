@@ -177,6 +177,13 @@ describe("event audience coverage", () => {
     expect(eventAudience("brand.new_kind")).toBe("admins");
   });
 
+  test("a clog's events carry its cause and are classified for admins, never guests or agents", () => {
+    for (const kind of ["clog.started", "clog.cleared"]) {
+      expect(classifiedAudience(kind)).toBe("admins");
+      expect(eventAudience(kind)).toBe("admins");
+    }
+  });
+
   test("the scan names a kind it cannot read literally", () => {
     const { unreadable } = emittedKinds({
       "src/x.ts": "app.bus.append({ kind: pick(a), payload: {} });",

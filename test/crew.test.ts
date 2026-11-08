@@ -57,7 +57,8 @@ describe("the crew, with a stand-in Claude Code", () => {
     agentRunSettled(app, repo, where, timeoutMs);
 
   beforeAll(async () => {
-    standIn = await startStandInCrew();
+    // The crew picks every 50 ms here (`tickMs`), not every five seconds.
+    standIn = await startStandInCrew({ tickMs: 50 });
     ({ dataDir, app, servers, crew, alice, bot, repo, argsFile, promptFile } =
       standIn);
   }, 30_000);
@@ -269,12 +270,18 @@ describe("the crew, with a stand-in Claude Code", () => {
     expect(kept.state).not.toBe("cancelled");
     // The fresh run spawned nothing: its whole log is the one archived line.
     expect(readRunLog(dataDir, done.id).lines.filter((l) => l.trim() !== "").length).toBe(1);
-    // Wake leaves it cancelled; a new assignment starts normally.
+    // Wake leaves it cancelled; a new assignment starts normally. The new
+    // run is on the same issue and queued after it, so the crew's picks
+    // after Wake reach the old run first: had Wake revived it, it would
+    // have started (one run per issue at a time) before this one settled.
     const woken = setArchivedIn(app.db, archived, false);
-    await Bun.sleep(6_000);
-    expect(listRuns(app.db, repo.id, { issueId: issue.value.id }).find((r) => r.id === queued!.id)!.state).toBe("cancelled");
     const next = queueAgentRun(app, woken, issue.value, agent, "assigned");
     expect(next).toBeDefined();
-    await settled((r) => r.id === next!.id, 60_000);
+    const ran = await settled((r) => r.id === next!.id, 60_000);
+    expect(ran.state).toBe("ok");
+    const after = listRuns(app.db, repo.id, { issueId: issue.value.id }).find((r) => r.id === queued!.id)!;
+    expect(after.state).toBe("cancelled");
+    expect(after.summary).toBe(ARCHIVED_WHY);
+    expect(readRunLog(dataDir, after.id).lines.filter((l) => l.trim() !== "").length).toBe(1);
   }, 120_000);
 });

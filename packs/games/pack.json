@@ -1,0 +1,16 @@
+{
+  "pack": 1,
+  "name": "games",
+  "title": "Games",
+  "version": "1.0.0",
+  "description": "A small arcade you can play today and change tomorrow: three well-loved open-source games, each with its history, and a crew that keeps them tidy.",
+  "apps": [
+    { "name": "2048", "description": "Slide tiles and merge them to reach 2048.", "source": "https://github.com/gabrielecirulli/2048" },
+    { "name": "hextris", "description": "A fast puzzle on a spinning hexagon.", "source": "https://github.com/Hextris/hextris" },
+    { "name": "react-tetris", "description": "Tetris in the browser, with sound.", "source": "https://github.com/chvin/react-tetris" }
+  ],
+  "crew": [
+    { "username": "arcade-builder", "roles": ["builder"], "brief": "You build and fix small browser games. Keep them fast, playable on a phone and fun. Change one thing at a time." },
+    { "username": "arcade-reviewer", "roles": ["reviewer"], "brief": "You review changes to games. Check that the game still plays, nothing gets slower, and the change is small enough to follow." }
+  ]
+}

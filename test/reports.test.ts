@@ -408,6 +408,24 @@ describe("reports from outside", () => {
     ).toBe(1);
   });
 
+  test("a report's body draws in the prose message div, escaped; a report without one draws none", async () => {
+    await report("alice/game", { title: "tall menu", body: "Menu <b>breaks</b>\n  on phones" });
+    await report("alice/game", { title: "silent bug", body: "" });
+    const withBody = (await waiting("tall menu"))!;
+    const without = (await waiting("silent bug"))!;
+    const page = await (await as(aliceToken, "/alice/game/reports")).text();
+    expect(page).not.toContain("commit-body");
+    expect(page).toContain(
+      '<div class="prose" data-text="message"><pre>Menu &lt;b&gt;breaks&lt;/b&gt;\n  on phones</pre></div>',
+    );
+    // The card of the bodiless report, from its opening to its accept form.
+    const end = page.indexOf(`id="accept-${without}"`);
+    const card = page.slice(page.lastIndexOf('class="card', end), end);
+    expect(card).toContain("silent bug");
+    expect(card).not.toContain('data-text="message"');
+    expect(page.indexOf(`id="accept-${withBody}"`)).toBeGreaterThan(-1);
+  });
+
   test("the reports page offers the title to change, and the form opens the issue marked", async () => {
     await report("alice/game", { title: "menu bad", body: "On my phone." });
     const id = (await waiting("menu bad"))!;
@@ -511,6 +529,8 @@ describe("reports from outside", () => {
         page: "https://x.example/#[click](https://evil.example/e)",
         state: "pending",
         createdAt: "2026-10-05T00:00:00.000Z",
+        filedBy: { how: "anonymous", name: null },
+        filerId: null,
       },
       alice,
     );
@@ -535,6 +555,38 @@ describe("reports from outside", () => {
     );
     expect(res.status).toBe(200);
     expect(count("issue")).toBe(issues);
+  });
+
+  test("the reports list pages with limit and next_cursor, and refuses a bad window", async () => {
+    app.db.run("DELETE FROM report");
+    const insert = app.db.query(
+      "INSERT INTO report (id, repo_id, title, body) VALUES (?1, ?2, 't', '')",
+    );
+    for (let i = 0; i < 5; i++) insert.run(`page${i}`, game.id);
+    const path = "/api/v1/repos/alice/game/reports";
+    const whole = (await (await as(aliceToken, path)).json()) as any;
+    expect(whole.items.length).toBe(5);
+    expect(whole.next_cursor).toBeNull();
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const res = await as(aliceToken, `${path}?limit=2${cursor ? `&cursor=${cursor}` : ""}`);
+      expect(res.status).toBe(200);
+      const page = (await res.json()) as any;
+      expect(page.items.every((r: any) => r.from === "outside")).toBe(true);
+      seen.push(...page.items.map((r: any) => r.id));
+      cursor = page.next_cursor;
+      pages++;
+    } while (cursor !== null && pages < 10);
+    expect(pages).toBe(3);
+    expect(seen).toEqual(whole.items.map((r: any) => r.id));
+    for (const bad of ["0", "201", "-1", "x", ""]) {
+      const res = await as(aliceToken, `${path}?limit=${bad}`);
+      expect(res.status).toBe(422);
+      expect(await res.text()).toContain("invalid_limit");
+    }
+    app.db.run("DELETE FROM report");
   });
 
   test("a repository holds a bounded number of waiting reports", async () => {

@@ -239,6 +239,7 @@ describe.skipIf(NO_OPENSSH)("a terminal for every app, over ssh", () => {
     const deadline = Date.now() + 10_000;
     while (!terminal.output().includes("j/k move") && Date.now() < deadline)
       await Bun.sleep(50);
+    if (!terminal.output().includes("j/k move")) throw new Error(`never came: still waiting while !terminal.output().includes("j/k move")`);
     // The app's own terminal drew on our pty…
     expect(terminal.output()).toContain("hello");
     expect(terminal.output()).toContain("j/k move");

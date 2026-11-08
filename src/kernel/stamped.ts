@@ -54,14 +54,28 @@ export class Stamped<V> {
     }
     this.misses++;
     const value = compute();
+    this.store(key, stamp, value, now);
+    return value;
+  }
+
+  /** The entry for `key` as stored, however old: for a caller that serves stale while it refreshes. Counts nothing. */
+  peek(key: string): { readonly stamp: string; readonly value: V; readonly at: number } | undefined {
+    return this.entries.get(key);
+  }
+
+  /** Store `value` for `key` under `stamp`, computed now: what a refresh off the request path lands. */
+  put(key: string, stamp: string, value: V): void {
+    this.store(key, stamp, value, this.now());
+  }
+
+  private store(key: string, stamp: string, value: V, at: number): void {
     this.entries.delete(key);
-    this.entries.set(key, { stamp, value, at: now });
+    this.entries.set(key, { stamp, value, at });
     while (this.entries.size > this.options.maxEntries) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) break;
       this.entries.delete(oldest);
     }
-    return value;
   }
 
   get size(): number {

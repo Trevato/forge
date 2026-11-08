@@ -38,7 +38,7 @@ test("no proof, no card", () => {
 test("a failing proof is a release card naming the check, linking the board", () => {
   keep({ version: "9.9.9", at: "2026-10-18T10:00:00.000Z", ok: false, failure: "https://f/a.css expected 200 (status 500)" });
   expect(card()).toMatchObject({
-    sentence: "Release 9.9.9 is unproven: https://f/a.css expected 200 (status 500).",
+    sentence: "Release 9.9.9 is unproven: https://f/a.css expected 200 (status 500). It is proven again at 10:05 UTC.",
     href: "/board",
     since: "2026-10-18T10:00:00.000Z",
   });

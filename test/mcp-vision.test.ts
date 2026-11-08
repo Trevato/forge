@@ -5,9 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
-import { createRepo } from "../src/core/repos.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import { savePlacement } from "../src/core/placements.ts";
+import { nextDirection } from "../src/crew/vision.ts";
+import { createRepo, getRepo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser } from "../src/core/users.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -67,6 +70,7 @@ test("this repository's VISION.md is parsed", async () => {
   expect(v.rules.length).toBe(4);
   expect(v.rules[2]).toStartWith("Done means reachable");
   expect(v.direction).toBe("ship the feed");
+  expect(v.directionStall).toBeNull();
   expect(v.updatedAt).toMatch(/^\d{4}-\d\d-\d\dT/);
 });
 
@@ -79,4 +83,33 @@ test("a reader who may not see settings gets no direction", async () => {
   const v = await vision(tok["reader"]!, "ada/with");
   expect(v.direction).toBeNull();
   expect(v.order.length).toBe(8);
+});
+
+test("number: an admin reads the direction after an open vision pull; a reader reads nothing", async () => {
+  const owner = ok(getUserByName(app.db, "ada") ? { ok: true as const, value: getUserByName(app.db, "ada")! } : { ok: false as const, error: "no ada" });
+  const repo = getRepo(app.db, "ada", "with")!;
+  const md = (await readFile(join(import.meta.dir, "..", "docs", "VISION.md"), "utf8")).replace("Done means reachable", "Done means shown");
+  ok(await commitToBranch(app, owner, repo, { branch: "vision-m", message: "v", files: [{ path: "docs/VISION.md", content: md }] }));
+  const pull = ok(await openPull(app, owner, repo, { title: "Note", body: "", baseBranch: "main", headBranch: "vision-m" }));
+  const call = async (token: string, args: object): Promise<any> => {
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "vision", arguments: args } }),
+    });
+    return JSON.parse(((await res.json()) as any).result.content[0].text);
+  };
+  expect((await call(tok["owner"]!, { repo: "ada/with", number: pull.number })).preview).toBeNull();
+  savePlacement(app.db, {
+    thoughtId: "thmcp", kind: "vision", reply: "", asked: false, decidedBy: "t", placedAt: new Date().toISOString(),
+    placed: [{ action: "proposed", repo: "ada/with", number: pull.number, pull: pull.number }],
+  });
+  const v = await call(tok["owner"]!, { repo: "ada/with", number: pull.number });
+  const expected = nextDirection("ship the feed", md);
+  if (!expected.ok) throw new Error(expected.why);
+  expect(v.preview).toEqual({ today: "ship the feed", after: expected.text });
+  expect(v.directionParts).toEqual([{ kind: "owner", text: "ship the feed" }]);
+  const r = await call(tok["reader"]!, { repo: "ada/with", number: pull.number });
+  expect(r.preview).toBeNull();
+  expect(r.directionParts).toBeNull();
 });

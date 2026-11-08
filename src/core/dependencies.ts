@@ -12,9 +12,12 @@ import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { getIssuesByIds, getIssuesOfRepo, type CloseReason, type Issue } from "./issues.ts";
 import { pillarsOf, structuralIds, type Pillars } from "./pillars.ts";
-import { getRepoById } from "./repos.ts";
+import { getRepoById, type Repo } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
+import { flowLabelled } from "./flow_label.ts";
 import { raisedAt, raisedInRepo } from "./thought_links.ts";
+import { firstAt, firstInRepo } from "./first.ts";
+import { ranksInRepo } from "./rank.ts";
 import { limbRanks, limbTree, readPlaces } from "./limb_order.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
@@ -182,6 +185,27 @@ export function dependenciesOf(
   return { blockedBy: pick(blockedBy), blocks: pick(blocks) };
 }
 
+/** An edge `d` whose blocker `b` closed without being done and nobody confirmed. */
+const HELD_EDGE = "d.confirmed = 0 AND b.close_reason IN ('dropped','split')";
+
+/**
+ * The blockers of `issueId` that closed as dropped or split and that no
+ * person has confirmed, by number: what holds the issue though it is closed.
+ */
+export function heldBlockers(db: Database, issueId: string): Issue[] {
+  const ids = db
+    .query<{ blocked_by_id: string }, [string]>(
+      `SELECT d.blocked_by_id FROM issue_dependency d
+         JOIN issue b ON b.id = d.blocked_by_id AND b.state = 'closed'
+        WHERE d.issue_id = ?1 AND ${HELD_EDGE}
+        ORDER BY b.number`,
+    )
+    .all(issueId)
+    .map((r) => r.blocked_by_id);
+  const found = getIssuesByIds(db, ids);
+  return ids.map((id) => found.get(id)).filter((i): i is Issue => i !== undefined);
+}
+
 // ---- the graph of one repository ----
 
 /** An open issue held by a blocker that closed without being done. */
@@ -228,6 +252,12 @@ export interface Graph {
    * ready ahead of the rest, the latest raise first.
    */
   readonly raised?: ReadonlyMap<string, string>;
+  /** Open issues labelled `flow`: ready, they go before all other ready work (`readyNow`). */
+  readonly flow?: ReadonlySet<string>;
+  /** When a writer put an issue first (#7806): ready ahead of everything else. */
+  readonly first?: ReadonlyMap<string, string>;
+  /** The owner's ranked list (#8694): an issue's place, 1 at the top. Ready, ranked issues go before all else. */
+  readonly ranked?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -241,7 +271,7 @@ export interface Graph {
  * would take along before anything is written.
  */
 export function deferredIn(
-  graph: Pick<Graph, "issues" | "edges">,
+  graph: { issues: readonly Pick<Issue, "id" | "state">[]; edges: readonly Edge[] },
   gate: string | undefined,
   later: string | undefined,
   also: Iterable<string> = [],
@@ -255,10 +285,7 @@ export function deferredIn(
   for (const edge of graph.edges) {
     if (!open.has(edge.issueId)) continue;
     if (edge.blockedById === gate) out.add(edge.issueId);
-    waiters.set(edge.blockedById, [
-      ...(waiters.get(edge.blockedById) ?? []),
-      edge.issueId,
-    ]);
+    push(waiters, edge.blockedById, edge.issueId);
   }
   if (later !== undefined && open.has(later)) out.add(later);
   for (const id of also) if (open.has(id) && id !== gate) out.add(id);
@@ -274,6 +301,13 @@ export function deferredIn(
     }
   }
   return out;
+}
+
+/** Append to the list under `key`, which a spread would copy whole each time. */
+function push(into: Map<string, string[]>, key: string, value: string): void {
+  const list = into.get(key);
+  if (list === undefined) into.set(key, [value]);
+  else list.push(value);
 }
 
 const GRAPH_MAX = 400;
@@ -301,6 +335,39 @@ export function linkedIssueIds(db: Database, ids: readonly string[]): Set<string
     out.add(r.b);
   }
   return out;
+}
+
+/**
+ * `repoGraph(...).deferred` for a repository, reading only what it needs: the
+ * open issues and the edges that start at one. Closed issues and the edges
+ * between them never change what is deferred, so a repository with thousands
+ * of finished issues costs what its open ones do. Nothing is deferred
+ * without an open Later gate, which is checked before any edge is read.
+ */
+export function deferredOf(db: Database, repo: Repo): ReadonlyMap<string, string> {
+  const set = pillarsOf(db, repo);
+  const gate = set.gate?.id;
+  if (gate === undefined || set.gate?.state !== "open") return new Map();
+  const issues = db
+    .query<{ id: string; number: number; title: string }, [string, number]>(
+      `SELECT id, number, title FROM issue
+        WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open' AND sealed = 0
+        ORDER BY number LIMIT ?2`,
+    )
+    .all(repo.id, GRAPH_MAX)
+    .map((i) => ({ ...i, state: "open" as const }));
+  const open = new Set(issues.map((i) => i.id));
+  const edges = db
+    .query<{ issue_id: string; blocked_by_id: string }, [string]>(
+      `SELECT d.issue_id, d.blocked_by_id FROM issue_dependency d
+         JOIN issue i ON i.id = d.issue_id
+        WHERE i.repo_id = ?1 AND i.state = 'open' AND i.kind = 'issue'`,
+    )
+    .all(repo.id)
+    .filter((r) => open.has(r.issue_id) && open.has(r.blocked_by_id))
+    .map((r) => ({ issueId: r.issue_id, blockedById: r.blocked_by_id }));
+  const graph = { issues, edges };
+  return deferredWhy(graph, deferredIn(graph, gate, set.later?.id), gate, set.later?.id);
 }
 
 export function repoGraph(
@@ -332,8 +399,7 @@ export function repoGraph(
          FROM issue_dependency d
          JOIN issue i ON i.id = d.issue_id AND i.state = 'open'
          JOIN issue b ON b.id = d.blocked_by_id AND b.state = 'closed'
-        WHERE i.repo_id = ?1 AND d.confirmed = 0
-          AND b.close_reason IN ('dropped','split')
+        WHERE i.repo_id = ?1 AND ${HELD_EDGE}
         ORDER BY b.number`,
     )
     .all(repoId);
@@ -396,6 +462,12 @@ export function repoGraph(
       whole === undefined
         ? raisedAt(db, issues.map((i) => i.id))
         : raisedInRepo(db, repoId),
+    flow: flowLabelled(db, repoId),
+    ranked: ranksInRepo(db, repoId),
+    first:
+      whole === undefined
+        ? firstAt(db, issues.map((i) => i.id))
+        : firstInRepo(db, repoId),
     issues,
     unadopted:
       repo === undefined ? new Set() : unadoptedAmong(db, repo, issues),
@@ -426,7 +498,7 @@ const NAMED_LIMBS = 2;
  * it — and then which: the deferred limbs above it, by number and title.
  */
 function deferredWhy(
-  graph: Pick<Graph, "issues" | "edges">,
+  graph: { issues: readonly Pick<Issue, "id" | "number" | "title">[]; edges: readonly Edge[] },
   deferred: ReadonlySet<string>,
   gate: string | undefined,
   later: string | undefined,
@@ -441,14 +513,11 @@ function deferredWhy(
     if (edge.blockedById === gate) behind.add(edge.issueId);
     if (edge.issueId === later) filed.add(edge.blockedById);
     if (deferred.has(edge.issueId))
-      waiters.set(edge.blockedById, [
-        ...(waiters.get(edge.blockedById) ?? []),
-        edge.issueId,
-      ]);
+      push(waiters, edge.blockedById, edge.issueId);
   }
   // The deferred limbs an issue hangs from: what above it was itself filed.
-  const limbs = (id: string, seen: Set<string>): Issue[] => {
-    const found: Issue[] = [];
+  const limbs = (id: string, seen: Set<string>): Pick<Issue, "id" | "number" | "title">[] => {
+    const found: Pick<Issue, "id" | "number" | "title">[] = [];
     for (const waiter of waiters.get(id) ?? []) {
       if (seen.has(waiter)) continue;
       seen.add(waiter);
@@ -555,11 +624,30 @@ function waitsForMap(
   return memo;
 }
 
+/**
+ * What the rankings of one graph share: its open ids and both reach maps.
+ * `readyNow`, `idleFurniture` and `blockedOn` each ask for them on the same
+ * graph in one page, and each walk is the costliest step of the read (#8381),
+ * so a graph is walked once. A graph is plain data that is built, not changed.
+ */
+const reachMaps = new WeakMap<
+  Graph,
+  { open: Set<string>; holds: Map<string, Set<string>>; waits: Map<string, Set<string>> }
+>();
+
+export function reachOf(graph: Graph) {
+  let known = reachMaps.get(graph);
+  if (known === undefined) {
+    const open = openIds(graph);
+    known = { open, holds: holdsUpMap(graph, open), waits: waitsForMap(graph, open) };
+    reachMaps.set(graph, known);
+  }
+  return known;
+}
+
 /** Open issues nothing open stands in front of, whoever they are for, in the ready order. */
 function clearNow(graph: Graph): Ranked[] {
-  const open = openIds(graph);
-  const holds = holdsUpMap(graph, open);
-  const waits = waitsForMap(graph, open);
+  const { open, holds, waits } = reachOf(graph);
   const held = new Set(graph.held.map((h) => h.issueId));
   return graph.issues
     .filter(
@@ -602,10 +690,30 @@ export function readyNow(graph: Graph): Ranked[] {
   const of = (r: Ranked) => rank?.get(r.issue.id) ?? Number.MAX_SAFE_INTEGER;
   if (rank !== undefined) ready.sort((a, b) => of(a) - of(b));
   const raised = graph.raised;
-  if (raised === undefined || raised.size === 0) return ready;
-  // What the owner said again comes first (stable: the rest keep their order).
-  const at = (r: Ranked) => raised.get(r.issue.id) ?? "";
-  return ready.sort((a, b) => at(b).localeCompare(at(a)));
+  if (raised !== undefined && raised.size > 0) {
+    // What the owner said again comes first (stable: the rest keep their order).
+    const at = (r: Ranked) => raised.get(r.issue.id) ?? "";
+    ready.sort((a, b) => at(b).localeCompare(at(a)));
+  }
+  // The `flow` label is the one place that says what goes first: no mode, no state.
+  const flow = graph.flow;
+  if (flow !== undefined && flow.size > 0) {
+    const labelled = (r: Ranked) => (flow.has(r.issue.id) ? 0 : 1);
+    ready.sort((a, b) => labelled(a) - labelled(b));
+  }
+  // What a person put first comes before all of it, the latest first. It only
+  // orders what is already ready: no rank lifts the Later gate or a blocker.
+  const first = graph.first;
+  if (first !== undefined && first.size > 0) {
+    const when = (r: Ranked) => first.get(r.issue.id) ?? "";
+    ready.sort((a, b) => when(b).localeCompare(when(a)));
+  }
+  // The owner's ranked list is the last word, by place; the rest keep their
+  // order, so the same state always gives the same pick (#8694).
+  const ranked = graph.ranked;
+  if (ranked === undefined || ranked.size === 0) return ready;
+  const place = (r: Ranked) => ranked.get(r.issue.id) ?? Number.MAX_SAFE_INTEGER;
+  return ready.sort((a, b) => place(a) - place(b));
 }
 
 /**
@@ -621,9 +729,7 @@ export function idleFurniture(graph: Graph): Issue[] {
 
 /** Open issues that hold others up, the widest blockage first. */
 export function blockedOn(graph: Graph): Ranked[] {
-  const open = openIds(graph);
-  const holds = holdsUpMap(graph, open);
-  const waits = waitsForMap(graph, open);
+  const { open, holds, waits } = reachOf(graph);
   return graph.issues
     .filter((i) => open.has(i.id) && (holds.get(i.id)?.size ?? 0) > 0)
     .map((issue) => ({

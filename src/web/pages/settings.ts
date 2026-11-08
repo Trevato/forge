@@ -1,13 +1,14 @@
 /**
  * Repository settings, admin-only: what the repo is (description, visibility,
- * default branch, protection), the labels that organise its work, the
- * webhooks that carry its events out, and the one door marked danger.
+ * default branch, protection) and the one door marked danger. The labels
+ * pane lives in `labels.ts` and the webhooks pane in `hooks.ts`.
  *
  * Four pages rather than one long scroll, because a settings page you have to
  * hunt through is a settings page people get wrong. Every mutation is its own
  * same-origin POST and every one of them says what happened.
  */
 
+import { POLISH_SHARE_DEFAULT, POLISH_SHARE_MAX } from "../../crew/small_share.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import { getProvenance, parentUrl, sourceLabel } from "../../core/provenance.ts";
@@ -26,38 +27,31 @@ import {
   type AppDomainView,
 } from "../../actions/domains.ts";
 import {
+  domainAddedText,
+  domainRefusalText,
+  domainRemovedText,
+  NO_SUCH_DOMAIN,
+} from "../../actions/domain_words.ts";
+import {
   egressView,
   grantAppEgress,
   revokeAppEgress,
   type EgressView,
 } from "../../actions/egress_grants.ts";
-import {
-  addPromptSource,
-  listPromptSources,
-  removePromptSource,
-  runPromptSource,
-  type PromptSourceView,
-} from "../../actions/prompts.ts";
 import type { DnsRecord } from "../../apps/domains.ts";
-import { REFRESH_AFTER_DAYS } from "../../crew/prompts.ts";
 import {
   listAppEnvNames,
   NAME_MAX,
   type AppEnvName,
-  type AppEnvScope,
 } from "../../core/app_env.ts";
-import { addToCrew, listCrew, removeFromCrew } from "../../actions/crew.ts";
-import { getAgentByName, isCrewRole, setCrewRole } from "../../core/agents.ts";
-import { isAutonomy, isDecisionsBy } from "../../core/repos.ts";
 import {
-  createLabel,
-  createWebhook,
-  deleteLabel,
-  deleteRepo,
-  deleteWebhook,
-  updateLabel,
-  updateRepoSettings,
-} from "../../actions/repos.ts";
+  APP_ENV_ERRORS,
+  APP_ENV_NO_SUCH,
+  APP_ENV_NOT_SET,
+  SCOPE_WORDS,
+} from "../../actions/app_env_words.ts";
+import { AUTONOMY_SAID, checkAutonomy, isDecisionsBy } from "../../core/repos.ts";
+import { updateRepoSettings } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { appVitals, shiftText, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
@@ -69,7 +63,6 @@ import {
   type AppAccess,
   type AppRecord,
 } from "../../core/apps.ts";
-import { listLabels, type Label } from "../../core/issues.ts";
 import {
   readAppMembers,
   setAppMembersThrough,
@@ -77,7 +70,6 @@ import {
 import { canAdmin, type Repo } from "../../core/repos.ts";
 import { stopMirroring } from "../../actions/mirror_target.ts";
 import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
-import { listWebhooks, recentDeliveries } from "../../core/webhooks.ts";
 import { listRefs } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -91,13 +83,13 @@ import {
   settingsLayout,
 } from "../chrome.ts";
 import { daySpark } from "../studio/kpi_row.ts";
-import { settingsLead } from "../studio/crew.ts";
+import { settingsLead, teamJs } from "../studio/crew.ts";
 import { pageTitle } from "../studio/nouns.ts";
 import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { NOT_CHANGED } from "../edit_words.ts";
-import { DELETE_REPO, STOP_APP } from "../danger_words.ts";
+import { STOP_APP } from "../danger_words.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import type { Flash } from "../flash.ts";
@@ -106,24 +98,17 @@ import {
   btn,
   card,
   confirmAction,
-  dot,
-  empty,
   field as formField,
-  labelChip,
-  labelCss,
   row,
   selectField,
   time,
-  timeAgo,
   tlEvent,
 } from "../ui.ts";
 import { cutWaveFor } from "../../actions/cut_wave.ts";
 import { proposalTokensSection } from "./proposal-tokens.ts";
 import { secretsSection } from "./secrets.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
-import { followUpstreamCard } from "./upstream-follow.ts";
-import { saveGrants } from "./subscriptions.ts";
-import { LABEL_WORDS } from "../../actions/label_words.ts";
+import { followSourcesCard, followUpstreamCard } from "./upstream-follow.ts";
 
 type Section =
   | "general"
@@ -131,6 +116,7 @@ type Section =
   | "prompts"
   | "labels"
   | "hooks"
+  | "machines"
   | "danger";
 
 /** The repo, but only for someone who administers it. A non-admin is told
@@ -142,7 +128,7 @@ function loadAdminRepo(ctx: Ctx): Repo | undefined {
 }
 
 /** `loadAdminRepo` for a GET page: names the session, then the repo read as `repo`. */
-function timedAdminRepo(ctx: Ctx): Repo | undefined {
+export function timedAdminRepo(ctx: Ctx): Repo | undefined {
   nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   return timePhase(ctx.request, "repo", () => loadAdminRepo(ctx));
@@ -181,6 +167,12 @@ function sections(base: string, active: Section) {
       current: active === "hooks",
     },
     {
+      label: "Machines",
+      href: `${base}/settings/machines`,
+      icon: "terminal" as const,
+      current: active === "machines",
+    },
+    {
       label: "Danger zone",
       href: `${base}/settings/danger`,
       icon: "alert" as const,
@@ -190,7 +182,7 @@ function sections(base: string, active: Section) {
 }
 
 /** Every settings page is the same frame with a different pane inside it. */
-function settingsPageResponse(
+export function settingsPageResponse(
   ctx: Ctx,
   repo: Repo,
   active: Section,
@@ -206,6 +198,7 @@ function settingsPageResponse(
       crumbs: crumbsFor(repo),
       palette: repoPalette(ctx, repo),
       ...(styleCss !== undefined ? { styleCss } : {}),
+      scriptJs: teamJs,
       body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
       ${settingsLayout(sections(repoBase(repo), active), body)}`,
     },
@@ -214,7 +207,7 @@ function settingsPageResponse(
 }
 
 /** The gate every settings POST passes: admin, same-origin, admin scope. */
-async function adminForm(
+export async function adminForm(
   ctx: Ctx,
 ): Promise<{ repo: Repo; form: Form } | Response> {
   const repo = loadAdminRepo(ctx);
@@ -251,6 +244,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
         title: pageTitle("settings", readable, true),
         crumbs: crumbsFor(readable),
         palette: repoPalette(ctx, readable),
+        scriptJs: teamJs,
         body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
       ${lead}${proposals ? html`<div class="mt">${proposals}</div>` : null}`,
       });
@@ -347,6 +341,27 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           >
         </label>
       </div>
+      <div class="field">
+        <input type="hidden" name="polishShareShown" value="1" />
+        <label for="polish-share">Polish share</label>
+        <input
+          class="input mono"
+          id="polish-share"
+          type="number"
+          name="polishShare"
+          min="0"
+          max="${String(POLISH_SHARE_MAX)}"
+          step="1"
+          value="${String(repo.polishShare)}"
+          inputmode="numeric"
+        />
+        <p class="hint">
+          Percent of the week's agent spend that polish may take, 0 to ${String(POLISH_SHARE_MAX)}
+          (starts at ${String(POLISH_SHARE_DEFAULT)}) — so small fixes get steady attention without crowding out the plan.
+          Over it, the crew stops picking issues labelled polish or in the small-fixes lane until the week catches up; the
+          <a href="${base}/week">week</a> shows where it stands.
+        </p>
+      </div>
       ${cellMemory === undefined
         ? null
         : html`<div class="field"><p class="hint" data-check-memory>${
@@ -362,6 +377,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   );
   const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
   const upstream = followUpstreamCard(ctx, repo);
+  const sources = followSourcesCard(ctx, repo);
   const wave = card(
     html`<form method="post" action="${base}/settings/wave">
       <p class="muted">
@@ -399,15 +415,16 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     held === undefined
       ? null
       : card(
-          html`<form method="post" action="${base}/settings/mirror/stop">
-            <p class="muted" data-mirror-line>${mirrorLine(held)}</p>
+          html`<p class="muted" data-mirror-line>${mirrorLine(held)}</p>
             <p class="muted small">
               Stopping leaves ${held.fullName} as it is; nothing more is pushed.
             </p>
             <div class="form-actions">
-              ${btn("Stop mirroring", { variant: "primary" })}
-            </div>
-          </form>`,
+              ${confirmAction({
+                action: `${base}/settings/mirror/stop`,
+                verb: "Stop mirroring",
+              })}
+            </div>`,
           { head: html`${icon("branch")}<h2>Mirror</h2>` },
         );
   const response = settingsPageResponse(
@@ -417,7 +434,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     "Settings",
     html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
       ? html`<div class="mt">${trail}</div>`
-      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
+      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}${sources ? html`<div class="mt">${sources}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
       : null}${secrets
       ? html`<div class="mt">${secrets}</div>`
@@ -426,6 +443,9 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "render", renderMs + performance.now() - since);
   return response;
 }
+
+/** A form's polish share: the number if it is all digits, else NaN, which the action refuses. */
+const parseShare = (raw: string): number => (/^\d{1,3}$/.test(raw.trim()) ? Number(raw) : Number.NaN);
 
 export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
@@ -458,6 +478,8 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
       ? { crewOutsiders: form.get("crewOutsiders") !== null }
       : {}),
     ...(branch !== "" ? { defaultBranch: branch } : {}),
+    // Sent only by a form that draws the field; anything but a whole 0–50 is refused by the action.
+    ...(form.get("polishShareShown") !== null ? { polishShare: parseShare(field(form, "polishShare")) } : {}),
   };
   const updated = await updateRepoSettings(
     ctx.app,
@@ -472,9 +494,20 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
         message:
           updated.error === "unknown_branch"
             ? "That branch does not exist in this repository."
+            : updated.error === "polish_share"
+            ? `Polish share is a whole number of percent, 0 to ${POLISH_SHARE_MAX}.`
             : "Those settings could not be saved.",
       };
   return flashTo(ctx, `${base}/settings`, flash);
+}
+
+/** A return address that stays on this origin, as a path; anything else is undefined. */
+function samePath(ctx: Ctx, to: string | undefined): string | undefined {
+  if (to === undefined || !to.startsWith("/") || to.startsWith("//") || /[\\\x00-\x1f]/.test(to))
+    return undefined;
+  const parsed = URL.parse(to, ctx.url.origin);
+  if (!parsed || parsed.origin !== ctx.url.origin) return undefined;
+  return parsed.pathname + parsed.search;
 }
 
 /**
@@ -495,7 +528,11 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
   const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
     archived,
   });
-  const back = field(form, "to") === "repo" ? repoBase(repo) : `${repoBase(repo)}/settings`;
+  const to = field(form, "to");
+  const back =
+    to === "repo"
+      ? repoBase(repo)
+      : (samePath(ctx, to) ?? `${repoBase(repo)}/settings`);
   return flashTo(
     ctx,
     back,
@@ -748,17 +785,6 @@ function appSettingsView(
     </div>`;
 }
 
-/**
- * The app's environment: the names that are set, and a form for one more.
- * Values are write-only — the page shows a name and when it was set, and
- * the value input forgets what was typed the moment the form is sent.
- */
-const SCOPE_WORDS: Record<AppEnvScope, string> = {
-  all: "everywhere",
-  production: "production",
-  preview: "previews",
-};
-
 /** Production's visitors and the speed they saw, from the app's own beacon. */
 export function appVisitorsView(v: AppVitals): Html {
   const known = v.loadDays.filter((n): n is number => n !== null);
@@ -770,7 +796,8 @@ export function appVisitorsView(v: AppVitals): Html {
       : `p75 load each day over the last 30 days, latest ${ms(latest ?? undefined)}, range ${ms(Math.min(...known))} to ${ms(Math.max(...known))}`,
   );
   return card(
-    html`<p class="muted small mb">
+    html`<p class="small mb"><a href="app/traffic">Where visitors come from and where they go</a></p>
+      <p class="muted small mb">
         Counted by the beacon the template ships, through the forge: no
         address is kept, and a visitor is the same only within a day, so the
         7 day figure adds the days up.
@@ -789,6 +816,11 @@ export function appVisitorsView(v: AppVitals): Html {
   );
 }
 
+/**
+ * The app's environment: the names that are set, and a form for one more.
+ * Values are write-only — the page shows a name and when it was set, and
+ * the value input forgets what was typed the moment the form is sent.
+ */
 function appEnvView(base: string, names: AppEnvName[]): Html {
   const rows = names.map((v) =>
     row({
@@ -1174,14 +1206,6 @@ export async function appDisable(ctx: Ctx): Promise<Response> {
   );
 }
 
-const APP_ENV_ERRORS: Record<string, string> = {
-  invalid_name: `A name is capital letters, digits and underscores, starting with a letter — ADMIN_PASSWORD, STRIPE_SECRET_KEY — and at most ${NAME_MAX} characters.`,
-  reserved_name:
-    "That name is the forge's own (PORT, HOST, PATH, FORGE_…); the app is already told it.",
-  invalid_value: "A value is one line or many, never empty and under 64 KiB.",
-  invalid_scope: "A variable goes everywhere, to production, or to previews.",
-};
-
 // POST /:owner/:name/settings/app/env — set one variable.
 export async function appEnvSet(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
@@ -1207,7 +1231,7 @@ export async function appEnvSet(ctx: Ctx): Promise<Response> {
       : {
           tone: "danger",
           message:
-            APP_ENV_ERRORS[set.error] ?? "That variable could not be set.",
+            APP_ENV_ERRORS[set.error] ?? APP_ENV_NOT_SET,
         },
   );
 }
@@ -1232,29 +1256,8 @@ export async function appEnvDelete(ctx: Ctx): Promise<Response> {
     `${repoBase(repo)}/settings/app`,
     removed.ok
       ? { message: `${name} is removed.${redeploying(ctx, "without it")}` }
-      : { tone: "danger", message: "No variable by that name." },
+      : { tone: "danger", message: APP_ENV_NO_SUCH },
   );
-}
-
-const APP_DOMAIN_ERRORS: Record<string, string> = {
-  invalid_host:
-    "A domain is a hostname: letters, digits and hyphens in at least two labels, like app.example.com.",
-  reserved_host: "That name is the forge's own to hand out.",
-  taken: "Another app already answers to that domain.",
-  no_runtime: "Nothing is serving apps on this forge.",
-};
-
-/** What the records say, as one flash: type, name and value, in words. */
-function recordsInWords(records: DnsRecord[]): string {
-  return records
-    .map((r) =>
-      r.type === "TXT"
-        ? `a TXT record at ${r.name} with the value ${r.value}`
-        : r.type === "CNAME"
-          ? `a CNAME from ${r.name} to ${r.value}`
-          : `an ALIAS from ${r.name} to ${r.value}`,
-    )
-    .join(" and ");
 }
 
 // POST /:owner/:name/settings/app/domains — add one.
@@ -1269,12 +1272,12 @@ export async function appDomainAdd(ctx: Ctx): Promise<Response> {
     `${repoBase(repo)}/settings/app`,
     added.ok
       ? {
-          message: `${added.value.host} is added. Publish ${recordsInWords(added.value.records)}, then press Check now.`,
+          message: domainAddedText(added.value),
         }
       : {
           tone: "danger",
           message:
-            APP_DOMAIN_ERRORS[added.error] ?? "That domain could not be added.",
+            domainRefusalText(added.error, "That domain could not be added."),
         },
   );
 }
@@ -1302,7 +1305,7 @@ export async function appDomainCheck(ctx: Ctx): Promise<Response> {
       : {
           tone: "danger",
           message:
-            APP_DOMAIN_ERRORS[checked.error] ?? "No domain by that name.",
+            domainRefusalText(checked.error, NO_SUCH_DOMAIN),
         },
   );
 }
@@ -1319,8 +1322,8 @@ export async function appDomainDelete(ctx: Ctx): Promise<Response> {
     ctx,
     `${repoBase(repo)}/settings/app`,
     removed.ok
-      ? { message: `${host} is removed. The forge no longer answers there.` }
-      : { tone: "danger", message: "No domain by that name." },
+      ? { message: domainRemovedText(host) }
+      : { tone: "danger", message: NO_SUCH_DOMAIN },
   );
 }
 
@@ -1450,718 +1453,6 @@ function redeploying(ctx: Ctx, how: string): string {
     : ` Production and every preview are starting again ${how}.`;
 }
 
-// ---- prompts ----
-
-const PROMPT_ERRORS: Record<string, string> = {
-  invalid_at: "The time is hours and minutes in UTC, like 15:00.",
-  invalid_token:
-    "Paste the long-lived token as Instagram gave it: one line, no spaces.",
-  invalid_kind: "Only Instagram is known here.",
-  already_connected:
-    "An Instagram account is already connected here. Remove it first.",
-  no_such_source: "No account by that id.",
-  not_running: "The prompt routine is not running on this forge.",
-};
-
-/** The day the forge will refresh a token pasted or refreshed at `iso`. */
-function refreshDay(iso: string): string {
-  return new Date(Date.parse(iso) + REFRESH_AFTER_DAYS * 24 * 3_600_000)
-    .toISOString()
-    .slice(0, 10);
-}
-
-/**
- * The Instagram card: the account and what the last run said when one is
- * connected, the form when none is. Beneath it, the one-time steps at Meta,
- * because the forge cannot take them for anyone. The token is a password
- * field on the way in and nowhere on the way out.
- */
-function promptsView(base: string, sources: PromptSourceView[]): Html {
-  const source = sources.find((s) => s.kind === "instagram");
-  const at = (id: string) =>
-    `${base}/settings/prompts/${encodeURIComponent(id)}`;
-  const body =
-    source === undefined
-      ? html`<div class="card-body">
-            <p class="muted small">
-              Once a day, the top comment on your latest Reel becomes the crew's
-              next tell.
-            </p>
-          </div>
-          <form
-            class="card-body"
-            method="post"
-            action="${base}/settings/prompts"
-          >
-            ${formField({
-              label: "Token",
-              name: "token",
-              type: "password",
-              hint: "A long-lived Instagram token. The forge seals it, refreshes it before it expires, and never shows it again.",
-              required: true,
-              autocomplete: "off",
-              mono: true,
-            })}
-            ${formField({
-              label: "Every day at … UTC",
-              name: "at",
-              type: "time",
-              value: "15:00",
-              required: true,
-            })}
-            <div class="form-actions">
-              ${btn("Add", { variant: "primary", icon: "plus" })}
-            </div>
-          </form>`
-      : html`<ul class="list">
-          <li>
-            <div class="row">
-              <span class="row-lead">${icon("comment")}</span>
-              <span class="row-main">
-                <span class="row-title"
-                  >${source.account === ""
-                    ? html`<span class="muted">not read yet</span>`
-                    : `@${source.account}`}
-                  ${badge(`every day at ${source.atUtc} UTC`)}</span
-                >
-                <span class="row-meta"
-                  >${source.lastRanAt === null
-                    ? "Has not run yet."
-                    : html`Last ran ${time(source.lastRanAt)}.
-                      ${source.lastSaid}`}</span
-                >
-                <span class="row-meta"
-                  >Token refreshed ${timeAgo(source.tokenRefreshedAt)}; the
-                  forge refreshes it again around
-                  ${refreshDay(source.tokenRefreshedAt)}.</span
-                >
-              </span>
-              <span class="row-trail">
-                <form method="post" action="${at(source.id)}/run">
-                  ${btn("Fetch now", { size: "sm", icon: "sync" })}
-                </form>
-                ${confirmAction({
-                  action: `${at(source.id)}/delete`,
-                  verb: "Remove",
-                  size: "sm",
-                })}
-              </span>
-            </div>
-          </li>
-        </ul>`;
-  return html`${card(body, {
-    head: html`${icon("comment")}
-      <h2>Instagram</h2>`,
-    pad: false,
-  })}
-  ${card(
-    html`<p class="muted small">
-        The one-time steps at Meta, for a professional account of your own. None
-        of them needs App Review.
-      </p>
-      <ol class="muted">
-        <li>
-          Make the Instagram account a professional one — Business or Creator —
-          in the Instagram app's settings.
-        </li>
-        <li>
-          At developers.facebook.com, make a Meta app and add the Instagram
-          product with <b>Business Login for Instagram</b>. No Facebook Page is
-          needed.
-        </li>
-        <li>
-          Get a token for the account with the scopes
-          <span class="mono">instagram_business_basic</span> and
-          <span class="mono">instagram_business_manage_comments</span>.
-        </li>
-        <li>
-          Exchange it for a long-lived token, the one that lives sixty days; the
-          product's docs show the one call.
-        </li>
-        <li>
-          Paste the long-lived token above. The forge refreshes it before it
-          expires, and the paste is never shown again.
-        </li>
-      </ol>`,
-    { head: html`<h2>Getting a token</h2>` },
-  )}`;
-}
-
-// GET /:owner/:name/settings/prompts
-export function promptsSettingsPage(ctx: Ctx): Response {
-  const repo = timedAdminRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  const listed = timePhase(ctx.request, "sources", () => listPromptSources(ctx.app, ctx.auth.user, repo));
-  return timePhase(ctx.request, "render", () =>
-    settingsPageResponse(
-      ctx,
-      repo,
-      "prompts",
-      "Prompts",
-      promptsView(repoBase(repo), listed.ok ? listed.value : []),
-    ),
-  );
-}
-
-// POST /:owner/:name/settings/prompts — connect an account.
-export async function promptSourceAdd(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const added = addPromptSource(ctx.app, ctx.auth.user, repo, {
-    kind: "instagram",
-    token: field(form, "token"),
-    at: field(form, "at"),
-  });
-  if (!added.ok && added.error === "not_found") return repoNotFound(ctx);
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/prompts`,
-    added.ok
-      ? {
-          message: `Instagram is connected. Every day at ${added.value.atUtc} UTC the top comment on the latest Reel is told to the crew; press Fetch now to try it.`,
-        }
-      : {
-          tone: "danger",
-          message:
-            PROMPT_ERRORS[added.error] ?? "The account could not be connected.",
-        },
-  );
-}
-
-// POST /:owner/:name/settings/prompts/:id/run — look at Instagram now.
-export async function promptSourceRun(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo } = gate;
-  const ran = await runPromptSource(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    ctx.params.id ?? "",
-  );
-  if (!ran.ok && ran.error === "not_found") return repoNotFound(ctx);
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/prompts`,
-    ran.ok
-      ? {
-          ...(ran.value.lastSaid.startsWith("Told the crew")
-            ? {}
-            : { tone: "attn" as const }),
-          message: ran.value.lastSaid,
-        }
-      : {
-          tone: "danger",
-          message: PROMPT_ERRORS[ran.error] ?? "No account by that id.",
-        },
-  );
-}
-
-// POST /:owner/:name/settings/prompts/:id/delete
-export async function promptSourceDelete(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo } = gate;
-  const removed = removePromptSource(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    ctx.params.id ?? "",
-  );
-  if (!removed.ok && removed.error === "not_found") return repoNotFound(ctx);
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/prompts`,
-    removed.ok
-      ? { message: "Instagram is disconnected. The token is forgotten." }
-      : { tone: "danger", message: "No account by that id." },
-  );
-}
-
-// ---- crew ----
-
-// GET /:owner/:name/settings/crew
-export function crewSettingsPage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  return redirect(`${repoBase(repo)}/settings#crew`);
-}
-
-// POST /:owner/:name/settings/crew/subscriptions
-export async function crewSubscriptionsSave(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  if (ctx.auth.user?.isAdmin !== true) return repoNotFound(ctx);
-  const crew = listCrew(ctx.app, ctx.auth.user, repo);
-  saveGrants(ctx, form, repo.id, crew.ok ? crew.value : []);
-  return flashTo(ctx, `${repoBase(repo)}/settings#crew`, {
-    message: "Saved. The next run here works on what is ticked.",
-  });
-}
-
-// POST /:owner/:name/settings/crew
-export async function crewAdd(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const added = addToCrew(ctx.app, ctx.auth.user, repo, field(form, "agent"));
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings#crew`,
-    added.ok
-      ? {
-          message: `${added.value.user.username} is on the crew. Assign it an issue and it starts.`,
-        }
-      : {
-          tone: "danger",
-          message:
-            added.error === "not_an_agent"
-              ? "Only an agent can be on a crew; a person is given access through an organization's team."
-              : "No such agent on this forge.",
-        },
-  );
-}
-
-// POST /:owner/:name/settings/crew/:username/remove
-export async function crewRemove(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo } = gate;
-  const username = ctx.params.username ?? "";
-  const removed = removeFromCrew(ctx.app, ctx.auth.user, repo, username);
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings#crew`,
-    removed.ok
-      ? { message: `${username} is off the crew.` }
-      : { tone: "danger", message: "No such agent on this forge." },
-  );
-}
-
-// ---- labels ----
-
-/** `<input type="color">` submits `#rrggbb`; the store keeps six hex digits. */
-function readColor(form: Form): string {
-  return field(form, "color").replace(/^#/, "").toLowerCase();
-}
-
-/**
- * The colour control is a native `<input type="color">`, so it works with no
- * script at all — the hex beside it is a readout, updated live where there is
- * a script and correct on load where there is not. A browser submits it as
- * `#rrggbb`; `readColor` strips the hash on the way in.
- */
-function colorField(value: string, label: string): Html {
-  return html`<span class="color-field"
-    ><input
-      type="color"
-      name="color"
-      value="#${value}"
-      aria-label="${label}"
-    /><span class="mono muted" data-hex>#${value}</span></span
-  >`;
-}
-
-function labelEditor(base: string, label: Label): Html {
-  return html`<li>
-    <form
-      class="edit-row"
-      method="post"
-      action="${base}/settings/labels/${label.id}"
-    >
-      <span class="preview">${labelChip(label)}</span>
-      <input
-        class="input"
-        type="text"
-        name="name"
-        value="${label.name}"
-        aria-label="Label name"
-        required
-      />
-      ${colorField(label.color, `Colour of the label ${label.name}`)}
-      ${btn("Save", { size: "sm" })}
-      ${confirmAction({
-        action: `${base}/settings/labels/${label.id}/delete`,
-        verb: "Delete",
-        size: "sm",
-      })}
-    </form>
-  </li>`;
-}
-
-export function labelsPage(ctx: Ctx): Response {
-  const repo = timedAdminRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  const labels = timePhase(ctx.request, "labels", () => listLabels(ctx.app.db, repo.id));
-  const rendering = performance.now();
-  const base = repoBase(repo);
-
-  const list =
-    labels.length === 0
-      ? empty({
-          icon: "tag",
-          title: "No labels yet",
-          note: "Labels are this repository's work queue — a handful is usually enough.",
-        })
-      : html`<div class="card">
-          <ul class="list">
-            ${labels.map((l) => labelEditor(base, l))}
-          </ul>
-        </div>`;
-
-  const create = card(
-    html`<form class="edit-row" method="post" action="${base}/settings/labels">
-      <input
-        class="input"
-        type="text"
-        name="name"
-        placeholder="Label name"
-        aria-label="New label name"
-        required
-      />
-      ${colorField("6b7280", "Colour of the new label")}
-      ${btn("Add label", { variant: "primary", size: "sm" })}
-    </form>`,
-    { head: html`<h2>New label</h2>`, pad: false },
-  );
-
-  const body = html`${list}
-    <div class="mt">${create}</div>`;
-  const response = settingsPageResponse(
-    ctx,
-    repo,
-    "labels",
-    "Labels",
-    body,
-    labelCss(labels),
-  );
-  notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
-}
-
-export async function labelCreate(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const created = createLabel(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    field(form, "name"),
-    readColor(form) || "6b7280",
-  );
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/labels`,
-    created.ok
-      ? { message: `Label “${created.value.name}” created.` }
-      : {
-          tone: "danger",
-          message:
-            created.error === "taken"
-              ? "This repository already has a label by that name."
-              : LABEL_WORDS.shape,
-        },
-  );
-}
-
-export async function labelUpdate(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const updated = updateLabel(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    ctx.params.id ?? "",
-    field(form, "name"),
-    readColor(form),
-  );
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/labels`,
-    updated.ok
-      ? { message: `Label “${updated.value.name}” updated.` }
-      : {
-          tone: "danger",
-          message:
-            updated.error === "taken"
-              ? "This repository already has a label by that name."
-              : updated.error === "not_found"
-                ? "That label no longer exists."
-                : LABEL_WORDS.shape,
-        },
-  );
-}
-
-export async function labelDelete(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo } = gate;
-  const removed = deleteLabel(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    ctx.params.id ?? "",
-  );
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/labels`,
-    removed.ok
-      ? { message: "Label deleted." }
-      : { tone: "danger", message: "That label no longer exists." },
-  );
-}
-
-// ---- webhooks ----
-
-export function hooksPage(ctx: Ctx): Response {
-  const repo = timedAdminRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  const hooks = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
-  const recent = timePhase(
-    ctx.request,
-    "deliveries",
-    () => new Map(hooks.map((h) => [h.id, recentDeliveries(ctx.app.db, h.id, 10)] as const)),
-  );
-  const rendering = performance.now();
-  const base = repoBase(repo);
-
-  const list =
-    hooks.length === 0
-      ? empty({
-          icon: "webhook",
-          title: "No webhooks yet",
-          note: "Every event this repository produces can be POSTed to a URL you control, signed and retried.",
-        })
-      : html`${hooks.map((hook) => {
-          const deliveries = recent.get(hook.id) ?? [];
-          return card(
-            deliveries.length === 0
-              ? html`<p class="muted small">No deliveries yet.</p>`
-              : html`<div class="table-scroll">
-                  <table class="table" data-dense>
-                    <thead>
-                      <tr>
-                        <th>Event</th>
-                        <th>State</th>
-                        <th>Attempts</th>
-                        <th>Last status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${deliveries.map(
-                        (d) =>
-                          html`<tr>
-                            <td class="mono">${d.kind}</td>
-                            <td>
-                              ${dot(
-                                d.state === "ok"
-                                  ? "success"
-                                  : d.state === "failed"
-                                    ? "danger"
-                                    : "attn",
-                              )}
-                              ${d.state}
-                            </td>
-                            <td>${d.attempts}</td>
-                            <td>${d.lastError ?? d.lastStatus ?? "—"}</td>
-                          </tr>`,
-                      )}
-                    </tbody>
-                  </table>
-                </div>`,
-            {
-              pad: deliveries.length === 0,
-              head: html`<span class="grow truncate mono" title="${hook.url}"
-                  >${hook.url}</span
-                >
-                <span class="badge" data-variant="secondary"
-                  >${hook.kinds}</span
-                >
-                <span class="badge"
-                  >${dot(hook.active ? "success" : "attn")}${hook.active
-                    ? "active"
-                    : "paused"}</span
-                >
-                ${confirmAction({
-                  action: `${base}/settings/hooks/${hook.id}/delete`,
-                  verb: "Delete webhook",
-                  size: "sm",
-                })}`,
-              foot: html`<span class="muted small"
-                >Added
-                ${time(hook.createdAt)}${when(
-                  !hook.hasSecret,
-                  () => html` · unsigned`,
-                )}</span
-              >`,
-            },
-          );
-        })}`;
-
-  const create = card(
-    html`<form method="post" action="${base}/settings/hooks">
-      ${formField({
-        label: "Payload URL",
-        name: "url",
-        type: "url",
-        required: true,
-        placeholder: "https://example.com/hook",
-        hint: "Every delivery is a POST with a JSON body.",
-      })}
-      ${formField({
-        label: "Events",
-        name: "kinds",
-        value: "*",
-        mono: true,
-        hint: "A space-separated list of kinds; * means everything. e.g. push issue.* pull.merged",
-      })}
-      ${formField({
-        label: "Signing secret",
-        name: "secret",
-        mono: true,
-        hint: "Optional — one is generated for you. Deliveries carry HMAC-SHA256 in X-Forge-Signature-256.",
-      })}
-      <div class="form-actions">
-        ${btn("Add webhook", { variant: "primary" })}
-      </div>
-    </form>`,
-    { head: html`<h2>New webhook</h2>` },
-  );
-
-  const body = html`${list}
-    <div class="mt">${create}</div>`;
-  const response = settingsPageResponse(ctx, repo, "hooks", "Webhooks", body);
-  notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
-}
-
-export async function webhookCreate(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const providedSecret = field(form, "secret");
-  const created = createWebhook(ctx.app, ctx.auth.user, repo, {
-    url: field(form, "url"),
-    kinds: field(form, "kinds") || "*",
-    ...(providedSecret !== "" ? { secret: providedSecret } : {}),
-  });
-  if (!created.ok) {
-    return flashTo(ctx, `${repoBase(repo)}/settings/hooks`, {
-      tone: "danger",
-      message: "That URL is not one this forge will deliver to.",
-    });
-  }
-  // The only moment the secret exists outside the database: show it once.
-  return flashTo(ctx, `${repoBase(repo)}/settings/hooks`, {
-    message:
-      "Webhook created. Copy its signing secret now — it is never shown again.",
-    code: created.value.secret,
-  });
-}
-
-export async function webhookDelete(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo } = gate;
-  const removed = deleteWebhook(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    ctx.params.id ?? "",
-  );
-  return flashTo(
-    ctx,
-    `${repoBase(repo)}/settings/hooks`,
-    removed.ok
-      ? { message: "Webhook deleted." }
-      : { tone: "danger", message: "That webhook no longer exists." },
-  );
-}
-
-// ---- danger zone ----
-
-export function dangerPage(ctx: Ctx): Response {
-  const repo = timedAdminRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  const rendering = performance.now();
-  const base = repoBase(repo);
-  const full = `${repo.ownerName}/${repo.name}`;
-
-  const body = card(
-    html`<p>
-        Deleting <strong>${full}</strong> removes its issues, pull requests,
-        reviews, labels and webhooks, and erases the git objects from disk.
-      </p>
-      <p class="muted small mt">
-        Any fork of this repository is detached first — it repacks so it owns
-        its objects, then loses the link. Forks survive; this repository does
-        not. There is no undo and no backup.
-      </p>
-      <div class="form-actions">
-        ${confirmAction({
-          action: `${base}/settings/delete`,
-          verb: DELETE_REPO,
-        })}
-      </div>`,
-    {
-      tone: "danger",
-      head: html`${icon("alert")}
-        <h2>${DELETE_REPO}</h2>`,
-    },
-  );
-  const response = settingsPageResponse(ctx, repo, "danger", "Danger zone", body);
-  notePhase(ctx.request, "render", performance.now() - rendering);
-  return response;
-}
-
-/**
- * The typed-name check lives here and nowhere else: the confirm page collects
- * the phrase, this handler is the one that refuses without it.
- */
-export async function repoDelete(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const full = `${repo.ownerName}/${repo.name}`;
-  if (field(form, "confirm") !== full) {
-    return flashTo(ctx, `${repoBase(repo)}/settings/danger`, {
-      tone: "danger",
-      message: `Type ${full} exactly to confirm. Nothing was deleted.`,
-    });
-  }
-  const deleted = await deleteRepo(ctx.app, ctx.auth.user, repo);
-  if (!deleted.ok) {
-    return flashTo(ctx, `${repoBase(repo)}/settings/danger`, {
-      tone: "danger",
-      message: "The repository could not be deleted.",
-    });
-  }
-  return flashTo(ctx, "/", { message: `${full} was deleted.` });
-}
-
-// POST /:owner/:name/settings/crew/:username/role
-export async function crewRoleUpdate(ctx: Ctx): Promise<Response> {
-  const gate = await adminForm(ctx);
-  if (gate instanceof Response) return gate;
-  const { repo, form } = gate;
-  const base = repoBase(repo);
-  const agent = getAgentByName(ctx.app.db, ctx.params.username ?? "");
-  const role = field(form, "role");
-  if (!agent || !isCrewRole(role))
-    return flashTo(ctx, `${base}/settings#crew`, {
-      tone: "danger",
-      message: "That role could not be set.",
-    });
-  setCrewRole(ctx.app.db, repo.id, agent.user.id, role);
-  return flashTo(ctx, `${base}/settings#crew`, {
-    message: `${agent.user.username} is a ${role} here.`,
-  });
-}
-
 // ---- autonomy ----
 
 /** GET /:owner/:name/settings/autonomy */
@@ -2178,22 +1469,17 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
   const base = repoBase(repo);
-  const mode = field(form, "autonomy");
   const ceiling = Number(field(form, "ceiling"));
-  const slots = Number(field(form, "slots"));
-  if (
-    !isAutonomy(mode) ||
-    !Number.isFinite(ceiling) ||
-    ceiling < 0 ||
-    !Number.isInteger(slots) ||
-    slots < 1 ||
-    slots > 8
-  )
+  // The builders' slots are the Builder pillar's number on the team card; this form only keeps them.
+  const slotsField = field(form, "slots");
+  const slots = slotsField === "" ? repo.autonomySlots : Number(slotsField);
+  const checked = checkAutonomy(field(form, "autonomy"), ceiling, slots);
+  if (!checked.ok)
     return flashTo(ctx, `${base}/settings#autonomy`, {
       tone: "danger",
-      message:
-        "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 1 to 8.",
+      message: checked.message,
     });
+  const { mode } = checked;
   const rule = field(form, "decisions");
   const decisionsBy = rule === "" ? repo.decisionsBy : rule;
   if (!isDecisionsBy(decisionsBy))
@@ -2212,14 +1498,7 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
   });
   return flashTo(ctx, `${base}/settings#autonomy`, {
     ...(updated.ok
-      ? {
-          message:
-            mode === "off"
-              ? "Autonomy is off."
-              : mode === "assisted"
-                ? "Assisted: the crew works what is ready; green waits for you."
-                : "Autonomous: the crew works what is ready and ships on green, as you.",
-        }
+      ? { message: AUTONOMY_SAID[mode] }
       : {
           tone: "danger" as const,
           message: "Those settings could not be saved.",

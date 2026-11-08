@@ -22,7 +22,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { cancelRun, createRun, getRun, listActive } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { readConflictLane } from "../src/crew/conflict_room.ts";
-import { finishFields, lentBuilder, ownBuilder } from "../src/crew/finishing.ts";
+import { finishFields, ownBuilder } from "../src/crew/finishing.ts";
 import { serve } from "../src/http/server.ts";
 import {
   conflictedPulls,
@@ -134,30 +134,21 @@ describe("the room counts only the checks in front of a rebase", () => {
   });
 });
 
-describe("a busy builder's rebases go to idle builders", () => {
+describe("a pull's rebase goes to the builder who can push it (#7006)", () => {
   const builder = (id: string): Agent => ({ user: { id, username: id } }) as unknown as Agent;
   const [ada, bo, cy, di] = ["ada", "bo", "cy", "di"].map(builder) as [Agent, Agent, Agent, Agent];
   const crew = [di, bo, ada, cy];
 
-  test("the pull's own builder is the agent on it, else its author", () => {
+  test("the fork's owner, else the author, else the agent on it", () => {
     const on = { assigneeId: "cy", authorId: "bo" } as Issue;
-    expect(ownBuilder(on, crew, new Map())?.user.id).toBe("cy");
-    expect(ownBuilder({ ...on, assigneeId: null } as Issue, crew, new Map())?.user.id).toBe("bo");
+    expect(ownBuilder(on, crew, new Map(), "ada")?.user.id).toBe("ada");
+    expect(ownBuilder(on, crew, new Map(), "alice")?.user.id).toBe("bo");
+    expect(ownBuilder({ ...on, authorId: "alice" } as Issue, crew, new Map())?.user.id).toBe("cy");
   });
 
-  test("an idle own builder keeps its pull; a busy one lends it round-robin among the idle", () => {
-    expect(lentBuilder(ada, crew, new Map())).toBeUndefined();
-    const load = new Map([["ada", 1], ["di", 2]]);
-    const lent = [1, 2, 3, 4].map(() => lentBuilder(ada, crew, load)?.user.id);
-    // Only bo and cy are idle; the turns alternate between them.
-    expect(new Set(lent)).toEqual(new Set(["bo", "cy"]));
-    expect(lent[0]).not.toBe(lent[1]);
-    expect(lent[1]).not.toBe(lent[2]);
-  });
-
-  test("with every builder busy, the update stays with its own builder", () => {
-    const load = new Map(crew.map((b) => [b.user.id, 1]));
-    expect(lentBuilder(ada, crew, load)).toBeUndefined();
+  test("a busy author keeps the rebase: it is never lent to an idle builder", () => {
+    const load = new Map([["bo", 1]]);
+    expect(ownBuilder({ assigneeId: null, authorId: "bo" } as Issue, crew, load, "bo")?.user.id).toBe("bo");
   });
 });
 
@@ -170,7 +161,7 @@ describe("the lane reads as conflicted N, rebasing M, room R", () => {
   test("the tick line carries the lane beside the finishing counts", () => {
     const fields = finishFields(
       [
-        { pull: 1, did: "queued update", builder: "bo", for: "ada" },
+        { pull: 1, did: "queued update", builder: "bo" },
         { pull: 2, did: "not moved", why: "waits for room in the check lane" },
       ],
       { runs: 1, checks: 2, room: 0 },
@@ -186,12 +177,12 @@ describe("the lane reads as conflicted N, rebasing M, room R", () => {
     // Other suites' ticks note their own repositories in the same process: read only this one.
     const mine = (publicOnly = false) =>
       conflictedPulls(app.db, publicOnly).filter((p) => p.repo === "zed/noted");
-    noteWaitingToFinish("zed-noted", [
+    noteWaitingToFinish(app.db, "zed-noted", [
       { repo: "zed/noted", number: 9, since: "2026-10-26T10:00:00.000Z", public: false },
       { repo: "zed/noted", number: 4, since: "2026-10-26T09:00:00.000Z", public: true },
     ]);
     // Seen again later: each keeps when it was first seen.
-    noteWaitingToFinish("zed-noted", [
+    noteWaitingToFinish(app.db, "zed-noted", [
       { repo: "zed/noted", number: 9, since: "2026-10-26T11:00:00.000Z", public: false },
       { repo: "zed/noted", number: 4, since: "2026-10-26T11:00:00.000Z", public: true },
     ]);
@@ -201,8 +192,19 @@ describe("the lane reads as conflicted N, rebasing M, room R", () => {
     ]);
     expect(mine(true).map((p) => p.number)).toEqual([4]);
     expect(rebaseLane(app.db, mine()).conflicted).toBe(2);
-    noteWaitingToFinish("zed-noted", []);
+    noteWaitingToFinish(app.db, "zed-noted", []);
     expect(mine()).toEqual([]);
+  });
+
+  test("a pull noted on one database is not read from another", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-noted-b-"));
+    const other = createApp({ dataDir: dir, port: 0 }).db;
+    const pull = { repo: "zed/solo", number: 3, since: "2026-10-26T10:00:00.000Z", public: true };
+    noteWaitingToFinish(app.db, "zed-solo", [pull]);
+    expect(conflictedPulls(other)).toEqual([]);
+    expect(conflictedPulls(app.db).filter((p) => p.repo === "zed/solo")).toHaveLength(1);
+    noteWaitingToFinish(app.db, "zed-solo", []);
+    await rm(dir, { recursive: true, force: true });
   });
 });
 

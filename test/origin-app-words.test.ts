@@ -4,7 +4,7 @@
  * and the MCP import the sentences; a copy typed back into either fails here.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   APP_ALREADY_YOURS,
@@ -14,8 +14,23 @@ import {
 import { importsFrom, mcpSource } from "./helpers/mcp.ts";
 
 const root = join(import.meta.dir, "..");
-const read = (path: string) =>
-  path === "src/http/mcp.ts" ? mcpSource(root) : readFileSync(join(root, path), "utf8");
+// The API door is api.ts and the route families moved out of it (#6332).
+const apiFiles = (): string[] => [
+  "src/http/api.ts",
+  ...readdirSync(join(root, "src/http/api"))
+    .filter((f) => f.endsWith(".ts"))
+    .sort()
+    .map((f) => `src/http/api/${f}`),
+];
+const apiSource = (): string =>
+  apiFiles()
+    .map((f) => readFileSync(join(root, f), "utf8"))
+    .join("\n");
+const read = (path: string) => {
+  if (path === "src/http/mcp.ts") return mcpSource(root);
+  if (path === "src/http/api.ts") return apiSource();
+  return readFileSync(join(root, path), "utf8");
+};
 
 const SENTENCES = {
   ORIGIN_UNREACHABLE: "the origin could not be reached",

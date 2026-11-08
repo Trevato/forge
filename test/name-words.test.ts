@@ -17,7 +17,7 @@ const DOORS = [
   "src/web/pages/claim.ts",
   "src/web/pages/crew.ts",
   "src/web/pages/everyday.ts",
-  "src/web/pages/org.ts",
+  "src/actions/orgs.ts",
   "src/web/pages/signup-passkey.ts",
   "src/web/pages/site.ts",
 ];

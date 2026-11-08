@@ -6,7 +6,7 @@
  * work to `actions/boards.ts`.
  */
 import {
-  changeBoard, deleteBoard, duplicateBoard, makeBoard, type BoardError,
+  boardRefusal, changeBoard, deleteBoard, duplicateBoard, makeBoard, type BoardError,
 } from "../../actions/boards.ts";
 import type { Edit } from "../../boards/edit.ts";
 import { movePinned, pinPanel, unpinPanel } from "../../actions/board-pins.ts";
@@ -19,19 +19,6 @@ import { PANEL_FIELDS, readParams, toQuery } from "./boards.ts";
 
 const num = (v: string) => (/^-?\d{1,4}$/.test(v) ? Number(v) : NaN);
 
-function sentence(e: BoardError): string {
-  if (typeof e === "object") return `That was refused: ${e.refused}.`;
-  const words: Partial<Record<string, string>> = {
-    invalid: "That is not a board.",
-    exists: "A board with that name is already there.",
-    no_slug: "A title needs letters or digits.",
-    too_many: "There are too many boards already.",
-    branch_moved: "The boards changed while you were saving; try again.",
-    repo: "The boards repo could not be made.",
-  };
-  return words[e] ?? "That could not be saved.";
-}
-
 /** A panel as the form says it: title, size, chart, and the query the shared fields build. */
 function panelOf(form: Form): Record<string, unknown> {
   const search = new URLSearchParams();
@@ -40,13 +27,21 @@ function panelOf(form: Form): Record<string, unknown> {
   return { title: field(form, "title"), chart: p.chart, query: toQuery(p), w: num(field(form, "w")), h: num(field(form, "h")) };
 }
 
-function editOf(op: string, form: Form): Edit | undefined {
+/** A panel to remove: from the form, or from the query the confirm page posts to (#8030). */
+function removeOf(form: Form, query: URLSearchParams): Edit {
+  const fromForm = field(form, "index") !== "";
+  const index = fromForm ? field(form, "index") : query.get("index") ?? "";
+  const title = fromForm ? field(form, "title") : query.get("title") ?? "";
+  return title === "" ? { kind: "remove", index: num(index) } : { kind: "remove", index: num(index), title };
+}
+
+function editOf(op: string, form: Form, query: URLSearchParams): Edit | undefined {
   switch (op) {
     case "rename": return { kind: "title", title: field(form, "title") };
     case "settings": return { kind: "settings", range: field(form, "range"), refresh: field(form, "refresh") };
     case "add": return { kind: "add", panel: panelOf(form) };
     case "edit": return { kind: "edit", index: num(field(form, "index")), panel: panelOf(form) };
-    case "remove": return { kind: "remove", index: num(field(form, "index")) };
+    case "remove": return removeOf(form, query);
     case "move": {
       const by = num(field(form, "by"));
       return by === 1 || by === -1 ? { kind: "move", index: num(field(form, "index")), by } : undefined;
@@ -57,7 +52,7 @@ function editOf(op: string, form: Form): Edit | undefined {
 
 const done = (ctx: Ctx, to: string, message: string) => flashTo(ctx, to, { message });
 const failed = (ctx: Ctx, to: string, e: BoardError) =>
-  e === "not_found" ? notFoundPage(ctx) : flashTo(ctx, to, { tone: "danger", message: sentence(e) });
+  e === "not_found" ? notFoundPage(ctx) : flashTo(ctx, to, { tone: "danger", message: boardRefusal(e) });
 
 // POST /boards/new
 export async function boardNew(ctx: Ctx): Promise<Response> {
@@ -95,7 +90,7 @@ export async function boardPost(ctx: Ctx): Promise<Response> {
     const gone = await deleteBoard(ctx.app, ctx.auth.user, slug);
     return gone.ok ? done(ctx, "/boards", "Board deleted.") : failed(ctx, back, gone.error);
   }
-  const edit = editOf(op, form);
+  const edit = editOf(op, form, ctx.url.searchParams);
   if (!edit) return notFoundPage(ctx);
   const changed = await changeBoard(ctx.app, ctx.auth.user, slug, edit);
   return changed.ok ? done(ctx, back, "Saved.") : failed(ctx, back, changed.error);

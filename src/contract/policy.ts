@@ -22,6 +22,8 @@ export interface Loosened {
   readonly answer: Cell["answer"];
   readonly from: Cell["answer"] | "absent";
   readonly to: Cell["answer"];
+  /** `as` is the role everyone holds: a stranger, signed out. */
+  readonly floor?: boolean;
 }
 
 /** Rank: what a cell lets through, most to least. */
@@ -56,9 +58,14 @@ export function loosened(
     if (decided.has(c.resource)) {
       const from = was.get(key) ?? "no";
       if (RANK[c.answer] > RANK[from])
-        out.push({ ...c, from: was.has(key) ? from : "absent", to: c.answer });
+        out.push({
+          ...c,
+          from: was.has(key) ? from : "absent",
+          to: c.answer,
+          ...(c.as === floor ? { floor: true } : {}),
+        });
     } else if (c.as === floor && c.answer !== "no")
-      out.push({ ...c, from: "absent", to: c.answer });
+      out.push({ ...c, from: "absent", to: c.answer, floor: true });
   }
   return out;
 }
@@ -98,3 +105,15 @@ export async function wallOf(
 /** One sentence per crossing, as the pull page and the ledger say it. */
 export const wallSentence = (l: Loosened): string =>
   `${l.resource}.${l.verb} as ${l.as}: ${l.from === "absent" ? "new, and" : `was ${l.from}, now`} ${l.to}`;
+
+const VERB_WORDS: Record<Cell["verb"], string> = {
+  create: "create",
+  read: "read",
+  update: "change",
+  delete: "delete",
+  list: "list",
+};
+
+/** One crossing in plain words: "anyone signed out could read packs". */
+export const wallPlain = (l: Loosened): string =>
+  `${l.floor === true ? "anyone signed out" : `any ${l.as}`} could ${VERB_WORDS[l.verb]} ${l.to === "own" ? "their own " : ""}${l.resource} records`;

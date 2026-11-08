@@ -91,7 +91,7 @@ export const hiddenFrom = (user: User, viewer: User | undefined): boolean =>
 
 // The minimum counts characters, the cap (`hash-gate.ts`) counts bytes: the
 // hash reads bytes, and a person never meets the difference at these sizes.
-const MIN_PASSWORD = 10;
+export const MIN_PASSWORD = 10;
 const MAX_EMAIL = 254;
 const MAX_DISPLAY_NAME = 80;
 
@@ -218,8 +218,9 @@ interface CreateUserFields {
  * other trace is removed; anything else stays.
  */
 export function discardFreshUser(db: Database, userId: string): void {
-  const removed = db.query("DELETE FROM user WHERE id = ?1 AND password_hash = ''").run(userId).changes;
-  if (removed === 1) reopenInvite(db, userId);
+  // RETURNING counts the account, not the trigger's write to `front_epoch`.
+  const removed = db.query("DELETE FROM user WHERE id = ?1 AND password_hash = '' RETURNING id").all(userId);
+  if (removed.length === 1) reopenInvite(db, userId);
 }
 
 /**
@@ -517,6 +518,19 @@ export async function verifyPasswordThrottled(
   if (!checked.ok) return err({ reason: "bad_credentials" });
   admission.succeeded();
   return checked;
+}
+
+/**
+ * Whether some password could verify for this account: what `checkPassword`
+ * would ever accept. An empty hash never parses, and an org or agent never
+ * signs in with one whatever is stored.
+ */
+export function hasPassword(db: Database, userId: string): boolean {
+  return (
+    db
+      .query("SELECT 1 FROM user WHERE id = ?1 AND password_hash <> '' AND kind <> 'org' AND is_agent = 0")
+      .get(userId) !== null
+  );
 }
 
 /** Constant-shape verification: always burns an argon2 verify, hit or miss. */

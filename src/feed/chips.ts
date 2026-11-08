@@ -29,3 +29,13 @@ export function chipHides(
   if (chip !== undefined && chips.kinds.has(chip)) return true;
   return item.actorId !== null && chips.people.has(item.actorId);
 }
+
+/** How many of the posts on the page each kind chip covers: what pressing it would take away. */
+export function chipCounts(items: readonly { readonly kind: FeedKind }[]): Map<KindChip, number> {
+  const counts = new Map<KindChip, number>();
+  for (const item of items) {
+    const chip = CHIP_OF[item.kind];
+    if (chip !== undefined) counts.set(chip, (counts.get(chip) ?? 0) + 1);
+  }
+  return counts;
+}

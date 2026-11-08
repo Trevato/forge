@@ -17,6 +17,7 @@ import { routeIssue, type Routed } from "../crew/route.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireParticipant } from "./access.ts";
 import { assignIssue, openIssue, type MirrorError } from "./issues.ts";
+import { parseFrom } from "./tell_from.ts";
 import { requireVerified } from "./verify.ts";
 import { VERIFY_FIRST } from "./verify_words.ts";
 
@@ -42,23 +43,6 @@ export function parseVariants(raw: unknown): number | undefined {
   if (raw === undefined) return 1;
   if (typeof raw !== "number" || !Number.isInteger(raw)) return undefined;
   return raw >= 1 && raw <= VARIANTS_MAX ? raw : undefined;
-}
-
-/** The longest `from` a tell may carry. */
-export const FROM_MAX = 512;
-
-/**
- * `from` as the doors take it: absent is none; otherwise a same-forge path
- * (leading single `/`, no scheme, no backslash, no control or space) of at
- * most 512 characters. Undefined for no.
- */
-export function parseFrom(raw: unknown): string | null | undefined {
-  if (raw === undefined || raw === null) return null;
-  if (typeof raw !== "string" || raw.length === 0 || raw.length > FROM_MAX)
-    return undefined;
-  if (!raw.startsWith("/") || raw.startsWith("//")) return undefined;
-  if (/[\\\s\x00-\x1f\x7f<>()\[\]`"'*]/.test(raw)) return undefined;
-  return raw;
 }
 
 /**
@@ -109,8 +93,11 @@ export async function tell(
   if (text === "") return err("empty");
   // One long line becomes only a title, so the body cap never sees it.
   if (text.length > MAX_BODY) return err("body_too_long");
-  if (from !== null && parseFrom(from) !== from && !(fromApp && APP_ADDRESS.test(from)))
-    return err("bad_from");
+  if (from !== null && !(fromApp && APP_ADDRESS.test(from))) {
+    const path = parseFrom(from);
+    if (typeof path !== "string") return err("bad_from");
+    from = path;
+  }
   const firstLine = text.split(/\n/)[0]!.trim();
   const title =
     firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
@@ -130,7 +117,10 @@ export async function tell(
   for (let k = 1; k <= variants; k++) {
     const note = many ? `Variant ${k} of ${variants}.` : "";
     const origin = from === null ? "" : `Told from [${from}](${from})`;
-    const rest = text === firstLine ? "" : text;
+    // The body is what follows the title; a title cut short keeps the
+    // whole text in the body, so nothing said is lost.
+    const rest =
+      title === firstLine ? text.slice(text.indexOf(firstLine) + firstLine.length).trim() : text;
     const opened = openIssue(app, actor, repo, {
       title,
       body: [rest, note, origin].filter((s) => s !== "").join("\n\n"),

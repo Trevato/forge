@@ -28,10 +28,14 @@ const gitEnv = gitClientEnv({
   GIT_COMMITTER_EMAIL: "a@forge.test",
 });
 
-async function git(args: string[], cwd: string): Promise<string> {
+async function git(
+  args: string[],
+  cwd: string,
+  env: Record<string, string> = {},
+): Promise<string> {
   const p = Bun.spawn(["git", ...args], {
     cwd,
-    env: gitEnv,
+    env: { ...gitEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -356,7 +360,7 @@ describe("parity: full control through actions and the API", () => {
     expect(settingsEvents.length).toBeGreaterThanOrEqual(2);
     expect(
       settingsEvents.some((e) =>
-        (e.payload.changed as string[]).includes("defaultBranch"),
+        "defaultBranch" in (e.payload.changed as object),
       ),
     ).toBe(true);
   });
@@ -392,7 +396,7 @@ describe("parity: full control through actions and the API", () => {
     });
     expect(queue.status).toBe(201);
     expect(
-      (await call("GET", "/api/v1/repos/alice/pub/labels")).list.map(
+      ((await call("GET", "/api/v1/repos/alice/pub/labels")).json.items as Json[]).map(
         (l) => l.name,
       ),
     ).toEqual(["bug", "queue"]);
@@ -710,7 +714,7 @@ describe("parity: full control through actions and the API", () => {
     );
     expect((detail.json.diff as Json).files).toHaveLength(1);
     const forks = await call("GET", "/api/v1/repos/alice/pub/forks");
-    expect(forks.list.map((f) => f.ownerName)).toEqual(["bob"]);
+    expect((forks.json.items as Json[]).map((f) => f.ownerName)).toEqual(["bob"]);
   });
 
   test("numbers from another repo are not_found here", async () => {
@@ -1013,10 +1017,37 @@ describe("parity: full control through actions and the API", () => {
     await git(["tag", "light"], dir);
     await git(["push", "origin", "--tags"], dir);
     const tags = await call("GET", "/api/v1/repos/alice/pub/tags");
-    expect(tags.list.map((t) => t.name).sort()).toEqual(["light", "v1"]);
+    const items = tags.json.items as Json[];
+    expect(items.map((t) => t.name).sort()).toEqual(["light", "v1"]);
+    expect(tags.json.next_cursor).toBeNull();
     const head = await git(["rev-parse", "HEAD"], dir);
-    for (const t of tags.list) expect(t.commit).toBe(head);
-    expect(tags.list.find((t) => t.name === "v1")?.oid).not.toBe(head);
+    for (const t of items) expect(t.commit).toBe(head);
+    expect(items.find((t) => t.name === "v1")?.oid).not.toBe(head);
+
+    const first = await call("GET", "/api/v1/repos/alice/pub/tags?limit=1");
+    expect((first.json.items as Json[]).length).toBe(1);
+    const tagCursor = first.json.next_cursor as string;
+    expect(tagCursor).toBe(String((first.json.items as Json[])[0]!.name));
+    const rest = await call(
+      "GET",
+      `/api/v1/repos/alice/pub/tags?limit=1&cursor=${encodeURIComponent(tagCursor)}`,
+    );
+    expect((rest.json.items as Json[]).map((t) => t.name)).not.toContain(tagCursor);
+    expect(rest.json.next_cursor).toBeNull();
+    // Newest first by date, not by name: the older tag has the later name.
+    await git(["tag", "-a", "zzz-old", "-m", "old"], dir, { GIT_COMMITTER_DATE: "2020-01-01T00:00:00Z" });
+    await git(["tag", "-a", "aaa-new", "-m", "new"], dir, { GIT_COMMITTER_DATE: "2025-01-01T00:00:00Z" });
+    await git(["push", "origin", "--tags"], dir);
+    const dated = await call("GET", "/api/v1/repos/alice/pub/tags");
+    const order = (dated.json.items as Json[]).map((t) => t.name);
+    expect(order.slice(-2)).toEqual(["aaa-new", "zzz-old"]);
+    // A cursor whose tag is gone is refused, not read as the first page.
+    const gone = await call("GET", "/api/v1/repos/alice/pub/tags?cursor=no-such-tag");
+    expect(gone.status).toBe(422);
+    expect(gone.json.error).toBe("invalid_cursor");
+    expect((await call("GET", "/api/v1/repos/alice/pub/tags?limit=0")).status).toBe(422);
+    expect((await call("GET", "/api/v1/repos/alice/pub/tags?limit=999")).status).toBe(422);
+    expect((await call("GET", "/api/v1/repos/alice/pub/tags?cursor=a..b")).status).toBe(422);
 
     const commits = await call("GET", "/api/v1/repos/alice/pub/commits");
     const oid = commits.list[0]!.oid as string;
@@ -1058,15 +1089,14 @@ describe("parity: full control through actions and the API", () => {
     expect(seen).toHaveLength(total);
     expect([...seen].sort((a, b) => b - a)).toEqual(seen);
     expect(new Set(seen).size).toBe(total);
-    // Limits are clamped, never trusted.
+    // Limits are validated, never trusted: past the ceiling is a 422.
+    expect(
+      (await call("GET", "/api/v1/repos/alice/pub/issues?state=all&limit=99999")).status,
+    ).toBe(422);
     expect(
       (
-        (
-          await call(
-            "GET",
-            "/api/v1/repos/alice/pub/issues?state=all&limit=99999",
-          )
-        ).json.items as Json[]
+        (await call("GET", "/api/v1/repos/alice/pub/issues?state=all&limit=200"))
+          .json.items as Json[]
       ).length,
     ).toBe(total);
 

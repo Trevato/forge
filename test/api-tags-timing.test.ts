@@ -62,7 +62,7 @@ test("the API tags list names session, git and render in order", async () => {
   const got = await phases("/api/v1/repos/alice/r/tags");
   expect(got.status).toBe(200);
   expect(got.names).toEqual(["session", "git", "render"]);
-  expect(JSON.parse(got.body)).toEqual([]);
+  expect(JSON.parse(got.body)).toEqual({ items: [], next_cursor: null });
 });
 
 test("a missing repository is a 404 that still names session", async () => {

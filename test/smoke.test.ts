@@ -34,6 +34,7 @@ function stub(cssType: string, seen: string[] = []) {
           ? new Response("board")
           : new Response(null, { status: anonymousBoard.status, headers: { location: anonymousBoard.location } });
       if (path === "/healthz") return new Response("ok", { headers: { "x-forge-version": version() } });
+      if (["/explore", "/search", "/boards"].includes(path) || path.startsWith("/trevato/")) return new Response("page");
       if (path === "/sw.js") return new Response(sw.body, { status: sw.status, headers: { "content-type": sw.type } });
       return new Response("no", { status: 404 });
     },
@@ -104,7 +105,7 @@ test("the CLI takes --version and --wait", async () => {
   const base = stub("text/css");
   const run = (...a: string[]) =>
     Bun.spawn(["bun", "scripts/smoke.ts", base, ...a], { env: { ...process.env, FORGE_TOKEN: "t" }, stdout: "pipe", stderr: "pipe" }).exited;
-  expect(await run("--version", "v1")).toBe(0);
+  expect(await run("--version", "v1", "--watch", "0.2")).toBe(0);
   expect(await run("--version", "zz", "--wait", "0")).toBe(1);
 });
 
@@ -159,4 +160,42 @@ test("--outsider without FORGE_TOKEN exits 2 and prints no ok", async () => {
   expect(await proc.exited).toBe(2);
   expect(await new Response(proc.stdout).text()).not.toContain("ok");
   expect(await new Response(proc.stderr).text()).toContain("FORGE_TOKEN");
+});
+
+test("navigationBranch finds the real service worker's navigate branch, free of Response.error()", async () => {
+  const { swSource } = await import("../src/web/sw.ts");
+  const { navigationBranch } = await import("../src/release/smoke.ts");
+  const nav = navigationBranch(swSource);
+  expect(nav).not.toBeNull();
+  expect(nav).toContain("navigate");
+  expect(nav).not.toMatch(/Response\s*\.\s*error\s*\(/);
+});
+
+test("navigationBranch gives null without a navigate mode", async () => {
+  const { navigationBranch } = await import("../src/release/smoke.ts");
+  expect(navigationBranch("self.addEventListener('fetch', function (e) { e.respondWith(fetch(e.request)); });")).toBeNull();
+});
+
+test("navigationBranch counts Response.error() inside the branch only, not in comments or after return", async () => {
+  const { navigationBranch } = await import("../src/release/smoke.ts");
+  const error = /Response\s*\.\s*error\s*\(/;
+  const wrap = (body: string) => `if (e.request.mode === 'navigate') {\n${body}\n return;\n}\nreturn Response.error();`;
+  expect(navigationBranch(wrap("// Response.error()\n respond();"))).not.toMatch(error);
+  expect(navigationBranch(wrap("/* Response.error() */ respond();"))).not.toMatch(error);
+  expect(navigationBranch(wrap("respond(Response.error());"))).toMatch(error);
+  expect(navigationBranch(wrap("respond();"))).not.toMatch(error);
+});
+
+test("--app-host fails when an app host answers with the forge's page", async () => {
+  const forgePage = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("<title>forge</title>", { headers: { "content-type": "text/html" } }) });
+  const appPage = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("<title>notes</title>") });
+  try {
+    const base = stub("text/css");
+    expect(await smoke(base, "t", { appHost: `http://127.0.0.1:${appPage.port}` })).toEqual([]);
+    const failures = await smoke(base, "t", { appHost: `http://127.0.0.1:${forgePage.port}` });
+    expect(failures.map((f) => f.why)).toEqual(["an app host answered with the forge's page"]);
+  } finally {
+    forgePage.stop(true);
+    appPage.stop(true);
+  }
 });

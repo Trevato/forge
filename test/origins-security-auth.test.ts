@@ -1,3 +1,4 @@
+import { everyoneIsAMember } from "./helpers/members.ts";
 import {
   afterAll,
   beforeAll,
@@ -174,6 +175,7 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
     state.oauth = oauth;
     fake = serveFakeForge(state);
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
@@ -217,9 +219,8 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
       `state=${encodeURIComponent(flow.state)}&code=${oauth.authCode}`,
       { none: true },
     );
-    expect(anonymous.headers.get("location")).toBe(
-      "/settings/origins?error=state",
-    );
+    // Signing in comes first; the state is still checked against whoever comes back.
+    expect(anonymous.headers.get("location")).toStartWith("/signin?next=");
     // No exchange happened, no credential landed on anyone, and Alice's flow
     // was not burned by someone else's attempt.
     expect(refreshCount()).toBe(exchanges);
@@ -296,7 +297,7 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
     );
     const location = response.headers.get("location")!;
     expect(location).toStartWith("/settings/origins?error=");
-    expect(decodeURIComponent(location)).toContain("code_verifier");
+    expect(decodeURIComponent(location)).toContain("did not finish the sign-in");
     expect(originCount(app)).toBe(0);
     // And the flow is finished, not retriable.
     expect(
@@ -335,7 +336,8 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
     expect(declined.headers.get("location")).toStartWith(
       "/settings/origins?error=",
     );
-    expect(declined.headers.get("location")).not.toContain("connected");
+    expect(declined.headers.get("location")).toStartWith("/settings/origins?error=");
+    expect(declined.headers.get("location")).not.toContain("connected=");
     expect(refreshCount()).toBe(before);
     expect(originCount(app)).toBe(0);
     // The state cannot be resurrected with a code afterwards.
@@ -479,6 +481,7 @@ describe("OAuth device flow: a flow is private to the user who started it", () =
     state.oauth = oauth;
     fake = serveFakeForge(state);
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     api = callerFor(servers.url);
@@ -592,6 +595,7 @@ describe("refresh serialisation and needs_reauth", () => {
     ]);
     fake = serveFakeForge(state);
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     api = callerFor(servers.url);
@@ -798,6 +802,7 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     fake = serveFakeForge(state);
 
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     base = servers.url;
     api = callerFor(base);
@@ -1178,6 +1183,9 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     expect(
       (await api("/api/v1/repos/alice/widgets", { none: true })).status,
     ).toBe(404);
+    // The settings trail says from what to what, in the one shape every writer uses.
+    const narrowed = listEvents(app.db, { kind: "repo.settings_updated", limit: 1 })[0]!;
+    expect(narrowed.payload["changed"]).toEqual({ visibility: { from: "public", to: "private" } });
 
     // Upstream goes public again. The sync does NOT widen the mirror back:
     // narrowing is the origin's call to make for us, widening is the owner's

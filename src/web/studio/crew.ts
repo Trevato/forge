@@ -26,21 +26,29 @@
  */
 
 import { listAllAgents, listCrew } from "../../actions/crew.ts";
-import { CREW_ROLES, listCrewRoles, type CrewRole } from "../../core/agents.ts";
+import { listCrewRoles, type Agent, type CrewRole } from "../../core/agents.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { seatsOf, type Seat } from "../../crew/seats.ts";
 import { crewHasCredential } from "../../core/subscriptions.ts";
-import { autonomyStatus } from "../../crew/autonomy.ts";
+import { autonomyStatus, smallShareWords } from "../../crew/autonomy.ts";
+import { governorSeen } from "../../crew/governed.ts";
 import { crewOffInPreview } from "../../crew/preview.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
-import { html, raw, type Html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { crewReadiness } from "../pages/crew.ts";
 import { grantsSection } from "../pages/subscriptions.ts";
+import { seatSlotsOf, seatSlotsWords, SEAT_UNIT } from "../../crew/seat_slots.ts";
+import { directionStall } from "../../crew/planner.ts";
+import { directionMarked } from "./direction.ts";
+import { fileHoldsCard } from "./file_holds.ts";
 import { markOf } from "../../core/marks.ts";
 import {
+  badge,
   btn,
+  type Tone,
   card,
   empty,
   field,
@@ -105,6 +113,130 @@ function aboutCard(
   );
 }
 
+const SEAT_LEAD: Record<Seat["state"], "check" | "alert" | "plus"> = {
+  filled: "check",
+  warn: "alert",
+  invite: "plus",
+};
+
+const SEAT_BADGE: Record<Seat["state"], { text: string; tone: Tone }> = {
+  filled: { text: "filled", tone: "success" },
+  warn: { text: "empty", tone: "attn" },
+  invite: { text: "open seat", tone: "default" },
+};
+
+/** The script: choosing in a team list, or setting its number, saves at once. */
+export const teamJs = /* js */ `
+(function () {
+  document.querySelectorAll("form[data-team] select, form[data-team] input[type=number]").forEach(function (el) {
+    el.addEventListener("change", function () { el.form.requestSubmit(); });
+  });
+  document.querySelectorAll("form[data-team] button[type=submit]").forEach(function (b) { b.hidden = true; });
+})();
+`;
+
+const SEAT_TITLE: Record<CrewRole, string> = {
+  planner: "Planners",
+  builder: "Builders",
+  reviewer: "Reviewers",
+};
+
+/**
+ * Your team, as three lists: Planners, Builders, Reviewers (`seatsOf`, the
+ * same facts the MCP `crew` tool returns). Each list holds who fills it, a
+ * picker of only the agents that declare that role, and how many may work at
+ * once; each choice posts at once (`teamJs`; without script, the button is
+ * there). A seat with nobody warns when the team is on its own.
+ */
+function teamCard(
+  ctx: Ctx,
+  repo: Repo,
+  base: string,
+  admin: boolean,
+  everyone: readonly Agent[],
+): Html {
+  const team = seatsOf(ctx.app.db, repo, crewOffInPreview());
+  const held = new Map(listCrewRoles(ctx.app.db, repo.id).map((c) => [c.agent.user.username, c.role]));
+  const seatSlots = new Map(seatSlotsOf(ctx.app.db, repo).map((p) => [p.role, p]));
+  const rows = team.seats.map((p) => {
+    const slots = seatSlots.get(p.role)!;
+    const paused = slots.slots === 0;
+    const b = SEAT_BADGE[p.state];
+    const picks = everyone.filter(
+      (a) => a.roles.includes(p.role) && held.get(a.user.username) !== p.role,
+    );
+    const add =
+      !admin || picks.length === 0
+        ? null
+        : html`<form class="row-fields" method="post" action="${base}/settings/crew" data-team>
+            <input type="hidden" name="role" value="${p.role}" />
+            <label class="sr-only" for="f-add-${p.role}">Add to ${SEAT_TITLE[p.role]}</label>
+            <select class="input input-sm" id="f-add-${p.role}" name="agent">
+              <option value="" disabled selected>Add…</option>
+              ${picks.map((a) => html`<option value="${a.user.username}">${a.user.username}</option>`)}
+            </select>
+            ${btn("Add", { size: "sm" })}
+          </form>`;
+    const setter = !admin
+      ? null
+      : html`<form class="row-fields" method="post" action="${base}/settings/pillars" data-team>
+          <input type="hidden" name="seat" value="${p.role}" />
+          <label class="sr-only" for="f-seat-${p.role}">${p.role}: ${SEAT_UNIT[p.role]}</label>
+          <input class="input input-sm" id="f-seat-${p.role}" name="slots" type="number" inputmode="numeric"
+            min="0" max="${String(slots.max)}" value="${String(slots.slots)}" />
+          ${btn("Set", { size: "sm" })}
+        </form>`;
+    const members = p.by.map((u) =>
+      row({
+        lead: icon("bot"),
+        title: userLink(u),
+        ...(admin
+          ? {
+              trail: html`<form class="row-actions" method="post" action="${base}/settings/crew/${encodeURIComponent(u)}/remove">
+                ${btn("Remove", { size: "sm", icon: "x" })}
+              </form>`,
+            }
+          : {}),
+        data: { member: u, seat: p.role },
+      }),
+    );
+    return row({
+      lead: icon(SEAT_LEAD[p.state]),
+      title: SEAT_TITLE[p.role],
+      meta: html`${p.does}${p.state === "warn" ? ` No ${p.role}: ${p.without}.` : null}`,
+      trail: html`${paused ? badge("paused", { tone: "attn" }) : badge(b.text, { tone: b.tone })}${add}`,
+      data: { seat: p.role, state: p.state },
+      children: [
+        ...members,
+        row({
+          title: paused ? "Paused" : `${String(slots.slots)} ${SEAT_UNIT[p.role]}`,
+          meta: html`${seatSlotsWords(slots)}`,
+          ...(setter ? { trail: setter } : {}),
+          data: { slots: p.role, at: String(slots.slots) },
+        }),
+      ],
+    });
+  });
+  const intro = crewOffInPreview()
+    ? "The crew is off in a preview, so nobody here is working."
+    : team.auto
+      ? `Auto mode is on (${team.mode}): your team works on its own — a planner decides what is next, a builder builds it, a reviewer checks it.`
+      : "Auto mode is off: your team works only when you ask. Pick who fills each list, then turn auto mode on under On its own. The number beside a list is how many may work at once; 0 pauses it.";
+  return card(
+    html`<p class="small" id="auto-mode" data-auto="${team.auto ? "on" : "off"}">
+        ${intro}
+      </p>
+      <ul class="list setting-list">
+        ${rows}
+      </ul>`,
+    {
+      id: "team",
+      head: html`${icon("users")}
+        <h2>Your team</h2>`,
+    },
+  );
+}
+
 function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
   const db = ctx.app.db;
   const crew = listCrewRoles(db, repo.id);
@@ -158,70 +290,16 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
               ...(admin
                 ? {
                     trail: html`<form
-                        class="row-fields"
-                        method="post"
-                        action="${base}/settings/crew/${encodeURIComponent(
-                          c.agent.user.username,
-                        )}/role"
-                      >
-                        <label
-                          class="sr-only"
-                          for="f-role-${c.agent.user.username}"
-                          >Role of ${c.agent.user.username}</label
-                        >
-                        <select
-                          class="input input-sm"
-                          id="f-role-${c.agent.user.username}"
-                          name="role"
-                        >
-                          ${CREW_ROLES.map(
-                            (r) =>
-                              html`<option
-                                value="${r}"
-                                ${c.role === r ? raw("selected") : null}
-                              >
-                                ${ROLE_WORD[r]}
-                              </option>`,
-                          )}
-                        </select>
-                        ${btn("Set", { size: "sm" })}
-                      </form>
-                      <form
-                        class="row-actions"
-                        method="post"
-                        action="${base}/settings/crew/${encodeURIComponent(
-                          c.agent.user.username,
-                        )}/remove"
-                      >
-                        ${btn("Remove", { size: "sm", icon: "x" })}
-                      </form>`,
+                      class="row-actions"
+                      method="post"
+                      action="${base}/settings/crew/${encodeURIComponent(c.agent.user.username)}/remove"
+                    >
+                      ${btn("Remove", { size: "sm", icon: "x" })}
+                    </form>`,
                   }
                 : {}),
             }),
           ),
-        );
-
-  const add =
-    !admin || available.length === 0
-      ? null
-      : card(
-          html`<form class="edit-row" method="post" action="${base}/settings/crew">
-            <label class="sr-only" for="f-agent">Agent</label>
-            <select class="input" id="f-agent" name="agent">
-              ${available.map(
-                (agent) =>
-                  html`<option value="${agent.user.username}">
-                    ${agent.user.username}
-                  </option>`,
-              )}
-            </select>
-            ${btn("Add to crew", {
-              variant: "primary",
-              size: "sm",
-              icon: "plus",
-            })}
-          </form>`,
-          { head: html`<h2>Add an agent</h2>`, pad: false },
         );
 
   // Whose money the crew spends here is the forge admin's to say.
@@ -238,13 +316,14 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
         })()
       : null;
   return html`<div id="crew">
+    ${teamCard(ctx, repo, base, admin, allListed.ok ? allListed.value : [])}
     ${admin ? crewReadiness(ctx) : null}
     ${card(html`${rows}`, {
       head: html`${icon("bot")}
         <h2>Crew</h2>`,
       pad: false,
     })}
-    ${add} ${grants}
+    ${grants}
   </div>`;
 }
 
@@ -252,7 +331,9 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
   const planner = listCrewRoles(ctx.app.db, repo.id).find(
     (c) => c.role === "planner",
   );
+  const stall = admin ? directionStall(ctx.app, repo) : null;
   const status = repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
+  const governor = governorSeen(ctx.app, ctx.auth.user, repo, new Date());
   const state = crewOffInPreview()
     ? html`<p class="muted small">
         The crew is off in a preview: nothing here plans, picks or runs an
@@ -273,6 +354,12 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
           </dd>
           <dt>Slots</dt>
           <dd>${status.active} of ${status.slots} in use</dd>
+          <dt>Small issues</dt>
+          <dd>${smallShareWords(ctx.app, repo)} slots</dd>
+          ${governor === undefined
+            ? null
+            : html`<dt>Governor</dt>
+                <dd>${governor.why}</dd>`}
           ${status.paused
             ? html`<dt>Paused</dt>
                 <dd>
@@ -305,6 +392,7 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
         })}
         <div class="field">
           <label for="f-direction">Direction</label>
+          ${directionMarked(repo.autonomyDirection)}
           <textarea
             class="input"
             id="f-direction"
@@ -325,6 +413,7 @@ ${repo.autonomyDirection}</textarea
               : html`No planner on the crew yet — set one under Crew, or the
                 map is only what people write.`}
           </p>
+          ${stall === null ? null : html`<p class="hint" id="direction-stall">${stall}</p>`}
         </div>
         ${selectField({
           label: "Decisions here",
@@ -351,26 +440,9 @@ ${repo.autonomyDirection}</textarea
           type: "number",
           hint: `Dollars of agent spend on this ${getAppByRepo(ctx.app.db, repo.id) === undefined ? "repository" : "app"} per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.`,
         })}
-        ${field({
-          label: "Slots",
-          name: "slots",
-          value: String(repo.autonomySlots),
-          type: "number",
-          hint: "Agent runs at once here. This is the WIP limit.",
-        })}
         <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
       </form>`;
-  // An autonomous repository with no reviewer lands nothing an agent wrote
-  // on its own: each such pull waits for a person's review (#597).
-  const noReviewer =
-    repo.autonomy === "autonomous" &&
-    !listCrewRoles(ctx.app.db, repo.id).some((c) => c.role === "reviewer")
-      ? html`<p class="small" id="no-reviewer">
-          <b>No reviewer: agent pulls wait for you.</b> Put a reviewer on the
-          crew under Crew to have them reviewed and land on their own.
-        </p>`
-      : null;
-  return card(html`${state}${noReviewer}${form}`, {
+  return card(html`${state}${form}`, {
     id: "autonomy",
     head: html`${icon("play")}
       <h2>On its own</h2>`,
@@ -399,6 +471,7 @@ export function settingsLead(ctx: Ctx, repo: Repo): Html {
     ${aboutCard(repo, base, admin, isApp)}
     ${crewCard(ctx, repo, base, admin)}
     ${autonomyCard(ctx, repo, base, admin)}
+    ${admin ? fileHoldsCard(ctx, repo, base) : null}
   </div>`;
 }
 

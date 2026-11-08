@@ -7,6 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { listVia } from "./mcp-list.ts";
 
 describe("MCP accounts", () => {
   let dataDir: string;
@@ -85,9 +86,9 @@ describe("MCP accounts", () => {
   });
 
   test("a non-admin is not listed the tool and is refused it", async () => {
-    const list = await rpc(bobToken, "tools/list", {});
+    const list = await listVia((p) => rpc(bobToken, "tools/list", p));
     expect(list.result.tools.map((t: any) => t.name)).not.toContain("accounts");
-    const admin = await rpc(adminToken, "tools/list", {});
+    const admin = await listVia((p) => rpc(adminToken, "tools/list", p));
     expect(admin.result.tools.map((t: any) => t.name)).toContain("accounts");
     expect((await accounts(bobToken)).refused).toContain("no tool named accounts");
   });

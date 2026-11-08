@@ -30,7 +30,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { App } from "../app.ts";
-import { isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
+import { envBuild, envPull, isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
 import { signGrant, type GrantWho } from "../apps/proxy.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
@@ -42,6 +42,7 @@ import {
 import type { ForgeEvent } from "../core/events.ts";
 import {
   deleteLooks,
+  deleteStrangerThumbs,
   DEFAULT_PAGE,
   LEGACY_THUMB_WIDTH,
   DARK_KINDS,
@@ -61,6 +62,7 @@ import { getPull } from "../core/pulls.ts";
 import { frontPicks } from "../core/front.ts";
 import { getRepoById } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
+import { ownerLooksFor } from "../spawn/preview-looks.ts";
 import { thumbnail } from "../design/image/image.ts";
 import { decodePng, encodePng, pngHeader } from "../design/image/png.ts";
 import { createLog } from "../kernel/log.ts";
@@ -347,11 +349,20 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const status = runtime.envStatus(record, item.env);
     if (status?.state !== "running" || status.commitOid !== item.commitOid)
       return;
+    // A preview of the forge itself always takes its named owner looks
+    // (`spawn/preview-looks.ts`), whatever its forge.json lists (#8974).
+    const ownerLooks = ownerLooksFor(app.config.forgeRepo, repo, item.env);
+    const pages = [
+      ...new Set([
+        ...(status.looks ?? [DEFAULT_PAGE]),
+        ...ownerLooks.map((l) => l.page),
+      ]),
+    ];
     const wanted = missing(
       item.appId,
       item.env,
       item.commitOid,
-      status.looks,
+      pages,
       item.swept === true,
     );
     if (wanted.length === 0) return;
@@ -368,8 +379,19 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const sealed = sealedPreview(app.db, repo.id, item.env);
     const everyone =
       !sealed && repo.visibility === "public" && record.access === "public";
-    const asNobody = (kind: LookKind): boolean =>
-      !sealed && (everyone || kind === "thumb");
+    // A private app turns a signed-out visitor away to sign in, on another
+    // host: its thumb is taken through the grant door as the owner, like
+    // its other pictures, and never leaves the app's host (#7830).
+    // A page the manifest names in `app.looksAsOwner` shows a stranger
+    // nothing worth a picture — an admin's own page — so its phone and
+    // desktop are the owner's, and stay the writers', even of a public app
+    // (#8812). Its thumb is still what a stranger sees.
+    const ownerPages = new Set(status.looksAsOwner ?? []);
+    const asNobody = (kind: LookKind, page: string): boolean =>
+      !sealed &&
+      !(kind !== "thumb" && ownerPages.has(page)) &&
+      !ownerLooks.some((l) => l.page === page && l.kind === kind) &&
+      (everyone || (kind === "thumb" && record.access === "public"));
     const owner = getUserById(app.db, repo.ownerId);
     const asOwner: GrantWho | undefined =
       owner === undefined
@@ -386,7 +408,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         { app: record, env: item.env },
         GRANT_TTL_MS,
         Date.now(),
-        asNobody(kind) ? undefined : asOwner,
+        asNobody(kind, page) ? undefined : asOwner,
       );
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
       const path = lookPath(item.appId, item.env, item.commitOid, page, kind, theme);
@@ -410,8 +432,10 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       // The thumb is the desktop page again, as a stranger: it adds no row.
       if (kind !== "thumb" && theme === "light") {
         const look = page === "/" ? kind : `${kind} ${page}`;
-        if (shot.ok) vitals.push({ look, entries: shot.value.entries });
-        else if (isNoBrowser(shot.error))
+        if (shot.ok) {
+          const size = shot.value.size === undefined ? {} : { size: shot.value.size };
+          vitals.push({ look, entries: shot.value.entries, ...size });
+        } else if (isNoBrowser(shot.error))
           vitals.push({ look, skipped: "no browser" });
       }
       const taken =
@@ -441,7 +465,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           ...row,
           kind,
           path,
-          takenAs: asNobody(kind) ? "nobody" : "owner",
+          takenAs: asNobody(kind, page) ? "nobody" : "owner",
         });
       } else {
         rmSync(staged, { force: true });
@@ -593,6 +617,24 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
   }
 
   /**
+   * Before #7830 a private app's thumb was taken as a signed-out visitor,
+   * who is sent to sign in on another host: its picture is a certificate
+   * warning. Those thumbs are deleted, and the sweep takes them again as
+   * the owner. Returns how many went.
+   */
+  function retakeStrangerThumbs(record: AppRecord): number {
+    if (record.access === "public") return 0;
+    const bad = deleteStrangerThumbs(app.db, record.id);
+    if (bad.length === 0) return 0;
+    remove(bad);
+    log.info("thumbs of a private app taken as a stranger, to be retaken", {
+      app: record.slug,
+      count: bad.length,
+    });
+    return bad.length;
+  }
+
+  /**
    * Pictures on disk for apps that no longer exist, or previews whose pull
    * closed while no forge was listening, are nobody's: the same sweep the
    * runtime makes over its checkouts on boot.
@@ -612,8 +654,16 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         rmSync(join(root, appId), { recursive: true, force: true });
         continue;
       }
+      retakeStrangerThumbs(record);
       for (const env of readdirSync(join(root, appId))) {
-        if (!isEnvName(env) || env === "production") continue;
+        if (!isEnvName(env)) continue;
+        // A build preview is gone once the runtime no longer holds it.
+        if (envBuild(env) !== undefined) {
+          if (appsRuntime(app)?.envStatus(record, env) === undefined)
+            forget(appId, env);
+          continue;
+        }
+        if (envPull(env) === undefined) continue;
         const pull = getPull(app.db, record.repoId, Number(env.slice(5)));
         if (
           pull === undefined ||

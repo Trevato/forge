@@ -18,6 +18,8 @@ import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { btn, card, row } from "../ui.ts";
+import { HELP_BUILD, HELP_BUILD_NEXT, SIGNUP_OWN_FORGE } from "../../core/contribute.ts";
+import type { Repo } from "../../core/repos.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import {
   notePhase,
@@ -47,6 +49,23 @@ function planRefused(ctx: Ctx, repo: NonNullable<ReturnType<typeof loadRepo>>, e
   });
 }
 
+/** What a guest sees in place of a copy: help this one, and what happens next. */
+function helpBuildPage(ctx: Ctx, repo: Repo): Response {
+  return page({
+    ctx,
+    title: `${HELP_BUILD} · ${repo.ownerName}/${repo.name}`,
+    body: html`<div class="narrow-wide">
+      ${pageHead(HELP_BUILD, { sub: `${repo.ownerName}/${repo.name}` })}
+      ${card(html`<p>${HELP_BUILD_NEXT}</p>
+        <p class="muted small mt">${SIGNUP_OWN_FORGE} <a href="/forges/new">Get your own forge</a>.</p>
+        <form method="post" action="${repoBase(repo)}/fork" class="form-actions">
+          ${btn(HELP_BUILD, { variant: "primary", icon: "fork" })}
+          ${btn("Not now", { href: repoBase(repo), variant: "ghost" })}
+        </form>`)}
+    </div>`,
+  });
+}
+
 // GET /:owner/:name/make-it-yours
 export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -57,6 +76,8 @@ export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
   const plan = await timePhaseAsync(ctx.request, "plan", () =>
     makeItYours(ctx.app, user, repo, { dryRun: true }),
   );
+  if (!plan.ok && plan.error.kind === "not_member" && repo.visibility === "public")
+    return timePhase(ctx.request, "render", () => helpBuildPage(ctx, repo));
   if (!plan.ok)
     return timePhase(ctx.request, "render", () => planRefused(ctx, repo, plan.error));
   const p = plan.value;

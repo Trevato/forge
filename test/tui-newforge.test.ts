@@ -87,11 +87,12 @@ describe("the new forge screen", () => {
   test("the screen and its plan promise no update that does not happen", () =>
     withScreen(admin, async ({ tui, terminal }) => {
       const form = tui.screen.toText();
-      expect(form).toContain("Recorded for now");
+      expect(form).toContain("tell-me (default) tells the owner in their inbox");
       terminal.feed("kai\x10");
       await settleApp(tui);
       const text = form + tui.screen.toText();
-      expect(tui.screen.toText()).toContain("Recorded for now, not acted on");
+      expect(tui.screen.toText()).toContain("It follows this forge's code as tell-me: it tells the owner in their inbox");
+      expect(text).not.toMatch(/recorded for now/i);
       expect(text).not.toMatch(/keeps? (itself )?up to date|updates itself|automatically/i);
     }));
 
@@ -204,6 +205,34 @@ describe("the new forge screen", () => {
         ),
       );
       expect(docs.find((d) => d?.name === "tuisize")?.size).toBe("medium");
+    }));
+
+  test("Blank is the default: the plan names no template", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      terminal.feed("tuiblank" + "\t".repeat(10));
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("Only the apps you fork");
+      terminal.feed("\x10");
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("The plan");
+      expect(tui.screen.toText()).not.toContain("Template:");
+    }));
+
+  test("choosing starter shows its sentence and the plan names it", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      terminal.feed("tuistart" + "\t".repeat(10) + "\x1b[C"); // right arrow
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("A server, a page, tests and a forge.json");
+      terminal.feed("\x10");
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("Template: Starter app.");
+    }));
+
+  test("an unknown template is refused beside the field", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      terminal.feed("tuitpl" + "\t".repeat(10) + "nope\x10");
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("template must be blank or starter");
     }));
 
   test("an unknown size is refused beside the field", () =>

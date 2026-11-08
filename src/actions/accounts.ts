@@ -193,7 +193,12 @@ async function removeOwnedRepos(
       app.bus.append({
         kind: "repo.deleted",
         actorId: admin.id,
-        payload: { repo: label, by: "org_retired" },
+        payload: {
+          repo: label,
+          visibility: repo.visibility,
+          ownerId: repo.ownerId,
+          by: "org_retired",
+        },
       });
   }
   return null;

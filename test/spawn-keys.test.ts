@@ -116,7 +116,7 @@ describe("a spawned child's own keys and domain", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test("a setup-token or a subscription's credits key may go to a child under a budget; a key needs a budget; a token with a space is refused", async () => {
+  test("a setup-token or a subscription's credits key may go to a child under a budget; a key needs a budget; an empty key is refused", async () => {
     const oauth = await post({
       name: "maria",
       apps: ["alice/bakery"],
@@ -148,11 +148,11 @@ describe("a spawned child's own keys and domain", () => {
       name: "maria",
       apps: ["alice/bakery"],
       dryRun: true,
-      modelKey: "sk-ant-api03 with a space",
+      modelKey: " \u200b ",
       budgetUsd: 5,
     });
     expect(spaced.status).toBe(422);
-    expect(await spaced.text()).toContain("one line with no spaces");
+    expect(await spaced.text()).toContain("is empty");
     expect(
       (
         await post({
@@ -245,7 +245,8 @@ describe("a spawned child's own keys and domain", () => {
         name: "maria",
         apps: ["alice/bakery"],
         dryRun: false,
-        modelKey: API_KEY,
+        // Pasted with a Bearer prefix and a trailing newline: the child gets the key itself.
+        modelKey: ` Bearer ${API_KEY}\n`,
         budgetUsd: 5,
       },
       { "idempotency-key": "maria-1" },
@@ -320,6 +321,9 @@ describe("a spawned child's own keys and domain", () => {
     const same = await post({ name: "maria", apps: ["alice/bakery"], dryRun: false, modelKey: API_KEY, budgetUsd: 5 });
     expect(same.status).toBe(200);
     expect(((await same.json()) as { existed: boolean }).existed).toBe(true);
+    // The same key pasted untidily is the same key: compared cleaned, not refused as another.
+    const padded = await post({ name: "maria", apps: ["alice/bakery"], dryRun: false, modelKey: `\tbearer ${API_KEY} \n`, budgetUsd: 5 });
+    expect(padded.status).toBe(200);
   });
 
   test("once the starter budget is spent, a run in the child gets no account: an assigned one, on any repository of its org", async () => {

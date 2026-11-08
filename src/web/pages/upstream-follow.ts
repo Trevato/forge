@@ -16,8 +16,20 @@ import {
   setFollowUpstream,
   standing,
   upstreamLabel,
+  upstreamShort,
 } from "../../actions/upstream_follow.ts";
+import { aheadFor, aheadWords } from "../../origins/ahead.ts";
+import { requireWriter } from "../../actions/access.ts";
+import {
+  addFollowSources,
+  checkSourcesNow,
+  removeFollowSource,
+  SOURCE_REFUSALS,
+  sourceStanding,
+} from "../../actions/follow_sources.ts";
+import { listSources, stampOf, type FollowSource } from "../../core/follow_sources.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
+import { getProvenance } from "../../core/provenance.ts";
 import { getFollow, listChecks } from "../../core/upstream_follow.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
@@ -70,6 +82,30 @@ export function behindLine(ctx: Ctx, repo: Repo): Html | null {
       ${btn("Update", { size: "sm", icon: "sync" })}
     </form>
     <a href="${base}/settings#upstream">details</a>
+  </div>`;
+}
+
+/**
+ * Under the head of a mirror: how many commits its origin has that it has
+ * not taken, with the one action that takes them. Read from the stored
+ * reading, never the network; null when level or unread, or when the viewer
+ * cannot read the repository. Only writers see the action: the route behind
+ * it asks the same.
+ */
+export function originAheadLine(ctx: Ctx, repo: Repo): Html | null {
+  if (repo.origin === null) return null;
+  const ahead = aheadFor(ctx.app, repo, ctx.auth.user);
+  if (ahead === undefined) return null;
+  const base = repoBase(repo);
+  return html`<div class="small muted" data-origin-ahead>
+    ${icon("sync")}
+    ${aheadWords(ahead)} · read ${timeAgo(ahead.at)}
+    ${when(
+      requireWriter(ctx.app, ctx.auth.user, repo).ok,
+      () => html`<form method="post" action="${base}/sync/take" class="inline">
+        ${btn("Take them", { size: "sm", icon: "sync" })}
+      </form>`,
+    )}
   </div>`;
 }
 
@@ -173,4 +209,112 @@ export async function followUpstreamCheck(ctx: Ctx): Promise<Response> {
       ? { message: checkedWords(checked.value) }
       : { tone: "danger", message: FOLLOW_REFUSALS[checked.error] },
   );
+}
+
+/** One source on one line: where, which branch, who it is trusted as, where its last check stands. */
+function sourceLine(base: string, s: FollowSource): Html {
+  const stamp = stampOf(s);
+  const stand = sourceStanding(s);
+  return row({
+    lead: icon("sync"),
+    title: html`<a href="${s.url}" rel="noreferrer noopener">${upstreamShort(s.url)}</a> <span class="mono">${s.branch}</span>`,
+    meta: html`${stamp === undefined ? "" : `${stamp.account}@${stamp.host}`} · ${stand}${
+      s.checkedAt === null ? "" : html` · checked ${clock(s.checkedAt)}`
+    }`,
+    trail: html`<form method="post" action="${base}/settings/sources/${s.id}/remove" class="row-fields">
+      ${btn("Remove", { size: "sm", variant: "outline", label: `Stop following ${upstreamShort(s.url)}` })}
+    </form>`,
+  });
+}
+
+/** The settings card: every source on a line, and one box to add as many as you like. */
+export function followSourcesCard(ctx: Ctx, repo: Repo): Html | null {
+  if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return null;
+  const sources = listSources(ctx.app.db, repo.id);
+  const base = repoBase(repo);
+  // A migrated repository's link back to where it came from is offered as the first line (#3293).
+  const from = sources.length === 0 ? getProvenance(ctx.app.db, repo.id)?.sourceUrl : undefined;
+  return card(
+    html`<ul class="list" data-follow-sources>
+        ${sources.length === 0
+          ? html`<li class="muted small">Following no other sources.</li>`
+          : sources.map((s) => sourceLine(base, s))}
+      </ul>
+      <form method="post" action="${base}/settings/sources" class="stack mt">
+        <p class="muted small">
+          A new commit on a source whose account is <a href="/settings/trusted">trusted</a> opens or updates
+          one pull, stamped with where it came from; a conflict goes to the crew. Anyone else's waits as a guest.
+        </p>
+        ${formField({
+          label: "Sources, one per line",
+          name: "sources",
+          type: "textarea",
+          rows: 3,
+          ...(from === undefined ? {} : { value: `${from} main` }),
+          mono: true,
+          spellcheck: false,
+          placeholder: "https://git.open-platform.sh/jmoran/forge-jay.git main",
+          hint: "Address, then the branch (main when left out). A forge admin may add “as account” to name the trusted account, e.g. “… main as benjivers”.",
+        })}
+        <div class="form-actions">${btn("Follow")}</div>
+      </form>
+      ${when(
+        sources.length > 0,
+        () => html`<form method="post" action="${base}/settings/sources/check" class="mt">
+          ${btn("Check sources now", { size: "sm", icon: "sync" })}
+        </form>`,
+      )}`,
+    { head: html`${icon("sync")}<h2 id="sources">Followed sources</h2>`, pad: sources.length === 0 },
+  );
+}
+
+// POST /:owner/:name/settings/sources
+export async function followSourcesAdd(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const done = addFollowSources(ctx.app, ctx.auth.user, repo, field(form, "sources"));
+  if (!done.ok) return repoNotFound(ctx);
+  const bad = done.value.find((d) => !d.result.ok);
+  const added = done.value.filter((d) => d.result.ok).length;
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings#sources`,
+    done.value.length === 0
+      ? { tone: "danger", message: "Give at least one address." }
+      : bad !== undefined && !bad.result.ok
+        ? { tone: "danger", message: `${added} added. “${bad.line.slice(0, 80)}”: ${SOURCE_REFUSALS[bad.result.error]}` }
+        : { message: `Following ${added} source${added === 1 ? "" : "s"}. The first check runs within a minute.` },
+  );
+}
+
+// POST /:owner/:name/settings/sources/:id/remove
+export async function followSourceRemove(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const gone = removeFollowSource(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings#sources`,
+    gone.ok
+      ? { message: `No longer following ${upstreamShort(gone.value.url)}.` }
+      : { tone: "danger", message: SOURCE_REFUSALS.not_found },
+  );
+}
+
+// POST /:owner/:name/settings/sources/check
+export async function followSourcesCheck(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const checked = await checkSourcesNow(ctx.app, ctx.auth.user, repo);
+  if (!checked.ok) return repoNotFound(ctx);
+  const lines = checked.value.map((c) =>
+    c.result.ok ? `${upstreamShort(c.source.url)}: ${checkedWords(c.result.value)}` : `${upstreamShort(c.source.url)}: ${FOLLOW_REFUSALS[c.result.error]}`,
+  );
+  return flashTo(ctx, `${repoBase(repo)}/settings#sources`, { message: lines.join(" ") || "No sources to check." });
 }

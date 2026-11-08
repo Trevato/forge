@@ -24,10 +24,13 @@ import {
   MIN_BUDGET_USD,
 } from "../../spawn/plan.ts";
 import { DEFAULT_SIZE, SIZES, sizesView } from "../../spawn/sizes.ts";
+import { DEFAULT_TEMPLATE, TEMPLATES, templateOf } from "../../spawn/templates.ts";
+import { FOLLOW_LABELS, FOLLOW_WORDS } from "../../spawn/follow_words.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
+import { pickList } from "../pick.ts";
 import { btn, card, field as formField, row, selectField } from "../ui.ts";
 
 interface Values {
@@ -42,6 +45,7 @@ interface Values {
   readonly budgetUsd: string;
   readonly modelEndpoint: string;
   readonly size: string;
+  readonly template: string;
   /** The last post carried a key: it is never sent back, so it is asked for again. */
   readonly hadKey: boolean;
 }
@@ -58,6 +62,7 @@ const EMPTY: Values = {
   budgetUsd: "",
   modelEndpoint: "",
   size: DEFAULT_SIZE,
+  template: DEFAULT_TEMPLATE,
   hadKey: false,
 };
 
@@ -74,29 +79,6 @@ function errorsOf(door: Door): Errors {
   const m = /^([A-Za-z]+): (.*)$/.exec(message);
   if (door.body["error"] === "invalid" && m) return { [m[1]!]: m[2]! };
   return { form: message };
-}
-
-function checks(
-  name: string,
-  items: readonly { value: string; label: string; note?: string }[],
-  chosen: readonly string[],
-): Html {
-  return html`${items.map(
-    (i) =>
-      html`<label class="check">
-        <input
-          type="checkbox"
-          name="${name}"
-          value="${i.value}"
-          ${chosen.includes(i.value) ? html`checked` : null}
-        />
-        <span
-          >${i.label}${i.note
-            ? html` <span class="muted small">${i.note}</span>`
-            : null}</span
-        >
-      </label>`,
-  )}`;
 }
 
 /** What the form reads before it draws: room, then (when there is room) the repositories and the crew. */
@@ -134,6 +116,16 @@ function sizeOptions(chosen: string): { value: string; label: string; selected?:
     value: size,
     label: `${size}: ${lower(says.get(size as keyof typeof SIZES) ?? "")}`,
     selected: size === at,
+  }));
+}
+
+/** The templates in order, Blank first; the one asked for chosen (Blank when it is not one of them). */
+function templateOptions(chosen: string): { value: string; label: string; selected?: boolean }[] {
+  const at = TEMPLATES.some((t) => t.id === chosen) ? chosen : DEFAULT_TEMPLATE;
+  return TEMPLATES.map((t) => ({
+    value: t.id,
+    label: `${t.title}: ${lower(t.says)}`,
+    selected: t.id === at,
   }));
 }
 
@@ -198,20 +190,17 @@ function formView(
           hint: "In your words: the crew's first direction. Optional.",
           ...(errors["direction"] ? { error: errors["direction"] } : {}),
         })}
-        <fieldset class="field" ${errors["apps"] ? html`data-invalid` : null}>
-          <legend>Apps to fork, with their history</legend>
-          ${checks(
-            "apps",
-            repos.map((r) => ({
-              value: `${r.ownerName}/${r.name}`,
-              label: `${r.ownerName}/${r.name}`,
-            })),
-            values.apps,
-          )}
-          ${errors["apps"]
-            ? html`<span class="error" id="f-apps-err">${errors["apps"]}</span>`
-            : null}
-        </fieldset>
+        ${pickList({
+          legend: "Apps to fork, with their history",
+          name: "apps",
+          noun: "repositories",
+          items: repos.map((r) => ({
+            value: `${r.ownerName}/${r.name}`,
+            label: `${r.ownerName}/${r.name}`,
+          })),
+          chosen: values.apps,
+          error: errors["apps"],
+        })}
         ${formField({
           label: "Or a fresh app (optional)",
           name: "fresh",
@@ -220,7 +209,7 @@ function formView(
           ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
         })}
         <fieldset class="field" ${errors["followMode"] ? html`data-invalid` : null}>
-          <legend>How it follows this forge's code (recorded for now; nothing acts on it yet)</legend>
+          <legend>How it follows this forge's code</legend>
           <label class="check">
             <input
               type="radio"
@@ -229,7 +218,7 @@ function formView(
               ${values.followMode !== "take-updates" ? html`checked` : null}
             />
             <span
-              >Recorded for now: tell me <span class="muted small">your choice is kept; nothing tells you yet.</span></span
+              >${FOLLOW_LABELS["tell-me"]} <span class="muted small">${FOLLOW_WORDS["tell-me"]}</span></span
             >
           </label>
           <label class="check">
@@ -240,7 +229,7 @@ function formView(
               ${values.followMode === "take-updates" ? html`checked` : null}
             />
             <span
-              >Recorded for now: take updates <span class="muted small">your choice is kept; nothing acts on it yet.</span></span
+              >${FOLLOW_LABELS["take-updates"]} <span class="muted small">${FOLLOW_WORDS["take-updates"]}</span></span
             >
           </label>
           ${errors["followMode"]
@@ -249,22 +238,14 @@ function formView(
         </fieldset>
         ${crew.length === 0
           ? null
-          : html`<fieldset class="field">
-              <legend>Crew whose briefs go along</legend>
-              ${checks(
-                "crew",
-                crew.map((a) => ({
-                  value: a.user.username,
-                  label: a.user.username,
-                })),
-                values.crew,
-              )}
-              ${errors["crew"]
-                ? html`<span class="error" id="f-crew-err"
-                    >${errors["crew"]}</span
-                  >`
-                : null}
-            </fieldset>`}
+          : pickList({
+              legend: "Crew whose briefs go along",
+              name: "crew",
+              noun: "crew",
+              items: crew.map((a) => ({ value: a.user.username, label: a.user.username })),
+              chosen: values.crew,
+              error: errors["crew"],
+            })}
         ${anon
           ? null
           : html`<fieldset class="field">
@@ -312,6 +293,13 @@ function formView(
               ...(errors["budgetUsd"] ? { error: errors["budgetUsd"] } : {}),
             })}
         ${selectField({
+          label: "Template",
+          name: "template",
+          hint: "What the child starts from besides the apps you fork. Blank is the default.",
+          options: templateOptions(values.template),
+          ...(errors["template"] ? { error: errors["template"] } : {}),
+        })}
+        ${selectField({
           label: "Size (optional)",
           name: "size",
           hint: "Room for the child to grow into. Small is the default and is not recorded.",
@@ -341,7 +329,7 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
   const copied = (body["copied"] as string[] | undefined) ?? [];
   const bytes = Number(body["bytes"] ?? 0);
   const note = body["keyNote"];
-  const plan = body["plan"] as { budgetUsd?: number | null } | undefined;
+  const plan = body["plan"] as { budgetUsd?: number | null; template?: string } | undefined;
   const budget = plan?.budgetUsd ?? null;
   const address = childUrlOf(ctx.app, values.name);
   return card(
@@ -355,6 +343,9 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
                 ? "You keep owner access after it is claimed; the claim page tells them."
                 : "You leave once it is claimed; they can invite you back."}
             </li>`}
+        ${plan?.template === undefined
+          ? null
+          : html`<li>It starts from the <b>${templateOf(plan.template).title}</b> template.</li>`}
         ${budget === null
           ? null
           : html`<li>Its crew runs on the key you give, up to $${budget} for the key's whole life.</li>`}
@@ -450,6 +441,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     budgetUsd: field(form, "budgetUsd").trim(),
     modelEndpoint: field(form, "modelEndpoint").trim(),
     size: field(form, "size").trim() || DEFAULT_SIZE,
+    template: field(form, "template").trim() || DEFAULT_TEMPLATE,
     hadKey: field(form, "modelKey").trim() !== "",
   };
   const key = field(form, "modelKey").trim();
@@ -468,6 +460,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     ...(values.budgetUsd === "" ? {} : { budgetUsd: Number(values.budgetUsd) }),
     // Small is the default: it is not recorded, so the plan stays as it was.
     ...(values.size === DEFAULT_SIZE ? {} : { size: values.size }),
+    ...(values.template === DEFAULT_TEMPLATE ? {} : { template: values.template }),
     dryRun: planOnly,
   });
   if (door.status >= 400)

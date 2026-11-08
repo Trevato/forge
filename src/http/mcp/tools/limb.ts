@@ -6,9 +6,9 @@ import { good, bad, type Tool, str, APP_ARG, planRepo, isAnswer } from "../share
 
 export const tool: Tool = {
   name: "limb",
-  doc: "`{ app, issue, action, reason?, pillar?, operation?, dryRun? }`: defer, resume or close a whole limb as not doing, or undo an operation; plans unless `dryRun` is false, and applying takes an admin token",
+  doc: "`{ app, issue?, action, reason?, pillar?, under?, operation?, dryRun? }`: defer, resume or close a whole limb as not doing, or undo an operation; plans unless `dryRun` is false, and applying takes an admin token",
   description:
-    "Act on a limb by `action`; `close` takes `reason`.",
+    "Act on a limb by `action`.",
   inputSchema: {
     type: "object",
     properties: {
@@ -20,7 +20,7 @@ export const tool: Tool = {
       action: { type: "string", enum: ["defer", "resume", "close", "raise", "lower", "replan", "takeback", "undo"] },
       reason: {
         type: "string",
-        description: "For close: why.",
+        description: "Why.",
       },
       pillar: {
         type: "string",

@@ -1,6 +1,6 @@
-/** `/settings/cloud/audit`, `/organizations/new` and `/apps/open` name their Server-Timing phases and answer within budget (#4322). */
+/** `/settings/cloud/audit`, `/organizations/new` and `/apps/open` name their Server-Timing phases and cost a bounded number of statements (#4322). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,45 +45,47 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** The most statements a request may run: today's count with room for a read or two. */
+const MAX_STATEMENTS: Record<string, number> = {
+  "/settings/cloud/audit": 11,
+  "/organizations/new": 10,
+  "/apps/open": 10,
+};
+
 // /apps/open with no host is the answer a stranger gets: session, then render.
+// `route` and `compress` are the server's own work around the handler: named,
+// the accounting no longer hangs on how long a loaded machine takes outside it.
 const PAGES: [string, string[]][] = [
-  ["/settings/cloud/audit", ["session", "audit", "render"]],
-  ["/organizations/new", ["session", "render"]],
-  ["/apps/open", ["session", "render"]],
+  ["/settings/cloud/audit", ["route", "session", "audit", "render", "compress"]],
+  ["/organizations/new", ["route", "session", "render", "compress"]],
+  ["/apps/open", ["route", "session", "render", "compress"]],
 ];
 
+/** Requests checked for their named phases. */
+const SAMPLES = 7;
+
 for (const [path, names] of PAGES)
-  test(`GET ${path} names its phases and answers within its budget`, async () => {
-    const against = await baselineMs(servers.url);
+  test(`GET ${path} names its phases and costs a bounded number of statements`, async () => {
     const get = () => fetch(`${servers.url}${path}`, { headers: { cookie }, redirect: "manual" });
     await (await get()).text(); // warm
-    // Timers jitter on a busy machine: judge the best of several requests.
-    let left = Infinity;
-    let total = Infinity;
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < SAMPLES; i++) {
       const res = await get();
       await res.text();
       const parts = (res.headers.get("server-timing") ?? "").split(", ");
-      const dur = (n: string) => Number(parts.find((p) => p.startsWith(`${n};`))!.split("dur=")[1]);
       for (const name of ["app", ...names])
-        expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
-      total = Math.min(total, dur("app"));
-      // Phases name the whole request: what is left over is small.
-      left = Math.min(left, Math.abs(dur("app") - names.reduce((sum, n) => sum + dur(n), 0)));
+        expect(parts.find((p) => p.startsWith(`${name};`)), `phase ${name} in ${parts.join(", ")}`).toMatch(/^[a-z]+;dur=\d+\.\d$/);
     }
-    expectBudget(total, { ms: 50, against });
-    expect(left).toBeLessThanOrEqual(1.5); // accounting, not speed: each phase is rounded to 0.1
+    expectWork(await requestStatements(app.db, `${servers.url}${path}`, { headers: { cookie }, redirect: "manual" }), { max: MAX_STATEMENTS[path]! });
   });
 
 // Signed out, the redirect to sign-in is still a named phase.
 for (const path of ["/settings/cloud/audit", "/organizations/new"])
-  test(`signed-out GET ${path} names session and render`, async () => {
+  test(`signed-out GET ${path} names route, session, render and compress`, async () => {
     const res = await fetch(`${servers.url}${path}`, { redirect: "manual" });
     await res.text();
     expect(res.status).toBe(303);
     const parts = (res.headers.get("server-timing") ?? "").split(", ");
-    const dur = (n: string) => Number(parts.find((p) => p.startsWith(`${n};`))!.split("dur=")[1]);
-    for (const name of ["session", "render"])
+    const names = ["route", "session", "render", "compress"];
+    for (const name of names)
       expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
-    expect(Math.abs(dur("app") - dur("session") - dur("render"))).toBeLessThan(1.5);
   });

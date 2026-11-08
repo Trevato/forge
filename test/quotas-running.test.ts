@@ -27,6 +27,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { startCrew } from "../src/crew/dispatch.ts";
 import { serve } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
+import { heldRuns } from "../src/runs/held.ts";
 import { QUOTA_KEYS, getQuota, runningLimitSentence, setQuota } from "../src/settings/quotas.ts";
 import { promote } from "./helpers/members.ts";
 
@@ -443,6 +444,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","total
         readRunLog(dataDir, waiting.id).lines.join("\n").includes("1 of 1 concurrent runs") ? true : undefined,
       );
       expect(count(mine, "running")).toBe(1);
+      // The pass that held it says so, for vitals (#9403).
+      expect(heldRuns(app.db).get(waiting.id)).toBe("limit");
 
       const theirs = await assignTwo(alice, "orchard");
       await until(() => (count(theirs, "running") === 2 ? true : undefined));

@@ -33,6 +33,8 @@ export interface Knock {
   readonly resource: string;
   readonly verb: Verb;
   readonly as: Identity;
+  /** The door asked, `METHOD path`, when one was; older rows have none. */
+  readonly door?: string;
   /** What the table says. */
   readonly cell: Cell["answer"];
   /** What the door said, or why it was not asked. */
@@ -134,7 +136,8 @@ export async function probe(input: ProbeInput): Promise<Probed | undefined> {
       continue;
     }
     const door = DOOR[cell.verb];
-    const url = `${base}${api}${door.row ? "/0" : ""}`;
+    const path = `${api}${door.row ? "/0" : ""}`;
+    const url = `${base}${path}`;
     const headers: Record<string, string> = {
       accept: "application/json",
       ...(door.method === "GET" ? {} : { "content-type": "application/json" }),
@@ -178,6 +181,7 @@ export async function probe(input: ProbeInput): Promise<Probed | undefined> {
       resource: cell.resource,
       verb: cell.verb,
       as,
+      door: `${door.method} ${path}`,
       cell: cell.answer,
       result,
       verdict,

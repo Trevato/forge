@@ -8,6 +8,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defect } from "../kernel/error.ts";
+import { hostAllowed } from "./egress.ts";
 
 export interface Reached {
   readonly host: string;
@@ -63,4 +64,28 @@ export function noteReached(
   mkdirSync(join(dataDir, "egress"), { recursive: true });
   writeFileSync(`${file}.new`, JSON.stringify(next));
   renameSync(`${file}.new`, file);
+}
+
+/**
+ * What `repoId`'s code reached that `declared` does not allow, and the
+ * `egress` entries to add to `forge.json` (a port is named unless 80 or 443).
+ * The app's page and the terminal both say it from here.
+ */
+export function undeclaredHosts(
+  dataDir: string,
+  repoId: string,
+  declared: readonly string[],
+): { reached: Reached[]; entries: string[] } {
+  const reached = reachedHosts(dataDir, repoId).filter((r) => !hostAllowed(declared, r.host, r.port));
+  const entries = [
+    ...new Set(reached.map((r) => (r.port === 80 || r.port === 443 ? r.host : `${r.host}:${r.port}`))),
+  ];
+  return { reached, entries };
+}
+
+/** Whether those calls still work, by the forge's egress mode. */
+export function egressModeSentence(mode: "enforce" | "report"): string {
+  return mode === "report"
+    ? "They were let through while egress is only reported; once it is enforced they are refused."
+    : "They were let through while egress was only reported; they are refused now.";
 }

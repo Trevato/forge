@@ -92,14 +92,15 @@ describe("an agent run's timing line", () => {
     const { run, lines, timing } = await runOn("Prune the roses", (number) => {
       const agent = getAgent(standIn.app.db, standIn.bot.id);
       if (!agent) throw new Error("no agent");
-      // A `.git` that is no repository: the fetch of a kept clone fails.
-      mkdirSync(
-        join(
-          workdirFor(standIn.app.config.dataDir, agent, standIn.repo, number),
-          ".git",
-        ),
-        { recursive: true },
-      );
+      // A kept clone that reads as a repository but refuses every
+      // transport: it is reused, and its fetch fails. (A `.git` that is no
+      // repository is moved aside and cloned afresh, #6263.)
+      const dir = workdirFor(standIn.app.config.dataDir, agent, standIn.repo, number);
+      mkdirSync(dir, { recursive: true });
+      for (const args of [["init", "--quiet"], ["config", "protocol.allow", "never"]]) {
+        const done = Bun.spawnSync(["git", ...args], { cwd: dir });
+        if (done.exitCode !== 0) throw new Error(done.stderr.toString());
+      }
     });
     expect(run.state).toBe("failed");
     expect(timing).toHaveLength(1);

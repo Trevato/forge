@@ -113,10 +113,22 @@ export function originFileUrl(
     : `${base}/src/branch/${at}/${encoded}`;
 }
 
-/** `codeberg.org` from `https://codeberg.org/octo/widgets`. */
+/**
+ * `codeberg.org` from `https://codeberg.org/octo/widgets`; "" when it is not
+ * a URL, so text a remote sent never reaches the terminal as itself.
+ */
 export function hostOf(url: string): string {
-  const parsed = URL.parse(url);
-  return parsed === null ? url : parsed.host;
+  return URL.parse(url)?.host ?? "";
+}
+
+/**
+ * What names a mirror's origin: its host, or the `owner/name` it was given
+ * when the page address is empty or not a URL. That name came from the remote,
+ * so C0 and C1 control characters are dropped — it must print inert.
+ */
+export function hostLabel(htmlUrl: string, fullName: string): string {
+  // eslint-disable-next-line no-control-regex
+  return (hostOf(htmlUrl) || fullName).replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 /**
@@ -156,7 +168,7 @@ export function otherSideLabel(
       : "the workbench copy";
   const link = src.where.repo.origin;
   if (link === null || f.user === undefined) return undefined;
-  return `live on ${hostOf(link.htmlUrl === "" ? link.fullName : link.htmlUrl)}`;
+  return `live on ${hostLabel(link.htmlUrl, link.fullName)}`;
 }
 
 /**
@@ -217,7 +229,7 @@ export function places(f: Session, src: RepoSource): Place[] {
     out.push({
       mark: "present",
       kind: "origin",
-      text: hostOf(link.htmlUrl === "" ? link.fullName : link.htmlUrl),
+      text: hostLabel(link.htmlUrl, link.fullName),
     });
   out.push({
     mark: "reading",

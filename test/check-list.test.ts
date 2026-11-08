@@ -35,11 +35,12 @@ describe("the gate's list", () => {
 
   test("forge.json's check names no test file and runs the gate's list", async () => {
     const manifest = (await Bun.file(`${root}forge.json`).json()) as {
-      check: { run: string };
+      check: { run: string; fast: string };
     };
     expect(manifest.check.run).not.toMatch(/\.test\.[cm]?[jt]sx?\b/);
-    expect(manifest.check.run).toContain("scripts/test-shards.ts");
-    expect(manifest.check.run).toContain("--gate");
+    // A pull's check runs the tests; landing re-proves lint and types on the merged tree (#7703).
+    expect(manifest.check.fast).toContain("scripts/test-shards.ts");
+    expect(manifest.check.fast).toContain("--tier fast");
   });
 });
 

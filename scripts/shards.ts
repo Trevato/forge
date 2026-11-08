@@ -7,7 +7,7 @@
  * is disjoint and covering, and that one red shard makes the run red.
  */
 
-import { nameUnnamed } from "../src/checks/bun-test.ts";
+import { isSummaryLine, nameUnnamed } from "../src/checks/bun-test.ts";
 
 /**
  * No more than this many `bun test` processes at once, whatever the host:
@@ -363,6 +363,41 @@ export interface ShardResult {
   readonly files: readonly string[];
   readonly code: number;
   readonly output: string;
+  /** How long the shard ran, when the runner timed it. */
+  readonly seconds?: number;
+}
+
+/**
+ * The most shards one run re-runs after a crash outside any test (#7788).
+ * One crash is a leaked timer or socket from a file before; more than
+ * this is a change that breaks loading, and re-running it only doubles
+ * the wall.
+ */
+export const CRASH_RERUNS = 3;
+
+/**
+ * Whether a finished shard crashed outside any test: it went red and its
+ * report is not only failed tests ({@link onlyTestFailures}) — an
+ * unhandled error between tests ("Cannot use a closed database" from a
+ * timer the file before left), a file that would not load, a process that
+ * died before its summary. Such a shard is re-run once, whole.
+ */
+export function crashedOutside(result: Pick<ShardResult, "code" | "output">): boolean {
+  return result.code !== 0 && !onlyTestFailures(result.output);
+}
+
+/**
+ * The crashed run's output, kept in the log for whoever reads it, each line
+ * behind `  │ ` so nothing that reads the log (the tally, the failing-test
+ * list) counts its reds beside the re-run's.
+ */
+export function quoteCrash(where: string, code: number, output: string): string {
+  const lines = output.replace(/\n$/, "").split("\n");
+  return [
+    `test-shards: shard ${where} crashed outside any test (exit ${code}); re-running it once. The crashed run:`,
+    ...lines.map((line) => `  │ ${line}`),
+    "",
+  ].join("\n");
 }
 
 /** What the log ends with, and the exit code of the whole run. */
@@ -373,6 +408,20 @@ export interface Tally {
 
 const RAN = /^Ran (\d+) tests? across (\d+) files?\./m;
 const FAIL = /^\(fail\) .*$/gm;
+const FILE_STARTED = /^(\S+\.test\.[cm]?[jt]sx?):$/gm;
+
+/** The last test file a shard's output says it started, if any. */
+export function lastStarted(output: string): string | undefined {
+  return [...output.matchAll(FILE_STARTED)].at(-1)?.[1];
+}
+
+/** The line for a red shard that named no test: where it was and how long it ran, when known. */
+function unnamedLine(n: number, result: ShardResult): string {
+  const running = lastStarted(result.output);
+  if (running !== undefined && result.seconds !== undefined)
+    return `shard ${n} killed after ${Math.round(result.seconds)} s, running ${running}`;
+  return `shard ${n} exited ${result.code} without naming a test: ${result.files.join(" ")}`;
+}
 
 /**
  * Reads every shard's `bun test` output into one ending. Green: one line,
@@ -394,9 +443,7 @@ export function tally(results: readonly ShardResult[], seconds: number): Tally {
     const named = nameUnnamed(result.output.split("\n")).join("\n").match(FAIL) ?? [];
     for (const line of new Set(named)) failing.push(`${line} [shard ${i + 1}]`);
     if (result.code !== 0 && named.length === 0)
-      unnamed.push(
-        `shard ${i + 1} exited ${result.code} without naming a test: ${result.files.join(" ")}`,
-      );
+      unnamed.push(unnamedLine(i + 1, result));
   });
   const took = `${seconds.toFixed(1)}s`;
   const shards = `${results.length} shard${results.length === 1 ? "" : "s"}`;
@@ -498,14 +545,18 @@ export function besideOthers(
   return { red: stillRed, besideOthers: cleared, line };
 }
 
-const HEADER = /^(\S+\.test\.[cm]?[jt]sx?):$/;
+// Under GitHub-style Actions (GITHUB_ACTIONS=true, which Forgejo's runner
+// sets too) bun opens each file's tests with `::group::path:` instead of
+// `path:`; the group marker is not part of the path.
+const HEADER = /^(?:::group::)?(\S+\.test\.[cm]?[jt]sx?):$/;
 const FAILED = /^\(fail\) /;
 
 /**
  * The files whose tests failed in one `bun test` report, in the order the
- * report reached them: bun prints `path:` before a file's tests and
- * `(fail) name` for each one that failed. A report that names no failing
- * test (a crash, a file that would not load) yields none.
+ * report reached them: bun prints `path:` (in an Actions job,
+ * `::group::path:`) before a file's tests and `(fail) name` for each one
+ * that failed. A report that names no failing test (a crash, a file that
+ * would not load) yields none.
  */
 export function failingFiles(output: string): string[] {
   const found: string[] = [];
@@ -513,6 +564,7 @@ export function failingFiles(output: string): string[] {
   for (const line of output.split("\n")) {
     const header = HEADER.exec(line);
     if (header) current = header[1]!;
+    else if (isSummaryLine(line)) current = undefined;
     else if (FAILED.test(line) && current !== undefined && !found.includes(current))
       found.push(current);
   }

@@ -647,14 +647,12 @@ describe("editing files on the web", () => {
     expect(await editor.text()).toContain(
       `<script type="module" src="${asset.path}">`,
     );
-    expect(policy).toContain(`script-src 'nonce-`);
-    expect(/script-src 'nonce-[^']+' 'self'/.test(policy)).toBe(true);
-
-    // Every other page keeps the stricter policy: nonce only.
+    // Scripts are hashed files, so every page's policy is the same: this
+    // origin's files, no inline script, no nonce, nothing unsafe.
+    expect(policy).toContain("script-src 'self';");
+    expect(policy).not.toContain("unsafe");
     const blob = await get("/alice/beacon/blob/main/src/lamp.ts", alice);
-    const strict = blob.headers.get("content-security-policy") ?? "";
-    expect(/script-src 'nonce-[^']+';/.test(strict)).toBe(true);
-    expect(/script-src [^;]*'self'/.test(strict)).toBe(false);
+    expect(blob.headers.get("content-security-policy")).toContain("script-src 'self';");
   });
 
   test("the bundle is served immutably at its hash, and nowhere else", async () => {
@@ -771,9 +769,6 @@ describe("editing files on the web", () => {
     expect(html).not.toContain('id="editor-mirror"');
     expect(html).not.toContain('data-mirror="1"');
     expect(html).not.toContain('<script type="module"');
-    const res = await get("/alice/beacon/edit/main/src/generated.ts", alice);
-    const policy = res.headers.get("content-security-policy") ?? "";
-    expect(/script-src [^;]*'self'/.test(policy)).toBe(false);
   });
 
   test("suggestBranch makes a name git will take", () => {

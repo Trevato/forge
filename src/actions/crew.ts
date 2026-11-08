@@ -17,8 +17,10 @@ import {
   isCrew,
   listAgents,
   listCrew as queryCrew,
+  isCrewRole,
   listCrewRoles,
   removeCrew as deleteCrew,
+  seatsOutside,
   updateAgent as patchAgent,
   type Agent,
   type AgentPatch,
@@ -44,6 +46,25 @@ export interface CreateAgentInput {
   model?: string;
   brief?: string;
   budgetUsd?: number;
+  /** The seats it can hold: any of planner, builder, reviewer. */
+  roles?: readonly string[];
+}
+
+/** An agent change as asked: roles still unchecked strings. */
+export type AgentChange = Omit<AgentPatch, "roles"> & { roles?: readonly string[] };
+
+/**
+ * The `roles` a request named, as a patch field: nothing when it named none;
+ * anything but a list of strings is carried as a value checkPatch refuses.
+ */
+export function askedRoles(value: unknown): { roles?: readonly string[] } {
+  if (value === undefined) return {};
+  return {
+    roles:
+      Array.isArray(value) && value.every((r) => typeof r === "string")
+        ? value
+        : [""],
+  };
 }
 
 export type CreateAgentError =
@@ -52,7 +73,9 @@ export type CreateAgentError =
   | CreateUserError
   | "invalid_model"
   | "brief_too_long"
-  | "invalid_budget";
+  | "invalid_budget"
+  | "invalid_roles"
+  | "role_held";
 
 function requireForgeAdmin(
   actor: User | undefined,
@@ -62,10 +85,16 @@ function requireForgeAdmin(
   return user.value.isAdmin ? user : err("forbidden");
 }
 
-function checkPatch(
+/** The bounds an agent change must meet; the screens check them before they ask. */
+export function checkPatch(
   app: App,
-  patch: AgentPatch,
-): Result<AgentPatch, "invalid_model" | "brief_too_long" | "invalid_budget"> {
+  patch: AgentChange,
+): Result<AgentPatch, "invalid_model" | "brief_too_long" | "invalid_budget" | "invalid_roles"> {
+  let roles: CrewRole[] | undefined;
+  if (patch.roles !== undefined) {
+    if (patch.roles.length === 0 || !patch.roles.every(isCrewRole)) return err("invalid_roles");
+    roles = patch.roles as CrewRole[];
+  }
   if (patch.model !== undefined) {
     if (patch.model.length > MODEL_MAX || /[\s\0]/.test(patch.model))
       return err("invalid_model");
@@ -79,7 +108,8 @@ function checkPatch(
       patch.budgetUsd > limitValue(app.db, "agent.budget_max_usd"))
   )
     return err("invalid_budget");
-  return ok(patch);
+  const { roles: _asked, ...rest } = patch;
+  return ok({ ...rest, ...(roles === undefined ? {} : { roles }) });
 }
 
 /** A new crew member. Admin only: this is an account that will act. */
@@ -94,6 +124,7 @@ export async function createAgent(
     ...(input.model === undefined ? {} : { model: input.model }),
     ...(input.brief === undefined ? {} : { brief: input.brief }),
     ...(input.budgetUsd === undefined ? {} : { budgetUsd: input.budgetUsd }),
+    ...(input.roles === undefined ? {} : { roles: input.roles }),
   });
   if (!patch.ok) return patch;
   const user = await createUser(app.db, {
@@ -110,6 +141,7 @@ export async function createAgent(
     model: patch.value.model,
     brief: patch.value.brief,
     budgetUsd: patch.value.budgetUsd,
+    roles: patch.value.roles,
     createdBy: admin.value.id,
   });
   app.bus.append({
@@ -124,7 +156,7 @@ export function updateAgent(
   app: App,
   actor: User | undefined,
   username: string,
-  patch: AgentPatch,
+  patch: AgentChange,
 ): Result<Agent, CreateAgentError | "not_found"> {
   const admin = requireForgeAdmin(actor);
   if (!admin.ok) return admin;
@@ -132,6 +164,11 @@ export function updateAgent(
   if (!agent) return err("not_found");
   const checked = checkPatch(app, patch);
   if (!checked.ok) return checked;
+  // No silent move: a seat the agent still holds on a repository is moved there first.
+  if (checked.value.roles) {
+    const held = seatsOutside(app.db, agent.user.id, checked.value.roles);
+    if (held.length > 0) return err("role_held");
+  }
   const updated = patchAgent(app.db, agent.user.id, checked.value);
   if (!updated) return err("not_found");
   app.bus.append({
@@ -204,6 +241,8 @@ export interface CrewMember {
    * or a stranger sees the crew's names and roles.
    */
   readonly config?: { model: string; brief: string; budgetUsd: number };
+  /** The seats the agent declares; the repository's `role` is one of them. */
+  readonly roles: readonly CrewRole[];
 }
 
 /** The crew of a repository, shown as `actor` may see it. */
@@ -223,6 +262,7 @@ export function crewAsSeen(
       username: agent.user.username,
       displayName: agent.user.displayName,
       role,
+      roles: agent.roles,
       ...(configured
         ? {
             config: {
@@ -242,7 +282,8 @@ export function addToCrew(
   actor: User | undefined,
   repo: Repo,
   username: string,
-): Result<Agent, "not_found" | "no_such_agent" | "not_an_agent" | "unverified"> {
+  role?: CrewRole,
+): Result<Agent, "not_found" | "no_such_agent" | "not_an_agent" | "unverified" | "role_not_declared"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
   const proven = requireVerified(app, admin.value);
@@ -251,7 +292,10 @@ export function addToCrew(
   // A person is never on a crew: said plainly, before the database would.
   if (!agent)
     return err(getUserByName(app.db, username) ? "not_an_agent" : "no_such_agent");
-  if (insertCrew(app.db, repo.id, agent.user.id, admin.value.id)) {
+  // A repository narrows what an agent declares, never widens it.
+  if (role !== undefined && !agent.roles.includes(role)) return err("role_not_declared");
+  // A seat is named only for an agent who joins now; one already on the crew keeps its role.
+  if (insertCrew(app.db, repo.id, agent.user.id, admin.value.id, role)) {
     app.bus.append({
       kind: "crew.added",
       repoId: repo.id,

@@ -1,5 +1,4 @@
-import { limitValue } from "../../../settings/limits.ts";
-import { budgetsOf, setBudget } from "../../../core/subscriptions.ts";
+import { budgetRefusal, setBudget } from "../../../core/subscriptions.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
@@ -21,16 +20,9 @@ export const tool: Tool = {
       return bad("invalid", "id is the account's id");
     if (usd !== null && (typeof usd !== "number" || !Number.isFinite(usd)))
       return bad("invalid", "usd is a number of dollars, or null to clear");
-    const held = budgetsOf(ctx.app.db).get(id);
-    if (!held) return bad("not_found", "no such account");
-    if (held.locked && (usd === null || !(usd < (held.budgetUsd ?? 0))))
-      return bad(
-        "locked",
-        "This budget was set by whoever made this forge: it can be lowered, never raised or cleared.",
-      );
-    const max = limitValue(ctx.app.db, "subscription.budget_max_usd");
-    if (!setBudget(ctx.app.db, id, usd))
-      return bad("invalid", `A budget is dollars from 1 to ${max}, or null for none.`);
+    const refused = budgetRefusal(ctx.app.db, id, usd);
+    if (refused) return bad(refused.code, refused.says);
+    if (!setBudget(ctx.app.db, id, usd)) return bad("invalid", "The budget was not saved.");
     const budgetUsd = usd === null ? null : Math.round(usd * 100) / 100;
     return good({
       id,

@@ -15,6 +15,7 @@ import {
 } from "../../actions/crew.ts";
 import {
   BRIEF_MAX,
+  CREW_ROLES,
   MODEL_MAX,
   type Agent,
 } from "../../core/agents.ts";
@@ -35,8 +36,13 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../../core/scorecard.ts";
+import { keeperDays, type KeeperDay } from "../../flow/keeper_rate.ts";
+import { decideChange, readReview } from "../../actions/model_review.ts";
+import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
+import { modelDays, type ModelDay } from "../../core/model_days.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { listTeams, type Team } from "../../core/teams.ts";
+import { isHostedChild } from "../../spawn/hosted-mark.ts";
 import { crewFor } from "../../crew/dispatch.ts";
 import { crewHandover, type CrewHandover } from "../../crew/handed.ts";
 import { MODELS } from "../../crew/models.ts";
@@ -45,7 +51,7 @@ import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 import { listAutonomousRepos, type Repo } from "../../core/repos.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import {
   btn,
@@ -62,6 +68,7 @@ import { accountSections } from "./origins.ts";
 import { markOf } from "../../core/marks.ts";
 import { limitValue } from "../../settings/limits.ts";
 import { USERNAME_TAKEN } from "../../actions/signup_words.ts";
+import { forgeCeiling } from "../../flow/ceiling.ts";
 
 /** The admin, or the response that turns everyone else away. */
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -100,6 +107,15 @@ function shell(ctx: Ctx, title: string, body: Html, status = 200): Response {
  */
 export function crewReadiness(ctx: Ctx): Html {
   const crew = crewFor(ctx.app);
+  if (crew === undefined && isHostedChild(ctx.app))
+    return card(
+      html`<p>
+        ${icon("alert")} This forge is hosted inside another forge's process,
+        which has no crew runner for it: assigned issues will wait. The crew
+        runs once this forge has a process of its own.
+      </p>`,
+      { tone: "danger", extra: "mb" },
+    );
   if (crew === undefined)
     return card(
       html`<p>
@@ -143,6 +159,7 @@ interface AgentValues {
   model: string;
   brief: string;
   budgetUsd: string;
+  roles: readonly string[];
 }
 
 const agentErrors = (ctx: Ctx): Record<string, string> => ({
@@ -151,6 +168,8 @@ const agentErrors = (ctx: Ctx): Record<string, string> => ({
   email_taken: USERNAME_TAKEN,
   invalid_model: `A model is up to ${MODEL_MAX} characters with no spaces.`,
   brief_too_long: `A brief is at most ${BRIEF_MAX} characters.`,
+  invalid_roles: "Pick at least one job: planner, builder or reviewer.",
+  role_held: "That agent still holds a seat it would lose on a repository. Move it there first, under Settings → Crew.",
   invalid_budget: `A budget is a number of dollars between 0 and ${limitValue(ctx.app.db, "agent.budget_max_usd")}.`,
 });
 
@@ -175,6 +194,14 @@ function agentFields(values: AgentValues, error?: string): Html {
     hint: "Who this agent is, in its own voice — appended to the prompt of every run. The repository's AGENTS.md says what the work is; this says who does it.",
     ...(error !== undefined && error.startsWith("A brief") ? { error } : {}),
   })}
+  <fieldset class="field" id="agent-roles">
+    <legend>Jobs</legend>
+    ${CREW_ROLES.map(
+      (r) => html`<label class="check"><input type="checkbox" name="roles" value="${r}" ${values.roles.includes(r) ? raw("checked") : null} />
+        <span>${r}</span></label>`,
+    )}
+    <p class="hint">What this agent does. A repository's team lists offer it only for these, and a dispatch never hands it another kind of job.${error !== undefined && error.startsWith("Pick at least") ? html` <strong>${error}</strong>` : null}</p>
+  </fieldset>
   ${uiField({
     label: "Budget per run (USD)",
     name: "budgetUsd",
@@ -191,7 +218,10 @@ const valuesOf = (agent: Agent): AgentValues => ({
   model: agent.model,
   brief: agent.brief,
   budgetUsd: agent.budgetUsd === 0 ? "" : String(agent.budgetUsd),
+  roles: agent.roles,
 });
+
+const rolesOf = (form: Form): string[] => form.getAll("roles").map(String);
 
 const budgetOf = (form: Form): number | undefined => {
   const raw = field(form, "budgetUsd").trim();
@@ -435,6 +465,9 @@ function loadScorecards(ctx: Ctx) {
     recentSplitScorecards: crewScorecardSplits(ctx.app.db, recentWindow()),
     byModel: agentSplits(ctx.app.db, "model"),
     byPrompt: agentSplits(ctx.app.db, "prompt_version"),
+    byModelDay: modelDays(ctx.app.db),
+    keeperDays: keeperDays(ctx.app.db, new Date()),
+    wasted: wastedDays(ctx.app.db),
   };
 }
 
@@ -448,6 +481,109 @@ function loadSpending(ctx: Ctx) {
     repo,
     status: autonomyStatus(ctx.app, repo),
   }));
+}
+
+/** The weekly model review (#7815): each member's models side by side, the verdict, the button, the trail. */
+function modelReviewCard(ctx: Ctx): Html {
+  const r = readReview(ctx.app);
+  const names = new Map(listAllAgentsByName(ctx));
+  const cell = (n: number | null, f: (n: number) => string) =>
+    n === null ? html`<td class="num muted">—</td>` : html`<td class="num">${f(n)}</td>`;
+  const asked = r.changes.filter((c) => c.state === "asked");
+  return card(
+    html`<p class="muted small">At most one change of model per agent a week, to the cheapest that holds its quality.
+        A step up always asks; a step down ${r.limits.auto ? "applies on its own" : "asks too"} (Settings → Limits).
+        Under ${r.limits.minLanded} landed changes nothing. A week after a change the result is reported, and the
+        change undone if quality fell. An ask nobody answers lapses after two weeks.</p>
+      <div class="table-scroll">
+        <table class="table" id="model-review">
+          <thead>
+            <tr><th>Agent</th><th>Model</th><th>Landed</th><th>Per landed</th><th>Red</th><th>Rework</th><th>Reverts</th><th>Hard</th></tr>
+          </thead>
+          <tbody>
+            ${r.agents.flatMap((a) =>
+              a.models.map(
+                (m) => html`<tr>
+                  <td>${a.username}</td>
+                  <td class="mono">${m.model === "" ? "unrecorded" : m.model}</td>
+                  <td class="num">${m.landed} <span class="muted small">of ${m.opened}</span></td>
+                  ${cell(m.costPerLanded, (n) => `$${n.toFixed(2)}`)}
+                  ${cell(m.redRate, (n) => `${Math.round(100 * n)}%`)}
+                  ${cell(m.reworkRounds, (n) => n.toFixed(1))}
+                  <td class="num">${m.reverts}</td>
+                  ${cell(m.hardShare, (n) => `${Math.round(100 * n)}%`)}
+                </tr>`,
+              ),
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-scroll">
+        <table class="table" id="model-review-verdicts">
+          <thead><tr><th>Agent</th><th>Model</th><th>Verdict</th></tr></thead>
+          <tbody>
+            ${r.agents.map(
+              (a) => html`<tr data-agent="${a.username}">
+                <td>${a.username}</td>
+                <td class="mono">${a.model === "" ? "default" : a.model}</td>
+                <td>${a.verdict.kind === "hold"
+                  ? a.verdict.note
+                  : `Would move to ${a.verdict.to}. ${a.verdict.why}`}</td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+      </div>
+      ${asked.length === 0
+        ? null
+        : html`<ul class="list" id="model-review-asks">
+            ${asked.map(
+              (c) => html`<li data-change="${c.id}">
+                <div class="row">
+                  <span class="row-main">
+                    <span class="row-title">${names.get(c.agentId) ?? "an agent"}: ${c.fromModel} → ${c.toModel}</span>
+                    <span class="row-meta">${c.why}</span>
+                  </span>
+                  <div class="row-actions">
+                    <form method="post" action="/settings/crew/model-review/${c.id}/take">
+                      ${btn(`Move to ${c.toModel}`, { type: "submit", size: "sm" })}
+                    </form>
+                    <form method="post" action="/settings/crew/model-review/${c.id}/decline">
+                      ${btn("Leave it", { type: "submit", size: "sm", variant: "ghost" })}
+                    </form>
+                  </div>
+                </div>
+              </li>`,
+            )}
+          </ul>`}
+      <div class="table-scroll">
+        <table class="table" id="model-review-trail">
+          <thead><tr><th>When</th><th>Agent</th><th>Change</th><th>State</th><th>Why and result</th></tr></thead>
+          <tbody>
+            ${r.changes.map(
+              (c) => html`<tr data-change="${c.id}">
+                <td>${time(c.createdAt)}</td>
+                <td>${names.get(c.agentId) ?? "an agent"}</td>
+                <td class="mono">${c.fromModel} → ${c.toModel}</td>
+                <td>${c.state}</td>
+                <td>${c.why}${c.result === "" ? "" : ` Result: ${c.result}`}</td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+      </div>`,
+    {
+      extra: "mt mb",
+      head: html`${icon("activity")}
+        <h2>Model review</h2>
+        <span class="muted small">Weekly, from the last ${r.windowDays} days of the ledger</span>`,
+    },
+  );
+}
+
+function listAllAgentsByName(ctx: Ctx): [string, string][] {
+  const listed = listAllAgents(ctx.app, ctx.auth.user);
+  return (listed.ok ? listed.value : []).map((a) => [a.user.id, a.user.username]);
 }
 
 interface CrewData {
@@ -472,14 +608,14 @@ function crewView(
     splitScorecards,
     recentSplitScorecards,
   } = data.scorecards;
-  const { scorecards, byModel, byPrompt } = data.scorecards;
+  const { scorecards, byModel, byPrompt, byModelDay, wasted, keeperDays: forgeDays } = data.scorecards;
   const { spending } = data;
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
   const handover = crewHandover(ctx.app.db);
   return html`${crewReadiness(ctx)}
   ${when(spending.length > 0, () =>
-    spendingCard(spending, ctx.app.config.crewCeilingUsd),
+    spendingCard(spending, forgeCeiling(ctx.app.config) ?? undefined),
   )}
   ${agents.length === 0
     ? empty({
@@ -577,12 +713,16 @@ function crewView(
       recentSplitScorecards,
     ),
   )}
+  ${when(agents.length > 0, () => modelReviewCard(ctx))}
   ${splitsCard(
     "Per model",
     "Model",
     byModel,
     () => html`<span class="muted">default</span>`,
   )}
+  ${modelDaysCard(byModelDay)}
+  ${keeperDaysCard(forgeDays)}
+  ${wastedDaysCard(wasted)}
   ${splitsCard(
     "Per prompt version",
     "Prompt version",
@@ -671,6 +811,95 @@ function drillCard(drill: CrewHandover["drill"]): Html {
   );
 }
 
+/** Hours the forge ran and pulls it landed, per day of the last week (#7645). */
+function keeperDaysCard(rows: readonly KeeperDay[]): Html {
+  return card(
+    html`<div class="table-scroll">
+      <table class="table" id="crew-keeper-days">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Hours running</th>
+            <th>Landed</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(
+            (r) => html`<tr>
+              <td class="mono">${r.day}</td>
+              <td class="num">${r.hoursRunning}</td>
+              <td class="num">${r.landed}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`,
+    { pad: false, head: html`<h2>Forge per day</h2>` },
+  );
+}
+
+/** Spend and landed pulls per model per day: the escalation, measured. */
+function modelDaysCard(rows: readonly ModelDay[]): Html {
+  if (rows.length === 0) return html``;
+  return card(
+    html`<div class="table-scroll">
+      <table class="table" id="crew-model-days">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Model</th>
+            <th>Runs</th>
+            <th>Spent</th>
+            <th>Landed</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(
+            (r) => html`<tr>
+              <td class="mono">${r.day}</td>
+              <td class="mono">${r.model === "" ? html`<span class="muted">default</span>` : r.model}</td>
+              <td class="num">${r.runs}</td>
+              <td class="num">$${r.spentUsd.toFixed(2)}</td>
+              <td class="num">${r.landed}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`,
+    { pad: false, head: html`<h2>Per model per day</h2>` },
+  );
+}
+
+/** Runs that ended on work not theirs to do, per day: the pull closed, nothing pushed, already done. */
+function wastedDaysCard(rows: readonly WastedDay[]): Html {
+  if (rows.length === 0) return html``;
+  return card(
+    html`<div class="table-scroll">
+      <table class="table" id="crew-wasted-days">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Wasted runs</th>
+            <th>Of runs</th>
+            <th>Spent</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(
+            (r) => html`<tr>
+              <td class="mono">${r.day}</td>
+              <td class="num">${r.wasted}</td>
+              <td class="num">${r.runs}</td>
+              <td class="num">$${r.spentUsd.toFixed(2)}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`,
+    { pad: false, head: html`<h2>Wasted runs per day</h2>` },
+  );
+}
+
 /** The scorecard cut by one thing the runs ran on; nothing before a first run. */
 function splitsCard(
   title: string,
@@ -716,6 +945,7 @@ const EMPTY: AgentValues = {
   model: "",
   brief: "",
   budgetUsd: "",
+  roles: ["builder"],
 };
 
 // GET /settings/crew
@@ -749,6 +979,7 @@ export async function agentCreate(ctx: Ctx): Promise<Response> {
     model: field(form, "model").trim(),
     brief: field(form, "brief"),
     budgetUsd: field(form, "budgetUsd").trim(),
+    roles: rolesOf(form),
   };
   const budgetUsd = budgetOf(form);
   const made = await createAgent(ctx.app, ctx.auth.user, {
@@ -756,6 +987,7 @@ export async function agentCreate(ctx: Ctx): Promise<Response> {
     ...(values.displayName === "" ? {} : { displayName: values.displayName }),
     model: values.model,
     brief: values.brief,
+    roles: values.roles,
     ...(budgetUsd === undefined ? {} : { budgetUsd }),
   });
   if (!made.ok) {
@@ -845,11 +1077,13 @@ export async function agentUpdate(ctx: Ctx): Promise<Response> {
     model: field(form, "model").trim(),
     brief: field(form, "brief"),
     budgetUsd: field(form, "budgetUsd").trim(),
+    roles: rolesOf(form),
   };
   const updated = updateAgent(ctx.app, ctx.auth.user, agent.user.username, {
     model: values.model,
     brief: values.brief,
     budgetUsd: budgetOf(form) ?? 0,
+    roles: values.roles,
   });
   if (!updated.ok) {
     if (updated.error === "not_found") return notFoundPage(ctx);
@@ -883,3 +1117,17 @@ export async function agentDelete(ctx: Ctx): Promise<Response> {
       : { tone: "danger" as const, message: "No such agent." }),
   });
 }
+
+// POST /settings/crew/model-review/:id/take and /decline
+export async function modelReviewDecide(ctx: Ctx, take: boolean): Promise<Response> {
+  const form = await adminForm(ctx);
+  if (form instanceof Response) return form;
+  const done = decideChange(ctx.app, ctx.auth.user, ctx.params.id ?? "", take);
+  return flashTo(ctx, "/settings/crew", {
+    ...(done.ok
+      ? { message: take ? `${done.value.toModel} it is.` : "Left as it was." }
+      : { tone: "danger" as const, message: "That change is no longer waiting." }),
+  });
+}
+export const modelReviewTake = (ctx: Ctx) => modelReviewDecide(ctx, true);
+export const modelReviewDecline = (ctx: Ctx) => modelReviewDecide(ctx, false);

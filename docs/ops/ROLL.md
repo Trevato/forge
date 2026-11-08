@@ -142,6 +142,51 @@ request routed to it in that beat is refused.
 Release as the release workflow does. Nothing in this recipe changes the
 workflow or the chart.
 
+**Cutting a release moves no branch (#6642).** On the commit of main being
+released, `bun scripts/cut-release.ts <version> --tag` makes the annotated
+tag `v<version>` whose message is the release record (`{"version",
+"migrations", "ids"}`); push that tag to the forge's own repository, where
+`release/shipped.ts` reads it for `/releases.json`, the children's standings
+and the behind watch, and to the mirror, where it starts `release.yml`.
+Nothing is committed: a commit to main would void every gate in flight
+(#6640). `src/core/releases-before-tags.json` keeps the releases cut before
+this, frozen.
+
+## Gates in flight across a roll (#6722)
+
+A roll does not turn a merge-queue gate red. On SIGTERM the old forge
+starts no new gate and gives the gates under way `FORGE_CHECKS_DRAIN_S`
+(10 s) to finish, the crew's runs `FORGE_CREW_DRAIN_S` (10 s); what is left
+is handed back queued. The old forge stops writing within seconds, so the
+new forge's `waitForPeer` (`src/runs/peer.ts`) returns at once and the
+release's write pause stays under 30 s (#7799). Before that the drain was
+660 s and the pause as long. Both budgets are read in `src/drain.ts`; junk
+falls back to 10 s.
+
+A gate cut off at the drain is `interrupted`, never red, and the new forge
+gates the same candidate again from the persisted queue
+(`test/merge-queue-restart.test.ts`: "the run gone, the same candidate is
+gated again" and the #6722 red case). A gate that outlives the drain on a
+roll is therefore redone, not lost; set `FORGE_CHECKS_DRAIN_S` higher to
+trade a longer write pause for fewer redone gates.
+
+If a crew run ignores the abort at the end of its 10 s, the old forge's
+leases stay renewed and the new forge logs "another forge still works this
+database" and keeps serving pages but holds its queue work. It starts when
+the run's process finally ends, or after `PEER_WAIT_MAX_MS` (720 s, the
+pod's grace, after which the platform has stopped the old pod). Pages answer
+throughout; only queue work is late.
+
+What the drain does not finish is no verdict, never red:
+
+- a gate cut off at the drain's end, or one whose check a signal from
+  outside ended (the pod going, the kernel's OOM killer, exit 137 or 143),
+  is `interrupted`: no red batch, no suspect, and the new pod gates the same
+  candidate again (`src/checks/queue.ts`, #6611);
+- a gate that came back `red (check)` — red with no test and no type error
+  named — is gated once more before the queue bisects it, as an install red
+  is. Red again, it is searched as the code's.
+
 ## The gate of record (#2794)
 
 A release ships on two proofs, and nothing else holds it:
@@ -204,3 +249,34 @@ in `src/release/`:
   version that was ready, kept on the volume under `release/good/`. The forge
   that comes up shows a `release:rolled-back` card and pages the admins once.
   The next version that reads ready clears it.
+
+## A forge beside one still draining (#6957)
+
+bun:sqlite waits for the write lock on the one thread the forge serves from,
+up to `busy_timeout` (15 s) a statement. 0.7.278 booted while 0.7.276 still
+ran its gates and crew runs on the same database. It started its own work
+beside them, and `/healthz` timed out for minutes behind the old pod's writes.
+Three things keep that from happening again:
+
+- **The new forge holds its work** (`src/runs/peer.ts`). Its listener
+  answers at once. Its checks, merge queue, crew and ticks start only once
+  no running run that another process holds has renewed its lease within
+  30 s, or after 720 s (the pod's grace). The log says
+  `another forge still works this database` when the wait starts and
+  `the other forge let go of this database` when it ends.
+- **Telemetry never waits on the lock** (`withoutWaiting` in
+  `src/kernel/db.ts`). Route timings, usage counts and machine samples try
+  the lock once, keep their rows and try again on the next flush. Every
+  probe is counted, so without this a probe's own count would hold the next
+  probe up.
+- **The next stall names itself.** `event loop stalled lateMs=…` is a
+  warning whenever the loop wakes more than a second late
+  (`src/kernel/loop_lag.ts`, on from the first line of the boot). `slow
+  statement held the thread ms=… sql=… stack=…` names any statement on the
+  forge's handle that took 200 ms or more, with its callers
+  (`src/kernel/slow_sql.ts`), at most ten lines a minute.
+
+`test/boot-beside-peer.test.ts` boots `src/main.ts` beside a process that
+holds the write lock 2.5 s of every 2.65 s and keeps a batch of 8 check
+leases fresh. Every `/healthz` probe must answer within a second, and the
+forge's work must start once that process lets go.

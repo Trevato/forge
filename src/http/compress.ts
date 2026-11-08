@@ -1,6 +1,6 @@
 /**
  * Content-Encoding for the bodies the forge writes itself (#2915 check 7): pages,
- * stylesheets, scripts and JSON, as br or gzip when `Accept-Encoding` allows.
+ * stylesheets, scripts, JSON, text and XML, as br or gzip when `Accept-Encoding` allows.
  * Both come from the runtime (`Bun.gzipSync`, `node:zlib` brotli); no
  * dependency. A body under MIN_BYTES is left alone, and so is anything that
  * is not on the type list: SSE, git streams, log follows and tarballs keep
@@ -25,6 +25,16 @@ const TYPES = new Set([
   "application/json",
   "application/manifest+json",
   "image/svg+xml",
+  // The site's words for crawlers and agents: /llms.txt, /robots.txt, the
+  // sitemap and the feeds. Left off, the edge encoded them with no Vary (#8328).
+  "text/markdown",
+  "text/plain",
+  "text/xml",
+  "application/xml",
+  "application/atom+xml",
+  "application/rss+xml",
+  // /opensearch.xml (#8332).
+  "application/opensearchdescription+xml",
 ]);
 
 /** The encoding to use: br over gzip, a `q=0` or absent coding refused. */

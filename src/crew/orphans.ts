@@ -25,15 +25,37 @@ const dirs = (dir: string): string[] => {
   }
 };
 
-/** Remove every clone `keep(agent, repoId, number)` is false for; how many went. */
+/**
+ * What a clone leaves beside itself: `<n>.broken-<ts>`, a clone moved aside,
+ * and `<n>.run-<id>`, a run's own clone when another held the issue's. Both
+ * are junk once no live run holds them (#8219).
+ */
+const ASIDE = /^[1-9]\d*\.(?:broken-\d+|run-[A-Za-z0-9]+)$/;
+
+/**
+ * Remove every clone `keep(agent, repoId, number)` is false for, and every
+ * leftover beside one that `held(dir)` does not name; how many went.
+ */
 export async function sweepOrphanClones(
   crewDir: string,
   keep: (agent: string, repoId: string, number: number) => boolean,
+  held: (dir: string) => boolean = () => false,
 ): Promise<number> {
   let swept = 0;
   for (const agent of dirs(crewDir)) {
     for (const repoId of dirs(join(crewDir, agent))) {
       for (const name of dirs(join(crewDir, agent, repoId))) {
+        const path = join(crewDir, agent, repoId, name);
+        if (ASIDE.test(name)) {
+          if (held(path)) continue;
+          try {
+            await rm(path, { recursive: true, force: true });
+            swept++;
+          } catch {
+            // tried again by the next sweep
+          }
+          continue;
+        }
         if (!/^[1-9]\d*$/.test(name)) continue;
         if (keep(agent, repoId, Number(name))) continue;
         try {

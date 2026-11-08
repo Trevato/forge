@@ -87,7 +87,10 @@ describe("closed signup", () => {
 
   test("open makes accounts; switching takes effect on the next request", async () => {
     mode("open");
-    expect(await (await fetch(`${base}/signup`, { headers: edge("newcomer") })).text()).toContain('name="password"');
+    const form = await (await fetch(`${base}/signup`, { headers: edge("newcomer") })).text();
+    expect(form).toContain('name="password"');
+    expect(form).toContain("Optional. If you add one, we send a link to confirm it.");
+    expect(form.split("Optional").length - 1).toBe(1);
     expect((await post("newcomer")).status).toBe(201);
     expect((await me("edgy")).status).toBe(200);
     expect((await me("later")).status).toBe(401);

@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "mint_invite",
   doc: "`{ days? }`: mint a single-use invite link that expires in `days` (1–30, default 7) and is shown once; a person admin's, with an admin token",
   description:
-    "Mint a single-use invite link, shown once, expiring in `days` (1–30, default 7). Person admins.",
+    "Mint a one-use invite link, shown once, valid `days` (1–30, default 7). Person admins.",
   inputSchema: {
     type: "object",
     properties: {

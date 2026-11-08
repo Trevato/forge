@@ -6,6 +6,8 @@
  * 24 h / 15 s + 30 d / 5 min = 5,760 + 8,640 rows per target.
  */
 import type { Database } from "bun:sqlite";
+import { withoutWaiting } from "../kernel/db.ts";
+import { quietly } from "../core/write_clock.ts";
 
 export const FINE_MS = 15_000;
 export const COARSE_MS = 300_000;
@@ -92,7 +94,10 @@ type FineRow = {
   lag_ms: number | null; checks: number | null; agents: number | null;
 };
 
-/** Keep `points` (taken at `now`), roll up the windows that closed, drop what is past its window. One transaction. */
+/**
+ * Keep `points` (taken at `now`), roll up the windows that closed, drop what is past its window. One transaction,
+ * never waiting on another process's write lock: behind one it throws at once and the sampler's next tick tries again (#6957).
+ */
 export function record(db: Database, points: readonly Point[], now: number): void {
   const put = db.query(
     `INSERT OR REPLACE INTO machine_sample
@@ -100,7 +105,7 @@ export function record(db: Database, points: readonly Point[], now: number): voi
         lag_ms, lag_ms_max, checks, agents)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  db.transaction(() => {
+  withoutWaiting(db, db.transaction(() => quietly(db, () => {
     for (const p of points) {
       const c = p.celsius ?? null;
       const lag = p.lagMs ?? null;
@@ -133,5 +138,5 @@ export function record(db: Database, points: readonly Point[], now: number): voi
     }
     db.query("DELETE FROM machine_sample WHERE step = 15 AND at < ?").run(iso(now - FINE_KEEP_MS));
     db.query("DELETE FROM machine_sample WHERE step = 300 AND at < ?").run(iso(now - COARSE_KEEP_MS));
-  })();
+  })));
 }

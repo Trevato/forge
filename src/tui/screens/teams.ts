@@ -15,6 +15,7 @@ import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, drawList, promptScreen, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 export function teamsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
@@ -95,3 +96,13 @@ export function teamsScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** Crew teams, as /settings/teams has them: an admin who is not an agent (#2679). */
+export const entry: PaletteEntry = {
+  id: "teams",
+  title: "Crew teams",
+  hint: "each team's charter, dial and members",
+  after: ["limits", "quotas", "people", "can"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
+  run: (session, ctx) => ctx.push(teamsScreen(session, ctx)),
+};

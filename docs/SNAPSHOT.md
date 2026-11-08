@@ -121,6 +121,18 @@ as failed. A put's deadline follows its size: its bytes at a floor of
 5 Mbit/s, plus 60 s. A fixed 180 s once failed every attempt at a 334 MB
 database behind a 15 Mbit/s uplink (#2536).
 
+## Backup lanes
+
+The platform's backup lanes (`FORGE_BACKUP_LANES`) and how each is judged: docs/features/backup-truth.md, "Platform backup lanes".
+
+## Progress
+
+A snapshot uploads eight objects at a time. Run logs older than a day go up
+bundled per day (cut at 4 MB, so a long history is several objects, never one
+huge one); restore unpacks them. While one runs, progress shows on
+**Settings → Backups** and as a line in the log every 500 objects or minute.
+The terminal has no backups view, so it has no readout.
+
 ## When a snapshot fails
 
 Its outcome is kept in `snapshot/state.json` under the data directory, so a
@@ -162,6 +174,53 @@ restore from running a restore on every boot. Kept for the
 week, a drill red at 09:11 stood as a card long after the fix deployed at
 10:18 (#2541).
 
+**Run a drill** on the same page (admins only) restores the newest snapshot
+into scratch, opens it, counts what is there and unseals a value; the page
+waits for it, up to 10 minutes, and the last drill shows there as one line,
+ending with the drill's time against its budget and each part's time, longest first ("6 min
+12 s of its 14 min budget: clone 4 min, download 58 s, …"), or only the time against the
+budget when no part was timed; drills from before this show none. The budget is 10 min
+plus 1 s per MB of snapshot, at most 45 min (`docs/RECOVERY.md`).
+The parts are download, decompress, clone, open, and start and migrate (the
+whole side-boot of the restored forge, process start included). The same words,
+slowest named, are in the drill's log line and in a red drill's card
+("… (download about 8 min, decompress 40 s, …; download was the slowest)").
+
+Each snapshot's manifest keeps
+the five counts of its database; a restore that counts differently is red at
+`count` and, like any red drill, one board line and one push. Snapshots from
+before the counts were kept are not compared.
+
+## Failure domains, and what the owner is told
+
+**Failure domains** (a card at the foot of `/settings/backups`; the old
+`/settings/resilience` sends there, and `/resilience` is the THREATS.md page): one row per failure domain from
+`docs/DOMAINS.md` — what breaks, the words the forge says, and the domain's
+last kept drill (when, green or red with its reason, seconds until back) or
+the sentence on why it is not drilled. In the terminal it is the **Failure domains**
+command (`ctrl+k`; the **Resilience** command is the THREATS.md one), shown to an admin only and read through the same
+`listResilience` action. Only the latest drill per domain is shown.
+An admin presses `d` on Failure domains to run the restore drill, behind a confirm, with the same words as the Backups button and MCP `restore_drill`; it keeps the snapshot drill record only and leaves the domain drills as they are.
+The **Owner's needs** command (admin only, `ownerView`) is the owner's one screen: the forge's needs as the board strip says them, where snapshots go (and any mirror) with the newest snapshot, and every domain with what the owner does.
+
+A red drill, or none in eight days, is one line for the forge's admin on the
+board's forge strip, in the terminal's dashboard (same `forgeNeeds`), and in
+MCP `health` and `asks`; it names the failed step and the next green drill
+clears it. An admin with a phone URL gets one push per cause (a new red
+drill, or the silence), also when eight days pass with no event: the notifier
+wakes every 10 minutes for it. The time the forge first owed a drill is kept
+at boot in `drill/first-seen`; if the disk will not take it, a warning is
+logged and a forge with no drill ever is not flagged.
+
+Snapshots written to a directory on the forge's own volume, with no off-box
+mirror set, are lost with that volume. That is one line for the forge's admin,
+"Snapshots are kept on the forge's own volume and mirrored nowhere: losing the
+volume loses them too.", on the board's forge strip (linking Settings →
+Backups), in the terminal's dashboard (same `forgeNeeds`), in the asks, in
+`GET /api/v1/health` and MCP `health`. Anyone else sees nothing. It clears when
+the destination moves to another volume or a bucket, or a mirror is set. Every
+one of those reads the vitals through `forgeVitals` in `src/actions/health.ts`.
+
 ## Restore
 
 The printable card, seven lines, is [RESTORE.md](RESTORE.md); a test runs it.
@@ -190,3 +249,5 @@ sealed variable and an app's SQLite is snapshotted, restored into an empty
 directory with the passphrase and booted there as the same forge; restored
 without it, the repositories come back and the sealed variable is reported by
 name. It also checks that the raw key is in no file of the store.
+
+The dump, a line per lane and the platform-free drill: [backup-truth.md](features/backup-truth.md), _Leaving the platform_.

@@ -33,6 +33,8 @@ describe("oauth protected resource metadata", () => {
     expect(res.headers.get("content-type")).toContain("application/json");
     const doc = (await res.json()) as Record<string, unknown>;
     expect(doc.resource).toBe("https://forge.example/mcp");
+    expect(doc.resource_name).toBe("forge");
+    expect(doc.resource_documentation).toBe("https://forge.example/llms.txt");
     expect(doc.authorization_servers).toEqual(["https://forge.example"]);
     expect(doc.bearer_methods_supported).toEqual(["header"]);
   });

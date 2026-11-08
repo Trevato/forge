@@ -9,13 +9,14 @@
  * branch of `askCandidatesFor` is on the measured path.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { createApp as createAppRecord } from "../src/core/apps.ts";
 import { createRepo, type Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -94,7 +95,7 @@ describe("home's asks are read grouped, and once", () => {
     });
     if (!made.ok) throw new Error(`seed repo ${name}: ${made.error}`);
     for (const agent of [builder, reviewer]) addCrew(app.db, made.value.id, agent.id, owner.id);
-    setCrewRole(app.db, made.value.id, reviewer.id, "reviewer");
+    seatAs(app.db, made.value.id, reviewer.id, "reviewer");
     app.db.query("UPDATE repo SET autonomy = ?2 WHERE id = ?1").run(made.value.id, autonomy);
     return made.value;
   };
@@ -254,7 +255,7 @@ describe("home's asks are read grouped, and once", () => {
     const handovers = sql.filter((s) => s.startsWith("SELECT r.issue_id AS issueId, COUNT(*)"));
     const rounds = sql.filter((s) => s.startsWith("SELECT r.issue_id AS issueId, r.id AS id"));
     const verdicts = sql.filter((s) => s.startsWith("SELECT review.issue_id, review.id"));
-    const tries = sql.filter((s) => s.includes("reason IN ('check_failed','conflict')"));
+    const tries = sql.filter((s) => s.includes("run.reason = 'check_failed'"));
     const reviewers = sql.filter((s) => s.includes("WHERE repo_crew.role = ?1"));
     expect(active.length).toBe(1);
     expect(handovers.length).toBe(1);

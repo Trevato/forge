@@ -13,7 +13,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { addAccount, net, renameAccount } from "../src/actions/cloud.ts";
 import { recordAudit } from "../src/core/cloud_audit.ts";
 import { getCloudAccount, listCloudAccounts } from "../src/core/cloud_account.ts";
-import { listSecretNames, setSecret } from "../src/core/secret_store.ts";
+import { listSecretNames, resolveSecrets, setSecret } from "../src/core/secret_store.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -90,6 +90,10 @@ describe("cloud accounts at the terminal and MCP doors", () => {
         for (const ch of t) key(ch);
         await settleApp(tui);
       },
+      paste: async (text: string) => {
+        tui.dispatch({ type: "paste", text } as never);
+        await settleApp(tui);
+      },
       palette: async (q: string) => {
         tui.dispatch({ type: "key", key: "k", ctrl: true, alt: false, shift: false });
         await settleApp(tui);
@@ -109,10 +113,12 @@ describe("cloud accounts at the terminal and MCP doors", () => {
     await h.press("a");
     await h.type("github/main");
     await h.press("enter");
-    await h.type(T1);
+    await h.paste(`${T1}\n`); // a pasted token keeps its newline in a masked prompt; the action gets it trimmed, as from the page
     expect(h.text()).not.toContain(T1);
     await h.press("enter");
     expect(listCloudAccounts(app.db).map((a) => a.name)).toEqual(["main"]);
+    const sealed = (name: string) => resolveSecrets(app.db, app.config.dataDir, app.bus, [name])[name];
+    expect(sealed("CLOUD_GITHUB_MAIN")).toBe(T1);
     expect(listSecretNames(app.db, "forge").map((s) => s.name)).toEqual(["CLOUD_GITHUB_MAIN"]);
     expect(h.text()).toContain("github/main");
     expect(h.text()).toContain("1 call today");
@@ -134,10 +140,11 @@ describe("cloud accounts at the terminal and MCP doors", () => {
     await h.press("esc");
 
     await h.press("r");
-    await h.type(T2);
+    await h.paste(` ${T2}\n`);
     expect(h.text()).not.toContain(T2);
     await h.press("enter");
     expect(h.text()).toContain("Rotated github/main");
+    expect(sealed("CLOUD_GITHUB_MAIN")).toBe(T2);
     expect(h.text()).not.toContain(T2);
 
     await h.press("n");

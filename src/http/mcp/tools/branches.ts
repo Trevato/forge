@@ -11,7 +11,7 @@ export const tool: Tool = {
   name: "branches",
   doc: "`{ repo, name?, action?, from?, kind? }`: without `name`, lists the branches; `kind: \"tags\"` lists the tags instead (as GET `/api/v1/repos/:owner/:name/tags` does, newest first; no `name` or `action`); with `name` and `action` (`create` from `from`, or `delete`) it does what the branches page does: the default branch is never deleted, only a writer may act",
   description:
-    "A repository's branches; `name`, `action` create (from `from`) or delete one, not the default.",
+    "A repo's branches; `name`, `action` create (from `from`) or delete one, not the default.",
   inputSchema: {
     type: "object",
     properties: {

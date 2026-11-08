@@ -10,6 +10,7 @@
 import { PASSWORD_TOO_LONG } from "../../core/hash-gate.ts";
 import { refusalText } from "../../http/refusal.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
+import { AGENT_NOT_ON_CREW } from "../../actions/crew_limit_words.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
@@ -18,10 +19,11 @@ import { SIGNUP_CLOSED_MESSAGE } from "../../actions/users.ts";
 import { ORIGIN_ALREADY_CONNECTED } from "../../actions/origins.ts";
 import { NEW_ACCOUNT_GUARD_MESSAGE } from "../../core/capacity.ts";
 import { PRIVATE_ADDRESS_REFUSED } from "../../kernel/address_words.ts";
+import type { ForgeEvent } from "../../core/events.ts";
 import type { Session } from "../session.ts";
 import { G, Screen as Surface, type Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
-import { pad, truncate } from "../term/width.ts";
+import { pad, truncate, wrap } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { icon, type IconSet } from "../ui/icons.ts";
@@ -46,6 +48,19 @@ export class ListState {
   offset = 0;
   /** Rows the last render had room for — what `ctrl+d` pages by. */
   height = 10;
+  /** Screen rows each drawn item took, from `offset`, when some item had a note; else undefined. */
+  heights: number[] | undefined;
+
+  /** The item at list row `y`: where a click landed, however tall the items above it. */
+  at(y: number): number {
+    if (this.heights === undefined) return this.offset + y;
+    let top = 0;
+    for (let i = 0; i < this.heights.length; i++) {
+      top += this.heights[i]!;
+      if (y < top) return this.offset + i;
+    }
+    return -1;
+  }
 
   clamp(length: number): void {
     this.index = Math.max(0, Math.min(this.index, Math.max(0, length - 1)));
@@ -69,6 +84,25 @@ export class ListState {
       0,
       Math.min(this.offset, Math.max(0, length - this.height)),
     );
+    return this.offset;
+  }
+
+  /**
+   * As `window`, for rows taller than one line: row `i` takes `heights[i]`
+   * lines. The cursor's row is kept whole on screen, and no room is left
+   * empty at the bottom while rows above could fill it.
+   */
+  windowRows(height: number, heights: readonly number[]): number {
+    this.height = Math.max(1, height);
+    this.clamp(heights.length);
+    const span = (from: number, to: number): number => {
+      let n = 0;
+      for (let i = from; i <= to; i++) n += heights[i] ?? 1;
+      return n;
+    };
+    if (this.index < this.offset) this.offset = this.index;
+    while (this.offset < this.index && span(this.offset, this.index) > height) this.offset++;
+    while (this.offset > 0 && span(this.offset - 1, heights.length - 1) <= height) this.offset--;
     return this.offset;
   }
 
@@ -213,9 +247,19 @@ export interface ListRow {
   readonly hollow?: boolean;
   readonly secondary?: string;
   readonly meta?: string;
+  /** A muted line under the row, indented past its dot; the item is then two rows tall. */
+  readonly note?: string;
+  /** Muted sentences under the row, wrapped to the list's width, never cut; the item is as tall as they wrap. */
+  readonly below?: readonly string[];
 }
 
-/** A scrolling list of `row()`s with a scrollbar when it overflows. */
+/** Lines under a row start past its caret and dot. */
+const UNDER_INDENT = 4;
+
+/**
+ * A scrolling list of `row()`s with a scrollbar when it overflows. A row with
+ * `note` is two lines tall; one with `below` lines, as many as they wrap to.
+ */
 export function drawList(
   s: Surface,
   r: Rect,
@@ -226,16 +270,36 @@ export function drawList(
 ): void {
   if (r.w <= 0 || r.h <= 0) return;
   const body = { x: r.x, y: r.y, w: Math.max(0, r.w - 1), h: r.h };
-  const from = state.window(r.h, rows.length);
-  for (let i = 0; i < r.h; i++) {
-    const item = rows[from + i];
-    if (item === undefined) break;
-    row(s, { x: body.x, y: body.y + i, w: body.w, h: 1 }, c, {
-      ...item,
-      selected: focused && from + i === state.index,
-      focused: from + i === state.index,
+  const room = Math.max(1, body.w - UNDER_INDENT);
+  const under = rows.map((item): string[] =>
+    item.note
+      ? body.w > UNDER_INDENT ? [truncate(item.note, room)] : [""]
+      : (item.below ?? []).flatMap((line) => wrap(line, room)),
+  );
+  const tall = under.some((lines) => lines.length > 0);
+  // Scroll by item, so the cursor's whole entry (row and the lines under it) is in view.
+  const from = tall
+    ? state.windowRows(r.h, under.map((lines) => 1 + lines.length))
+    : state.window(r.h, rows.length);
+  let y = body.y;
+  const heights: number[] = [];
+  for (let i = from; i < rows.length && y < body.y + body.h; i++) {
+    const top = y;
+    row(s, { x: body.x, y, w: body.w, h: 1 }, c, {
+      ...rows[i]!,
+      selected: focused && i === state.index,
+      focused: i === state.index,
     });
+    y++;
+    for (const line of under[i]!) {
+      if (y >= body.y + body.h) break;
+      s.text(body.x + UNDER_INDENT, y, line, style(c.mutedFg, c.bg), body.x + body.w);
+      y++;
+    }
+    heights.push(y - top);
   }
+  state.heights = tall ? heights : undefined;
+  if (tall) state.height = Math.max(1, heights.length);
   scrollbar(s, { x: r.x + r.w - 1, y: r.y, w: 1, h: r.h }, c, {
     total: rows.length,
     offset: from,
@@ -274,7 +338,7 @@ export function hitList(
 ): void {
   ctx.hit(r, {
     click: (e) => {
-      const index = state.offset + e.y;
+      const index = state.at(e.y);
       if (index < 0 || index >= count) return;
       if (index === state.index || e.double) {
         state.index = index;
@@ -394,6 +458,10 @@ export function confirmScreen(
     /** Index of the action chosen; -1 when dismissed. */
     onChoose: (index: number) => void;
     selected?: number;
+    /** `y` chooses the first action and `n` dismisses, for a plain yes/no question. */
+    yesNo?: boolean;
+    /** Columns of the dialog, for a body line longer than the default fits. */
+    width?: number;
   },
 ): Screen {
   let selected = o.selected ?? 0;
@@ -411,6 +479,7 @@ export function confirmScreen(
         body: o.body,
         actions: o.actions,
         selected,
+        ...(o.width !== undefined ? { width: o.width } : {}),
       });
       // Clicking a button *is* choosing it: a dialog has no browsing to do,
       // so the two-click rule that protects a list would only be in the way.
@@ -422,7 +491,10 @@ export function confirmScreen(
       );
     },
     key(e) {
-      if (e.key === "left" || e.key === "h")
+      if (o.yesNo === true && (e.key === "y" || e.key === "n")) {
+        ctx.pop();
+        o.onChoose(e.key === "y" ? 0 : -1);
+      } else if (e.key === "left" || e.key === "h")
         selected = Math.max(0, selected - 1);
       else if (e.key === "right" || e.key === "l" || e.key === "tab")
         selected = Math.min(o.actions.length - 1, selected + 1);
@@ -434,6 +506,24 @@ export function confirmScreen(
         o.onChoose(-1);
       }
       return true;
+    },
+  };
+}
+
+/**
+ * A `… y/n` confirm: `y` chooses the first action and `n` cancels, whatever
+ * the selection — each outright, rather than pressing Enter.
+ */
+export function yesNo(ctx: Ctx, dialog: Screen, choose: (choice: number) => void): Screen {
+  return {
+    ...dialog,
+    key(e) {
+      if (e.key === "y" || e.key === "n") {
+        ctx.pop();
+        choose(e.key === "y" ? 0 : -1);
+        return true;
+      }
+      return dialog.key(e);
     },
   };
 }
@@ -451,7 +541,8 @@ export function promptScreen(
     /**
      * Show the value as dots. A terminal is the one surface where somebody
      * is routinely reading over your shoulder, so a secret typed into one
-     * must never be a plain string of cells.
+     * must never be a plain string of cells. A masked value is also kept
+     * verbatim: not trimmed, and a paste keeps its newlines.
      */
     mask?: boolean;
     /** Return an error string to keep the prompt open with a message. */
@@ -490,7 +581,8 @@ export function promptScreen(
       ctx.setCursor(cursor);
     },
     paste(text) {
-      value += text.replace(/\s+/g, " ");
+      // A masked value is a credential: kept as pasted (a PEM key's lines), only CR/CRLF made LF.
+      value += o.mask === true ? text.replace(/\r\n?/g, "\n") : text.replace(/\s+/g, " ");
       return true;
     },
     key(e) {
@@ -499,7 +591,7 @@ export function promptScreen(
         return true;
       }
       if (e.key === "enter") {
-        const outcome = o.onSubmit(value.trim());
+        const outcome = o.onSubmit(o.mask === true ? value : value.trim());
         if (typeof outcome === "string") {
           error = outcome;
           return true;
@@ -659,6 +751,8 @@ export interface LiveOptions {
   readonly repoId?: string;
   /** Only these event kinds. Omit for all of them. */
   readonly kinds?: readonly string[];
+  /** Only events this accepts. Omit for all of them. */
+  readonly where?: (event: ForgeEvent) => boolean;
 }
 
 /**
@@ -685,11 +779,14 @@ export function live(
   const off = f.app.bus.subscribe((event) => {
     if (o.repoId !== undefined && event.repoId !== o.repoId) return;
     if (o.kinds !== undefined && !o.kinds.includes(event.kind)) return;
+    if (o.where !== undefined && !o.where(event)) return;
     if (timer !== null) return;
     timer = setTimeout(() => {
       timer = null;
       if (signal.aborted) return;
-      void Promise.resolve(refresh()).catch(() => undefined);
+      // A refresh that throws at once (the forge closed under it) fails as
+      // quietly as one that rejects, never as an uncaught error on the timer.
+      void Promise.resolve().then(refresh).catch(() => undefined);
     }, LIVE_COALESCE_MS);
   });
   signal.addEventListener("abort", () => {
@@ -850,6 +947,8 @@ const MESSAGES: Record<string, string> = {
   throttled: "too many attempts: try again in a minute",
   already_forked: "you already have a fork of this repo",
   already_merged: "this pull is already merged",
+  reason_required: "a bug closed without a fix says why: close it from the page or the API with a note",
+  invalid_note: "a reason is one sentence of at most 300 characters",
   unknown_label: "no such label",
   unknown_branch: "no such branch",
   unknown_base: "the base branch does not exist",
@@ -883,6 +982,8 @@ const MESSAGES: Record<string, string> = {
   mirrored: "this repo mirrors an origin — do it there",
   origin_owner_only: "only whoever connected this origin can write through it",
   origin_refused: "the origin refused that; nothing changed here",
+  origin_paused: "this connection is not verified yet; writes are paused",
+  origin_protected: "the operator protects this repository at its origin: nothing is pushed to it from here; propose the change from your fork",
   origin_unreachable: "the origin could not be reached; nothing changed",
   already_connected: ORIGIN_ALREADY_CONNECTED,
   already_mirrored: "that repository is already mirrored here",
@@ -906,7 +1007,7 @@ const MESSAGES: Record<string, string> = {
   no_such_agent: "no such agent",
   scaffold_failed: "the repository was made, but the app could not be started",
   assignee_cannot_read: "they cannot see this repository",
-  agent_not_on_crew: "that agent is not on this repository's crew",
+  agent_not_on_crew: AGENT_NOT_ON_CREW,
   invalid_model: "that model name is not valid",
   brief_too_long: "that brief is too long (4000 characters at most)",
   invalid_budget: "the budget must be between 0 and 100 dollars",
@@ -1042,3 +1143,8 @@ export function ago(iso: string): string {
 }
 
 export { plural } from "../../kernel/plural.ts";
+
+/** A screen that draws nothing — the parent a palette-launched modal has. */
+export function blank(title: string): Screen {
+  return { title, keys: [], render: () => undefined, key: () => false };
+}

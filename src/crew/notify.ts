@@ -40,6 +40,10 @@ import { newestDrills } from "../core/domain_drills.ts";
 import { health } from "../http/health.ts";
 import { forgeVitals } from "../actions/health.ts";
 import { RECOVERED, drainIncident, nextPage, observe, recoveredLine, type Watch } from "./incidents.ts";
+import { firedAlarms, type FiredAlarm } from "../flow/alarms.ts";
+import { reachAlarms } from "../spawn/reach.ts";
+import { loadClog } from "../flow/clog_tick.ts";
+import { forgeCeiling } from "../flow/ceiling.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
 const KEY = "notify_url";
@@ -54,6 +58,7 @@ const BACKOFF_MAX_MS = HOUR_MS;
 
 /** Events after which the set of asks may have changed. */
 const WAKES = new Set([
+  "clog.started",
   "run.finished",
   "pull.opened",
   "pull.pushed",
@@ -164,6 +169,36 @@ export const post: Sender = async (url, body, headers) => {
   }
 };
 
+export const TEST_LINE = "Test from the forge — notifications reach you.";
+const TEST_GAP_MS = 30_000;
+const lastTest = new Map<string, number>();
+
+/** Whether this person may send a test now: one per `TEST_GAP_MS`. Claims the slot when it says yes. */
+export function claimTest(userId: string, now = Date.now()): boolean {
+  for (const [id, at] of lastTest) if (now - at >= TEST_GAP_MS) lastTest.delete(id);
+  if (lastTest.has(userId)) return false;
+  lastTest.set(userId, now);
+  return true;
+}
+
+/**
+ * One short line to the saved URL, to prove it works. Never throws; the
+ * URL's path (it can hold a secret) is never logged.
+ */
+export async function sendTest(
+  db: Database,
+  userId: string,
+  sender: Sender = post,
+): Promise<"sent" | "refused" | "off"> {
+  const url = notifyUrlOf(db, userId);
+  if (url === undefined) return "off";
+  try {
+    return (await sender(url, TEST_LINE, { title: "forge" })) ? "sent" : "refused";
+  } catch {
+    return "refused";
+  }
+}
+
 /**
  * The forge's admin hears of a red restore drill, or none in eight days,
  * once per cause: the id is the drill's own key, so a repeat tick is not news.
@@ -241,6 +276,41 @@ export function redLines(
   return out;
 }
 
+/**
+ * The owner hears once when a flow alarm (#5930) starts firing. The id is the
+ * alarm and when it began, so a standing alarm is the same ask on every tick
+ * and a later one is new. Admin only: the words name private repositories.
+ */
+export function alarmLines(
+  app: App,
+  user: User,
+  now = Date.now(),
+  fired?: readonly FiredAlarm[],
+): { id: string; line: string; items: readonly string[]; link: string }[] {
+  if (!user.isAdmin || user.kind !== "user") return [];
+  const alarms = fired ?? [...firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config) }), ...reachAlarms(app)];
+  return alarms.map((a) => {
+    const id = `alarm:${a.key}@${a.since}`;
+    return { id, line: a.says, items: [id], link: a.href };
+  });
+}
+
+/**
+ * The owner hears once when a clog (#6524) starts: the id is the clog's own
+ * start, so the one standing clog is the same ask on every tick and a later
+ * one is new. The state is the database's, so a restart never says it twice.
+ */
+export function clogLines(
+  app: App,
+  user: User,
+): { id: string; line: string; items: readonly string[]; link: string }[] {
+  if (!user.isAdmin || user.kind !== "user") return [];
+  const clog = loadClog(app.db);
+  if (clog === null) return [];
+  const id = `clog:${clog.since}`;
+  return [{ id, line: `Clogged: ${clog.firstReasons.join("; ")}.`, items: [id], link: "/" }];
+}
+
 export interface Notifier {
   /** Resolves when the work queued so far is done. For tests and shutdown. */
   settled(): Promise<void>;
@@ -263,6 +333,8 @@ export interface NotifyOptions {
   drainingSince?: () => number | null;
   /** The causes the vitals hold now; the live vitals unless a test says. */
   causes?: () => readonly { cause: string; sentence: string }[];
+  /** The alarms firing now; the live four unless a test says. */
+  alarms?: () => readonly FiredAlarm[];
 }
 
 /** Long enough for a domain drill line to keep every command it names. */
@@ -424,6 +496,8 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...domainDrillLines(app, user, now(), options.forgeUrl),
       ...mirrorLines(app, user, now()),
       ...redLines(app, user, now()),
+      ...alarmLines(app, user, now(), options.alarms?.()),
+      ...clogLines(app, user),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by

@@ -24,6 +24,10 @@ export interface Invite {
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly state: InviteState;
+  /** When it was spent, or null. */
+  readonly usedAt: string | null;
+  /** The username it let in; null when unused or the account is gone. */
+  readonly usedBy: string | null;
 }
 
 interface Row {
@@ -33,7 +37,11 @@ interface Row {
   expires_at: string;
   revoked_at: string | null;
   used_at: string | null;
+  used_by_name: string | null;
 }
+
+/** An invite with its redeemer's username, resolved in the one query. */
+const SELECT = "SELECT invite.*, user.username AS used_by_name FROM invite LEFT JOIN user ON user.id = invite.used_by";
 
 const stateOf = (r: Row, now: number): InviteState =>
   r.revoked_at !== null ? "revoked" : r.used_at !== null ? "used" : Date.parse(r.expires_at) <= now ? "expired" : "open";
@@ -44,6 +52,8 @@ const view = (r: Row, now: number): Invite => ({
   createdAt: r.created_at,
   expiresAt: r.expires_at,
   state: stateOf(r, now),
+  usedAt: r.used_at,
+  usedBy: r.used_at === null ? null : r.used_by_name,
 });
 
 /** A whole number of days from 1 to 30, or the default when absent. */
@@ -64,7 +74,7 @@ export function mintInvite(
   db.query(
     "INSERT INTO invite (id, token_hash, created_by, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)",
   ).run(inviteId, sha256(token), createdBy, new Date(now).toISOString(), new Date(now + days * DAY).toISOString());
-  const row = db.query<Row, [string]>("SELECT * FROM invite WHERE id = ?1").get(inviteId)!;
+  const row = db.query<Row, [string]>(`${SELECT} WHERE invite.id = ?1`).get(inviteId)!;
   return { invite: view(row, now), token };
 }
 
@@ -103,7 +113,7 @@ export function reopenInvite(db: Database, userId: string): void {
 /** Every invite, newest first, never with its token. */
 export function listInvites(db: Database, now: number = Date.now()): Invite[] {
   return db
-    .query<Row, []>("SELECT * FROM invite ORDER BY id DESC LIMIT 500")
+    .query<Row, []>(`${SELECT} ORDER BY invite.id DESC LIMIT 500`)
     .all()
     .map((r) => view(r, now));
 }
@@ -118,7 +128,7 @@ export function revokeInvite(
     .query("UPDATE invite SET revoked_at = ?2 WHERE id = ?1 AND revoked_at IS NULL AND used_at IS NULL")
     .run(inviteId, new Date(now).toISOString()).changes;
   if (changed === 0) return err("not_found");
-  return ok(view(db.query<Row, [string]>("SELECT * FROM invite WHERE id = ?1").get(inviteId)!, now));
+  return ok(view(db.query<Row, [string]>(`${SELECT} WHERE invite.id = ?1`).get(inviteId)!, now));
 }
 
 /** The id of the invite an account spent, if one let it in. */

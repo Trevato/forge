@@ -19,7 +19,8 @@ import { id as newId } from "../kernel/id.ts";
  * the summaries that read them keep the word.
  *
  * `hand` is a person's tap on "Let the decider" on a hand-over card
- * (`crew/handover.ts`): its state is the curated context the decider saw. */
+ * (`crew/handover.ts`): its state is the curated context the decider saw.
+ */
 export type DecisionKind =
   | "next"
   | "land"
@@ -249,24 +250,95 @@ export function resolveOpen(
 export function listDecisions(
   db: Database,
   repoId: string,
-  options: { kind?: DecisionKind | undefined; limit?: number | undefined } = {},
+  options: {
+    kind?: DecisionKind | undefined;
+    limit?: number | undefined;
+    /** The id of the last row of the page before: read what is older. */
+    before?: string | undefined;
+  } = {},
 ): Decision[] {
   const limit = Math.min(500, Math.max(1, options.limit ?? 100));
-  const rows =
-    options.kind === undefined
-      ? db
-          .query<
-            Row,
-            [string, number]
-          >("SELECT * FROM decision WHERE repo_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2")
-          .all(repoId, limit)
-      : db
-          .query<
-            Row,
-            [string, string, number]
-          >("SELECT * FROM decision WHERE repo_id = ?1 AND kind = ?2 ORDER BY created_at DESC, id DESC LIMIT ?3")
-          .all(repoId, options.kind, limit);
-  return rows.map(toDecision);
+  const args: (string | number)[] = [repoId];
+  let where = "repo_id = ?1";
+  if (options.kind !== undefined) {
+    args.push(options.kind);
+    where += ` AND kind = ?${args.length}`;
+  }
+  if (options.before !== undefined) {
+    args.push(options.before);
+    where += ` AND (created_at, id) < (SELECT created_at, id FROM decision WHERE id = ?${args.length})`;
+  }
+  args.push(limit);
+  return db
+    .query<Row, (string | number)[]>(
+      `SELECT * FROM decision WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ?${args.length}`,
+    )
+    .all(...args)
+    .map(toDecision);
+}
+
+export const DECISIONS_LIMIT_DEFAULT = 30;
+export const DECISIONS_LIMIT_MAX = 100;
+
+/** A `limit` as the decisions read takes it: a whole number 1 to 100, or undefined when bad. */
+export function decisionsLimit(raw: string | null): number | undefined {
+  if (raw === null) return DECISIONS_LIMIT_DEFAULT;
+  const n = /^\d{1,4}$/.test(raw) ? Number(raw) : 0;
+  return n >= 1 && n <= DECISIONS_LIMIT_MAX ? n : undefined;
+}
+
+/** Whether `cursor` names a decision of this repository (a `next_cursor` of a page before). */
+export function decisionCursorValid(db: Database, repoId: string, cursor: string): boolean {
+  return (
+    /^[A-Za-z0-9_-]{1,64}$/.test(cursor) &&
+    db.query("SELECT 1 FROM decision WHERE id = ?1 AND repo_id = ?2").get(cursor, repoId) !== null
+  );
+}
+
+/** Rows read per batch, and batches per request, while hunting for visible ones. */
+const BATCH = 100;
+const BATCHES = 5;
+
+/**
+ * One page of the ledger, newest first, after `cursor`. `visible` runs before
+ * the page is cut, so a hidden row never shortens a page; the read is bounded,
+ * and past the bound the page may be short, its `next_cursor` the last row it
+ * showed (or, when it showed none, the last row scanned).
+ */
+export function decisionsPage(
+  db: Database,
+  repoId: string,
+  options: {
+    kind?: DecisionKind | undefined;
+    limit: number;
+    cursor?: string | undefined;
+    visible: (d: Decision) => boolean;
+  },
+): { decisions: Decision[]; next_cursor: string | null } {
+  const found: Decision[] = [];
+  let before = options.cursor;
+  let scanned: string | undefined;
+  let more = false;
+  for (let n = 0; n < BATCHES && found.length <= options.limit; n++) {
+    const batch = listDecisions(db, repoId, { kind: options.kind, limit: BATCH, before });
+    for (const d of batch) if (options.visible(d)) found.push(d);
+    if (batch.length > 0) scanned = batch[batch.length - 1]!.id;
+    more = batch.length === BATCH;
+    if (!more) break;
+    before = scanned;
+  }
+  const page = found.slice(0, options.limit);
+  // A cursor is the last row this reader was shown. Only a page that found
+  // nothing for a whole bound resumes after a row it scanned (maybe hidden):
+  // without that the read could not move past a long run of hidden rows.
+  const shown = found[Math.min(found.length, options.limit) - 1];
+  const next =
+    found.length > options.limit
+      ? shown!.id
+      : more
+        ? (shown?.id ?? scanned ?? null)
+        : null;
+  return { decisions: page, next_cursor: next };
 }
 
 /** The newest decisions across several repositories, newest first. */

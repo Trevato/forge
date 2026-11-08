@@ -138,7 +138,7 @@ describe("one hostile string, every surface", () => {
   });
 
   const pages: [string, () => string][] = [
-    ["the home feed", () => "/"],
+    ["the home feed", () => "/feed"],
     ["the issue", () => `/alice/game/issues/${issueNo}`],
     ["the pull", () => `/alice/game/pulls/${pullNo}`],
     ["the issue list", () => "/alice/game/issues"],
@@ -201,14 +201,15 @@ describe("one hostile string, every surface", () => {
   });
 
   test("MCP feed and issue cards carry it as data the shell draws with textContent", async () => {
-    // `feed` has a card; `issue` answers with data alone, so it has none.
+    // `feed` and `issue` both have cards; the hostile text rides as raw data.
     const feed = JSON.parse(await mcp("feed", {})).result;
     const card = feed.structuredContent?.card;
     expect(card).toBeDefined();
     expect(card.rows.map((r: { label: string }) => r.label).join("\n")).toContain(EVIL);
     expect(JSON.stringify(card)).not.toContain("&lt;");
     const issue = JSON.parse(await mcp("issue", { repo: "alice/game", number: issueNo })).result;
-    expect(issue.structuredContent?.card).toBeUndefined();
+    expect(issue.structuredContent.card.rows[0].value).toBe(EVIL);
+    expect(JSON.stringify(issue.structuredContent.card)).not.toContain("&lt;");
     expect(JSON.parse(issue.content[0].text).title).toBe(EVIL);
     const shell = CARD_SHELL("feed");
     expect(shell).not.toContain("innerHTML");

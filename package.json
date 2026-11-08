@@ -15,7 +15,9 @@
     "@anthropic-ai/sandbox-runtime": "^0.0.79",
     "@types/bun": "^1.2.0",
     "axe-core": "^4.14.0",
+    "happy-dom": "^21.0.4",
     "typescript": "^7.0.2",
     "typescript-api": "npm:typescript@^5.9.0"
-  }
+  },
+  "license": "AGPL-3.0-only"
 }

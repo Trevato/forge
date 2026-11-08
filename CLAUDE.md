@@ -4,16 +4,14 @@ Orientation for an agent editing forge. Read this first, then `README.md` (what
 it is) and `docs/ARCHITECTURE.md` (why it's shaped this way). This file is the
 rulebook: the invariants you must not break, and how to work here.
 
+**README.md is capped: a new feature's how-to goes in `docs/features/<name>.md`, not a new README section.**
+
 **Read docs/VISION.md first: it says what the forge is for and the order of work.**
 
-**Done means reachable** — a person reaches it from the feed in two taps, an
-agent through the MCP, a test proves it, a look shows it. A function nobody can
-call is not done.
-
-The whole point of forge is that **one person can hold it in their head**. Every
-change should leave it that way. When something fights you, step up and
-understand the system before adding code — a workaround usually means the system
-isn't understood yet.
+**Done means reachable**, and the rest of what the forge holds to is in
+docs/PRINCIPLES.md with what enforces each; read it. This file does not repeat it. When
+something fights you, step up and understand the system before adding code — a
+workaround usually means the system isn't understood yet.
 
 ## Invariants — do not break these
 
@@ -28,9 +26,8 @@ isn't understood yet.
 3. **Real git, thin wrapper.** Never reimplement pack negotiation, diff, blame,
    or merge. Spawn the `git` binary and plumb bytes carefully. Correctness comes
    from git; our job is safe arguments and clean I/O.
-4. **Git is truth; the DB is a derived index.** SQLite holds nothing that can't
-   be rebuilt from the bare repos. `core/reconcile.ts` self-heals the index from
-   git on boot. Don't invent state that lives only in the DB (or only in memory).
+4. **Derived index** (docs/PRINCIPLES.md). Don't invent state that lives only
+   in the DB (or only in memory).
 5. **State changes go through the event outbox.** Every meaningful mutation
    `bus.append(...)`s a durable event (`core/events.ts`). Webhooks and SSE ride
    that outbox; delivery is retried. Never fire-and-forget something important.
@@ -47,9 +44,9 @@ canAdmin`), token scope (`readForm` floor + `minScope`), and branch
 9. **`not_found` is deliberately ambiguous.** A missing resource and a resource
    you can't see both return `not_found`, so private repos never leak their
    existence. Keep that conflation when you add routes.
-10. **The crew proposes; a person lands.** An agent (`user.kind === "agent"`)
-    never moves the default branch — the pre-receive hook refuses it,
-    protected or not — and `mergePull` refuses an agent actor. Its only grant
+10. **The crew proposes; a person lands** (docs/PRINCIPLES.md). An agent
+    (`user.kind === "agent"`) is refused by the pre-receive hook, protected
+    or not, and by `mergePull`. Its only grant
     is `repo_crew` (read + write, never admin); its only credential is a
     token minted for a run with an expiry, deleted when the run ends, and
     bound to the run's repository and the fork it pushes to — every other
@@ -104,20 +101,17 @@ bun run src/main.ts   # boots on :3000, data in ./data
   `EXCLUDED`, so never hand-edit that move. Never add `retry` — fix the
   cause: a shared port, a real clock, order dependence, a leaked server, a
   timeout near the real duration, a wall-clock bound under 200 ms on a
-  request or a spawn (`test/flake.test.ts` refuses one). A speed is bounded only
-  with `expectBudget` (`test/helpers/budget.ts`): relative to a same-run
-  baseline, absolute only when `FORGE_TEST_QUIET=1` (set by hand on a quiet machine; no
-  lane sets it yet, so absolute budgets are not enforced anywhere);
-  `test/flake.test.ts` refuses a raw `under N ms` title or bound.
+  request or a spawn (`test/flake.test.ts` refuses one). Speed is counted in work (docs/PRINCIPLES.md): SQL
+  statements with `test/helpers/statements.ts`, spawns, bytes, phases,
+  asserted with `expectWork` (`test/helpers/work.ts`), or a fake clock
+  (#7789, #7824).
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.
-- **Done means reachable.** A new action is called from a route, a page or an
-  MCP tool in the same pull, and a new screen is linked from a page a person
-  can get to. `scripts/hollow.ts` (run by `test/hollow.test.ts` in the gate,
-  or `bun scripts/hollow.ts`) names an exported function in `src/actions/`
-  that nothing that runs reaches (a page function no route names does not
-  count as a caller) and a screen no page links to.
+- **Reachable** (docs/PRINCIPLES.md). A new action is called from a route, a
+  page or an MCP tool in the same pull, and a new screen is linked from a page
+  a person can get to. `bun scripts/hollow.ts` names what is not (a page
+  function no route names does not count as a caller).
   `scripts/hollow-allow.ts` is for hollow work an issue already owns, never
   for new work.
 - **TypeScript is strict**: `noUncheckedIndexedAccess` (index access is `T |
@@ -178,7 +172,8 @@ src/
               header, settings shell, the one 404), flash, layout (CSP+nonce,
               topbar, theme switcher), client (progressive enhancement, as a
               string), style/{base,components,content} assembled by style.ts,
-              markdown, highlight, code, worddiff, diff-view, live, and
+              markdown, highlight, code, worddiff, diff-view, live, render/ (the
+              file-kind registry, kinds.ts, and one renderer per kind), and
               pages/{site,repo,issues,pulls,pull,thread,commits,refs,search,
               org,account,settings}, and studio/ — the app-as-the-unit
               surface, one module per concept: words (the vocabulary every
@@ -257,8 +252,8 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   exporting `route`; then `bun scripts/openapi-routes.ts` writes its line in the
   generated index. Never list it by hand.
 - **Add an MCP tool:** one file, `http/mcp/tools/<name>.ts`, exporting `tool`;
-  then `bun scripts/mcp-tools.ts` writes its line in the index and its row in
-  docs/MCP.md (docs/MCP.md, "Adding a tool"). Never list it by hand.
+  then `bun scripts/mcp-tools.ts` writes its line in the index; its `doc` is
+  its line in /llms.txt, served live, so no docs file changes. Never list it by hand.
 - **Add a TUI screen:** one file under `tui/screens/`, exporting
   `(f: Session, ctx: Ctx, …) => Screen`. Compose `ui/widgets`; take navigation
   from `screens/common.ts` (`ListState`, `Scroll`, `Filter`, `drawList`,
@@ -281,10 +276,16 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   records each name), so two pulls' migrations land in either order, and a
   database with one this build does not know boots and names it. Never edit
   an existing migration — an edited one is a new one and runs again; once
-  pinned in `core/migration-pins.json` (`bun scripts/pin-migrations.ts`, run
-  by the release agent, never by a pull) the schema test fails on an edit. It must only add
-  (`test/schema-additive.test.ts`); the release agent lists its id in
-  `core/releases.json`.
+  pinned the schema test fails on an edit: the pull that adds a migration
+  runs `bun scripts/pin-migrations.ts` and commits the one file it writes,
+  `core/migration-pins/<name>.pin` (`core/migration-pins.json` is the frozen
+  older pins); the release never touches pins. A crew clone's `pre-push`
+  hook (`crew/pin_hook.ts`) runs it and commits the pin when a push touches
+  a migration, and the gate names a migration added without its pin. A migration must only add
+  (`test/schema-additive.test.ts`). A release is an annotated tag whose
+  message is its record (`bun scripts/cut-release.ts <version> --tag`,
+  read by `release/shipped.ts`); no pull and no release touches
+  `core/releases-before-tags.json`, which is frozen.
 - **New git read:** put it in `git/read.ts`; reuse the long-lived `cat-file`
   batch reader rather than spawning per object. Run every rev/path through
   `assertBatchSafe`.

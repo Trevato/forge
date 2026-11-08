@@ -19,8 +19,9 @@ describe("a crew run does not run the gate the check runs", () => {
       forgeUrl: "http://forge.test",
       isApp: false,
     } as unknown as BriefInput);
-    expect(prompt).toContain("run the type check and the tests that cover what you changed");
-    expect(prompt).toContain("not the whole check");
+    expect(prompt).toContain("bun x tsc --noEmit");
+    expect(prompt).toContain("&& bun test $files");
+    expect(prompt).toContain("Not the whole suite");
     expect(prompt).not.toContain("Run the same command yourself");
   });
 

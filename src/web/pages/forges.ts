@@ -16,6 +16,7 @@ import { reissueDoor } from "../../spawn/door.ts";
 import { readForm } from "../form.ts";
 import { badge, btn, card, empty, row, time } from "../ui.ts";
 import { noRoom } from "../../spawn/door.ts";
+import { sizeWords, useWords } from "../../spawn/usage.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
 
@@ -23,7 +24,8 @@ import { claimLinkBody } from "./new-forge.ts";
 function runningNote(r: ClientRow): Html | null {
   const words = runningWords(r);
   if (words === null) return null;
-  return html`<span data-apps="${r.running!.notRunning.length === 0 ? "up" : "down"}"
+  const down = (r.running?.notRunning.length ?? 0) > 0 || r.reach?.ok === false;
+  return html`<span data-apps="${down ? "down" : "up"}"
     >${words}</span
   >`;
 }
@@ -57,6 +59,19 @@ function forgeRow(r: ClientRow): Html {
     title: html`<a href="${r.url}">${r.name}</a>`,
     meta: html`${meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}`,
     data: { forge: r.name, claimed: state },
+    ...(r.reach === null
+      ? {}
+      : {
+          // One row per public address; the word in the trail, not a colour, says which failed.
+          children: r.reach.proofs.map((p) =>
+            row({
+              title: html`<a href="${p.url}">${p.url.replace(/^https?:\/\//, "")}</a>`,
+              meta: html`${p.says}`,
+              trail: badge(p.ok ? "reachable" : "not reachable", p.ok ? { tone: "success" as const } : { tone: "attn" as const }),
+              data: { proof: p.ok ? "ok" : "failed" },
+            }),
+          ),
+        }),
     trail: html`${r.attention === null
         ? null
         : html`<span data-attention="${r.attention}">${badge(ATTENTION_WORDS[r.attention], { tone: "attn" })}</span>`}${badge(CLAIM_WORDS[state], {
@@ -67,6 +82,41 @@ function forgeRow(r: ClientRow): Html {
           </form>`
         : null}`,
   });
+}
+
+/** The forges side by side: one row each, the same columns, so none shifts. */
+export function sideBySide(rows: readonly ClientRow[]): Html {
+  return html`<div class="table-scroll" role="region" tabindex="0" aria-label="Forges side by side">
+    <table class="table" data-dense data-sticky-lead data-by="forges">
+      <thead>
+        <tr>
+          <th scope="col">Forge</th>
+          <th scope="col">Address</th>
+          <th scope="col">Size</th>
+          <th scope="col">Memory</th>
+          <th scope="col">CPU</th>
+          <th scope="col">Disk</th>
+          <th scope="col">Apps</th>
+          <th scope="col">Last heartbeat</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((r) => {
+          const use = useWords(r.use);
+          return html`<tr data-compare="${r.name}" data-use="${r.use.kind}">
+            <th scope="row">${r.name}</th>
+            <td><a href="${r.url}">${r.url.replace(/^https?:\/\//, "")}</a></td>
+            <td>${sizeWords(r.size)}</td>
+            <td>${use.memory}</td>
+            <td>${use.cpu}</td>
+            <td>${use.disk}</td>
+            <td>${r.apps.length === 0 ? "none" : r.apps.join(", ")}</td>
+            <td>${r.lastHeartbeatAt === null ? "none yet" : time(r.lastHeartbeatAt)}</td>
+          </tr>`;
+        })}
+      </tbody>
+    </table>
+  </div>`;
 }
 
 // GET /forges — an admin's only.
@@ -97,6 +147,9 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
             note: "A whole forge for someone: the apps you choose, a crew, and one link to send.",
             action,
           })
+        : card(sideBySide(rows), { pad: false, id: "forges-compare" })}
+      ${rows.length === 0
+        ? null
         : card(
             html`<ul class="list setting-list">
               ${rows.map(forgeRow)}

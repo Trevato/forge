@@ -13,6 +13,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { quietly } from "../core/write_clock.ts";
 import { sha256 } from "../kernel/hash.ts";
 
 /** A report is a few dozen bytes; this is already generous. */
@@ -31,9 +32,22 @@ export interface Report {
   readonly lcp: number | null;
   readonly inp: number | null;
   readonly cls: number;
+  /** document.referrer, location.search and the host of the link the visitor left by; absent from an older beacon. */
+  readonly ref?: string;
+  readonly q?: string;
+  readonly out?: string;
 }
 
-const FIELDS = new Set(["path", "ttfb", "load", "lcp", "inp", "cls"]);
+const FIELDS = new Set(["path", "ttfb", "load", "lcp", "inp", "cls", "ref", "q", "out"]);
+
+/** An optional text field: absent is fine, a wrong kind or a long or control-laden one is malformed. */
+function optionalText(body: Record<string, unknown>, key: string, max: number): string | undefined | "malformed" {
+  const given = body[key];
+  if (given === undefined) return undefined;
+  // eslint-disable-next-line no-control-regex
+  if (typeof given !== "string" || given.length > max || /[\u0000-\u001f\u007f]/.test(given)) return "malformed";
+  return given;
+}
 
 const bounded = (value: unknown, max: number): number | undefined =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max
@@ -70,6 +84,10 @@ export function parseReport(text: string): Report | "malformed" {
     // 0 is how the beacon says "not measured".
     times[key] = value === 0 ? null : value;
   }
+  const ref = optionalText(body, "ref", 300);
+  const q = optionalText(body, "q", 300);
+  const out = optionalText(body, "out", 253);
+  if (ref === "malformed" || q === "malformed" || out === "malformed") return "malformed";
   return {
     path,
     ttfb: times["ttfb"] ?? null,
@@ -77,6 +95,9 @@ export function parseReport(text: string): Report | "malformed" {
     lcp: times["lcp"] ?? null,
     inp: times["inp"] ?? null,
     cls,
+    ...(ref === undefined ? {} : { ref }),
+    ...(q === undefined ? {} : { q }),
+    ...(out === undefined ? {} : { out }),
   };
 }
 
@@ -99,9 +120,11 @@ export function saltFor(db: Database, at: number): string {
   const salt = new Bun.CryptoHasher("sha256")
     .update(crypto.getRandomValues(new Uint8Array(32)))
     .digest("hex");
-  db.run("DELETE FROM vital_salt WHERE day <> ?", [day]);
-  db.run("INSERT OR IGNORE INTO vital_salt (day, salt) VALUES (?, ?)", [day, salt]);
-  db.run("DELETE FROM page_vital WHERE at < ?", [at - KEEP_MS]);
+  quietly(db, () => {
+    db.run("DELETE FROM vital_salt WHERE day <> ?", [day]);
+    db.run("INSERT OR IGNORE INTO vital_salt (day, salt) VALUES (?, ?)", [day, salt]);
+    db.run("DELETE FROM page_vital WHERE at < ?", [at - KEEP_MS]);
+  });
   return (
     db
       .query<{ salt: string }, [string]>("SELECT salt FROM vital_salt WHERE day = ?")
@@ -127,9 +150,11 @@ export function recordVital(
     .get(dayOf(at));
   if ((held?.n ?? 0) >= dayMax) return false;
   const visitor = sha256(`${saltFor(db, at)}\0${client}\0${agent}`).slice(0, 32);
-  db.run(
-    "INSERT INTO page_vital (day, at, route, visitor, ttfb, load, lcp, inp, cls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [dayOf(at), at, route, visitor, report.ttfb, report.load, report.lcp, report.inp, report.cls],
+  quietly(db, () =>
+    db.run(
+      "INSERT INTO page_vital (day, at, route, visitor, ttfb, load, lcp, inp, cls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [dayOf(at), at, route, visitor, report.ttfb, report.load, report.lcp, report.inp, report.cls],
+    ),
   );
   return true;
 }

@@ -233,6 +233,25 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build it\\",\\"che
     }
   }, 60_000);
 
+  test("POST /apps with a sentence and no name derives the name; a repeat gets -2; neither is 422", async () => {
+    const first = await post("/api/v1/apps", { sentence: "Keep notes" }, rw);
+    expect(first.status).toBe(201);
+    const a = (await first.json()) as { app: { slug: string }; repo: { name: string } };
+    const again = await post("/api/v1/apps", { sentence: "Keep notes" }, rw);
+    expect(again.status).toBe(201);
+    const b = (await again.json()) as { repo: { name: string } };
+    expect(b.repo.name).toBe(`${a.repo.name}-2`);
+
+    const both = await post("/api/v1/apps", { name: "named-wins", sentence: "Keep notes" }, rw);
+    expect(((await both.json()) as { repo: { name: string } }).repo.name).toBe("named-wins");
+
+    const neither = await post("/api/v1/apps", {}, rw);
+    expect(neither.status).toBe(422);
+    const nothing = await post("/api/v1/apps", { sentence: "!!!" }, rw);
+    expect(nothing.status).toBe(422);
+    expect(((await nothing.json()) as { error: string }).error).toBe("no_name");
+  });
+
   test("POST /apps makes the app, puts the agent on the crew, assigns the first issue", async () => {
     const made = await post(
       "/api/v1/apps",

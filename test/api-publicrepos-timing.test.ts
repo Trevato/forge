@@ -53,9 +53,9 @@ async function phases(path: string): Promise<{ status: number; names: string[]; 
   return { status: res.status, names: names.slice(names.indexOf("app") + 1), body };
 }
 
-test("the repositories list names session, repos, render in order", async () => {
+test("the repositories list names session, tag, repos, render in order", async () => {
   const got = await phases("/api/v1/repos");
   expect(got.status).toBe(200);
-  expect(got.names).toEqual(["session", "repos", "render"]);
+  expect(got.names).toEqual(["session", "tag", "repos", "render"]);
   expect(JSON.parse(got.body)).toBeTruthy();
 });

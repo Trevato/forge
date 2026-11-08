@@ -2,15 +2,16 @@
  * What asks a person, and what they can do about it: a *decision* is one
  * card — a pull the crew stopped on, a green pull waiting for a look, or a
  * repository parked at its ceiling — read from the same tables the rest of
- * the forge reads, with the same access the owner has. This module owns the
- * card, the row and the panel of them; every button here posts
- * to the route a person could have posted to by hand (`actions.ts`).
+ * the forge reads, with the same access the owner has. This module owns
+ * which asks there are, the row and the panel of them; the card's words,
+ * forms and buttons are `decisions.ts`.
  */
 
 import type { Database } from "bun:sqlite";
+import { crewHandsFor } from "../../actions/give_back.ts";
 import { forgeVitals, needLine } from "../../actions/health.ts";
+import { reviewSet } from "./review_set.ts";
 import type { Degraded } from "../../kernel/vitals.ts";
-import { previewEnv } from "../../apps/data.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { appsForRepos } from "../../core/apps.ts";
@@ -21,7 +22,7 @@ import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.t
 import { chipsOf, type Chips } from "../../core/feed_chips.ts";
 import { chipHides } from "../../feed/chips.ts";
 import { askDismissals, mutedRepos } from "../../core/interactions.ts";
-import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
+import { ASKS_WINDOW_DAYS, askMeasureWeek, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
   getIssueById,
   labelsForIssues,
@@ -30,8 +31,8 @@ import {
   listOpenPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
+import { reviewSummary } from "../../core/reviews.ts";
 import { mayView } from "../../core/sealed.ts";
-import { looksForApps } from "../../core/looks.ts";
 import { closesFromBody, getPull, joinMany, type Pull } from "../../core/pulls.ts";
 import {
   canRead,
@@ -56,23 +57,18 @@ import {
 } from "../../crew/autonomy.ts";
 import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
-import { handoverLines, handoversOf, type Handover } from "../../crew/guard.ts";
+import { handoversOf, passReasonOf, type Handover } from "../../crew/guard.ts";
 import { conflictsOf, isStalePull, mergesAgainSince, staleGreen } from "../../crew/stale_asks.ts";
+import { reviewSays } from "../../crew/review_says.ts";
+import { reviewerPaused } from "../../crew/reviewer_paused.ts";
 import { reviewWaitsFor, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
-import { repoBase } from "../chrome.ts";
-import { html, type Html } from "../html.ts";
-import { btn, row } from "../ui.ts";
-import { lookUrl } from "../../core/looks.ts";
-import { thumbLook } from "../pages/looks.ts";
-import { changeHref } from "./nouns.ts";
 import { NO_LONGER_ASKS } from "../../actions/asks_words.ts";
-import { testsClause } from "./words.ts";
 
 /** Repos narrowed to those with an app record, with the records — the one
  * join `appsOf` and `writableAppsOf` share. */
 function appsFiltered(
-  ctx: Ctx,
+  ctx: Pick<Ctx, "app">,
   repos: readonly Repo[],
 ): { repos: Repo[]; records: ReturnType<typeof appsForRepos> } {
   const records = appsForRepos(
@@ -87,10 +83,14 @@ function appsFiltered(
  * Everyone's public apps sit in this list beside the viewer's own: right
  * for search, the palette and the asks count, wrong for a shelf headed
  * "your apps" — that reading is `writableAppsOf`. */
-export function appsOf(ctx: Ctx, user: User | undefined) {
+export function appsOf(ctx: Pick<Ctx, "app">, user: User | undefined, archived = false) {
   return appsFiltered(
     ctx,
-    listReposVisibleTo(ctx.app.db, user, { limit: 200, withoutArchived: true }),
+    listReposVisibleTo(
+      ctx.app.db,
+      user,
+      archived ? { limit: 200, archivedOnly: true } : { limit: 200, withoutArchived: true },
+    ),
   );
 }
 
@@ -109,9 +109,6 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
 }
 
 export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "waiting" | "assigned" | "proposal";
-
-/** Dollars as a person reads them: cents when small, whole when not. */
-const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
 
 export interface Decision {
   readonly kind: DecisionKind;
@@ -141,6 +138,10 @@ export interface Decision {
   readonly waiting: WaitingFor;
   readonly why?: string | undefined;
   readonly recommendation?: Recommendation | undefined;
+  /** For "handover" and a pass-assigned "assigned": the builder the pull can be given back to, if any. */
+  readonly giveBack?: string | undefined;
+  /** For "assigned" pull: whether landing is allowed now (green, no outstanding change request). */
+  readonly canLand?: boolean | undefined;
 }
 
 /** What an ask asks, the answers it takes, and what happens if nobody gives one. */
@@ -189,7 +190,7 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
   },
   assigned: {
     decision: "This is assigned to you: act on it?",
-    options: ["Open it"],
+    options: ["Give to the crew", "Land", "Close"],
     ifNothing: "it stays assigned to you",
   },
   proposal: {
@@ -289,7 +290,11 @@ interface AskCandidate {
   readonly decline?: { readonly runId: string; readonly words: string };
   /** For "handover": the reviews that asked for changes. */
   readonly handover?: Handover;
-  /** For "handover" and "waiting": one sentence on why a person must decide. */
+  /** For "handover" and a pass-assigned "assigned": the crew member that opened or last worked on the pull, when it can be given back. */
+  readonly builder?: string;
+  /** For an "assigned" pull: it is green with no change requested, so it can land. */
+  readonly canLand?: boolean;
+  /** For "handover", "waiting" and a pass-assigned "assigned": one sentence on why a person must decide. */
   readonly why?: string;
   /** For "handover" and "waiting": what the crew advised, when it wrote one. */
   readonly recommendation?: Recommendation;
@@ -314,6 +319,7 @@ function askCandidatesFor(
   db: Database,
   user: User | undefined,
   allRepos: readonly Repo[],
+  only?: string,
 ): AskCandidate[] {
   const out: AskCandidate[] = [];
   if (!user) return out;
@@ -323,8 +329,10 @@ function askCandidatesFor(
   const ownerFacts = ownerFactRepoIds(db, allRepos, user);
   const repos = allRepos.filter((r) => ownerFacts.has(r.id));
   const byId = new Map(repos.map((r) => [r.id, r]));
-  const pulls = listOpenPullsVisibleTo(db, user, 50).filter((p) =>
-    byId.has(p.repoId),
+  // `only` narrows to one pull's own asks, for its page: the same fifty
+  // pulls are listed, so it asks exactly what the full read would say of it.
+  const pulls = listOpenPullsVisibleTo(db, user, 50).filter(
+    (p) => byId.has(p.repoId) && (only === undefined || p.id === only),
   );
   const checks = latestRunsForIssues(
     db,
@@ -371,6 +379,7 @@ function askCandidatesFor(
     handedOver,
   );
   const first = out.length;
+  let crews: Map<string, string[]> | undefined;
   for (const issue of pulls) {
     const repo = byId.get(issue.repoId)!;
     const pull = joined.get(issue.id);
@@ -391,6 +400,10 @@ function askCandidatesFor(
     if (over !== undefined && repo.autonomy === "autonomous" && issue.authorIsAgent)
       continue;
     if (over !== undefined) {
+      // Whoever opened it, while still on the crew, is who it can go back to.
+      crews ??= crewForRepos(db, [...byId.keys()]);
+      const builder =
+        issue.authorIsAgent && crews.get(repo.id)?.includes(issue.authorName) ? issue.authorName : undefined;
       out.push({
         kind: "handover",
         id: `handover:${pull.id}`,
@@ -400,6 +413,7 @@ function askCandidatesFor(
         who,
         authorIsAgent: issue.authorIsAgent,
         handover: over,
+        ...(builder === undefined ? {} : { builder }),
         why: HANDOVER_WHY,
       });
       continue;
@@ -515,6 +529,79 @@ function askCandidatesFor(
     const rec = a.kind === "handover" ? advice.get(a.pull!.id) : undefined;
     if (rec !== undefined) out[i] = { ...a, recommendation: rec };
   }
+  // Pauses, parked issues, declines and waves carry no pull: one pull's page
+  // never shows them, so it never reads them.
+  if (only === undefined) repoAsksInto(db, out, repos, byId);
+  // Open work assigned to the viewer that no ask above already covers: a
+  // pull that is an ask and assigned to them is one row, the ask's.
+  const taken = new Set(out.flatMap((a) => [a.pull?.id, a.issue?.id].filter((i) => i !== undefined)));
+  const visible = new Map(allRepos.map((r) => [r.id, r]));
+  const mine = listAssignedTo(db, user.id, 50).filter(
+    (i) => !taken.has(i.id) && (only === undefined || i.id === only),
+  );
+  const elsewhere = getReposByIds(
+    db,
+    [...new Set(mine.map((i) => i.repoId))].filter((id) => !visible.has(id)),
+  );
+  // An assignment can outlive the access that made it: each repo needs a real read.
+  // Asked once per repository, not once per assigned row.
+  const reads = new Map<string, boolean>();
+  const readable = (repo: Repo | undefined): repo is Repo => {
+    if (repo === undefined) return false;
+    if (visible.has(repo.id)) return true;
+    let ok = reads.get(repo.id);
+    if (ok === undefined) reads.set(repo.id, (ok = canRead(db, repo, user)));
+    return ok;
+  };
+  const joinedMine = new Map(
+    joinMany(db, mine.filter((i) => i.kind === "pull")).map((p) => [p.id, p]),
+  );
+  const mineChecks = latestRunsForIssues(db, [...joinedMine.keys()]);
+  const hands = crewHandsFor(
+    db,
+    mine.flatMap((issue) => {
+      const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
+      return repo === undefined || issue.assigneeIsAgent ? [] : [{ repo, work: issue }];
+    }),
+  );
+  for (const issue of mine) {
+    const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
+    if (!readable(repo) || repo.archivedAt !== null) continue;
+    if (!mayView(db, repo, issue, user)) continue;
+    const pull = joinedMine.get(issue.id);
+    if (issue.kind === "pull" && pull === undefined) continue;
+    // A pull a pass gave up on and assigned to this person says why, and can go back.
+    const reason = pull === undefined || issue.assigneeIsAgent ? undefined : passReasonOf(db, issue.id, issue.assigneeId!);
+    // Whatever a person holds can go to the crew, not only what a pass gave up on.
+    const back = issue.assigneeIsAgent ? undefined : hands.get(issue.id);
+    out.push({
+      kind: "assigned",
+      id: `assigned:${issue.id}`,
+      since: issue.updatedAt,
+      repo,
+      ...(pull === undefined ? { issue } : { pull }),
+      who: issue.authorName,
+      authorIsAgent: issue.authorIsAgent,
+      ...(reason === undefined ? {} : { why: reason }),
+      ...(back === undefined ? {} : { builder: back }),
+      ...(pull !== undefined &&
+      mineChecks.get(pull.id)?.state === "ok" &&
+      reviewSummary(db, pull.id, pull.headOid).changesRequested === 0
+        ? { canLand: true }
+        : {}),
+    });
+  }
+  return out;
+}
+
+/** The asks a repository makes that are not a pull's: a ceiling pause, a
+ * parked issue, a planner's decline, a wave waiting for its nod. */
+function repoAsksInto(
+  db: Database,
+  out: AskCandidate[],
+  repos: readonly Repo[],
+  byId: ReadonlyMap<string, Repo>,
+): void {
   const crew = crewForRepos(
     db,
     repos.map((r) => r.id),
@@ -577,38 +664,6 @@ function askCandidatesFor(
       proposal,
       who: getUserById(db, proposal.authorId)?.username ?? "the planner",
     });
-  // Open work assigned to the viewer that no ask above already covers: a
-  // pull that is an ask and assigned to them is one row, the ask's.
-  const taken = new Set(out.flatMap((a) => [a.pull?.id, a.issue?.id].filter((i) => i !== undefined)));
-  const visible = new Map(allRepos.map((r) => [r.id, r]));
-  const mine = listAssignedTo(db, user.id, 50).filter((i) => !taken.has(i.id));
-  const elsewhere = getReposByIds(
-    db,
-    [...new Set(mine.map((i) => i.repoId))].filter((id) => !visible.has(id)),
-  );
-  // An assignment can outlive the access that made it: each repo needs a real read.
-  const readable = (repo: Repo | undefined): repo is Repo =>
-    repo !== undefined && (visible.has(repo.id) || canRead(db, repo, user));
-  const joinedMine = new Map(
-    joinMany(db, mine.filter((i) => i.kind === "pull")).map((p) => [p.id, p]),
-  );
-  for (const issue of mine) {
-    const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
-    if (!readable(repo) || repo.archivedAt !== null) continue;
-    if (!mayView(db, repo, issue, user)) continue;
-    const pull = joinedMine.get(issue.id);
-    if (issue.kind === "pull" && pull === undefined) continue;
-    out.push({
-      kind: "assigned",
-      id: `assigned:${issue.id}`,
-      since: issue.updatedAt,
-      repo,
-      ...(pull === undefined ? { issue } : { pull }),
-      who: issue.authorName,
-      authorIsAgent: issue.authorIsAgent,
-    });
-  }
-  return out;
 }
 
 /**
@@ -778,7 +833,7 @@ export function askRows<
   }));
 }
 
-type Scored = AskCandidate & {
+export type Scored = AskCandidate & {
   readonly consequence: Consequence;
   readonly waiting: WaitingFor;
 };
@@ -795,13 +850,14 @@ function waitingOf(db: Database, user: User | undefined, a: AskCandidate): Waiti
 }
 
 /** Every candidate for the viewer, scored, dismissed or not. */
-function scoredFor(
+export function scoredFor(
   db: Database,
   user: User | undefined,
   repos: readonly Repo[],
   now = Date.now(),
+  only?: string,
 ): Scored[] {
-  const asks = askCandidatesFor(db, user, repos);
+  const asks = askCandidatesFor(db, user, repos, only);
   const scores = consequencesOf(db, asks, now);
   return asks.map((a) => ({
     ...a,
@@ -949,7 +1005,7 @@ export function recordAskLedger(db: Database, now = new Date()): void {
 function lineOf(c: AskCandidate): string {
   if (c.kind === "paused") return "is paused at its ceiling";
   if (c.kind === "assigned")
-    return `"${c.pull?.title ?? c.issue?.title ?? ""}" is assigned to you`;
+    return `"${c.pull?.title ?? c.issue?.title ?? ""}" is assigned to you${c.why === undefined ? "" : `: ${c.why}`}`;
   if (c.kind === "parked")
     return `the crew parked #${c.issue!.number} after three failed runs`;
   if (c.kind === "proposal")
@@ -961,21 +1017,15 @@ function lineOf(c: AskCandidate): string {
     return `"${c.pull?.title ?? ""}" had three reviews asking for changes and waits for you`;
   const title = c.pull?.title ?? "";
   if (c.kind === "review")
-    return `"${title}" waits for your review: ${reviewWhy(c.reviewWait)}`;
+    return `"${title}" waits for your review: ${reviewWhy(c.reviewWait, reviewerPaused(c.repo))}`;
   return c.kind === "stopped"
     ? `the crew stopped on "${title}"`
     : `"${title}" is green, waiting for your look`;
 }
 
 /** Why an agent's change waits for a person's review, in a clause. */
-const reviewWhy = (wait: ReviewWait | undefined): string =>
-  wait?.why === "rounds"
-    ? `the reviewer asked for changes three times, since ${wait.since.slice(0, 10)}`
-    : wait?.why === "lapsed" && wait.lateCheckMinutes !== undefined
-    ? `review ran late: the check took ${wait.lateCheckMinutes} min, and the reviewer did not answer, since ${wait.since.slice(0, 10)}`
-    : wait?.why === "lapsed"
-    ? `the reviewer did not answer, since ${wait.since.slice(0, 10)}`
-    : `no reviewer on the crew, since ${wait?.since.slice(0, 10) ?? "it went green"}`;
+export const reviewWhy = (wait: ReviewWait | undefined, paused = false): string =>
+  `${reviewSays(wait, paused)}, since ${wait?.since.slice(0, 10) ?? "it went green"}`;
 
 /** A collapsed row in a line: how many, and of what. */
 export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> = {
@@ -1091,305 +1141,6 @@ export function askLinesFor(
 }
 
 /**
- * The decisions waiting on the viewer, worded and pictured. A change's own
- * page passes `evenDismissed`: setting an ask aside quiets the lists, never
- * the decision on the thing itself.
- */
-export function decisionsFor(
-  ctx: Ctx,
-  allRepos: readonly Repo[],
-  options: { evenDismissed?: boolean } = {},
-): Decision[] {
-  const db = ctx.app.db;
-  const candidates = options.evenDismissed
-    ? scoredFor(db, ctx.auth.user, allRepos)
-    : waitingOn(db, ctx.auth.user, allRepos);
-  // The pictures, in one read: a green pull's row leads with its preview.
-  const repoIds = [...new Set(candidates.map((c) => c.repo.id))];
-  const records = appsForRepos(db, repoIds);
-  const looks = looksForApps(
-    db,
-    [...records.values()].map((r) => r.id),
-  );
-  const pictureOf = (repo: Repo, pull: Pull): string | undefined => {
-    const record = records.get(repo.id);
-    if (record === undefined) return undefined;
-    const env = previewEnv(pull.number);
-    const look = thumbLook(
-      ctx,
-      repo,
-      record,
-      looks.filter((l) => l.appId === record.id && l.env === env),
-    );
-    return (
-      look && lookUrl(repoBase(repo), look)
-    );
-  };
-  const worded = (c: Scored): Omit<Decision, "consequence" | "waiting"> => {
-    if (c.kind === "assigned") {
-      const thing = c.pull ?? c.issue!;
-      return {
-        kind: "assigned",
-        id: `assigned:${thing.id}`,
-        repo: c.repo,
-        ...(c.pull === undefined ? { issue: c.issue } : { pull: c.pull }),
-        who: c.who,
-        says: `"${thing.title}" is assigned to you.`,
-        short: `assigned to you · updated ${thing.updatedAt.slice(0, 10)}`,
-      };
-    }
-    if (c.kind === "proposal" && c.proposal)
-      return {
-        kind: "proposal",
-        id: `proposal:${c.proposal.id}`,
-        repo: c.repo,
-        proposal: c.proposal,
-        who: c.who,
-        says: `${c.who} proposes "${c.proposal.title}" (${issueTitles(c.proposal).length} issues). Approve opens them, Redirect hands your words to the planner, Later puts it aside.`,
-        short: `proposes "${c.proposal.title}"`,
-      };
-    if (c.kind === "parked" && c.issue)
-      return {
-        kind: "parked",
-        id: `parked:${c.issue.id}`,
-        repo: c.repo,
-        issue: c.issue,
-        who: c.who,
-        says: `Three runs on #${c.issue.number} failed or were declined within an hour, so the crew parked it. Say what to try and it starts again.`,
-        short: `#${c.issue.number} parked after three failed runs`,
-      };
-    if (c.kind === "declined" && c.issue && c.decline)
-      return {
-        kind: "declined",
-        id: `declined:${c.decline.runId}`,
-        repo: c.repo,
-        issue: c.issue,
-        who: c.who,
-        says: `The planner declined the direction: \u201c${c.decline.words}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
-        short: `the planner declined the direction: \u201c${c.decline.words}\u201d`,
-      };
-    if (c.kind === "handover" && c.pull && c.handover)
-      return {
-        kind: "handover",
-        id: `handover:${c.pull.id}`,
-        repo: c.repo,
-        pull: c.pull,
-        who: c.who,
-        says: `The reviewer asked for changes three times with no approval between, so the crew stopped. ${handoverLines(c.handover).join(" ")} Say what to try (or approve it on its page), or close it.`,
-        short: `"${c.pull.title}" had three reviews asking for changes`,
-        why: c.why,
-        recommendation: c.recommendation,
-      };
-    if (c.kind === "waiting" && c.pull)
-      return {
-        kind: "waiting",
-        id: `waiting:${c.pull.id}`,
-        repo: c.repo,
-        pull: c.pull,
-        who: c.who,
-        says: `"${c.pull.title}" is ${c.why ?? "waiting"}, and no person has acted on it. Ship it, say what to change, or close it.`,
-        short: c.why ?? "waiting for a person",
-        why: c.why,
-        recommendation: c.recommendation,
-      };
-    if (c.kind === "stopped" && c.pull) {
-      const tries = c.tries ?? 0;
-      const stopped = c.stoppedByDecider ?? false;
-      return {
-        kind: "stopped",
-        id: `stopped:${c.pull.id}`,
-        repo: c.repo,
-        pull: c.pull,
-        who: c.who,
-        says: stopped
-          ? `${c.who}'s check failed and the crew's decider stopped rather than spend another run. Say what to try, or close it.`
-          : `${c.who} tried ${tries + 1} times and the check still fails. The crew stopped here. Say what to try, or close it.`,
-        short: stopped
-          ? `the check failed; the decider stopped for you`
-          : `${c.who} tried ${tries + 1} times; the check still fails`,
-      };
-    }
-    if (c.kind === "review" && c.pull)
-      return {
-        kind: "review",
-        id: `review:${c.pull.id}`,
-        repo: c.repo,
-        pull: c.pull,
-        who: c.who,
-        says: `${c.who}'s "${c.pull.title}" is green and waits for a review: ${reviewWhy(c.reviewWait)}. An agent's change never ships unreviewed; ship it, or say what is off.`,
-        short: `green; waits for a review — ${reviewWhy(c.reviewWait)}`,
-      };
-    if (c.kind === "look" && c.pull) {
-      const picture = pictureOf(c.repo, c.pull);
-      const clause = testsClause(c.check ?? null);
-      // The crew's own words say who finished it; a person's own change
-      // gets the wording that is true of it — nobody "finished" it for
-      // them, it is simply green and waiting.
-      return {
-        kind: "look",
-        id: `look:${c.pull.id}`,
-        repo: c.repo,
-        pull: c.pull,
-        who: c.who,
-        says: c.authorIsAgent
-          ? `${c.who} finished "${c.pull.title}" and the check is green${clause === "" ? "" : ` (${clause})`}. Look at the preview, then ship it or say what is off.`
-          : `"${c.pull.title}" is green — ${clause === "" ? "" : `${clause}, `}ready for a look. Ship it, or say what is off.`,
-        short: c.authorIsAgent
-          ? `${c.who} finished it; the check is green${clause === "" ? "" : ` (${clause})`}`
-          : `green — ${clause === "" ? "" : `${clause}, `}ready for a look`,
-        ...(picture === undefined ? {} : { picture }),
-      };
-    }
-    return {
-      kind: "paused",
-      id: `paused:${c.repo.id}`,
-      repo: c.repo,
-      who: "the crew",
-      says: `${c.repo.name} reached its $${dollars(c.repo.autonomyCeilingUsd)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
-      short: `at its $${dollars(c.repo.autonomyCeilingUsd)} ceiling until 00:00 UTC`,
-    };
-  };
-  const previewOf = (c: Scored): string | undefined =>
-    c.pull === undefined || !records.has(c.repo.id)
-      ? undefined
-      : `${repoBase(c.repo)}/app/pull-${c.pull.number}/open`;
-  return candidates.map((c) => ({
-    ...worded(c),
-    preview: previewOf(c),
-    consequence: c.consequence,
-    waiting: c.waiting,
-  }));
-}
-/** The id of the form a row's own button submits (see `decisionForm`). */
-const askFormId = (d: Decision): string => `ask-${d.id}`;
-
-/**
- * The form behind a row's landing button — its own post, exactly as it was.
- * It sits after the panel's form, because a form inside a form is not
- * HTML; the button reaches it by id.
- */
-export function decisionForm(d: Decision, back?: string): Html | null {
-  const pull = d.pull;
-  const own = html`id="${askFormId(d)}" method="post" hidden`;
-  if (d.kind === "parked")
-    return html`<form ${own} action="/asks/decide">
-      <input type="hidden" name="ask" value="${d.id}" />
-    </form>`;
-  if (d.kind === "proposal" && d.proposal) return proposalForms(d, back);
-  if (pull === undefined) return null;
-  const base = repoBase(d.repo);
-  const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
-  if (d.kind === "stopped" || d.kind === "handover")
-    return html`<form ${own} action="${base}/pulls/${pull.number}/state">
-      <input type="hidden" name="state" value="closed" />${where}
-    </form>`;
-  if (d.kind === "look" || d.kind === "review")
-    return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
-      <input type="hidden" name="pull" value="${pull.number}" />${where}
-    </form>`;
-  if (d.kind === "waiting")
-    return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
-        <input type="hidden" name="pull" value="${pull.number}" />${where}
-      </form>
-      <form id="${askFormId(d)}-close" method="post" hidden action="${base}/pulls/${pull.number}/state">
-        <input type="hidden" name="state" value="closed" />${where}
-      </form>`;
-  return null;
-}
-
-/**
- * The actions on one ask, on one line: a button for what lands (submitting
- * the row's own form, `decisionForm`), links for what needs a look or a
- * word. Saying something to the crew happens on the change's own page,
- * where the conversation is — not in a box in a list.
- */
-export function decisionActions(ctx: Ctx, d: Decision): Html {
-  const { primary, others } = decisionButtons(ctx, d);
-  return html`${primary} ${others}`;
-}
-
-/** An ask's actions in two parts: the one that decides, and the rest. */
-export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others: Html[] } {
-  const base = repoBase(d.repo);
-  const pull = d.pull;
-  const preview = d.preview;
-  if ((d.kind === "stopped" || d.kind === "handover") && pull)
-    return {
-      primary: btn("Tell them", {
-        href: `${changeHref(base, pull.number)}#comment-body`,
-        size: "sm",
-        variant: "primary",
-      }),
-      others: [
-        btn("Close", { size: "sm", form: askFormId(d) }),
-        btn("See", { href: changeHref(base, pull.number), size: "sm" }),
-      ],
-    };
-  if ((d.kind === "look" || d.kind === "review") && pull)
-    return {
-      primary: btn("Ship", { size: "sm", form: askFormId(d), variant: "primary" }),
-      others: [
-        ...(preview === undefined ? [] : [btn("Preview", { href: preview, size: "sm" })]),
-        btn("Not like this", {
-          href: `${changeHref(base, pull.number)}#comment-body`,
-          size: "sm",
-        }),
-      ],
-    };
-  if (d.kind === "waiting" && pull)
-    return {
-      primary: btn("Ship", { size: "sm", form: askFormId(d), variant: "primary" }),
-      others: [
-        btn("Say what to change", {
-          href: `${changeHref(base, pull.number)}#comment-body`,
-          size: "sm",
-        }),
-        btn("Close", { size: "sm", form: `${askFormId(d)}-close` }),
-      ],
-    };
-  if (d.kind === "assigned" && (d.pull ?? d.issue))
-    return {
-      primary: btn("Open", {
-        href: pull ? changeHref(base, pull.number) : `${base}/issues/${d.issue!.number}`,
-        size: "sm",
-        variant: "primary",
-      }),
-      others: [],
-    };
-  if (d.kind === "proposal" && d.proposal)
-    return {
-      primary: btn("Approve", { size: "sm", form: askFormId(d), variant: "primary" }),
-      others: [btn("Later", { size: "sm", form: `${askFormId(d)}-later` })],
-    };
-  if (d.kind === "declined" && d.issue)
-    return {
-      primary: btn("Answer", {
-        href: `${base}/issues/${d.issue.number}#comment-body`,
-        size: "sm",
-        variant: "primary",
-      }),
-      others: [],
-    };
-  if (d.kind === "parked" && d.issue)
-    return {
-      primary: btn("Tell them", {
-        href: `${base}/issues/${d.issue.number}#comment-body`,
-        size: "sm",
-        variant: "primary",
-      }),
-      // Only where a decider is there to answer.
-      others:
-        ctx.app.config.decider === undefined
-          ? []
-          : [btn("Let the decider", { size: "sm", form: askFormId(d) })],
-    };
-  return {
-    primary: btn("Settings", { href: `${base}/settings/autonomy`, size: "sm" }),
-    others: [],
-  };
-}
-
-/**
  * What the forge itself needs, for a site admin: each sentence of the
  * health answer (`/api/v1/health`) as one ask. Anyone else gets none — the
  * forge's standing is the admin's to read and nobody else's to know about.
@@ -1428,11 +1179,13 @@ export function askSentence(count: number): string {
  * and gone by themselves. `GET /api/v1/asks` and the MCP's `asks` read this.
  */
 export function asksAnswer(ctx: Ctx, user: User, chips?: Chips) {
-  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const set = reviewSet(ctx, user);
   return {
+    // The very figures Home's line and /review show: `count` is live asks plus the forge's needs; `stale` are older than 30 days.
+    waiting: { count: set.count, stale: set.stale.length },
     rows: askLinesFor(ctx.app.db, user, chips),
     forge: forgeNeedsFor(ctx, user).map((d) => needLine(d)),
-    measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
+    measure: { days: ASKS_WINDOW_DAYS, ...askMeasureWeek(ctx.app.db, user.id) },
   };
 }
 
@@ -1468,8 +1221,8 @@ export function askDismissedBy(db: Database, viewerId: string, issue: Issue): bo
     issue.kind === "pull"
       ? pullCause(db, issue)
       : (db
-          .query<{ at: string | null }, [string, string, string]>(
-            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body IN (?2, ?3)",
+          .query<{ at: string | null }, [string, string, string, string]>(
+            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body IN (?2, ?3, ?4)",
           )
           .get(issue.id, ...WAITING_NOTES)?.at ?? issue.createdAt);
   return at > cause;
@@ -1521,17 +1274,4 @@ export function askTargetsFor(
     else issueIds.push((ask.pull ?? ask.issue)!.id);
   }
   return { issueIds: [...new Set(issueIds)], refused };
-}
-
-/**
- * The forms behind a proposal card: Approve, Later and Redirect, each one
- * POST to `/asks/proposal/:id/<verb>` that lands back on the page it came
- * from. They sit apart from the card's own form, as forms do not nest.
- */
-function proposalForms(d: Decision, back?: string): Html {
-  const id = askFormId(d);
-  const post = (verb: string) => `/asks/proposal/${d.proposal!.id}/${verb}`;
-  const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
-  return html`<form id="${id}" method="post" action="${post("approve")}" hidden>${where}</form>
-    <form id="${id}-later" method="post" action="${post("later")}" hidden>${where}</form>`;
 }

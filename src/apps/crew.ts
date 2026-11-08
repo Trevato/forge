@@ -27,9 +27,21 @@ export function crewNow(
   /** When given, the reads are named on it: `app`, `pull`, `working`. */
   request?: Request,
 ): CrewNow | undefined {
+  return crewAll(db, forgeUrl, app, env, viewerId, request)[0];
+}
+
+/** Everyone working on the app now, by the same rules as `crewNow`. */
+export function crewAll(
+  db: Database,
+  forgeUrl: string,
+  app: AppRecord,
+  env: string,
+  viewerId: string | undefined,
+  request?: Request,
+): CrewNow[] {
   const phase = <T>(name: string, work: () => T): T =>
     request === undefined ? work() : timePhase(request, name, work);
-  if (viewerId === undefined) return undefined;
+  if (viewerId === undefined) return [];
   const seen = phase("app", () => {
     const viewer = getUserById(db, viewerId);
     const repo = getRepoById(db, app.repoId);
@@ -37,29 +49,29 @@ export function crewNow(
     if (!canRead(db, repo, viewer)) return undefined;
     return { viewer, repo };
   });
-  if (seen === undefined) return undefined;
+  if (seen === undefined) return [];
   const { viewer, repo } = seen;
   const number = /^pull-(\d+)$/.exec(env)?.[1];
-  if (number === undefined && env !== "production") return undefined;
+  if (number === undefined && env !== "production") return [];
   const pulled = phase("pull", () => {
     if (number === undefined) return { issueId: undefined };
     const pull = getIssue(db, repo.id, Number(number));
     if (pull === undefined || !mayView(db, repo, pull, viewer)) return undefined;
     return { issueId: pull.id as string | undefined };
   });
-  if (pulled === undefined) return undefined;
+  if (pulled === undefined) return [];
   // A run on a sealed issue is not the viewer's to know of.
-  const run = phase("working", () =>
-    workingAgentRuns(db, repo.id, pulled.issueId).find((r) =>
-      mayViewId(db, repo, r.issueId, viewer),
-    ),
+  return phase("working", () =>
+    workingAgentRuns(db, repo.id, pulled.issueId)
+      .filter((r) => mayViewId(db, repo, r.issueId, viewer))
+      .map((run) => {
+        const actor = run.actorId === null ? undefined : getUserById(db, run.actorId);
+        return {
+          who: actor?.username ?? "the crew",
+          url: new URL(`/${repo.ownerName}/${repo.name}/runs/${run.id}`, forgeUrl).href,
+        };
+      }),
   );
-  if (run === undefined) return undefined;
-  const actor = run.actorId === null ? undefined : getUserById(db, run.actorId);
-  return {
-    who: actor?.username ?? "the crew",
-    url: new URL(`/${repo.ownerName}/${repo.name}/runs/${run.id}`, forgeUrl).href,
-  };
 }
 
 /**

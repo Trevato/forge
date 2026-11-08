@@ -10,7 +10,7 @@
 import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "explore";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue";
 
 export interface CardRow {
   readonly label: string;
@@ -39,7 +39,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "explore"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -48,11 +48,15 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   runs: "run",
   asks: "decision",
   milestones: "wave",
+  waves: "wave",
   map: "map",
   feed: "feed",
   explore: "explore",
   new_app: "app",
   pull: "pull",
+  pulls: "pulls",
+  asked: "asked",
+  issue: "issue",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -64,6 +68,9 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   feed: "Feed",
   explore: "Explore",
   pull: "Pull",
+  pulls: "Pulls",
+  asked: "Asked",
+  issue: "Issue",
 };
 
 type Obj = Record<string, unknown>;
@@ -74,8 +81,19 @@ const text = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 const LIMIT = 12;
 const FEED_LIMIT = 10;
+const PULLS_LIMIT = 20;
+const ASKED_WORDS = 80;
+const ASKED_LIMIT = 20;
 /** The forge's id shape (src/kernel/id.ts): 26 lowercase Crockford base32 characters. */
 const RUN_ID = /^[0-9a-hjkmnp-tv-z]{26}$/;
+
+/** A run state as one check word: what a pull's check says at a glance. */
+const checkWord = (state: string): string =>
+  state === "ok" ? "green"
+  : state === "failed" ? "red"
+  : state === "queued" || state === "running" ? "running"
+  : state === "cancelled" ? "cancelled"
+  : "none";
 
 /** An absolute http(s) address: the only origin a card builds links on. */
 const web = (u: string): boolean => /^https?:\/\//.test(u);
@@ -94,6 +112,19 @@ export function cardFor(
   const rows: CardRow[] = [];
   const actions: CardAction[] = [];
   let status = "";
+  if (tool === "waves") {
+    // Only one wave is a card; the list is text.
+    const w = obj(obj(value)["wave"]);
+    if (text(w["version"]) === "") return undefined;
+    const repo = text(obj(value)["repo"]);
+    const pulls = list(w["pulls"]).map(text);
+    rows.push({ label: "Headline", value: text(w["headline"]) });
+    for (const h of list(w["highlights"]).map(obj).slice(0, LIMIT))
+      rows.push({ label: text(h["title"]), value: text(h["why"]) });
+    if (pulls.length > 0)
+      rows.push({ label: "Pulls", value: pulls.slice(0, LIMIT).map((n) => `#${n}`).join(" ") });
+    return { kind, title: `Wave ${text(w["version"])}`, status: `${repo} · ${text(w["date"])}`.replace(/^ · /, ""), rows, actions };
+  }
   if (tool === "new_app") {
     const made = obj(value);
     const repo = text(made["repo"]);
@@ -119,16 +150,11 @@ export function cardFor(
     const p = obj(value);
     const state = text(p["state"]);
     const check = text(obj(p["check"])["state"]);
-    const checkWord =
-      check === "ok" ? "check green"
-      : check === "failed" ? "check red"
-      : check === "queued" || check === "running" ? "check running"
-      : check === "cancelled" ? "check cancelled"
-      : "";
+    const word = checkWord(check);
     const conflicts = list(p["conflicts"]).map(text).filter((c) => c !== "");
     status = [
       state,
-      state === "open" ? checkWord : "",
+      state === "open" && word !== "none" ? `check ${word}` : "",
       state === "open" && conflicts.length > 0 ? "conflicts" : "",
     ]
       .filter((w) => w !== "")
@@ -147,6 +173,73 @@ export function cardFor(
     const preview = text(extra["preview"]);
     if (web(preview)) rows.push({ label: "Preview", value: preview, link: preview });
     return { kind, title: `#${number} ${text(p["title"])}`.trim(), status, rows, actions };
+  }
+  if (kind === "pulls") {
+    // `pulls` answers `{ pulls: [{ number, title, check, … }] }`; the repo and
+    // the state asked for come in `extra`.
+    const pulls = list(obj(value)["pulls"]).map(obj);
+    // The tool stops at `limit`: a full answer may be the first of more.
+    const cut = typeof extra["limit"] === "number" && pulls.length >= extra["limit"];
+    status = `${pulls.length}${cut ? "+" : ""} ${extra["state"] === "closed" ? "closed" : "open"}`;
+    const slug = text(extra["repo"]);
+    for (const p of pulls.slice(0, PULLS_LIMIT)) {
+      const number = text(p["number"]);
+      const check = text(p["check"]);
+      const path = `/${slug}/pulls/${number}`;
+      rows.push({
+        label: `#${number} ${text(p["title"])}`.trim(),
+        value: checkWord(check),
+        ...(web(origin) && slugOf(slug) && /^[1-9]\d*$/.test(number) && here(origin, path)
+          ? { link: origin + path }
+          : {}),
+      });
+    }
+    return { kind, title: CARD_TITLE[kind], status, rows, actions };
+  }
+  if (kind === "asked") {
+    // `asked` answers `{ asked: [{ repo, number, title, state, flagged, pulls }] }`.
+    const asks = list(obj(value)["asked"]).map(obj);
+    const flagged = asks.filter((a) => a["flagged"] === true);
+    const waiting = asks.filter((a) => a["state"] === "waiting").length;
+    status = `${waiting} waiting · ${flagged.length} flagged`;
+    for (const a of [...flagged, ...asks.filter((a) => a["flagged"] !== true)].slice(0, ASKED_LIMIT)) {
+      const repo = text(a["repo"]);
+      const number = text(a["number"]);
+      // The pull that closes it: a landed one, else an open one, else the issue.
+      const pulls = list(a["pulls"]).map(obj);
+      const closing = pulls.find((p) => p["state"] === "merged") ?? pulls.find((p) => p["state"] === "open");
+      const pullNumber = closing === undefined ? "" : text(closing["number"]);
+      const path =
+        /^[1-9]\d*$/.test(pullNumber) ? `/${repo}/pulls/${pullNumber}` : `/${repo}/issues/${number}`;
+      const title = text(a["title"]);
+      rows.push({
+        label: title.length > ASKED_WORDS ? `${title.slice(0, ASKED_WORDS - 1)}…` : title,
+        value: text(a["state"]),
+        ...(web(origin) && slugOf(repo) && /^[1-9]\d*$/.test(number) && here(origin, path)
+          ? { link: origin + path }
+          : {}),
+      });
+    }
+    return { kind, title: CARD_TITLE[kind], status, rows, actions };
+  }
+  if (kind === "issue") {
+    const v = obj(value);
+    const number = text(v["number"]);
+    // A number that names a pull answers `{kind:"pull"}`: no issue, no card.
+    if (v["kind"] === "pull" || !/^[1-9]\d*$/.test(number)) return undefined;
+    const slug = text(extra["repo"]);
+    const base = web(origin) && /^[^/\s]+\/[^/\s]+$/.test(slug) ? `${origin}/${slug}/issues/` : "";
+    const at = (n: string): { link?: string } => (base !== "" && /^\d+$/.test(n) ? { link: base + n } : {});
+    status = text(v["state"]) + (v["closeReason"] ? ` · ${text(v["closeReason"])}` : "");
+    rows.push({ label: `#${number}`, value: text(v["title"]), ...at(number) });
+    // The title is an outsider's when the answer says so; the card says so too.
+    if (v["untrusted"] === true) rows.push({ label: "Author", value: "untrusted: not a writer on this repository" });
+    rows.push({ label: "Assignee", value: text(v["assignee"]) || "nobody" });
+    const labels = list(v["labels"]).map(text).filter((l) => l !== "");
+    if (labels.length > 0) rows.push({ label: "Labels", value: labels.join(", ") });
+    for (const b of list(v["blockedBy"]).map(obj).slice(0, LIMIT))
+      rows.push({ label: "Waits for", value: `#${text(b["number"])} · ${text(b["state"])}`, ...at(text(b["number"])) });
+    return { kind, title: `Issue #${number}`, status, rows, actions };
   }
   if (kind === "app") {
     const apps = list(value).map(obj);

@@ -18,6 +18,70 @@ const SAID_MAX = 2000;
 const RUN = /^[A-Za-z0-9_-]{1,64}$/;
 const COMMIT = /^[0-9a-f]{7,64}$/;
 
+/**
+ * Query parameter names that carry a secret: sign-in, invite and reset
+ * links. A name is compared lowercased with `-` read as `_`, so `API-Key`
+ * is `api_key`; besides these, any name ending `_token`, `_secret` or `_key`
+ * (`id_token`, `client_secret`, `x_api_key`) carries one too.
+ */
+const SECRET_PARAMS = new Set([
+  "token",
+  "access_token",
+  "refresh_token",
+  "id_token",
+  "key",
+  "api_key",
+  "apikey",
+  "secret",
+  "client_secret",
+  "password",
+  "code",
+  "sig",
+  "signature",
+  "invite",
+  "reset",
+  "session",
+  "sessionid",
+  "sid",
+  "auth",
+  "authorization",
+  "jwt",
+  "otp",
+  "magic",
+  "ticket",
+]);
+const SECRET_SUFFIX = /_(?:token|secret|key)$/;
+
+/** Whether a query parameter's (still encoded) name carries a secret. */
+function secretName(raw: string): boolean {
+  let name = raw.replace(/\+/g, " ");
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    // A malformed escape is compared as written.
+  }
+  const n = name.trim().toLowerCase().replace(/-/g, "_");
+  return SECRET_PARAMS.has(n) || SECRET_SUFFIX.test(n);
+}
+
+/**
+ * A query string (with or without its leading `?`) without the parameters
+ * that carry a secret. The others keep their order and their exact
+ * spelling; a query with nothing to drop comes back as it was given.
+ * Out of scope: `;`-separated parameters (read as part of one `&` segment)
+ * and secrets in the path itself (`/reset/<token>`), which a pure function
+ * of the string cannot tell from an ordinary path.
+ */
+export function scrubQuery(query: string): string {
+  const lead = query.startsWith("?") ? "?" : "";
+  const body = query.slice(lead.length);
+  if (body === "") return query;
+  const parts = body.split("&");
+  const kept = parts.filter((part) => !secretName(part.split("=", 1)[0]!));
+  if (kept.length === parts.length) return query;
+  return kept.length === 0 ? "" : `${lead}${kept.join("&")}`;
+}
+
 /** The checked context, nothing for none, or null when a field is malformed. */
 export function parseContext(v: unknown): TellContext | undefined | null {
   if (v === undefined) return undefined;
@@ -34,6 +98,10 @@ export function parseContext(v: unknown): TellContext | undefined | null {
     // A fragment holds client-only state (tokens, invite keys); the issue
     // body may be public, so it never travels.
     url.hash = "";
+    // Nor do the credentials of a sign-in, invite or reset link.
+    url.username = "";
+    url.password = "";
+    url.search = scrubQuery(url.search);
     out.page = url.href;
   }
   if (o["pull"] !== undefined) {

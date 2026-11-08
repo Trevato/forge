@@ -24,7 +24,7 @@ import { addPasskey } from "../../core/passkeys.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
-import { signInFirst } from "../chrome.ts";
+import { forbiddenPage, NOT_ADMIN_HERE, CAME_FROM_ELSEWHERE, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, redirect } from "../layout.ts";
@@ -142,11 +142,11 @@ function nameProblem(ctx: Ctx, username: string): string | undefined {
 export async function everydayOptions(ctx: Ctx): Promise<Response> {
   const refuse = (status: number, message: string) =>
     json({ error: "refused", message }, status);
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const admin = ctx.auth.user;
   if (!admin) return refuse(401, "Sign in first.");
   if (ctx.auth.via !== "session") return refuse(403, "Passkeys are made from a signed-in browser.");
-  if (!admin.isAdmin) return refuse(403, "forbidden");
+  if (!admin.isAdmin) return refuse(403, NOT_ADMIN_HERE);
   if (everydayOf(ctx.app.db, admin) !== undefined)
     return refuse(409, "You already have an everyday account.");
   const data = await boundedBody(ctx.request, STRANGER_MAX);
@@ -163,7 +163,7 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
   if (!admin) return signInFirst(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  if (!admin.isAdmin) return new Response("forbidden", { status: 403 });
+  if (!admin.isAdmin) return forbiddenPage(ctx, NOT_ADMIN_HERE);
   const existing = everydayOf(ctx.app.db, admin);
   if (existing !== undefined)
     return flashTo(ctx, "/settings", {
@@ -231,7 +231,7 @@ export async function everydayKeep(ctx: Ctx): Promise<Response> {
   if (!admin) return signInFirst(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  if (!admin.isAdmin) return new Response("forbidden", { status: 403 });
+  if (!admin.isAdmin) return forbiddenPage(ctx, NOT_ADMIN_HERE);
   keepAdmin(ctx.app.db, admin);
   return flashTo(ctx, "/", {
     message:

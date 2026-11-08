@@ -26,8 +26,10 @@ import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
 import { formatMinutes, formatSpan, timeByPart, type DrillResult } from "../../snapshot/drill.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
+import { backupVerdict } from "../../snapshot/bucket.ts";
 import type { Store } from "../../snapshot/store.ts";
 import { snapshotsOf, type SnapshotsHandle } from "../../snapshot/service.ts";
+import { drillNow, mirrorNow, snapshotNow } from "../../actions/backups_now.ts";
 import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -337,7 +339,7 @@ async function movingPart(
   const restore = snapshots[0]
     ? html`<pre class="restore-command" tabindex="0" aria-label="Restore command">bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
     : null;
-  return html`<div id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live">${recovery}${card(
+  return html`<div id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live">${recovery}${lanesCard(ctx)}${card(
       html`<p>
           Every night at 08:00 UTC the forge writes what cannot be rebuilt — its
           database, its keys, every repository, every app's production data, the
@@ -626,23 +628,40 @@ export async function backupsNow(ctx: Ctx): Promise<Response> {
   if (denied) return denied;
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const svc = snapshotsOf(ctx.app);
-  if (svc === undefined)
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: "This forge has nowhere to put a snapshot.",
-    });
-  try {
-    const m = await svc.now();
-    return flashTo(ctx, "/settings/backups", {
-      message: `Snapshot ${m.name} taken: ${m.repos} repositories, ${m.apps} apps, ${fileSize(m.bytes)}.`,
-    });
-  } catch (error) {
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: `The snapshot failed: ${String(error)}`,
-    });
-  }
+  const taken = await snapshotNow(ctx.app, ctx.auth.user);
+  return flashTo(
+    ctx,
+    "/settings/backups",
+    taken.ok ? { message: taken.value.says } : { tone: "danger", message: taken.error.says },
+  );
+}
+
+/**
+ * Each lane beside its newest object and its line (#9067); a lane without a
+ * line says so, as information. Nothing when no lane has been read. The
+ * verdict is the in-memory read the tile uses: no disk read on the live path.
+ */
+export function lanesCard(ctx: Ctx): Html | "" {
+  const lanes = backupVerdict(ctx.app.config.dataDir, lastDrill(ctx.app.db)).lanes;
+  if (lanes.length === 0) return "";
+  // The glyph is the mark that is not colour alone: ok, !, and a dash for a lane that is retired.
+  const mark = { green: "✓", red: "!", retired: "–" } as const;
+  const lead = { green: "open", red: "closed", retired: "draft" } as const;
+  return card(
+    html`<ul id="backup-lanes" class="list setting-list">
+      ${lanes.map((l) =>
+        row({
+          lead: html`<span aria-hidden="true">${mark[l.state]}</span>`,
+          state: lead[l.state],
+          title: l.says,
+          meta: html`${l.line}`,
+          ...(l.state === "retired" ? { trail: badge("retired", { variant: "outline" }) } : {}),
+          data: { lane: l.lane, "lane-state": l.state },
+        }),
+      )}
+    </ul>`,
+    { head: html`<strong>Lanes</strong>` },
+  );
 }
 
 /** POST /settings/backups/drill — restore the newest snapshot, keep what came of it. */
@@ -655,27 +674,14 @@ export async function backupsDrill(ctx: Ctx): Promise<Response> {
     });
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const svc = snapshotsOf(ctx.app);
-  if (svc === undefined || svc.store === undefined)
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: "This forge has no snapshots to drill.",
-    });
-  try {
-    const d = await svc.drill();
-    return flashTo(
-      ctx,
-      "/settings/backups",
-      d.verdict === "green"
-        ? { message: "The drill restored green." }
-        : { tone: "danger", message: `The drill failed at ${d.failedStep}.` },
-    );
-  } catch (error) {
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: `The drill could not run: ${String(error)}`,
-    });
-  }
+  const ran = await drillNow(ctx.app, ctx.auth.user);
+  return flashTo(
+    ctx,
+    "/settings/backups",
+    ran.ok && ran.value.verdict === "green"
+      ? { message: ran.value.says }
+      : { tone: "danger", message: ran.ok ? ran.value.says : ran.error.says },
+  );
 }
 
 /** POST /settings/backups/mirror — seal the mirror. */
@@ -708,19 +714,14 @@ export async function backupsMirrorNow(ctx: Ctx): Promise<Response> {
   if (denied) return denied;
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const state = await snapshotsOf(ctx.app)?.mirrorNow();
-  if (state === undefined)
-    return flashTo(ctx, "/settings/backups", { tone: "danger", message: "This forge has no mirror to bring level." });
-  if (state.sourceError !== undefined)
-    return flashTo(ctx, "/settings/backups", {
-      tone: "danger",
-      message: `The snapshots could not be read from the destination, so the mirror was not touched: ${state.sourceError}`,
-    });
+  const level = await mirrorNow(ctx.app, ctx.auth.user);
   return flashTo(
     ctx,
     "/settings/backups",
-    state.failingSince === undefined
-      ? { message: `The mirror is level${state.newest ? ` at ${state.newest}` : ""}.` }
-      : { tone: "danger", message: `The mirror is not level: ${state.error ?? "unknown reason"}` },
+    !level.ok
+      ? { tone: "danger", message: level.error.says }
+      : level.value.level
+        ? { message: level.value.says }
+        : { tone: "danger", message: level.value.says },
   );
 }

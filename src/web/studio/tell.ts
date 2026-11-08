@@ -17,7 +17,9 @@ import { alreadyDone } from "../../core/done_on_main.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { LATER_TITLED } from "../../core/pillars.ts";
-import { linkedIssueIds, repoGraph } from "../../core/dependencies.ts";
+import { deferredOf, linkedIssueIds } from "../../core/dependencies.ts";
+import { hasPicture } from "../../core/note_pictures.ts";
+import { heldBanner } from "../pages/gate.ts";
 import {
   getIssuesByNumbers,
   labelsFor,
@@ -32,6 +34,8 @@ import {
   type Pull,
 } from "../../core/pulls.ts";
 import { canEnterApp, canWrite, getSealedFork, type Repo } from "../../core/repos.ts";
+import { FLOW_LABEL } from "../../core/flow_label.ts";
+import { flowButton } from "../flow_button.ts";
 import { canSeeSealed } from "../../core/sealed.ts";
 import {
   activeRunFor,
@@ -305,7 +309,7 @@ function deferredWhy(
   if (byRepo === undefined) deferrals.set(wordCtx, (byRepo = new Map()));
   let known = byRepo.get(repo.id);
   if (known === undefined)
-    byRepo.set(repo.id, (known = repoGraph(wordCtx.db, repo.id).deferred));
+    byRepo.set(repo.id, (known = deferredOf(wordCtx.db, repo)));
   return known.get(issue.id);
 }
 
@@ -449,7 +453,7 @@ async function studioTell(
     doneBy.length === 0
       ? null
       : card(
-          html`<form method="post" action="${thread}/state" class="row">
+          html`<form method="post" action="${thread}/state" class="row" data-now="Closed" data-now-once>
             <input type="hidden" name="state" value="closed" />
             <input type="hidden" name="reason" value="done" />
             <span
@@ -507,6 +511,13 @@ async function studioTell(
           badge("Sealed security report", { tone: "danger", icon: "lock" }),
       )}
       ${workSpent(ctx, repo, issue.id)}
+      ${!direction && issue.state === "open" && canWrite(db, repo, user)
+        ? flowButton(
+            `${thread}/flow`,
+            labelsFor(db, issue.id).some((l) => l.name.toLowerCase() === FLOW_LABEL),
+            thread,
+          )
+        : null}
       ${issue.assigneeName !== null
         ? html`<span
             >${when(issue.assigneeIsAgent, () => icon("bot"))}
@@ -549,11 +560,12 @@ async function studioTell(
     { extra: "mt" },
   );
 
-  const body = html`${repoHeader(ctx, repo, "issues", {
+  const body = html`<div data-tell>${repoHeader(ctx, repo, "issues", {
       compact: true,
       ownTitle: true,
     })}
     ${head}
+    ${heldBanner(ctx, repo, issue)}
     <div class="split">
       <div>
         ${talk.node} ${doneLine}
@@ -568,6 +580,15 @@ async function studioTell(
       </div>
       <aside>
         ${privateWorkCard(ctx, repo, issue, `${thread}/private`)}
+        ${hasPicture(db, repo.id, issue.number)
+          ? card(
+              html`<h2>Picture of the page</h2>
+                <a href="${thread}/picture"
+                  ><img src="${thread}/picture" alt="The page the sender was looking at" loading="lazy" class="tell-picture"
+                /></a>`,
+              { extra: "mt" },
+            )
+          : null}
         ${runsCard}
         ${closingCard}
         ${dependencies}
@@ -579,7 +600,7 @@ async function studioTell(
       thread: "issue",
       number: issue.number,
       lastCommentId: talk.lastCommentId,
-    })}`;
+    })}</div>`;
 
   const response = page({
     ctx,

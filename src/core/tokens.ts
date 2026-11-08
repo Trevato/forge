@@ -71,7 +71,7 @@ export function verifyToken(
   db: Database,
   presented: string,
 ): Result<
-  { user: User; scope: TokenScope; proposal?: Proposal; run?: RunScope },
+  { user: User; scope: TokenScope; name: string; proposal?: Proposal; run?: RunScope; via?: string },
   "invalid_token"
 > {
   const row = db
@@ -79,6 +79,7 @@ export function verifyToken(
       {
         id: string;
         user_id: string;
+        name: string;
         scope: TokenScope;
         last_used_at: string | null;
         expires_at: string | null;
@@ -87,14 +88,16 @@ export function verifyToken(
         p_origin: string | null;
         r_repo: string | null;
         r_fork: string | null;
+        v_via: string | null;
       },
       [string]
     >(
-      `SELECT t.id, t.user_id, t.scope, t.last_used_at, t.expires_at,
+      `SELECT t.id, t.user_id, t.name, t.scope, t.last_used_at, t.expires_at,
               p.repo_id AS p_repo, p.child AS p_child, p.origin AS p_origin,
-              r.repo_id AS r_repo, r.fork_id AS r_fork
+              r.repo_id AS r_repo, r.fork_id AS r_fork, v.via AS v_via
          FROM token t LEFT JOIN proposal_token p ON p.token_id = t.id
                       LEFT JOIN run_token r ON r.token_id = t.id
+                      LEFT JOIN via_token v ON v.token_id = t.id
         WHERE t.token_hash = ?1`,
     )
     .get(sha256(presented));
@@ -119,6 +122,7 @@ export function verifyToken(
   if (row.p_repo !== null)
     return ok({
       user,
+      name: row.name,
       scope: row.scope,
       proposal: {
         tokenId: row.id,
@@ -131,10 +135,13 @@ export function verifyToken(
   if (row.r_repo !== null)
     return ok({
       user,
+      name: row.name,
       scope: row.scope,
       run: { repoId: row.r_repo, forkId: row.r_fork! },
     });
-  return ok({ user, scope: row.scope });
+  // The forge's own agent, speaking for this person (`core/via_token.ts`).
+  if (row.v_via !== null) return ok({ user, name: row.name, scope: row.scope, via: row.v_via });
+  return ok({ user, name: row.name, scope: row.scope });
 }
 
 export function listTokens(db: Database, userId: string): TokenInfo[] {
@@ -177,11 +184,7 @@ export function deleteToken(
   userId: string,
   tokenId: string,
 ): boolean {
-  return (
-    db
-      .query("DELETE FROM token WHERE id = ?1 AND user_id = ?2")
-      .run(tokenId, userId).changes > 0
-  );
+  return deleteWithRefreshFamily(db, tokenId, userId);
 }
 
 /**
@@ -190,7 +193,40 @@ export function deleteToken(
  * a person revoking their own goes through `deleteToken`.
  */
 export function revokeToken(db: Database, tokenId: string): boolean {
-  return db.query("DELETE FROM token WHERE id = ?1").run(tokenId).changes > 0;
+  return deleteWithRefreshFamily(db, tokenId, null);
+}
+
+/**
+ * Delete a token and, when the OAuth endpoint minted it with a refresh
+ * token, every `oauth_refresh` row of its family, so a revoked harness
+ * cannot refresh its way back (#8428). The family is read before the
+ * delete: `token_id` clears with the token. Plain SQL, so this module
+ * stays free of an import of oauth.ts. Expiry (`pruneTokens`) does not
+ * come through here: an expired access token still refreshes.
+ */
+function deleteWithRefreshFamily(
+  db: Database,
+  tokenId: string,
+  userId: string | null,
+): boolean {
+  return db.transaction(() => {
+    const family = db
+      .query<{ family: string }, [string]>(
+        "SELECT family FROM oauth_refresh WHERE token_id = ?1 LIMIT 1",
+      )
+      .get(tokenId);
+    const deleted =
+      userId === null
+        ? db.query("DELETE FROM token WHERE id = ?1").run(tokenId)
+        : db
+            .query("DELETE FROM token WHERE id = ?1 AND user_id = ?2")
+            .run(tokenId, userId);
+    if (deleted.changes === 0) return false;
+    if (family !== null) {
+      db.query("DELETE FROM oauth_refresh WHERE family = ?1").run(family.family);
+    }
+    return true;
+  })();
 }
 
 /**

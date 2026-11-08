@@ -15,11 +15,13 @@ import {
   notePasskeyUsed,
   passkeyIds,
   passkeyRoom,
-  removePasskey,
   PASSKEY_NAME_MAX,
 } from "../../core/passkeys.ts";
+import { linkEdgeLogin } from "../../core/edge_links.ts";
+import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { createSession } from "../../core/sessions.ts";
+import { LAST_WAY_IN, removeOwnPasskey } from "../../actions/passkeys.ts";
 import { recoveryAccount, requestRecovery, spendRecoveryLink } from "../../actions/verify.ts";
 import { getUserById, isActive } from "../../core/users.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
@@ -27,7 +29,7 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import { clientAddress, clientBucket } from "../../http/peer.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
-import { signInFirst } from "../chrome.ts";
+import { CAME_FROM_ELSEWHERE, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
@@ -56,9 +58,12 @@ const refuse = (status: number, message: string) =>
 
 /** A signed-in browser, on a same-origin request; else the refusal to send. */
 function sessionOnly(ctx: Ctx): Response | undefined {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   if (!ctx.auth.user) return refuse(401, "Sign in first.");
-  if (ctx.auth.via !== "session") return refuse(403, "Passkeys are changed from a signed-in browser.");
+  // A browser the platform edge signed in is a signed-in browser too: adding a
+  // passkey there is how an account comes to sign in without the edge (#9432).
+  if (ctx.auth.via !== "session" && ctx.auth.via !== "edge")
+    return refuse(403, "Passkeys are changed from a signed-in browser.");
   return undefined;
 }
 
@@ -72,6 +77,11 @@ export function passkeysPage(ctx: Ctx): Response {
   const body = html`<p class="muted small mb">
       A passkey signs you in with a fingerprint, face or device PIN instead of
       a password. Add one per device; each can be removed on its own.
+    </p>
+    <p class="muted small mb" id="passkey-why">
+      Why: the forge signs you in itself, so your account does not depend on
+      another service being up or trusted. With a passkey, you can sign in here
+      even if the platform sign-in is switched off.
     </p>
     ${keys.length === 0
       ? empty({ icon: "key", title: "No passkeys yet", note: "Your password still works; add a passkey now, as every new account starts with one." })
@@ -149,6 +159,14 @@ export async function passkeyAdd(ctx: Ctx): Promise<Response> {
       409,
       added.error === "too_many" ? "That is as many passkeys as an account keeps." : PASSKEY_TAKEN,
     );
+  // A browser the edge signed in carries the login it vouched for: link it to
+  // this account, so the edge still reaches it by that login and no second
+  // account is made. A refused link (taken, malformed) leaves the passkey added.
+  if (ctx.auth.via === "edge") {
+    const login = edgeIdentity(ctx.request, activeEdgeToken(ctx.app));
+    if (login !== undefined)
+      linkEdgeLogin(ctx.app.db, ctx.auth.user!, login);
+  }
   return json({ ok: true });
 }
 
@@ -157,17 +175,19 @@ export async function passkeyDelete(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  const gone = removePasskey(ctx.app.db, ctx.auth.user.id, ctx.params.id ?? "");
+  const gone = removeOwnPasskey(ctx.app, ctx.auth.user, ctx.params.id ?? "");
   return flashTo(
     ctx,
     "/settings/passkeys",
-    gone ? { message: "Passkey removed." } : { tone: "danger", message: "No such passkey." },
+    gone.ok
+      ? { message: "Passkey removed." }
+      : { tone: "danger", message: gone.error === "last_way_in" ? LAST_WAY_IN : "No such passkey." },
   );
 }
 
 // POST /signin/passkey/options — a challenge for someone with no session yet.
 export function signinOptions(ctx: Ctx): Response {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const wait = signinAllowed(ctx, `passkey:${clientAddress(ctx.request)}`, { forgeWide: false });
   if (wait !== undefined)
     return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });
@@ -176,7 +196,7 @@ export function signinOptions(ctx: Ctx): Response {
 
 // POST /signin/passkey — a good assertion gets the session a password gets.
 export async function signinPasskey(ctx: Ctx): Promise<Response> {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const wait = signinAllowed(ctx, `passkey:${clientAddress(ctx.request)}`, { forgeWide: false });
   if (wait !== undefined)
     return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });
@@ -291,7 +311,7 @@ export async function recoverRequest(ctx: Ctx): Promise<Response> {
 
 // POST /recover/options — a challenge, for a link that still works.
 export async function recoverOptions(ctx: Ctx): Promise<Response> {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const user = recoveryAccount(ctx.app, str(data.token));
@@ -311,7 +331,7 @@ export async function recoverOptions(ctx: Ctx): Promise<Response> {
 
 // POST /recover/passkey — a good registration spends the link and signs in.
 export async function recoverFinish(ctx: Ctx): Promise<Response> {
-  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, CAME_FROM_ELSEWHERE);
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const token = str(data.token);

@@ -107,6 +107,17 @@ describe("a report through the proxy", () => {
     expect((await report("notes", { ...good, app: ids["diary"] })).status).toBe(400);
   });
 
+  test("its referrer and campaign are buffered against that app, as host and utm fields only (#9427)", async () => {
+    const { flushViews } = await import("../src/perf/views_store.ts");
+    await report("notes", { ...good, path: "/a?x=1", ref: "https://espodev.com/blog?secret=1", q: "?utm_source=post&utm_campaign=c1&token=zzz", out: "github.com" });
+    flushViews(app.db);
+    const row = app.db
+      .query<Record<string, unknown>, [string]>("SELECT path, ref_host, source, campaign, out_host FROM traffic_view WHERE scope = ?1 ORDER BY id DESC LIMIT 1")
+      .get(ids["notes"]!);
+    expect(row).toEqual({ path: "/a", ref_host: "espodev.com", source: "post", campaign: "c1", out_host: "github.com" });
+    expect(app.db.query("SELECT 1 FROM traffic_view WHERE scope = ?1").all(ids["diary"]!)).toEqual([]);
+  });
+
   test("keeps no address and refuses a foreign origin, a bad body and an opted-out visitor", async () => {
     expect((await report("notes", good, { origin: "http://evil.test" })).status).toBe(403);
     expect((await report("notes", "nope")).status).toBe(400);

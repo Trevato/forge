@@ -7,8 +7,8 @@
 
 import { listProposals, mintProposal, revokeProposal } from "../../actions/proposal_tokens.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
-import type { Ctx } from "../../http/context.ts";
-import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
+import { isAccountItself, type Ctx } from "../../http/context.ts";
+import { loadRepo, repoBase, repoNotFound, NOT_YOURS_TO_DO, forbiddenPage } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo } from "../layout.ts";
@@ -69,7 +69,7 @@ async function writerForm(ctx: Ctx) {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   if (!canWrite(ctx.app.db, repo, ctx.auth.user))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "Only someone who can write to this repository can do this.");
   return { repo, form };
 }
 
@@ -79,8 +79,8 @@ export async function proposalTokenMint(ctx: Ctx): Promise<Response> {
   if (gate instanceof Response) return gate;
   const { repo, form } = gate;
   // Never minted by another token: a credential cannot grow credentials.
-  if (ctx.auth.via !== "session" && ctx.auth.via !== "password")
-    return new Response("forbidden", { status: 403 });
+  if (!isAccountItself(ctx.auth))
+    return forbiddenPage(ctx, "A token is made from your own signed-in account, never by another token.");
   const minted = mintProposal(ctx.app, ctx.auth.user, repo, {
     child: field(form, "child"),
     origin: field(form, "origin"),
@@ -89,7 +89,7 @@ export async function proposalTokenMint(ctx: Ctx): Promise<Response> {
   if (!minted.ok)
     return minted.error.code === "invalid_child" || minted.error.code === "invalid_origin"
       ? flashTo(ctx, back, { tone: "danger", message: minted.error.message })
-      : new Response("forbidden", { status: 403 });
+      : forbiddenPage(ctx, NOT_YOURS_TO_DO);
   // Post-redirect-get: the secret rides a one-shot flash, never the page.
   return flashTo(ctx, back, {
     message: "Proposal token minted — copy it now, it is never shown again.",

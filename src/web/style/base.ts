@@ -57,6 +57,7 @@ body {
 a { color: inherit; text-decoration: none; transition: color 120ms var(--ease); }
 a:hover { color: var(--accent); }
 code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
+.mono { overflow-wrap: anywhere; }
 
 h1 { font-size: 20px; font-weight: 620; letter-spacing: -0.02em; line-height: 1.25; text-wrap: balance; }
 h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; text-wrap: balance; }
@@ -134,7 +135,8 @@ body { overflow-x: clip; }
   width: 100%; max-width: var(--page); margin: 0 auto;
   padding: 20px 16px 36px;
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  color: var(--faint); font-size: 12.5px;
+  /* Muted, not faint: small text and links must still reach AA (4.5:1) in every theme. */
+  color: var(--muted-fg); font-size: 12.5px;
 }
 .foot .mark {
   width: 7px; height: 7px; border-radius: 2px; opacity: .7;
@@ -187,6 +189,7 @@ export const utilities = /* css */ `
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 [hidden] { display: none !important; }
+[data-region] { display: contents; }
 
 @media (min-width: 720px) {
   .shell { padding: 0 24px 96px; }

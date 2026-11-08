@@ -1,0 +1,645 @@
+/**
+ * /talk (#7652): the page renders the person's own history and a composer,
+ * a reply streams over SSE and ends with the turn, resuming from a turn id;
+ * a held action draws Confirm and Cancel that post the person's yes or no;
+ * signed out goes to /signin; Talk is in the chrome, the palette and home;
+ * a stream is capped per person; a once-result is never confirmed here.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { createRepo } from "../src/actions/repos.ts";
+import { sayNo } from "../src/actions/conversation_confirms.ts";
+import { clock, STREAMS_MAX } from "../src/web/pages/talk.ts";
+import { appendTurn, listTurns, openConversation } from "../src/core/conversations.ts";
+import { hold, waitingFor } from "../src/core/fence.ts";
+import { getRepoById } from "../src/core/repos.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { createUser, type User } from "../src/core/users.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+quietLogs();
+
+let dir: string;
+let app: App;
+let servers: Servers;
+let alice: User;
+let bob: User;
+
+const cookie = (u: User) => `forge_session=${createSession(app.db, u.id).token}`;
+const get = (path: string, u?: User, headers: Record<string, string> = {}) =>
+  fetch(`${servers.url}${path}`, { redirect: "manual", headers: { ...(u ? { cookie: cookie(u) } : {}), ...headers } });
+const post = (path: string, u: User, form: Record<string, string>, headers: Record<string, string> = {}) =>
+  fetch(`${servers.url}${path}`, {
+    method: "POST",
+    redirect: "manual",
+    headers: { origin: servers.url, cookie: cookie(u), ...headers },
+    body: new URLSearchParams(form),
+  });
+const say = (u: User, role: string, text: string) =>
+  appendTurn(app.db, u.id, openConversation(app.db, u.id).id, { role, text });
+
+/** The frames of a stream that ended on its own. */
+async function frames(path: string, u: User, headers: Record<string, string> = {}) {
+  const res = await get(path, u, headers);
+  const text = await res.text();
+  return text
+    .split("\n\n")
+    .map((f) => ({
+      event: /^event: (.*)$/m.exec(f)?.[1],
+      id: /^id: (.*)$/m.exec(f)?.[1],
+      data: /^data: (.*)$/m.exec(f)?.[1],
+    }))
+    .filter((f) => f.event !== undefined);
+}
+
+beforeAll(async () => {
+  dir = await mkdtemp(join(tmpdir(), "forge-talk-page-"));
+  app = createApp({ dataDir: dir, port: 0 });
+  servers = await serve(app);
+  const mk = async (username: string, first = false) => {
+    const u = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@forge.local`, password: "a-good-passphrase", adminIfFirst: first });
+    if (!u.ok) throw new Error(u.error);
+    promote(app.db, u.value);
+    return u.value;
+  };
+  alice = await mk("alice", true);
+  bob = await mk("bob");
+}, 30_000);
+
+afterAll(async () => {
+  servers.stop();
+  app.close();
+  await rm(dir, { recursive: true, force: true });
+});
+
+describe("the page", () => {
+  test("signed out goes to /signin and comes back", async () => {
+    const res = await get("/talk");
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toStartWith("/signin?next=%2Ftalk");
+    expect((await get("/talk/stream")).status).toBe(401);
+  });
+
+  test("renders your history escaped, a composer, and keeps the log in order", async () => {
+    say(alice, "person", "hello <b>there</b>");
+    say(alice, "agent", "Hi **alice**");
+    const res = await get("/talk", alice);
+    expect(res.status).toBe(200);
+    const page = await res.text();
+    expect(page).toContain("hello &lt;b&gt;there&lt;/b&gt;");
+    expect(page).not.toContain("<b>there</b>");
+    expect(page).toContain("<strong>alice</strong>");
+    expect(page).toContain('action="/talk"');
+    expect(page).toContain('name="text"');
+    expect(page.indexOf("hello")).toBeLessThan(page.indexOf("Hi "));
+    expect(res.headers.get("content-security-policy")).toBeTruthy();
+  });
+
+  test("each person has their own conversation", async () => {
+    say(alice, "person", "alice-only secret");
+    const bobs = await (await get("/talk", bob)).text();
+    expect(bobs).not.toContain("alice-only secret");
+    expect(bobs).toContain("Ask the forge anything");
+  });
+
+  test("a message with no agent running says so and is not kept", async () => {
+    const res = await post("/talk", bob, { text: "do a thing" });
+    expect(res.status).toBe(303);
+    const after = await (await get("/talk", bob)).text();
+    expect(after).not.toContain("do a thing");
+    expect((await post("/talk", bob, { text: "x" }, { origin: "https://elsewhere.example" })).status).toBe(403);
+    expect((await post("/talk", bob, { text: "  " })).status).toBe(303);
+  });
+
+  test("a message shows who and when, with a copy button; a tool call is a closed card; an empty chat offers starters", async () => {
+    const carol = await createUser(app.db, { origin: "seed", trusted: true, username: "dana", email: "dana@forge.local", password: "a-good-passphrase" });
+    if (!carol.ok) throw new Error(carol.error);
+    promote(app.db, carol.value);
+    const empty = await (await get("/talk", carol.value)).text();
+    expect(empty).toContain('href="/talk?q=What%20needs%20my%20attention%3F"');
+    expect(empty).not.toMatch(/<button[^>]*(data-suggest|data-copy|data-jump)/);
+    say(carol.value, "person", "hi");
+    say(carol.value, "agent", "hello");
+    say(carol.value, "tool", "list_issues {\"repo\":\"x\"}");
+    const page = await (await get("/talk", carol.value)).text();
+    expect(page).not.toContain("data-suggest=");
+    expect(page).toContain("You · <time");
+    expect(page).toContain("Forge · <time");
+    expect(page).not.toContain("data-copy");
+    expect(page).toContain('role="log"');
+    expect(page).toMatch(/<details><summary>list_issues /);
+    expect(page).not.toMatch(/<details open/);
+  });
+
+  test("a suggestion link prefills the composer without the script, and only with a known suggestion", async () => {
+    const q = "What needs my attention?";
+    const page = await (await get(`/talk?q=${encodeURIComponent(q)}`, alice)).text();
+    expect(page).toMatch(/<textarea[^>]*>What needs my attention\?<\/textarea>/);
+    const other = await (await get(`/talk?q=${encodeURIComponent("<script>x</script>")}`, alice)).text();
+    expect(other).not.toContain("<script>x</script>");
+    expect(other).not.toMatch(/<textarea[^>]*>[^<]/);
+  });
+
+  test("markdown in a reply: highlighted code, a table and a link render; every <script> is escaped", async () => {
+    const eve = await createUser(app.db, { origin: "seed", trusted: true, username: "eve", email: "eve@forge.local", password: "a-good-passphrase" });
+    if (!eve.ok) throw new Error(eve.error);
+    promote(app.db, eve.value);
+    say(eve.value, "agent", [
+      "Plain <script>alert(1)</script> and [docs](/docs) and [bad](javascript:alert(1))",
+      "",
+      "```ts",
+      "const s = \"<script>alert(2)</script>\";",
+      "```",
+      "",
+      "| name | note |",
+      "| --- | ---: |",
+      "| a | <script>alert(3)</script> |",
+    ].join("\n"));
+    const page = await (await get("/talk", eve.value)).text();
+    expect(page).not.toContain("<script>alert");
+    expect(page).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(page).toContain("&lt;script&gt;alert(2)&lt;/script&gt;");
+    expect(page).toContain("<td class=\"ta-r\">&lt;script&gt;alert(3)&lt;/script&gt;</td>");
+    expect(page).toMatch(/<pre><code class="language-ts">.*tok-keyword/s);
+    expect(page).toContain('<a href="/docs" rel="nofollow noopener">docs</a>');
+    expect(page).not.toContain('href="javascript:');
+    expect(page).toContain("<table>");
+  });
+
+  test("an unfinished code block closes itself and leaves what is above it as it was", async () => {
+    const { turnHtml } = await import("../src/web/pages/talk.ts");
+    const turn = (text: string) => ({ id: "9", role: "agent", text, createdAt: "2026-01-01T00:00:00Z" }) as any;
+    const above = "Intro **bold**\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n";
+    const part = turnHtml(turn(`${above}\`\`\`ts\nconst a = 1;\nconst b`), new Set()).text;
+    const whole = turnHtml(turn(`${above}\`\`\`ts\nconst a = 1;\nconst b = 2;\n\`\`\`\n\nDone.`), new Set()).text;
+    const head = (h: string) => h.slice(0, h.indexOf("<pre>"));
+    expect(head(part)).toBe(head(whole));
+    expect(part.match(/<pre>/g)?.length).toBe(1);
+    expect(part).toContain("</code></pre>");
+  });
+
+  test("an agent turn carries no prose padding or measure into the column", async () => {
+    const { talkCss } = await import("../src/web/pages/talk_client.ts");
+    expect(talkCss).toContain(".talk-body.prose { padding: 0;");
+    expect(talkCss).toContain(".talk-body.prose > * { max-width: none; }");
+  });
+
+  test("the page's own bytes are held: stylesheet and script stay small", async () => {
+    const { talkCss, talkJs } = await import("../src/web/pages/talk_client.ts");
+    expect(Buffer.byteLength(talkCss)).toBeLessThan(3_750);
+    expect(Buffer.byteLength(talkJs)).toBeLessThan(13_500);
+    say(alice, "agent", "```ts\nlet x = 1;\n```");
+    const page = await get("/talk", alice);
+    const size = (await page.arrayBuffer()).byteLength;
+    expect(size).toBeLessThan(40_000);
+  });
+
+  describe("the script, driven against a DOM", () => {
+    test("while a reply streams the composer stays open: Send queues, Steer and Stop appear, Escape stops, and it is Send again when the turn ends", async () => {
+      const t = await boot();
+      const send = t.doc.querySelector('.bar button[type="submit"]');
+      const stop = t.doc.querySelector("[data-stop]");
+      expect(send.textContent).toBe("Send");
+      expect(stop.hidden).toBe(true);
+      t.sources.at(-1)!.on["running"]!({ data: "{}" });
+      expect(send.textContent).toBe("Queue");
+      expect(stop.hidden).toBe(false);
+      stop.dispatchEvent(new t.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      t.doc.dispatchEvent(new t.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      expect(t.urls).toEqual(["/api/v1/conversation/stop", "/api/v1/conversation/stop"]);
+      t.sources.at(-1)!.on["done"]!({ data: "{}" });
+      expect(send.textContent).toBe("Send");
+      expect(stop.hidden).toBe(true);
+      t.doc.dispatchEvent(new t.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      expect(t.urls).toHaveLength(2);
+    });
+
+    const queuedFrame = (id: string, text: string) => ({ id, html: `<li class="talk-turn talk-queued" data-queued="${id}"><div class="talk-body">${text}</div><form data-unqueue method="post" action="/talk/queue/${id}/cancel"><button>Cancel</button></form></li>` });
+
+    test("a message sent mid-answer is queued; the stream's queued frame draws it; Cancel puts it back without overwriting what is typed (#8819)", async () => {
+      const t = await boot();
+      t.how.value = "queued";
+      t.sources.at(-1)!.on["running"]!({ data: "{}" });
+      t.box.value = "and then this";
+      t.key({});
+      await tick();
+      expect(t.bodies.at(-1)).toMatchObject({ text: "and then this", during: "queue" });
+      expect(t.status.textContent).toContain("Queued");
+      t.sources.at(-1)!.on["queued"]!({ data: JSON.stringify({ items: [queuedFrame("q1", "and then this")] }) });
+      t.sources.at(-1)!.on["queued"]!({ data: JSON.stringify({ items: [queuedFrame("q1", "and then this")] }) });
+      expect(t.doc.querySelectorAll("[data-queued]")).toHaveLength(1);
+      t.box.value = "something new";
+      t.doc.querySelector("form[data-unqueue]").dispatchEvent(new t.window.Event("submit", { bubbles: true, cancelable: true }));
+      await tick();
+      expect(t.urls.at(-1)).toEndWith("/talk/queue/q1/cancel");
+      expect(t.doc.querySelector("[data-queued]")).toBeNull();
+      expect(t.box.value).toBe("something new\nand then this");
+    });
+
+    test("Cancel keeps the message when the server fails and drops it only on a 404; Steer sends a steer", async () => {
+      const t = await boot();
+      t.sources.at(-1)!.on["running"]!({ data: "{}" });
+      t.sources.at(-1)!.on["queued"]!({ data: JSON.stringify({ items: [queuedFrame("q1", "keep me")] }) });
+      t.cancel.status = 500;
+      t.doc.querySelector("form[data-unqueue]").dispatchEvent(new t.window.Event("submit", { bubbles: true, cancelable: true }));
+      await tick();
+      expect(t.doc.querySelector("[data-queued]")).not.toBeNull();
+      t.cancel.status = 404;
+      t.doc.querySelector("form[data-unqueue]").dispatchEvent(new t.window.Event("submit", { bubbles: true, cancelable: true }));
+      await tick();
+      expect(t.doc.querySelector("[data-queued]")).toBeNull();
+      t.box.value = "do this instead";
+      t.doc.querySelector("[data-steer]").dispatchEvent(new t.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      await tick();
+      expect(t.bodies.at(-1)).toMatchObject({ text: "do this instead", during: "steer" });
+    });
+
+    const boot = async (user = "u1", store: Record<string, string> = {}) => {
+      const sources: Array<{ on: Record<string, (e: { data: string }) => void> }> = [];
+      const { Window } = await import("happy-dom");
+      const { talkJs } = await import("../src/web/pages/talk_client.ts");
+      const window = new Window({ url: "http://localhost/talk" });
+      const doc = window.document as any;
+      doc.body.innerHTML = `<div class="talk" data-talk data-user="${user}" data-paged="0" data-running="1"><div>
+        <ol class="talk-log" role="log" data-last=""><li class="talk-turn talk-agent" id="t-1"><div class="talk-body"><pre><code>let a = 1;</code></pre></div><p class="talk-meta">Forge · now</p></li></ol><div id="end"></div></div>
+        <form class="talk-compose"><p class="talk-status" role="status"></p><ul data-chips></ul><textarea name="text"></textarea><div class="bar"><span data-compose-hint></span><label data-attach hidden><input type="file" data-pick /></label><button class="btn" type="button" data-stop hidden>Stop</button><button class="btn" type="button" data-steer hidden>Steer</button><button class="btn" type="submit">Send</button></div></form></div>`;
+      const how = { value: "started" };
+      const cancel = { status: 200 };
+      const sent: string[] = [];
+      const urls: string[] = [];
+      const copied: string[] = [];
+      const bodies: { files?: string[] }[] = [];
+      const fetchStub = async (u: string, init: { body: string; method?: string }) => {
+        urls.push(u);
+        if (u.endsWith("/files")) return { ok: true, json: async () => ({ id: "f1", name: "shot.png" }) };
+        if (init.method === "DELETE") return { ok: true, json: async () => ({}) };
+        if (u.includes("/queue/")) return { ok: cancel.status === 200, status: cancel.status, json: async () => ({}) };
+        const body = JSON.parse(init.body);
+        sent.push(body.text);
+        bodies.push(body);
+        return { ok: true, json: async () => ({ how: how.value, queued: "q1" }) };
+      };
+      const local = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; } };
+      const nav = { clipboard: { writeText: async (t: string) => { copied.push(t); } } };
+      class ES { on: Record<string, (e: { data: string }) => void> = {}; constructor() { sources.push(this); } addEventListener(n: string, f: (e: { data: string }) => void) { this.on[n] = f; } close() {} }
+      doc.getElementById("end").scrollIntoView = () => {};
+      new Function("document", "window", "EventSource", "fetch", "localStorage", "navigator", talkJs)(doc, window, ES, fetchStub, local, nav);
+      const box = doc.querySelector("textarea");
+      const key = (init: object) => box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }));
+      const emit = (id: string, html: string) => sources.at(-1)!.on["turn"]!({ data: JSON.stringify({ id, html }) });
+      return { how, cancel, emit, bodies, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
+    };
+    const tick = () => new Promise((r) => setTimeout(r, 5));
+
+    test("a pasted file becomes a chip with Remove, and a sent message carries its id once", async () => {
+      const t = await boot();
+      const paste = new t.window.Event("paste", { bubbles: true, cancelable: true }) as any;
+      paste.clipboardData = { files: [{ name: "shot.png" }] };
+      t.box.dispatchEvent(paste);
+      await tick();
+      const chips = t.doc.querySelector("[data-chips]");
+      expect(chips.textContent).toContain("shot.png");
+      expect(chips.querySelector("button").textContent).toBe("Remove");
+      t.box.value = "see this";
+      t.box.dispatchEvent(new t.window.Event("input", { bubbles: true }));
+      t.doc.querySelector("form").requestSubmit();
+      await tick();
+      expect(t.bodies.at(-1)!.files).toEqual(["f1"]);
+      expect(chips.children.length).toBe(0);
+      // A removed chip is not sent.
+      t.box.dispatchEvent(paste);
+      await tick();
+      chips.querySelector("button").click();
+      await tick();
+      expect(chips.children.length).toBe(0);
+      t.box.value = "again";
+      t.doc.querySelector("form").requestSubmit();
+      await tick();
+      expect(t.bodies.at(-1)!.files).toEqual([]);
+    });
+
+    test("Enter submits; Shift+Enter and an IME composition do not", async () => {
+      const t = await boot();
+      t.box.value = "hello";
+      expect(t.key({ shiftKey: true })).toBe(true);
+      expect(t.key({ isComposing: true })).toBe(true);
+      await tick();
+      expect(t.sent).toEqual([]);
+      expect(t.key({})).toBe(false);
+      await tick();
+      expect(t.sent).toEqual(["hello"]);
+      expect(t.doc.querySelector("[data-compose-hint]").textContent).toContain("Enter sends");
+      await t.window.happyDOM.close();
+    });
+
+    test("the draft is stored per person on input, restored on load, and cleared on send", async () => {
+      const t = await boot("u1");
+      t.box.value = "half";
+      t.box.dispatchEvent(new t.window.Event("input", { bubbles: true }));
+      expect(t.store["talk-draft:u1"]).toBe("half");
+      const again = await boot("u1", t.store);
+      expect(again.box.value).toBe("half");
+      const other = await boot("u2", t.store);
+      expect(other.box.value).toBe("");
+      again.key({});
+      await tick();
+      expect(again.store["talk-draft:u1"]).toBeUndefined();
+    });
+
+    test("copy buttons are drawn by the script, code first in tab order, and copy the text", async () => {
+      const t = await boot();
+      const pre = t.doc.querySelector("pre");
+      expect(pre.firstElementChild.getAttribute("data-copy")).toBe("");
+      expect(t.doc.querySelector(".talk-meta [data-copy]")).not.toBeNull();
+      pre.firstElementChild.dispatchEvent(new t.window.MouseEvent("click", { bubbles: true }));
+      await tick();
+      expect(t.copied).toEqual(["let a = 1;"]);
+    });
+
+    test("a code block in a streamed turn gets its Copy button too", async () => {
+      const t = await boot();
+      t.emit("2", '<li class="talk-turn" id="t-2"><div class="talk-body"><pre><code>x</code></pre></div><p class="talk-meta">Forge</p></li>');
+      expect(t.doc.querySelectorAll("#t-2 pre [data-copy]").length).toBe(1);
+      expect(t.doc.querySelectorAll("#t-2 .talk-meta [data-copy]").length).toBe(1);
+    });
+
+    test("a turn that arrives again is not drawn twice or replaced, so what is above it keeps its place", async () => {
+      const t = await boot();
+      const first = t.doc.getElementById("t-1");
+      const copy = first.querySelector("pre [data-copy]");
+      t.emit("2", '<li class="talk-turn" id="t-2"><div class="talk-body"><pre><code>x</code></pre></div><p class="talk-meta">Forge</p></li>');
+      const second = t.doc.getElementById("t-2");
+      t.emit("2", '<li class="talk-turn" id="t-2"><div class="talk-body"><p>changed</p></div></li>');
+      expect(t.doc.querySelectorAll("#t-2").length).toBe(1);
+      expect(t.doc.getElementById("t-2")).toBe(second);
+      expect(t.doc.getElementById("t-1")).toBe(first);
+      expect(first.querySelector("pre [data-copy]")).toBe(copy);
+      expect(t.doc.querySelectorAll("#t-2 pre [data-copy]").length).toBe(1);
+    });
+
+    test("a turn arriving while scrolled up does not scroll the page", async () => {
+      const t = await boot();
+      let scrolled = 0;
+      t.doc.getElementById("end").scrollIntoView = () => { scrolled++; };
+      Object.defineProperty(t.window, "innerHeight", { value: 800, configurable: true });
+      Object.defineProperty(t.window, "scrollY", { value: 0, configurable: true });
+      Object.defineProperty(t.doc.documentElement, "scrollHeight", { value: 5000, configurable: true });
+      t.window.dispatchEvent(new t.window.Event("scroll"));
+      t.emit("2", '<li class="talk-turn" id="t-2"><div class="talk-body"><pre><code>x</code></pre></div></li>');
+      expect(scrolled).toBe(0);
+    });
+
+    test("the jump button shows only when scrolled up, and a new message is announced", async () => {
+      const t = await boot();
+      const jump = t.doc.querySelector(".talk-jump");
+      t.emit("2", '<li class="talk-turn" id="t-2">a</li>');
+      expect(jump.hidden).toBe(true);
+      expect(t.status.textContent).not.toContain("New message");
+      Object.defineProperty(t.window, "innerHeight", { value: 800, configurable: true });
+      Object.defineProperty(t.window, "scrollY", { value: 0, configurable: true });
+      Object.defineProperty(t.doc.documentElement, "scrollHeight", { value: 5000, configurable: true });
+      t.window.dispatchEvent(new t.window.Event("scroll"));
+      t.emit("3", '<li class="talk-turn" id="t-3">b</li>');
+      expect(jump.hidden).toBe(false);
+      expect(t.status.textContent).toBe("New message");
+      Object.defineProperty(t.window, "scrollY", { value: 4400, configurable: true });
+      t.window.dispatchEvent(new t.window.Event("scroll"));
+      expect(jump.hidden).toBe(true);
+    });
+  });
+
+  test("Talk is one tap away: the chrome, the palette and home", async () => {
+    const home = await (await get("/explore", alice)).text();
+    expect(home).toContain('href="/talk"');
+    expect(home).toContain('aria-label="Talk to the forge"');
+    expect(home).toContain('"h":"/talk"');
+  });
+});
+
+describe("the stream", () => {
+  test("replays turns after an id, then ends with the turn", async () => {
+    const a = say(bob, "person", "first");
+    const b = say(bob, "agent", "second");
+    if (!a.ok || !b.ok) throw new Error("turns");
+    const all = await frames("/talk/stream?after=", bob);
+    expect(all.map((f) => f.event)).toEqual(["turn", "turn", "done"]);
+    expect(all[0]!.id).toBe(a.value.id);
+    expect(JSON.parse(all[1]!.data!).html).toContain("second");
+    const rest = await frames(`/talk/stream?after=${a.value.id}`, bob);
+    expect(rest.map((f) => f.id ?? f.event)).toEqual([b.value.id, "done"]);
+    // A reconnect that names the last turn it saw gets only what is new.
+    const resumed = await frames("/talk/stream", bob, { "last-event-id": b.value.id });
+    expect(resumed.map((f) => f.event)).toEqual(["done"]);
+  });
+
+  test("never shows another person's turns, and refuses a bad id", async () => {
+    const mine = say(bob, "agent", "bob private");
+    if (!mine.ok) throw new Error("turn");
+    const theirs = await frames(`/talk/stream?after=${mine.value.id}`, alice);
+    expect(theirs.map((f) => f.event)).toEqual(["done"]);
+    const seen = await frames("/talk/stream?after=", alice);
+    expect(JSON.stringify(seen)).not.toContain("bob private");
+    expect((await get("/talk/stream?after=%3Cscript%3E", alice)).status).toBe(400);
+  });
+});
+
+describe("confirm and cancel", () => {
+  async function held(u: User) {
+    const made = await createRepo(app, u, { name: `r${Math.random().toString(36).slice(2, 8)}`, visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const id = hold(app.db, "conversation:talk", u.id, "archive", { repo: `${u.username}/${made.value.name}`, archived: true, dryRun: false });
+    if (id === null) throw new Error("hold");
+    say(u, "confirm", JSON.stringify({ confirm: id, tool: "archive", does: "This will archive the app." }));
+    return { id, repoId: made.value.id };
+  }
+
+  test("a waiting confirm draws Confirm and Cancel; Cancel does nothing and cannot be undone by a yes", async () => {
+    const h = await held(alice);
+    const page = await (await get("/talk", alice)).text();
+    expect(page).toContain("This will archive the app.");
+    expect(page).toContain(`action="/talk/confirm/${h.id}"`);
+    expect(page).toContain("Confirm");
+    expect(page).toContain("Cancel");
+    const no = await post(`/talk/confirm/${h.id}`, alice, { answer: "no" }, { accept: "application/json" });
+    expect(no.status).toBe(200);
+    expect(getRepoById(app.db, h.repoId)!.archivedAt).toBeNull();
+    const yes = await post(`/talk/confirm/${h.id}`, alice, { answer: "yes" }, { accept: "application/json" });
+    expect(yes.status).toBe(409);
+    expect(getRepoById(app.db, h.repoId)!.archivedAt).toBeNull();
+    const after = await (await get("/talk", alice)).text();
+    expect(after).toContain("Cancelled: archive.");
+    expect(after).not.toContain(`action="/talk/confirm/${h.id}"`);
+  });
+
+  test("Confirm does the stored call once", async () => {
+    const h = await held(alice);
+    const yes = await post(`/talk/confirm/${h.id}`, alice, { answer: "yes" }, { accept: "application/json" });
+    expect(yes.status).toBe(200);
+    expect(getRepoById(app.db, h.repoId)!.archivedAt).not.toBeNull();
+    expect((await post(`/talk/confirm/${h.id}`, alice, { answer: "yes" }, { accept: "application/json" })).status).toBe(409);
+    expect(await (await get("/talk", alice)).text()).toContain("Done: archive.");
+  });
+
+  test("nobody else's yes or no counts, nor a cross-origin one, nor a bad answer", async () => {
+    const h = await held(alice);
+    expect((await post(`/talk/confirm/${h.id}`, bob, { answer: "yes" }, { accept: "application/json" })).status).toBe(404);
+    expect((await post(`/talk/confirm/${h.id}`, bob, { answer: "no" }, { accept: "application/json" })).status).toBe(404);
+    expect((await post(`/talk/confirm/${h.id}`, alice, { answer: "yes" }, { origin: "https://elsewhere.example" })).status).toBe(403);
+    expect((await post(`/talk/confirm/${h.id}`, alice, { answer: "maybe" })).status).toBe(400);
+    expect(getRepoById(app.db, h.repoId)!.archivedAt).toBeNull();
+  });
+});
+
+describe("a once-result", () => {
+  test("a yes posted here is refused, runs nothing and keeps the confirm for Settings", async () => {
+    const id = hold(app.db, "conversation:talk", alice.id, "mint_invite", {});
+    if (id === null) throw new Error("hold");
+    say(alice, "confirm", JSON.stringify({ confirm: id, tool: "mint_invite", does: "This will mint an invite." }));
+    const page = await (await get("/talk", alice)).text();
+    expect(page).toContain(`action="/settings/confirms/${id}"`);
+    const yes = await post(`/talk/confirm/${id}`, alice, { answer: "yes" }, { accept: "application/json" });
+    expect(yes.status).toBe(409);
+    expect(((await yes.json()) as { message: string }).message).toContain("Settings");
+    expect(waitingFor(app.db, alice.id).some((h) => h.id === id)).toBe(true);
+    // Cancel is still allowed here.
+    expect((await post(`/talk/confirm/${id}`, alice, { answer: "no" }, { accept: "application/json" })).status).toBe(200);
+  });
+});
+
+describe("sayNo", () => {
+  test("spends the confirm, writes a cancelled tool turn, and is not another person's to say", () => {
+    const id = hold(app.db, "conversation:talk", bob.id, "archive", { repo: "bob/none", archived: true, dryRun: false });
+    if (id === null) throw new Error("hold");
+    expect(sayNo({ app }, alice, id)).toEqual({ ok: false, error: "not_found" });
+    const no = sayNo({ app }, bob, id);
+    expect(no.ok).toBe(true);
+    expect(sayNo({ app }, bob, id)).toEqual({ ok: false, error: "answered" });
+    const turns = listTurns(app.db, bob.id, openConversation(app.db, bob.id).id, { limit: 200 });
+    if (!turns.ok) throw new Error("turns");
+    const last = JSON.parse(turns.value.at(-1)!.text);
+    expect(last).toMatchObject({ confirm: id, tool: "archive", done: false, cancelled: true });
+    expect(sayNo({ app }, bob, "../x")).toEqual({ ok: false, error: "not_found" });
+  });
+});
+
+describe("paging back", () => {
+  test("?before= shows older turns, does not follow, and validates the id", async () => {
+    const carol = await createUser(app.db, { origin: "seed", trusted: true, username: "carol", email: "carol@forge.local", password: "a-good-passphrase" });
+    if (!carol.ok) throw new Error("user");
+    promote(app.db, carol.value);
+    let ids: string[] = [];
+    for (let i = 0; i < 55; i++) {
+      const t = say(carol.value, "person", `turn-${String(i).padStart(2, "0")}`);
+      if (t.ok) ids.push(t.value.id);
+    }
+    const first = await (await get("/talk", carol.value)).text();
+    expect(first).toContain("turn-54");
+    expect(first).not.toContain("turn-04");
+    expect(first).toContain('data-paged="0"');
+    const link = /href="\/talk\?before=([0-9a-z]+)"/.exec(first);
+    expect(link).not.toBeNull();
+    clock.running = () => true;
+    try {
+      const older = await (await get(`/talk?before=${link![1]}`, carol.value)).text();
+      expect(older).toContain("turn-04");
+      expect(older).not.toContain("turn-54");
+      expect(older).toContain('data-paged="1"');
+      expect(older).toContain('data-running="0"');
+      const latest = await (await get("/talk", carol.value)).text();
+      expect(latest).toContain('data-running="1"');
+    } finally {
+      clock.running = (await import("../src/crew/conversation.ts")).turnRunning;
+    }
+    // A bad id is ignored, not echoed.
+    const bad = await get("/talk?before=%3Cscript%3E", carol.value);
+    expect(bad.status).toBe(200);
+    expect(await bad.text()).not.toContain("<script>alert");
+  });
+});
+
+describe("a long stream", () => {
+  test("while a turn runs it says running, then asks the client to reconnect", async () => {
+    const { turnRunning } = await import("../src/crew/conversation.ts");
+    clock.running = () => true;
+    clock.streamMs = 700;
+    try {
+      const seen = await frames("/talk/stream?after=", alice);
+      const events = seen.map((f) => f.event);
+      expect(events.at(-1)).toBe("more");
+      expect(events).toContain("running");
+      expect(events).not.toContain("done");
+    } finally {
+      clock.running = turnRunning;
+      clock.streamMs = 40_000;
+    }
+  });
+
+  test("a person holds at most STREAMS_MAX at once; the next waits, and a slot frees", async () => {
+    const { turnRunning } = await import("../src/crew/conversation.ts");
+    clock.running = () => true;
+    clock.streamMs = 60_000;
+    const aborts = Array.from({ length: STREAMS_MAX }, () => new AbortController());
+    try {
+      const open = await Promise.all(aborts.map((a) => fetch(`${servers.url}/talk/stream?after=`, { headers: { cookie: cookie(bob) }, signal: a.signal })));
+      expect(open.map((r) => r.status)).toEqual(Array(STREAMS_MAX).fill(200));
+      const extra = await get("/talk/stream?after=", bob);
+      expect(extra.status).toBe(429);
+      expect(extra.headers.get("retry-after")).toBeTruthy();
+      // Another person is not held back.
+      const other = new AbortController();
+      expect((await fetch(`${servers.url}/talk/stream?after=`, { headers: { cookie: cookie(alice) }, signal: other.signal })).status).toBe(200);
+      other.abort();
+      aborts[0]!.abort();
+      await new Promise((r) => setTimeout(r, 300));
+      const again = new AbortController();
+      expect((await fetch(`${servers.url}/talk/stream?after=`, { headers: { cookie: cookie(bob) }, signal: again.signal })).status).toBe(200);
+      again.abort();
+    } finally {
+      for (const a of aborts) a.abort();
+      clock.running = turnRunning;
+      clock.streamMs = 40_000;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  });
+});
+
+describe("cost and context (#8822)", () => {
+  test("a run's stored usage gives the turn's cost under the reply and the context share in the header", async () => {
+    const erin = await createUser(app.db, { origin: "seed", trusted: true, username: "erin", email: "erin@forge.local", password: "a-good-passphrase" });
+    if (!erin.ok) throw new Error(erin.error);
+    promote(app.db, erin.value);
+    const conversation = openConversation(app.db, erin.value.id);
+    const before = await (await get("/talk", erin.value)).text();
+    expect(before).not.toContain("Context ");
+    say(erin.value, "person", "hello");
+    const reply = say(erin.value, "agent", "two");
+    if (!reply.ok) throw new Error(reply.error);
+    const at = new Date(Date.now() - 1000).toISOString();
+    app.db
+      .query("INSERT INTO conversation_run (id, conversation_id, user_id, prompt, state, cost_usd, tokens_in, tokens_out, context_tokens, context_window, started_at, finished_at) VALUES ('r1',?1,?2,'hello','ok',?3,?4,?5,?6,200000,?7,?8)")
+      .run(conversation.id, erin.value.id, 0.1234, 170030, 14, 170020, at, new Date(Date.now() + 1000).toISOString());
+    const html = await (await get("/talk", erin.value)).text();
+    expect(html).toContain("$0.12 this turn");
+    expect(html).toContain("Context 85% full (170k of 200k tokens)");
+    expect(html).toContain("A new conversation answers faster");
+    // A longer window is read from the run, not assumed.
+    app.db.query("UPDATE conversation_run SET context_window = 1000000").run();
+    expect(await (await get("/talk", erin.value)).text()).toContain("Context 17% full (170k of 1M tokens)");
+    app.db.query("UPDATE conversation_run SET context_window = 200000").run();
+    // The stream's end carries both, so a reply that streamed in gets them without a reload.
+    const done = (await frames("/talk/stream?after=", erin.value)).find((f) => f.event === "done");
+    const sent = JSON.parse(done?.data ?? "{}");
+    expect(sent.costs[0].html).toContain("$0.12 this turn");
+    expect(sent.context).toContain("Context 85% full");
+    // Under 80 %: no suggestion.
+    app.db.query("UPDATE conversation_run SET context_tokens = 40000").run();
+    const calm = await (await get("/talk", erin.value)).text();
+    expect(calm).toContain("Context 20% full");
+    expect(calm).not.toContain("A new conversation answers faster");
+  });
+});

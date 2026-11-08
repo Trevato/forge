@@ -8,6 +8,9 @@
  *   sender's own, with a live status. Moderation is not here: the app's own
  *   code could call it with a visiting admin's cookie, so it happens on the
  *   forge's origin (`moderateNote`), and `/__forge/note/moderate` is a 404.
+ * - `POST /__forge/note/picture?note=<id>` adds the picture a sender chose to
+ *   send (#4820) to a note of theirs: raw PNG or JPEG bytes, at most
+ *   `PICTURE_MAX`, judged by their signature, one per note.
  * - Same origin only, a body read only up to `REQUEST_MAX` bytes, and limits
  *   keyed on the socket's client (`http/peer.ts`), never on a header the
  *   client wrote.
@@ -17,6 +20,8 @@ import type { App } from "../app.ts";
 import { notesFor, sendNote, type Sender } from "../actions/app_notes.ts";
 import type { AppRecord } from "../core/apps.ts";
 import { canAdmin, canRead, getRepoById, type Repo } from "../core/repos.ts";
+import { getNote } from "../core/app_notes.ts";
+import { PICTURE_MAX, savePicture, sniffPicture } from "../core/note_pictures.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { NOTE_FAILED } from "./note_words.ts";
@@ -190,6 +195,41 @@ async function send(ask: FeedbackAsk, door: Door): Promise<Response> {
   return json(201, { note: sent.value, name: sender.name }, cookies);
 }
 
+/** The body's bytes, read no further than `PICTURE_MAX`; `undefined` when it is longer. */
+async function readPicture(request: Request): Promise<Uint8Array | undefined> {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > PICTURE_MAX || request.body === null) return undefined;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > PICTURE_MAX) {
+      await reader.cancel().catch(() => undefined);
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function picture(ask: FeedbackAsk, door: Door): Promise<Response> {
+  const { sender } = senderOf(ask, door);
+  const asked = ask.url.searchParams.get("note") ?? "";
+  const note = /^[0-9a-z]{10,40}$/.test(asked) ? getNote(ask.app.db, ask.record.id, asked) : undefined;
+  // Only the sender's own note takes a picture.
+  if (note === undefined || note.visitor !== sender.key || note.hidden) return json(404, { error: "not_found" });
+  const bytes = await readPicture(ask.request);
+  if (bytes === undefined) return json(413, { error: "too_large", message: "That picture is too big. It must be under 2 MB." });
+  const kind = sniffPicture(bytes);
+  if (kind === undefined) return json(415, { error: "not_a_picture", message: "Only a PNG or JPEG picture can be sent." });
+  if (!savePicture(ask.app.db, ask.app.config.dataDir, note, kind, bytes))
+    return json(409, { error: "has_picture", message: "That note already has a picture." });
+  return json(201, { ok: true });
+}
+
 function list(ask: FeedbackAsk, door: Door, proven: boolean): Response {
   const { sender, fresh } = senderOf(ask, door);
   const notes = notesFor(ask.app, ask.record, door.repo, ask.forgeUrl, sender);
@@ -205,7 +245,7 @@ export async function feedback(ask: FeedbackAsk): Promise<Response | undefined> 
   const path = ask.url.pathname;
   const method = ask.request.method;
   if (path === "/__forge/note/moderate") return json(404, { error: "not_found" });
-  if (path !== "/__forge/note" && path !== "/__forge/notes") return undefined;
+  if (path !== "/__forge/note" && path !== "/__forge/notes" && path !== "/__forge/note/picture") return undefined;
   const host = ask.request.headers.get("host");
   const proven = spendProof(ask.request.headers.get(PROOF_HEADER), ask.grantCookie, host);
   const answer = await answerNote(proven ? ask : { ...ask, viewerId: undefined }, path, method, proven);
@@ -222,5 +262,5 @@ async function answerNote(ask: FeedbackAsk, path: string, method: string, proven
   }
   if (method !== "POST") return json(405, { error: "method" }, { allow: "POST" });
   if (!sameOrigin(ask.request)) return json(403, { error: "cross_origin" });
-  return send(ask, door);
+  return path === "/__forge/note/picture" ? picture(ask, door) : send(ask, door);
 }

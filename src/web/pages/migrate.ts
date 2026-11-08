@@ -13,6 +13,10 @@
  * commits and selects the one the app most likely lives on — the person's
  * newest (`origins/work-branch.ts`); the Migrate button carries the choice.
  *
+ * An account whose token sees public repositories only says so on its card
+ * (`origins/token-reach.ts`), with GitHub's new-token page one click away
+ * and a field that replaces the token in place.
+ *
  * Every mutation is `migrateRepo`; the page only puts its answer into words.
  */
 
@@ -44,7 +48,7 @@ import {
 } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { MirrorJob, MirrorStage } from "../../origins/jobs.ts";
-import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
+import { notFoundPage, pageHead, signInFirst, NOT_YOURS_TO_DO, forbiddenPage } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
@@ -57,8 +61,15 @@ import {
   selectField,
   field as formField,
 } from "../ui.ts";
+import {
+  FINE_GRAINED_NOTE,
+  PUBLIC_ONLY,
+  newTokenUrl,
+  tokenReach,
+} from "../../origins/token-reach.ts";
+import type { TokenReach } from "../../origins/types.ts";
 import { STAGE_BADGE_JS, stageRow, stageStateFor } from "../stage-row.ts";
-import { prefill, originHost } from "./migrate-prefill.ts";
+import { prefill, originHost, migrationBuilders } from "./migrate-prefill.ts";
 import { githubConnectable, hostLabel } from "./origins.ts";
 
 interface MigrateValues {
@@ -92,7 +103,10 @@ interface OriginChoices {
   readonly id: string;
   readonly kind: string;
   readonly host: string;
+  readonly webUrl: string;
   readonly repos: readonly OriginRepoRow[];
+  /** What its token sees; undefined when the origin names no limit. */
+  readonly reach: TokenReach | undefined;
 }
 
 /** Every origin you connected; one that cannot list has no rows. */
@@ -100,13 +114,18 @@ async function originChoices(ctx: Ctx): Promise<OriginChoices[]> {
   const user = ctx.auth.user!;
   const out: OriginChoices[] = [];
   for (const origin of listUserOrigins(ctx.app, user)) {
-    const listed = await listRemoteRepos(ctx.app, user, origin.id);
+    const [listed, reach] = await Promise.all([
+      listRemoteRepos(ctx.app, user, origin.id),
+      tokenReach(ctx.app, origin),
+    ]);
     out.push({
       id: origin.id,
       kind: origin.kind,
       host: originHost(origin.webUrl),
+      webUrl: origin.webUrl,
       label: `${origin.login} @ ${hostLabel(origin.webUrl)}`,
       repos: listed.ok ? listed.value : [],
+      reach,
     });
   }
   return out;
@@ -222,6 +241,36 @@ export function matchesFilter(
 }
 
 /**
+ * Under an account whose token lists public repositories only: why the
+ * private ones are missing, where to make a token that sees them, and the
+ * field that puts it on this origin without disconnecting it.
+ */
+function publicOnly(origin: OriginChoices): Html {
+  return html`<div class="mt" id="migrate-reach-${origin.id}" data-reach="public">
+    <p class="small">${icon("lock")} ${PUBLIC_ONLY} — ${origin.label}.</p>
+    <p class="small">
+      <a href="${newTokenUrl(origin.webUrl)}" target="_blank" rel="noopener noreferrer"
+        >Make a token with <span class="mono">repo</span> on GitHub</a
+      >
+    </p>
+    <form method="post" action="/settings/origins/${origin.id}/token">
+      <input type="hidden" name="then" value="migrate" />
+      ${formField({
+        label: `New token for ${origin.label}`,
+        name: "token",
+        type: "password",
+        hint: `${FINE_GRAINED_NOTE}.`,
+        mono: true,
+        required: true,
+        autocomplete: "off",
+        id: `f-token-${origin.id}`,
+      })}
+      ${btn("Replace", { size: "sm", variant: "outline", type: "submit" })}
+    </form>
+  </div>`;
+}
+
+/**
  * The accounts half, outside the migrate form (forms do not nest): each
  * connected origin with a Disconnect, and Connect GitHub when there is no
  * GitHub account yet. Both come back here (`then=migrate`).
@@ -265,6 +314,7 @@ function accounts(ctx: Ctx, origins: readonly OriginChoices[]): Html {
             }),
           )}
         </ul>`}
+    ${origins.filter((o) => o.reach === "public").map(publicOnly)}
     ${connect}`,
     {
       head: html`${icon("globe")}
@@ -294,16 +344,20 @@ function picker(
     </p>`;
   return html`<div class="field" id="migrate-picker">
     <label for="f-q">Your repositories</label>
-    <input
-      class="input"
-      type="search"
-      id="f-q"
-      name="q"
-      form="migrate-search"
-      value="${values.q}"
-      placeholder="Filter by name or description"
-      autocomplete="off"
-    />
+    <div class="bar">
+      <input
+        class="input"
+        type="search"
+        id="f-q"
+        name="q"
+        form="migrate-search"
+        value="${values.q}"
+        placeholder="Filter by name or description"
+        autocomplete="off"
+        enterkeyhint="search"
+      />
+      ${btn("Filter", { variant: "outline", type: "submit", form: "migrate-search", icon: "search" })}
+    </div>
     ${values.source === ""
       ? null
       : html`<input type="hidden" name="source" value="${values.source}" />`}
@@ -370,6 +424,7 @@ function migrateForm(
   branches: BranchChoices | undefined,
   error?: string,
   unmatched: readonly string[] = [],
+  refused: readonly string[] = [],
 ): Html {
   const user = ctx.auth.user!;
   const writeOrgs = listOrgsForUser(ctx.app.db, user.id).filter((org) =>
@@ -377,7 +432,7 @@ function migrateForm(
   );
   const owners = [user.username, ...writeOrgs.map((o) => o.username)];
   const agents = listAllAgents(ctx.app, user);
-  const crew = agents.ok ? agents.value : [];
+  const crew = agents.ok ? migrationBuilders(agents.value) : [];
 
   return html`<div class="narrow-wide">
     ${pageHead("Migrate a repository", {
@@ -394,6 +449,11 @@ function migrateForm(
       : html`<p class="muted small mb" id="prefill-unmatched">
           ${icon("globe")} Ignored, nothing here matches:
           ${unmatched.join(", ")}
+        </p>`}
+    ${refused.length === 0
+      ? null
+      : html`<p class="muted small mb" id="prefill-refused">
+          ${icon("globe")} ${refused.join(" ")}
         </p>`}
     ${accounts(ctx, origins)}
     <form method="get" action="/migrate" id="migrate-search"></form>
@@ -526,7 +586,7 @@ function migrateForm(
  * The name field follows the picked repository or the pasted URL until
  * somebody types in it — a preview; the server names it the same way.
  */
-const migrateJs = /* js */ `
+export const migrateJs = /* js */ `
 (function () {
   var name = document.getElementById('f-name');
   var url = document.getElementById('f-url');
@@ -559,6 +619,7 @@ async function show(
   error?: string,
   status = 200,
   unmatched: readonly string[] = [],
+  refused: readonly string[] = [],
 ): Promise<Response> {
   // Asked for only: each draw is a listing and a commit per branch at the
   // origin (remembered a minute), so a plain visit costs none of it.
@@ -572,7 +633,7 @@ async function show(
     {
       ctx,
       title: "Migrate",
-      body: migrateForm(ctx, values, origins, branches, error, unmatched),
+      body: migrateForm(ctx, values, origins, branches, error, unmatched, refused),
       scriptJs: migrateJs,
     },
     status,
@@ -593,11 +654,14 @@ export async function migratePage(ctx: Ctx): Promise<Response> {
   const agents = timePhase(ctx.request, "agents", () =>
     listAllAgents(ctx.app, user),
   );
-  const names = agents.ok ? agents.value.map((a) => a.user.username) : [];
+  const all = agents.ok ? agents.value : [];
+  const builders = migrationBuilders(all);
+  const names = builders.map((a) => a.user.username);
   const linked = prefill(
     { from: q.get("from"), crew: q.get("crew") },
     origins,
     names,
+    all.filter((a) => !builders.includes(a)).map((a) => a.user.username),
   );
   return show(
     ctx,
@@ -622,6 +686,7 @@ export async function migratePage(ctx: Ctx): Promise<Response> {
     undefined,
     200,
     linked.unmatched,
+    linked.refused,
   );
 }
 
@@ -666,7 +731,7 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
     picked !== undefined &&
     (ctx.auth.scope === undefined || !scopeAllows(ctx.auth.scope, "admin"))
   )
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, "This token is not allowed to do this.");
 
   const started = await migrateRepo(ctx.app, ctx.auth.user, {
     source: picked ?? { url: values.url },
@@ -683,7 +748,7 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
   });
   if (!started.ok) {
     if (started.error === "forbidden_owner" || started.error === "unauthorized")
-      return new Response("forbidden", { status: 403 });
+      return forbiddenPage(ctx, NOT_YOURS_TO_DO);
     return again(
       migrateMessage(started.error, repositoryLimitMessage(ctx.app, ctx.auth.user!)),
     );

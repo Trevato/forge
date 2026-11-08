@@ -151,12 +151,16 @@ function waiting(ctx: Ctx, repo: Repo, issue: Issue): string {
 
 export type OgKind = "repo" | "app" | "issue" | "pull" | "run" | "map" | "audit" | "site";
 
-/** The card for any page without a card of its own: it says only what the forge is. */
-const SITE_CARD: CardInput = {
-  kind: "page",
-  title: "forge",
-  lines: ["Repositories, issues, pulls and the crew that works them."],
-};
+/** The card for any page without a card of its own: the home page's own words, and where it is. */
+function siteCard(ctx: Ctx): CardInput {
+  return {
+    kind: "page",
+    title: "Software for what you're building.",
+    tagline: "Yours to keep.",
+    lines: ["Say what you need. An AI crew builds it."],
+    stat: `${ctx.url.host} · open source`,
+  };
+}
 
 /** The audit page's own bound. */
 const AUDIT_LIMIT = 200;
@@ -291,12 +295,16 @@ function mapCardInput(ctx: Ctx, ref: string): CardInput | undefined {
   const repo = twoPart(ctx, ref);
   if (!repo) return undefined;
   const db = ctx.app.db;
-  const graph = repoGraph(db, repo.id, sealedScope(db, repo, undefined));
-  // A run on a sealed report is not shown to who may not see the report.
-  const runs = listActiveRuns(db, [repo.id]).filter((r) =>
-    mayViewId(db, repo, r.issueId, undefined),
-  );
-  return mapInput(`${repo.ownerName}/${repo.name}`, graph, marksFor(db, repo.id, graph, runs));
+  const stretch = <T>(name: string, work: () => T): T => timePhase(ctx.request, name, work);
+  const graph = stretch("graph", () => repoGraph(db, repo.id, sealedScope(db, repo, undefined)));
+  const marks = stretch("marks", () => {
+    // A run on a sealed report is not shown to who may not see the report.
+    const runs = listActiveRuns(db, [repo.id]).filter((r) =>
+      mayViewId(db, repo, r.issueId, undefined),
+    );
+    return marksFor(db, repo.id, graph, runs);
+  });
+  return mapInput(`${repo.ownerName}/${repo.name}`, graph, marks, stretch);
 }
 
 /** The public apps, read the way the audit page reads them for someone signed out. */
@@ -356,7 +364,7 @@ async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput |
   if (kind === "run") return runInput(ctx, ref);
   if (kind === "map") return mapCardInput(ctx, ref);
   if (kind === "audit") return ref === "" ? auditCards(ctx.app).get("", () => auditCardInput(ctx)) : undefined;
-  if (kind === "site") return ref === "" ? SITE_CARD : undefined;
+  if (kind === "site") return ref === "" ? siteCard(ctx) : undefined;
   if (kind === "repo") return repoCard(ctx, ref);
   if (!isSlug(ref)) return undefined;
   const record = getAppBySlug(db, ref);

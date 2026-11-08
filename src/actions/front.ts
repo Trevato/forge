@@ -24,6 +24,9 @@ import {
   frontPicks,
   frontScore,
   frontSignals,
+  latestMerges,
+  mergesByDay,
+  type LatestMerge,
   frontWeights,
   isWeight,
   rankFront,
@@ -45,6 +48,7 @@ import { keepLook } from "../looks/service.ts";
 import { canRead, getRepo, getReposByIds, type Repo } from "../core/repos.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
+import { timePhase } from "../core/route_timing.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { limitValue } from "../settings/limits.ts";
 
@@ -79,12 +83,44 @@ export interface CrewAtWork {
   readonly issues: readonly { number: number; title: string }[];
 }
 
+/** One merged change on a public repository, as the door lists it. */
+export interface DoorChange {
+  readonly repo: string;
+  readonly title: string;
+  readonly href: string;
+  readonly mergedAt: string;
+}
+
+/** What the forge is doing, in public, read with the page and kept with it. */
+export interface FrontPulse {
+  /** Public apps whose production is running right now. */
+  readonly running: number;
+  /** Changes merged on the shown repositories in the last `SIGNAL_DAYS`. */
+  readonly merged: number;
+  /** Agents at work on the shown repositories, and at most three of their issues. */
+  readonly crew: {
+    readonly running: number;
+    readonly issues: readonly { title: string; href: string }[];
+  };
+  /** The newest merged changes, at most `DOOR_CHANGES`. */
+  readonly changes: readonly DoorChange[];
+  /** Changes merged each day, oldest first, `PULSE_DAYS` of them, today last. */
+  readonly days: readonly { readonly day: string; readonly n: number }[];
+}
+
 export interface FrontPage {
   readonly featured: (FrontEntry & { readonly crew: CrewAtWork }) | undefined;
   readonly shelf: readonly FrontEntry[];
   /** Every public app a stranger could find on `/apps`. */
   readonly total: number;
+  readonly pulse: FrontPulse;
 }
+
+/** How many merged changes the door lists. */
+const DOOR_CHANGES = 4;
+
+/** How many days the door's picture of the work covers. */
+const PULSE_DAYS = 90;
 
 /**
  * Whether a thumb is one taken as a stranger: not one from before thumbs
@@ -150,7 +186,43 @@ function scoresFor(app: App, repoIds: readonly string[], now: number): Scores {
 /** Forget the remembered ranking: the picks changed. */
 export function forgetFrontScores(app: App): void {
   remembered.delete(app);
+  merges.delete(app);
   built.delete(app);
+}
+
+/** The newest merges, kept as long as a ranking: a write must not mean another walk of the merged pulls. */
+const merges = new WeakMap<
+  App,
+  {
+    at: number;
+    rows: readonly LatestMerge[];
+    days: FrontPulse["days"];
+    ids: ReadonlySet<string>;
+  }
+>();
+
+function newestMerges(
+  app: App,
+  repoIds: readonly string[],
+  now: number,
+): { rows: readonly LatestMerge[]; days: FrontPulse["days"] } {
+  const kept = merges.get(app);
+  const shown = new Set(repoIds);
+  // A repository made private leaves the list at once; one made public waits its turn.
+  if (kept !== undefined && now - kept.at < SCORES_MS && repoIds.every((id) => kept.ids.has(id)))
+    return { rows: kept.rows.filter((r) => shown.has(r.repoId)), days: kept.days };
+  const rows = latestMerges(app.db, repoIds, DOOR_CHANGES * 4);
+  const dayOf = (back: number): string =>
+    new Date(now - back * 86_400_000).toISOString().slice(0, 10);
+  const counted = new Map(
+    mergesByDay(app.db, repoIds, dayOf(PULSE_DAYS - 1)).map((d) => [d.day, d.n]),
+  );
+  const days = Array.from({ length: PULSE_DAYS }, (_, at) => {
+    const day = dayOf(PULSE_DAYS - 1 - at);
+    return { day, n: counted.get(day) ?? 0 };
+  });
+  merges.set(app, { at: now, rows, days, ids: shown });
+  return { rows, days };
 }
 
 /** How long a built page is kept when nothing in the database changed: an app's state is not in it. */
@@ -163,18 +235,24 @@ const PAGE_MS = 3_000;
  */
 const built = new WeakMap<App, { key: string; at: number; page: FrontPage }>();
 
-function dbKey(app: App): string {
+/**
+ * The shelf's data version: one row that triggers bump when a column the
+ * shelf renders changes (`front_epoch`). Its size never depends on how many
+ * apps there are, and a session, a heartbeat or a push does not move it.
+ */
+export function frontKey(app: App): string {
   const row = app.db
-    .query<{ c: number; v: number }, []>(
-      "SELECT total_changes() AS c, (SELECT data_version FROM pragma_data_version) AS v",
-    )
+    .query<{ n: number }, []>("SELECT n FROM front_epoch")
     .get();
-  return `${row?.c}:${row?.v}`;
+  return String(row?.n);
 }
 
-/** The front page as a stranger is shown it. */
-export function frontPage(app: App, now = Date.now()): FrontPage {
-  const key = dbKey(app);
+/** The front page as a stranger is shown it; `request` is told what the key cost. */
+export function frontPage(app: App, now = Date.now(), request?: Request): FrontPage {
+  const key =
+    request === undefined
+      ? frontKey(app)
+      : timePhase(request, "key", () => frontKey(app));
   const kept = built.get(app);
   const wall = performance.now();
   if (kept !== undefined && kept.key === key && wall - kept.at < PAGE_MS)
@@ -297,6 +375,9 @@ function buildFrontPage(app: App, now: number): FrontPage {
     ...(first === undefined ? [] : rest),
     ...(first === undefined ? ranked.slice(1) : ranked),
   ].slice(0, SHELF);
+  const shownRepos = new Map(
+    [...pinned, ...publicApps.map((r) => repos.get(r.repoId)!)].map((r) => [r.id, r]),
+  );
   return {
     featured:
       featuredEntry === undefined
@@ -304,12 +385,57 @@ function buildFrontPage(app: App, now: number): FrontPage {
         : { ...featuredEntry, crew: crewAtWork(app, featuredEntry.repo) },
     shelf,
     total: publicApps.length,
+    pulse: buildPulse(app, shownRepos, publicApps, scores, now),
   };
+}
+
+function buildPulse(
+  app: App,
+  shown: ReadonlyMap<string, Repo>,
+  publicApps: readonly AppRecord[],
+  scores: Scores,
+  now: number,
+): FrontPulse {
+  const runtime = appsRuntime(app);
+  const running =
+    runtime === undefined
+      ? 0
+      : publicApps.filter(
+          (r) =>
+            r.access === "public" &&
+            runtime.status(r).some((env) => env.env === "production" && env.state === "running"),
+        ).length;
+  const ids = [...shown.keys()];
+  const merged = ids.reduce((sum, id) => sum + (scores.get(id)?.s.ships ?? 0), 0);
+  const seen = new Set<string>();
+  const changes: DoorChange[] = [];
+  const { rows, days } = newestMerges(app, ids, now);
+  for (const m of rows) {
+    const repo = shown.get(m.repoId);
+    if (repo === undefined || seen.has(m.title) || changes.length === DOOR_CHANGES) continue;
+    seen.add(m.title);
+    changes.push({
+      repo: repo.name,
+      title: m.title,
+      href: `/${repo.ownerName}/${repo.name}/pulls/${m.number}`,
+      mergedAt: m.mergedAt,
+    });
+  }
+  return { running, merged, crew: crewOn(app, shown), changes, days };
 }
 
 /** The crew's runs on one readable repository right now, and their issues. */
 function crewAtWork(app: App, repo: Repo): CrewAtWork {
-  const running = listActiveRuns(app.db, [repo.id]).filter(
+  const { running, issues } = crewOn(app, new Map([[repo.id, repo]]));
+  return { running, issues: issues.map(({ number, title }) => ({ number, title })) };
+}
+
+/** The crew's runs across readable repositories right now, and the issues they are on. */
+function crewOn(
+  app: App,
+  repos: ReadonlyMap<string, Repo>,
+): { running: number; issues: readonly { number: number; title: string; href: string }[] } {
+  const running = listActiveRuns(app.db, [...repos.keys()]).filter(
     (r) => r.state === "running",
   );
   const issues = getIssuesByIds(
@@ -317,13 +443,19 @@ function crewAtWork(app: App, repo: Repo): CrewAtWork {
     running.flatMap((r) => (r.issueId === null ? [] : [r.issueId])),
   );
   const seen = new Set<string>();
-  const on: { number: number; title: string }[] = [];
+  const on: { number: number; title: string; href: string }[] = [];
   for (const run of running) {
     const issue = run.issueId === null ? undefined : issues.get(run.issueId);
     // The front page is the stranger's view: a sealed report is not on it.
     if (issue === undefined || issue.sealed || seen.has(issue.id)) continue;
+    const repo = repos.get(run.repoId);
+    if (repo === undefined) continue;
     seen.add(issue.id);
-    on.push({ number: issue.number, title: issue.title });
+    on.push({
+      number: issue.number,
+      title: issue.title,
+      href: `/${repo.ownerName}/${repo.name}/issues/${issue.number}`,
+    });
   }
   return { running: running.length, issues: on.slice(0, 3) };
 }
@@ -479,13 +611,30 @@ export function frontInput(
   return { pinned, hidden, weights };
 }
 
+/** One app on the front page as JSON. */
+export type FrontRowJson = {
+  readonly repo: string;
+  readonly description: string;
+  readonly url: string;
+  readonly state: EnvState | null;
+  readonly picture: string | null;
+  readonly pinned: boolean;
+  readonly score: number;
+  readonly signals: FrontSignals;
+};
+
+/** The front page as JSON, as `frontJson` answers it. */
+export type FrontJson = {
+  readonly featured: (FrontRowJson & { readonly crew: CrewAtWork }) | null;
+  readonly apps: readonly FrontRowJson[];
+  readonly total: number;
+  readonly picks?: FrontPicksJson;
+};
+
 /** The front page as JSON: what a stranger is shown; a site admin also gets the picks. */
-export function frontJson(
-  app: App,
-  viewer: User | undefined,
-): Record<string, unknown> {
+export function frontJson(app: App, viewer: User | undefined): FrontJson {
   const front = frontPage(app);
-  const row = (e: FrontEntry) => ({
+  const row = (e: FrontEntry): FrontRowJson => ({
     repo: `${e.repo.ownerName}/${e.repo.name}`,
     description: e.repo.description,
     url: `/${e.repo.ownerName}/${e.repo.name}`,

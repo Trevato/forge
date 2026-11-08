@@ -10,7 +10,8 @@
  * their comment did not go upstream, not silently given a local one.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { everyoneIsAMember } from "./helpers/members.ts";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ import { listPins } from "../src/core/pins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
+import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { advance, createJob, settled } from "../src/origins/jobs.ts";
 import { icon } from "../src/web/ui.ts";
 import { quietLogs, withoutEnv } from "./helpers/globals.ts";
@@ -34,9 +36,15 @@ import {
   type FakeForge,
   type FakeOAuth,
 } from "./fake-origin.ts";
+import { pointAtSprite } from "../src/web/icons.ts";
+import { spriteAsset } from "../src/web/asset.ts";
 import { adminCookie, seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
+
+// Every test here drives a real git fetch and renders real pages; on a loaded
+// check machine the 5 s default measures the machine, not the code.
+setDefaultTimeout(30_000);
 
 const ORIGIN_LOGIN = "octo";
 const ORIGIN_TOKEN = "octo-origin-secret-9f2a";
@@ -166,6 +174,7 @@ describe("origins on the web", () => {
     github = serveFakeForge(ghState);
 
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     base = servers.url;
     alice = await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD });
@@ -198,12 +207,10 @@ describe("origins on the web", () => {
     const html = await (await asUser(alice, "/settings/origins")).text();
     expect(html).toContain("No origins connected");
     expect(html).toContain("Forgejo / Gitea, one click");
-    expect(html).toContain("Personal access token");
-    // The token path comes first and is open; the OAuth pair is folded away.
-    expect(html.indexOf("Personal access token")).toBeLessThan(
-      html.indexOf("One-click sign-in"),
-    );
-    expect(html).toContain("recommended");
+    // Another forge leads (#9388); the rest are folded.
+    expect(html).toContain("Another forge");
+    expect(html.indexOf("Another forge")).toBeLessThan(html.indexOf("A token for GitHub, Forgejo or Gitea"));
+    expect(html.indexOf("Another forge")).toBeLessThan(html.indexOf("One-click sign-in"));
     // Drawn with §5's rows and buttons, not the page's own classes.
     for (const gone of ["handoff", "connect-more", "connect-path"]) {
       expect(html).not.toContain(gone);
@@ -233,6 +240,7 @@ describe("origins on the web", () => {
     const closed = await (await asUser(alice, "/settings/origins")).text();
     const used = await (await asUser(alice, "/settings/origins?host=codeberg.org")).text();
     for (const [id, brand] of [
+      ["connect-forge", "globe"],
       ["connect-token", "key"],
       ["connect-github", "github"],
       ["connect-forgejo", "forgejo"],
@@ -242,15 +250,17 @@ describe("origins on the web", () => {
         // The lead is the caret (it is rotated when open); the brand glyph
         // is in the title beside the name.
         const lead = /<span class="row-lead">([\s\S]*?)<\/span>/.exec(summary)![1]!;
-        expect(lead).toBe(icon("chevronRight").text);
-        expect(lead).not.toBe(icon(brand).text);
-        expect(/<span\s+class="row-title"[^>]*>([\s\S]*?)<\/span\s*>/.exec(summary)![1]).toContain(icon(brand).text);
+        expect(lead).toBe(pointAtSprite(icon("chevronRight").text, spriteAsset().path));
+        expect(lead).not.toBe(pointAtSprite(icon(brand).text, spriteAsset().path));
+        expect(/<span\s+class="row-title"[^>]*>([\s\S]*?)<\/span\s*>/.exec(summary)![1]).toContain(pointAtSprite(icon(brand).text, spriteAsset().path));
       }
     }
-    expect(fold(closed, "connect-token").open).toBe(true);
+    expect(fold(closed, "connect-forge").open).toBe(true);
+    expect(fold(closed, "connect-token").open).toBe(false);
     expect(fold(closed, "connect-github").open).toBe(false);
     expect(fold(closed, "connect-forgejo").open).toBe(false);
-    expect(fold(used, "connect-token").open).toBe(true);
+    expect(fold(used, "connect-forge").open).toBe(true);
+    expect(fold(used, "connect-token").open).toBe(false);
     expect(fold(used, "connect-github").open).toBe(true);
     expect(fold(used, "connect-forgejo").open).toBe(true);
   });
@@ -416,6 +426,19 @@ describe("origins on the web", () => {
   });
 
   test("Mirror starts a job, shows its stages, and lands on the mirror", async () => {
+    // The first fetch is retried on the forge's clock (2 s, 5 s, 10 s); a
+    // loaded check machine can spend all three and fail the job. Retry on a
+    // short clock instead, so the verdict is the mirror's, not the load's.
+    const found = firstFetchRetry.ms;
+    firstFetchRetry.ms = Array.from({ length: 40 }, () => 250);
+    try {
+      await mirrorStartsAJob();
+    } finally {
+      firstFetchRetry.ms = found;
+    }
+  });
+
+  async function mirrorStartsAJob(): Promise<void> {
     const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
     const mirrored = await asUser(alice, `/settings/origins/${id}/mirror`, {
       form: { fullName: "octo/widgets" },
@@ -426,10 +449,15 @@ describe("origins on the web", () => {
 
     // The job page renders the checklist, and works with no JavaScript: a
     // meta refresh keeps it current while the mirror is still running.
-    const running = await (await asUser(alice, jobPath)).text();
+    // A job nothing drives stays running, so the page cannot race the mirror.
+    const pending = createJob(id, "octo/pending");
+    const running = await (
+      await asUser(alice, `/settings/origins/${id}/mirror/${pending.id}`)
+    ).text();
     expect(running).toContain("Creating the repository");
     expect(running).toContain("Importing issues");
     expect(running).toContain('id="stages"');
+    advance(pending.id, { stage: "failed", detail: "test over" });
 
     const jobId = jobPath.split("/").pop()!;
     const done = await settled(jobId);
@@ -440,7 +468,7 @@ describe("origins on the web", () => {
     const after = await (await asUser(alice, jobPath)).text();
     expect(after).not.toContain("http-equiv");
     expect(after).toContain("Open the mirror");
-  });
+  }
 
   test("a running job's stream sends the next stage, then done with the mirror's address; only its starter may read it", async () => {
     const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
@@ -576,7 +604,7 @@ describe("origins on the web", () => {
     expect(picker).toContain("mirrored as");
     expect(picker).toContain("this machine");
 
-    const dash = await (await asUser(`${alice}; forge_mode=dev`, "/")).text();
+    const dash = await (await asUser(`${alice}; forge_mode=dev`, "/feed")).text();
     expect(dash).toContain("On your machine");
     expect(dash).toContain("forge sync");
     expect(dash).toContain('href="/alice/widgets"');
@@ -746,6 +774,9 @@ describe("origins on the web", () => {
       redirect: "manual",
     });
     expect(unknown.status).toBe(404);
+    const plainBody = await unknown.clone().text();
+    expect(plainBody).not.toContain("/search?q=");
+    expect(plainBody).not.toContain("Create an account");
     app.db
       .query("UPDATE oauth_flow SET expires_at = ?1 WHERE id = ?2")
       .run("2020-01-01T00:00:00.000Z", flowId);
@@ -760,7 +791,8 @@ describe("origins on the web", () => {
       text
         .replaceAll(/nonce="[^"]*"/g, 'nonce="N"')
         .replaceAll(/here\?path=[^"&\s]*/g, "here?path=")
-        .replaceAll(/next=[^"]*/g, "next=");
+        .replaceAll(/next=[^"]*/g, "next=")
+        .replaceAll(/\/new\/issue\?from=[^"]*/g, "/new/issue?from=");
     const staleText = await stale.text();
     const unknownText = await unknown.text();
     expect(sameBut(staleText)).toBe(sameBut(unknownText));
@@ -840,7 +872,7 @@ describe("origins on the web", () => {
     expect(html).not.toContain("error-note");
     expect(html).not.toContain("origin-callback-err");
     // The token path is unaffected, and still offered.
-    expect(html).toContain("Personal access token");
+    expect(html).toContain("Another forge");
 
     const started = await fetch(`${base}/settings/origins/oauth`, {
       method: "POST",

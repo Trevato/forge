@@ -1,0 +1,139 @@
+/**
+ * Palette entries that live beside their screen. A screen module exports an
+ * `entry`; this list names them in the order the palette offers them, and
+ * `forgeCommands` walks it at one position. Screens are imported here, and
+ * this module by `forge.ts`, never the reverse.
+ */
+
+import type { Ctx } from "../app/app.ts";
+import type { Command } from "../app/palette.ts";
+import type { Session } from "../session.ts";
+import { entry as access } from "./access.ts";
+import { entry as agents } from "./agents.ts";
+import { entry as archived } from "./archived.ts";
+import { entry as audit } from "./audit.ts";
+import { entry as bets } from "./bets.ts";
+import { entry as boards } from "./boards.ts";
+import { entry as bugs } from "./bugs.ts";
+import { entry as bulk } from "./bulk.ts";
+import { entry as cloud } from "./cloud.ts";
+import { entry as connections } from "./connections.ts";
+import { entry as crewHandover } from "./crewhandover.ts";
+import { entry as crewSplits } from "./crewsplits.ts";
+import { entry as displays } from "./displays.ts";
+import { entry as domains } from "./domains.ts";
+import { entry as edgeOnly } from "./edgeonly.ts";
+import { entry as traffic } from "./trafficview.ts";
+import { entry as feed } from "./feed.ts";
+import { entry as forgeView } from "./forgeview.ts";
+import { entry as front } from "./front.ts";
+import { entry as forges } from "./forges.ts";
+import { entry as homePins } from "./home_pins.ts";
+import { entry as invites } from "./invites.ts";
+import { entry as limits } from "./limits.ts";
+import { entry as loopStalls } from "./loopstalls.ts";
+import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
+import { entry as orgGrants } from "./orggrants.ts";
+import { entry as orgTeams } from "./orgteams.ts";
+import { entry as newIssue } from "./newissue.ts";
+import { entry as now } from "./nowlist.ts";
+import { entry as repos } from "./repolist.ts";
+import { entry as originAhead } from "./originahead.ts";
+import { entry as owner } from "./owner.ts";
+import { entry as people } from "./people.ts";
+import { entry as pinned } from "./pinned.ts";
+import { entry as profile } from "./profile.ts";
+import { entry as quotas } from "./quotas.ts";
+import { entry as resilience } from "./resilience.ts";
+import { entry as scorecard } from "./scorecard.ts";
+import { entry as scrapes } from "./scrapes.ts";
+import { entry as secrets } from "./secrets.ts";
+import { entry as sentinel } from "./sentinel.ts";
+import { entry as subscriptions } from "./subscriptions.ts";
+import { entry as system } from "./system.ts";
+import { entry as teams } from "./teams.ts";
+import { entry as telemetry } from "./telemetry.ts";
+import { entry as valves } from "./valves.ts";
+
+export interface PaletteEntry {
+  readonly id: string;
+  readonly title: string;
+  readonly hint: string;
+  /**
+   * Ids of the commands it follows, nearest first; the first one the session
+   * has wins. Without it, or with none present, the entry goes where
+   * `addEntries` is called.
+   */
+  readonly after?: readonly string[];
+  /** Whether this session is offered the entry. */
+  offered(session: Session): boolean;
+  run(session: Session, ctx: Ctx): void;
+}
+
+/** In the order the palette offers them; an entry follows the ones it names in `after`. */
+export const ENTRIES: readonly PaletteEntry[] = [
+  sentinel,
+  boards,
+  bugs,
+  homePins,
+  system,
+  loopStalls,
+  telemetry,
+  resilience,
+  valves,
+  access,
+  edgeOnly,
+  traffic,
+  audit,
+  secrets,
+  crewSplits,
+  crewHandover,
+  scorecard,
+  modelGrantEntry,
+  modelCeilingEntry,
+  people,
+  quotas,
+  limits,
+  scrapes,
+  teams,
+  orgTeams,
+  orgGrants,
+  agents,
+  archived,
+  invites,
+  bulk,
+  subscriptions,
+  cloud,
+  pinned,
+  bets,
+  connections,
+  domains,
+  feed,
+  front,
+  owner,
+  forges,
+  originAhead,
+  profile,
+  now,
+  forgeView,
+  repos,
+  displays,
+  newIssue,
+];
+
+/** Put each entry the session is offered into `commands`, after the command it names or at the end. */
+export function addEntries(commands: Command[], session: Session, ctx: Ctx): void {
+  const placed = new Map<string, number>();
+  for (const e of ENTRIES) {
+    if (!e.offered(session)) continue;
+    const command: Command = { id: e.id, title: e.title, hint: e.hint, run: () => e.run(session, ctx) };
+    const anchor = e.after?.find((id) => commands.some((c) => c.id === id));
+    if (anchor === undefined) {
+      commands.push(command);
+      continue;
+    }
+    const before = placed.get(anchor) ?? 0;
+    commands.splice(commands.findIndex((c) => c.id === anchor) + 1 + before, 0, command);
+    placed.set(anchor, before + 1);
+  }
+}

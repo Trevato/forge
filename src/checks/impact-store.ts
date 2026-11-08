@@ -34,6 +34,10 @@ function readValid(path: string): Map<string, string[]> | undefined {
   }
 }
 
+/** The repository's kept map, when there is a valid one. */
+export const keptImpact = (dataDir: string, repoId: string): Map<string, string[]> | undefined =>
+  readValid(storeOf(dataDir, repoId));
+
 /** Copies the kept map into a checkout; how many tests it maps, or 0 for none. */
 export function seedImpact(dataDir: string, repoId: string, checkout: string): number {
   const map = readValid(storeOf(dataDir, repoId));

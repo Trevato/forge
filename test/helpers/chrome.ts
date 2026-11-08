@@ -28,16 +28,31 @@ interface CdpMessage {
   error?: { message: string };
 }
 
+/**
+ * `promise`, or a rejection naming `what` after `ms`: every wait on chromium
+ * is bounded, so a stalled browser fails the test and the `finally` that
+ * kills it runs, instead of hanging the shard until it is killed.
+ */
+function within<T>(ms: number, what: string, promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`chromium: ${what} took longer than ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 /** A CDP session over one page's own devtools socket. */
 class Cdp {
   private nextId = 1;
   private readonly pending = new Map<number, (msg: CdpMessage) => void>();
   private readonly waiters = new Map<string, () => void>();
+  private readonly listeners = new Map<string, ((params: any) => void)[]>();
 
   constructor(private readonly ws: WebSocket) {
     ws.addEventListener("message", (event) => {
       const msg = JSON.parse(event.data as string) as CdpMessage & {
         method?: string;
+        params?: unknown;
       };
       if (msg.id !== undefined) {
         this.pending.get(msg.id)?.(msg);
@@ -45,19 +60,26 @@ class Cdp {
       } else if (msg.method !== undefined) {
         this.waiters.get(msg.method)?.();
         this.waiters.delete(msg.method);
+        for (const listen of this.listeners.get(msg.method) ?? [])
+          listen(msg.params);
       }
     });
   }
 
+  /** Every time `method` fires as an event, with its params. */
+  on(method: string, listen: (params: any) => void): void {
+    this.listeners.set(method, [...(this.listeners.get(method) ?? []), listen]);
+  }
+
   send(method: string, params: object = {}): Promise<any> {
     const id = this.nextId++;
-    return new Promise((resolve, reject) => {
+    return within(5_000, method, new Promise((resolve, reject) => {
       this.pending.set(id, (msg) => {
         if (msg.error !== undefined) reject(new Error(msg.error.message));
         else resolve(msg.result);
       });
       this.ws.send(JSON.stringify({ id, method, params }));
-    });
+    }));
   }
 
   /** Resolves the next time `method` fires as an event — a one-shot wait. */
@@ -73,7 +95,8 @@ async function findPageTarget(
   const httpBase = debuggerWsUrl
     .replace(/^ws:/, "http:")
     .replace(/\/devtools\/browser\/.*$/, "");
-  const list = (await (await fetch(`${httpBase}/json/list`)).json()) as {
+  const res = await fetch(`${httpBase}/json/list`, { signal: AbortSignal.timeout(5_000) });
+  const list = (await res.json()) as {
     type: string;
     webSocketDebuggerUrl: string;
   }[];
@@ -107,7 +130,7 @@ async function readDebuggerUrl(
  * cookies and the given colour scheme, and return what `expression` (a JS
  * expression that yields a JSON string) says once the page has loaded.
  */
-async function evaluateLoaded(
+export async function evaluateLoaded(
   binary: string,
   url: string,
   viewport: { width: number; height: number },
@@ -141,12 +164,12 @@ async function evaluateLoaded(
     ]);
     const page = await findPageTarget(browserWsUrl);
     ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise<void>((resolve, reject) => {
+    await within(5_000, "opening the devtools socket", new Promise<void>((resolve, reject) => {
       ws!.addEventListener("open", () => resolve());
       ws!.addEventListener("error", () =>
         reject(new Error("chromium's devtools socket refused the connection")),
       );
-    });
+    }));
     const cdp = new Cdp(ws);
     await cdp.send("Page.enable");
     await cdp.send("Network.enable");
@@ -171,7 +194,7 @@ async function evaluateLoaded(
       });
     const loaded = cdp.once("Page.loadEventFired");
     await cdp.send("Page.navigate", { url });
-    await loaded;
+    await within(10_000, `loading ${url}`, loaded);
     // The load event can be the blank start page's, fired late on a busy
     // machine: the page measured is the navigated one, loaded, or none.
     const deadline = Date.now() + 10_000;
@@ -187,6 +210,7 @@ async function evaluateLoaded(
     const { result } = await cdp.send("Runtime.evaluate", {
       expression,
       returnByValue: true,
+      awaitPromise: true,
     });
     return result.value as string;
   } finally {
@@ -298,6 +322,158 @@ export function chromiumRuns(binary: string): boolean {
   } catch {
     return false;
   } finally {
+    rmSync(profile, { recursive: true, force: true });
+  }
+}
+
+/** What a browser did after a click: where it went, and what it refused. */
+export interface Followed {
+  /** Every URL the page asked for, in order (navigations and redirects). */
+  readonly requested: string[];
+  /** The page's URL when following stopped. */
+  readonly finalUrl: string;
+  /**
+   * Console errors, log entries and `securitypolicyviolation` events: a
+   * Content-Security-Policy refusal lands here, however the browser says it.
+   */
+  readonly errors: string[];
+}
+
+/**
+ * Run `attempt` until it reports no failure (`undefined`) or `deadline`
+ * passes, pausing `pauseMs` between tries: a click on an element the page
+ * has not drawn yet throws, and under load that is only "not yet". Throws
+ * the last failure when time runs out.
+ */
+export async function retryStep(
+  attempt: () => Promise<string | undefined>,
+  deadline: number,
+  pauseMs = 50,
+): Promise<void> {
+  for (;;) {
+    const failure = await attempt();
+    if (failure === undefined) return;
+    if (Date.now() >= deadline) throw new Error(`step never ran: ${failure}`);
+    await Bun.sleep(pauseMs);
+  }
+}
+
+/**
+ * Load `url` with a session cookie, then run each of `steps` (an
+ * expression evaluated in the page — a click) after the page before it has
+ * loaded, and follow the browser until a requested URL satisfies `until` or
+ * `timeoutMs` passes. What a real browser enforces and an HTTP client does
+ * not — a page's CSP on the redirect that follows its form — is exactly
+ * what this sees.
+ */
+export async function clickAndFollow(
+  binary: string,
+  input: {
+    url: string;
+    cookie: { name: string; value: string };
+    steps: readonly string[];
+    until: (url: string) => boolean;
+    /** Done for another reason the page cannot see (a server got the request). */
+    done?: () => boolean;
+    timeoutMs?: number;
+  },
+): Promise<Followed> {
+  const profile = mkdtempSync(join(tmpdir(), "forge-click-"));
+  const proc = Bun.spawn(
+    [
+      binary,
+      "--headless=new",
+      "--no-sandbox",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--disable-background-networking",
+      "--disable-crash-reporter",
+      "--no-first-run",
+      `--user-data-dir=${profile}`,
+      "--remote-debugging-port=0",
+    ],
+    { env: childEnv({}), stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+  );
+  let ws: WebSocket | undefined;
+  const requested: string[] = [];
+  const errors: string[] = [];
+  try {
+    const browserWsUrl = await Promise.race([
+      readDebuggerUrl(proc.stderr),
+      Bun.sleep(10_000).then((): string => {
+        throw new Error("chromium never printed its devtools address");
+      }),
+    ]);
+    const target = await findPageTarget(browserWsUrl);
+    ws = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws!.addEventListener("open", () => resolve());
+      ws!.addEventListener("error", () =>
+        reject(new Error("chromium's devtools socket refused the connection")),
+      );
+    });
+    const cdp = new Cdp(ws);
+    cdp.on("Network.requestWillBeSent", (p) => requested.push(String(p.request?.url ?? "")));
+    cdp.on("Log.entryAdded", (p) => {
+      if (p.entry?.level === "error" || p.entry?.source === "security")
+        errors.push(String(p.entry?.text ?? ""));
+    });
+    cdp.on("Runtime.consoleAPICalled", (p) => {
+      if (p.type === "error")
+        errors.push((p.args ?? []).map((a: any) => String(a.value ?? a.description ?? "")).join(" "));
+    });
+    cdp.on("Audits.issueAdded", (p) => {
+      const csp = p.issue?.details?.contentSecurityPolicyIssueDetails;
+      if (csp !== undefined)
+        errors.push(`CSP issue: ${csp.violatedDirective} ${csp.blockedURL ?? ""}`);
+    });
+    await cdp.send("Page.enable");
+    await cdp.send("Network.enable");
+    await cdp.send("Log.enable");
+    await cdp.send("Runtime.enable");
+    await cdp.send("Audits.enable");
+    // Every document reports its own CSP refusals, before anything else runs.
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `document.addEventListener("securitypolicyviolation", (e) =>
+        console.error("CSP violation: " + e.violatedDirective + " " + e.blockedURI));`,
+    });
+    await cdp.send("Network.setCookie", {
+      name: input.cookie.name,
+      value: input.cookie.value,
+      url: input.url,
+    });
+    const deadline = Date.now() + (input.timeoutMs ?? 15_000);
+    const reached = () =>
+      requested.some(input.until) || (input.done?.() ?? false);
+    let loaded = cdp.once("Page.loadEventFired");
+    await cdp.send("Page.navigate", { url: input.url });
+    await Promise.race([loaded, Bun.sleep(Math.max(0, deadline - Date.now()))]);
+    for (const step of input.steps) {
+      if (reached()) break;
+      loaded = cdp.once("Page.loadEventFired");
+      await retryStep(
+        async () => {
+          // As a person's click: a user gesture, so a link that opens a tab does.
+          const r = await cdp.send("Runtime.evaluate", { expression: step, userGesture: true });
+          return r.exceptionDetails === undefined
+            ? undefined
+            : String(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
+        },
+        deadline,
+      );
+      await Promise.race([loaded, Bun.sleep(Math.max(0, deadline - Date.now()))]);
+    }
+    while (!reached() && Date.now() < deadline) await Bun.sleep(100);
+    // Late reports of what the last navigation refused.
+    await Bun.sleep(300);
+    const where = await cdp
+      .send("Runtime.evaluate", { expression: "location.href", returnByValue: true })
+      .catch(() => ({ result: { value: "" } }));
+    return { requested, finalUrl: String(where.result?.value ?? ""), errors };
+  } finally {
+    ws?.close();
+    proc.kill("SIGKILL");
+    await proc.exited.catch(() => {});
     rmSync(profile, { recursive: true, force: true });
   }
 }

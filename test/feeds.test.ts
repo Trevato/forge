@@ -184,7 +184,7 @@ describe("a repository's feed", () => {
     const first = await fetch(url);
     const etag = first.headers.get("etag")!;
     expect(etag).toMatch(/^W\//);
-    expect(first.headers.get("vary")).toBe("authorization, cookie");
+    expect(first.headers.get("vary")).toBe("authorization, cookie, Accept-Encoding");
     await first.text();
     const again = await fetch(url, { headers: { "if-none-match": etag } });
     expect(again.status).toBe(304);

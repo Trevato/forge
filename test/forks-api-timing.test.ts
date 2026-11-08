@@ -42,7 +42,7 @@ test("the forks list names session, forks, render in order", async () => {
   const res = await fetch(`${servers.url}/api/v1/repos/alice/yard/forks`, { headers: { authorization: `Bearer ${bearer}` } });
   await res.arrayBuffer();
   expect(res.status).toBe(200);
-  expect(names(res)).toEqual(["session", "forks", "render"]);
+  expect(names(res)).toEqual(["session", "forks", "drift", "render"]);
 });
 
 test("a refused forks read still names session", async () => {

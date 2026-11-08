@@ -11,6 +11,7 @@
  */
 
 import { NOT_A_MEMBER } from "../core/roles.ts";
+import { AGENT_NOT_ON_CREW } from "../actions/crew_limit_words.ts";
 import type { App } from "../app.ts";
 import {
   addComment,
@@ -117,8 +118,10 @@ const WORDS: Record<string, string> = {
   mirrored: "mirrored: change it at the origin",
   unknown_label: "no such label here",
   assignee_cannot_read: "the assignee cannot read this repository",
-  agent_not_on_crew: "that agent is not on this repository's crew",
+  agent_not_on_crew: AGENT_NOT_ON_CREW,
   already_merged: "a merged pull stays closed",
+  reason_required: "a bug closed without a fix says why: add a reason",
+  invalid_note: "a reason is one sentence of at most 300 characters",
   finished: "already finished",
   not_agent: "only an agent run is queued again",
   not_finished: "only a cancelled or failed run is queued again",
@@ -128,7 +131,8 @@ const WORDS: Record<string, string> = {
   unknown_branch: "unknown branch",
 };
 
-const words = (code: string): string => WORDS[code] ?? code;
+/** An action's refusal code in words; the terminal says the same (#7294). */
+export const words = (code: string): string => WORDS[code] ?? code;
 
 /** A Result from an action, as a verb's answer. */
 const done = (result: Result<unknown, string>): string | undefined =>
@@ -368,12 +372,12 @@ export const VERBS: Record<string, Verb> = {
     async write(app, actor, t, after, value) {
       if (!t.issue || (after !== "open" && after !== "closed"))
         return words("not_found");
-      const closed = done(setIssueState(app, actor, t.repo, t.issue, after));
-      // Said after the close, so a refused close leaves no comment behind.
-      if (closed === undefined && after === "closed" && typeof value === "string" && value !== "") {
-        const said = addComment(app, actor, t.repo, t.issue, `Closed: ${value}`);
-        if (!said.ok) return words(String(said.error));
-      }
+      // The reason rides the close, so it is said with it or not at all,
+      // and a bug that needs one is refused without it.
+      const note = after === "closed" && typeof value === "string" ? value : "";
+      const closed = done(
+        setIssueState(app, actor, t.repo, t.issue, after, note === "" ? {} : { note }),
+      );
       return closed;
     },
   },

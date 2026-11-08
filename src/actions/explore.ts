@@ -38,6 +38,7 @@ export type ExploreSort =
   | "score"
   | "forks"
   | "ships"
+  | "likes"
   | "use"
   | "fresh"
   | "name";
@@ -49,9 +50,18 @@ export interface ExploreQuery {
   readonly text: string;
   /** `archived:yes` — put-away repositories are in the list; off, they are not. */
   readonly archived: boolean;
+  /** `updated:1d|7d|30d` — only rows that moved within the window; `all` is no window. */
+  readonly updated: ExploreWindow;
   /** `owner:<name>` — only this account's apps, and the person themself. */
   readonly owner?: string;
 }
+
+export type ExploreWindow = "all" | "1d" | "7d" | "30d";
+const WINDOWS: Record<string, number> = {
+  "1d": 86_400_000,
+  "7d": 7 * 86_400_000,
+  "30d": 30 * 86_400_000,
+};
 
 const KINDS: Record<string, ExploreKind> = {
   app: "app",
@@ -65,6 +75,7 @@ const SORTS: readonly ExploreSort[] = [
   "score",
   "forks",
   "ships",
+  "likes",
   "use",
   "fresh",
   "name",
@@ -76,13 +87,32 @@ const ROWS = 60;
 
 /**
  * The one line: `kind:` and `sort:` take a word each; anything else is
- * text to match. An unknown kind or sort is ignored, not an error — the
- * line is typed by a person.
+ * text to match. An unknown kind or sort is ignored (`readExploreLine`
+ * names it), not an error — the line is typed by a person.
  */
 export function parseExploreQuery(line: string): ExploreQuery {
+  return readExploreLine(line).query;
+}
+
+const EXPLORE_KEYS = /(^|\s)(kind|sort|updated|owner|archived):/i;
+
+/** Whether a line has any word the explorer reads as a key, so every surface takes it as the explorer's. */
+export function isExploreLine(line: string): boolean {
+  return EXPLORE_KEYS.test(line);
+}
+
+/** The query and the `kind:`, `sort:`, `updated:`, `archived:` and `owner:` words it did not take, as typed. */
+export interface ExploreRead {
+  readonly query: ExploreQuery;
+  readonly unknown: readonly string[];
+}
+
+export function readExploreLine(line: string): ExploreRead {
+  const unknown: string[] = [];
   let kind: ExploreKind | "all" = "all";
   let sort: ExploreSort = "score";
   let archived = false;
+  let updated: ExploreWindow = "all";
   let owner: string | undefined;
   const words: string[] = [];
   for (const word of line
@@ -91,25 +121,117 @@ export function parseExploreQuery(line: string): ExploreQuery {
     .filter((w) => w !== "")) {
     const [key, value = ""] = word.split(/:(.*)/s);
     const k = (key ?? "").toLowerCase();
-    if (k === "kind" && value !== "") kind = KINDS[value.toLowerCase()] ?? kind;
-    else if (
-      k === "sort" &&
-      (SORTS as readonly string[]).includes(value.toLowerCase())
-    )
-      sort = value.toLowerCase() as ExploreSort;
-    else if (k === "archived" && ["yes", "no"].includes(value.toLowerCase()))
-      archived = value.toLowerCase() === "yes";
-    else if (k === "owner" && isSafeName(value)) owner = value;
-    else if (k === "q" && value !== "") words.push(value);
+    if (k === "kind" && value !== "") {
+      const known = Object.hasOwn(KINDS, value.toLowerCase()) ? KINDS[value.toLowerCase()] : undefined;
+      if (known === undefined) unknown.push(word);
+      else kind = known;
+    } else if (k === "sort" && value !== "") {
+      if ((SORTS as readonly string[]).includes(value.toLowerCase()))
+        sort = value.toLowerCase() as ExploreSort;
+      else unknown.push(word);
+    } else if (k === "archived" && value !== "") {
+      if (["yes", "no"].includes(value.toLowerCase())) archived = value.toLowerCase() === "yes";
+      else unknown.push(word);
+    } else if (k === "updated" && value !== "") {
+      if (Object.hasOwn(WINDOWS, value.toLowerCase())) updated = value.toLowerCase() as ExploreWindow;
+      else unknown.push(word);
+    } else if (k === "owner" && value !== "") {
+      if (isSafeName(value)) owner = value;
+      else unknown.push(word);
+    } else if (k === "q" && value !== "") words.push(value);
     else words.push(word);
   }
   return {
-    kind,
-    sort,
-    text: words.join(" ").slice(0, 100),
-    archived,
-    ...(owner === undefined ? {} : { owner }),
+    query: {
+      kind,
+      sort,
+      text: words.join(" ").slice(0, 100),
+      archived,
+      updated,
+      ...(owner === undefined ? {} : { owner }),
+    },
+    unknown: unknown.slice(0, 5),
   };
+}
+
+/** The kinds a `kind:` word may be, once each. */
+const KIND_WORDS: readonly ExploreKind[] = [...new Set(Object.values(KINDS))];
+
+/**
+ * One quiet sentence for the unknown words, naming what is taken; "" when
+ * there are none. Plain text: the caller escapes it where it draws it.
+ */
+export function exploreNote(unknown: readonly string[]): string {
+  return unknown
+    .map((word) => {
+      const key = word.slice(0, word.indexOf(":")).toLowerCase();
+      const shown = word.length > 40 ? `${word.slice(0, 39)}…` : word;
+      if (key === "owner") return `${shown} is not a name`;
+      if (key === "updated") return `${shown} is not a window — use ${Object.keys(WINDOWS).join(", ")}`;
+      if (key === "archived") return `${shown} is not an answer — use yes, no`;
+      const sort = key === "sort";
+      return `${shown} is not a ${sort ? "sort" : "kind"} — use ${(sort ? SORTS : KIND_WORDS).join(", ")}`;
+    })
+    .join("; ");
+}
+
+/** Edit distance between two short words. */
+function distance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++)
+      next[j] = Math.min(row[j]! + 1, next[j - 1]! + 1, row[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length]!;
+}
+
+/** The words each key takes. */
+function takenBy(key: string): readonly string[] {
+  if (key === "kind") return Object.keys(KINDS);
+  if (key === "sort") return SORTS;
+  if (key === "updated") return Object.keys(WINDOWS);
+  if (key === "archived") return ["yes", "no"];
+  return [];
+}
+
+export interface ExploreSuggestion {
+  /** The unknown word as typed. */
+  readonly word: string;
+  /** The known word it was nearest, `sort:forks`. */
+  readonly fix: string;
+  /** The whole line with that one word mended. */
+  readonly line: string;
+}
+
+/**
+ * One mended line for the first unknown word within edit distance 2 of a
+ * known value of its key; undefined when none is that close. A pure
+ * function of the line: nothing is looked up.
+ */
+export function exploreSuggestion(line: string): ExploreSuggestion | undefined {
+  const { unknown } = readExploreLine(line);
+  for (const word of unknown) {
+    const at = word.indexOf(":");
+    const key = word.slice(0, at).toLowerCase();
+    const value = word.slice(at + 1).toLowerCase();
+    let best: string | undefined;
+    // Within 2, and nearer than the word is long: 1–2 characters of junk match anything.
+    let near = Math.min(3, value.length);
+    for (const known of takenBy(key)) {
+      const d = distance(value, known);
+      if (d < near) {
+        near = d;
+        best = known;
+      }
+    }
+    if (best === undefined) continue;
+    const fix = `${key}:${best}`;
+    const words = line.trim().split(/\s+/);
+    return { word, fix, line: words.map((w) => (w === word ? fix : w)).join(" ") };
+  }
+  return undefined;
 }
 
 /** The line a query reads as, for links and the query box. */
@@ -118,6 +240,7 @@ export function exploreLine(query: ExploreQuery): string {
     query.kind === "all" ? "" : `kind:${query.kind}`,
     query.sort === "score" ? "" : `sort:${query.sort}`,
     query.archived ? "archived:yes" : "",
+    query.updated === "all" ? "" : `updated:${query.updated}`,
     query.owner === undefined ? "" : `owner:${query.owner}`,
     query.text,
   ]
@@ -135,6 +258,8 @@ export interface ExploreRow {
   readonly numbers: {
     readonly forks: number;
     readonly ships: number;
+    /** Likes on posts about the app, as the viewer may read them. */
+    readonly likes: number;
     readonly awakeHours: number;
     readonly apps: number;
   };
@@ -175,6 +300,84 @@ export async function explore(
   query: ExploreQuery,
   now?: number,
 ): Promise<ExploreRow[]> {
+  return (await everything(app, viewer, query, now)).slice(0, ROWS);
+}
+
+export interface ExplorePage {
+  readonly items: readonly ExploreRow[];
+  /** Pass back as `cursor` for the page after; null on the last. */
+  readonly nextCursor: string | null;
+}
+
+/**
+ * One page after `cursor` (a `next_cursor` of the page before), or null when
+ * the cursor is not one. The cursor holds the last row's sort value, kind and
+ * name, so the next page starts after that place in the order even when the
+ * row itself has since gone.
+ */
+export async function explorePage(
+  app: App,
+  viewer: User | undefined,
+  query: ExploreQuery,
+  cursor: string | null,
+  visible?: (row: ExploreRow) => boolean,
+  now?: number,
+): Promise<ExplorePage | null> {
+  const after = cursor === null ? undefined : readCursor(cursor, query);
+  if (after === null) return null;
+  // The caller's narrowing comes first, so a page and its cursor only ever
+  // hold rows the caller may see.
+  const all = await everything(app, viewer, query, now);
+  const rows = visible === undefined ? all : all.filter(visible);
+  const rest = after === undefined ? rows : rows.filter((r) => compare(r, after, query) > 0);
+  const items = rest.slice(0, ROWS);
+  return {
+    items,
+    nextCursor: rest.length > ROWS ? writeCursor(items[items.length - 1]!, query) : null,
+  };
+}
+
+interface Place {
+  readonly key: number | string;
+  readonly kind: ExploreKind;
+  readonly name: string;
+}
+
+const CURSOR_MAX = 400;
+
+function writeCursor(row: ExploreRow, query: ExploreQuery): string {
+  const place: [ExploreSort, number | string, ExploreKind, string] = [query.sort, sortKey(row, query.sort), row.kind, row.name];
+  return Buffer.from(JSON.stringify(place)).toString("base64url");
+}
+
+/** Whether `cursor` is one for this query, answered without reading any rows. */
+export const cursorFits = (cursor: string, query: ExploreQuery): boolean => readCursor(cursor, query) !== null;
+
+/** The place a cursor names, undefined never; null when it is not one for this query. */
+function readCursor(cursor: string, query: ExploreQuery): Place | null {
+  if (cursor.length > CURSOR_MAX || !/^[A-Za-z0-9_-]+$/.test(cursor)) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(value) || value.length !== 4) return null;
+  const [sort, key, kind, name] = value as unknown[];
+  if (sort !== query.sort) return null;
+  const wanted = query.sort === "name" ? "string" : "number";
+  if (typeof key !== wanted || (typeof key === "number" && !Number.isFinite(key))) return null;
+  if (kind !== "app" && kind !== "person" && kind !== "forge") return null;
+  if (typeof name !== "string" || name.length > 200) return null;
+  return { key: key as number | string, kind, name };
+}
+
+async function everything(
+  app: App,
+  viewer: User | undefined,
+  query: ExploreQuery,
+  now?: number,
+): Promise<readonly ExploreRow[]> {
   const forgeRows = await forges(app, viewer, query);
   const stamp = now === undefined ? writeStamp(app.db) : undefined;
   if (stamp === undefined) return place(rank(app, viewer, query, now ?? Date.now()), forgeRows, query);
@@ -196,13 +399,14 @@ export async function explore(
 
 /** The forges this forge spawned, for a site admin asking for them. */
 async function forges(app: App, viewer: User | undefined, query: ExploreQuery): Promise<ExploreRow[]> {
-  if (query.owner !== undefined || viewer?.isAdmin !== true || (query.kind !== "all" && query.kind !== "forge")) return [];
+  // A spawned forge carries no time, so a window leaves it out.
+  if (query.updated !== "all" || query.owner !== undefined || viewer?.isAdmin !== true || (query.kind !== "all" && query.kind !== "forge")) return [];
   return (await listChildren(app)).map((child) => ({
     kind: "forge",
     name: child.name,
     url: child.url,
     description: child.done ? "spawned from this forge" : "being spawned",
-    numbers: { forks: 0, ships: 0, awakeHours: 0, apps: 0 },
+    numbers: { forks: 0, ships: 0, likes: 0, awakeHours: 0, apps: 0 },
     shippedAt: null,
     score: 0,
   }));
@@ -256,8 +460,13 @@ function rank(
       : { ...s, awakeHours: 0 };
   };
 
+  const likes = likesByRepo(db, appRepos.map((r) => r.id));
+
   const copyable = (repo: Repo): boolean => {
-    if (viewer === undefined || viewer.kind === "agent" || !isActive(viewer)) return false;
+    // A signed-out visitor is offered only public apps; the page they land on
+    // sends them to sign in first, and the copy is made after.
+    if (viewer === undefined) return records.get(repo.id)!.access === "public";
+    if (viewer.kind === "agent" || !isActive(viewer)) return false;
     if (repo.ownerId === viewer.id) return false;
     const record = records.get(repo.id)!;
     return (
@@ -267,6 +476,7 @@ function rank(
   };
   const appRows: ExploreRow[] = appRepos.map((repo) => {
     const s = told(repo);
+    const liked = likes.get(repo.id) ?? 0;
     return {
       kind: "app",
       name: `${repo.ownerName}/${repo.name}`,
@@ -275,11 +485,12 @@ function rank(
       numbers: {
         forks: s.forks,
         ships: s.ships,
+        likes: liked,
         awakeHours: Math.round(s.awakeHours * 10) / 10,
         apps: 1,
       },
       shippedAt: s.shippedAt,
-      score: frontScore(s, now, weights),
+      score: frontScore(s, now, weights) + LIKE_WEIGHT * Math.log1p(liked),
       repo: { owner: repo.ownerName, name: repo.name },
       copyable: copyable(repo),
     };
@@ -304,6 +515,7 @@ function rank(
       numbers: {
         forks: (was?.numbers.forks ?? 0) + row.numbers.forks,
         ships: (was?.numbers.ships ?? 0) + row.numbers.ships,
+        likes: (was?.numbers.likes ?? 0) + row.numbers.likes,
         awakeHours:
           Math.round(((was?.numbers.awakeHours ?? 0) + row.numbers.awakeHours) * 10) / 10,
         apps: (was?.numbers.apps ?? 0) + 1,
@@ -326,6 +538,7 @@ function rank(
     [...appRows, ...people.values()].map(freeze).filter(
       (row) =>
         (query.kind === "all" || row.kind === query.kind) &&
+        movedWithin(row, query, now) &&
         (only === undefined || (row.repo?.owner ?? row.name).toLowerCase() === only) &&
         (text === "" || `${row.name} ${row.description}`.toLowerCase().includes(text)),
     ),
@@ -333,35 +546,74 @@ function rank(
   );
 }
 
+/** What a like adds to the score sort: modest next to forks (3) and ships (2). */
+const LIKE_WEIGHT = 0.5;
+
+/** Likes on posts about each repository; the caller passes only repositories the viewer may read. */
+function likesByRepo(db: Database, repoIds: readonly string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  if (repoIds.length === 0) return out;
+  const rows = db
+    .query<{ repo_id: string; n: number }, [string]>(
+      `SELECT repo_id, COUNT(*) AS n FROM feed_like
+        WHERE repo_id IN (SELECT value FROM json_each(?1)) GROUP BY repo_id`,
+    )
+    .all(JSON.stringify(repoIds));
+  for (const r of rows) out.set(r.repo_id, r.n);
+  return out;
+}
+
+function sortKey(r: ExploreRow, sort: ExploreSort): number | string {
+  switch (sort) {
+    case "score": return r.score;
+    case "forks": return r.numbers.forks;
+    case "ships": return r.numbers.ships;
+    case "likes": return r.numbers.likes;
+    case "use": return r.numbers.awakeHours;
+    case "fresh": return r.shippedAt === null ? 0 : Date.parse(r.shippedAt) || 0;
+    case "name": return r.name.toLowerCase();
+  }
+}
+
+/**
+ * The total order: the sort value, then kind and name, so no two rows tie and
+ * a cursor names exactly one place in it.
+ */
+function compare(a: Place | ExploreRow, b: Place | ExploreRow, query: ExploreQuery): number {
+  const x = "key" in a ? a.key : sortKey(a, query.sort);
+  const y = "key" in b ? b.key : sortKey(b, query.sort);
+  const by =
+    query.sort === "name"
+      ? String(x) < String(y) ? -1 : String(x) > String(y) ? 1 : 0
+      : (y as number) - (x as number);
+  if (by !== 0) return by;
+  if (a.kind !== b.kind) return a.kind < b.kind ? -1 : 1;
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+}
+
+/** Whether the row's `shippedAt` (its last merged pull) is inside the window. */
+function movedWithin(row: ExploreRow, query: ExploreQuery, now: number): boolean {
+  if (query.updated === "all") return true;
+  if (row.shippedAt === null) return false;
+  const at = Date.parse(row.shippedAt);
+  return now - at <= WINDOWS[query.updated]!;
+}
+
 /** Rows sorted as the query says, in place. */
 function order(rows: ExploreRow[], query: ExploreQuery): ExploreRow[] {
-  const by: Record<ExploreSort, (r: ExploreRow) => number | string> = {
-    score: (r) => r.score,
-    forks: (r) => r.numbers.forks,
-    ships: (r) => r.numbers.ships,
-    use: (r) => r.numbers.awakeHours,
-    fresh: (r) => (r.shippedAt === null ? 0 : Date.parse(r.shippedAt)),
-    name: (r) => r.name.toLowerCase(),
-  };
-  const key = by[query.sort];
-  return rows.sort((a, b) => {
-    const x = key(a);
-    const y = key(b);
-    if (query.sort === "name") return String(x).localeCompare(String(y));
-    return (y as number) - (x as number) || a.name.localeCompare(b.name);
-  });
+  return rows.sort((a, b) => compare(a, b, query));
 }
 
 /**
  * The answer: the ranked rows (kept, so never changed here) with the forge
- * rows among them, cut to a page. Only the forge rows lack a write clock,
+ * rows among them, whole (the callers cut a page). Only the forge rows lack a write clock,
  * so they are added after the kept read, to a copy.
  */
-function place(ranked: readonly ExploreRow[], forgeRows: ExploreRow[], query: ExploreQuery): ExploreRow[] {
+function place(ranked: readonly ExploreRow[], forgeRows: ExploreRow[], query: ExploreQuery): readonly ExploreRow[] {
   const text = query.text.toLowerCase();
   const own = forgeRows.filter(
     (row) => text === "" || `${row.name} ${row.description}`.toLowerCase().includes(text),
   );
-  if (own.length === 0) return ranked.slice(0, ROWS);
-  return order([...ranked, ...own], query).slice(0, ROWS);
+  if (own.length === 0) return ranked;
+  return order([...ranked, ...own], query);
 }

@@ -23,6 +23,8 @@
  *   bun scripts/flake-hunt.ts admit test/x.test.ts [--runs 10]
  *       The file ADMISSION_RUNS times the same way; prints the record the
  *       admitting pull carries. Exits non-zero unless every run is green.
+ *       A file with a wait that runs out of time and carries on
+ *       (`fallThroughWaits`) is refused before any run (#9017).
  */
 
 import { availableParallelism } from "node:os";
@@ -31,6 +33,7 @@ import {
   admissionRecord,
   admitted,
   ADMISSION_RUNS,
+  fallThroughWaits,
   findBroken,
   findFlakes,
   huntedFile,
@@ -236,8 +239,9 @@ async function openRedIssues(): Promise<Map<string, OpenRed>> {
 }
 
 /** The files outside the gate, one at a time; red ones reported to the forge. */
-async function outside(): Promise<number> {
-  const files = outsideFiles(presentTests());
+async function scheduled(): Promise<number> {
+  const present = presentTests();
+  const files = outsideFiles(present);
   const fileIssues = rest.includes("--file-issues");
   const open = fileIssues ? await openRedIssues() : new Map<string, OpenRed>();
   const runs: FileRun[] = [];
@@ -357,6 +361,14 @@ async function admit(): Promise<number> {
   if (file === undefined || file.includes(".."))
     fail("admit needs a file: bun scripts/flake-hunt.ts admit test/x.test.ts");
   const runs = runsOf(ADMISSION_RUNS);
+  // A wait that runs out and carries on passes ten runs on a fast box (#9017): refused on sight.
+  const waits = fallThroughWaits(file, readFileSync(file, "utf8"));
+  if (waits.length > 0) {
+    console.log(`admission: ${file} — refused, a wait runs out of time and carries on:`);
+    for (const line of waits) console.log(`  ${line}`);
+    console.log("  after the loop, fail when the condition never came (or return it), then run admit again");
+    return 1;
+  }
   const results = await underLoad(async () => {
     const out: FileRun[] = [];
     for (let i = 0; i < runs; i++) out.push(await runFile(file, freshSeed()));
@@ -368,7 +380,7 @@ async function admit(): Promise<number> {
   return admitted(results) ? 0 : 1;
 }
 
-if (mode === "outside") process.exit(await outside());
+if (mode === "outside") process.exit(await scheduled());
 else if (mode === "hunt") process.exit(await hunt());
 else if (mode === "quarantine") process.exit(await quarantineAll());
 else if (mode === "admit") process.exit(await admit());

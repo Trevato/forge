@@ -33,3 +33,27 @@ writing anything; a missing one restores without the key and lists the
 sealed values to set again. To pick an older snapshot, put its name
 (`2026-09-22T08-00-00Z`) where line 5 says `latest`. Details:
 [SNAPSHOT.md](SNAPSHOT.md).
+
+On a box that stays: `scripts/box-install.sh`, then lines 3–6 as the `forge`
+user with `<data-dir>` `/var/lib/forge`, then `systemctl enable --now forge`
+in place of line 7 ([EXTRACT.md](EXTRACT.md), _The box beside production_).
+
+## The drill on the box
+
+`scripts/restore-drill.ts` runs lines 3–7 and checks them, from the bucket
+alone: with the card's `S3_*` lines and the passphrase exported, as the
+`forge` user,
+
+    bun scripts/restore-drill.ts <empty-data-dir>
+
+restores the newest snapshot into that directory, boots it on a free side
+port, checks `/` answers, and prints the repositories and apps anyone can
+see beside production's public API (`--production <url>`, default
+`https://forge.open-platform.sh`); the restored forge boots as a preview,
+so the sample its preview admin seeds is left out. It exits 1 when a step fails or a count
+differs. It writes only into the directory it is given, which must be empty,
+refuses `/data`, and leaves the restored copy in place.
+`test/restore-drill-script.test.ts` runs it against a tiny snapshot and a
+stub bucket.
+
+With the platform unreachable (the B2 mirror only): [backup-truth.md](features/backup-truth.md), _Leaving the platform_.

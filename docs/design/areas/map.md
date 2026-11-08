@@ -23,4 +23,7 @@ is `data-state` on `.map-node`, not a class.
 - `.map-edge` — one dependency edge between two cards.
 - `.map-edge-crit` — an edge on the critical path, in the accent.
 - `.map-edge-done` — an edge with a closed issue at either end, faded.
+- `.map-toggle` — the link beside the counts that swaps between "Show done" (`?done=1`) and "Open only"; padded, 44px tall under `pointer: coarse`. It is a link, not a badge.
 - `.map-ask` — a pillar row's lead-time figures in the side column, inline, with the hover title saying what they measure.
+
+The Ready now list's **First** button (a writer's `method="post"` form in the row's trail) and its "first, by <who>" meta line add no class: they are `row`'s `trail` and `meta` and the outline `btn`. The list is `.setting-list`, so the meta wraps and under 640px the trail drops to its own line.

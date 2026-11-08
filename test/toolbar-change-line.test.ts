@@ -154,3 +154,30 @@ test("signed out sees it too; production is unchanged", async () => {
 test("a pull the viewer may not see is a 404", async () => {
   expect((await read("pull-9999")).status).toBe(404);
 });
+
+test("lists changed files with anchors, counts, escaping, and a cut-off", async () => {
+  const files = Array.from({ length: 12 }, (_, i) => ({ path: `d/f${String(i).padStart(2, "0")}.txt`, content: "a\n" }));
+  files.push({ path: "d/<b>x.txt", content: "a\nb\n" });
+  const done = await commitToBranch(app, aliceUser, repoRow, { branch: "many", message: "many", files });
+  if (!done.ok) throw new Error(JSON.stringify(done.error));
+  const pull = await openPull(app, aliceUser, repoRow, { title: "many", body: "", baseBranch: "main", headBranch: "many" });
+  if (!pull.ok) throw new Error(JSON.stringify(pull.error));
+  const n = pull.value.number;
+  const text = await (await read(`pull-${n}`)).text();
+  expect(text).toContain('class="change-files"');
+  expect(text).toContain(`href="/alice/notes/pulls/${n}/files#d-d-f00-txt"`);
+  expect(text).toContain('<span class="add" aria-label="1 added">+1</span>');
+  expect(text).not.toContain("<b>x");
+  expect(text).toContain("d/&lt;b&gt;x.txt");
+  const block = /<ul class="change-files"[\s\S]*?<\/ul>/.exec(text)![0];
+  expect(block).toContain('aria-label="Files this pull changed"');
+  expect(block).toContain('aria-label="2 added"');
+  const listed = block.match(/<li>/g)!.length;
+  expect(listed).toBe(11);
+  expect(text).toContain("and 3 more");
+  expect(text).toContain(`href="/alice/notes/pulls/${n}/files">and 3 more`);
+  const before = statReads.count;
+  await (await read(`pull-${n}`)).text();
+  expect(statReads.count).toBe(before);
+  expect(await (await read("production")).text()).not.toContain("change-files");
+});

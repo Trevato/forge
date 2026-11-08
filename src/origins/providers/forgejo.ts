@@ -32,6 +32,7 @@ import type {
   ProviderResult,
   RemoteBlob,
   RemoteBranch,
+  RemoteCheck,
   RemoteComment,
   RemoteCommit,
   RemoteIdentity,
@@ -39,9 +40,13 @@ import type {
   RemoteLabel,
   RemoteReadme,
   RemoteRepo,
+  RepoGroup,
   RemoteReview,
+  ArchivedPage,
+  ArchivedRepo,
   RemoteReviewState,
   RemoteTreeEntry,
+  RepoWalk,
 } from "../types.ts";
 import {
   NO_ACCOUNT,
@@ -92,7 +97,7 @@ export class ForgejoProvider implements Provider {
   readonly kind: OriginKind;
   readonly apiUrl: string;
   readonly webUrl: string;
-  private readonly api: ApiClient;
+  protected readonly api: ApiClient;
   /** The instance's `max_response_items`, learned once. */
   private limit: number | undefined;
   /** Our own numeric id, needed for the repo search that sees org repos. */
@@ -102,13 +107,16 @@ export class ForgejoProvider implements Provider {
     this.kind = credential.kind === "gitea" ? "gitea" : "forgejo";
     this.apiUrl = credential.apiUrl;
     this.webUrl = credential.webUrl;
-    this.api = new ApiClient(credential, (token) => ({
-      // The OpenAPI document is explicit: "API tokens must be prepended with
-      // 'token' followed by a space." Bearer works on new builds and is what
-      // an OAuth access token wants; `token` is what a PAT wants everywhere.
-      authorization:
-        credential.authKind === "oauth" ? `Bearer ${token}` : `token ${token}`,
-    }));
+    this.api = new ApiClient(credential, (token) => ({ authorization: this.authorization(token, credential) }));
+  }
+
+  /**
+   * The OpenAPI document is explicit: "API tokens must be prepended with
+   * 'token' followed by a space." Bearer works on new builds and is what an
+   * OAuth access token wants; `token` is what a PAT wants everywhere.
+   */
+  protected authorization(token: string, credential: ProviderCredential): string {
+    return credential.authKind === "oauth" || credential.software === "forge" ? `Bearer ${token}` : `token ${token}`;
   }
 
   /**
@@ -116,7 +124,7 @@ export class ForgejoProvider implements Provider {
    * an error here, it is a silent truncation — the one pagination bug that
    * looks like a correct empty result.
    */
-  private async pageSize(): Promise<number> {
+  protected async pageSize(): Promise<number> {
     if (this.limit !== undefined) return this.limit;
     const result = await this.api.call({ path: "/settings/api" });
     const reported = result.ok
@@ -140,6 +148,9 @@ export class ForgejoProvider implements Provider {
       htmlUrl:
         asString(field(result.value.data, "html_url")) ||
         `${this.webUrl}/${login}`,
+      // Forgejo states it about the account asking (`/user` is always that
+      // account), and only then: it is no secret from the account itself.
+      siteAdmin: asBool(field(result.value.data, "is_admin")),
     });
   }
 
@@ -149,6 +160,43 @@ export class ForgejoProvider implements Provider {
    * with our own uid is the endpoint that sees org and collaborator repos,
    * and it wraps its rows in `{ok, data}`. We prefer it and fall back.
    */
+  /**
+   * One group, from `/repos/search`: `uid` with `exclusive` is what the account
+   * owns, `uid` alone adds what a collaborator, team or organization shares,
+   * and no `uid` is the whole instance.
+   */
+  async listRepoGroup(
+    group: RepoGroup,
+    query: { readonly q?: string; readonly cursor?: string },
+  ): Promise<ProviderResult<Page<RemoteRepo>>> {
+    const me = await this.whoami();
+    if (!me.ok) return me;
+    const page = pageOf(query.cursor);
+    const limit = await this.pageSize();
+    const q = (query.q ?? "").trim();
+    const result = await this.api.call({
+      path: "/repos/search",
+      query: {
+        limit,
+        page,
+        order_by: "recentupdate",
+        ...(q === "" ? {} : { q }),
+        ...(group === "public" ? { private: "false" } : { uid: this.uid ?? "" }),
+        ...(group === "yours" ? { exclusive: "true" } : {}),
+      },
+    });
+    if (!result.ok) return result;
+    const rows = asArray(field(result.value.data, "data"));
+    const mine = me.value.login.toLowerCase();
+    const items = rows.map(toRepo).filter((repo) => {
+      const own = repo.owner.toLowerCase() === mine;
+      if (group === "yours") return own;
+      if (group === "shared") return !own;
+      return !own && !repo.private && !repo.permissions.push;
+    });
+    return succeed({ items, next: nextPage(result.value.headers, rows.length, limit, page) });
+  }
+
   async listRepos(cursor?: string): Promise<ProviderResult<Page<RemoteRepo>>> {
     const page = pageOf(cursor);
     const limit = await this.pageSize();
@@ -181,6 +229,60 @@ export class ForgejoProvider implements Provider {
       items: rows.map(toRepo),
       next: nextPage(result.value.headers, rows.length, limit, page),
     });
+  }
+
+  /**
+   * `listRepos` is for a person looking; this is for a check that must see
+   * everything. It sorts by id, so a repository pushed or made while the walk
+   * runs cannot move into a page already read; it never falls back to
+   * `/user/repos`, whose order differs; and it is complete only when the
+   * distinct repositories seen equal `X-Total-Count`, which must say the
+   * same on every page. Anything else fails, and the guard refuses.
+   */
+  async walkRepos(options: {
+    maxPages: number;
+    pauseMs?: number;
+  }): Promise<ProviderResult<RepoWalk>> {
+    if (this.uid === undefined) {
+      const me = await this.whoami();
+      if (!me.ok) return me;
+    }
+    if (this.uid === undefined)
+      return fail("invalid_response", "the origin gave no id for the account");
+    const limit = await this.pageSize();
+    const seen = new Map<string, RemoteRepo>();
+    const read = (
+      complete: boolean,
+      why?: RepoWalk["why"],
+    ): ProviderResult<RepoWalk> =>
+      succeed({
+        repos: [...seen.values()],
+        complete,
+        ...(why === undefined ? {} : { why }),
+      });
+    let total: number | undefined;
+    for (let page = 1; page <= options.maxPages; page++) {
+      if (page > 1 && (options.pauseMs ?? 0) > 0)
+        await new Promise((resolve) => setTimeout(resolve, options.pauseMs));
+      const result = await this.api.call({
+        path: "/repos/search",
+        query: { uid: this.uid, sort: "id", order: "asc", limit, page },
+      });
+      if (!result.ok) return read(false, "failed");
+      const counted = Number(result.value.headers.get("x-total-count") ?? "");
+      if (!Number.isInteger(counted) || counted < 0) return read(false, "moved");
+      if (total !== undefined && counted !== total) return read(false, "moved");
+      total = counted;
+      const rows = asArray(field(result.value.data, "data"));
+      for (const raw of rows) {
+        const repo = toRepo(raw);
+        seen.set(repo.remoteId || repo.fullName.toLowerCase(), repo);
+      }
+      if (seen.size === total) return read(true);
+      // More than counted, or a page that ends the list short of the count.
+      if (seen.size > total || rows.length < limit) return read(false, "moved");
+    }
+    return read(false, "too_many");
   }
 
   async getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
@@ -502,6 +604,29 @@ export class ForgejoProvider implements Provider {
     return succeed(toPull(result.value.data));
   }
 
+  /** The head's combined commit status: success, failure or error, pending. */
+  async getPullCheck(fullName: string, number: number): Promise<ProviderResult<RemoteCheck>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const base = `/repos/${seg(named.owner)}/${seg(named.name)}`;
+    const pull = await this.api.call({ path: `${base}/pulls/${number}` });
+    if (!pull.ok) return pull;
+    const headOid = asString(dig(pull.value.data, "head", "sha"));
+    if (!/^[0-9a-f]{40,64}$/.test(headOid)) return succeed({ word: "none", headOid: "" });
+    const status = await this.api.call({ path: `${base}/commits/${headOid}/status` });
+    if (!status.ok) return status;
+    const state = asString(field(status.value.data, "state"));
+    const word =
+      state === "success"
+        ? "green"
+        : state === "failure" || state === "error"
+          ? "red"
+          : state === "pending" && asNumber(field(status.value.data, "total_count")) > 0
+            ? "running"
+            : "none";
+    return succeed({ word, headOid });
+  }
+
   async listComments(
     fullName: string,
     number: number,
@@ -647,6 +772,32 @@ export class ForgejoProvider implements Provider {
     return succeed(toComment(result.value.data));
   }
 
+  /**
+   * A webhook on the repository for its pull events (#9011), signed with
+   * `secret`; Forgejo and Gitea sign as `X-Forgejo-Signature` /
+   * `X-Gitea-Signature`, bare hex. One already pointing at `url` is kept.
+   */
+  async watch(fullName: string, hook: { url: string; secret: string }): Promise<ProviderResult<void>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const path = `/repos/${seg(named.owner)}/${seg(named.name)}/hooks`;
+    const listed = await this.api.call({ path });
+    if (!listed.ok) return listed;
+    if (asArray(listed.value.data).some((row) => asString(field(field(row, "config"), "url")) === hook.url))
+      return succeed(undefined);
+    const made = await this.api.call({
+      path,
+      method: "POST",
+      body: {
+        type: "gitea",
+        active: true,
+        events: ["pull_request"],
+        config: { url: hook.url, content_type: "json", secret: hook.secret },
+      },
+    });
+    return made.ok ? succeed(undefined) : made;
+  }
+
   async setState(
     fullName: string,
     number: number,
@@ -695,9 +846,10 @@ export class ForgejoProvider implements Provider {
   ): Promise<ProviderResult<RemoteIssue>> {
     const named = splitFullName(fullName);
     if (!named) return fail("not_found", `not a repository name: ${fullName}`);
-    // `head` is an undocumented plain string here. `branch` is certain;
-    // whether `owner:branch` works for a cross-repo pull is unverified, which
-    // is why the fork-and-contribute flow is not offered yet (docs/ORIGINS.md).
+    // `head` is a plain string here: a branch of this repository, or
+    // `owner:branch` for a branch of a fork (Forgejo's parseCompareInfo,
+    // checked on Forgejo 15.0.9). A reader proposes with the second form
+    // (`origins/fork-route.ts`).
     const result = await this.api.call({
       path: `/repos/${seg(named.owner)}/${seg(named.name)}/pulls`,
       method: "POST",
@@ -712,13 +864,38 @@ export class ForgejoProvider implements Provider {
     return succeed(toPull(result.value.data));
   }
 
-  async forkRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
+  async listForks(
+    fullName: string,
+  ): Promise<ProviderResult<readonly RemoteRepo[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const limit = await this.pageSize();
+    const forks: RemoteRepo[] = [];
+    for (let page = 1; page <= MAX_INTERNAL_PAGES; page++) {
+      const result = await this.api.call({
+        path: `/repos/${seg(named.owner)}/${seg(named.name)}/forks`,
+        query: { limit, page },
+      });
+      if (!result.ok) return result;
+      const rows = asArray(result.value.data);
+      forks.push(...rows.map((r) => toRepo(r)));
+      if (nextPage(result.value.headers, rows.length, limit, page) === null) break;
+    }
+    return succeed(forks);
+  }
+
+  async forkRepo(
+    fullName: string,
+    name?: string,
+  ): Promise<ProviderResult<RemoteRepo>> {
     const named = splitFullName(fullName);
     if (!named) return fail("not_found", `not a repository name: ${fullName}`);
     const result = await this.api.call({
       path: `/repos/${seg(named.owner)}/${seg(named.name)}/forks`,
       method: "POST",
-      body: {},
+      // Both forges take `name` (Forgejo's CreateForkOption, GitHub's
+      // create-fork body); without it the fork takes the upstream's name.
+      body: name === undefined ? {} : { name },
     });
     if (!result.ok) return result;
     return succeed(toRepo(result.value.data));
@@ -734,6 +911,76 @@ export class ForgejoProvider implements Provider {
     });
     if (!result.ok) return result;
     return succeed(undefined);
+  }
+
+  async listArchived(options: {
+    query: string;
+    page: number;
+  }): Promise<ProviderResult<ArchivedPage>> {
+    const me = await this.whoami();
+    if (!me.ok) return me;
+    if (this.uid === undefined)
+      return fail("invalid_response", "the origin gave no id for the account");
+    const limit = await this.pageSize();
+    const result = await this.api.call({
+      path: "/repos/search",
+      query: {
+        uid: this.uid,
+        archived: "true",
+        q: options.query === "" ? undefined : options.query,
+        sort: "alpha",
+        order: "asc",
+        limit,
+        page: options.page,
+      },
+    });
+    if (!result.ok) return result;
+    const rows = asArray(field(result.value.data, "data"));
+    const counted = Number(result.value.headers.get("x-total-count") ?? "");
+    const total = Number.isInteger(counted) && counted >= 0 ? counted : null;
+    return succeed({
+      items: rows.map(toArchived),
+      total,
+      hasNext:
+        total === null ? rows.length === limit : options.page * limit < total,
+    });
+  }
+
+  async unarchiveRepo(
+    fullName: string,
+  ): Promise<ProviderResult<{ archived: boolean | null }>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const path = `/repos/${seg(named.owner)}/${seg(named.name)}`;
+    const changed = await this.api.call({
+      path,
+      method: "PATCH",
+      body: { archived: false },
+    });
+    if (!changed.ok) return changed;
+    const read = await this.api.call({ path });
+    return succeed({
+      archived: read.ok ? asBool(field(read.value.data, "archived")) : null,
+    });
+  }
+
+  /**
+   * A token's scopes are checked before the repository is looked up, so a
+   * write to a name that cannot exist answers 403 naming the scope, or 404
+   * when the token has it, and touches nothing either way.
+   */
+  async repoWriteReach(
+    login: string,
+  ): Promise<ProviderResult<"yes" | "unknown" | { missing: readonly string[] }>> {
+    const asked = await this.api.call({
+      path: `/repos/${seg(login)}/forge-write-check-${crypto.randomUUID()}`,
+      method: "PATCH",
+      body: {},
+    });
+    if (asked.ok || asked.error.error === "not_found") return succeed("yes");
+    if (asked.error.error !== "forbidden") return asked;
+    const missing = asked.error.missingScopes ?? [];
+    return succeed(missing.length > 0 ? { missing } : "unknown");
   }
 
   /**
@@ -767,7 +1014,7 @@ const pageOf = (cursor: string | undefined): number => {
  * deliberately conservative, because a page shorter than `limit` here means
  * "the server clamped you", not "the list ended".
  */
-function nextPage(
+export function nextPage(
   headers: Headers,
   received: number,
   limit: number,
@@ -780,7 +1027,21 @@ function nextPage(
 
 // ---- mapping ----
 
-function toRepo(raw: unknown): RemoteRepo {
+function toArchived(raw: unknown): ArchivedRepo {
+  const repo = toRepo(raw);
+  // A repository archived before the field existed reports the zero time.
+  const at = asTime(field(raw, "archived_at"));
+  return {
+    fullName: repo.fullName,
+    owner: repo.owner,
+    name: repo.name,
+    private: repo.private,
+    archivedAt: at !== null && Date.parse(at) > 0 ? at : null,
+    canChange: repo.permissions.admin,
+  };
+}
+
+export function toRepo(raw: unknown): RemoteRepo {
   const fullName = asString(field(raw, "full_name"));
   const named = splitFullName(fullName);
   return {

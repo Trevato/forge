@@ -2,11 +2,15 @@
  * Your tells on an app, and what the crew said back — the page's own rows
  * (`answersFor`), behind the page's own gate (`canSeeAnswers`): the owner of
  * an app sees their tells; anyone else gets an empty screen, never a name.
- * Read-only; `enter` opens the tell on the web, `r` reads again.
+ * `enter` opens the tell on the web, `r` reads again, and `t` tells the crew
+ * more (#7416): one line through the same `tell()` and `tellAnswer` words the
+ * palette's tell uses, told from the row's page when the cursor is on one.
  */
 
 import { answersFor, canSeeAnswers } from "../../web/studio/answers.ts";
 import { CREW_WORKING } from "../../actions/ask_state_words.ts";
+import { tell } from "../../actions/tell.ts";
+import { SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -15,7 +19,8 @@ import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
-import { ListState, drawList, hitList, metaOf, openOnWeb, relTime, type ListRow } from "./common.ts";
+import { ListState, drawList, hitList, metaOf, openOnWeb, promptScreen, relTime, type ListRow } from "./common.ts";
+import { tellAnswer } from "./tell.ts";
 
 /** One line of plain text: a tell or an answer may carry escapes the terminal must not obey. */
 const plain = (text: string): string =>
@@ -53,9 +58,30 @@ export function answersScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     const line = lines[index];
     if (line !== undefined) openOnWeb(f, ctx, line.path, "That tell");
   };
-  return {
+  const more = (): void => {
+    if (!canSeeAnswers(f.db, repo, f.user)) return;
+    // The row's page goes in as the tell's `from`, as a toolbar tell's does.
+    const from = lines[state.index]?.path ?? null;
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: "Tell the crew",
+        label: from ?? `${repo.ownerName}/${repo.name}`,
+        hint: "enter sends",
+        onSubmit: (said) => {
+          if (said === "") return SAY_SOMETHING_WORDS;
+          return (async () => {
+            const answer = tellAnswer(await tell(f.app, f.user, repo, said, 1, from));
+            ctx.toast(answer.text, answer.tone);
+            read();
+            ctx.invalidate();
+          })();
+        },
+      }),
+    );
+  };
+  const screen: Screen = {
     title: "Your tells",
-    keys: [binding(["j", "k"], "move"), binding(["enter"], "open"), binding(["r"], "refresh")],
+    keys: [binding(["j", "k"], "move"), binding(["enter"], "open"), binding(["t"], "tell"), binding(["r"], "refresh")],
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
@@ -83,6 +109,10 @@ export function answersScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         open(state.index);
         return true;
       }
+      if (e.key === "t") {
+        more();
+        return true;
+      }
       if (e.key === "r") {
         read();
         ctx.invalidate();
@@ -91,4 +121,5 @@ export function answersScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       return false;
     },
   };
+  return screen;
 }

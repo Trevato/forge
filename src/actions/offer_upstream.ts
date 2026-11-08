@@ -27,6 +27,8 @@ export function upstreamOffer(
   ahead: number | null | undefined,
 ): UpstreamOffer | null {
   if (parent === undefined || viewer === undefined) return null;
+  // An archived parent takes nothing in; the fork's own work is not owed to it.
+  if (parent.archivedAt !== null) return null;
   if (ahead === null || ahead === undefined || ahead <= 0) return null;
   if (!canRead(app.db, parent, viewer)) return null;
   const open = openPullFromHead(app.db, parent.id, fork.id, fork.defaultBranch);

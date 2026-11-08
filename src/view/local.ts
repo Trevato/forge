@@ -32,6 +32,7 @@ import { diffCommit, type Diff } from "../git/diff.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import {
   blobForRender,
+  blobHead,
   commitLog,
   listRefs,
   listTree,
@@ -42,6 +43,7 @@ import {
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { Page } from "../origins/types.ts";
+import { HEAD_BYTES } from "../web/render/kinds.ts";
 import type {
   Blob,
   Branch,
@@ -201,7 +203,10 @@ export function localSource(
       if (!isSafeRef(ref) || !isSafeTreePath(path)) return err("not_found");
       const blob = await blobForRender(dir, ref, path, MAX_BLOB_BYTES);
       if (blob.kind === "missing") return err("not_found");
-      return ok(blob);
+      if (blob.kind !== "too_large") return ok(blob);
+      // Too large to read, but its first bytes still say what it is.
+      const head = await blobHead(dir, ref, path, HEAD_BYTES);
+      return ok(head === undefined ? blob : { ...blob, head });
     },
 
     async readme(ref) {

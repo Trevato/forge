@@ -11,7 +11,11 @@ import {
   type Scorecard,
   type SplitScorecard,
 } from "../core/scorecard.ts";
+import { modelDays, type ModelDay } from "../core/model_days.ts";
+import { readReview } from "./model_review.ts";
+import { wastedDays, type WastedDay } from "../core/wasted_days.ts";
 import { listAgents } from "../core/agents.ts";
+import { keeperDays, type KeeperDay } from "../flow/keeper_rate.ts";
 import type { User } from "../core/users.ts";
 
 export interface AgentScorecard {
@@ -40,7 +44,13 @@ const figures = (c: Scorecard): Scorecard => ({
 export function readScorecards(
   app: App,
   actor: User | undefined,
-): { agents: AgentScorecard[] } | undefined {
+): {
+  agents: AgentScorecard[];
+  modelDays: ModelDay[];
+  wastedDays: WastedDay[];
+  keeperDays: KeeperDay[];
+  modelReview: ReturnType<typeof readReview>;
+} | undefined {
   if (actor?.isAdmin !== true) return undefined;
   const window = recentWindow();
   const all = crewScorecards(app.db);
@@ -49,6 +59,11 @@ export function readScorecards(
   const recentSplits = crewScorecardSplits(app.db, window);
   const key = (p: SplitScorecard) => `${p.model}\u0000${p.promptVersion}`;
   return {
+    modelDays: modelDays(app.db),
+    // Hours the forge ran and pulls landed, per UTC day of the last week (#7645).
+    keeperDays: keeperDays(app.db, new Date()),
+    modelReview: readReview(app),
+    wastedDays: wastedDays(app.db),
     agents: listAgents(app.db).map((agent) => {
       const id = agent.user.id;
       const lately = new Map((recentSplits.get(id) ?? []).map((p) => [key(p), p]));

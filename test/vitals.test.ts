@@ -2,6 +2,8 @@
 
 import { laneSentence } from "../src/kernel/vitals.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { accessDir, flushAccess, recordAccess } from "../src/http/access_log.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,7 +93,8 @@ test("a site admin with a read-only token gets the shape; others get the short o
   const v = (await res.json()) as Record<string, any>;
   expect(Object.keys(v).sort()).toEqual(
     [
-      "apps", "at", "checkedAt", "commit", "degraded", "disk", "draining", "errors",
+      "accessLog",
+      "apps", "at", "checkedAt", "commit", "degraded", "disk", "draining", "errors", "flakes",
       "incidents", "lane", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
       "version",
     ].sort(),
@@ -168,8 +171,8 @@ test("the number of queries does not grow with runs", () => {
     if (i % 2) app.db.query("UPDATE run SET state='running' WHERE id=?1").run(r.id);
   }
   expect(count()).toBe(before);
-  // The queue, the running runs, the runs killed twice for their budget, the lane's depth and finished checks, the red mains holding pulls' checks, the tests red on many pulls, (the checks red on a full disk only while the disk is full), and the newest drill of every domain, and the checks no red main holds.
-  expect(before).toBe(9);
+  // The queue, the running runs, the runs killed twice for their budget, the lane's depth and finished checks, the red mains holding pulls' checks, the tests red on many pulls, (the checks red on a full disk only while the disk is full), and the newest drill of every domain, the checks no red main holds, and the week's flake list.
+  expect(before).toBe(10);
 });
 
 test("errors are counted, bounded, redacted, and a burst is said", async () => {
@@ -321,6 +324,18 @@ test("degraded names each cause, stable, with when it began", async () => {
     const q = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: later }).degraded.find((d) => d.cause === "queue:agent");
     expect(q?.since).toBe(new Date(oldest).toISOString());
     expect(q?.href).toBe("/settings/capacity");
+    app.db.query("INSERT INTO forge_setting (key, value, updated_by, updated_at) VALUES ('crew.concurrency', '3', 'test', ?1)").run(new Date().toISOString());
+    const busy = createRun(app.db, { repoId, kind: "agent" });
+    app.db.query("UPDATE run SET state='running', started_at=?2, heartbeat_at=?2 WHERE id=?1").run(busy.id, new Date(later).toISOString());
+    const held = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: later }).degraded.find((d) => d.cause === "queue:agent");
+    expect(held?.sentence).toBe("The agent queue has waited over 30 minutes: 1 queued, 1 of 3 slots running.");
+    app.db.query("DELETE FROM run").run();
+    app.db.query("DELETE FROM forge_setting WHERE key='crew.concurrency'").run();
+    createRun(app.db, { repoId, kind: "agent" });
+    createRun(app.db, { repoId, kind: "deploy", env: "production" });
+    const d = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: later }).degraded.find((x) => x.cause === "queue:deploy");
+    expect(d?.sentence).toBe("The deploy queue has waited over 30 minutes: 1 queued, 0 running.");
+    app.db.query("DELETE FROM run WHERE kind='deploy'").run();
 
     // stuck: one per run, keyed by run id, since is when it last moved.
     const run = createRun(app.db, { repoId, kind: "deploy", env: "production" });
@@ -486,4 +501,33 @@ test("laneSentence says one lane for one slot and names the slots in force for s
   expect(laneSentence(4, oldest, [], 3, now)).toBe(
     "4 checks wait for 3 slots, none busy; the oldest since 01:04; nothing runs.",
   );
+});
+
+test("an access log that cannot write is a need past five minutes; an idle forge is not (#6841)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "vitals-access-"));
+  const at = new Date();
+  try {
+    flushAccess();
+    const later = (ms: number) =>
+      vitals({ db: app.db, signals: app.signals, dataDir: dir, disk: roomy, now: Date.now() + ms });
+    // ten idle minutes: nothing recorded, nothing to say
+    const idle = later(600_000);
+    expect(idle.degraded.some((d) => d.cause === "access-log")).toBe(false);
+    expect(idle.accessLog.unwrittenSecondsAgo).toBeNull();
+    // a recorded line whose append fails
+    writeFileSync(accessDir(dir), "not a directory");
+    recordAccess(dir, { request: new Request("http://forge.test/issues/a"), status: 200, ms: 1, client: "1.1.1.1" }, at);
+    flushAccess(at);
+    expect(later(0).degraded.some((d) => d.cause === "access-log")).toBe(false);
+    const late = later(600_000);
+    expect(late.degraded.find((d) => d.cause === "access-log")?.sentence).toContain("not writing");
+    expect(late.accessLog.unwrittenSecondsAgo).toBeGreaterThan(300);
+    // once a line lands the mark clears
+    await rm(accessDir(dir));
+    recordAccess(dir, { request: new Request("http://forge.test/issues/b"), status: 200, ms: 1, client: "1.1.1.1" }, at);
+    flushAccess(at);
+    expect(later(600_000).accessLog.unwrittenSecondsAgo).toBeNull();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

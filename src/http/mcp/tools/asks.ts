@@ -6,6 +6,8 @@ export const tool: Tool = {
   description:
     "What waits on you, most important first; saved filter applies",
   inputSchema: { type: "object", properties: { ...CHIP_ARGS } },
+  doc:
+    "`{ hide_kinds?, hide_people? }`: what waits on you, most important first; your saved filter applies unless a chip argument overrides it",
   writes: false,
   run(ctx, user, args) {
     const chips = chipArgs(ctx, args);

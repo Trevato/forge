@@ -12,6 +12,7 @@ import { failuresOf } from "../src/checks/failures.ts";
 import { addLearned, readLearned } from "../src/checks/learned.ts";
 import { gateCandidate } from "../src/checks/landing.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { runGit } from "../src/git/env.ts";
 import { mergeable, resolveOid } from "../src/git/merge.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
@@ -39,6 +40,12 @@ import { resolveLimits } from "../src/apps/contain.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "../src/checks/impact-store.ts";
 
+const IDENT = {
+  GIT_AUTHOR_NAME: "t",
+  GIT_AUTHOR_EMAIL: "t@example.com",
+  GIT_COMMITTER_NAME: "t",
+  GIT_COMMITTER_EMAIL: "t@example.com",
+};
 const tests = [
   "test/snapshot-store.test.ts",
   "test/snapshot.test.ts",
@@ -510,6 +517,44 @@ describe("the tiers in the forge's own checks service", () => {
     expect(again.ok).toBe(true);
     expect(again.lines.join("\n")).toContain("already proven green by gate-");
     expect(again.lines.join("\n")).not.toContain("FULL-GREEN");
+
+    // Each gate leaves its slot minutes, opened and closed, for the flow (#6426).
+    const traced = app.db
+      .query<{ n: number }, [string, string]>(
+        "SELECT COUNT(*) AS n FROM check_gate WHERE issue_id = ?1 AND commit_oid = ?2 AND finished_at >= started_at",
+      )
+      .get(pull.id, branched.value.commitOid);
+    expect(traced?.n).toBe(2);
+
+    // The same tree under another commit — a batch of one is a new squash of
+    // the same files — is the same verdict: it names the run it came from and
+    // runs nothing (#7782).
+    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const head = branched.value.commitOid;
+    const treeOid = (await runGit(["rev-parse", `${head}^{tree}`], { cwd: bare }));
+    if (!treeOid.ok) throw new Error("no tree");
+    const squash = await runGit(["commit-tree", treeOid.value, "-m", "Squash of the pull"], { cwd: bare, env: IDENT });
+    if (!squash.ok) throw new Error("no commit");
+    expect(squash.value).not.toBe(head);
+    const batch = await checks.gate(repo, pull, squash.value);
+    expect(batch.ok).toBe(true);
+    expect(batch.lines.join("\n")).toContain("already proven green by gate-");
+    expect(batch.lines.join("\n")).not.toContain("FULL-GREEN");
+
+    // Another tree is another question: it runs.
+    const blob = await runGit(["hash-object", "-w", "--stdin"], { cwd: bare, stdin: "other\n" });
+    if (!blob.ok) throw new Error("no blob");
+    const index = join(dataDir, "tree-index");
+    const env = { GIT_INDEX_FILE: index };
+    await runGit(["read-tree", treeOid.value], { cwd: bare, env });
+    await runGit(["update-index", "--add", "--cacheinfo", `100644,${blob.value},other.txt`], { cwd: bare, env });
+    const changed = await runGit(["write-tree"], { cwd: bare, env });
+    if (!changed.ok) throw new Error("no tree");
+    const other = await runGit(["commit-tree", changed.value, "-m", "Another tree"], { cwd: bare, env: IDENT });
+    if (!other.ok) throw new Error("no commit");
+    const rerun = await checks.gate(repo, pull, other.value);
+    expect(rerun.ok).toBe(true);
+    expect(rerun.lines.join("\n")).toContain("FULL-GREEN");
   });
 
   test("a check's environment carries its cell's CPU limit (#2257)", async () => {
@@ -567,6 +612,8 @@ describe("the tiers in the forge's own checks service", () => {
     const pull = listPulls(app.db, repo.id, { state: "open", limit: 5 })[0]!;
     const done = await checks.gate(repo, pull, red.value.commitOid);
     expect(done.ok).toBe(false);
+    // Red in the check step, not before it: the queue searches it (#5276).
+    expect(done.stage).toBe("check");
     const failed = failuresOf(done.lines);
     expect(failed).toEqual({ tests: ["boom"], files: ["test/x.test.ts"] });
     const verdict = landVerdict(false, failed.tests, failed.files);

@@ -12,14 +12,17 @@
  */
 
 import { pullDir, runDir } from "../core/pulls.ts";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { chmod, lstat, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
+import { releaseOnGreen } from "../actions/holds.ts";
 import { announceRun } from "../actions/runs.ts";
 import { announceShard } from "./shard_event.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
+import { isContributionFork } from "../core/contribute.ts";
 import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
@@ -47,16 +50,36 @@ import {
 import { Gate, runGit } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
+import { approvedOnce } from "./approved_first.ts";
 import { checkOnApproval } from "./approval.ts";
 import { checkKey, provenBy, recordProven } from "./proven.ts";
+import { beginGate, endGate, gateHolding } from "./gate_record.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
 import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
-import { withDisk } from "./disk_red.ts";
+import { parseBunTestFailure } from "./bun-test.ts";
+import { recordCrashFlakes, passedAlone, recordFlakes, rerunCommand, rerunnable, pullOwnsRed } from "./flake.ts";
+import { diskRecovered, withDisk } from "./disk_red.ts";
+import { scratchEnv } from "./disk_full.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
+import { proposeRevert } from "./revert_red.ts";
 import { rebasesFirst } from "./finishing_first.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
+import { afterVerify } from "./culprit.ts";
+import { redDetail, reportGreen, reportRed } from "./report.ts";
+import {
+  bisectOrigin,
+  failedFiles,
+  inVerifyLane,
+  onlyEnv,
+  passedFiles,
+  VERIFY_ENV,
+  VERIFY_EVERY_MS,
+  VERIFY_REASON,
+  VERIFY_SWEEP_MS,
+  verifyDue,
+} from "./verify.ts";
 import { getIssueById } from "../core/issues.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { transact } from "../kernel/db.ts";
@@ -65,10 +88,10 @@ import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
-import { parseCheck } from "../apps/manifest.ts";
+import { CHECK_TIMEOUT_MAX, parseCheck } from "../apps/manifest.ts";
 import { workerCpus } from "../core/capacity.ts";
 import { accountActive } from "../core/accounts.ts";
-import { childEnv, runStep } from "../apps/process.ts";
+import { childEnv, killedStep, runStep } from "../apps/process.ts";
 import { noteReached } from "../apps/egress_report.ts";
 import {
   capacityCount,
@@ -88,8 +111,17 @@ import { summariseCheckFailure } from "./summary.ts";
 import type { Result } from "../kernel/result.ts";
 import { placementFromEnv, type Placement } from "./placement.ts";
 import { JOB_VANISHED, runJobStep } from "./job_step.ts";
-import { checkInstallCache, installWithRetry, withLock } from "./install.ts";
-import { extraGates } from "./queue.ts";
+import {
+  cellInstall,
+  checkInstallCache,
+  meteredInstall,
+  installWithRetry,
+  prefillInstallCache,
+  withLock,
+} from "./install.ts";
+import { evictSoon, lend } from "./install_evict.ts";
+import { checkStage, type GateStage } from "./gate_reason.ts";
+import { extraGates, GATE_DEADLINE_MS, gateQueued, gateRunId, gatesInFlight, watchGates } from "./queue.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
@@ -135,6 +167,21 @@ export interface ChecksOptions {
   readonly job?: JobOptions | undefined;
   /** How long a transient install failure waits for its retry. @default INSTALL_RETRY_MS */
   readonly installRetryMs?: number | undefined;
+  /**
+   * How often the default branch is verified after landing at most
+   * (`checks/verify.ts`). Unset, no timer asks; `verifyDue` still holds
+   * to `VERIFY_EVERY_MS`. The forge sets it to `VERIFY_EVERY_MS`.
+   */
+  readonly verifyEveryMs?: number | undefined;
+}
+
+/** A gate's answer from the lane: `interrupted` is no verdict (#3155). */
+export interface GateDone {
+  ok: boolean;
+  error: string;
+  lines: string[];
+  interrupted?: boolean;
+  stage?: GateStage;
 }
 
 export interface ChecksHandle {
@@ -155,12 +202,12 @@ export interface ChecksHandle {
    * forge stopping, or the cluster losing its Job — and is no verdict (#3155).
    * `signal` aborting (the queue's deadline, #3430) cuts it off the same way.
    */
-  gate(
-    repo: Repo,
-    pull: Pull,
-    commitOid: string,
-    signal?: AbortSignal,
-  ): Promise<{ ok: boolean; error: string; lines: string[]; interrupted?: boolean }>;
+  gate(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone>;
+  /**
+   * The gate of `commitOid` this forge is running now, to wait on rather
+   * than start again (#6611); undefined when none is.
+   */
+  adopt?(commitOid: string): Promise<GateDone> | undefined;
   /**
    * Stop checking. Checks under way get `drainMs` to finish unless `drain`
    * is false (a person's Ctrl-C): then they are cut off and queued again now.
@@ -174,6 +221,12 @@ export interface ChecksHandle {
   spareSlots(): number;
   /** The gate checks take their turn at; a hosted child's checks share it. */
   readonly lane: Gate;
+  /**
+   * Ask for every verification after landing that is due now
+   * (`checks/verify.ts`); the answer is the runs asked for. The forge's
+   * own timer calls it when `verifyEveryMs` is set.
+   */
+  verifyDue(now?: number): Promise<Run[]>;
 }
 
 /**
@@ -192,6 +245,9 @@ export const PULL_RESERVE = 2;
  */
 export const LAND_SETTLE_MS = 30_000;
 
+/** The longest a failed test is given to pass alone, in seconds. */
+const RERUN_TIMEOUT_S = 300;
+
 /** How often queued checks another forge left are looked for. */
 const TICK_MS = 5_000;
 
@@ -205,34 +261,44 @@ const TICK_MS = 5_000;
 export const STARVATION_MS = BUDGETS.laneWait / 2;
 
 /**
+ * Whether a pull's check must pass over the free slots left (`free`): while
+ * a merge-queue gate is about to start (`gateQueued`), the last one is the
+ * gate's.
+ */
+export function holdsLastSlot(free: number, gateWaits: boolean): boolean {
+  return gateWaits && free <= 1;
+}
+
+/**
  * Which queued check takes a slot when one frees: the one requested most
  * recently, so a push's own check is never stuck behind pulls that queued
  * hours earlier — unless something has already waited `STARVATION_MS` or
  * more, in which case the longest-waiting check goes first regardless of
- * how fresh the rest are. Ties (down to the same instant) fall back to id
- * order, which is itself creation order (`kernel/id.ts`).
+ * how fresh the rest are. Checks of approved pulls (`approved`) go before
+ * the rest, newest first among themselves (#6396): a check that is the last
+ * thing between a pull and landing is not held up by a new pull's. Ties
+ * (down to the same instant) fall back to id order, which is itself
+ * creation order (`kernel/id.ts`).
  */
 export function pickNext(
   queued: readonly Run[],
   now: number = Date.now(),
+  approved: (run: Run) => boolean = () => false,
 ): Run | undefined {
   if (queued.length === 0) return undefined;
+  const newer = (a: Run, b: Run): boolean =>
+    a.createdAt > b.createdAt || (a.createdAt === b.createdAt && a.id > b.id);
   let oldest = queued[0]!;
-  let newest = queued[0]!;
+  let newest: Run | undefined;
+  let newestApproved: Run | undefined;
   for (const run of queued) {
-    if (
-      run.createdAt < oldest.createdAt ||
-      (run.createdAt === oldest.createdAt && run.id < oldest.id)
-    )
-      oldest = run;
-    if (
-      run.createdAt > newest.createdAt ||
-      (run.createdAt === newest.createdAt && run.id > newest.id)
-    )
-      newest = run;
+    if (newer(oldest, run)) oldest = run;
+    if (newest === undefined || newer(run, newest)) newest = run;
+    if (approved(run) && (newestApproved === undefined || newer(run, newestApproved)))
+      newestApproved = run;
   }
   if (now - Date.parse(oldest.createdAt) >= STARVATION_MS) return oldest;
-  return newest;
+  return newestApproved ?? newest;
 }
 
 /**
@@ -255,29 +321,115 @@ export function requeueAbandonedChecks(app: App, staleMs: number): number {
     appendRunLog(app.config.dataDir, run.id, run.summary);
     announceRun(app, run);
   }
+  // On the same timer: what a dead or lapsed run left on the disk. Removing
+  // a checkout is thousands of unlinks: off the loop, never in front of /healthz (#7688).
+  sweepSoon(app);
   return swept.requeued.length + swept.failed.length + swept.cancelled.length;
+}
+
+/**
+ * Remove a run's directory even when the cell left read-only files in it (a
+ * bun cache is): `rmSync` cannot unlink inside a directory without write
+ * permission, so permissions are restored and the removal tried again. A
+ * removal that still fails is logged, never swallowed.
+ */
+export async function removeRunDir(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+    return;
+  } catch {
+    /* fall through to restore permissions */
+  }
+  const open = async (p: string): Promise<void> => {
+    try {
+      if ((await lstat(p)).isSymbolicLink()) return;
+      if ((await lstat(p)).isDirectory()) {
+        await chmod(p, 0o700);
+        for (const n of await readdir(p)) await open(join(p, n));
+      }
+    } catch {
+      /* gone, or not ours: the retry says */
+    }
+  };
+  await open(path);
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch (error) {
+    log.error("could not remove a run directory", { path, error: String(error) });
+  }
+}
+
+/** The sweep of the checkouts under way, if any: one at a time. */
+let sweeping: Promise<void> | undefined;
+
+/**
+ * Sweep the checkouts in the background and answer when done. A sweep
+ * already running is the one answered, not doubled; a failure is logged.
+ */
+export function sweepSoon(app: App, now: number = Date.now()): Promise<void> {
+  sweeping ??= sweepCheckouts(app, now)
+    .catch((error) => log.error("could not sweep the checkouts", { error: String(error) }))
+    .finally(() => {
+      sweeping = undefined;
+    });
+  return sweeping;
 }
 
 /** Where a check's checkout lives while it runs. */
 const checksRoot = (dataDir: string): string => join(dataDir, "checks");
 
+/** A gate's checkout (`gateRunId`): it has no run, only its `check_gate` row. */
+const GATE_DIR = /^gate-([0-9a-f]{12})$/;
+
+/** Whether a gate's checkout, this forge's or a peer's during a roll, is younger than a gate may run. */
+function gateMayBeRunning(path: string, now: number): boolean {
+  try {
+    return now - lstatSync(path).mtimeMs < GATE_DEADLINE_MS;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Remove the checkouts nobody is using: one whose run is not running with a
  * live lease, or has no run at all. A forge booting during a roll shares this
  * directory and database with the old one, whose checks are still running in
- * theirs; those are left alone.
+ * theirs; those are left alone. A gate writes no run: its checkout is left
+ * while it is younger than a gate's deadline, and past that while its
+ * `check_gate` row is open, for as long as a check may run.
  */
-export function sweepCheckouts(app: App, now: number = Date.now()): void {
+export async function sweepCheckouts(app: App, now: number = Date.now()): Promise<void> {
   const root = checksRoot(app.config.dataDir);
   if (!existsSync(root)) return;
+  const since = new Date(now - CHECK_TIMEOUT_MAX * 1000);
   for (const name of readdirSync(root)) {
-    const run = getRun(app.db, name);
+    // A gate has no run row: its checkout is spared until no gate could still be using it.
+    if (name.startsWith("gate-") && gateMayBeRunning(join(root, name), now)) continue;
+    // `<id>.home` is the home of run `<id>`: it lives and dies with it.
+    const id = name.endsWith(".home") ? name.slice(0, -5) : name;
+    const gate = GATE_DIR.exec(id);
+    if (gate !== null) {
+      if (!gateHolding(app.db, gate[1]!, since)) await removeRunDir(join(root, name));
+      continue;
+    }
+    const run = getRun(app.db, id);
     const live =
       run !== undefined &&
       run.state === "running" &&
       !leaseLapsed(run, STALE_AFTER_MS, now);
-    if (!live) rmSync(join(root, name), { recursive: true, force: true });
+    if (!live) await removeRunDir(join(root, name));
   }
+}
+
+/**
+ * Under the free floor, give back what no check is using before taking more
+ * (#6945): checkouts leaked by a crash sat on the disk until the next boot
+ * while every check failed red on it. Answers whether it swept.
+ */
+export async function reclaimIfFull(app: App, now: number = Date.now()): Promise<boolean> {
+  if (diskRecovered(app.config.dataDir)) return false;
+  await sweepCheckouts(app, now);
+  return true;
 }
 
 const handles = new WeakMap<App, ChecksHandle>();
@@ -300,18 +452,25 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     capacityCount(app.db, "checks.concurrency", booted);
   const gate = options.gate ?? new Gate(capacity());
   const placement = options.placement ?? placementFromEnv();
-  /** Full gates on land in flight: not slots in the queue, but stopped with it. */
-  const gates = new Set<AbortController>();
+  /**
+   * Full gates on land in flight: not slots in the queue, but stopped with
+   * it — after the drain, as a check is. By commit, so a merge queue that
+   * carries on adopts one rather than gate the same tip again (#6611).
+   */
+  const gates = new Map<AbortController, { commitOid: string; done: Promise<GateDone> }>();
   const inFlight = new Map<
     string,
     { promise: Promise<void>; abort: AbortController }
   >();
   /** Checks already told why they wait, so the log says it once. */
   const waiting = new Set<string>();
+  /** The verification-lane run in flight, which holds no check slot. */
+  let verifying: string | undefined;
+  const slotted = (): number => inFlight.size - (verifying === undefined ? 0 : 1);
   const settle = options.landSettleMs ?? 0;
   let stopped = false;
 
-  sweepCheckouts(app);
+  sweepSoon(app);
 
   async function request(
     repo: Repo,
@@ -324,6 +483,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   ): Promise<Run | undefined> {
     // A suspended or removed owner's code is not run, not even to check it.
     if (stopped || !accountActive(app.db, repo.ownerId)) return undefined;
+    // A guest's fork runs nothing: its code runs only as a pull a person approved.
+    if (isContributionFork(app.db, repo.id)) return undefined;
     // A pull from someone who cannot write runs nothing until a writer
     // approves this exact head (`core/pull_trust.ts`).
     if (!issueMayRun(app.db, repo, issueId, commitOid)) {
@@ -342,6 +503,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     ]);
     const declared = parseCheck(forgeJson, packageJson);
     if (declared.ok && declared.value === undefined) return undefined;
+    // Main is verified after landing only where it says how (#7786).
+    if (env === VERIFY_ENV && (!declared.ok || declared.value?.verify == null)) return undefined;
     // One check per environment at a time: a newer commit supersedes what
     // is still waiting, and the same commit is not checked twice. Looked for
     // and written in one write transaction, so a second forge process over
@@ -394,7 +557,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (inFlight.has(run.id)) return;
     waiting.delete(run.id);
     const abort = new AbortController();
-    const promise = execute(run, repo, abort.signal)
+    const low = inVerifyLane(run.env);
+    if (low) verifying = run.id;
+    const promise = execute(run, repo, abort.signal, !low)
       .catch((error) =>
         log.error("check failed to execute", {
           run: run.id,
@@ -403,6 +568,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       )
       .finally(() => {
         inFlight.delete(run.id);
+        if (verifying === run.id) verifying = undefined;
         // The slot this run held is free again: give it to whichever queued
         // check now deserves it most, not whoever asked first.
         schedule();
@@ -438,11 +604,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   /** `pickNext` among `queued`, passing over any whose account is at its limit. */
   function startable(queued: readonly Run[]): Run | undefined {
     let rest = queued;
-    let next = pickNext(rest);
+    const isApproved = approvedOnce(app.db);
+    let next = pickNext(rest, Date.now(), isApproved);
     while (next !== undefined && atLimit(next)) {
       const held = next;
       rest = rest.filter((run) => run !== held);
-      next = pickNext(rest);
+      next = pickNext(rest, Date.now(), isApproved);
     }
     return next;
   }
@@ -451,14 +618,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (stopped) return;
     const limit = capacity();
     if (options.gate === undefined) gate.resize(limit);
-    // A merge-queue gate beyond a line's first holds a slot (#4053).
-    while (inFlight.size < limit - extraGates()) {
+    startVerify();
+    // Every merge-queue gate in flight holds a slot, a line's first too (#6376).
+    while (slotted() < limit - gatesInFlight()) {
       // A pull's check waits while its main is red (`checks/red_main.ts`).
       const queued = unheld(
         listActive(app.db, "check").filter(
           (run) =>
             run.state === "queued" &&
             !inFlight.has(run.id) &&
+            !inVerifyLane(run.env) &&
             (run.notBefore === null || Date.parse(run.notBefore) <= Date.now()),
         ),
         (repoId) => redMain(app.db, repoId),
@@ -469,12 +638,74 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       // burst of one account's checks cannot pass together. A rebase's
       // check goes before any other (`finishing_first.ts`, #6140).
       const { rebases, rest: others } = rebasesFirst(app.db, queued);
-      const next = startable(rebases) ?? startable(others);
+      // While a gate is about to start, the last free slot is its: a pull's
+      // check waits for it, a rebase's and a main check do not.
+      const held = holdsLastSlot(limit - gatesInFlight() - slotted(), gateQueued());
+      const next = startable(rebases) ?? startable(held ? others.filter((run) => run.issueId === null) : others);
       if (!next) return;
       const repo = getRepoById(app.db, next.repoId);
       if (!repo) return;
       start(next, repo);
     }
+  }
+
+  /**
+   * The verification lane (#7786): one run at a time, forge-wide, beside
+   * the check slots rather than in one, so no landing and no pull's check
+   * ever waits for it. A bisection step goes before a new verification.
+   */
+  function startVerify(): void {
+    if (verifying !== undefined) return;
+    const queued = listActive(app.db, "check").filter(
+      (run) => run.state === "queued" && inVerifyLane(run.env) && !inFlight.has(run.id),
+    );
+    const next =
+      queued.find((run) => bisectOrigin(run.reason) !== undefined) ?? queued[0];
+    if (next === undefined) return;
+    const repo = getRepoById(app.db, next.repoId);
+    if (repo !== undefined) start(next, repo);
+  }
+
+  /** Every verification due now: main moved since the last, and that one is old enough. */
+  async function askVerifications(now = Date.now()): Promise<Run[]> {
+    const everyMs = options.verifyEveryMs ?? VERIFY_EVERY_MS;
+    const since = new Date(now - 24 * 3_600_000).toISOString();
+    // The newest default-branch check of each repository that had one today.
+    const tips = app.db
+      .query<{ repo_id: string; commit_oid: string }, [string]>(
+        `SELECT r.repo_id, r.commit_oid FROM run r JOIN repo ON repo.id = r.repo_id
+          WHERE r.id IN (SELECT MAX(x.id) FROM run x JOIN repo y ON y.id = x.repo_id
+                          WHERE x.kind = 'check' AND x.issue_id IS NULL
+                            AND x.env = y.default_branch AND x.created_at >= ?1
+                          GROUP BY x.repo_id)`,
+      )
+      .all(since);
+    const asked: Run[] = [];
+    for (const tip of tips) {
+      const last = app.db
+        .query<{ commit_oid: string; created_at: string }, [string]>(
+          `SELECT commit_oid, created_at FROM run
+            WHERE repo_id = ?1 AND kind = 'check' AND env = '${VERIFY_ENV}'
+            ORDER BY id DESC LIMIT 1`,
+        )
+        .get(tip.repo_id);
+      const active = listActive(app.db, "check").some(
+        (run) => run.repoId === tip.repo_id && inVerifyLane(run.env),
+      );
+      const due = verifyDue({
+        tip: tip.commit_oid,
+        last: last === null ? undefined : { commitOid: last.commit_oid, createdAt: last.created_at },
+        active,
+        now,
+        everyMs,
+      });
+      if (!due) continue;
+      const repo = getRepoById(app.db, tip.repo_id);
+      if (repo === undefined) continue;
+      const run = await request(repo, VERIFY_ENV, tip.commit_oid, VERIFY_REASON);
+      if (run !== undefined) asked.push(run);
+    }
+    return asked;
   }
 
   /**
@@ -522,8 +753,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     run: Run,
     repo: Repo,
     signal: AbortSignal,
+    slot = true,
   ): Promise<void> {
-    const release = await gate.acquire();
+    // The verification lane takes no slot of the gate (`startVerify`).
+    const release = slot ? await gate.acquire() : () => {};
     try {
       // A slot that opens while this forge is stopping is not taken: the run
       // stays queued for the forge that carries on.
@@ -633,6 +866,21 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       write(outcome.ok ? `passed in ${seconds}s` : `failed: ${outcome.error}`);
       if (done) announceRun(app, done);
+      if (done && outcome.ok) releaseOnGreen(app, done);
+      if (!outcome.ok && run.issueId === null && run.env === repo.defaultBranch)
+        proposeRevert(app, repo.id).catch((error) =>
+          log.error("revert proposal failed", { error: String(error) }),
+        );
+      // A red verification after landing names its culprit (#7786).
+      if (done && run.env === VERIFY_ENV) {
+        reportRed(app, repo, done).forEach(write);
+        // A file the run printed passing closes its open report issue (#9524).
+        reportGreen(app, repo, done, outcome.passed ?? []).forEach(write);
+      }
+      if (done && inVerifyLane(run.env))
+        await afterVerify(app, repo, done, (r, env, oid, reason) => request(r, env, oid, reason))
+          .then((lines) => lines.forEach(write))
+          .catch((error) => write(`culprit not named: ${String(error)}`));
     } finally {
       release();
     }
@@ -644,8 +892,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     write: (line: string) => void,
     signal: AbortSignal,
   ): Promise<
-    | { ok: true; proven?: string }
-    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean }
+    | { ok: true; proven?: string; passed?: readonly string[] }
+    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean; passed?: readonly string[] }
   > {
     const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
     // A pull's check is the fast tier, judged against where the pull left
@@ -654,6 +902,28 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
     const pull =
       issue?.kind === "pull" ? getPull(app.db, repo.id, issue.number) : undefined;
+    if (inVerifyLane(run.env)) {
+      // A bisection step runs only the red's failed files, with the red's
+      // own command: an older commit may not say how to verify (#7786).
+      const origin = run.env === VERIFY_ENV ? undefined : getRun(app.db, bisectOrigin(run.reason) ?? "");
+      if (run.env !== VERIFY_ENV && origin === undefined)
+        return { ok: false, error: "the red verification this step bisects is gone" };
+      return runTier({
+        bare,
+        repo,
+        id: run.id,
+        runId: run.id,
+        commitOid: run.commitOid,
+        tier: "verify",
+        ...(origin === undefined
+          ? { keepImpact: true }
+          : { only: origin.checkDetail?.files ?? [], commandsFrom: origin.commitOid }),
+        fileOrderDependent: origin === undefined,
+        isMain: true,
+        write,
+        signal,
+      });
+    }
     const outcome = await runTier({
       bare,
       repo,
@@ -665,6 +935,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       keep: run.issueId === null && run.env === repo.defaultBranch,
       keepImpact: pull === undefined && run.env === repo.defaultBranch,
       fileOrderDependent: run.issueId === null && run.env === repo.defaultBranch,
+      isMain: run.issueId === null && run.env === repo.defaultBranch,
       write,
       signal,
     });
@@ -679,14 +950,20 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     readonly runId?: string;
     readonly commitOid: string;
     readonly pull?: Pull | undefined;
-    /** `run`: a push to a branch; `fast`: a pull's push; `full`: on land. */
-    readonly tier: "run" | "fast" | "full";
+    /** `run`: a push to a branch; `fast`: a pull's push; `full`: on land; `verify`: main after landing. */
+    readonly tier: "run" | "fast" | "full" | "verify";
+    /** A bisection step: only these test files run (`FORGE_CHECK_ONLY`). */
+    readonly only?: readonly string[];
+    /** A bisection step: the commit whose `check.verify` it runs. */
+    readonly commandsFrom?: string;
     /** A check of the default branch's own push: its cache is kept. */
     readonly keep?: boolean;
     /** A green run keeps the impact map it measured; `full` always does. */
     readonly keepImpact?: boolean;
     /** The default branch's own run: only its log may open issues. */
     readonly fileOrderDependent?: boolean;
+    /** The default branch's own run: a failure of one or two tests is re-run alone before it counts as red. */
+    readonly isMain?: boolean;
     readonly write: (line: string) => void;
     readonly signal: AbortSignal;
   }
@@ -694,8 +971,19 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   async function runTier(
     x: Execution,
   ): Promise<
-    | { ok: true; proven?: string }
-    | { ok: false; error: string; detail?: CheckDetail | undefined; infrastructure?: boolean }
+    | { ok: true; proven?: string; passed?: readonly string[] }
+    | {
+        ok: false;
+        error: string;
+        detail?: CheckDetail | undefined;
+        /** A whole verification: the files its log ran to the end green (#9524). */
+        passed?: readonly string[];
+        infrastructure?: boolean;
+        /** Where it stopped red (#5276); none is before any step ran. */
+        stage?: GateStage;
+        /** The check step was ended by a signal from outside: no verdict (#6722). */
+        killed?: boolean;
+      }
   > {
     const { bare, repo, write, signal } = x;
     // A pull's fast check is of the pull as it would land: its head merged
@@ -766,12 +1054,20 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         );
       }
     }
+    if (x.commandsFrom !== undefined) {
+      const from = parseCheck(await readFileAt(bare, x.commandsFrom, "forge.json"), undefined);
+      if (from.ok && from.value !== undefined) manifest = { ...manifest, verify: from.value.verify, timeout: from.value.timeout };
+    }
+    if (x.tier === "verify" && manifest.verify === null)
+      return { ok: false, error: "this commit declares no check.verify" };
     const command =
       x.tier === "full"
         ? manifest.full
         : x.tier === "fast"
           ? (manifest.fast ?? manifest.run)
-          : manifest.run;
+          : x.tier === "verify"
+            ? manifest.verify!
+            : manifest.run;
     // The fast tier diffs what the pull changes against the base's tip,
     // which the clone is given as a repository of its own: `origin/main` is
     // not a ref there.
@@ -781,7 +1077,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const learned =
       base === undefined ? "" : readLearned(app.config.dataDir, x.pull!.id).join(",");
     const tree = await runGit(["rev-parse", `${run.commitOid}^{tree}`], { cwd: bare });
-    const key = tree.ok
+    // A bisection step runs a slice: its green proves nothing of the whole.
+    const key = tree.ok && x.only === undefined
       ? checkKey({
           repoId: repo.id,
           treeOid: tree.value.trim(),
@@ -799,6 +1096,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       write(`already proven green by ${earlier}`);
       return { ok: true, proven: earlier };
     }
+    if (await reclaimIfFull(app)) write("disk under its free floor: swept unused checkouts");
     const dir = join(checksRoot(app.config.dataDir), run.id);
     mkdirSync(dir, { recursive: true });
     write(mergeLine === "" ? `checking out ${run.commitOid.slice(0, 7)}` : mergeLine);
@@ -807,7 +1105,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (base !== undefined) {
       const given = await giveHistory(bare, dir, base, run.commitOid);
       if (!given.ok) {
-        rmSync(dir, { recursive: true, force: true });
+        await rm(dir, { recursive: true, force: true });
         return { ok: false, error: given.error };
       }
     }
@@ -886,9 +1184,13 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         FORGE_CHECK: run.id,
         FORGE_COMMIT: x.commitOid,
         FORGE_CHECK_IMPACT: IMPACT_FILE,
+        ...(x.only === undefined ? {} : { FORGE_CHECK_ONLY: onlyEnv(x.only) }),
         // The cell's CPU limit, which `availableParallelism()` may not
         // report inside it; the shard count follows this (#2257).
         FORGE_CELL_CPUS: String(cellCpus),
+        // The one place besides the checkout the cell can write on disk; its
+        // own /tmp is a 256 MiB tmpfs the shards would fill (#8679).
+        ...scratchEnv(cell === undefined ? undefined : home),
         ...(base === undefined
           ? {}
           : {
@@ -903,6 +1205,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       let ran: Result<void, string>;
       const checkLines: string[] = [];
+      // A bisection step runs only some files: what it shows green says nothing of the rest.
+      const wholeVerify = x.tier === "verify" && x.only === undefined;
       if (job !== undefined) {
         ran = await runJobStep(job, {
           runId: run.id,
@@ -926,26 +1230,79 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           // cache is shared, so installs into it take turns (`checks/install.ts`).
           const shared =
             cell === undefined ? checkInstallCache(app.config.dataDir, repo.id) : undefined;
-          const once = (log: (line: string) => void): Promise<Result<void, string>> =>
-            runStep("install", install, {
+          // A cell installs from that same cache, bound read-only (#7543):
+          // the forge fills it first, on the host, so no pull writes what
+          // the gate on main installs. Cluster jobs (`runJobStep`) are
+          // unchanged: a Job has its own cache and never takes this path.
+          const warm = cell === undefined ? undefined : checkInstallCache(app.config.dataDir, repo.id);
+          // Set once the fill has run: a cell installs from the shared cache
+          // only when the forge filled it; otherwise it keeps a cache of its own.
+          let filled = false;
+          const once = (log: (line: string) => void): Promise<Result<void, string>> => {
+            const base = shared === undefined ? env : { ...env, BUN_INSTALL_CACHE_DIR: shared };
+            const from = cellInstall(install, base, filled ? warm : undefined);
+            const revealed = cell !== undefined && filled && warm !== undefined ? { ...cell, reveal: [warm] } : cell;
+            return runStep("install", from.command, {
               cwd: dir,
-              env: shared === undefined ? env : { ...env, BUN_INSTALL_CACHE_DIR: shared },
+              env: from.env,
               log,
               signal,
               timeoutMs: manifest.timeout * 1000,
-              cell,
+              cell: revealed,
             });
-          const installed = await installWithRetry(
-            async (log) => {
-              if (shared === undefined) return once(log);
-              mkdirSync(shared, { recursive: true });
-              const held = await withLock(`${shared}.lock`, () => once(log), { signal });
-              return held.ok ? held.value : held;
-            },
-            { log: write, signal, retryMs: options.installRetryMs },
+          };
+          // What the cell's proxy received, for the one line that shows the cache
+          // working (#7546). Uncontained, nothing is logged: the shared cache
+          // is not metered, and its growth is wrong under concurrent checks.
+          // Stopped in `finally`, so a throw never leaves the label metered;
+          // over a MiB from the npm registry adds the miss line (#8382).
+          const installed = await meteredInstall(
+            cell === undefined ? undefined : `check:${run.id}`,
+            repo.id,
+            () =>
+              installWithRetry(
+                async (log) => {
+                  if (shared === undefined) {
+                    if (warm !== undefined) {
+                      const fill = await prefillInstallCache({
+                        cache: warm,
+                        dir,
+                        env,
+                        log,
+                        signal,
+                        timeoutMs: manifest.timeout * 1000,
+                      });
+                      if (!fill.ok) return fill;
+                      filled = fill.value;
+                      void evictSoon(warm, process.env);
+                    }
+                    return once(log);
+                  }
+                  mkdirSync(shared, { recursive: true });
+                  const held = await withLock(
+                    `${shared}.lock`,
+                    async () => {
+                      const done = await once(log);
+                      if (done.ok) lend(shared, dir);
+                      return done;
+                    },
+                    { signal },
+                  );
+                  if (held.ok && held.value.ok) void evictSoon(shared, process.env);
+                  return held.ok ? held.value : held;
+                },
+                { log: write, signal, retryMs: options.installRetryMs },
+            ),
+            write,
+            { fetched: true },
           );
           if (!installed.ok)
-            return { ok: false, error: installed.error, infrastructure: installed.infrastructure };
+            return {
+              ok: false,
+              error: installed.error,
+              infrastructure: installed.infrastructure,
+              stage: "install",
+            };
         }
         // The check step's own lines are kept beside what `write` already
         // logs, so a failure can be summarised once here — never by reading
@@ -989,12 +1346,97 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       } catch (error) {
         write(`order-dependent tests not filed: ${String(error)}`);
       }
+      // Main's red costs the forge every pull's check (#6643): one or two
+      // failed tests are re-run alone, on this commit in this cell, before
+      // main counts as red. Passing alone is a flake: green, and recorded.
+      // A pull's red is the same unless the pull touched the test (#7426).
+      if (!ran.ok && job === undefined && (x.isMain === true || tip !== undefined)) {
+        try {
+          let tests = rerunnable(checkLines, parseBunTestFailure(checkLines));
+          if (tests !== undefined && x.isMain !== true) {
+            const diff = await runGit(
+              ["diff", "--name-only", "-z", `${tip}...${x.commitOid}`],
+              { cwd: bare },
+            );
+            const changed = diff.ok ? diff.value.split("\0").filter((p) => p !== "") : undefined;
+            const read = (path: string): string | undefined => {
+              try {
+                return readFileSync(join(dir, path), "utf8");
+              } catch {
+                return undefined;
+              }
+            };
+            if (pullOwnsRed(tests, changed, read)) {
+              write("not re-run alone: the pull changed a failed test or what it imports");
+              tests = undefined;
+            }
+          }
+          if (tests !== undefined) {
+            write(`re-running ${tests.length} failed test(s) alone`);
+            let alone = true;
+            for (const test of tests) {
+              const out: string[] = [];
+              const again = await runStep("flake", rerunCommand(test), {
+                cwd: dir,
+                env,
+                log: (line) => {
+                  out.push(line);
+                  write(line);
+                },
+                signal,
+                timeoutMs: Math.min(manifest.timeout, RERUN_TIMEOUT_S) * 1000,
+                cell,
+              });
+              if (!again.ok || !passedAlone(out)) {
+                alone = false;
+                write(`"${test.name}" fails alone too: ${x.isMain === true ? "main" : "the check"} is red`);
+                break;
+              }
+            }
+            if (alone) {
+              recordFlakes(app.db, app.bus, repo, tests, { runId: run.id, commit: run.commitOid, pull: x.isMain !== true });
+              for (const t of tests) write(`flake: ${t.file} > ${t.name} passed alone`);
+              write(`flaky: ${tests.map((t) => `"${t.name}"`).join(", ")} failed in the full run and passed alone; recorded, ${x.isMain === true ? "main" : "the check"} stays green`);
+              ran = { ok: true, value: undefined };
+            }
+          }
+        } catch (error) {
+          write(`flake re-run failed: ${String(error)}`);
+        }
+      }
+      // A shard that crashed outside any test and ran green once more (#7781).
+      {
+        try {
+          recordCrashFlakes(app.db, app.bus, repo, checkLines, { runId: run.id, commit: run.commitOid, pull: x.isMain !== true }, ran.ok);
+        } catch (error) {
+          write(`crash flakes not recorded: ${String(error)}`);
+        }
+      }
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(
           checkLines,
           ran.error,
         );
-        return { ok: false, error: summary, detail };
+        const killed = killedStep(ran.error);
+        // A red verification keeps the map it measured all the same, and
+        // names the files it failed in for the bisection (#7786).
+        const files = x.tier === "verify" ? failedFiles(checkLines) : [];
+        if (x.tier === "verify" && x.keepImpact === true) {
+          try {
+            const kept = keepImpact(app.config.dataDir, repo.id, dir);
+            if (kept !== undefined) write(kept);
+          } catch (error) {
+            write(`impact map not kept: ${String(error)}`);
+          }
+        }
+        return {
+          ok: false,
+          error: killed ? ran.error : summary,
+          detail: redDetail(detail, files, checkLines),
+          ...(wholeVerify ? { passed: passedFiles(checkLines) } : {}),
+          stage: checkStage(ran.error),
+          ...(killed ? { killed } : {}),
+        };
       }
       // Only a green check of the default branch is kept for the next.
       if (
@@ -1011,10 +1453,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         }
       }
       if (key !== undefined) recordProven(app.db, key, x.id);
-      return { ok: true };
+      return wholeVerify ? { ok: true, passed: passedFiles(checkLines) } : { ok: true };
     } finally {
-      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
-      rmSync(home, { recursive: true, force: true });
+      if (existsSync(dir)) await removeRunDir(dir);
+      await removeRunDir(home);
     }
   }
 
@@ -1199,60 +1641,100 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const timer = setInterval(() => {
     if (!stopped) schedule();
   }, TICK_MS);
+  // Main is verified after landing on a schedule, when the forge says how often.
+  const sweeper =
+    options.verifyEveryMs === undefined
+      ? undefined
+      : setInterval(() => {
+          if (!stopped)
+            askVerifications().catch((error) => log.error("verification not asked", { error: String(error) }));
+        }, Math.min(VERIFY_SWEEP_MS, options.verifyEveryMs));
+  // A gate's slot frees: the pull check held for it starts now, not at the tick.
+  const unwatch = watchGates(schedule);
   schedule();
   void catchUp();
 
+  /** One gate's run on the lane: the full tier on `commitOid`, traced, cut off by `controller`. */
+  async function gateOnce(
+    repo: Repo,
+    pull: Pull,
+    commitOid: string,
+    controller: AbortController,
+    signal: AbortSignal | undefined,
+  ): Promise<GateDone> {
+    const lines: string[] = [];
+    const abandon = (): void => controller.abort();
+    signal?.addEventListener("abort", abandon, { once: true });
+    // The slot minutes it spends are the flow's gate minutes (#6426).
+    const traced = beginGate(app.db, repo.id, pull.id, commitOid);
+    try {
+      const bare = await pullDir(app.db, app.reposRoot, repo, pull);
+      const done = await runTier({
+        bare,
+        repo,
+        id: gateRunId(commitOid),
+        commitOid,
+        pull,
+        tier: "full",
+        write: (line) => lines.push(line),
+        signal: controller.signal,
+      });
+      if (done.ok) return { ok: true, error: "", lines };
+      const stage = done.stage ?? "setup";
+      // Cut off by this forge stopping, the Job lost under it, the check
+      // killed by a signal from outside (the pod going, the OOM killer), or
+      // an install the machine failed twice: the code was not judged, so
+      // this is no red. A gate the drain lets finish is judged (#6611, #6722).
+      if (
+        controller.signal.aborted ||
+        done.error === JOB_VANISHED ||
+        done.infrastructure === true ||
+        done.killed === true
+      )
+        return { ok: false, error: done.error, lines, interrupted: true, stage };
+      return { ok: false, error: done.error, lines, stage };
+    } finally {
+      endGate(app.db, traced);
+      signal?.removeEventListener("abort", abandon);
+      gates.delete(controller);
+    }
+  }
+
+  /** A gate asked of a forge already stopping is not started: the forge that carries on asks it again. */
+  function gateRun(repo: Repo, pull: Pull, commitOid: string, signal?: AbortSignal): Promise<GateDone> {
+    if (stopped) return Promise.resolve({ ok: false, error: INTERRUPTED, lines: [], interrupted: true });
+    const controller = new AbortController();
+    const done = gateOnce(repo, pull, commitOid, controller, signal);
+    gates.set(controller, { commitOid, done });
+    return done;
+  }
+
   const handle: ChecksHandle = {
     request,
-    gate: async (repo, pull, commitOid, signal) => {
-      const lines: string[] = [];
-      // A gate asked of a forge already stopping is not started: the forge
-      // that carries on asks it again.
-      if (stopped) return { ok: false, error: INTERRUPTED, lines, interrupted: true };
-      const controller = new AbortController();
-      gates.add(controller);
-      const abandon = (): void => controller.abort();
-      signal?.addEventListener("abort", abandon, { once: true });
-      try {
-        const bare = await pullDir(app.db, app.reposRoot, repo, pull);
-        const done = await runTier({
-          bare,
-          repo,
-          id: `gate-${commitOid.slice(0, 12)}`,
-          commitOid,
-          pull,
-          tier: "full",
-          write: (line) => lines.push(line),
-          signal: controller.signal,
-        });
-        if (done.ok) return { ok: true, error: "", lines };
-        // Cut off by this forge stopping, the Job lost under it, or an
-        // install the machine failed twice: the code was not judged, so
-        // this is no red.
-        if (
-          stopped ||
-          controller.signal.aborted ||
-          done.error === JOB_VANISHED ||
-          done.infrastructure === true
-        )
-          return { ok: false, error: done.error, lines, interrupted: true };
-        return { ok: false, error: done.error, lines };
-      } finally {
-        signal?.removeEventListener("abort", abandon);
-        gates.delete(controller);
-      }
+    gate: gateRun,
+    adopt: (commitOid) => {
+      for (const g of gates.values()) if (g.commitOid === commitOid) return g.done;
+      return undefined;
     },
-    spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - inFlight.size - extraGates()),
+    spareSlots: () => Math.max(0, capacity() - PULL_RESERVE - slotted() - extraGates()),
+    verifyDue: (now) => askVerifications(now),
     lane: gate,
     stop: async (stopOptions) => {
       stopped = true;
       clearInterval(timer);
+      if (sweeper !== undefined) clearInterval(sweeper);
       unsubscribe();
+      unwatch();
       // A roll waits for the checks under way, up to the budget, and only
       // then cuts off what is left (it is queued again, not lost).
-      const running = Promise.all([...inFlight.values()].map((f) => f.promise));
+      // A merge-queue gate is under way too: its verdict, if it comes in the
+      // drain, is kept for the forge that carries on (#6611).
+      const running = Promise.all([
+        ...[...inFlight.values()].map((f) => f.promise),
+        ...[...gates.values()].map((g) => g.done),
+      ]);
       const drainMs = stopOptions?.drain === false ? 0 : (options.drainMs ?? 0);
-      if (drainMs > 0 && inFlight.size > 0) {
+      if (drainMs > 0 && inFlight.size + gates.size > 0) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
           running,
@@ -1263,7 +1745,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         clearTimeout(timer);
       }
       for (const { abort } of inFlight.values()) abort.abort();
-      for (const abort of gates) abort.abort();
+      for (const abort of gates.keys()) abort.abort();
       await running;
     },
   };

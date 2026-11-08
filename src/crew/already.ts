@@ -74,3 +74,25 @@ export function alreadyDoneOids(summary: string): string[] {
     .filter((o) => /^[0-9a-f]{40}$/.test(o))
     .slice(0, MOST);
 }
+
+/** What a builder's final words decline with, when they begin `DECLINED`. */
+export function declineOf(text: string): string | undefined {
+  return /^\s*DECLINED\b/i.test(text)
+    ? text.replace(/^\s*DECLINED:?\s*/i, "").trim()
+    : undefined;
+}
+
+/**
+ * Whether a run stopped from outside still has its own answer worth keeping:
+ * an already-done decline it reached before its pull closed under it. A run
+ * the meter stopped (`stoppedFor`) has none: the cap is the reason it ended.
+ */
+export const answeredBeforeStop = (
+  stoppedFor: string | undefined,
+  text: string,
+): boolean =>
+  stoppedFor === undefined && namedCommits(declineOf(text) ?? "").length > 0;
+
+/** Whether a run's summary is the already-done answer. */
+export const isAnswer = (summary: string): boolean =>
+  summary.startsWith(ALREADY_DONE);

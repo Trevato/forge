@@ -10,6 +10,7 @@
 import { err, ok, type Result } from "../kernel/result.ts";
 import { DEFAULT_MODE, type FollowMode } from "./chain.ts";
 import { parseSize, type Size } from "./sizes.ts";
+import { DEFAULT_TEMPLATE, parseTemplate } from "./templates.ts";
 
 export const MAX_APPS = 50;
 export const MAX_BRIEFS = 100;
@@ -72,6 +73,8 @@ export interface SpawnInput {
   readonly followMode?: unknown;
   /** How big the child is: `small`, `medium` or `large`; optional. */
   readonly size?: unknown;
+  /** Which template the child's apps start from (`spawn/templates.ts`); optional. */
+  readonly template?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -114,6 +117,8 @@ export interface SpawnPlan {
   readonly followMode?: FollowMode;
   /** The child's size, present only when chosen. */
   readonly size?: Size;
+  /** The template the child starts from, present only when chosen and not `blank`. */
+  readonly template?: string;
 }
 
 export interface DryRun {
@@ -263,6 +268,14 @@ export function planSpawn(
     size = parsed.value;
   }
 
+  // After size, for the same reason; `blank` is today's child, so it is never named.
+  let template: string | undefined;
+  if (input.template !== undefined && input.template !== null && input.template !== "") {
+    const parsed = parseTemplate(input.template);
+    if (!parsed.ok) return refuse("template", parsed.error);
+    if (parsed.value !== DEFAULT_TEMPLATE) template = parsed.value;
+  }
+
   // `forWhom` only when said, so a plan without it hashes as it always did.
   return ok({
     name,
@@ -277,6 +290,7 @@ export function planSpawn(
     ...(fresh === undefined ? {} : { fresh }),
     ...(followMode === undefined ? {} : { followMode }),
     ...(size === undefined ? {} : { size }),
+    ...(template === undefined ? {} : { template }),
   });
 }
 

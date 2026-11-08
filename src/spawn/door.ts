@@ -7,12 +7,13 @@
  */
 
 import { startWatch, probeOf, type Probe } from "./live.ts";
+import { firstProof, reachWords, settleChild } from "./reach.ts";
 import { reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
 import { maxChildren } from "../core/capacity.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { canRead, getRepo } from "../core/repos.ts";
-import { kindOfToken, parseApiBase } from "../core/subscriptions.ts";
+import { kindOfToken, normalizeToken, parseApiBase } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Ctx } from "../http/context.ts";
@@ -215,11 +216,11 @@ export async function spawnDoor(
   }
   const modelKey = raw["modelKey"];
   if (modelKey !== undefined) {
-    const kind = typeof modelKey === "string" ? kindOfToken(modelKey) : undefined;
+    const kind = typeof modelKey === "string" ? kindOfToken(normalizeToken(modelKey)) : undefined;
     if (kind === undefined)
       return invalid(
         "modelKey",
-        "must be one line with no spaces: an Anthropic key (sk-ant-api…, sk-ant-usr…), a `claude setup-token` token (sk-ant-oat…), or a gateway's key with its base URL",
+        "is empty or over 4096 characters once spaces, line breaks and a `Bearer ` prefix are dropped: paste an Anthropic key, a `claude setup-token` token, or your gateway's key (with its base URL)",
       );
     if (kind === "oauth" && modelEndpoint !== undefined)
       return invalid("modelEndpoint", "a subscription token (sk-ant-oat…) talks to Anthropic itself and takes no base URL");
@@ -268,6 +269,7 @@ export async function spawnDoor(
     fresh: raw["fresh"],
     followMode: raw["followMode"],
     size: raw["size"],
+    template: raw["template"],
     ...(anon ? {} : { for: raw["for"] }),
   };
 
@@ -313,11 +315,25 @@ export async function spawnDoor(
     void bootHostedChild(ctx.app, made.value.name);
     startWatch(ctx.app, { name: made.value.name, startedAt, probe: (probes.get(ctx.app) ?? probeOf)(made.value.url) });
   }
+  // Proven from outside before it is called done: the child's home and each
+  // app's public address, each with what came back. What does not answer yet
+  // is kept proving behind this answer, and is an alarm if it never does.
+  const proved = made.value.existed ? undefined : await firstProof(ctx.app, made.value.name);
+  if (proved !== undefined) void settleChild(ctx.app, made.value.name);
   return {
     status: made.value.existed ? 200 : 201,
     body: {
       dryRun: false,
       ...made.value,
+      ...(proved === undefined
+        ? {}
+        : {
+            reach: {
+              ok: proved.ok,
+              says: proved.ok ? "Every public address answered." : `${reachWords(proved)}. Still checking; the owner is alarmed if it does not come up in 3 minutes.`,
+              proofs: proved.proofs,
+            },
+          }),
       ...(typeof modelKey === "string" ? { keyNote: KEY_BUDGET_NOTE } : {}),
     },
   };

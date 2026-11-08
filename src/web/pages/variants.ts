@@ -18,6 +18,8 @@ import {
   notFoundPage,
   repoBase,
   signInFirst,
+  NOT_YOURS_TO_DO,
+  forbiddenPage,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -137,7 +139,7 @@ export const variantVoteSubmit =
     );
     if (!voted.ok) {
       if (voted.error === "forbidden")
-        return new Response("forbidden", { status: 403 });
+        return forbiddenPage(ctx, NOT_YOURS_TO_DO);
       return flashTo(ctx, dest, {
         tone: "danger",
         message:

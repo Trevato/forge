@@ -9,6 +9,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { listVia } from "./mcp-list.ts";
 
 describe("MCP hooks", () => {
   let dataDir: string;
@@ -65,11 +66,43 @@ describe("MCP hooks", () => {
     expect(added.value.kinds).toBe("*");
     expect(JSON.stringify(added)).not.toContain("s3cret-value-long-enough");
     const listed = await tool(aliceAdmin, { repo: "alice/game", action: "list" });
-    expect(listed.value.map((h: any) => h.id)).toEqual([added.value.id]);
+    expect(listed.value.items.map((h: any) => h.id)).toEqual([added.value.id]);
     expect(JSON.stringify(listed)).not.toContain("s3cret-value-long-enough");
     expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: added.value.id })).value).toEqual({});
-    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual([]);
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual({ items: [], next_cursor: null });
     expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: added.value.id })).error).toContain("not_found");
+  });
+
+  test("deliveries answers the hook's last deliveries as the route does, and refuses as it does", async () => {
+    const added = await tool(aliceAdmin, { repo: "alice/game", action: "add", url: "https://example.com/d", secret: "0123456789abcdef" });
+    const repoId = app.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name='game'").get()!.id;
+    app.bus.append({ kind: "push", repoId });
+    const got = await tool(aliceAdmin, { repo: "alice/game", action: "deliveries", id: added.value.id });
+    expect(got.value.items.length).toBeGreaterThan(0);
+    expect(got.value.items[0].kind).toBe("push");
+    expect(JSON.stringify(got)).not.toContain("0123456789abcdef");
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "deliveries", id: "nope" })).error).toContain("not_found");
+    expect((await tool(bobAdmin, { repo: "alice/game", action: "deliveries", id: added.value.id })).error).toContain("not_found");
+    await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: added.value.id });
+  });
+
+  test("list pages by limit and cursor, and refuses what the route refuses", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const a = await tool(aliceAdmin, { repo: "alice/game", action: "add", url: `https://example.com/p${i}`, secret: "0123456789abcdef" });
+      ids.push(a.value.id);
+    }
+    ids.sort();
+    const first = await tool(aliceAdmin, { repo: "alice/game", action: "list", limit: 2 });
+    expect(first.value.items.map((h: any) => h.id)).toEqual(ids.slice(0, 2));
+    expect(first.value.next_cursor).toBe(ids[1]);
+    const second = await tool(aliceAdmin, { repo: "alice/game", action: "list", limit: 2, cursor: first.value.next_cursor });
+    expect(second.value.items.map((h: any) => h.id)).toEqual([ids[2]]);
+    expect(second.value.next_cursor).toBeNull();
+    for (const limit of [0, 201, 1.5, "5"])
+      expect((await tool(aliceAdmin, { repo: "alice/game", action: "list", limit })).error).toContain("invalid_limit");
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list", cursor: "gone" })).error).toContain("invalid_cursor");
+    for (const id of ids) await tool(aliceAdmin, { repo: "alice/game", action: "remove", id });
   });
 
   test("a reader is refused and nothing is added", async () => {
@@ -78,7 +111,7 @@ describe("MCP hooks", () => {
       { repo: "alice/game", action: "list" },
     ])
       expect((await tool(bobAdmin, args)).error).toContain("not_found");
-    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual([]);
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual({ items: [], next_cursor: null });
   });
 
   test("an invalid URL is refused with the API's error", async () => {
@@ -97,11 +130,11 @@ describe("MCP hooks", () => {
     expect((await tool(aliceAdmin, { repo: "alice/game", action: "remove", id: "i".repeat(65) })).error).toContain("id is text");
     for (const secret of [undefined, "short"])
       expect((await tool(aliceAdmin, { repo: "alice/game", action: "add", url: "https://example.com/h", secret })).error).toContain("secret is required");
-    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual([]);
+    expect((await tool(aliceAdmin, { repo: "alice/game", action: "list" })).value).toEqual({ items: [], next_cursor: null });
   });
 
   test("it is listed, and callable, only with an admin-scope token", async () => {
-    const names = async (t: string) => (await rpc(t, "tools/list", {})).result.tools.map((x: any) => x.name);
+    const names = async (t: string) => (await listVia((p) => rpc(t, "tools/list", p))).result.tools.map((x: any) => x.name);
     expect(await names(aliceAdmin)).toContain("hooks");
     expect(await names(aliceRw)).not.toContain("hooks");
     const called = await rpc(aliceRw, "tools/call", { name: "hooks", arguments: { repo: "alice/game", action: "list" } });

@@ -32,6 +32,7 @@ import { runGit } from "../src/git/env.ts";
 import { REMOTE_PROTOCOLS } from "../src/git/remote-env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { MIRROR_REFUSED, provideMirrorOutboundForTest, vettedEnv } from "../src/origins/git-mirror.ts";
+import { mirrorOutbound } from "./helpers/globals.ts";
 import {
   getFollow,
   listFollowing,
@@ -156,9 +157,10 @@ describe("checking an upstream (layer 2)", () => {
   beforeAll(async () => {
     target = ok(await createRepo(app, alice, { name: "checked", visibility: "public" }));
     dir = repoDir(app.reposRoot, target.ownerName, target.name);
-    provideMirrorOutboundForTest({ allow: ["127.0.0.1"] });
   });
-  afterAll(() => provideMirrorOutboundForTest({}));
+  // Given back as found: a bare `{}` here refused loopback to every file
+  // after this one in its shard (#7686).
+  mirrorOutbound({ allow: ["127.0.0.1"] });
   /** A server that records every request and answers with `refs` as a dumb-http `info/refs`. */
   function upstream(refs: () => string, delayMs = 0) {
     const seen: Request[] = [];
@@ -453,6 +455,8 @@ describe("checking an upstream (layer 2)", () => {
         expect(issue.length).toBe(1);
         expect(issue[0]!.title).toBe(`Upstream: conflict at ${t.up.slice(0, 7)}`);
         expect(issue[0]!.body).toContain("f.txt");
+        expect(issue[0]!.body).toContain("Bring the work in.");
+        expect(issue[0]!.body).toContain("is not a resolution");
         ok(await checkUpstream(app, t.r));
         ok(await checkUpstream(app, t.r));
         expect(t.runs().length).toBe(1);
@@ -477,6 +481,7 @@ describe("checking an upstream (layer 2)", () => {
         expect(prompt).toContain(t.srv.url);
         expect(prompt).toContain("git fetch origin refs/upstream-follow/main && git merge FETCH_HEAD");
         expect(prompt).toContain("never rebase, squash or cherry-pick");
+        expect(prompt).toContain("Bring the work in: never `-s ours`");
         expect(prompt).toContain('"f.txt"');
       } finally {
         t.srv.server.stop(true);

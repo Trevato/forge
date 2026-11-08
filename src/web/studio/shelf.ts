@@ -65,6 +65,8 @@ export interface ShelfReads {
   /** Milliseconds from New app to the first preview, by repo id; a row
    * wears it beside its name only when it has one. */
   readonly firstPreview?: ReadonlyMap<string, number> | undefined;
+  /** Something to hang under a row, by repo id (the archived list's Wake). */
+  readonly under?: ReadonlyMap<string, Html> | undefined;
 }
 
 /**
@@ -182,7 +184,7 @@ export async function shelfRows(
   let mark = performance.now();
   const lap = (name: string): void => {
     const now = performance.now();
-    notePhase(ctx.request, name, now - mark);
+    notePhase(ctx.request, `shelf-${name}`, now - mark);
     mark = now;
   };
   const records = appsForRepos(db, repoIds);
@@ -336,7 +338,9 @@ export async function shelfRows(
         ? repo.name
         : html`<span class="muted">${repo.ownerName}/</span>${repo.name}`;
       const first = reads.firstPreview?.get(repo.id);
+      const under = reads.under?.get(repo.id);
       return row({
+        ...(under === undefined ? {} : { children: [under] }),
         href: repoBase(repo),
         nav: true,
         lead: dot(tone),

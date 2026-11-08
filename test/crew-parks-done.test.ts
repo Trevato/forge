@@ -23,6 +23,7 @@ import {
 import { repoDir } from "../src/git/repos.ts";
 import { alreadyDone } from "../src/core/done_on_main.ts";
 import { askedIn, askedJson } from "../src/core/asked.ts";
+import { answerCancelled, cancelRun, createRun } from "../src/core/runs.ts";
 import { parkedTwice, struckOut } from "../src/crew/parks.ts";
 import { engine, tick, type Engine } from "./helpers/parks-engine.ts";
 
@@ -386,5 +387,50 @@ describe("an issue found already done is the asker's to close, not a park", () =
     );
     expect(alreadyDone(e.app.db, [finished.id]).get(finished.id)).toEqual([oid]);
     expect(numbers()).toEqual([open.number]);
+  });
+
+  const cancelledByItsPull = (on: Issue) => {
+    const run = createRun(e.app.db, {
+      repoId: e.fresh().id,
+      kind: "agent",
+      issueId: on.id,
+      actorId: e.mason.id,
+      reason: "assigned",
+    });
+    e.app.db.run(`UPDATE run SET state = 'running' WHERE id = ?1`, [run.id]);
+    cancelRun(e.app.db, run.id, "the pull closed");
+    return run.id;
+  };
+
+  test("a run its pull closed under, that had answered already done, notes the issue and holds it", () => {
+    const work = e.issue("Closed under its decline");
+    const runId = cancelledByItsPull(work);
+    const run = answerCancelled(e.app.db, runId, {
+      state: "ok",
+      summary: alreadyDoneSummary([oid]),
+    })!;
+    expect(run.summary).toBe(`already done: ${oid}`);
+    expect(
+      settleAgentRun(e.app, e.fresh(), {
+        issueId: work.id,
+        state: run.state,
+        summary: run.summary,
+        reason: "assigned",
+        actorId: e.mason.id,
+      }),
+    ).toBe(true);
+    expect(alreadyDone(e.app.db, [work.id]).get(work.id)).toEqual([oid]);
+    expect(parkedCount(e.app, e.fresh(), work.id)).toBe(0);
+  });
+
+  test("answerCancelled touches only a run its pull cancelled", () => {
+    const work = e.issue("Cancelled for another reason");
+    const other = createRun(e.app.db, { repoId: e.fresh().id, kind: "agent", issueId: work.id });
+    cancelRun(e.app.db, other.id, "cancelled");
+    const done = { state: "ok" as const, summary: alreadyDoneSummary([oid]) };
+    expect(answerCancelled(e.app.db, other.id, done)).toBeUndefined();
+    const runId = cancelledByItsPull(work);
+    expect(answerCancelled(e.app.db, runId, done)).toBeDefined();
+    expect(answerCancelled(e.app.db, runId, done)).toBeUndefined();
   });
 });

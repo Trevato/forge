@@ -1,13 +1,6 @@
 import { addSshKey, deleteSshKey } from "../../../actions/users.ts";
 import { listKeys, publicKey } from "../../../core/keys.ts";
-import { good, bad, type Tool } from "../shared.ts";
-
-const keyWords = (error: string): string =>
-  ({
-    invalid_key: "not a public key in authorized_keys form",
-    key_exists: "that key is already registered",
-    not_found: "no such key of yours",
-  })[error] ?? error;
+import { good, bad, keyWords, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "ssh_keys",

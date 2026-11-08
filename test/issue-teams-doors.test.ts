@@ -5,6 +5,7 @@
  * on the crew can ask never stops the pull being reviewed.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
 import { teamsOfIssue, teamVerdicts } from "../src/core/issue_teams.ts";
 import type { Issue } from "../src/core/issues.ts";
@@ -34,6 +35,7 @@ import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 quietLogs();
 
@@ -141,7 +143,7 @@ describe("naming teams, at every door", () => {
     const agent = await createAgent(app, alice, { username: "quill" });
     if (!agent.ok) throw new Error(String(agent.error));
     addToCrew(app, alice, repo, "quill");
-    setCrewRole(app.db, repo.id, id("quill"), "reviewer");
+    seatAs(app.db, repo.id, id("quill"), "reviewer");
   }, 30_000);
 
   afterAll(async () => {
@@ -301,7 +303,7 @@ describe("naming teams, at every door", () => {
     // The page's timeline carries it, and its live client listens for it.
     const page = await (await fetch(`${base()}/issues/${issue.number}`, { headers: { cookie: cookie(alice) } })).text();
     expect(page).toContain("changed the teams");
-    expect(page).toContain("'issue.teams'");
+    expect(await withScripts(servers.url, page)).toContain("'issue.teams'");
     // A reader of the terminal who cannot write still sees the teams.
     const terminal = headlessTerminal(140, 40);
     const { app: tui, session } = createForgeApp(

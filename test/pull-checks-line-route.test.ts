@@ -15,6 +15,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { appendRunLog } from "../src/runs/log.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 quietLogs();
 
@@ -138,7 +139,7 @@ test("the page that draws the line also ships the script that drives it", async 
   expect(text).not.toMatch(/id="live-checks"[^>]*data-live-every/);
   // liveRegionsJs reads data-live-src and arms the beat; liveClientJs alone does not.
   expect(text).toContain("data-live-src");
-  expect(text).toContain("function arm(");
+  expect(await withScripts(servers.url, text)).toContain("function arm(");
 });
 
 test("once the check has passed, the line has no beat, no counts, and reads as passed", async () => {
@@ -164,5 +165,5 @@ test("the change page the owner lands on draws the same live line, with the coun
   expect(text).toContain('id="live-checks"');
   expect(text).not.toMatch(/id="live-checks"[^>]*data-live-every/);
   expect(text).toContain("2 of 170 files · 500 passed, 0 failed");
-  expect(text).toContain("function arm(");
+  expect(await withScripts(servers.url, text)).toContain("function arm(");
 });

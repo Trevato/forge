@@ -6,6 +6,7 @@
  * `feed` tool answers the same posts. Nothing private, nor an admin's
  * configuration, reaches a reader's timeline.
  */
+import { freshHome } from "./helpers/home-fresh.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -124,13 +125,13 @@ describe("home is the feed", () => {
   });
 
   test("the composer is a §5 card, and no .composer class remains", async () => {
-    const text = await (await get("/", aliceCookie)).text();
+    const text = await (await get("/feed", aliceCookie)).text();
     expect(text).toMatch(/<form id="composer" class="card" method="post" action="\/tell">\s*<div class="card-body/);
     expect(text).not.toContain('class="composer');
   });
 
   test("the composer's action bar is §5's bar, not .composer-bar", async () => {
-    const text = await (await get("/", aliceCookie)).text();
+    const text = await (await get("/feed", aliceCookie)).text();
     const form = text.slice(text.indexOf('id="composer"'), text.indexOf("</form>", text.indexOf('id="composer"')));
     expect(form).not.toContain("composer-bar");
     expect(form).toContain('<div class="bar">');
@@ -141,7 +142,7 @@ describe("home is the feed", () => {
   });
 
   test("signed in, / is the composer above one timeline; your apps one step away", async () => {
-    const text = await (await get("/", aliceCookie)).text();
+    const text = await (await get("/feed", aliceCookie)).text();
     const composer = text.indexOf('id="composer"');
     const feed = text.indexOf('id="live-feed"');
     expect(composer).toBeGreaterThan(-1);
@@ -166,7 +167,9 @@ describe("home is the feed", () => {
     expect(text).not.toContain("home-tabs");
     // Nothing stands between the composer and the first post: the crew's
     // missing key sits beside the timeline (after it on a phone), and
-    // "What you asked for" is a tab there.
+    // "What you asked for" is the Asked tab, the one door to /asked.
+    expect(text).not.toContain("feed-head");
+    expect(text).not.toContain('href="/asked">What you asked for');
     const note = text.indexOf('id="crew-key-note"');
     if (note !== -1) expect(note).toBeGreaterThan(feed);
     expect(text).toMatch(/class="tabs"[\s\S]*?href="\/asked"/);
@@ -180,7 +183,7 @@ describe("home is the feed", () => {
     const asked = await (await get("/asked", aliceCookie)).text();
     expect(asked).toMatch(/class="tabs"[\s\S]*?href="\/asked"\s+aria-current="page"/);
     expect(asked).toContain('href="/"');
-    expect(text).toMatch(/class="tabs"[\s\S]*?href="\/"\s+aria-current="page"/);
+    expect(text).toMatch(/class="tabs"[\s\S]*?href="\/feed"\s+aria-current="page"/);
     for (const page of [apps, asked]) {
       expect(page).not.toContain("home-tabs");
       for (const w of ["Feed", "Your apps", "Asked"]) expect(page).toContain(w);
@@ -188,7 +191,7 @@ describe("home is the feed", () => {
   });
 
   test("a reader's timeline has the public repository's posts and nothing private or configured", async () => {
-    const text = await (await get("/", bobCookie)).text();
+    const text = await (await get("/feed", bobCookie)).text();
     expect(text).toContain("Water the tomatoes at dawn");
     expect(text).not.toContain("The combination is 4-8-15");
     expect(text).not.toContain("alice/vault");
@@ -202,6 +205,25 @@ describe("home is the feed", () => {
     // Its owner sees both.
     const owners = readFeed(app.db, alice, { limit: 50 }).items.filter((i) => i.app === "alice/lab");
     expect(owners.map((i) => i.kind).sort()).toEqual(["look", "run"]);
+  });
+
+  test("the installed icon's long-press offers On you and Talk, same-origin pages that answer", async () => {
+    const manifest = (await fetch(`${servers.url}/manifest.webmanifest`).then((r) => r.json())) as {
+      shortcuts: { name: string; short_name: string; url: string; icons: { src: string }[] }[];
+    };
+    expect(manifest.shortcuts.map((s) => [s.short_name, s.url])).toEqual([
+      ["On you", "/asks"],
+      ["Talk", "/talk"],
+    ]);
+    for (const s of manifest.shortcuts) {
+      expect(s.icons[0]!.src).toBe("/icons/forge-192.png");
+      expect(new URL(s.url, servers.url).origin).toBe(servers.url);
+      const signedIn = await get(s.url, aliceCookie);
+      expect(signedIn.status).toBe(200);
+      const anon = await fetch(`${servers.url}${s.url}`, { redirect: "manual" });
+      expect(anon.status).toBe(303);
+      expect(anon.headers.get("location")).toBe(`/signin?next=${encodeURIComponent(s.url)}`);
+    }
   });
 
   test("a phone's share sheet opens the composer with the shared words, escaped, and sends nothing", async () => {
@@ -219,7 +241,7 @@ describe("home is the feed", () => {
       text: 'Look at this </textarea><script>alert(1)</script>',
       url: "https://example.com/gauge",
     });
-    const res = await get(`/?${q}`, aliceCookie);
+    const res = await get(`/feed?${q}`, aliceCookie);
     const text = await res.text();
     const box = /<textarea[^>]*name="text"[^>]*>([\s\S]*?)<\/textarea>/.exec(text);
     expect(box?.[1]).toContain("Rain gauges\nLook at this &lt;/textarea&gt;&lt;script&gt;");
@@ -320,13 +342,13 @@ describe("home is the feed", () => {
       )
       .get(alice.id);
     expect(row).toEqual({ text, source: "composer" });
-    const page = await get("/", aliceCookie).then((r) => r.text());
+    const page = await freshHome(servers.url, `${aliceCookie}; forge_mode=studio`, "/feed");
     expect(page).toContain("&lt;script&gt;alert(1)&lt;/script&gt; &amp; more");
     expect(page).not.toContain("<script>alert(1)</script>");
     expect(page).toContain("Received");
     expect(page).toContain('<option value="forge">the forge</option>');
     // It is the author's alone, and another site's form is refused.
-    const bobs = await get("/", bobCookie).then((r) => r.text());
+    const bobs = await freshHome(servers.url, `${bobCookie}; forge_mode=studio`, "/feed");
     expect(bobs).not.toContain("alert(1)");
     const forged = await fetch(`${servers.url}/tell`, {
       method: "POST",
@@ -339,21 +361,21 @@ describe("home is the feed", () => {
   });
 
   test("a person with no apps can still send to the forge, and a day-old thought leaves the feed", async () => {
-    const empty = await get("/", bobCookie).then((r) => r.text());
+    const empty = await freshHome(servers.url, `${bobCookie}; forge_mode=studio`, "/feed");
     expect(empty).toContain('name="app" value="forge"');
     expect(empty).toContain("No apps yet");
     const old = new Date(Date.now() - 2 * 86_400_000).toISOString();
     app.db
       .query("INSERT INTO thought (id, author, text, source, received_at) VALUES ('old1', ?1, 'ancient musing', 'composer', ?2)")
       .run(bob.id, old);
-    expect(await get("/", bobCookie).then((r) => r.text())).not.toContain("ancient musing");
+    expect(await freshHome(servers.url, `${bobCookie}; forge_mode=studio`, "/feed")).not.toContain("ancient musing");
     await fetch(`${servers.url}/tell`, {
       method: "POST",
       headers: { cookie: bobCookie, origin: servers.url },
       body: new URLSearchParams({ app: "forge", text: "fresh musing" }),
       redirect: "manual",
     });
-    const after = await get("/", bobCookie).then((r) => r.text());
+    const after = await freshHome(servers.url, `${bobCookie}; forge_mode=studio`, "/feed");
     expect(after).toContain("fresh musing");
     expect(after).not.toContain("ancient musing");
   });
@@ -363,7 +385,7 @@ describe("home is the feed", () => {
     const serving = (payload: Record<string, unknown>) =>
       app.bus.append({ kind: "app.serving", repoId: garden.id, payload: { app: "garden", env: "production", commitOid: oid, ...payload } });
     serving({ version: "0.7.251", pulls: [{ title: "Water <b>early</b>", number: 1 }, { title: "Mulch", number: 2 }, { title: "Weed", number: 3 }] });
-    const page = await get("/", aliceCookie).then((r) => r.text());
+    const page = await freshHome(servers.url, `${aliceCookie}; forge_mode=studio`, "/feed");
     expect(page).toContain("0.7.251 is serving: Water &lt;b&gt;early&lt;/b&gt; and 2 more");
     expect(page).not.toContain("<b>early</b>");
     expect(page).toContain(`href="/alice/garden/commit/${oid}"`);
@@ -421,7 +443,7 @@ describe("home is the feed", () => {
       if (!made.ok) throw new Error("issue");
       expect(assignIssue(app, alice, garden, made.value, alice).ok).toBe(true);
     }
-    const page = await (await get("/", aliceCookie)).text();
+    const page = await (await get("/feed", aliceCookie)).text();
     // The timeline may still tell of a filed issue as a post; the asks are
     // what must be gone, so the page is read up to the timeline.
     const home = page.slice(0, page.indexOf('id="live-feed"'));
@@ -431,7 +453,7 @@ describe("home is the feed", () => {
     expect(home).not.toContain("things need you");
     expect(home).not.toContain("data-pick");
     expect(home).toContain('href="/asks"');
-    const link = home.match(/<a[^>]*href="\/asks"[^>]*>([^<]*)<\/a\s*>/);
+    const link = home.match(/<a[^>]*href="\/asks"[^>]*>([^<]*)(?:<kbd class="keyhint">.*?<\/kbd>)?<\/a\s*>/s);
     expect(link).not.toBeNull();
     expect(link![1]!.trim()).toBe("Asks");
     // Nothing after the link, up to the next tag, is a number.

@@ -13,8 +13,15 @@
 
 import type { App } from "../app.ts";
 import { getIssuesByIds } from "../core/issues.ts";
-import { canSeeOwnerFacts, type Repo } from "../core/repos.ts";
-import { standings, type Standing } from "../core/standing.ts";
+import {
+  canSeeOwnerFacts,
+  listReposVisibleTo,
+  ownerFactRepoIds,
+  type Repo,
+} from "../core/repos.ts";
+import { forgeSpend, type SpanSpend } from "../core/usage_report.ts";
+import { measureFor } from "../core/measure.ts";
+import { freePct, standings, type Standing } from "../core/standing.ts";
 import {
   budgetsOf,
   grantedAccounts,
@@ -194,4 +201,101 @@ export function readUsage(
     spend: readSpend(app, now, repo.id),
     guard: guardCounts(app.db, repo.id, since),
   });
+}
+
+/** Repositories read per page; the core caps a page at 200. */
+const PAGE = 200;
+
+const NONE: SpanSpend = { runs: 0, tokensIn: 0, tokensOut: 0, costUsd: 0 };
+
+export interface ForgeUsage {
+  readonly at: string;
+  /** `today` runs from `todaySince` (00:00 UTC); `last24h` is the rolling 24 hours: both are named so they never seem to disagree. */
+  readonly todaySince: string;
+  readonly last24hSince: string;
+  readonly apps: number;
+  readonly today: SpanSpend;
+  readonly last24h: SpanSpend;
+  readonly subscriptions: readonly {
+    readonly subscription: string;
+    readonly today: SpanSpend;
+    readonly last24h: SpanSpend;
+    /** Per window: the share of its limit still free, in whole percent; null until the provider has named a limit. */
+    readonly headroom: readonly {
+      readonly window: string;
+      readonly pct: number | null;
+      readonly resetsAt: string | null;
+    }[];
+  }[];
+}
+
+const sum = (a: SpanSpend, b: SpanSpend): SpanSpend => ({
+  runs: a.runs + b.runs,
+  tokensIn: a.tokensIn + b.tokensIn,
+  tokensOut: a.tokensOut + b.tokensOut,
+  costUsd: a.costUsd + b.costUsd,
+});
+
+/** Spend across the repositories whose owner facts `user` may see, never another's. */
+export function readForgeUsage(
+  app: App,
+  user: User | undefined,
+  now: Date = new Date(),
+): ForgeUsage {
+  const db = app.db;
+  // Every visible repository, page by page (newest id first): a cap would undercount silently.
+  const visible: Repo[] = [];
+  for (let cursor: string | undefined; ; ) {
+    const page = listReposVisibleTo(db, user, cursor === undefined ? { limit: PAGE } : { limit: PAGE, cursor });
+    visible.push(...page);
+    if (page.length < PAGE) break;
+    cursor = page[page.length - 1]!.id;
+  }
+  const mine = ownerFactRepoIds(db, visible, user);
+  const spend = forgeSpend(db, mine, now);
+  const names = new Map(listCredentials(db).map((c) => [c.id, c.name]));
+  const accounts = new Set<string>();
+  for (const m of [spend.today, spend.last24h])
+    for (const k of m.keys()) accounts.add(k ?? PLATFORM);
+  for (const repo of visible) {
+    if (!mine.has(repo.id)) continue;
+    const granted = grantedAccounts(db, repo.id, repo.ownerId);
+    if (granted.length === 0) accounts.add(PLATFORM);
+    for (const g of [...listGrants(db, repo.id), ...listGrants(db, repo.ownerId)])
+      accounts.add(g.subscriptionId);
+  }
+  const read = standings(db, [...accounts], now);
+  const at = (m: Map<string | null, SpanSpend>, id: string) =>
+    id === PLATFORM
+      ? sum(m.get(null) ?? NONE, m.get(PLATFORM) ?? NONE)
+      : (m.get(id) ?? NONE);
+  // A subscription since removed still paid for runs: its own row, never dropped.
+  const subscriptions = [...accounts]
+    .map((id) => ({
+      subscription: names.get(id) ?? (id === PLATFORM ? id : "a removed subscription"),
+      today: at(spend.today, id),
+      last24h: at(spend.last24h, id),
+      headroom: (read.get(id)?.windows ?? []).map((w) => {
+        // The provider's own measurement wins over the ledger's inference (#8960).
+        const m = measureFor(db, id, w.window, now);
+        return {
+          window: w.window,
+          pct: m === null ? freePct(w.cap?.value ?? null, w.used.value) : Math.round(100 - m.usedPct),
+          resetsAt: m === null ? (w.resetsAt?.value ?? null) : m.resetsAt,
+        };
+      }),
+    }))
+    .sort((a, b) => a.subscription.localeCompare(b.subscription));
+  // Totals come from every row, so no spend can fall out of them.
+  const whole = (m: Map<string | null, SpanSpend>) =>
+    [...m.values()].reduce(sum, NONE);
+  return {
+    at: now.toISOString(),
+    todaySince: spend.todaySince,
+    last24hSince: spend.last24hSince,
+    apps: mine.size,
+    today: whole(spend.today),
+    last24h: whole(spend.last24h),
+    subscriptions,
+  };
 }

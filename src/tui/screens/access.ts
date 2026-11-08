@@ -16,6 +16,7 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import type { Session } from "../session.ts";
 import { ListState, drawList, promptScreen, type ListRow } from "./common.ts";
+import type { PaletteEntry } from "./entries.ts";
 
 type Filter = "since" | "ua" | "path";
 
@@ -111,3 +112,13 @@ export function accessScreen(f: Session, ctx: Ctx): Screen {
   };
   return screen;
 }
+
+/** What outside agents tried, as Settings → Access says it: a site admin's (#1768). */
+export const entry: PaletteEntry = {
+  id: "access",
+  title: "Access",
+  hint: "what outside agents tried",
+  after: ["file-holds"],
+  offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
+  run: (session, ctx) => ctx.push(accessScreen(session, ctx)),
+};

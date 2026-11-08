@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { heapStats } from "bun:jsc";
 import type { App } from "../app.ts";
+import { quietly } from "../core/write_clock.ts";
 
 export const MEMORY_EVERY_MS = 60_000;
 export const HOUR_MS = 3_600_000;
@@ -29,7 +30,7 @@ const valid = (n: number) => Number.isFinite(n) && n >= 0;
 export function recordMemory(db: Database, rss: number, heap: number, now: number): void {
   if (!valid(rss) || !valid(heap) || !valid(now)) return;
   const hour = Math.floor(now / HOUR_MS) * HOUR_MS;
-  db.transaction(() => {
+  db.transaction(() => quietly(db, () => {
     db.run(
       `INSERT INTO memory_hour (hour, samples, rss_sum, rss_max, heap_sum, heap_max) VALUES (?, 1, ?, ?, ?, ?)
        ON CONFLICT(hour) DO UPDATE SET samples = samples + 1, rss_sum = rss_sum + excluded.rss_sum,
@@ -38,7 +39,7 @@ export function recordMemory(db: Database, rss: number, heap: number, now: numbe
       [hour, rss, rss, heap, heap],
     );
     db.run("DELETE FROM memory_hour WHERE hour < ?", [hour - KEEP_MS]);
-  })();
+  }))();
 }
 
 /** The hours in the `hours` before `now` (the current one included), oldest first. */

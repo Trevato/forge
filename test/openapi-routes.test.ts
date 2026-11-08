@@ -14,8 +14,10 @@ const fields = (v: unknown) => {
   expect(typeof v).toBe("object");
   for (const [k, t] of Object.entries(v as object)) {
     expect(k.length).toBeGreaterThan(0);
-    expect(typeof t).toBe("string");
-    expect((t as string).trim().length).toBeGreaterThan(0);
+    // A query integer may carry its bounds: { type: "integer", min, max }.
+    if (typeof t === "object" && t !== null) expect((t as { type?: unknown }).type).toBe("integer");
+    else expect(typeof t).toBe("string");
+    if (typeof t === "string") expect(t.trim().length).toBeGreaterThan(0);
   }
 };
 

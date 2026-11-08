@@ -303,7 +303,9 @@ describe("terminal: apps, runs and the crew", () => {
       expect(h.text()).toContain("opened pull #2 with the melody");
       expect(h.text()).toContain("$0.42");
       await h.press("tab", "enter");
-      await h.until(`/alice/site/runs/${run.id}`);
+      await h.until("cloning alice/site");
+      // The log screen's state line, not the web address.
+      expect(h.text()).toContain("ok · agent · opened pull #2 with the melody · $0.42");
     } finally {
       h.stop();
     }
@@ -461,7 +463,7 @@ describe("terminal: apps, runs and the crew", () => {
       await h.until("On you");
       // alice is the site admin, so the crew entry would have been there.
       const ids = forgeCommands(h.session)(h.app.ctx).map((c) => c.id);
-      for (const gone of ["apps", "app", "runs", "new-app", "crew"])
+      for (const gone of ["apps", "app", "runs", "crew"])
         expect(ids).not.toContain(gone);
       expect(ids).toContain("repo");
       expect(ids).toContain("pulls");

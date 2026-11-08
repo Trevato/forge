@@ -40,6 +40,7 @@ import { setSignup } from "../src/settings/signup.ts";
 import { readClaim, spawnedOrg } from "../src/spawn/claim.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { passkeyFields } from "./helpers/passkey.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 quietLogs();
 
@@ -296,7 +297,7 @@ describe("a person: /first-admin with a passkey", () => {
   test("the page holds no code and takes it from the fragment", async () => {
     const html = await (await fetch(`${servers.url}/first-admin`)).text();
     expect(html).not.toContain(code);
-    expect(html).toContain("location.hash");
+    expect(await withScripts(servers.url, html)).toContain("location.hash");
     expect(html).toContain('name="token"');
   });
 

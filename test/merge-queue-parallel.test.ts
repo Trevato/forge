@@ -151,7 +151,7 @@ describe("the merge queue in parallel", () => {
     expect(git(repo, "rev-list", "--count", "refs/heads/main")).toBe("17");
   });
 
-  test("ten pulls, one red: the head is gated alone, the culprit is found in one wave of prefixes, and the nine land by the fourth gate-time", async () => {
+  test("ten pulls, one red: the head is gated alone, the culprit is found in one wave of stacked prefixes, and the nine land by the fourth gate-time", async () => {
     const repo = await autonomousRepo("ten-one-red");
     const pulls = [];
     for (let i = 0; i < 10; i++) pulls.push(await greenPull(repo, i === 4 ? `red-${i}.ts` : `p${i}.ts`));
@@ -163,10 +163,11 @@ describe("the merge queue in parallel", () => {
     // beside the other seven and the next on main and the last on top.
     await letGo(3);
     // Wave three: the head was green alone; the eight without it are red
-    // again, and seven prefixes of them gate at once: three green, the fourth red.
+    // again, and are searched by prefixes of their own chain, each on the
+    // one before (#5994): the first red one names the culprit, the green
+    // one before it lands, and the culprit is handed back with no gate more.
     await letGo(7);
-    // Wave four: the culprit is handed back without a gate of its own; the
-    // four after it, the last and the head (at the tail) are one candidate.
+    // Wave four: the pulls after the culprit, with the head, are one candidate.
     await letGo(1);
     expect(await sweep).toBe(9);
     expect(wave - first).toBe(4);
@@ -184,8 +185,9 @@ describe("the merge queue in parallel", () => {
     for (let i = 0; i < 10; i++) pulls.push(await greenPull(repo, i === 9 ? `red-${i}.ts` : `p${i}.ts`));
     const sweep = sweepGreen(app, repo);
     await letGo(2);
-    // The first eight landed; the two behind are red on them, so one is
-    // gated alone (the only prefix of two), and the culprit handed back.
+    // The first eight landed; the two behind are red on them, so the first
+    // of the two is gated alone on main: green, it lands, and the culprit,
+    // red on top of it, is handed back with no gate more (#5994).
     await letGo(1);
     expect(await sweep).toBe(9);
     for (const pull of pulls.slice(0, 9)) expect(merged(repo, pull)).toBe(true);
@@ -290,6 +292,7 @@ describe("the queue's extra gates and the pull checks' slots", () => {
     const [first, second] = [await entry(1), await entry(2)];
     const one = enqueue(repoId, [first], gate, options);
     for (let i = 0; i < 2000 && open < 1; i++) await Bun.sleep(5);
+    if (open < 1) throw new Error(`never came: still waiting while open < 1`);
     const two = enqueue(repoId, [second], gate, options);
     // Either it gates beside the first, or it still waits in line for it.
     for (let i = 0; i < 100 && open < 2; i++) await Bun.sleep(5);

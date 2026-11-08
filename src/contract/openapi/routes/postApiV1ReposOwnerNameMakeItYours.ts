@@ -1,5 +1,6 @@
 import { PROVE_FIRST } from "../../../actions/verify_words.ts";
 import { REPO, type Route } from "../shared.ts";
+import { VISIBILITY_WORDS } from "../../../core/arg_words.ts";
 
 export const route: Route = {
   method: "post",
@@ -9,7 +10,7 @@ export const route: Route = {
   auth: true,
   body: { dryRun: "boolean", name: "string", visibility: "string" },
   refusals: {
-    invalid: "422: visibility is public or private",
+    invalid: `422: ${VISIBILITY_WORDS}`,
     own: "409: this app is already yours",
     unverified: `403: ${PROVE_FIRST}`,
     limit: "429: at most so many copies a day; { resetsAt }",

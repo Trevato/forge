@@ -5,6 +5,7 @@
  * repo. Deletion inverts the order — row first, directory second.
  */
 
+import { contributionForksSince, isContributionFork } from "./contribute.ts";
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { isSafeName } from "../git/guard.ts";
@@ -15,6 +16,7 @@ import {
   detachFork,
   forkBareRepo,
   initBareRepo,
+  repoDirExists,
   repoDir,
 } from "../git/repos.ts";
 import { id } from "../kernel/id.ts";
@@ -22,6 +24,7 @@ import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { appsNaming, isAppMember } from "./app_members.ts";
 import { forgetListings } from "./listings.ts";
+import { forgetRepoCursors } from "./origins.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
 import {
   OWNER_STANDING,
@@ -81,6 +84,38 @@ export const AUTONOMY: readonly Autonomy[] = ["off", "assisted", "autonomous"];
 export const isAutonomy = (value: unknown): value is Autonomy =>
   (AUTONOMY as readonly unknown[]).includes(value);
 
+/** What the settings page and the terminal say when autonomy input is out of bounds. */
+export const AUTONOMY_BOUNDS =
+  "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 0 (paused) to 8.";
+
+/** What each mode does, in one sentence: the settings page's flash and the terminal's toast. */
+export const AUTONOMY_SAID: Readonly<Record<Autonomy, string>> = {
+  off: "Autonomy is off.",
+  assisted: "Assisted: the crew works what is ready; green waits for you.",
+  autonomous: "Autonomous: the crew works what is ready and ships on green, as you.",
+};
+
+/** The mode, dollar ceiling and slots, checked once for every surface; the sentence is the refusal. */
+export function checkAutonomy(
+  mode: unknown,
+  ceiling: number,
+  slots: number,
+): { ok: true; mode: Autonomy } | { ok: false; message: string } {
+  if (
+    !isAutonomy(mode) ||
+    !Number.isFinite(ceiling) ||
+    ceiling < 0 ||
+    !Number.isInteger(slots) ||
+    slots < 0 ||
+    slots > PILLAR_MAX
+  )
+    return { ok: false, message: AUTONOMY_BOUNDS };
+  return { ok: true, mode };
+}
+
+/** The most any pillar may be set to at once. */
+export const PILLAR_MAX = 8;
+
 export interface Repo {
   readonly id: string;
   readonly ownerId: string;
@@ -110,6 +145,12 @@ export interface Repo {
   readonly autonomyDirection: string;
   readonly autonomyCeilingUsd: number;
   readonly autonomySlots: number;
+  /** Planning passes at once: 0 pauses the planner, 1 is the most. */
+  readonly plannerSlots: number;
+  /** Reviews at once: 0 pauses the reviewer. */
+  readonly reviewerSlots: number;
+  /** Percent of a week's agent spend polish may take, 0 to 50 (#8853). */
+  readonly polishShare: number;
   readonly autonomyBy: string | null;
   /**
    * "Outsiders may trigger the crew": whether someone who cannot write here
@@ -165,6 +206,9 @@ interface RepoRow {
   autonomy_direction: string;
   autonomy_ceiling_usd: number;
   autonomy_slots: number;
+  planner_slots: number;
+  reviewer_slots: number;
+  polish_share: number;
   autonomy_by: string | null;
   crew_outsiders: number;
   decisions_by: string;
@@ -205,6 +249,9 @@ function toRepo(row: RepoRow): Repo {
     autonomyDirection: row.autonomy_direction,
     autonomyCeilingUsd: row.autonomy_ceiling_usd,
     autonomySlots: row.autonomy_slots,
+    plannerSlots: row.planner_slots,
+    reviewerSlots: row.reviewer_slots,
+    polishShare: row.polish_share,
     autonomyBy: row.autonomy_by,
     crewOutsiders: row.crew_outsiders === 1,
     decisionsBy: isDecisionsBy(row.decisions_by) ? row.decisions_by : "me",
@@ -408,6 +455,10 @@ export async function forkRepo(
      * a fork, so not one the daily limit counts.
      */
     sealed?: boolean;
+    /** A guest's contribution fork (`contribute.ts`): marked in the row's own write. */
+    contribution?: boolean;
+    /** With `contribution`: guests' forks on the whole forge in the last 24 hours, counted in the same write. */
+    forgePerDay?: number;
   } = {},
 ): Promise<Result<Repo, ForkRepoError>> {
   const sealed = options.sealed === true;
@@ -420,8 +471,8 @@ export async function forkRepo(
   const since = new Date(now - DAY_MS).toISOString();
   const overLimit = (): boolean =>
     !sealed &&
-    options.perDay !== undefined &&
-    forksSince(db, ownerId, since).length >= options.perDay;
+    ((options.perDay !== undefined && forksSince(db, ownerId, since).length >= options.perDay) ||
+      (options.forgePerDay !== undefined && contributionForksSince(db, since) >= options.forgePerDay));
   if (overLimit()) return err("limit");
   if (!isSafeName(forkName)) return err("invalid_name");
   const owner = db
@@ -484,6 +535,11 @@ export async function forkRepo(
         if (!sealed)
           db.query(`INSERT INTO fork_made (owner_id, made_at) VALUES (?1, ?2)`).run(
             ownerId,
+            new Date(now).toISOString(),
+          );
+        if (options.contribution === true)
+          db.query(`INSERT INTO contribution_fork (repo_id, made_at) VALUES (?1, ?2)`).run(
+            repoId,
             new Date(now).toISOString(),
           );
       })(),
@@ -617,6 +673,16 @@ export function forkParentFor(
     : undefined;
 }
 
+/**
+ * Forget a fork's parent. Only once the fork owns its objects (`detachFork`):
+ * a row without a parent over a store that still borrows one is a fork that
+ * breaks when the parent goes.
+ */
+export function clearForkParent(db: Database, repoId: string): void {
+  db.query("UPDATE repo SET fork_parent_id = NULL WHERE id = ?1").run(repoId);
+  forgetListings(db);
+}
+
 /** The forks of this repository the viewer may see — the list, and its count. */
 export function visibleForks(
   db: Database,
@@ -624,6 +690,66 @@ export function visibleForks(
   viewer: User | undefined,
 ): Repo[] {
   return listForks(db, repoId).filter((fork) => canRead(db, fork, viewer));
+}
+
+/** A fork the viewer may see, the visible forks beneath it, and how many lie one level further. */
+export interface ForkNode {
+  readonly repo: Repo;
+  readonly forks: readonly ForkNode[];
+  /** Visible forks of this one, counted but not listed; only the second level carries it. */
+  readonly deeper: number;
+}
+
+const forksOfMany = (db: Database, ids: readonly string[]): Repo[] =>
+  ids.length === 0
+    ? []
+    : db
+        .query<RepoRow, string[]>(
+          `${SELECT} WHERE repo.fork_parent_id IN (${ids.map(() => "?").join(",")}) ORDER BY repo.id`,
+        )
+        .all(...ids)
+        .map(toRepo);
+
+/** The visible forks of these parents, grouped by parent id: one query. */
+function visibleForksByParent(
+  db: Database,
+  parents: readonly Repo[],
+  viewer: User | undefined,
+): Map<string, Repo[]> {
+  const byParent = new Map<string, Repo[]>();
+  for (const fork of forksOfMany(db, parents.map((p) => p.id))) {
+    if (fork.forkParentId === null || !canRead(db, fork, viewer)) continue;
+    const siblings = byParent.get(fork.forkParentId) ?? [];
+    siblings.push(fork);
+    byParent.set(fork.forkParentId, siblings);
+  }
+  return byParent;
+}
+
+/**
+ * The visible forks of a repository, each with its own visible forks, and
+ * for those a count of the visible forks one level further: three queries
+ * at most, one per level. A fork the viewer cannot read hides itself and
+ * everything under it.
+ */
+export function forkTree(
+  db: Database,
+  repoId: string,
+  viewer: User | undefined,
+): ForkNode[] {
+  const first = visibleForks(db, repoId, viewer);
+  const secondBy = visibleForksByParent(db, first, viewer);
+  const second = [...secondBy.values()].flat();
+  const thirdBy = visibleForksByParent(db, second, viewer);
+  return first.map((repo) => ({
+    repo,
+    deeper: 0,
+    forks: (secondBy.get(repo.id) ?? []).map((child) => ({
+      repo: child,
+      forks: [],
+      deeper: thirdBy.get(child.id)?.length ?? 0,
+    })),
+  }));
 }
 
 export function getRepo(
@@ -693,6 +819,8 @@ export interface ListReposOptions {
   withoutArchived?: boolean;
   /** Only archived repositories. @default false */
   archivedOnly?: boolean;
+  /** Only this owner's repositories (a username, any case). */
+  owner?: string;
 }
 
 // Visibility in SQL: public, owned, or owned by an org the viewer is on a
@@ -706,13 +834,17 @@ const VISIBLE = REPO_VISIBLE;
 const newestFirst = (options: ListReposOptions): string =>
   `${options.appsFirst === true ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, " : ""}repo.id DESC`;
 
-export function listReposVisibleTo(
-  db: Database,
+/** The WHERE and parameters a visible-to listing reads by; the page and its tag share them. */
+function visibleClause(
   viewer: User | undefined,
-  options: ListReposOptions = {},
-): Repo[] {
+  options: ListReposOptions,
+): { where: string; params: (string | number)[] } {
   const params: (string | number)[] = [viewer?.id ?? ""];
   let where = viewer ? VISIBLE : PUBLIC_VISIBLE;
+  if (options.owner !== undefined) {
+    params.push(options.owner);
+    where += ` AND user.username = ?${params.length} COLLATE NOCASE`;
+  }
   if (options.query !== undefined && options.query.trim() !== "") {
     params.push(`%${likeEscape(options.query.trim())}%`);
     const p = params.length;
@@ -726,6 +858,15 @@ export function listReposVisibleTo(
   if (options.withoutArchived === true) where += " AND repo.archived_at IS NULL";
   if (options.archivedOnly === true) where += " AND repo.archived_at IS NOT NULL";
   params.push(pageLimit(options.limit));
+  return { where, params };
+}
+
+export function listReposVisibleTo(
+  db: Database,
+  viewer: User | undefined,
+  options: ListReposOptions = {},
+): Repo[] {
+  const { where, params } = visibleClause(viewer, options);
   const rows = db
     .query<RepoRow, (string | number)[]>(
       `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
@@ -733,6 +874,53 @@ export function listReposVisibleTo(
     .all(...params)
     .map(toRepo);
   return withCounts(db, rows);
+}
+
+/** The columns `toRepo` shows; `issue_seq` is not one, since a sealed report moves it. */
+const SHOWN = [
+  "repo.id", "repo.owner_id", "user.username", "repo.name", "repo.visibility", "repo.description",
+  "repo.default_branch", "repo.protect_default", "repo.require_review", "repo.require_checks",
+  "repo.autonomy", "repo.autonomy_direction", "repo.autonomy_ceiling_usd", "repo.autonomy_slots",
+  "repo.planner_slots", "repo.reviewer_slots", "repo.polish_share", "repo.autonomy_by",
+  "repo.crew_outsiders", "repo.decisions_by", "repo.plans_need_nod", "repo.direction_issue_id",
+  "repo.fork_parent_id", "repo.sealed_for", "repo.archived_at", "repo.origin_id",
+  "repo.origin_full_name", "repo.origin_html_url", "repo.last_fetch_at", "repo.fetch_error",
+  "repo.origin_detached_at",
+].join(", ");
+
+/**
+ * A marker that moves whenever the page `listReposVisibleTo` would answer
+ * could differ, without building the page: one query that digests the shown
+ * columns of the page's rows inside SQLite, the newest push of each, and the
+ * open counts. Sealed reports are in neither the counts nor any event kind
+ * read, so filing one moves no viewer's marker (`countsForRepos`). A viewer
+ * sees only rows they may read, so two viewers who see different pages get
+ * different markers.
+ */
+export function visibleReposMarker(
+  db: Database,
+  viewer: User | undefined,
+  options: ListReposOptions = {},
+): string {
+  const { where, params } = visibleClause(viewer, options);
+  const page = `SELECT repo.id AS id, json_array(${SHOWN}) AS shown FROM repo
+    JOIN user ON user.id = repo.owner_id
+    WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`;
+  const row = db
+    .query<{ shown: string | null; pushes: string | null; counts: string | null }, (string | number)[]>(
+      `WITH page AS (${page})
+       SELECT
+         (SELECT group_concat(shown, char(10)) FROM page) AS shown,
+         (SELECT group_concat(repo_id || ':' || last, ',') FROM
+            (SELECT repo_id, MAX(id) AS last FROM event
+             WHERE kind = 'push' AND repo_id IN (SELECT id FROM page) GROUP BY repo_id ORDER BY repo_id)) AS pushes,
+         (SELECT group_concat(repo_id || ':' || kind || ':' || n, ',') FROM
+            (SELECT repo_id, kind, COUNT(*) AS n FROM issue
+             WHERE state = 'open' AND sealed = 0 AND repo_id IN (SELECT id FROM page)
+             GROUP BY repo_id, kind ORDER BY repo_id, kind)) AS counts`,
+    )
+    .get(...params);
+  return Bun.hash(`${row?.shown ?? ""}|${row?.pushes ?? ""}|${row?.counts ?? ""}`).toString(36);
 }
 
 /**
@@ -777,32 +965,14 @@ export function listReposByOwner(
   viewer: User | undefined,
   options: ListReposOptions = {},
 ): Repo[] {
-  const params: (string | number)[] = [viewer?.id ?? "", ownerName];
-  let where = `user.username = ?2 COLLATE NOCASE AND ${
-    viewer ? VISIBLE : PUBLIC_VISIBLE
-  }`;
-  if (options.query !== undefined && options.query.trim() !== "") {
-    params.push(`%${likeEscape(options.query.trim())}%`);
-    const p = params.length;
-    where += ` AND (repo.name LIKE ?${p} ESCAPE '\\' COLLATE NOCASE
-      OR user.username LIKE ?${p} ESCAPE '\\' COLLATE NOCASE)`;
-  }
-  if (options.cursor !== undefined) {
-    params.push(options.cursor);
-    where += ` AND repo.id < ?${params.length}`;
-  }
-  params.push(pageLimit(options.limit));
-  const rows = db
-    .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
-    )
-    .all(...params)
-    .map(toRepo);
-  return withCounts(db, rows);
+  return listReposVisibleTo(db, viewer, { ...options, owner: ownerName });
 }
 
 /**
- * Delete a repo. Row first, then disk — inverse of creation, same invariant.
+ * Delete a repo. Disk first, then the row: when the directory will not go,
+ * the repository stays listed and a retry finds it (`delete_failed`). A
+ * directory that is already missing leaves nothing to orphan, so the row still
+ * goes and `delete_failed` is still reported.
  * Before removing the objects, detach every fork that borrows them (repack so
  * the fork owns its objects, then drop its alternates link) — otherwise a
  * fork would be silently corrupted. This is the detach-before-delete rule.
@@ -811,7 +981,19 @@ export async function deleteRepo(
   db: Database,
   reposRoot: string,
   repo: Repo,
-): Promise<Result<void, "delete_failed">> {
+): Promise<Result<void, "delete_failed" | "has_pulls">> {
+  // A pull names its head by this row, and a pull with no head row reads as
+  // one from its base's own branch, which runs without approval. So a fork a
+  // pull was sent from stays; nothing below is touched.
+  if (
+    db
+      .query(
+        `SELECT 1 FROM pull p JOIN issue i ON i.id = p.issue_id
+          WHERE p.head_repo_id = ?1 AND i.repo_id <> ?1 LIMIT 1`,
+      )
+      .get(repo.id) !== null
+  )
+    return err("has_pulls");
   const forks = listForks(db, repo.id);
   for (const fork of forks) {
     const forkDir = repoDir(reposRoot, fork.ownerName, fork.name);
@@ -824,19 +1006,24 @@ export async function deleteRepo(
       });
       return err("delete_failed");
     }
-    db.query("UPDATE repo SET fork_parent_id = NULL WHERE id = ?1").run(
-      fork.id,
-    );
+    clearForkParent(db, fork.id);
   }
 
-  db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
-  forgetListings(db);
   const dir = repoDir(reposRoot, repo.ownerName, repo.name);
   // A pooled `cat-file` holds this directory open. Closing it first is what
   // keeps the space actually free after the unlink instead of pinned to a
   // descriptor nobody will ever read again.
   closeReader(dir);
+  const present = await repoDirExists(dir);
+  // The directory goes first: when it will not, the row stays, so the
+  // repository is still listed and a retry finds it. With no directory there
+  // is nothing to orphan, so the row goes and the missing repository is
+  // still reported.
   const removed = await deleteRepoDir(dir);
+  if (!removed.ok && present) return err("delete_failed");
+  db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
+  forgetRepoCursors(db, repo.id);
+  forgetListings(db);
   if (!removed.ok) return err("delete_failed");
   return ok();
 }
@@ -1063,7 +1250,9 @@ export function canAdmin(
   repo: Repo,
   user: User | undefined,
 ): boolean {
-  if (personalOrDirect(repo, user)) return true;
+  if (personalOrDirect(repo, user))
+    // A guest's contribution fork is theirs to push to, not to administer.
+    return user?.id !== repo.ownerId || user.isAdmin || !isContributionFork(db, repo.id);
   return accessAllows(orgAccessFor(db, repo, user), "admin");
 }
 
@@ -1087,6 +1276,9 @@ export interface RepoSettings {
   autonomyDirection?: string;
   autonomyCeilingUsd?: number;
   autonomySlots?: number;
+  plannerSlots?: number;
+  reviewerSlots?: number;
+  polishShare?: number;
   /** Who the forge acts as when it assigns and lands on its own. */
   autonomyBy?: string | null;
   /** Whether someone who cannot write here may start or steer a run. */
@@ -1118,7 +1310,7 @@ export function updateRepoSettings(
        default_branch = ?4, require_review = ?5, require_checks = ?7,
        autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
        autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13, decisions_by = ?14,
-       plans_need_nod = ?15
+       plans_need_nod = ?15, planner_slots = ?16, reviewer_slots = ?17, polish_share = ?18
      WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
@@ -1136,6 +1328,9 @@ export function updateRepoSettings(
     (settings.crewOutsiders ?? repo.crewOutsiders) ? 1 : 0,
     settings.decisionsBy ?? repo.decisionsBy,
     (settings.plansNeedNod ?? repo.plansNeedNod) ? 1 : 0,
+    settings.plannerSlots ?? repo.plannerSlots,
+    settings.reviewerSlots ?? repo.reviewerSlots,
+    settings.polishShare ?? repo.polishShare,
   );
   forgetListings(db);
   return getRepoById(db, repo.id)!;
@@ -1152,13 +1347,14 @@ export function moveArchived(
   archived: boolean,
   at: string = new Date().toISOString(),
 ): boolean {
+  // RETURNING counts the repository, not the trigger's write to `front_epoch`.
   const changes = archived
     ? db
-        .query("UPDATE repo SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL")
-        .run(repoId, at).changes
+        .query("UPDATE repo SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL RETURNING id")
+        .all(repoId, at).length
     : db
-        .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL")
-        .run(repoId).changes;
+        .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL RETURNING id")
+        .all(repoId).length;
   if (changes === 1) forgetListings(db);
   return changes === 1;
 }
@@ -1191,4 +1387,79 @@ export function setDirectionIssue(
     repoId,
     issueId,
   );
+}
+
+// Reads a display lists from (display/known.ts, display/items.ts).
+
+/**
+ * When each repository was created and last pushed to (the newest `push`
+ * event, null when there is none), for a list of forks: one query per chunk.
+ */
+export function repoDatesFor(
+  db: Database,
+  repoIds: readonly string[],
+): Map<string, { createdAt: string; pushedAt: string | null }> {
+  const out = new Map<string, { createdAt: string; pushedAt: string | null }>();
+  for (let i = 0; i < repoIds.length; i += 500) {
+    const chunk = repoIds.slice(i, i + 500);
+    const marks = chunk.map((_, j) => `?${j + 1}`).join(",");
+    const rows = db
+      .query<{ id: string; created_at: string; pushed_at: string | null }, string[]>(
+        `SELECT repo.id, repo.created_at,
+                (SELECT MAX(event.created_at) FROM event
+                  WHERE event.repo_id = repo.id AND event.kind = 'push') AS pushed_at
+           FROM repo WHERE repo.id IN (${marks})`,
+      )
+      .all(...chunk);
+    for (const r of rows)
+      out.set(r.id, { createdAt: r.created_at, pushedAt: r.pushed_at });
+  }
+  return out;
+}
+
+/**
+ * Every repo one user or org owns, whoever looks: for a display, whose
+ * showcased demos are published from private repositories too
+ * (`display/items.ts`). Never a listing a person sees as repositories.
+ */
+export function listAllReposByOwner(db: Database, ownerName: string, limit: number): Repo[] {
+  return db
+    .query<RepoRow, [string, number]>(`${SELECT} WHERE user.username = ?1 COLLATE NOCASE ORDER BY repo.id DESC LIMIT ?2`)
+    .all(ownerName, limit)
+    .map(toRepo);
+}
+
+/**
+ * Which of these repositories the viewer may read — `REPO_VISIBLE` (or
+ * `PUBLIC_VISIBLE` signed out) for many rows in one query per chunk: the
+ * rule every listing applies, so a row never links a page that would 404.
+ */
+export function readableRepoIds(
+  db: Database,
+  viewer: User | undefined,
+  repoIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ id: string }, string[]>(
+        `SELECT repo.id FROM repo
+         WHERE repo.id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+           AND ${viewer ? REPO_VISIBLE : PUBLIC_VISIBLE}`,
+      )
+      .all(viewer?.id ?? "", ...batch);
+    for (const row of rows) out.add(row.id);
+  }
+  return out;
+}
+
+/** Every repository a site admin owns (a person, never an agent), its owner in standing. */
+export function listAdminOwnedRepos(db: Database): Repo[] {
+  return db
+    .query<RepoRow, []>(`${SELECT} WHERE user.is_admin = 1 AND user.is_agent = 0 AND ${OWNER_STANDING} ORDER BY owner_name, repo.name`)
+    .all()
+    .map(toRepo);
 }

@@ -13,11 +13,28 @@ import type { CheckDetail } from "../core/runs.ts";
 
 // The duration is bun's to print or not: under CI it leaves it off a test
 // that took next to no time, so a name is a name with or without one.
-const FAIL_LINE = /^\(fail\) (.+?)(?: \[[0-9.]+m?s\])?(?: \[shard [0-9]+\])?$/;
+const FAIL_LINE = /^\(fail\) (.+?)(?: \[[0-9.]+m?s\])?(?: \[shard ([0-9]+)\])?$/;
+/** The runner's header over one shard's output, live (`── shard 2/4: …`) or held (`── shard 2/4 (exit 1, 3s): …`). */
+const SHARD_HEADER = /^── shard ([0-9]+)\/[0-9]+(?::| \(exit)/;
+/** A name that belongs to no test: bun's `(unnamed)`, however {@link nameUnnamed} renamed it. */
+const FALLOUT = /(?:^|> )\(unnamed\)(?::|$)/;
 const PASS_COUNT = /^\s*(\d+) pass$/;
 const FAIL_COUNT = /^\s*(\d+) fail$/;
 
 const HEADER = /^(\S+\.test\.[cm]?[jt]sx?):$/;
+
+/**
+ * Bun's closing summary (#9523): `N tests skipped:` and `N tests failed:`
+ * each repeat their lines after the last file, then the counts and `Ran N
+ * tests across M files.`. A reader that gives each `(fail)` line to the last
+ * `file.test.ts:` header it saw stops at the first of these, or every
+ * repeated failure lands on the last file printed; the next header (another
+ * shard's report) starts a file again.
+ */
+const SUMMARY = /^(?:\d+ tests? (?:failed|skipped|todo):|\s*\d+ (?:pass|fail|skip|todo)|Ran \d+ tests? across .*)\s*$/;
+
+/** Whether a log line opens or belongs to bun's closing summary, outside any file's block. */
+export const isSummaryLine = (line: string): boolean => SUMMARY.test(line);
 const UNNAMED_FAIL = /^\(fail\) ((?:.* > )?)\(unnamed\)/;
 /** bun's own caret line under a hook that timed out, printed right after its `(fail)`. */
 const HOOK_TIMEOUT = /^\s*\^ a (\S+) hook timed out/;
@@ -25,8 +42,6 @@ const HOOK_TIMEOUT = /^\s*\^ a (\S+) hook timed out/;
 const THROWN = /^(?:[A-Za-z]*Error|error): .+/;
 const RESULT_LINE = /^\((?:fail|pass)\) /;
 const MAX_THROWN = 120;
-/** The tail that ends a file's report; bun's recap of `(fail)` lines can follow, headerless. */
-const SUMMARY = /^\s*\d+ pass$|^\d+ tests? failed:$/;
 
 /**
  * The first error bun printed since the previous result line, printable only,
@@ -85,7 +100,32 @@ export function nameUnnamed(lines: readonly string[]): string[] {
 export const MAX_FAILING_NAMES = 3;
 
 /**
- * The counts and the first few failing names, in the order printed, or
+ * The first few failing names: each red shard's lead first, in shard order
+ * (the log holds shards in the order they finished, the tally in shard
+ * order), then the rest of each shard's in the order printed. A shard's
+ * named failures are its names; its `(unnamed)` hook fallout counts only
+ * when it named nothing else, so a summary never leads with what fell over
+ * behind a real failure (#8730). Output with no shards is one shard.
+ */
+function failingNames(failures: readonly (readonly [shard: number, name: string])[]): string[] {
+  const byShard = new Map<number, string[]>();
+  for (const [shard, name] of failures) {
+    const names = byShard.get(shard) ?? [];
+    if (!names.includes(name)) names.push(name);
+    byShard.set(shard, names);
+  }
+  const groups = [...byShard.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, names]) => {
+      const named = names.filter((name) => !FALLOUT.test(name));
+      return named.length > 0 ? named : names;
+    });
+  const ordered = [...groups.map((names) => names[0]!), ...groups.flatMap((names) => names.slice(1))];
+  return [...new Set(ordered)].slice(0, MAX_FAILING_NAMES);
+}
+
+/**
+ * The counts and the first few failing names ({@link failingNames}), or
  * undefined when the lines never carried `bun test`'s own summary (no
  * `N pass` / `M fail`, or every `M` came to zero — a failure from something
  * other than a test). A green shard's `0 fail` printed after a red one's
@@ -94,14 +134,19 @@ export const MAX_FAILING_NAMES = 3;
 export function parseBunTestFailure(
   lines: readonly string[],
 ): CheckDetail | undefined {
-  const names: string[] = [];
+  const failures: (readonly [number, string])[] = [];
+  let shard = 0;
   let passed: number | undefined;
   let failed: number | undefined;
   for (const line of nameUnnamed(lines)) {
+    const header = SHARD_HEADER.exec(line);
+    if (header) {
+      shard = Number(header[1]);
+      continue;
+    }
     const fail = FAIL_LINE.exec(line);
     if (fail) {
-      if (names.length < MAX_FAILING_NAMES && !names.includes(fail[1]!))
-        names.push(fail[1]!);
+      failures.push([fail[2] === undefined ? shard : Number(fail[2]), fail[1]!]);
       continue;
     }
     const pass = PASS_COUNT.exec(line);
@@ -114,5 +159,5 @@ export function parseBunTestFailure(
   }
   if (passed === undefined || failed === undefined || failed === 0)
     return undefined;
-  return { passed, failed, names };
+  return { passed, failed, names: failingNames(failures) };
 }

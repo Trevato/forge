@@ -22,6 +22,7 @@ import { startChecks, type ChecksHandle } from "../../src/checks/service.ts";
 import type { Repo } from "../../src/core/repos.ts";
 import { listRuns, type Run } from "../../src/core/runs.ts";
 import { createUser, type User } from "../../src/core/users.ts";
+import type { InstallRunner } from "../../src/crew/workdir.ts";
 import { serve, type Servers } from "../../src/http/server.ts";
 
 export interface StandInCrew {
@@ -47,6 +48,10 @@ export async function startStandInCrew(
     readonly reviewBudgetMs?: number;
     readonly tickMs?: number;
     readonly now?: () => number;
+    /** Stands in for `bun install` in a clone. */
+    readonly installRunner?: InstallRunner;
+    /** Files committed to main beside the README. */
+    readonly files?: { path: string; content: string }[];
   } = {},
 ): Promise<StandInCrew> {
   const dataDir = await mkdtemp(join(tmpdir(), "forge-crew-"));
@@ -121,6 +126,20 @@ n=0; while [ ! -f "${dataDir}/release" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n
 echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this turned out to be out of scope.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-5","terminal_reason":"completed"}'
 exit 0
 fi
+if grep -q PUSH-THEN-DONE-ON-MAIN "${promptFile}"; then
+tip=$(git rev-parse HEAD)
+echo "early work $(date +%s%N)" >> CREW.md
+git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
+printf '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: already done on main in %s","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-7","terminal_reason":"completed"}\n' "$tip"
+touch "${dataDir}/answered"
+sleep 30
+exit 0
+fi
+if grep -q LEVEL-ME "${promptFile}"; then
+git commit -q --allow-empty -m "level with main" && git push -q -u origin HEAD
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to change.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-8","terminal_reason":"completed"}'
+exit 0
+fi
 if grep -q PUSH-THEN-FAIL "${promptFile}"; then
 echo "early work $(date +%s%N)" >> CREW.md
 git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
@@ -184,6 +203,9 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     reviewBudgetMs: options.reviewBudgetMs ?? 4_000,
     ...(options.tickMs === undefined ? {} : { tickMs: options.tickMs }),
     ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.installRunner === undefined
+      ? {}
+      : { installRunner: options.installRunner }),
   });
   const a = await createUser(app.db, {
     origin: "seed",
@@ -209,7 +231,10 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
   const repo = created.value;
   const seeded = await commitToBranch(app, alice, repo, {
     message: "Start",
-    files: [{ path: "README.md", content: "# garden\n" }],
+    files: [
+      { path: "README.md", content: "# garden\n" },
+      ...(options.files ?? []),
+    ],
   });
   if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
   expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);

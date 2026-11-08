@@ -71,7 +71,11 @@ export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
       : html`<ul class="list client-apps">
           ${rows}
         </ul>`,
-    { id: "client-apps", head: html`<h2>Your apps</h2>` },
+    {
+      id: "client-apps",
+      head: html`<h2>Your apps</h2>`,
+      attrs: html`data-live="run.*" data-live-src="/live/client-apps"`,
+    },
   );
   notePhase(ctx.request, "render", performance.now() - rendering);
   return shown;

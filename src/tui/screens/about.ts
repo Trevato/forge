@@ -15,17 +15,32 @@
  * card is an OSC 8 hyperlink besides.
  */
 
+import { sourcesScreen } from "./sources.ts";
 import { audienceFor } from "../../core/audience.ts";
 import { isPinned } from "../../core/pins.ts";
 import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
+import { sshCloneUrl } from "../../ssh/command.ts";
 import { checkMemoryAt } from "../../apps/check-memory.ts";
 import { repoDir } from "../../git/repos.ts";
 import { forkDrift } from "../../actions/forks.ts";
+import {
+  detachFromParent,
+  detachJob,
+  detachPhaseWords,
+  detachPlanWords,
+} from "../../actions/detach.ts";
 import { upstreamOffer, type UpstreamOffer } from "../../actions/offer_upstream.ts";
 import { listRefs } from "../../git/read.ts";
-import { updateRepoSettings } from "../../actions/repos.ts";
+import { directionNote } from "../../crew/direct.ts";
+import { seatsOf } from "../../crew/seats.ts";
+import { crewOffInPreview } from "../../crew/preview.ts";
+import { addToCrew } from "../../actions/crew.ts";
+import { listAgents, listCrewRoles } from "../../core/agents.ts";
+import { whyRepo } from "../../flow/why.ts";
+import { setCrewOutsiders, updateRepoSettings } from "../../actions/repos.ts";
 import { showProvenance } from "../../actions/provenance.ts";
+import { appPace } from "../../actions/apps.ts";
 import {
   checkLine,
   checkedWords,
@@ -45,6 +60,7 @@ import {
 } from "../../core/provenance.ts";
 import {
   canAdmin,
+  canWrite,
   forkParentFor,
   getRepoById,
   type Repo,
@@ -56,8 +72,9 @@ import { style } from "../term/style.ts";
 import { truncate, wrap } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { PIN_MARK, ago, drawFacts, plural } from "./common.ts";
+import { PIN_MARK, ago, confirmScreen, drawFacts, later, pickerScreen, plural, promptScreen, yesNo } from "./common.ts";
 import { connectionsScreen, egressScreen } from "./egress.ts";
+import { eventsScreen } from "./events.ts";
 import { newPullScreen } from "./newpull.ts";
 import { pullScreen } from "./pull.ts";
 import { forkOf, hostOf, liveOrigin, local, localRepo, sourceName } from "./where.ts";
@@ -89,17 +106,37 @@ export function aboutScreen(
     f.user?.kind !== "agent" &&
     repo !== undefined &&
     getProvenance(f.db, repo.id) !== undefined;
+  // A person's, an admin's: the settings page's gate.
+  const mayPerson = (): boolean => may() && f.user?.kind !== "agent";
   // The following card's rule: an admin's, and only while it is on or to be turned on.
   const mayFollow = (): boolean =>
     may() && repo !== undefined && repo.origin === null;
+  // Outsiders is the same person-and-admin gate; `d` (direct) never clashes
+  // with `o`, the fork's upstream offer.
+  const mayOutsiders = (): boolean => mayPerson();
+  // Detach is a person's, an admin's, and only on a fork made here: the
+  // Danger zone card's gate (#7452).
+  const mayDetach = (): boolean =>
+    mayPerson() && repo !== undefined && repo.forkParentId !== null;
+  // The team card's button: the first agent not yet on the crew, in the first empty seat.
+  const emptySeat = () =>
+    repo === undefined ? undefined : seatsOf(f.db, repo, crewOffInPreview()).seats.find((x) => x.by.length === 0);
+  const mayFill = (): boolean => may() && f.user?.kind !== "agent" && emptySeat() !== undefined;
   const checking = (): boolean =>
     repo !== undefined && followShown(f.app, repo, f.user)?.enabled === true;
   const factRows = (): [string, string][] => [
     ...archivedRow(repo),
-    ...aboutFacts(f, src, facts, ref),
+    ...movingRow(f, repo),
+    ...outsidersRow(repo),
+    ...seatRows(f, repo),
+    ...aboutFacts(f, src, facts, ref, repo),
+    ...paceRows(f, repo),
     ...trailRows(f, repo),
     ...upstreamRows(f, repo),
     ...offerRows(offered),
+    // The phase and git's failure line are the Danger zone card's, an
+    // admin's: shown here behind the same gate as `x`.
+    ...(mayDetach() ? detachRows(repo) : []),
     ...cell,
   ];
   let rows = factRows();
@@ -107,7 +144,9 @@ export function aboutScreen(
   // button, read the same way (`upstreamOffer`), pressed here with `o`.
   const forkParent =
     repo === undefined ? undefined : forkParentFor(f.db, repo, f.user);
-  if (repo !== undefined && forkParent !== undefined) {
+  // An archived parent is offered nothing (`upstreamOffer`), so its drift
+  // is not read either, as the web home does.
+  if (repo !== undefined && forkParent !== undefined && forkParent.archivedAt === null) {
     const at = repo;
     void forkDrift(f.app, at, forkParent)
       .then((drift) => {
@@ -135,22 +174,41 @@ export function aboutScreen(
       ctx.invalidate();
     })().catch(() => {
       cell = [["check cell", "forge.json's check could not be read"]];
-      rows = factRows();
-      ctx.invalidate();
+      try {
+        rows = factRows();
+        ctx.invalidate();
+      } catch {
+        // The screen outlived its database (a closing forge): there is nothing left to draw.
+      }
     });
   }
   const cloneUrl = rows.find(([label]) => label.startsWith("clone"))?.[1] ?? "";
-  return {
+  const screen: Screen = {
     title: "About",
     get keys() {
       return [
         binding(["y"], "copy the clone URL", { disabled: cloneUrl === "" }),
+        ...(repo === undefined ? [] : [binding(["v"], "events")]),
+        // A site admin also reaches (early, so a narrow footer keeps them) the repository's private egress grants.
+        ...(f.user?.isAdmin === true && repo !== undefined
+          ? [binding(["e"], "egress"), binding(["c"], "connections")]
+          : []),
         // Only an admin is offered the key, and only an admin's press counts.
         ...(may()
           ? [
               binding(
                 ["a"],
                 repo?.archivedAt === null ? "archive" : "wake",
+              ),
+            ]
+          : []),
+        ...(mayPerson() ? [binding(["w"], "write description")] : []),
+        ...(mayPerson() ? [binding(["b"], "default branch")] : []),
+        ...(mayOutsiders()
+          ? [
+              binding(
+                ["d"],
+                repo?.crewOutsiders === true ? "outsiders off" : "outsiders on",
               ),
             ]
           : []),
@@ -170,9 +228,13 @@ export function aboutScreen(
               binding(["f"], checking() ? "stop following upstream" : "follow upstream"),
             ]
           : []),
-        // A site admin also reaches the repository's private egress grants.
-        ...(f.user?.isAdmin === true && repo !== undefined
-          ? [binding(["e"], "egress"), binding(["c"], "connections")]
+        ...(may() && repo?.origin === null ? [binding(["s"], "followed sources")] : []),
+        // Who can read it is a person's, an admin's call (#8008).
+        ...(mayPerson()
+          ? [binding(["V"], repo?.visibility === "public" ? "make private" : "make public")]
+          : []),
+        ...(mayDetach() && detachJob(repo!.id)?.phase !== "repacking"
+          ? [binding(["x"], "detach from parent")]
           : []),
         ...(offered === null
           ? []
@@ -184,6 +246,7 @@ export function aboutScreen(
                   : `see #${offered.openNumber} upstream`,
               ),
             ]),
+        ...(mayFill() ? [binding(["p"], `fill ${emptySeat()!.role}`)] : []),
         binding(["esc"], "close"),
       ];
     },
@@ -208,7 +271,8 @@ export function aboutScreen(
       });
       const lead = inner.x + 1;
       const edge = inner.x + inner.w;
-      const visibility = facts?.visibility ?? repo?.visibility ?? "public";
+      // The row first: `V` changes it under facts read before the card opened.
+      const visibility = repo?.visibility ?? facts?.visibility ?? "public";
       let x = badge(s, inner.x, inner.y, c, {
         text: visibility,
         variant: visibility === "public" ? "success" : "secondary",
@@ -279,6 +343,132 @@ export function aboutScreen(
         );
         return true;
       }
+      if (e.key === "p" && repo !== undefined && mayFill()) {
+        const seat = emptySeat()!;
+        const onCrew = new Set(listCrewRoles(f.db, repo.id).map((c) => c.agent.user.id));
+        const agent = listAgents(f.db).find((a) => !onCrew.has(a.user.id));
+        if (agent === undefined) {
+          ctx.toast("no agent to put there: make one under Crew first", "danger");
+          return true;
+        }
+        const done = addToCrew(f.app, f.user, repo, agent.user.username, seat.role);
+        if (done.ok) {
+          rows = factRows();
+          ctx.toast(`${agent.user.username} is on ${seat.role}`, "success");
+        } else ctx.toast("that could not be changed", "danger");
+        ctx.invalidate();
+        return true;
+      }
+      if (e.key === "d" && repo !== undefined && mayOutsiders()) {
+        const at = repo;
+        const on = !at.crewOutsiders;
+        void setCrewOutsiders(f.app, f.user, at, on, true).then((plan) => {
+          if (!plan.ok) return ctx.toast("that could not be changed", "danger");
+          ctx.push(
+            confirmScreen(ctx, screen, {
+              title: "Outsiders",
+              body: [
+                on
+                  ? "Turn on: people who cannot write here may direct the crew."
+                  : "Turn off: only people who can write here direct the crew.",
+              ],
+              actions: [{ label: "Confirm" }, { label: "Cancel" }],
+              onChoose: (i) => {
+                if (i !== 0) return;
+                void setCrewOutsiders(f.app, f.user, at, on, false).then((done) => {
+                  if (done.ok) {
+                    repo = getRepoById(f.db, at.id) ?? at;
+                    rows = factRows();
+                    ctx.toast(
+                      on
+                        ? "outsiders may direct the crew"
+                        : "outsiders may not direct the crew",
+                      "success",
+                    );
+                  } else ctx.toast("that could not be changed", "danger");
+                  ctx.invalidate();
+                });
+              },
+            }),
+          );
+        });
+        return true;
+      }
+      if (e.key === "x" && repo !== undefined && mayDetach()) {
+        const at = repo;
+        void detachFromParent(f.app, f.user, at, true).then((plan) => {
+          if (!plan.ok) return ctx.toast("that could not be detached", "danger");
+          ctx.push(
+            confirmScreen(ctx, screen, {
+              title: "Detach from parent",
+              body: [detachPlanWords(plan.value)],
+              actions: [{ label: "Detach" }, { label: "Cancel" }],
+              onChoose: (i) => {
+                if (i !== 0) return;
+                void detachFromParent(f.app, f.user, at, false).then((started) => {
+                  if (!started.ok) {
+                    ctx.toast(
+                      started.error === "running" ? "a detach is already running" : "that could not be detached",
+                      "danger",
+                    );
+                    return ctx.invalidate();
+                  }
+                  rows = factRows();
+                  ctx.toast("detaching: the repack runs on its own", "default");
+                  ctx.invalidate();
+                  void detachJob(at.id)?.done.then(() => {
+                    repo = getRepoById(f.db, at.id) ?? at;
+                    rows = factRows();
+                    const failed = detachJob(at.id)?.phase === "failed";
+                    ctx.toast(failed ? "the detach stopped" : "detached from its parent", failed ? "danger" : "success");
+                    ctx.invalidate();
+                  });
+                });
+              },
+            }),
+          );
+        });
+        return true;
+      }
+      if (e.key === "V" && repo !== undefined && mayPerson()) {
+        const at = repo;
+        const visibility = at.visibility === "public" ? "private" : "public";
+        const name = `${at.ownerName}/${at.name}`;
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: visibility === "public" ? "Make public" : "Make private",
+            body: wrap(
+              visibility === "public"
+                ? `Make ${name} public? Anyone with the link can read its code, issues and pulls, signed in or not.`
+                : `Make ${name} private? Only its members and the crew can read it from now on; forks and clones already made keep what they have.`,
+              52,
+            ),
+            actions: [
+              { label: visibility === "public" ? "Make public" : "Make private" },
+              { label: "Cancel" },
+            ],
+            selected: 1,
+            onChoose: (i) => {
+              if (i !== 0) return;
+              void updateRepoSettings(f.app, f.user, at, { visibility }).then((done) => {
+                if (done.ok) {
+                  repo = getRepoById(f.db, done.value.id) ?? done.value;
+                  rows = factRows();
+                  ctx.toast(`now ${visibility}`, "success");
+                } else
+                  ctx.toast(
+                    at.sealedFor !== null
+                      ? "a sealed report stays private until it merges"
+                      : "that could not be changed",
+                    "danger",
+                  );
+                ctx.invalidate();
+              });
+            },
+          }),
+        );
+        return true;
+      }
       if (e.key === "y" && cloneUrl !== "") {
         ctx.copy(cloneUrl);
         ctx.toast("copied the clone URL", "success");
@@ -295,6 +485,85 @@ export function aboutScreen(
             ctx.toast(waking ? "awake again" : "archived", "success");
           } else ctx.toast("that could not be changed", "danger");
           ctx.invalidate();
+        });
+        return true;
+      }
+      if (e.key === "w" && repo !== undefined && mayPerson()) {
+        const at = repo;
+        ctx.push(
+          promptScreen(ctx, screen, {
+            title: "Description",
+            label: "What this repository is for",
+            value: at.description,
+            hint: "one line; empty clears it",
+            onSubmit: (value) => {
+              const refusal = descriptionRefusal(value);
+              if (refusal !== undefined) {
+                ctx.toast(refusal, "danger");
+                return refusal;
+              }
+              void updateRepoSettings(f.app, f.user, at, { description: value }).then((done) => {
+                if (done.ok) {
+                  repo = getRepoById(f.db, done.value.id) ?? done.value;
+                  rows = factRows();
+                  ctx.toast("description saved", "success");
+                } else ctx.toast("that could not be changed", "danger");
+                ctx.invalidate();
+              });
+              return undefined;
+            },
+          }),
+        );
+        return true;
+      }
+      if (e.key === "b" && repo !== undefined && mayPerson()) {
+        const at = repo;
+        void listRefs(repoDir(f.app.reposRoot, at.ownerName, at.name), "refs/heads/").then((refs) => {
+          if (!refs.ok) return ctx.toast("the branches could not be read", "danger");
+          const items = refs.value.map((r) => r.name.replace(/^refs\/heads\//, "")).sort().map((name) => ({
+            id: name,
+            label: name,
+            ...(name === at.defaultBranch ? { hint: "default" } : {}),
+          }));
+          ctx.push(
+            pickerScreen(ctx, screen, {
+              title: "Default branch",
+              items,
+              onPick: ([branch]) => {
+                if (branch === undefined || branch === at.defaultBranch) return;
+                const choose = (choice: number): void => {
+                  if (choice !== 0) return;
+                  void updateRepoSettings(f.app, f.user, at, { defaultBranch: branch }).then((done) => {
+                    if (done.ok) {
+                      repo = getRepoById(f.db, done.value.id) ?? done.value;
+                      rows = factRows();
+                      ctx.toast(`${branch} is the default branch`, "success");
+                    } else
+                      ctx.toast(
+                        done.error === "unknown_branch"
+                          ? `${branch} is no longer a branch here`
+                          : "that could not be changed",
+                        "danger",
+                      );
+                    ctx.invalidate();
+                  });
+                };
+                void later(ctx, () =>
+                  yesNo(
+                    ctx,
+                    confirmScreen(ctx, screen, {
+                      title: "Default branch",
+                      body: [`make ${branch} the default? y/n`],
+                      actions: [{ label: "Make default" }, { label: "Cancel", variant: "ghost" }],
+                      selected: 1,
+                      onChoose: choose,
+                    }),
+                    choose,
+                  ),
+                );
+              },
+            }),
+          );
         });
         return true;
       }
@@ -321,6 +590,10 @@ export function aboutScreen(
           .finally(() => ctx.invalidate());
         return true;
       }
+      if (e.key === "s" && repo !== undefined && may()) {
+        ctx.push(sourcesScreen(f, ctx, repo));
+        return true;
+      }
       if (e.key === "f" && repo !== undefined && mayFollow()) {
         const on = !checking();
         const done = setFollowUpstream(f.app, f.user, repo, {
@@ -341,6 +614,10 @@ export function aboutScreen(
         ctx.invalidate();
         return true;
       }
+      if (e.key === "v" && repo !== undefined) {
+        ctx.push(eventsScreen(f, ctx, repo));
+        return true;
+      }
       if (e.key === "e" && repo !== undefined && f.user?.isAdmin === true) {
         ctx.push(egressScreen(f, ctx, repo));
         return true;
@@ -356,6 +633,7 @@ export function aboutScreen(
       return true;
     },
   };
+  return screen;
 }
 
 /**
@@ -375,6 +653,23 @@ export function trailRows(
     ["migrated from", sourceLabel(trail.sourceUrl)],
     ...trail.parents.map((p): [string, string] => ["fork of", p]),
   ];
+}
+
+/**
+ * How long an app's golden path took, in the apps page's words (#7488):
+ * nothing on a repository that is not an app, or before either figure exists.
+ */
+export function paceRows(
+  f: Session,
+  repo: Repo | undefined,
+): [string, string][] {
+  if (repo === undefined) return [];
+  const pace = appPace(f.app, f.user, repo);
+  if (pace === "") return [];
+  return wrap(pace, 50).map((line, i): [string, string] => [
+    i === 0 ? "golden path" : "",
+    line,
+  ]);
 }
 
 /** The offer row: what the fork has for its parent, and where it stands. */
@@ -417,6 +712,52 @@ export function upstreamRows(
   ];
 }
 
+/** Why the repository's builders are held, first gate only (`flow/why.ts`, as MCP `flow`); a writer's. */
+export function movingRow(f: Session, repo: Repo | undefined): [string, string][] {
+  if (repo === undefined || f.user === undefined || !canWrite(f.app.db, repo, f.user)) return [];
+  const { cause } = whyRepo(f.app, repo);
+  return [["Moving", cause === null ? "yes" : `no: ${cause.says} ${cause.clears}`]];
+}
+
+/** The three seats, in the crew card's words: who fills each, and what an empty one costs. */
+export function seatRows(f: Session, repo: Repo | undefined): [string, string][] {
+  if (repo === undefined) return [];
+  return seatsOf(f.db, repo, crewOffInPreview()).seats.map((x): [string, string] => [
+    x.role[0]!.toUpperCase() + x.role.slice(1),
+    x.by.length > 0
+      ? x.by.join(", ")
+      : x.state === "warn"
+        ? `empty. No ${x.role}: ${x.without}.`
+        : "open seat",
+  ]);
+}
+
+/** Who may direct the crew, in `OUTSIDERS_NOTE`'s words; every reader sees it. */
+export function outsidersRow(repo: Repo | undefined): [string, string][] {
+  if (repo === undefined) return [];
+  return wrap(directionNote(repo), 50).map((line, i): [string, string] => [
+    i === 0 ? "Crew" : "",
+    line,
+  ]);
+}
+
+/** Where a detach from the parent stands (#7452): the Danger zone card's line. */
+export function detachRows(repo: Repo | undefined): [string, string][] {
+  if (repo === undefined) return [];
+  const words = detachPhaseWords(detachJob(repo.id), ago);
+  return words === null ? [] : [["detach", words]];
+}
+
+/** The longest description the MCP `repo_settings` tool takes; Settings has no cap of its own. */
+const DESCRIPTION_MAX = 2000;
+
+/** Why a typed description is refused, in words, or nothing when it stands. */
+function descriptionRefusal(value: string): string | undefined {
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(value)) return "a description is one line of plain text";
+  if ([...value].length > DESCRIPTION_MAX) return `a description is ${DESCRIPTION_MAX} characters at most`;
+  return undefined;
+}
+
 /** One line when an admin has put the repository away. */
 function archivedRow(repo: Repo | undefined): [string, string][] {
   if (repo === undefined || repo.archivedAt === null) return [];
@@ -455,6 +796,7 @@ function aboutFacts(
   src: RepoSource,
   facts: RepoFacts | undefined,
   ref: string,
+  current?: Repo,
 ): [string, string][] {
   const repo = localRepo(src);
   const counts: [string, string][] =
@@ -474,7 +816,8 @@ function aboutFacts(
               .join(" · "),
           ],
         ];
-  const branch = facts?.defaultBranch ?? repo?.defaultBranch ?? "";
+  // The card's own row first: `b` moves it under facts read before the card opened.
+  const branch = current?.defaultBranch ?? facts?.defaultBranch ?? repo?.defaultBranch ?? "";
   // Whose work this descends from. A fork at an origin is not `forkParentId`
   // — that is a fork made *here* — so the badge above cannot say it and this
   // row can.
@@ -532,18 +875,21 @@ function originFacts(repo: Repo): [string, string][] {
   ];
 }
 
-/** The two clone URLs, from the ports this forge is actually listening on. */
+/**
+ * The two clone URLs: HTTP from the forge's public address, the same one
+ * the web page shows, and SSH from the one builder (absent when SSH is off).
+ */
 export function cloneFacts(f: Session, repo: Repo): [string, string][] {
-  const host = f.app.config.host ?? "localhost";
-  const path = `${repo.ownerName}/${repo.name}.git`;
+  const config = f.app.config;
+  const origin =
+    config.url !== undefined
+      ? new URL(config.url).origin
+      : `http://${config.host ?? "localhost"}:${config.port ?? 3000}`;
   const out: [string, string][] = [
-    ["clone (http)", `http://${host}:${f.app.config.port ?? 3000}/${path}`],
+    ["clone (http)", `${origin}/${repo.ownerName}/${repo.name}.git`],
   ];
-  if (f.app.config.sshPort !== undefined)
-    out.push([
-      "clone (ssh)",
-      `ssh://git@${host}:${f.app.config.sshPort}/${path}`,
-    ]);
+  const ssh = sshCloneUrl(f.app, repo.ownerName, repo.name);
+  if (ssh !== undefined) out.push(["clone (ssh)", ssh]);
   return out;
 }
 

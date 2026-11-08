@@ -9,6 +9,8 @@
  * take, in ms, and starts a new window; null when no timer fired in it.
  */
 
+import type { Log } from "./log.ts";
+
 export type LoopLag = { take(): number | null; stop(): void };
 
 /** How often the timer asks to wake, ms: 20 wakes a second, no measurable cost. */
@@ -29,15 +31,21 @@ export function nearestRank(xs: readonly number[], p: number): number | null {
   return sorted[rank - 1]!;
 }
 
-/** Start measuring; `now` is a clock in ms (`performance.now` in production). */
-export function startLoopLag(everyMs = LAG_EVERY_MS, now: () => number = () => performance.now()): LoopLag {
+/** Start measuring; `now` is a clock in ms (`performance.now` in production); `onLate` hears every wake's lateness. */
+export function startLoopLag(
+  everyMs = LAG_EVERY_MS,
+  now: () => number = () => performance.now(),
+  onLate?: (lateMs: number) => void,
+): LoopLag {
   let samples: number[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   const arm = (): void => {
     const due = now() + everyMs;
     timer = setTimeout(() => {
       // Early by a fraction of a ms is timer rounding, not a fast loop.
-      if (samples.length < MAX_SAMPLES) samples.push(Math.max(0, now() - due));
+      const late = Math.max(0, now() - due);
+      if (samples.length < MAX_SAMPLES) samples.push(late);
+      onLate?.(late);
       arm();
     }, everyMs);
     timer.unref?.();
@@ -51,4 +59,26 @@ export function startLoopLag(everyMs = LAG_EVERY_MS, now: () => number = () => p
     },
     stop: () => clearTimeout(timer),
   };
+}
+
+/** A wake this late is a stall worth a warning (#6957): a readiness probe gives up at 1 s. */
+export const STALL_WARN_MS = 1_000;
+
+/**
+ * The always-on gauge (#6957): from boot, every wake later than `warnMs` is
+ * one warning saying how late, so a stall that keeps /healthz from answering
+ * names its minute in the log. Returns the stop.
+ */
+export function watchStalls(
+  log: Pick<Log, "warn">,
+  warnMs = STALL_WARN_MS,
+  everyMs = LAG_EVERY_MS,
+  now: () => number = () => performance.now(),
+  onStall?: (lateMs: number, at: number) => void,
+): () => void {
+  const lag = startLoopLag(everyMs, now, (late) => {
+    onStall?.(late, now());
+    if (late >= warnMs) log.warn("event loop stalled", { lateMs: Math.round(late) });
+  });
+  return lag.stop;
 }

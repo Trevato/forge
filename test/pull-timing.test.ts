@@ -13,6 +13,7 @@ import type { User } from "../src/core/users.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { PULL_PAGE_PHASES } from "./helpers/pull-phases.ts";
 
 quietLogs();
 
@@ -100,14 +101,14 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("a pull names session, diff, checks, reviews and render after app, summing to no more than app", async () => {
+test("a pull names its read phases and render after app, summing to no more than app", async () => {
   const res = await fetch(`${servers.url}/alice/r/pulls/${number}`, { headers: { cookie } });
   expect(res.status).toBe(200);
   await res.arrayBuffer();
   const parts = (res.headers.get("server-timing") ?? "").split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
   const after = names.slice(names.indexOf("app") + 1);
-  expect(after).toEqual(["session", "diff", "checks", "reviews", "render"]);
+  expect(after).toEqual([...PULL_PAGE_PHASES]);
   const ms = (n: string) => Number(parts[names.indexOf(n)]!.match(/dur=([\d.]+)/)![1]);
   const sum = after.reduce((t, n) => t + ms(n), 0);
   // Each is rounded to 0.1 ms, so allow one step per phase.
@@ -128,13 +129,13 @@ test("a pull's Files page names session, diff, checks, reviews and render, in th
   expect(names.slice(names.indexOf("app") + 1)).toEqual(["session", "diff", "diff-git", "diff-parse", "diff-highlight", "git", "checks", "reviews", "render"]);
 });
 
-/** The `app` duration of one Files-page view, in ms. */
-async function filesApp(): Promise<number> {
+/** The Server-Timing phase names of one Files-page view, and whether its diff came from the cache. */
+async function filesView(): Promise<{ names: string[]; hit: boolean }> {
   const res = await fetch(`${servers.url}/alice/r/pulls/${number}/files`, { headers: { cookie } });
   expect(res.status).toBe(200);
   await res.arrayBuffer();
-  const app = (res.headers.get("server-timing") ?? "").match(/(?:^|, )app;dur=([\d.]+)/);
-  return Number(app![1]);
+  const timing = res.headers.get("server-timing") ?? "";
+  return { names: timing.split(", ").map((p) => p.split(";")[0]!), hit: /(?:^|, )diff;dur=[\d.]+;desc="hit"/.test(timing) };
 }
 
 /** 40 files of 50 lines each, new content per `i` so each is a fresh head. */
@@ -150,67 +151,26 @@ async function commitHead(i: number): Promise<void> {
   if (!done.ok) throw new Error(JSON.stringify(done.error));
 }
 
-// Measured over 3 runs of this test (40 files x 50 lines): the cold median of 3 was 125-135 ms
-// (a single cold view up to 244 ms); the repeat median of 5 was 55 ms (single views 49-76 ms).
-// 250 ms is ~2x the cold median; 100 ms is the issue's bar for a repeat view.
-const COLD_MS = 250;
-
-/**
- * A fixed CPU workload, in ms. The `x < 0` is never true; it only keeps the optimiser from
- * deleting the loop as dead code.
- */
-const spin = (): number => {
-  const t = performance.now();
-  let x = 0;
-  for (let n = 0; n < 3e6; n++) x = (x + Math.sqrt(n)) % 1e9;
-  return x < 0 ? 0 : performance.now() - t;
-};
-const fastest = (n: number) => Math.min(...Array.from({ length: n }, spin));
-/** This machine's speed, taken once at module load: the idle reference (scale 1.0 beside itself). */
-const idle = (spin(), fastest(5));
-
-/**
- * How much slower the machine was around one view than at load, from the spin times taken just
- * before and just after it: the larger of the two, so contention that starts or stops mid-view
- * still counts (#5000). Never below 1.0, so an idle machine meets the ceilings as written; capped
- * at 8x so a stalled machine cannot excuse anything.
- */
-const loadScale = (before: number, after: number, idleMs: number): number =>
-  Math.max(1, Math.min(Math.max(before, after) / idleMs, 8));
-
-/** One view's ms divided by the load around it: what it would have taken on the idle machine. */
-async function idleEquivalent(view: () => Promise<number>): Promise<number> {
-  const before = fastest(2);
-  const ms = await view();
-  return ms / loadScale(before, fastest(2), idle);
-}
-
-test("loadScale: idle is 1.0, the slower side of a view wins, and 8x is the cap", () => {
-  expect(loadScale(10, 10, 10)).toBe(1);
-  // Faster than at load is still 1.0: an idle machine's 105 ms repeat view fails the 100 ms bar.
-  expect(loadScale(8, 9, 10)).toBe(1);
-  expect(105 / loadScale(8, 9, 10)).toBeGreaterThan(100);
-  // Load that arrives after the view started is seen by the after-sample (#5000's 105 ms run).
-  expect(loadScale(10, 15, 10)).toBe(1.5);
-  expect(loadScale(15, 10, 10)).toBe(1.5);
-  expect(105 / loadScale(10, 15, 10)).toBeLessThan(100);
-  expect(loadScale(10, 1000, 10)).toBe(8);
-});
-
-test("the Files page of a 40-file diff: fastest cold view of 3 and fastest repeat view of 5 stay under their ceilings", async () => {
-  // Each view is scaled by the load measured beside it, not once up front: contention that begins
-  // partway through the eight views would otherwise leave the ceilings unstretched (#5000).
-  const cold: number[] = [];
+test("the Files page of a 40-file diff: a new head does the diff work, a repeat view reuses it", async () => {
+  // The verdict is the work done, not the milliseconds it took: wall time depends on the check
+  // machine's load (#7886), while a lost cache or a re-parse on every view shows in the phases.
   for (let i = 0; i < 3; i++) {
     // A new head each time, so nothing rendered before is reused.
     await commitHead(i);
-    cold.push(await idleEquivalent(filesApp));
+    const view = await filesView();
+    expect(view.hit).toBe(false);
+    expect(view.names).toContain("diff-git");
+    expect(view.names).toContain("diff-parse");
+    expect(view.names).toContain("diff-highlight");
   }
   // The head is unchanged now: every view reuses the rendered diff.
-  const repeat: number[] = [];
-  for (let i = 0; i < 5; i++) repeat.push(await idleEquivalent(filesApp));
-  // The fastest view, not the median: contention only ever adds time, so the minimum is the
-  // measurement least about the machine's load, and still fails if the work itself got slower.
-  expect(Math.min(...cold)).toBeLessThan(COLD_MS);
-  expect(Math.min(...repeat)).toBeLessThan(100);
+  for (let i = 0; i < 5; i++) {
+    const view = await filesView();
+    expect(view.hit).toBe(true);
+    // A hit still names every other phase, so a dropped phase name is caught.
+    for (const n of ["session", "diff", "git", "checks", "reviews", "render"]) expect(view.names).toContain(n);
+    expect(view.names).not.toContain("diff-git");
+    expect(view.names).not.toContain("diff-parse");
+    expect(view.names).not.toContain("diff-highlight");
+  }
 });

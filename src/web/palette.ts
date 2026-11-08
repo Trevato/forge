@@ -17,6 +17,14 @@ export interface PaletteRow {
   readonly h: string;
   readonly g: string;
   readonly d?: string;
+  /** A repository's bare name: an exact or prefix landing on it outranks everything. */
+  readonly n?: string;
+  /** The viewer owns this repository: its name matches lead the others. */
+  readonly m?: 1;
+  /** What the app is, for a repository that has one ("App · running"); shown, never scored. */
+  readonly x?: string;
+  /** Where Cmd/Ctrl+Enter goes: the app itself. */
+  readonly o?: string;
 }
 
 /** A heading and the rows under it, best first. */
@@ -95,6 +103,15 @@ export function rankPalette(
       const detail = r.d === undefined ? 0 : fuzzyScore(q, r.d);
       if (title === 0 && detail === 0) return;
       s = title + detail / 2 + (recent.indexOf(r.h) === -1 ? 0 : 50);
+      // A repository named by what was typed beats every other kind of
+      // landing: exact, then prefix; the viewer's own ahead of the rest.
+      if (r.n !== undefined && !/\s/.test(q)) {
+        const ql = q.toLowerCase();
+        const nl = r.n.toLowerCase();
+        const tl = r.t.toLowerCase();
+        const tier = nl === ql || tl === ql ? 3000 : nl.indexOf(ql) === 0 || tl.indexOf(ql) === 0 ? 2000 : 0;
+        if (tier > 0) s = tier + (r.m === 1 ? 500 : 0) + s / 10;
+      }
     }
     seen.add(r.h);
     scored.push({ r, s, i });

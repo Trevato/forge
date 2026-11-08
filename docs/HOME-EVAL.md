@@ -25,6 +25,12 @@ The five facts, and where the truth comes from:
 
 Limits: the window is the last 24 hours, the one `/api/v1/telemetry/home` reads; landings are counted, not named. A fact the page may rightly leave out (nothing waiting, no quiet repository) scores `stated` when the page does not claim otherwise. The cold-read agent of step 2 stays the steward's.
 
+## The two scripts
+
+**Reading the home as the eye does (#5735, step 1).** `bun scripts/home-read.ts <url>` fetches a page and prints its visible text, then one line: `chars N · words N · fetched in N ms`. Set `FORGE_COOKIE` (for example `forge_session=…; forge_mode=studio`) to read it as the owner; the cookie is sent and never printed. It exits non-zero on any status but 200. The conversion is `pageText` in `src/web/page_text.ts`: scripts, styles, templates, the head and anything `hidden` or `aria-hidden="true"` are dropped, link text stays, blocks sit on their own lines, entities are decoded. The method then continues: (2) a fresh agent with no context reads only that text and answers in at most 150 words, (3) the steward scores it against ground truth on coverage of the 5 things that mattered, errors, and seconds, (4) repeat after every feed change. The steward runs steps 2–4 and logs them on #5735.
+
+**Scoring the home (#5805).** `bun scripts/home-eval.ts <url>` is the deterministic half of that loop: it reads `/` with the same text conversion, builds ground truth from the forge's own API (`GET /api/v1/telemetry/home` for landings, the live version, builders and why idle, spend against the ceiling and what waits on the owner; the repository list and each newest commit for repositories quiet 3 days), and prints each of the five facts as `stated`, `missing` or `wrong` with the page's words, then coverage, errors, characters and fetch time. No dependency was added.
+
 ## Results
 
 One row per feed pull, newest last. Coverage is out of 5; `agent s` is the cold read's seconds (steward), `script` is the fetch time of `home-eval.ts`.

@@ -1,11 +1,13 @@
 /**
  * The red tests in a full gate's output: `bun test` prints the file as
  * `test/x.test.ts:` before its results and `(fail) name` for each failure.
- * Plain lines in, names and files out.
+ * The shards' tally repeats each as `(fail) name [1ms] [shard 3]`: one test,
+ * counted once (#6739). Plain lines in, names and files out.
  */
 
+import { FAIL } from "./gate_tests.ts";
+
 const HEADER = /^([A-Za-z0-9_./-]+\.test\.[cm]?[jt]sx?):$/;
-const FAIL = /^\(fail\) (.+?)(?: \[[0-9.]+m?s\])?$/;
 
 export function failuresOf(lines: readonly string[]): {
   tests: string[];

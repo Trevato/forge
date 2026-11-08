@@ -8,6 +8,7 @@ import { sha256 } from "../kernel/hash.ts";
 import { id as newId, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { getUserById, isActive, type User } from "./users.ts";
+import { quietly } from "./write_clock.ts";
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** How stale a session's last-seen time may get before a request moves it. */
@@ -70,9 +71,11 @@ export function sessionOf(
   // At most one write a minute per browser, however busy it is.
   const stale = new Date(now.getTime() - SEEN_EVERY_MS).toISOString();
   if (row.last_seen_at === null || row.last_seen_at < stale)
-    db.query("UPDATE session SET last_seen_at = ?1 WHERE token_hash = ?2").run(
-      now.toISOString(),
-      hash,
+    quietly(db, () =>
+      db.query("UPDATE session SET last_seen_at = ?1 WHERE token_hash = ?2").run(
+        now.toISOString(),
+        hash,
+      ),
     );
   return ok({ user, id: row.id });
 }

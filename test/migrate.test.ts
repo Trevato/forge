@@ -66,6 +66,7 @@ import { STAGE_BADGE_JS } from "../src/web/stage-row.ts";
 import { prefill } from "../src/web/pages/migrate-prefill.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 quietLogs();
 
@@ -743,7 +744,7 @@ describe("migrate", () => {
         kind: "github",
         token: upstreamSecret,
       });
-      if (!connected.ok) throw new Error(connected.error);
+      if (!connected.ok) throw new Error(JSON.stringify(connected.error));
       const agent = await createAgent(app, alice, {
         username: "mover",
         model: "",
@@ -892,7 +893,7 @@ describe("migrate", () => {
         kind: "github",
         token: upstreamSecret,
       });
-      if (!connected.ok) throw new Error(connected.error);
+      if (!connected.ok) throw new Error(JSON.stringify(connected.error));
       const job = await migrate(alice, {
         source: { originId: connected.value.id, fullName: "octo/forked-pulls" },
       });
@@ -1003,7 +1004,7 @@ describe("migrate", () => {
     try {
       forgetProviders(dataDir);
       const connected = await connectOrigin(app, alice, { host: github.url, kind: "github", token: upstreamSecret });
-      if (!connected.ok) throw new Error(connected.error);
+      if (!connected.ok) throw new Error(JSON.stringify(connected.error));
       const value = `${connected.value.id}/octo/arm`;
 
       // The row links to its branches; the list shows each last commit,
@@ -1418,7 +1419,7 @@ describe("migrate", () => {
     expect(page).not.toContain("stage-dot");
     expect(page).not.toContain("stage-detail");
     // The page's script is built from the table the rows are drawn from.
-    expect(page).toContain(`var badges = ${STAGE_BADGE_JS};`);
+    expect(await withScripts(servers.url, page)).toContain(`var badges = ${STAGE_BADGE_JS};`);
     expect(page).toMatch(/<li data-stage-name="creating" data-state="done">[\s\S]*?class="row"[\s\S]*?>Done</);
     expect(page).toMatch(/data-stage-name="fetching" data-state="now">[\s\S]*?receiving 61%[\s\S]*?>Running</);
     expect(page).toMatch(/data-stage-name="crew" data-state="todo">[\s\S]*?>Waiting</);

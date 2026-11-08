@@ -11,13 +11,15 @@
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
-import { parseFrom, SENT_WORDS, tell, toldWords, TOO_LONG_WORDS } from "../../actions/tell.ts";
+import { parseFrom } from "../../actions/tell_from.ts";
+import { SENT_WORDS, tell, toldWords, TOO_LONG_WORDS } from "../../actions/tell.ts";
 import { contextNote, parseContext } from "../../actions/tell_context.ts";
 import { NOT_TOLD_FROM_WORDS, NOT_TOLD_WORDS, SAY_SOMETHING_WORDS } from "../../actions/tell_words.ts";
 import { keepThought } from "../../actions/thought.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
-import { revertPull, type RevertPullError } from "../../actions/revert.ts";
+import { revertPull } from "../../actions/revert.ts";
+import { takeBackWords } from "../../actions/revert_words.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
@@ -81,14 +83,26 @@ async function tellFrom(
   // A client's "Ask for something" (named by the form, not guessed from `/`):
   // they asked for something and want nothing more than to know it went.
   if (from === "/" && field(form, "ask") === "1") return flashOrJson(ctx, back, { message: SENT_WORDS });
+  // The tell's own page, for a caller that asked for JSON (the palette's row).
+  const at = { href: `${repoBase(repo)}/issues/${told.value.issue.number}` };
   if (routed === undefined)
-    return flashOrJson(ctx, back, {
-      message: `Opened as an issue. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
-    });
+    return flashOrJson(
+      ctx,
+      back,
+      {
+        message: `Opened as an issue. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
+      },
+      at,
+    );
   const builder = routed.builder;
-  return flashOrJson(ctx, back, {
-    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}.${from === null ? " Watch it work below." : ""}`,
-  });
+  return flashOrJson(
+    ctx,
+    back,
+    {
+      message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}.${from === null ? " Watch it work below." : ""}`,
+    },
+    at,
+  );
 }
 
 /** POST /:owner/:name/tell  { text } — a sentence becomes work. */
@@ -158,12 +172,16 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const target = field(form, "app");
+  // The feed's composer asks to come back to the feed; any other box, to home.
+  const home = backTo(form, "/");
   // "the forge" is no app: the words are kept as a thought, exactly as typed.
   if (target === FORGE_TARGET) {
+    if (field(form, "text").trim() === "")
+      return flashOrJson(ctx, home, { tone: "danger", message: SAY_SOMETHING_WORDS });
     const kept = keepThought(ctx.app, ctx.auth.user, field(form, "text"), "composer");
-    return flashTo(
+    return flashOrJson(
       ctx,
-      "/",
+      home,
       kept.ok
         ? { message: "Received." }
         : {
@@ -171,12 +189,13 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
             message:
               kept.error === "too_long" ? "That is too long to keep." : "That could not be kept.",
           },
+      { href: home },
     );
   }
   const [owner = "", name = "", ...extra] = target.split("/");
   const repo = extra.length === 0 ? getRepo(ctx.app.db, owner, name) : undefined;
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
-  return tellFrom(ctx, repo, form, "/");
+  return tellFrom(ctx, repo, form, home);
 }
 
 
@@ -224,42 +243,6 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
           message: `That could not ship: ${mergeWords(merged.error)}.`,
         }),
   });
-}
-
-/** A take-back refusal in the studio's words. */
-function takeBackWords(error: RevertPullError): string {
-  if (typeof error === "string") {
-    switch (error) {
-      case "not_shipped":
-        return "it has not shipped";
-      case "mirrored":
-        return "the origin owns this history";
-      case "already_reverted":
-        return "it has already been taken back";
-      case "unauthorized":
-        return "sign in first";
-      case "forbidden":
-        return "only a person can take a pull request back";
-      case "not_found":
-        return "that pull request was not found";
-    }
-  }
-  switch (error.kind) {
-    case "conflict":
-      return `it conflicts with the current code in ${error.files.join(", ")}`;
-    case "unsafe":
-      return "git refused it";
-    case "base_moved":
-      return "the base moved under it";
-    case "git":
-      return `git said ${error.message}`;
-    case "octopus":
-      return "it has more than two parents";
-    case "branch_failed":
-      return `it could not be made ready (${error.reason})`;
-    case "pull_failed":
-      return `the change could not be opened (${error.reason})`;
-  }
 }
 
 /**
@@ -346,6 +329,8 @@ export async function holdSubmit(ctx: Ctx): Promise<Response> {
     repo,
     found.pull,
     field(form, "why"),
+    false,
+    field(form, "until") === "green" ? "green" : undefined,
   );
   if (!held.ok && (held.error === "not_found" || held.error === "forbidden"))
     return notFoundPage(ctx);

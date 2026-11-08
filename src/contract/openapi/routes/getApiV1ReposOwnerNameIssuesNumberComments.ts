@@ -1,3 +1,3 @@
-import { REPO, type Route } from "../shared.ts";
+import { REPO, type Route, limitTo } from "../shared.ts";
 
-export const route: Route = { method: "get", path: `${REPO}/issues/{number}/comments`, summary: "Page through an issue's or pull's comments, oldest first: {comments, next}; limit 1 to 100 (default 50), after a comment id", auth: false, query: { after: "string", limit: "integer" } };
+export const route: Route = { method: "get", path: `${REPO}/issues/{number}/comments`, summary: "Page through an issue's or pull's comments, oldest first: {comments, next}; limit 1 to 100 (default 50), after a comment id; cursor (an issue's commentsNext) answers the page of older comments before it, next being the cursor for older still; the 200 carries a weak etag of the page and cache-control private, no-cache (it varies by reader), and a repeat sending If-None-Match gets 304 with no body once access is checked", auth: false, alsoStatus: [304], query: { after: "string", cursor: "string", limit: limitTo(100) } };

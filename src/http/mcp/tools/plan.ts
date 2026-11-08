@@ -3,8 +3,8 @@ import { good, bad, type Tool, APP_ARG, planRepo, isAnswer } from "../shared.ts"
 
 export const tool: Tool = {
   name: "plan",
-  doc: "`{ app, issues }`: open up to 12 linked issues, all or none (see below)",
-  description: `Open and link issues, all or none (max ${PLAN_MAX}); each has \`pillar\` or \`later: true\` with \`why\`.`,
+  doc: "`{ app, issues, title?, why? }`: open up to 12 linked issues, all or none (see below)",
+  description: `Open linked issues, all or none (max ${PLAN_MAX}); each: \`pillar\` or \`later\`+\`why\`.`,
   inputSchema: {
     type: "object",
     properties: {
@@ -66,7 +66,7 @@ export const tool: Tool = {
     }
     const planned = openPlan(ctx.app, user, repo, items.value);
     if (!planned.ok) return bad(planned.error.error, planned.error.message);
-    const { opened, ready, later, gate } = planned.value;
+    const { opened, ready, held, later, gate } = planned.value;
     const waits =
       gate === undefined
         ? ""
@@ -75,6 +75,7 @@ export const tool: Tool = {
       says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.${waits}`,
       opened,
       ready,
+      held,
       later,
     });
   },

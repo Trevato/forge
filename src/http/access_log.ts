@@ -12,7 +12,7 @@
  * other than the user agent, cookies, bodies and queries are never read.
  *
  * Files older than 14 days go, and the directory is capped in total, oldest
- * first; one day's file stops growing at its own cap. Nothing here is served
+ * first; one day's file sheds its older half at its own cap, so it never stops. Nothing here is served
  * by any route; the owner reads it through `readAccess` (a settings page and
  * the `access` MCP tool).
  */
@@ -21,19 +21,23 @@ import {
   appendFileSync,
   mkdirSync,
   readdirSync,
+  renameSync,
   closeSync,
   openSync,
   readSync,
   statSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { createHmac } from "node:crypto";
 import { join } from "node:path";
 import { loadKey } from "../kernel/secret.ts";
 
 export const KEEP_DAYS = 14;
-export const DAY_BYTES = 4 * 1024 * 1024;
-export const TOTAL_BYTES = 32 * 1024 * 1024;
+export const DAY_BYTES = 16 * 1024 * 1024;
+export const TOTAL_BYTES = 128 * 1024 * 1024;
+/** The log's last line older than this is an alarm. */
+export const SILENT_AFTER_S = 300;
 const UA_MAX = 200;
 const PATH_MAX = 200;
 const HOST_MAX = 100;
@@ -152,7 +156,7 @@ export function lineFor(
 let pruned = "";
 
 /** Drop files past their days, then the oldest until the directory fits. */
-export function prune(dataDir: string, at: Date): void {
+export function prune(dataDir: string, at: Date, cap: number = TOTAL_BYTES): void {
   const dir = accessDir(dataDir);
   const oldest = dayOf(new Date(at.getTime() - (KEEP_DAYS - 1) * DAY_MS));
   const files = readdirSync(dir)
@@ -165,10 +169,40 @@ export function prune(dataDir: string, at: Date): void {
   }
   let total = kept.reduce((n, f) => n + statSync(join(dir, f)).size, 0);
   for (const f of kept) {
-    if (total <= TOTAL_BYTES || f === kept[kept.length - 1]) break;
+    if (total <= cap || f === kept[kept.length - 1]) break;
     total -= statSync(join(dir, f)).size;
     unlinkSync(join(dir, f));
   }
+}
+
+/**
+ * Keep the newest half of a file, from a whole line: written beside it and
+ * renamed over it, so a crash never leaves an empty day. A line another pod
+ * appends to the old file between the read and the rename can still be lost.
+ * Never throws.
+ */
+function shedOlder(file: string): void {
+  const tmp = `${file}.tmp`;
+  try {
+    writeFileSync(tmp, tailOf(file, DAY_BYTES / 2).join("\n"), { mode: 0o600 });
+    renameSync(tmp, file);
+  } catch {
+    // appending still works on the long file
+  }
+}
+
+/** When the oldest line that has not reached a file was recorded (ms), if any. */
+let unwritten: number | undefined;
+
+/**
+ * Seconds the oldest recorded line has waited without landing on disk, or
+ * undefined when nothing waits. An idle forge has nothing waiting: this
+ * measures a writer that is failing, never a site without traffic.
+ */
+export function unwrittenFor(now: number = Date.now()): number | undefined {
+  return unwritten === undefined
+    ? undefined
+    : Math.max(0, Math.round((now - unwritten) / 1000));
 }
 
 /**
@@ -187,6 +221,7 @@ export function flushAccess(at: Date = new Date()): void {
   timer = undefined;
   const batches = [...pending];
   pending.clear();
+  let failed = false;
   for (const [file, { dataDir, lines }] of batches) {
     try {
       const dir = accessDir(dataDir);
@@ -202,12 +237,16 @@ export function flushAccess(at: Date = new Date()): void {
       } catch {
         // no file yet
       }
-      if (size >= DAY_BYTES) continue;
+      // A full day's file sheds its older half: the trail never goes silent.
+      if (size >= DAY_BYTES) shedOlder(file);
       appendFileSync(file, lines.join(""), { mode: 0o600 });
     } catch {
       // the log is a convenience; the request is the work
+      failed = true;
     }
   }
+  // The mark clears only when every line landed and none wait.
+  if (!failed && pending.size === 0) unwritten = undefined;
 }
 
 /**
@@ -222,6 +261,7 @@ export function recordAccess(
   try {
     const line = lineFor(dataDir, seen, at);
     if (line === undefined) return;
+    unwritten ??= at.getTime();
     const file = fileOf(accessDir(dataDir), dayOf(at));
     const queued = pending.get(file) ?? { dataDir, lines: [] };
     queued.lines.push(`${JSON.stringify(line)}\n`);

@@ -23,21 +23,27 @@ export interface WaitingToFinish extends ConflictedPull {
   readonly public: boolean;
 }
 
-/** Repository id → its approved, conflicted pulls on the finishing pass's last tick. */
-const waiting = new Map<string, readonly WaitingToFinish[]>();
+/** Per database: repository id → its approved, conflicted pulls on the finishing pass's last tick. */
+const waiting = new WeakMap<Database, Map<string, readonly WaitingToFinish[]>>();
 
 /** What the finishing pass found this tick in one repository; a pull seen before keeps its first `since`. */
-export function noteWaitingToFinish(repoId: string, pulls: readonly WaitingToFinish[]): void {
-  const before = new Map((waiting.get(repoId) ?? []).map((p) => [p.number, p.since]));
-  if (pulls.length === 0) waiting.delete(repoId);
-  else waiting.set(repoId, pulls.map((p) => ({ ...p, since: before.get(p.number) ?? p.since })));
+export function noteWaitingToFinish(
+  db: Database,
+  repoId: string,
+  pulls: readonly WaitingToFinish[],
+): void {
+  let mine = waiting.get(db);
+  if (!mine) waiting.set(db, (mine = new Map()));
+  const before = new Map((mine.get(repoId) ?? []).map((p) => [p.number, p.since]));
+  if (pulls.length === 0) mine.delete(repoId);
+  else mine.set(repoId, pulls.map((p) => ({ ...p, since: before.get(p.number) ?? p.since })));
 }
 
 /** Oldest first; `publicOnly` leaves out private repositories, for a reader who must not learn their names. */
 export function conflictedPulls(db: Database, publicOnly = false): ConflictedPull[] {
   const ran = conflictRuns(db, publicOnly);
   const seen = new Set(ran.map((p) => `${p.repo}#${p.number}`));
-  const noted = [...waiting.values()]
+  const noted = [...(waiting.get(db)?.values() ?? [])]
     .flat()
     .filter((p) => (!publicOnly || p.public) && !seen.has(`${p.repo}#${p.number}`))
     .map(({ repo, number, since }) => ({ repo, number, since }));

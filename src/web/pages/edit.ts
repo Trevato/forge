@@ -17,6 +17,7 @@
  * preview are `editorJs`, and none of them is load-bearing.
  */
 
+import { fileKind, NO_BYTES } from "../render/kinds.ts";
 import { editFiles, MAX_FILE_BYTES } from "../../actions/contents.ts";
 import { contribute } from "../../actions/contribute.ts";
 import { NO_WRITE_ACCESS } from "../../actions/pull_words.ts";
@@ -125,6 +126,10 @@ export function editErrorText(error: unknown): string {
       return "The origin could not be reached, so nothing was written here either.";
     if (error === "origin_refused")
       return "The origin refused this change, so nothing landed here either.";
+    if (error === "origin_protected")
+      return "The operator protects this repository at its origin, so nothing is pushed to it from here. Propose the change from your fork.";
+    if (error === "origin_paused")
+      return "This connection is not verified yet, so writes through it are paused. Check it again under Settings → Origins.";
     return "That edit could not be saved.";
   }
   const e = error as { kind?: string; branch?: string; message?: string };
@@ -555,8 +560,9 @@ function mirrorHtml(content: string, lang: string): string {
     .join("");
 }
 
+/** A file not yet named is written as prose until its name says otherwise. */
 const isMarkdownPath = (path: string): boolean =>
-  path === "" || /\.(md|markdown|mdx)$/i.test(path);
+  path === "" || fileKind(path, NO_BYTES) === "markdown";
 
 /**
  * The repository and the situation an edit route needs, or the refusal. A

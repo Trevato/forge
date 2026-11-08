@@ -3,6 +3,7 @@
  * because the next thing anyone does is look at it.
  */
 
+import { GUEST_REFUSALS, isGuestRefusal } from "../../core/contribute.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { createRepo, forkRepo, repositoryLimitMessage, resolveOwner } from "../../actions/repos.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
@@ -166,6 +167,8 @@ export function forkScreen(f: Session, ctx: Ctx, parent: Repo): Screen {
             ? `not made: ${storageLimitMessage(f.app, f.user!.id)}`
             : forked.error === "repository_limit"
             ? `not made: ${repositoryLimitMessage(f.app, f.user!)}`
+            : isGuestRefusal(forked.error)
+            ? GUEST_REFUSALS[forked.error]
             : errorText(forked.error);
         ctx.toast(error, "danger");
         return;

@@ -1,11 +1,12 @@
 import { spawnDoor } from "../../../spawn/door.ts";
+import { FOLLOW_SHORT } from "../../../spawn/follow_words.ts";
 import { good, bad, type Tool, APP_ARG, REVEAL_ARG, LINK_KEPT, LINK_REVEALED } from "../shared.ts";
 
 export const tool: Tool = {
   name: "spawn",
-  doc: "`{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make",
+  doc: "`{ name, apps?, crew?, direction?, fresh?, followMode?, size?, template?, keepAccess?, dryRun?, reveal? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make; `reveal: true` shows the claim link",
   description:
-    "Spawn a child forge with the named apps and the crew's briefs. Plans first.",
+    "Spawn a child forge. Plans first.",
   inputSchema: {
     type: "object",
     properties: {
@@ -22,28 +23,28 @@ export const tool: Tool = {
       },
       direction: {
         type: "string",
-        description:
-          "Its purpose; first issue.",
       },
       fresh: {
         type: "string",
-        description:
-          "A fresh app too.",
+        description: "One line: a new app to start.",
       },
       followMode: {
         type: "string",
         enum: ["tell-me", "take-updates"],
+        description: FOLLOW_SHORT,
       },
       size: {
         type: "string",
         enum: ["small", "medium", "large"],
-        description:
-          "Recorded only.",
+        description: "Recorded only.",
+      },
+      template: {
+        type: "string",
+        description: "An id from `templates`.",
       },
       keepAccess: {
         type: "boolean",
-        description:
-          "Stay an owner.",
+        description: "Stay an owner.",
       },
       dryRun: { type: "boolean" },
       reveal: REVEAL_ARG,
@@ -65,10 +66,12 @@ export const tool: Tool = {
     const made = door.body["dryRun"] === false;
     const { claimUrl, ...rest } = door.body;
     const reveal = args["reveal"] === true && typeof claimUrl === "string";
+    const reach = door.body["reach"] as { ok?: boolean; says?: string } | undefined;
+    const reached = reach?.ok === false ? ` ${reach.says}` : "";
     return good({
       says: !made
         ? "This is the plan; nothing was made. Send dryRun: false to spawn."
-        : `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}. ${reveal ? LINK_REVEALED : LINK_KEPT}`,
+        : `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}. ${reveal ? LINK_REVEALED : LINK_KEPT}${reached}`,
       ...rest,
       ...(reveal ? { claimUrl } : {}),
     });

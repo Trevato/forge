@@ -1,8 +1,10 @@
 /**
  * A red many pulls share never parks them (#2266): through the crew's event
  * path, with main green, three pulls whose checks fail one test in the hour
- * are neither parked nor reworked and are checked again on main's next green
- * check; a pull red on a test only it fails is parked as ever. Each pull has
+ * — a test a re-run passed — are neither parked nor reworked and are checked
+ * again on main's next green check; a pull red on a test only it fails is
+ * parked as ever, and so is each of many pulls red on a test main passes and
+ * no re-run passed (#8786). Each pull has
  * already spent its automatic tries, so any red that is its own parks it.
  */
 
@@ -52,7 +54,7 @@ describe("the crew, with a red many pulls share", () => {
       files: [{ path: `${branch}.md`, content: "x\n" }],
     });
     if (!c.ok) throw new Error(JSON.stringify(c.error));
-    const o = await openPull(app, alice, repo, { title: branch, baseBranch: "main", headBranch: branch });
+    const o = await openPull(app, bot, repo, { title: branch, baseBranch: "main", headBranch: branch });
     if (!o.ok) throw new Error(String(o.error));
     app.db.run("UPDATE issue SET assignee_id = ?1 WHERE id = ?2", [bot.id, o.value.id]);
     for (let i = 0; i < CHECK_FAILED_LIMIT; i++) {
@@ -83,6 +85,12 @@ describe("the crew, with a red many pulls share", () => {
     claimRun(app.db, run.id);
     announceRun(app, finishRun(app.db, run.id, { state: "ok", summary: "check passed" })!);
   };
+  /** The check runner re-ran the test alone on some check and it passed: random, the lane's (#8786). */
+  const flaked = (test: string) =>
+    app.db.run(
+      "INSERT INTO check_flake (id, repo_id, run_id, commit_oid, test, file, at) VALUES (?1, ?2, 'r', 'a', ?3, 'x.test.ts', ?4)",
+      [`flake-${test}`, repo.id, test, new Date().toISOString()],
+    );
   const open = (pull: Pull) => getIssueById(app.db, pull.id)?.state === "open";
   const sharedCards = () =>
     vitals({
@@ -93,6 +101,7 @@ describe("the crew, with a red many pulls share", () => {
 
   test("three pulls red on X in the hour: none parked, one card; a fourth red on Y only is parked", async () => {
     mainGreen();
+    flaked("X");
     const pulls = [await spentPull(), await spentPull(), await spentPull()];
     const runs = pulls.map((p) => failed(p, ["X"]));
     for (const run of runs) announceRun(app, run);
@@ -118,6 +127,14 @@ describe("the crew, with a red many pulls share", () => {
     expect(requested.map((r) => r[4]).sort()).toEqual(pulls.map((p) => p.id).sort());
     mainGreen();
     expect(requested).toHaveLength(3);
+  });
+
+  test("three pulls red on a test main passes and no re-run passed: each is its own red, parked, and no card (#8786)", async () => {
+    mainGreen();
+    const pulls = [await spentPull(), await spentPull(), await spentPull()];
+    for (const p of pulls) announceRun(app, failed(p, ["Z"]));
+    for (const p of pulls) expect(open(p)).toBe(false);
+    expect(sharedCards().map((c) => c.sentence).filter((s) => s.includes('"Z"'))).toEqual([]);
   });
 
   test("the card says another repository's red is not fixable here; the forge's own says nothing of it", async () => {

@@ -1,0 +1,16 @@
+{
+  "pack": 1,
+  "name": "business",
+  "title": "Business",
+  "version": "1.0.0",
+  "description": "The everyday tools of a small business: notes and a task board, two open-source apps with their history, and a crew that plans, builds and reviews changes you ask for.",
+  "apps": [
+    { "name": "memos", "description": "Quick notes and a shared journal for a team.", "source": "https://github.com/usememos/memos" },
+    { "name": "kanboard", "description": "A simple board for tasks and projects.", "source": "https://github.com/kanboard/kanboard" }
+  ],
+  "crew": [
+    { "username": "office-planner", "roles": ["planner"], "brief": "You turn what the business asks for into small, clear steps. Prefer the change that saves someone time this week." },
+    { "username": "office-builder", "roles": ["builder"], "brief": "You make the changes the planner lays out, in small steps, with tests where the app has them." },
+    { "username": "office-reviewer", "roles": ["reviewer"], "brief": "You review changes for a business that keeps customer information. Refuse anything that touches secrets or leaks data." }
+  ]
+}

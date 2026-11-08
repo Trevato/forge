@@ -30,6 +30,12 @@
  *   target   a button, link, input or select under 24px wide or high, WCAG 2.5.8
  *            (specification.website, target size)
  *
+ * The quiet-page rules (#8775, #8719) are held per file in `docs/design/quiet-debt.json`,
+ * the same ratchet, and may only go down: `label` ("Status: Open"), `caps`
+ * (`text-transform: uppercase`), `echo` (an icon's aria-label equal to its visible
+ * text) and `inline-colour` (a colour name in a `style=""`). They match markup and
+ * style, never a paragraph's words. Named in docs/design/areas/quiet.md.
+ *
  * A red names the file:line, the literal and what to use instead, so one pass
  * fixes it; run `bun scripts/design-lint.ts` before pushing. A new class is named
  * in its own `docs/design/areas/<area>.md` rather than in DESIGN.md, which
@@ -79,7 +85,7 @@ export type Baseline = { files: Record<string, Counts> };
 export type Finding = { line: number; kind: "colour" | "size"; text: string; use: string };
 export type Scan = Baseline & { classes: string[]; found?: Record<string, Finding[]> };
 
-const SKIP = /(^|\/)(og\/vendor)\//;
+const SKIP = /(^|\/)(og\/vendor|web\/vendor)\//;
 
 export function sourceFiles(root: string): string[] {
   const out: string[] = [];
@@ -308,6 +314,97 @@ export function compare(base: Baseline, now: Scan, design: string, areas: readon
   return out;
 }
 
+/** The quiet-page rules a machine can check (#8775, from #8719): markup and style only, never prose. */
+export type QuietRule = "label" | "caps" | "echo" | "inline-colour" | "keyhint";
+export type QuietFinding = { line: number; rule: QuietRule; text: string; use: string };
+export const QUIET_RULES: readonly QuietRule[] = ["label", "caps", "echo", "inline-colour", "keyhint"];
+const STATUS_WORD = "open|closed|merged|draft|done|failed|passing|failing|pending|running|queued|shipped|blocked|active|ready";
+
+/** Where `text` breaks a quiet-page rule: file line, the offence, and what to use instead. */
+export function quiet(text: string): QuietFinding[] {
+  const code = blanked(text);
+  const at = (i: number) => code.slice(0, i).split("\n").length;
+  const out: QuietFinding[] = [];
+  // "Status: Open": a label tag ending in a colon, straight before a status word, a tag or an interpolation.
+  for (const m of code.matchAll(new RegExp(`>\\s*(?:Status|State)\\s*:\\s*(?=<|\\$\\{|(?:${STATUS_WORD})\\b)`, "gi"))) {
+    out.push({ line: at(m.index!), rule: "label", text: m[0].slice(1).trim(), use: "the status glyph and colour alone, its word in title/aria-label and on the detail page (§6a)" });
+  }
+  for (const { css, at: start } of cssBlocksAt(text)) {
+    for (const m of css.matchAll(/text-transform\s*:\s*uppercase/gi)) {
+      out.push({ line: at(start + m.index!), rule: "caps", text: m[0], use: "size and weight for hierarchy; drop the uppercase caption" });
+    }
+  }
+  // An icon beside its own label: the aria-label and the visible text are the same words.
+  for (const m of code.matchAll(/<(button|a)\b[^>]*\baria-label="([^"$]+)"[^>]*>([\s\S]*?)<\/\1>/g)) {
+    const visible = m[3]!.replace(/<svg[\s\S]*?<\/svg>/g, "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+    if (/<svg\b/.test(m[3]!) && visible.toLowerCase() === m[2]!.trim().toLowerCase()) {
+      out.push({ line: at(m.index!), rule: "echo", text: `aria-label="${m[2]}" beside the visible "${visible}"`, use: "either the icon with the aria-label, or the visible word with the icon aria-hidden — never both" });
+    }
+  }
+  // A key hint takes no room at rest (#8930): inline only in a menu item, else `hintAttr`.
+  for (const m of code.matchAll(/(?<!function )\bkeyHint\(|<kbd class="keyhint"/g)) {
+    if (!inMenuItem(code, m.index!) && !code.slice(Math.max(0, m.index! - 60), m.index!).includes("function keyHint")) {
+      out.push({ line: at(m.index!), rule: "keyhint", text: m[0], use: "hintAttr(key): a tooltip on hover and an overlay on request; an inline hint only inside a menu item" });
+    }
+  }
+  // A colour name in an inline style="": the stylesheet scan reads css templates only.
+  for (const m of code.matchAll(/\bstyle="([^"]*)"/g)) {
+    const bad = m[1]!.match(NAMED_RE);
+    if (bad) out.push({ line: at(m.index!), rule: "inline-colour", text: bad[0].trim(), use: tokenFor(bad[0]) });
+  }
+  return out.sort((a, b) => a.line - b.line);
+}
+
+/** Is the position inside a still-open menu or palette row? The nearest earlier
+ * element whose class is `menu-item`/`palette-item`, not yet closed before here. */
+export function inMenuItem(code: string, at: number): boolean {
+  const before = code.slice(0, at);
+  const opens = [...before.matchAll(/<(a|button|div|li)\b[^>]*?\bclass="[^"]*\b(?:menu-item|palette-item)\b/g)];
+  const last = opens.at(-1);
+  if (!last) return false;
+  const rest = before.slice(last.index!);
+  const tag = last[1]!;
+  const depth = (rest.match(new RegExp(`<${tag}\\b`, "g")) ?? []).length - (rest.match(new RegExp(`</${tag}\\s*>`, "g")) ?? []).length;
+  return depth > 0;
+}
+
+export const QUIET_DEBT = "docs/design/quiet-debt.json";
+export type QuietDebt = Record<string, Partial<Record<QuietRule, number>>>;
+
+/** Per file and rule, how many findings there are: the shape the debt list is kept in. */
+export function quietCounts(files: Record<string, QuietFinding[]>): QuietDebt {
+  const out: QuietDebt = {};
+  for (const [f, list] of Object.entries(files)) {
+    for (const x of list) (out[f] ??= {})[x.rule] = ((out[f] ??= {})[x.rule] ?? 0) + 1;
+  }
+  return out;
+}
+
+/** What broke a quiet rule beyond the debt, and a debt that has been paid and not struck. Empty passes. */
+export function compareQuiet(debt: QuietDebt, files: Record<string, QuietFinding[]>): string[] {
+  const out: string[] = [];
+  const now = quietCounts(files);
+  for (const f of new Set([...Object.keys(now), ...Object.keys(debt)])) {
+    for (const r of QUIET_RULES) {
+      const n = now[f]?.[r] ?? 0, d = debt[f]?.[r] ?? 0;
+      if (n > d) {
+        const where = (files[f] ?? []).filter((x) => x.rule === r).map((x) => `\n  ${f}:${x.line}  ${x.text}  →  use ${x.use}`).join("");
+        out.push(`${f}: ${n - d} new quiet-page "${r}" finding(s) (${d} already there are debt in ${QUIET_DEBT}):${where}`);
+      } else if (n < d) out.push(`${f}: the "${r}" debt is ${d} and only ${n} remain — lower it in ${QUIET_DEBT} (bun scripts/design-lint.ts --update)`);
+    }
+  }
+  return out;
+}
+
+export function scanQuiet(root: string): Record<string, QuietFinding[]> {
+  const out: Record<string, QuietFinding[]> = {};
+  for (const f of sourceFiles(root)) {
+    const found = quiet(readFileSync(f, "utf8"));
+    if (found.length) out[relative(root, f)] = found;
+  }
+  return out;
+}
+
 const BASELINE = "docs/design/baseline.json";
 const DESIGN = "docs/DESIGN.md";
 const SECTIONS = "docs/design/sections";
@@ -319,10 +416,12 @@ if (import.meta.main) {
   if (process.argv.includes("--update")) {
     const baseline = { ...JSON.parse(readFileSync(join(root, BASELINE), "utf8")), files: now.files }; // keeps `coldRead` (#5882)
     writeFileSync(join(root, BASELINE), JSON.stringify(baseline, null, 2) + "\n");
+    writeFileSync(join(root, QUIET_DEBT), JSON.stringify(quietCounts(scanQuiet(root)), null, 2) + "\n");
     console.log(`wrote ${BASELINE}`);
   } else {
     const base: Baseline = JSON.parse(readFileSync(join(root, BASELINE), "utf8"));
-    const problems = compare(base, now, designText(root), areaFiles(root));
+    const debt: QuietDebt = JSON.parse(readFileSync(join(root, QUIET_DEBT), "utf8"));
+    const problems = [...compare(base, now, designText(root), areaFiles(root)), ...compareQuiet(debt, scanQuiet(root))];
     for (const p of problems) console.error(p);
     if (problems.length) process.exit(1);
     console.log("design: no colour, size or component added outside the system");

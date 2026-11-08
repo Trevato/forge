@@ -323,10 +323,10 @@ describe("origin sync: incremental, event-shaped, and polite", () => {
     // The second sweep sent If-None-Match and got a 304 back — and the labels
     // survived, because a 304 must serve the cached body, not an empty one.
     expect(fake.state.conditionalHits).toBeGreaterThan(hitsBefore);
-    const labels = await read<{ name: string }[]>(
+    const labels = await read<{ items: { name: string }[] }>(
       await api("/api/v1/repos/alice/sprockets/labels"),
     );
-    expect(labels.map((l) => l.name)).toEqual(["bug"]);
+    expect(labels.items.map((l) => l.name)).toEqual(["bug"]);
   });
 
   test("the worker's due sweep is time-driven and bounded", async () => {

@@ -9,7 +9,7 @@ import { resolveSource } from "../src/actions/migrate.ts";
 import { createOrigin } from "../src/core/origins.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { loadTrustedHosts, parseHosts, trustedHosts } from "../src/origins/trusted-hosts.ts";
+import { loadTrustedHosts, parseHosts, rejectedSentence, trustedHosts } from "../src/origins/trusted-hosts.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -167,9 +167,12 @@ describe("trusted internal hosts", () => {
     }
 
     test("a non-admin is not offered it", async () => {
+      const before = changes();
       const h = boot("bob");
       await h.palette();
       expect(h.text()).not.toContain("internal hosts an origin may reach");
+      expect(trustedHosts()).toEqual(["git.internal.test"]);
+      expect(changes()).toEqual(before);
       h.stop();
     });
 
@@ -181,12 +184,13 @@ describe("trusted internal hosts", () => {
       expect(h.text()).toContain("git.internal.test");
       await h.type(" 10.1.1.1");
       await h.enter();
-      expect(h.text()).toContain("Not host names");
+      expect(h.text()).toContain(rejectedSentence(parseHosts("10.1.1.1").rejected).slice(0, 40));
       expect(trustedHosts()).toEqual(["git.internal.test"]);
       h.stop();
     });
 
     test("an admin saves from the terminal: live and audited", async () => {
+      const before = changes().length;
       const h = boot("alice");
       await h.palette();
       await h.enter();
@@ -194,6 +198,8 @@ describe("trusted internal hosts", () => {
       await h.enter();
       expect(trustedHosts().sort()).toEqual(["git.internal.test", "second.test"]);
       expect(changes().at(-1)).toBe('["git.internal.test","second.test"]');
+      expect(changes()).toHaveLength(before + 1);
+      expect(h.text()).toContain("Trusted: git.internal.test, second.test.");
       h.stop();
     });
   });

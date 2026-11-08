@@ -7,8 +7,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { listKeys } from "../src/core/keys.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser } from "../src/core/users.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 const KEY_A =
@@ -103,5 +104,32 @@ describe("MCP ssh_keys", () => {
     expect((await tool(bobRw, { action: "remove", id: mine.id })).error).toStartWith("not_found");
     expect((await tool(bobRw, { action: "list" })).value).toEqual([]);
     expect((await tool(aliceRw, { action: "list" })).value).toHaveLength(1);
+  });
+
+  test("a read-only token's refusal stores nothing and names forbidden", async () => {
+    const before = (await tool(aliceRw, { action: "list" })).value;
+    const refused = await tool(aliceRo, { action: "add", key: KEY_A });
+    expect(refused.error).toStartWith("forbidden");
+    expect((await tool(aliceRw, { action: "list" })).value).toEqual(before);
+    expect((await tool(bobRw, { action: "list" })).value).toEqual([]);
+  });
+
+  test("another account's key id is not_found and the key stays in the database", async () => {
+    const [mine] = (await tool(aliceRw, { action: "list" })).value;
+    expect((await tool(bobRw, { action: "remove", id: mine.id })).error).toStartWith("not_found");
+    const alice = getUserByName(app.db, "alice")!;
+    expect(listKeys(app.db, alice.id).map((k) => k.id)).toContain(mine.id);
+  });
+
+  test("an unknown action is invalid_action", async () => {
+    expect((await tool(aliceRw, { action: "rotate" })).error).toStartWith("invalid_action");
+  });
+
+  test("malformed key lines are invalid_key and store nothing", async () => {
+    const before = (await tool(bobRw, { action: "list" })).value;
+    for (const key of ["not a key", "ssh-ed25519 !!!notbase64", ""]) {
+      expect((await tool(bobRw, { action: "add", key })).error).toStartWith("invalid_key");
+    }
+    expect((await tool(bobRw, { action: "list" })).value).toEqual(before);
   });
 });

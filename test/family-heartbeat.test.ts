@@ -245,6 +245,17 @@ describe("family heartbeats", () => {
     expect((await familyView(parent, true, () => ({ total: 0, running: 0, notRunning: [] }))).children[0]?.apps).toBeNull();
   });
 
+  test("the terminal's family lines say where each child runs, as /forges does", async () => {
+    const view = await familyView(parent, true);
+    const lineOf = (v: typeof view) => familyLines(v).find(([k]) => k === "child maria")?.[1] ?? "";
+    expect(view.children[0]?.placement).toBe("hosted");
+    expect(lineOf(view)).toEndWith(" · hosted");
+    const placed = (placement: string) => ({ ...view, children: view.children.map((c) => ({ ...c, placement })) });
+    expect(lineOf(placed("own cell"))).toEndWith(" · own cell");
+    expect(lineOf(placed("hosted: its cell did not come up"))).toEndWith(" · hosted: its cell did not come up");
+    expect(lineOf({ ...view, children: view.children.map((c) => ({ ...c, placement: null })) })).not.toContain("hosted");
+  });
+
   test("the terminal's Family card shows the apps line", async () => {
     const view = await familyView(parent, true, two);
     const { app } = createForgeApp(

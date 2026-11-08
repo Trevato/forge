@@ -6,6 +6,8 @@
  */
 
 import { openPull } from "../../actions/pulls.ts";
+import { VERIFY_FIRST } from "../../actions/verify_words.ts";
+import { GUEST_REFUSALS } from "../../core/contribute.ts";
 import { BODY_TOO_LONG, TITLE_TOO_LONG } from "../../actions/thread_limits_words.ts";
 import type { Label } from "../../core/issues.ts";
 import type { Pull } from "../../core/pulls.ts";
@@ -215,6 +217,8 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
 }
 
 const COMPOSE_ERRORS: Record<string, string> = {
+  ...GUEST_REFUSALS,
+  unverified: VERIFY_FIRST,
   empty_title: "A title is required.",
   title_too_long: TITLE_TOO_LONG,
   body_too_long: BODY_TOO_LONG,

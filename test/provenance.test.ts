@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
+import { listEvents } from "../src/core/events.ts";
 import { showProvenance } from "../src/actions/provenance.ts";
 import {
   cleanParents,
@@ -202,6 +203,10 @@ describe("the record and the line", () => {
       ok: true,
       value: { shown: false, was: true, dryRun: false },
     });
+    // The settings trail says from what to what, in the one shape every writer uses.
+    const trail = listEvents(app.db, { repoId: source.id, kind: "repo.settings_updated", limit: 1 })[0]!;
+    expect(trail.actorId).toBe(owner.id);
+    expect(trail.payload["changed"]).toEqual({ provenance: { from: true, to: false } });
     expect(lineageLine(app.db, source, undefined)).toBeNull();
     expect(getProvenance(app.db, source.id)?.parents).toEqual([
       "TheRobotStudio/SO-ARM100",

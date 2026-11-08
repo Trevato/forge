@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { forgetFrontScores, frontPage } from "../src/actions/front.ts";
+import { forgetFrontScores, frontKey, frontPage } from "../src/actions/front.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { createApp as insertApp, type AppRecord } from "../src/core/apps.ts";
@@ -102,4 +102,62 @@ test("making one app private builds a new page without it on the next request", 
   expect(after).not.toBe(before);
   expect(after.total).toBe(APPS - 1);
   expect([after.featured, ...after.shelf].some((e) => e?.repo.id === gone.id)).toBe(false);
+});
+
+test("a session insert and an issue_seq bump leave the kept page as it was (#6325)", () => {
+  const first = frontPage(app);
+  const owner = app.db.query<{ id: string }, []>("SELECT id FROM user LIMIT 1").get()!.id;
+  app.db
+    .query("INSERT INTO session (token_hash, user_id, expires_at) VALUES ('h6325', ?1, '2099-01-01T00:00:00Z')")
+    .run(owner);
+  app.db.query("UPDATE repo SET issue_seq = issue_seq + 1, last_fetch_at = 'now'").run();
+  expect(frontPage(app)).toBe(first);
+});
+
+test("archiving a repo, making an app private and retaking a thumb each give a new page (#6325)", () => {
+  const ids = (p: ReturnType<typeof frontPage>) =>
+    [p.featured, ...p.shelf].flatMap((e) => (e === undefined ? [] : [e.repo.id]));
+  let page = frontPage(app);
+  const [a, b] = ids(page);
+  app.db.query("UPDATE repo SET archived_at = '2026-10-26T00:00:00Z' WHERE id = ?1").run(a!);
+  let next = frontPage(app);
+  expect(next).not.toBe(page);
+  expect(frontPage(app)).toBe(next);
+  page = next;
+  app.db.query("UPDATE app SET access = 'private' WHERE repo_id = ?1").run(b!);
+  next = frontPage(app);
+  expect(next).not.toBe(page);
+  expect(frontPage(app)).toBe(next);
+  page = next;
+  const appId = app.db.query<{ id: string }, [string]>("SELECT id FROM app WHERE repo_id = ?1").get(ids(page)[0]!)!.id;
+  recordLook(app.db, { appId, env: "production", commitOid: "b".repeat(40), kind: "thumb", path: `looks/${appId}/thumb.png` });
+  next = frontPage(app);
+  expect(next).not.toBe(page);
+  // A phone look, or a preview's thumb, is not the shelf's concern.
+  recordLook(app.db, { appId, env: "production", commitOid: "c".repeat(40), kind: "phone", path: "x.png" });
+  recordLook(app.db, { appId, env: "preview", commitOid: "c".repeat(40), kind: "thumb", path: "x.png" });
+  expect(frontPage(app)).toBe(next);
+});
+
+test("with 2,000 more apps the key keeps its size and reads no app or look column (#6325)", () => {
+  const owner = app.db.query<{ id: string }, []>("SELECT id FROM user LIMIT 1").get()!.id;
+  const small = frontKey(app);
+  app.db.transaction(() => {
+    for (let n = 0; n < 2000; n++) {
+      app.db.query("INSERT INTO repo (id, owner_id, name, visibility) VALUES (?1, ?2, ?3, 'public')").run(`bulk${n}`, owner, `bulk${n}`);
+      app.db.query("INSERT INTO app (id, repo_id, slug, access) VALUES (?1, ?2, ?3, 'public')").run(`bulkapp${n}`, `bulk${n}`, `bulk${n}`);
+    }
+  })();
+  const big = frontKey(app);
+  expect(big).not.toBe(small);
+  expect(big).toMatch(/^\d{1,9}$/);
+  const page = frontPage(app);
+  const asked: string[] = [];
+  const spy = spyOn(app.db, "query").mockImplementation(((sql: string) => {
+    asked.push(sql);
+    return (Object.getPrototypeOf(app.db).query as (s: string) => unknown).call(app.db, sql);
+  }) as never);
+  expect(frontPage(app)).toBe(page);
+  spy.mockRestore();
+  expect(asked).toEqual(["SELECT n FROM front_epoch"]);
 });

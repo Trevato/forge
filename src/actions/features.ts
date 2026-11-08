@@ -1,0 +1,262 @@
+/**
+ * Absorb: an app becomes one of the forge's features without a line of
+ * its code moving into the forge. It keeps its repository, its cell, its data
+ * and its deploys; the forge gives it a place in its nav and keeps its
+ * settings, typed by what the app declares in `forge.json` (`apps/feature.ts`).
+ *
+ * The rules, each held by a test:
+ * - Absorbing and un-absorbing are a site admin's acts, and each is an event.
+ * - Declaring a `feature` does nothing on its own: a repository cannot
+ *   promote itself.
+ * - A value is checked against its declaration at the door; a bad one is
+ *   refused with the setting named, and nothing is kept.
+ * - Un-absorbing keeps the values, so absorbing again is the same feature.
+ * - Who may see the feature is who may read the app's repository: absorbing
+ *   widens nothing.
+ * - The forge never runs the app's code: a change reaches the app as
+ *   `FORGE_SETTING_*` in a new process, the same way an env var does.
+ */
+
+import type { App } from "../app.ts";
+import { readFileAt } from "../apps/checkout.ts";
+import { checkSetting, featureEnv, parseFeature, settingEnvName, type FeatureSpec } from "../apps/feature.ts";
+import { appsRuntime } from "../apps/runtime.ts";
+import { getAppById, getAppBySlug, listApps, type AppRecord } from "../core/apps.ts";
+import {
+  absorb,
+  featureSettings,
+  getAbsorbed,
+  listAbsorbed,
+  setFeatureSettings as keepSettings,
+  unabsorb,
+} from "../core/features.ts";
+import { canRead, getRepoById, type Repo } from "../core/repos.ts";
+import type { User } from "../core/users.ts";
+import { resolveOid } from "../git/merge.ts";
+import { repoDir } from "../git/repos.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
+
+export type FeatureError =
+  /** No such app, or one the actor may not see. */
+  | "not_found"
+  /** Only a site admin absorbs, un-absorbs or changes settings. */
+  | "forbidden"
+  /** The app's forge.json declares no feature (or declares it wrongly). */
+  | "not_a_feature"
+  /** The app is not absorbed: its settings are not the forge's to change. */
+  | "not_absorbed"
+  /** A value that does not fit its declaration; `message` names it. */
+  | "invalid_setting";
+
+export interface SettingView {
+  readonly key: string;
+  readonly type: string;
+  readonly label: string;
+  readonly help: string | null;
+  readonly value: string;
+  readonly default: string;
+  readonly set: boolean;
+  readonly min: number | null;
+  readonly max: number | null;
+  readonly choices: readonly string[] | null;
+  /** What the app's process reads it as. */
+  readonly env: string;
+}
+
+export interface FeatureView {
+  readonly slug: string;
+  readonly repo: string;
+  readonly name: string;
+  readonly summary: string | null;
+  readonly page: string;
+  readonly absorbed: boolean;
+  readonly absorbedBy: string | null;
+  readonly absorbedAt: string | null;
+  /** Why the declaration is not usable, when it is not; `settings` is then empty. */
+  readonly problem: string | null;
+  readonly settings: readonly SettingView[];
+}
+
+const siteAdmin = (actor: User | undefined): actor is User =>
+  actor !== undefined && actor.isAdmin && actor.kind !== "agent";
+
+/** The feature an app's default branch declares, as `forge.json` says it at the tip. */
+export async function declaredFeature(app: App, repo: Repo): Promise<Result<FeatureSpec | undefined, string>> {
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const tip = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+  if (tip === undefined) return ok(undefined);
+  const text = await readFileAt(dir, tip, "forge.json");
+  if (text === undefined) return ok(undefined);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return ok(undefined); // a broken forge.json is the deploy's to report, not this
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return ok(undefined);
+  return parseFeature(parsed as Record<string, unknown>);
+}
+
+function viewOf(record: AppRecord, repo: Repo, app: App, spec: FeatureSpec | undefined, problem: string | null): FeatureView {
+  const kept = featureSettings(app.db, record.id);
+  const absorbed = getAbsorbed(app.db, record.id);
+  const env = spec === undefined ? {} : featureEnv(spec, kept);
+  return {
+    slug: record.slug,
+    repo: `${repo.ownerName}/${repo.name}`,
+    name: spec?.name ?? record.slug,
+    summary: spec?.summary ?? null,
+    page: spec?.page ?? "/",
+    absorbed: absorbed !== undefined,
+    absorbedBy: absorbed?.absorbedBy ?? null,
+    absorbedAt: absorbed?.absorbedAt ?? null,
+    problem,
+    settings: (spec?.settings ?? []).map((s) => {
+      const name = settingEnvName(s.key);
+      return {
+        key: s.key,
+        type: s.type,
+        label: s.label,
+        help: s.help ?? null,
+        value: env[name] ?? s.default,
+        default: s.default,
+        set: kept.has(s.key),
+        min: s.min ?? null,
+        max: s.max ?? null,
+        choices: s.choices ?? null,
+        env: name,
+      };
+    }),
+  };
+}
+
+/** The app behind a slug, if the actor may read its repository. */
+function readable(app: App, actor: User | undefined, slug: string): { record: AppRecord; repo: Repo } | undefined {
+  const record = getAppBySlug(app.db, slug);
+  if (record === undefined) return undefined;
+  const repo = getRepoById(app.db, record.repoId);
+  if (repo === undefined || !canRead(app.db, repo, actor)) return undefined;
+  return { record, repo };
+}
+
+/**
+ * Every app that declares a feature, absorbed or not, for a site admin's
+ * settings page. Reads each app's forge.json at its tip: a handful of apps,
+ * on an admin page.
+ */
+export async function listFeatures(app: App, actor: User | undefined): Promise<Result<FeatureView[], FeatureError>> {
+  if (!siteAdmin(actor)) return err("not_found");
+  const out: FeatureView[] = [];
+  for (const record of listApps(app.db)) {
+    const repo = getRepoById(app.db, record.repoId);
+    if (repo === undefined) continue;
+    const declared = await declaredFeature(app, repo);
+    if (declared.ok && declared.value === undefined && getAbsorbed(app.db, record.id) === undefined) continue;
+    out.push(viewOf(record, repo, app, declared.ok ? declared.value : undefined, declared.ok ? null : declared.error));
+  }
+  return ok(out.sort((a, b) => Number(b.absorbed) - Number(a.absorbed) || a.name.localeCompare(b.name)));
+}
+
+export interface NavFeature {
+  readonly appId: string;
+  readonly slug: string;
+  /** `owner/name`, for a link to the app's own page. */
+  readonly repo: string;
+  readonly name: string;
+  /** The app path to open: the feature's page. */
+  readonly page: string;
+}
+
+/** Absorbed apps the actor may read, for the forge's nav. Cheap enough for every page: no git reads. */
+export function absorbedForNav(app: App, actor: User | undefined): NavFeature[] {
+  const out: NavFeature[] = [];
+  for (const row of listAbsorbed(app.db)) {
+    const record = getAppById(app.db, row.appId);
+    if (record === undefined) continue;
+    const repo = getRepoById(app.db, record.repoId);
+    if (repo === undefined || !canRead(app.db, repo, actor)) continue;
+    out.push({ appId: record.id, slug: record.slug, repo: `${repo.ownerName}/${repo.name}`, name: row.name, page: row.page });
+  }
+  return out;
+}
+
+/** One feature, for whoever may read the app; settings changes are a site admin's. */
+export async function getFeature(app: App, actor: User | undefined, slug: string): Promise<Result<FeatureView, FeatureError>> {
+  const found = readable(app, actor, slug);
+  if (found === undefined) return err("not_found");
+  const declared = await declaredFeature(app, found.repo);
+  if (declared.ok && declared.value === undefined && getAbsorbed(app.db, found.record.id) === undefined)
+    return err("not_a_feature");
+  return ok(viewOf(found.record, found.repo, app, declared.ok ? declared.value : undefined, declared.ok ? null : declared.error));
+}
+
+async function redeployAll(app: App, record: AppRecord, repo: Repo): Promise<void> {
+  await appsRuntime(app)?.reconcileApp(record, repo, "redeploy");
+}
+
+/** Absorb an app that declares a feature. Absorbing one already absorbed changes nothing. */
+export async function absorbApp(app: App, actor: User | undefined, slug: string): Promise<Result<FeatureView, FeatureError>> {
+  const found = readable(app, actor, slug);
+  if (found === undefined) return err("not_found");
+  if (!siteAdmin(actor)) return err("forbidden");
+  const declared = await declaredFeature(app, found.repo);
+  if (!declared.ok || declared.value === undefined) return err("not_a_feature");
+  if (absorb(app.db, found.record.id, actor.id, declared.value.name, declared.value.page)) {
+    app.bus.append({ kind: "app.absorbed", repoId: found.repo.id, actorId: actor.id, payload: { slug, name: declared.value.name } });
+    await redeployAll(app, found.record, found.repo);
+  }
+  return ok(viewOf(found.record, found.repo, app, declared.value, null));
+}
+
+/** Put an absorbed app back as an ordinary app. Its settings are kept for the next absorb. */
+export async function unabsorbApp(app: App, actor: User | undefined, slug: string): Promise<Result<FeatureView, FeatureError>> {
+  const found = readable(app, actor, slug);
+  if (found === undefined) return err("not_found");
+  if (!siteAdmin(actor)) return err("forbidden");
+  if (!unabsorb(app.db, found.record.id)) return err("not_absorbed");
+  app.bus.append({ kind: "app.unabsorbed", repoId: found.repo.id, actorId: actor.id, payload: { slug } });
+  await redeployAll(app, found.record, found.repo);
+  const declared = await declaredFeature(app, found.repo);
+  return ok(viewOf(found.record, found.repo, app, declared.ok ? declared.value : undefined, declared.ok ? null : declared.error));
+}
+
+/**
+ * Change some of an absorbed app's settings. Every value is checked against
+ * its declaration first; one that does not fit refuses the whole change,
+ * naming it. Kept values go to the app in a new process, as an env change does.
+ */
+export async function changeFeatureSettings(
+  app: App,
+  actor: User | undefined,
+  slug: string,
+  values: Readonly<Record<string, unknown>>,
+): Promise<Result<FeatureView, { error: FeatureError; message: string }>> {
+  const refuse = (error: FeatureError, message: string) => err({ error, message });
+  const found = readable(app, actor, slug);
+  if (found === undefined) return refuse("not_found", "No such app.");
+  if (!siteAdmin(actor)) return refuse("forbidden", "Only a site admin changes a feature's settings.");
+  if (getAbsorbed(app.db, found.record.id) === undefined) return refuse("not_absorbed", "Absorb the app first.");
+  const declared = await declaredFeature(app, found.repo);
+  if (!declared.ok || declared.value === undefined) return refuse("not_a_feature", "The app no longer declares a feature.");
+  const changes = new Map<string, string>();
+  for (const [key, raw] of Object.entries(values)) {
+    const spec = declared.value.settings.find((s) => s.key === key);
+    if (spec === undefined) return refuse("invalid_setting", `${key} is not one of this feature's settings.`);
+    const checked = checkSetting(spec, raw);
+    if (!checked.ok) return refuse("invalid_setting", `${spec.label} ${checked.error}.`);
+    changes.set(key, checked.value);
+  }
+  const before = featureSettings(app.db, found.record.id);
+  const changed = [...changes].filter(([k, v]) => (before.get(k) ?? declared.value!.settings.find((s) => s.key === k)!.default) !== v);
+  if (changes.size > 0) keepSettings(app.db, found.record.id, changes, actor.id);
+  if (changed.length > 0) {
+    app.bus.append({
+      kind: "app.feature_settings",
+      repoId: found.repo.id,
+      actorId: actor.id,
+      payload: { slug, keys: changed.map(([k]) => k) },
+    });
+    await redeployAll(app, found.record, found.repo);
+  }
+  return ok(viewOf(found.record, found.repo, app, declared.value, null));
+}

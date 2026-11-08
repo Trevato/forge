@@ -15,13 +15,23 @@ import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { NOTE_EMPTY, NOTE_FAILED } from "./note_words.ts";
 
+/** What the panel says about a preview's freshness (#9111): the pill's words, in one table. */
+export const FRESHNESS_WORDS = {
+  merged: "Merged: this preview shows the pull as it landed",
+  closed: "Closed without landing",
+  deploying: "A newer push is deploying",
+  behind: "Shows an older push than the pull's newest",
+} as const;
+
 /** The client, as plain source: no `eval`, no inline handlers. */
 export const toolbarJs = `(function () {
   if (window.__forgeToolbar) return;
   window.__forgeToolbar = true;
   var me = document.currentScript;
-  var home = "/";
-  try { home = new URL(me.src).origin + "/"; } catch (e) {}
+  // The forge's origin comes from data-forge: the script itself is served from the app's own host.
+  var fo = "";
+  try { fo = new URL((me.dataset || {}).forge || "").origin; } catch (e) {}
+  var home = fo ? fo + "/" : "/";
   var host = document.createElement("div");
   host.id = "forge-toolbar";
   host.style.cssText = "all:initial;position:fixed;z-index:2147483647";
@@ -70,21 +80,42 @@ export const toolbarJs = `(function () {
   }
   if (d.app) line(d.app, true);
   if (d.env === "production") line("Production");
-  else if (d.pull) line("Preview of pull #" + d.pull);
+  var LS = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+  var pullHref = "";
+  // The pull this preview shows, one tap away: built from the script's own origin, never from page text.
+  if (d.env !== "production" && /^\\d{1,9}$/.test(d.pull || "") && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo || "")) {
+    try { pullHref = new URL("/" + d.repo + "/pulls/" + d.pull, fo).href; } catch (e) {}
+  }
+  if (d.env === "production") {}
+  else if (pullHref) {
+    var pl = document.createElement("a");
+    pl.textContent = "Preview of pull #" + d.pull;
+    pl.href = pullHref;
+    pl.rel = "noopener";
+    pl.style.cssText = LS;
+    panel.appendChild(pl);
+  } else if (d.pull) line("Preview of pull #" + d.pull);
   if (d.title) line(d.title);
+  // Whether this is the pull as it stands now; an open, current preview says nothing.
+  var W = ${JSON.stringify(FRESHNESS_WORDS)};
+  var freshness = d.state === "merged" ? W.merged
+    : d.state === "closed" ? W.closed
+    : d.deploying ? W.deploying
+    : d.behind ? W.behind : "";
+  if (freshness) line(freshness);
   var link = document.createElement("a");
   link.textContent = "Home";
   link.rel = "noopener";
-  link.style.cssText = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+  link.style.cssText = LS;
+  var hasHome = false;
   try {
     var target = new URL(home);
-    if (target.origin === new URL(me.src).origin) link.href = target.href;
+    if (target.origin === fo) { link.href = target.href; hasHome = true; }
   } catch (e) {}
   // Tell the builders: one box, one button, no account. The note goes to
   // this app's own host (same-origin, so the sender's cookie goes along) and
   // the answer is a live status the panel keeps fresh while it is open.
-  var forgeOrigin = "";
-  try { forgeOrigin = new URL(me.src).origin; } catch (e) {}
+  var forgeOrigin = fo;
   var tellBox = document.createElement("form");
   tellBox.setAttribute("aria-label", "Tell the builders");
   tellBox.style.cssText = "display:flex;flex-direction:column;gap:6px;margin:6px 0";
@@ -100,6 +131,16 @@ export const toolbarJs = `(function () {
   tellText.required = true;
   tellText.setAttribute("aria-label", "Your note to the builders");
   tellText.style.cssText = "box-sizing:border-box;width:100%;font:16px/1.3 system-ui,sans-serif;padding:8px;border-radius:8px;border:1px solid #57606a;background:#0d1117;color:#fff;resize:vertical";
+  var tellPicRow = document.createElement("label");
+  tellPicRow.style.cssText = "display:flex;align-items:center;gap:8px;min-height:44px";
+  var tellPic = document.createElement("input");
+  tellPic.type = "checkbox";
+  tellPic.checked = false;
+  tellPic.style.cssText = "width:20px;height:20px;margin:0";
+  var tellPicText = document.createElement("span");
+  tellPicText.textContent = "Include a picture of this page, visible to anyone who can read the report";
+  tellPicRow.appendChild(tellPic);
+  tellPicRow.appendChild(tellPicText);
   var tellGo = document.createElement("button");
   tellGo.type = "submit";
   tellGo.textContent = "Send";
@@ -111,9 +152,11 @@ export const toolbarJs = `(function () {
   mine.style.cssText = "display:flex;flex-direction:column;gap:6px";
   ring(tellGo);
   ring(tellText);
+  ring(tellPic);
   tellBox.appendChild(tellHead);
   tellBox.appendChild(tellHint);
   tellBox.appendChild(tellText);
+  tellBox.appendChild(tellPicRow);
   tellBox.appendChild(tellGo);
   tellBox.appendChild(tellSay);
   tellBox.appendChild(mine);
@@ -171,25 +214,86 @@ export const toolbarJs = `(function () {
       })
       .catch(function () {});
   }
+  var PICTURE_MAX = 2097152;
+  function shoot() {
+    return new Promise(function (resolve) {
+      var done = false;
+      function end(blob) { if (!done) { done = true; resolve(blob || null); } }
+      setTimeout(end, 8000);
+      try {
+        var w = window.innerWidth, h = window.innerHeight;
+        var src = document.documentElement;
+        var all = src.querySelectorAll("*");
+        var copy = src.cloneNode(true);
+        var twins = copy.querySelectorAll("*");
+        for (var i = 0; i < twins.length && i < all.length; i++) {
+          var t = twins[i], tag = t.tagName;
+          if (tag === "SCRIPT" || tag === "NOSCRIPT" || tag === "IFRAME" || t.id === "forge-toolbar") { t.setAttribute("data-drop", "1"); continue; }
+          if (i > 4000) { t.setAttribute("data-drop", "1"); continue; }
+          var cs = getComputedStyle(all[i]), css = "";
+          for (var k = 0; k < cs.length; k++) css += cs[k] + ":" + cs.getPropertyValue(cs[k]) + ";";
+          t.setAttribute("style", css);
+        }
+        copy.querySelectorAll("[data-drop]").forEach(function (n) { n.remove(); });
+        var cb = getComputedStyle(src);
+        copy.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        copy.setAttribute("style", "margin:0;background:" + (cb.backgroundColor || "#fff") + ";width:" + src.scrollWidth + "px;transform:translate(" + (-window.scrollX) + "px," + (-window.scrollY) + "px)");
+        var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><foreignObject width="100%" height="100%">' + new XMLSerializer().serializeToString(copy) + "</foreignObject></svg>";
+        var img = new Image();
+        img.onload = function () {
+          try {
+            var c = document.createElement("canvas");
+            c.width = w; c.height = h;
+            c.getContext("2d").drawImage(img, 0, 0);
+            c.toBlob(function (png) {
+              if (png && png.size <= PICTURE_MAX) return end(png);
+              c.toBlob(function (jpg) { end(jpg && jpg.size <= PICTURE_MAX ? jpg : null); }, "image/jpeg", 0.7);
+            }, "image/png");
+          } catch (e) { end(); }
+        };
+        img.onerror = function () { end(); };
+        img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+      } catch (e) { end(); }
+    });
+  }
   tellBox.addEventListener("submit", function (e) {
     e.preventDefault();
     var text = tellText.value.trim();
     if (!text) { tellSay.textContent = ${JSON.stringify(NOTE_EMPTY)}; return; }
     if (tellGo.disabled) return;
+    var wantPicture = tellPic.checked === true;
     tellGo.disabled = true;
     tellGo.setAttribute("aria-busy", "true");
     tellGo.style.opacity = ".6";
     function idle() { tellGo.disabled = false; tellGo.removeAttribute("aria-busy"); tellGo.style.opacity = "1"; }
-    call("/__forge/note", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight })
+    var taken = wantPicture ? shoot() : Promise.resolve(null);
+    taken.then(function (blob) {
+      return call("/__forge/note", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight })
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (a) {
+          if (!a.ok || !blob || !a.j || !a.j.note || !a.j.note.id) return { a: a, pic: false };
+          return call("/__forge/note/picture?note=" + encodeURIComponent(a.j.note.id), {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": blob.type },
+            body: blob
+          }).then(function (r) { return { a: a, pic: r.ok }; }, function () { return { a: a, pic: false }; });
+        });
     })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (a) {
+      .then(function (x) {
         idle();
-        if (a.ok) { tellText.value = ""; tellSay.textContent = "Sent. The builders will see it."; refresh(true); }
+        var a = x.a;
+        if (a.ok) {
+          tellText.value = "";
+          tellPic.checked = false;
+          tellSay.textContent = wantPicture && x.pic !== true ? "Sent, without the picture. The builders will see it." : "Sent. The builders will see it.";
+          refresh(true);
+        }
         else tellSay.textContent = a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};
       })
       .catch(function () { idle(); tellSay.textContent = ${JSON.stringify(NOTE_FAILED)}; });
@@ -207,7 +311,7 @@ export const toolbarJs = `(function () {
   var crew = document.createElement("div");
   crew.setAttribute("aria-live", "polite");
   panel.appendChild(crew);
-  panel.appendChild(link);
+  if (hasHome) panel.appendChild(link);
   // The actions live on a forge page, opened in a tab of its own: the bar
   // posts nothing and reads nothing of this page beyond its address.
   if (d.repo && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo)) {
@@ -215,7 +319,7 @@ export const toolbarJs = `(function () {
     act.textContent = "Comment, tell, make it yours";
     act.target = "_blank";
     act.rel = "noopener noreferrer";
-    act.style.cssText = "color:#8ab4ff;text-decoration:none;margin-top:4px";
+    act.style.cssText = LS + ";margin-top:4px";
     try {
       var dest = new URL(home);
       dest.pathname = "/" + d.repo + "/toolbar";
@@ -233,7 +337,7 @@ export const toolbarJs = `(function () {
       .then(function (r) { return r.ok ? r.json() : {}; })
       .then(function (c) {
         if (!c) return;
-        var forge = new URL(me.src).origin;
+        var forge = fo;
         // Signed in, the crew can be told from here. The form is the forge's
         // own page, on its own origin, with its own CSRF check: the app's
         // page only carries the address and the pull to it.
@@ -247,9 +351,24 @@ export const toolbarJs = `(function () {
             ta.target = "_blank";
             ta.rel = "noopener";
             ta.href = t.href;
-            ta.style.cssText = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+            ta.style.cssText = LS;
             crew.appendChild(ta);
           }
+        }
+        // The other side: origin plus this path as text, so "//" cannot leave it.
+        var sd = c.side;
+        if (sd && typeof sd.label === "string" && typeof sd.url === "string") {
+          try {
+            var so = new URL(sd.url);
+            if (so.protocol === "https:" || so.protocol === location.protocol) {
+              var sa = document.createElement("a");
+              sa.textContent = sd.label;
+              sa.rel = "noopener";
+              sa.href = so.origin + location.pathname + location.search;
+              sa.style.cssText = LS;
+              crew.appendChild(sa);
+            }
+          } catch (e) {}
         }
         if (typeof c.who !== "string" || typeof c.url !== "string") return;
         var u = new URL(c.url);
@@ -258,7 +377,7 @@ export const toolbarJs = `(function () {
         a.textContent = c.who + " is working on this";
         a.rel = "noopener";
         a.href = u.href;
-        a.style.cssText = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+        a.style.cssText = LS;
         crew.appendChild(a);
       })
       .catch(function () {});
@@ -273,10 +392,14 @@ export const toolbarJs = `(function () {
     var saved = window.localStorage.getItem(KEY);
     if (CORNERS.indexOf(saved) >= 0) corner = saved;
   } catch (e) {}
+  var NARROW_MAX = 600, CAMERA_TOP = "48px";
   function place(c) {
     corner = c;
     var top = c.charAt(0) === "t", left = c.charAt(1) === "l";
-    host.style.top = top ? "12px" : "auto";
+    var narrow = top && window.innerWidth <= NARROW_MAX;
+    host.style.top = top ? (narrow ? CAMERA_TOP : "12px") : "auto";
+    // The cssText cap assumes a pill 12px down; 36px lower, the cap drops by as much.
+    panel.style.maxHeight = narrow ? "min(70vh,calc(100vh - 124px))" : "";
     host.style.bottom = top ? "auto" : "12px";
     host.style.left = left ? "12px" : "auto";
     host.style.right = left ? "auto" : "12px";
@@ -347,8 +470,32 @@ export const toolbarJs = `(function () {
     pill.setAttribute("aria-expanded", open ? "true" : "false");
     pill.style.opacity = open ? "1" : ".85";
     watch(open);
-    if (open) panel.focus();
+    if (open) {
+      // Focus goes to the panel's first link; a bare panel only when it has none.
+      var first = stops().filter(function (el) { return el.tagName === "A"; })[0];
+      (first || panel).focus();
+    }
   }
+  // The panel's own tab stops, in order (read from the panel, never the page).
+  function stops() {
+    var all = panel.getElementsByTagName ? Array.prototype.slice.call(panel.getElementsByTagName("*")) : [];
+    return all.filter(function (el) {
+      var t = el.tagName;
+      return (t === "A" && el.hasAttribute("href")) || ((t === "BUTTON" || t === "INPUT" || t === "TEXTAREA") && !el.disabled);
+    });
+  }
+  // Tab cycles inside the open panel: the last stop wraps to the first, and back.
+  panel.addEventListener("keydown", function (e) {
+    if (e.key !== "Tab") return;
+    var s = stops();
+    if (!s.length) return;
+    var at = root.activeElement;
+    var edge = e.shiftKey ? s[0] : s[s.length - 1];
+    if (at === edge || at === panel) {
+      e.preventDefault();
+      (e.shiftKey ? s[s.length - 1] : s[0]).focus();
+    }
+  });
   pill.addEventListener("click", function () {
     if (Date.now() < until) return;
     set(panel.hidden);
@@ -377,6 +524,11 @@ const name = `toolbar-${hash.slice(0, 16)}`;
 /** The path the script is served from on the forge, content-addressed. */
 export const TOOLBAR_PATH = `/assets/${name}.js`;
 export const TOOLBAR_NAME = name;
+
+/** The same script on an app's own host, where a strict `script-src 'self'` allows it. */
+export const TOOLBAR_ASSET_PATH = `/__forge/${name}.js`;
+/** Every path under this prefix on an app host is the forge's, whether or not it names the script. */
+export const TOOLBAR_ASSET_PREFIX = "/__forge/toolbar";
 
 /** The forge's answer for the script: immutable, because its name is its hash. */
 export function toolbarResponse(request: Request): Response {
@@ -428,6 +580,12 @@ export type PillWhere = {
   env: string;
   pull?: number;
   title?: string;
+  /** Whether the pull is open, merged or closed; for a reader of the pull only. */
+  state?: "open" | "merged" | "closed";
+  /** The preview runs a commit that is not the pull's head (and none is deploying). */
+  behind?: boolean;
+  /** A newer commit is being deployed now. */
+  deploying?: boolean;
 };
 
 /** `text` safe inside a double-quoted HTML attribute. */
@@ -440,8 +598,32 @@ export function escapeAttr(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * The nonce a response's own Content-Security-Policy admits scripts by: from
+ * `script-src`, or `default-src` when a policy has no `script-src`. Only a
+ * well-formed base64 value is returned; anything else is no nonce.
+ */
+export function cspNonce(policy: string | null): string | undefined {
+  if (policy === null) return undefined;
+  for (const one of policy.split(",")) {
+    const directives = one.split(";").map((d) => d.trim().split(/\s+/));
+    const names = (n: string) => directives.find((d) => d[0]?.toLowerCase() === n);
+    const chosen = names("script-src") ?? names("default-src");
+    for (const source of chosen?.slice(1) ?? []) {
+      const m = /^'nonce-([A-Za-z0-9+/_-]+={0,2})'$/i.exec(source);
+      if (m) return m[1];
+    }
+  }
+  return undefined;
+}
+
 /** The script tag, with where-you-are as escaped data attributes. */
-export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string): string {
+export function toolbarTag(
+  forgeUrl: string,
+  where?: PillWhere,
+  proof?: string,
+  nonce?: string,
+): string {
   const data =
     where === undefined
       ? ""
@@ -451,12 +633,29 @@ export function toolbarTag(forgeUrl: string, where?: PillWhere, proof?: string):
           ["env", where.env],
           ["pull", where.pull === undefined ? undefined : String(where.pull)],
           ["title", where.title],
+          ["state", where.state],
+          ["behind", where.behind === true ? "1" : undefined],
+          ["deploying", where.deploying === true ? "1" : undefined],
         ]
           .filter((pair): pair is [string, string] => pair[1] !== undefined)
           .map(([k, v]) => ` data-${k}="${escapeAttr(v)}"`)
           .join("");
   const token = proof === undefined ? "" : ` data-proof="${escapeAttr(proof)}"`;
-  return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data}${token} defer></script>`;
+  const forge = ` data-forge="${escapeAttr(new URL(forgeUrl).origin)}"`;
+  const admitted = nonce === undefined ? "" : ` nonce="${escapeAttr(nonce)}"`;
+  return `<script src="${TOOLBAR_ASSET_PATH}"${admitted}${forge}${data}${token} defer></script>`;
+}
+
+/**
+ * The byte offset of the last `</body`, any case, or -1. Scanned from the end
+ * so a page pays for its tail, not for a lowercase copy of the whole body.
+ */
+function lastBodyClose(buffer: Buffer): number {
+  for (let i = buffer.length - 6; i >= 0; i--) {
+    if (buffer[i] !== 0x3c || buffer[i + 1] !== 0x2f) continue;
+    if (buffer.toString("latin1", i + 2, i + 6).toLowerCase() === "body") return i;
+  }
+  return -1;
 }
 
 /** `bytes` with the pill's tag before the last `</body>`, or at the end. */
@@ -465,11 +664,11 @@ export function withToolbar(
   forgeUrl: string,
   where?: PillWhere,
   proof?: string,
+  nonce?: string,
 ): Uint8Array<ArrayBuffer> {
-  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof));
+  const tag = Buffer.from(toolbarTag(forgeUrl, where, proof, nonce));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  // latin1 is one character per byte, so an index in it is a byte offset.
-  const at = buffer.toString("latin1").toLowerCase().lastIndexOf("</body");
+  const at = lastBodyClose(buffer);
   const cut = at < 0 ? buffer.length : at;
   return Buffer.concat([buffer.subarray(0, cut), tag, buffer.subarray(cut)]);
 }

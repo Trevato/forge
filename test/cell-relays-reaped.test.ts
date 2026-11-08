@@ -91,6 +91,7 @@ describe.skipIf(noCells)("cells: no relay outlives its cell", () => {
       seen = relays(mark).length;
       await Bun.sleep(50);
     }
+    if (seen === 0) throw new Error(`never came: still waiting while seen === 0`);
     const result = await running;
     expect(result.ok).toBe(true);
     expect(seen).toBeGreaterThan(0);

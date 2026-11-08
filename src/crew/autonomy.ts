@@ -12,6 +12,10 @@
  * repository's origin.
  */
 
+import { tickBets } from "../actions/bets.ts";
+import { betsInUse } from "../core/bets.ts";
+import { onlyListDocs, resolveListConflicts } from "../actions/list-conflicts.ts";
+import { closedToday, closeStale } from "./stale_pulls.ts";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { ceilingReached, forgeCeiling } from "../flow/ceiling.ts";
@@ -22,16 +26,21 @@ import {
   setIssueState,
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
-import { gateCandidate, releaseOnLand } from "../checks/landing.ts";
+import { adoptGate, gateCandidate, releaseOnLand } from "../checks/landing.ts";
+import { queueStore } from "../checks/queue_store.ts";
 import { addLearned } from "../checks/learned.ts";
-import { enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords } from "../checks/queue.ts";
+import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
-import { queueDepth } from "../core/capacity.ts";
+import { queueBatch, queueDepth, smallShare } from "../core/capacity.ts";
+import { shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
+import { crewFor as crewForIssue, passedWords, pickFilter, routable } from "./pick_filter.ts";
+import { tickPolish } from "./polish_cap.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
-import { CLOSED_NOTE } from "../core/done_on_main.ts";
+import { CLOSED_NOTE, leftNote, reopenedByPerson, unticked } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { carriesUpstream } from "../actions/upstream_follow.ts";
+import { sourceHeld } from "./source_held.ts";
 import {
   listCrewRoles,
   type Agent,
@@ -39,6 +48,10 @@ import {
   crewRole,
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
+import { firstAt } from "../core/first.ts";
+import { pickOrder } from "../core/next_up.ts";
+import { ranksInRepo } from "../core/rank.ts";
+import { ensurePlanner } from "./planner.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import {
   type Decision,
@@ -53,11 +66,10 @@ import { decideAndRecord } from "./ledger.ts";
 import { sentinelTick } from "./sentinel.ts";
 import { triageTick } from "./triage.ts";
 import { liveTriage, none as noTriage, tickFields } from "./livetriage.ts";
-import { wallOf, wallSentence } from "../contract/policy.ts";
+import { wallOf, wallPlain, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
   getIssueById,
-  LIST_LIMIT_MAX,
   listComments,
   MAX_TITLE,
   type Issue,
@@ -65,7 +77,7 @@ import {
 import {
   getPull,
   closesFromBody,
-  listPulls,
+  listOpenPulls,
   type MergePullError,
   type Pull,
   pullDir,
@@ -95,25 +107,25 @@ import { grantedAccounts } from "../core/subscriptions.ts";
 import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
+import { heldByGateAlone, releaseFromGate } from "./release_later.ts";
+import { staggeredUntil } from "./ceiling_stagger.ts";
+import { crewWeekFor, weekFor, weekScope } from "./week_read.ts";
+import { announceGovernor, governorFor } from "./governed.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
+import { REPEAT_NOTE } from "./repeat_note.ts";
 import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
 import { holdHot, hotFiles, hotWords, learnPullFiles } from "./hot_files.ts";
-import { NO_PULL, shunnedBy, stallReason, unstickOwed } from "./stalls.ts";
+import { landedUnder, NO_PULL, stallReason, unstickOwed } from "./stalls.ts";
 import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { repoDir } from "../git/repos.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
 import { removedBy, retiredNames } from "./retired.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
-  PARK_NOTE,
-  PARK_STRIKES,
-  PLANNER_HINT,
   parkedCount as countParks,
   parkedTwice,
-  parkReason,
-  parkReasons,
 } from "./parks.ts";
 import { reserveOf, reserveWords, short } from "./reserve.ts";
 import { createLog } from "../kernel/log.ts";
@@ -123,15 +135,30 @@ import {
   landsOnItsOwn,
   markReaders,
 } from "./direct.ts";
+import { foldsIn, needsCrewReview } from "../core/trusted_sources.ts";
+import { foldWall } from "./fold_walls.ts";
+import { warnExpiring } from "./fold_in.ts";
 import { crewOffInPreview } from "./preview.ts";
 import { approvedOnHead, finishApproved, finishFields } from "./finishing.ts";
+import { recheckRedApproved } from "./red_approved.ts";
+import { sweepStaleReds } from "./stale_reds.ts";
+import { sweepStranded } from "./stranded.ts";
+import { parkPull, strikeNote } from "./park_pull.ts";
+import { keepVerdict } from "../flow/culprits.ts";
+import { sweepRepeats } from "./repeat_checks.ts";
+import { breathe } from "../kernel/breathe.ts";
+import { keepBatch } from "../flow/red_batches.ts";
+import { recordQueueFlakes } from "../checks/flake.ts";
 import { readVitals, vitalsMisses, vitalsWords } from "../flow/vitals.ts";
 import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
+import { passLanded } from "./box_pass.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 import { lastWaits, noteWaits, tallyWaits, type Wait, waitWords } from "./waits.ts";
 import { bootCounts } from "../kernel/boots.ts";
 
 const log = createLog("autonomy");
+
+export { parkPull };
 
 export const AUTONOMY_TICK_MS = 60_000;
 /**
@@ -277,6 +304,19 @@ export function slottedRuns(
   );
 }
 
+/**
+ * The builders with nothing in flight here. One agent runs one thing at a
+ * time, so `active` on the tick line climbs to at most
+ * min(slots, startable, idle builders + active) (#7006).
+ */
+export function idleBuilders(
+  active: readonly Run[],
+  crew: readonly { readonly agent: Agent; readonly role: CrewRole }[],
+): number {
+  const busy = new Set(active.map((r) => r.actorId));
+  return crew.filter((c) => c.role === "builder" && !busy.has(c.agent.user.id)).length;
+}
+
 export function autonomyStatus(
   app: App,
   repo: Repo,
@@ -327,25 +367,106 @@ function meanRunUsd(db: App["db"], repoId: string): number {
   );
 }
 
-/** The crew's pace here: the operator's slots, held to what the windows have left. */
-export function repoPace(app: App, repo: Repo, now = new Date()): Pace {
+/** The issues each repository picked in this tick, by repository id: their runs may not show yet. */
+export type TickPicks = ReadonlyMap<string, ReadonlySet<string>>;
+
+/** The crew's pace here: the operator's slots, held to what the windows have left and to the governor's. */
+export function repoPace(app: App, repo: Repo, now = new Date(), crew = true, picked: TickPicks = new Map()): Pace {
   const accounts = grantedAccounts(app.db, repo.id, repo.ownerId).flatMap(
     (a) => {
       const s = standing(app.db, a.id, now);
       return s === undefined ? [] : [{ name: a.name, standing: s }];
     },
   );
-  return pace(accounts, repo.autonomySlots, meanRunUsd(app.db, repo.id), now);
+  const paced = pace(accounts, repo.autonomySlots, meanRunUsd(app.db, repo.id), now);
+  const governed = governorFor(app, repo, now).slots;
+  const limited = governed < paced.slots ? { ...paced, slots: governed } : paced;
+  // Finishing and rework run ahead of new picks: only a new pick waits on the crew's week and the midnight spread.
+  if (!crew) return limited;
+  const until = staggeredUntil(app.db, repo, now);
+  if (until !== null)
+    return { ...limited, slots: 0, reason: `0 of ${repo.autonomySlots} slots until ${until.toISOString().slice(11, 16)} UTC: the daily ceilings reset together and each repository restarts at its own time` };
+  // The week is one budget for the whole crew on these accounts, and the repository's own slots are limits inside it (#8989).
+  const week = crewWeekFor(app, repo, now);
+  if (week === null) return limited;
+  const scope = weekScope(app, repo, now);
+  let others = 0;
+  for (const other of listAutonomousRepos(app.db)) {
+    if (other.id === repo.id || other.autonomy !== "autonomous" || other.archivedAt !== null) continue;
+    if (weekScope(app, other, now) !== scope) continue;
+    const active = activeRuns(app, other.id);
+    others += slottedRuns(active, listCrewRoles(app.db, other.id)).length;
+    // Picked earlier in this tick and not yet running: a slot of the crew's week already spent.
+    const running = new Set(active.map((r) => r.issueId));
+    others += [...(picked.get(other.id) ?? [])].filter((id) => !running.has(id)).length;
+  }
+  const here = Math.max(0, week.slots - others);
+  return here < limited.slots
+    ? { ...limited, slots: here, reason: `${here} of ${repo.autonomySlots} slots: the whole crew has ${week.slots} for the week, ${others} running elsewhere. ${week.sentence}` }
+    : limited;
+}
+
+/**
+ * Behind the week's pace with builders idle and nothing startable, the next
+ * gated issue (the lowest number the Later gate alone holds) is released:
+ * one per look, each logged and noted on the issue with why (#8695).
+ */
+function releaseForPace(app: App, repo: Repo, by: User, slotted: number, startable: number, now: Date): number | undefined {
+  const gated = heldByGateAlone(app.db, repo.id);
+  const week = weekFor(app, repo, now, { idleSlots: Math.max(0, repo.autonomySlots - slotted), startable, gated: gated.length });
+  const next = gated[0];
+  if (week === null || !week.release || next === undefined) return undefined;
+  const [number] = releaseFromGate(app.db, repo.id, [next.number], by.id);
+  if (number === undefined) return undefined;
+  const why = `Released from Later to use the week's subscription: ${week.sentence}`;
+  log.info("released", { repo: `${repo.ownerName}/${repo.name}`, issue: number, why });
+  const issue = getIssueById(app.db, next.id);
+  if (issue !== undefined) addComment(app, by, repo, issue, why);
+  return number;
 }
 
 /** The builder slots free now: none while paused, else the paced slots less what is slotted. */
 function freeSlots(app: App, repo: Repo, now: Date): number {
   if (autonomyStatus(app, repo, now).paused !== null) return 0;
   const slotted = slottedRuns(activeRuns(app, repo.id), listCrewRoles(app.db, repo.id));
-  return Math.max(0, repoPace(app, repo, now).slots - slotted.length);
+  return Math.max(0, repoPace(app, repo, now, false).slots - slotted.length);
 }
 
-export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "idle";
+/** The pickable issues in slot order: the order Next up shows, small work held to its share (#7571). */
+export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: readonly Run[], slots: number, picked: ReadonlySet<string> = new Set(), now: Date = new Date()): Ranked[] {
+  const issues = ready.map((r) => r.issue);
+  const small = smallIssues(app.db, issues);
+  const first = firstAt(app.db, issues.map((i) => i.id));
+  const ranked = ranksInRepo(app.db, repo.id);
+  // Issues picked earlier in this tick hold their share before their runs show (#8729).
+  const running = smallOfIds(app.db, [...new Set([...slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])), ...picked])]);
+  const { allowed } = pickFilter(app, repo, ready, now);
+  // The order is the one Next up shows (#8826): ranked by place, then the ready order.
+  return slotOrder(
+    pickOrder(allowed, ranked, (r) => r.issue.id),
+    (r) => ({
+      ranked: ranked.has(r.issue.id),
+      small: small.has(r.issue.id) && !first.has(r.issue.id),
+    }),
+    running,
+    smallCap(slots, smallShare(app.db)),
+  );
+}
+
+/** Slotted runs on small issues, and the slots they may hold (#7571). */
+export function smallShareOf(app: App, repo: Repo, now = new Date()): { running: number; cap: number } {
+  const slotted = slottedRuns(activeRuns(app, repo.id), listCrewRoles(app.db, repo.id));
+  const running = smallOfIds(app.db, slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])));
+  return { running, cap: smallCap(repoPace(app, repo, now).slots, smallShare(app.db)) };
+}
+
+/** `1/2`: {@link smallShareOf} as the tick line, the terminal and the studio print it. */
+export function smallShareWords(app: App, repo: Repo, now = new Date()): string {
+  const { running, cap } = smallShareOf(app, repo, now);
+  return shareWords(running, cap);
+}
+
+export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "released" | "idle";
 
 /**
  * One turn of the loop for one repository. Returns what it did, for the
@@ -356,8 +477,34 @@ export async function driveRepo(
   app: App,
   repo: Repo,
   now = new Date(),
+  picked: Map<string, Set<string>> = new Map(),
+): Promise<Drove> {
+  // One start per free builder slot (#8729). Each pass re-reads the ceiling,
+  // the paced slots and the held filters, so a start the dispatcher refused
+  // or a spend that reached the wall ends the tick's starts there.
+  // An issue picked this tick may not have its run yet: it is kept out of the
+  // next pass and counted against the slots until the run shows.
+  const taken = new Set<string>();
+  picked.set(repo.id, taken);
+  const did = await driveOnce(app, repo, now, taken, picked);
+  if (did !== "picked") return did;
+  for (let n = 1; n < Math.max(1, repo.autonomySlots); n++) {
+    const next = await driveOnce(app, getRepoById(app.db, repo.id) ?? repo, now, taken, picked);
+    if (next !== "picked") break;
+  }
+  return did;
+}
+
+async function driveOnce(
+  app: App,
+  repo: Repo,
+  now: Date,
+  taken: Set<string>,
+  picked: TickPicks,
 ): Promise<Drove> {
   if (repo.autonomy === "off") return "off";
+  tickBets(app, repo, now);
+  tickPolish(app, repo, now);
   const status = autonomyStatus(app, repo, now);
   if (status.paused !== null) return "paused";
   const by = getUserById(app.db, repo.autonomyBy!);
@@ -365,9 +512,12 @@ export async function driveRepo(
   const crew = listCrewRoles(app.db, repo.id);
   const active = activeRuns(app, repo.id);
   const slotted = slottedRuns(active, crew);
+  // Picked earlier in this tick and not yet running: still a slot spent.
+  const running = new Set(active.map((r) => r.issueId));
+  const pending = [...taken].filter((id) => !running.has(id)).length;
   // Slots follow the subscriptions' remaining windows, never past the
   // operator's; at a wall nothing new starts until the reset.
-  const paced = repoPace(app, repo, now);
+  const paced = repoPace(app, repo, now, true, picked);
   if (paced.slots === 0 && slotted.length === 0) return "waiting";
   // The files the open pulls touch, read before the sort: a build that
   // names a hot one waits for its pile to drain (#5934).
@@ -380,9 +530,22 @@ export async function driveRepo(
   const sorted = () => heldBy(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
   let held = sorted();
   if (freeParked(app, repo, by, held) > 0) held = sorted();
-  holdHot(repo.id, held.by.hot_file, now);
-  const ready = held.startable;
-  if (slotted.length >= paced.slots) {
+  // An issue a landing left open with boxes is given the reviewer's pass once (#8682).
+  await passLanded(app, repo, held.by.landed);
+  holdHot(
+    repo.id,
+    held.by.hot_file,
+    now,
+    new Map(
+      [...held.pinned].map(([n, h]) => [n, { path: h.path, byName: getUserById(app.db, h.by)?.username ?? "someone" }]),
+    ),
+    held.relieving,
+  );
+  const ready = held.startable.filter((r) => !taken.has(r.issue.id));
+  const used = slotted.length + pending;
+  if (used < paced.slots && releaseForPace(app, repo, by, used, ready.length, now) !== undefined)
+    return "released";
+  if (used >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
     // the reserve is short — counted, never assumed: a full crew with a
     // full reserve is not a reason to plan (#1097, #3237).
@@ -397,19 +560,12 @@ export async function driveRepo(
       inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
   // A builder that stalled an issue within the hour leaves it to the
   // others; one no builder may take now is skipped, not waited on (#4073).
-  const crewFor = (issue: Issue) => {
-    const shunned = shunnedBy(app.db, repo, issue.id, now);
-    return crew.filter((c) => c.role !== "builder" || !shunned.has(c.agent.user.id));
-  };
-  const pickable = (
-    await withoutRetired(
-      app,
-      repo,
-      ready.filter((r) => crewFor(r.issue).some((c) => c.role === "builder")),
-    )
-  );
-  const next = await nextOf(app, repo, pickable);
+  const crewFor = (issue: Issue) => crewForIssue(app, repo, issue.id, crew, now);
+  const pickable = await withoutRetired(app, repo, routable(app, repo, ready, crew, now).kept);
+  // The roadmap first, and small issues held to their share of the slots (#7571).
+  const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, slotted, paced.slots, taken, now));
   if (next !== undefined) {
+    taken.add(next.issue.id);
     const routed = await routeIssue(app, repo, next.issue, crewFor(next.issue), inFlight);
     if (!routed) return "paused";
     const builder = routed.builder;
@@ -420,7 +576,7 @@ export async function driveRepo(
       if (!cleared.ok) return "idle";
     }
     const current = getIssueById(app.db, next.issue.id) ?? next.issue;
-    const assigned = assignIssue(app, by, repo, current, builder.user);
+    const assigned = assignIssue(app, by, repo, current, builder.user, undefined, true);
     if (!assigned.ok) {
       log.warn("could not assign the next ready issue", {
         repo: `${repo.ownerName}/${repo.name}`,
@@ -493,6 +649,8 @@ export function freeStalled(app: App, repo: Repo, by: User, held: Held): number 
       )
       .get(issue.id);
     if (!last || last.state === "queued" || last.state === "running") continue;
+    // A run its pull landed under left the work on the base: no park, no strike (#8481).
+    if (landedUnder(last)) continue;
     const who = last.actor === null ? undefined : getUserById(app.db, last.actor)?.username;
     if (parkAs(app, by, repo, issue, stallReason(who, last.summary || last.state), "unstuck"))
       freed++;
@@ -648,10 +806,14 @@ async function planIfThin(
   const limbs = pendingReplans(app.db, repo);
   const reserve = reserveOf(ready, repo.autonomySlots);
   if (!short(reserve) && handed.length === 0 && limbs.length === 0) return false;
-  const planner = crew.find((c) => c.role === "planner")?.agent;
-  if (planner === undefined) return notPlanned(repo, "no planner on the crew");
+  // Paused by its pillar's setting (#7668): the planner stays on the crew.
+  if (repo.plannerSlots === 0) return notPlanned(repo, "the planner is paused");
   if (repo.autonomyDirection.trim() === "")
     return notPlanned(repo, "no direction written");
+  // A direction with no planner would go nowhere; the forge lends one (#7637).
+  const planner =
+    crew.find((c) => c.role === "planner")?.agent ?? ensurePlanner(app, repo, by);
+  if (planner === undefined) return notPlanned(repo, "no planner on the crew");
   const direction = ensureDirectionIssue(app, by, repo);
   if (!direction) return notPlanned(repo, "no direction issue");
   if (active.some((r) => r.issueId === direction.id))
@@ -855,7 +1017,7 @@ export function parkForBreaker(
   const last = listComments(app.db, issue.id).at(-1);
   if (last?.body === note) return false;
   addComment(app, author, repo, issue, note);
-  log.info(note === BREAKER_NOTE ? "parked by the breaker" : "parked at the run cap", {
+  log.info(note === BREAKER_NOTE ? "parked by the breaker" : note === REPEAT_NOTE ? "parked by the repeat stop" : "parked at the run cap", {
     repo: `${repo.ownerName}/${repo.name}`,
     issue: issue.number,
   });
@@ -865,39 +1027,6 @@ export function parkForBreaker(
 /** How many times the crew has parked this issue since a person who directs it last spoke (`parks.ts`). */
 export function parkedCount(app: App, repo: Repo, issueId: string): number {
   return countParks(app.db, repo, issueId);
-}
-
-/** What happens to an issue the crew hands over, said once on the issue. */
-const HANDED_OVER =
-  "The planner splits it, replaces it with a fresh issue, or defers it; a person can also say what to try. Nothing starts here until then, and the board lists it.";
-
-/**
- * What a park says on its issue. A first strike is the reason — and, when a
- * pull closed with it, a word to the planner. The strike that takes the
- * issue out of the crew's hands also says every reason since someone who
- * directs the crew last spoke, and whose it is now: an issue parked twice
- * is handed over, never dropped.
- */
-function strikeNote(
-  db: Database,
-  repo: Repo,
-  issue: Issue,
-  reason: string,
-  hint = "",
-): string {
-  const note = `${PARK_NOTE}${reason}`;
-  const reasons = [...parkReasons(db, repo, issue.id), parkReason(note)];
-  if (reasons.length < PARK_STRIKES)
-    return hint === "" ? note : `${note} ${hint}`;
-  return [
-    note,
-    "",
-    `Parked ${reasons.length === 2 ? "twice" : `${reasons.length} times`} since a person last spoke here, so it is the planner's now. Every reason:`,
-    "",
-    ...reasons.map((r, n) => `${n + 1}. ${r}`),
-    "",
-    HANDED_OVER,
-  ].join("\n");
 }
 
 /**
@@ -1047,71 +1176,19 @@ function answeredWithoutChange(
 }
 
 /**
- * Park a pull the crew cannot finish: close it with the reason, put its
- * issues back on the map unassigned with the same reason, and move on. A
- * repository on its own never waits for a person; a parked issue is the
- * planner's to split or drop on its next pass, and one parked twice is
- * handed to the planner with every reason (`strikeNote`). A pull a person
- * holds is not parked: closing it would hand its issue back to the crew, to
- * build the same change again beside the one that was told to wait.
- */
-export function parkPull(
-  app: App,
-  repo: Repo,
-  pull: Pull,
-  why: string,
-): boolean {
-  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
-  if (getHold(app.db, pull.id) !== undefined) return false;
-  const by = getUserById(app.db, repo.autonomyBy);
-  if (!by) return false;
-  const issue = getIssueById(app.db, pull.id);
-  if (!issue || issue.state !== "open") return false;
-  addComment(app, by, repo, issue, `${PARK_NOTE}${why}`);
-  const closed = setIssueState(app, by, repo, issue, "closed", {
-    reason: "parked",
-  });
-  if (!closed.ok) return false;
-  for (const number of closesFromBody(pull.body)) {
-    const about = getIssue(app.db, repo.id, number);
-    if (!about || about.state !== "open") continue;
-    if (about.assigneeId !== null) assignIssue(app, by, repo, about, null);
-    addComment(
-      app,
-      by,
-      repo,
-      about,
-      strikeNote(
-        app.db,
-        repo,
-        about,
-        `${why} (pull #${pull.number} closed).`,
-        PLANNER_HINT,
-      ),
-    );
-  }
-  log.info("parked", {
-    repo: `${repo.ownerName}/${repo.name}`,
-    pull: pull.number,
-    why,
-  });
-  return true;
-}
-
-/**
  * Green pulls that have not landed — a check that passed before autonomy
  * was turned on, or one the event missed — land on the tick, so nothing
  * green waits on chance.
  */
-export async function sweepGreen(app: App, repo: Repo): Promise<number> {
+export async function sweepGreen(app: App, repo: Repo, now: Date = new Date()): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
   // Admitted one by one, queued together, oldest first: the green pulls of
   // one sweep are one candidate and one gate (#2036).
   const entries: Queued[] = [];
   // Why each approved pull waits, for the tick line (#3055).
   const waits: Wait[] = [];
-  for (const pull of openPulls(app, repo)) {
-    const admitted = await admit(app, repo, pull);
+  for (const pull of listOpenPulls(app.db, repo.id)) {
+    const admitted = await admit(app, repo, pull, now);
     if (admitted.ok) entries.push(admitted.value);
     const seen = reviewSummary(app.db, pull.id, pull.headOid);
     if (seen.approvals > 0 && seen.changesRequested === 0)
@@ -1119,31 +1196,33 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   }
   noteWaits(repo.id, tallyWaits(waits));
   if (entries.length === 0) return 0;
-  const landed = await enqueue(repo.id, entries, gateFor(app, repo), queueOptions(app));
+  const landed = await enqueue(repo.id, entries, gateFor(app, repo), queueOptions(app, repo));
   return landed.filter(Boolean).length;
 }
 
 /**
- * Every open pull of the repository, oldest first. All of them, page by
- * page: a sweep that read only the newest page never queued an approved
- * pull older than it, which then joined the line alone, on its own event,
- * one gate at a time (#4053).
+ * Take out of the merge queue's line every waiting pull that would no
+ * longer be admitted (#6611): held, closed or merged, pushed to since it
+ * joined, no longer green on its head, or with changes requested on it.
+ * Run on every tick, beside the sweep: a sweep in flight waits on its whole
+ * line, so the line is cleared here, not there. Reads only rows: cheap.
+ * How many were taken out.
  */
-function openPulls(app: App, repo: Repo): Pull[] {
-  const all: Pull[] = [];
-  let cursor: number | undefined;
-  for (;;) {
-    const page = listPulls(app.db, repo.id, {
-      sealed: true,
-      state: "open",
-      limit: LIST_LIMIT_MAX,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    all.push(...page);
-    if (page.length < LIST_LIMIT_MAX) break;
-    cursor = page.at(-1)!.number;
+export function pruneLine(app: App, repo: Repo): number {
+  const out = new Set<string>();
+  for (const joined of waitingPulls(repo.id)) {
+    const row = getPull(app.db, repo.id, joined.number);
+    const stays =
+      row !== undefined &&
+      row.state === "open" &&
+      row.mergedAt === null &&
+      row.headOid === joined.headOid &&
+      getHold(app.db, row.id) === undefined &&
+      verdictForHead(app.db, row.id, row.headOid).every((c) => c.state === "ok") &&
+      reviewSummary(app.db, row.id, row.headOid).changesRequested === 0;
+    if (!stays) out.add(joined.id);
   }
-  return all.sort((a, b) => a.number - b.number);
+  return out.size === 0 ? 0 : dropFromLine(repo.id, out);
 }
 
 /** The sweep each repository has in flight, by repository id. */
@@ -1219,6 +1298,15 @@ export function ensureDirectionIssue(
   return opened.value;
 }
 
+/**
+ * Repositories with a backed bet go first, so a short week budget (#8989) is
+ * spent on what the owner backed before the rest; the order is otherwise kept.
+ */
+export function byBackedBets(db: App["db"], repos: Repo[]): Repo[] {
+  const backed = (r: Repo): number => (betsInUse(db, r.id) ? 0 : 1);
+  return [...repos].sort((a, b) => backed(a) - backed(b));
+}
+
 /** Every repository that runs on its own, one turn each. */
 export async function autonomyTick(
   app: App,
@@ -1226,14 +1314,41 @@ export async function autonomyTick(
   sweep: (app: App, repo: Repo) => Promise<number> = sweepGreen,
 ): Promise<void> {
   if (crewOffInPreview()) return;
-  for (const repo of listAutonomousRepos(app.db)) {
+  // A pull a person holds with changes requested goes back to its builder after a day of silence, in any repository.
+  try {
+    sweepStranded(app, now);
+  } catch (error) {
+    log.error("stranded sweep failed", { error: String(error) });
+  }
+  // Three days before a trusted source lapses, a note (#8937).
+  try {
+    warnExpiring(app, now);
+  } catch (error) {
+    log.error("trust note failed", { error: String(error) });
+  }
+  const picked = new Map<string, Set<string>>();
+  for (const repo of byBackedBets(app.db, listAutonomousRepos(app.db))) {
     // An archived repository is put away: the crew starts nothing in it.
     if (repo.archivedAt !== null) continue;
     try {
+      // A hold, a close, a push or a lost approval leaves the line before
+      // the next batch is formed, not at its gate (#6611).
+      pruneLine(app, repo);
       void startSweep(app, repo, sweep);
+      // Each pass below is one slice of the thread: a request waiting is served between them (#8848).
+      await breathe();
       // First of all: a slot freed goes to an approved pull that no longer
       // merges, before a changes-requested one or a new issue (#3682).
       const finishing = await finishApproved(app, repo, freeSlots(app, repo, now));
+      await breathe();
+      // An approved pull red for a day gets one re-check, then goes back (#6349).
+      await recheckRedApproved(app, repo, now).catch((error) =>
+        log.error("red approved re-check failed", {
+          repo: `${repo.ownerName}/${repo.name}`,
+          error: String(error),
+        }),
+      );
+      await breathe();
       // Quick, and before the picks: a pull main moved under is brought up
       // to date within this tick, not after a landing gate (#2039).
       await sweepConflicts(app, repo).catch((error) =>
@@ -1243,11 +1358,28 @@ export async function autonomyTick(
         }),
       );
       const current = getRepoById(app.db, repo.id) ?? repo;
+      await breathe();
+      // A red pull nobody is working is checked again, reworked, parked or closed (#8245).
+      await sweepStaleReds(app, current, now, freeSlots(app, current, now)).catch((error) => {
+        log.error("stale red sweep failed", {
+          repo: `${repo.ownerName}/${repo.name}`,
+          error: String(error),
+        });
+      });
+      // What reviewers keep asking for becomes an issue to automate it (#8716).
+      try {
+        await sweepRepeats(app, current, now);
+      } catch (error) {
+        log.error("repeat check sweep failed", { repo: `${repo.ownerName}/${repo.name}`, error: String(error) });
+      }
+      await breathe();
       // Before the picks: a pull a reviewer answered is finished before new
       // work takes the slots it needs (#2172).
       const requested = await moveRequested(app, current, freeSlots(app, current, now), now);
+      await breathe();
       const unstuck = unstickNow(app, current, now);
-      const did = await driveRepo(app, current, now);
+      const did = await driveRepo(app, current, now, picked);
+      await breathe();
       // Rules only, no run: an issue noted already done on the base closes.
       const triaged = await liveTriage(app, current, now).catch((error) => {
         log.error("live triage failed", {
@@ -1256,19 +1388,23 @@ export async function autonomyTick(
         });
         return noTriage();
       });
+      await breathe();
       // Every tick says what it did and why, so an app that sits still is
       // never a mystery: the numbers behind "idle" are on the line.
       const status = autonomyStatus(app, current, now);
+      await breathe();
       const approved = waitWords(lastWaits(current.id));
       const ready = readyNow(repoGraph(app.db, current.id, { sealed: true }));
-      const held = heldBy(
-        app,
-        current,
-        ready,
-        listCrewRoles(app.db, current.id),
-        activeRuns(app, current.id),
-      );
+      const crewNow = listCrewRoles(app.db, current.id);
+      const activeNow = activeRuns(app, current.id);
+      await breathe();
+      const held = heldBy(app, current, ready, crewNow, activeNow);
       const boots = bootCounts(app.config.dataDir);
+      await breathe();
+      await breathe();
+      const staleToday = closedToday(app, current.id, now);
+      // Says when the governor lowers the slots (#6375); one feed item per change.
+      const governor = announceGovernor(app, current, now);
       log.info("tick", {
         repo: `${repo.ownerName}/${repo.name}`,
         did,
@@ -1280,18 +1416,27 @@ export async function autonomyTick(
         // The standing reserve the planner keeps: startable/target (#3237).
         reserve: reserveWords(reserveOf(held.startable.length, status.slots)),
         held: heldWords(held),
+        // What the picker passes over among the startable, so no ready issue goes unexplained (#8924).
+        passed: passedWords(pickFilter(app, current, held.startable, now).passed),
         // The files 5 or more open pulls touch, which no new build starts on (#5934).
         ...(held.by.hot_file.length === 0 ? {} : { hot: hotWords(hotFiles(current.id)) }),
         // Stalled issues this tick parked and freed for another builder (#4073).
         unstuck,
+        // Crew pulls closed today after 3 days in conflict (#5940).
+        ...(staleToday === 0 ? {} : { staleClosed: staleToday }),
         // Open pulls, opened/landed per hour and per 6 h, conflicted (#5935).
         ...flowVitals(app.db, now),
         active: status.active,
         slots: status.slots,
+        // Builders with nothing in flight: what bounds active beside slots and startable (#7006).
+        idle: idleBuilders(activeNow, crewNow),
+        // Small issues in flight of the slots they may hold (#7571).
+        small: smallShareWords(app, current, now),
+        ...(governor === undefined ? {} : { governor }),
         // Approved conflicted pulls: queued, in flight, and why each other is
-        // skipped (#3682, #6237); and the lane for rebases: conflicted N,
+        // skipped (#3682, #6237), or "0 candidates of N open" (#6263); and the lane for rebases: conflicted N,
         // rebasing M, room R (#6140).
-        ...finishFields(finishing, readConflictLane(app.db)),
+        ...finishFields(finishing.moves, readConflictLane(app.db), finishing.open),
         ...(requested.length === 0
           ? {}
           : {
@@ -1301,6 +1446,8 @@ export async function autonomyTick(
         ...(approved === undefined ? {} : { approved }),
         // What the merge queue is doing now, not what the sweep admitted (#3430).
         queue: queueWords(current.id),
+        // The size of the next batch: `8`, or `4 of 16` after a red (#6674).
+        batch: batchWords(current.id, queueBatch(app.db)),
         // Pulls the queue found red on top of others of their candidate (#4235).
         clashes: queueClashes(current.id),
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
@@ -1316,18 +1463,21 @@ export async function autonomyTick(
       });
     }
   }
+  await breathe();
   // Every thought is placed within minutes (`crew/triage.ts`).
   try {
     await triageTick(app, now);
   } catch (error) {
     log.error("triage failed", { error: String(error) });
   }
+  await breathe();
   // The forge hunts its own faults on the same clock (`crew/sentinel.ts`).
   try {
     sentinelTick(app, now.getTime());
   } catch (error) {
     log.error("sentinel failed", { error: String(error) });
   }
+  await breathe();
   // Review is not autonomy's alone: an agent's green pull is read by the
   // crew's reviewer in every repository that has one.
   try {
@@ -1486,6 +1636,8 @@ const checked = new Map<
   string,
   { head: string; key: string; files: string[] | null; tree: string | null }
 >();
+/** Pull id → the head it conflicts at, and when the sweep first saw that (#5940). */
+const conflictedAt = new Map<string, { head: string; since: string }>();
 /** Pull id → when the sweep last saw it merge cleanly. */
 const cleanAt = new Map<string, string>();
 
@@ -1542,9 +1694,17 @@ export function closeSuperseded(
   for (const number of closesFromBody(pull.body)) {
     const about = getIssue(app.db, repo.id, number);
     if (!about || about.state !== "open") continue;
+    // A superseded pull landed nothing: a person's reopen stands against it,
+    // and so does work still unticked.
+    if (reopenedByPerson(app.db, repo.id, number)) continue;
+    const left = unticked(about.body);
+    if (left.length > 0) {
+      addComment(app, by, repo, issue, leftNote(number, left));
+      continue;
+    }
     if (about.assigneeId !== null) assignIssue(app, by, repo, about, null);
     addComment(app, by, repo, about, `${CLOSED_NOTE}${named} (pull #${pull.number}).`);
-    setIssueState(app, by, repo, about, "closed", { reason: "done" });
+    setIssueState(app, by, repo, about, "closed", { reason: "done", system: true });
   }
   log.info("superseded pull closed", {
     repo: `${repo.ownerName}/${repo.name}`,
@@ -1616,19 +1776,25 @@ export function releaseConflicted(
  * for (`conflict_room.ts`); the rest wait for a later tick (#4459).
  * Returns how many pulls were acted on.
  */
-export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
+export async function sweepConflicts(
+  app: App,
+  repo: Repo,
+  now: Date = new Date(),
+): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
   let acted = 0;
   let room = readConflictRoom(app.db);
   // Forget pulls that are no longer open: closed, merged or released.
-  for (const id of new Set([...checked.keys(), ...cleanAt.keys()]))
+  for (const id of new Set([...checked.keys(), ...cleanAt.keys(), ...conflictedAt.keys()]))
     if (getIssueById(app.db, id)?.state !== "open") {
       checked.delete(id);
+      conflictedAt.delete(id);
       cleanAt.delete(id);
       asked.delete(id);
     }
-  const open = listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 });
-  for (const pull of open.sort((a, b) => a.number - b.number)) {
+  // Every open pull, not the newest page: an old one main moved under is
+  // the crew's too (#6263).
+  for (const pull of listOpenPulls(app.db, repo.id)) {
     if (!pull.authorIsAgent || pull.mergedAt !== null) continue;
     if (getHold(app.db, pull.id) !== undefined) continue;
     const dir = await pullDir(app.db, app.reposRoot, repo, pull);
@@ -1668,15 +1834,31 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
     if (seen.files === null) {
       // Merges cleanly: whatever came before was a different episode.
       cleanAt.set(pull.id, new Date().toISOString());
+      conflictedAt.delete(pull.id);
       continue;
     }
     const files = seen.files;
+    // A push moves the head and the 72-hour clock starts again.
+    let conflict = conflictedAt.get(pull.id);
+    if (conflict?.head !== pull.headOid)
+      conflictedAt.set(
+        pull.id,
+        (conflict = { head: pull.headOid, since: now.toISOString() }),
+      );
     // An approved pull is finished first, and handed to a person rather
     // than closed: the tick's finishing pass has it (`finishing.ts`).
     if (approvedOnHead(app.db, pull)) continue;
     const issue = getIssueById(app.db, pull.id);
     if (!issue || issue.state !== "open") continue;
     if (activeRunFor(app.db, "agent", issue.id) !== undefined) continue;
+    // Past 72 hours in conflict, whatever the attempts did (#5940).
+    if (closeStale(app, repo, pull, conflict.since, now)) {
+      acted++;
+      checked.delete(pull.id);
+      cleanAt.delete(pull.id);
+      conflictedAt.delete(pull.id);
+      continue;
+    }
     const since = conflictEpisodeStart(app, issue, pull.id);
     const runs = app.db
       .query<{ n: number; first: string | null }, [string, string]>(
@@ -1703,6 +1885,14 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
     // push must not be queued again on every tick.
     const tried = asked.get(pull.id);
     if (tried?.tip === baseTip && tried.n >= RUNS_PER_TIP) continue;
+    // A clash only in list docs is settled by the forge, with no run: its
+    // push is a check, and the next tick sees the pull clean (#7909).
+    if (onlyListDocs(files) && room > 0 && (await resolveListConflicts(app, repo, pull)) !== undefined) {
+      room--;
+      acted++;
+      checked.delete(pull.id);
+      continue;
+    }
     // Its push is a check: none starts that the lane has no slot for (#4459).
     if (room <= 0) continue;
     if (bringUpToDate(app, repo, pull, files, since) !== undefined) {
@@ -1771,14 +1961,20 @@ export function bringUpToDate(
  * crew, and is `lapsed` when the reviewer was asked twice and never
  * answered: it lands without it, and says so (`crew/review.ts`).
  */
-async function reviewed(
+export async function reviewed(
   app: App,
   repo: Repo,
   pull: Pull,
+  now: Date = new Date(),
 ): Promise<"pass" | "hold" | "lapsed"> {
   const seen = reviewSummary(app.db, pull.id, pull.headOid);
   if (seen.changesRequested > 0) return "hold";
   if (seen.approvals > 0) return "pass";
+  // A trusted source's pull needs no person's review (#8937); its check, the
+  // boot proof and the walls above still stood before this point.
+  // A big first fold, and the crew's resolution of a conflict, are reviewed
+  // by the crew first (#9003): they take the path below.
+  if (foldsIn(app.db, pull.id, now) && !needsCrewReview(app.db, pull.id)) return "pass";
   // An agent's pull ships only on an approving review — the crew's reviewer
   // or a person's. With no reviewer, or a review that lapsed, it waits for
   // a person (`waitsForPerson` puts it where a person looks); never by lapse.
@@ -1806,7 +2002,7 @@ export async function landIfGreen(
 ): Promise<boolean> {
   const admitted = await admit(app, repo, pull);
   if (!admitted.ok) return false;
-  const [landed] = await enqueue(repo.id, [admitted.value], gateFor(app, repo), queueOptions(app));
+  const [landed] = await enqueue(repo.id, [admitted.value], gateFor(app, repo), queueOptions(app, repo));
   return landed === true;
 }
 
@@ -1821,6 +2017,7 @@ async function admit(
   app: App,
   repo: Repo,
   pull: Pull,
+  now: Date = new Date(),
 ): Promise<Result<Queued, Wait>> {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return err("off");
   if (pull.state !== "open" || pull.mergedAt !== null) return err("closed");
@@ -1836,7 +2033,7 @@ async function admit(
   // Only work the crew wrote, or a writer's, lands on green by itself: a
   // reader's pull — from a fork, say — waits for a person, outsiders
   // switch or not, and is never sent to the crew's reviewer (#619).
-  if (!landsOnItsOwn(app.db, repo, pull)) return err("outsider");
+  if (!landsOnItsOwn(app.db, repo, pull, now)) return err("outsider");
   const by = getUserById(app.db, repo.autonomyBy);
   if (!by) return err("off");
   // The newest run of each kind is what the head says: a red that a re-run
@@ -1870,6 +2067,28 @@ async function admit(
         if (!approvedOnHead(app.db, pull)) bringUpToDate(app, repo, pull, clean.error.files);
       }
       return err("conflict");
+    }
+    // A merge of a followed source's head that leaves most of its diff
+    // behind marks the work taken without taking it (#9034): decided by a
+    // person, trusted or not, and before "nothing new" closes it as carried.
+    const dropped = await sourceHeld(app, repo, pull, baseTip);
+    if (dropped.length > 0) {
+      const earlier = latestDecision(app.db, pull.id, "land");
+      const told =
+        earlier?.answer === "wall" &&
+        (earlier.state as { head?: unknown } | null)?.head === pull.headOid;
+      if (!told)
+        recordDecision(app.db, {
+          kind: "land",
+          repoId: repo.id,
+          issueId: pull.id,
+          state: { head: pull.headOid, cells: dropped, plain: dropped, unsound: false },
+          answer: "wall",
+          p: 1,
+          by: "wall",
+          ms: 0,
+        });
+      return err("wall");
     }
     // Nothing the base does not already hold: no gate and no review, for
     // there is nothing to land. The merge closes the pull as merged into
@@ -1910,6 +2129,7 @@ async function admit(
         state: {
           head: pull.headOid,
           cells,
+          plain: wall.unsound ?? wall.loosened.map(wallPlain),
           unsound: wall.unsound !== undefined,
         },
         answer: "wall",
@@ -1925,6 +2145,27 @@ async function admit(
     }
     return err("wall");
   }
+  // A trusted source's pull that touches secrets, credentials, permissions,
+  // the contract or release machinery waits for a person like a guest's.
+  const folded = await foldWall(app, repo, pull, baseTip, now);
+  if (folded.length > 0) {
+    const earlier = latestDecision(app.db, pull.id, "land");
+    const told =
+      earlier?.answer === "wall" &&
+      (earlier.state as { head?: unknown } | null)?.head === pull.headOid;
+    if (!told)
+      recordDecision(app.db, {
+        kind: "land",
+        repoId: repo.id,
+        issueId: pull.id,
+        state: { head: pull.headOid, cells: folded, plain: folded, unsound: false },
+        answer: "wall",
+        p: 1,
+        by: "wall",
+        ms: 0,
+      });
+    return err("wall");
+  }
   // One gate for every pull, whoever wrote it: when the crew has a
   // reviewer, a green head is queued for review and waits for an approval
   // on that very head (a person's counts the same). A push is a new head,
@@ -1932,7 +2173,7 @@ async function admit(
   // long it takes — with no reviewer, or after one lapsed, a person's
   // (#597). Only a person's own pull lands without a reviewer, or after a
   // review lapsed.
-  const review = await reviewed(app, repo, pull);
+  const review = await reviewed(app, repo, pull, now);
   if (review === "hold") return err("review");
   // The full tier, once, on the queue's candidate (#1198, #2036). Red is
   // told to the pull once per head and base, and the pull is out of the
@@ -2032,13 +2273,24 @@ export function regateDue(red: Decision, now: number): boolean {
 }
 
 /**
- * How the merge queue may use the forge's check slots (#4053): its depth as
- * an admin set it, and the slots the checks service has spare.
+ * How the merge queue may use the forge's check slots (#4053): its depth and
+ * batch size as an admin set them, and the slots the checks service has spare. Each judged
+ * batch is kept for the red-batch rate (#6427); its gates and red marks are
+ * kept in the database, and a gate a roll left running adopted (#6611).
  */
-function queueOptions(app: App): QueueOptions {
+function queueOptions(app: App, repo: Repo): QueueOptions {
   return {
     depth: queueDepth(app.db),
+    batch: queueBatch(app.db),
     room: () => checksFor(app)?.spareSlots?.() ?? 0,
+    onBatch: (repoId, red) => keepBatch(app.db, repoId, red),
+    onVerdict: (repoId, verdict) => keepVerdict(app.db, repoId, verdict),
+    onFlake: (repoId, reds, tip) => {
+      const owner = getRepoById(app.db, repoId);
+      if (owner !== undefined) recordQueueFlakes(app.db, app.bus, owner, reds, tip);
+    },
+    store: queueStore(app.db),
+    adopt: (record, signal) => adoptGate(app, repo, record, signal),
   };
 }
 
@@ -2058,7 +2310,11 @@ export async function landingStrategy(
   repo: Repo,
   pull: Pull,
   baseOid: string,
+  now: Date = new Date(),
 ): Promise<"merge" | "squash"> {
+  // A trusted source's work lands as a true merge: its commits stay
+  // ancestors of main and each author keeps their name (#8937).
+  if (foldsIn(app.db, pull.id, now)) return "merge";
   return (await carriesUpstream(
     app,
     repo,

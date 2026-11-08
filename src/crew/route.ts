@@ -49,6 +49,27 @@ export function pickBuilder(
   )[0];
 }
 
+/**
+ * Who takes an issue given the decider's preference: a ranking, not an
+ * exclusive pick. The most preferred builder with nothing in flight takes
+ * it — one agent runs one thing at a time, so a busy favourite would leave
+ * the other slots empty (#7006) — and with every builder busy, the most
+ * preferred. Ties keep the decider's choice first, then the crew's order.
+ */
+export function rankedBuilder(
+  builders: readonly Agent[],
+  preference: Readonly<Record<string, number>>,
+  choice: string,
+  inFlight: ReadonlyMap<string, number>,
+): Agent | undefined {
+  const score = (b: Agent) => (b.user.username === choice ? Infinity : 0);
+  const ranked = [...builders].sort(
+    (a, b) =>
+      (preference[b.user.username] ?? 0) - (preference[a.user.username] ?? 0) || score(b) - score(a),
+  );
+  return ranked.find((b) => (inFlight.get(b.user.id) ?? 0) === 0) ?? ranked[0];
+}
+
 /** The rule for size: how much was said, roughly how much there is to do. */
 export function sizeByWords(text: string): Size {
   const words = text
@@ -160,15 +181,15 @@ export async function routeIssue(
     questions,
     rule,
   );
+  const preferred = decided.answers.builder;
   const builder =
-    builders.find((b) => b.user.username === decided.answers.builder.choice) ??
-    byRule;
+    own ?? rankedBuilder(builders, preferred.probabilities, preferred.choice, inFlight) ?? byRule;
   return {
     builder,
     size: decided.answers.size.choice as Size,
     kind: decided.answers.kind.choice as Kind,
     by: decided.by,
     ms: decided.ms,
-    p: decided.answers.builder.p,
+    p: own ? preferred.p : (preferred.probabilities[builder.user.username] ?? 0),
   };
 }

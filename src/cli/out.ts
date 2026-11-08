@@ -45,6 +45,11 @@ export function cell(text: string, fg?: Color, attr?: number): Cell {
   };
 }
 
+/** A cell is data, not instructions: control characters become U+FFFD. */
+export function inert(text: string): string {
+  return text.replace(/[\x00-\x1f\x7f-\x9f]/g, "\ufffd");
+}
+
 function chosenTheme(): ThemeName {
   const name = process.env["FORGE_THEME"];
   return name !== undefined && (THEME_NAMES as readonly string[]).includes(name)
@@ -77,12 +82,15 @@ export function createOut(
     paint,
     line: (text = "") => write(`${text}\n`),
     err: (text) => writeErr(`${text}\n`),
-    table(columns, rows) {
-      if (rows.length === 0) return;
+    table(columns, rows_) {
+      if (rows_.length === 0) return;
+      const rows = rows_.map((row) =>
+        row.map((x) => ({ ...x, text: inert(x.text) })),
+      );
       // Size from the content, then cap: a table that reflows on every run
       // because one branch name grew is a table you cannot scan.
       const widths = columns.map((col, i) => {
-        let w = displayWidth(col.header);
+        let w = displayWidth(inert(col.header));
         for (const row of rows)
           w = Math.max(w, displayWidth(row[i]?.text ?? ""));
         return Math.min(w, col.max ?? w);
@@ -98,7 +106,7 @@ export function createOut(
       };
       write(
         `${render(
-          columns.map((col) => cell(col.header)),
+          columns.map((col) => cell(inert(col.header))),
           true,
         )}\n`,
       );

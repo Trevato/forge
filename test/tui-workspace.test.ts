@@ -220,7 +220,8 @@ describe("the terminal workspace", () => {
       await h.settle();
       await open(h);
       expect(h.text()).toContain("Mirrored to octo/lighthouse, stopped:");
-      await h.press("U");
+      // U asks first (test/tui-workspace-unmirror.test.ts); choose Stop mirroring.
+      await h.press("U", "right", "enter");
       expect(getMirrorTarget(forge.db, repo.id)).toBeUndefined();
       expect(h.text()).not.toContain("Mirrored to octo/lighthouse");
     } finally {
@@ -257,6 +258,113 @@ describe("the terminal workspace", () => {
       expect(h.text()).toContain("L60");
       await h.press("g");
       expect(h.text()).toContain("# Lighthouse");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .csv opens as an aligned table with a pinned header, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "ledger",
+      visibility: "public",
+      description: "numbers",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    const rows = Array.from({ length: 80 }, (_, i) => `${i + 1},item ${i + 1}`);
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        { path: "data.csv", content: ["id,name", ...rows, ""].join("\n") },
+        { path: "qty.tsv", content: "name, full\tqty\nwidget\t4\n" },
+        { path: "bad.csv", content: 'a,b\n1,"oops\n' },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "ledger");
+      await openFile(h, "data.csv");
+      expect(h.text()).toContain("id │ name");
+      expect(h.text()).toContain("1  │ item 1");
+      expect(h.text()).toContain("80 rows");
+      await h.press("G");
+      expect(h.text()).toContain("id │ name");
+      expect(h.text()).toContain("80 │ item 80");
+      await h.press("s");
+      expect(h.text()).toContain("id,name");
+      expect(h.text()).not.toContain("│ item");
+      await h.press("s");
+      expect(h.text()).toContain("id │ name");
+
+      await openFile(h, "qty.tsv");
+      expect(h.text()).toContain("name, full │ qty");
+      expect(h.text()).toContain("widget");
+      expect(h.text()).toContain("1 row");
+
+      await openFile(h, "bad.csv");
+      expect(h.text()).toContain("a,b");
+      expect(h.text()).toContain("not a table: line 2");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("tables: search, edit, the caps in the status line, a ; file, and s on a broken one", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "sheets",
+      visibility: "public",
+      description: "more numbers",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    const rows = Array.from({ length: 80 }, (_, i) => `${i + 1},item ${i + 1}`);
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        { path: "data.csv", content: ["id,name", ...rows, ""].join("\n") },
+        { path: "semi.csv", content: "city;pop\nOslo;700\n" },
+        {
+          path: "wide.csv",
+          content: `${Array.from({ length: 70 }, (_, i) => `c${i}`).join(",")}\n1\n`,
+        },
+        {
+          path: "long.csv",
+          content: `n\n${Array.from({ length: 1100 }, (_, i) => i).join("\n")}\n`,
+        },
+        { path: "bad.csv", content: 'a,b\n1,"oops\n' },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "sheets");
+
+      await openFile(h, "semi.csv");
+      expect(h.text()).toContain("city │ pop");
+      expect(h.text()).toContain("Oslo");
+
+      await openFile(h, "wide.csv");
+      expect(h.text()).toContain("6 more columns");
+
+      await openFile(h, "long.csv");
+      expect(h.text()).toContain("1100 rows, first 1000 shown");
+
+      await openFile(h, "data.csv");
+      expect(h.text()).not.toContain("item 70");
+      await h.press("/");
+      await h.type("item 70");
+      await h.press("enter");
+      expect(h.text()).toContain("70 │ item 70");
+
+      await h.press("e");
+      await h.press("esc");
+      expect(h.text()).toContain("70,item 70");
+      expect(h.text()).not.toContain("│ item");
+      await h.press("s");
+      expect(h.text()).toContain("id │ name");
+
+      await openFile(h, "bad.csv");
+      await h.press("s");
+      expect(h.text()).toContain("not a table: line 2");
     } finally {
       h.stop();
     }

@@ -87,6 +87,46 @@ export function commitCheck(
   };
 }
 
+/**
+ * The own verdicts, `ok` or `failed`, of a page of commits in one query: what
+ * a log list marks. A commit with no verdict yet is absent from the map.
+ */
+export function commitVerdicts(
+  db: Database,
+  repoId: string,
+  branch: string,
+  oids: readonly string[],
+): Map<string, CommitCheck> {
+  const out = new Map<string, CommitCheck>();
+  const wanted = new Set(oids.filter(isCommitId));
+  if (wanted.size === 0) return out;
+  const rows = db
+    .query<
+      { id: string; commit_oid: string; state: string; summary: string; finished_at: string | null },
+      [string, string, number]
+    >(
+      `SELECT id, commit_oid, state, summary, finished_at
+         FROM (SELECT id, kind, issue_id, env, commit_oid, state, summary, finished_at
+                 FROM run WHERE repo_id = ?1 ORDER BY id DESC LIMIT ?3)
+        WHERE kind = 'check' AND issue_id IS NULL AND env = ?2
+          AND state IN ('ok', 'failed')
+        ORDER BY id DESC`,
+    )
+    .all(repoId, branch, WINDOW);
+  for (const row of rows) {
+    if (!wanted.has(row.commit_oid) || out.has(row.commit_oid)) continue;
+    out.set(row.commit_oid, {
+      commit: row.commit_oid,
+      checkedCommit: row.commit_oid,
+      state: row.state as "ok" | "failed",
+      runId: row.id,
+      summary: row.summary,
+      finishedAt: row.finished_at,
+    });
+  }
+  return out;
+}
+
 /** How many later commits main checked are asked whether they contain the tag. */
 export const DESCENDANTS = 10;
 

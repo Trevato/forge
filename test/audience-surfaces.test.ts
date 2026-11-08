@@ -20,7 +20,7 @@ const esc = (s: string): string =>
 
 /** The audience line of a page: the settings link if any, the Split badge if any, and the sentence. */
 function audienceOn(page: string) {
-  const m = /<p class="repo-desc"\s*>\s*(?:<span\s+class="badge"\s+data-variant="attn"\s*>(Split)<\/span\s*>)?\s*(?:<a href="([^"]*)"\s*>)?([^<]*Public: anyone[^<]*|The code is public[^<]*)(?:<\/a\s*>)?\s*<\/p\s*>/.exec(page);
+  const m = /<p class="muted small"\s*>\s*(?:<span\s+class="badge"\s+data-variant="attn"\s*>(Split)<\/span\s*>)?\s*(?:<a href="([^"]*)"\s*>)?([^<]*Public: anyone[^<]*|The code is public[^<]*)(?:<\/a\s*>)?\s*<\/p\s*>/.exec(page);
   if (m === null) throw new Error("no audience line on the page");
   return { badge: m[1], href: m[2], text: m[3]!.trim() };
 }
@@ -98,6 +98,7 @@ describe("one sentence on every surface", () => {
     const said = esc(api.audience.sentence);
     const out = await (await fetch(`${servers.url}/olive/meadow`)).text();
     expect(audienceOn(out)).toEqual({ badge: undefined, href: undefined, text: said });
+    expect(out).not.toContain("repo-desc");
 
     const wren = await createUser(app.db, {
       origin: "seed",

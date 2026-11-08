@@ -29,7 +29,7 @@ setDefaultTimeout(60_000);
  * until it is walked here or named.
  */
 const WALKED: Record<string, number> = {
-  "src/http/api.ts": 4, // import, password sign-in, sign-out (+1 mention)
+  "src/http/api/tokens.ts": 4, // password sign-in, sign-out: a set-cookie header and a sessionCookie() call each
   "src/http/server.ts": 1, // the mode switch
   "src/http/rp.ts": 6, // parent sign-in and link: state cookie set and cleared
   "src/apps/proxy.ts": 2, // app grant, app sign-out
@@ -39,6 +39,7 @@ const WALKED: Record<string, number> = {
   "src/web/flash.ts": 2, // forge_flash
 };
 const UNREACHED: Record<string, { sites: number; why: string }> = {
+  "src/http/addressed.ts": { sites: 1, why: "only asks whether a response sets a cookie, so it isn't shared; it sets none" },
   "src/apps/scaffold.ts": { sites: 7, why: "the `notice` cookie lives in the template generated into new apps, not in the forge's own responses" },
   "src/apps/feedback.ts": { sites: 2, why: "the visitor cookie is set on a deployed app's own host from its feedback widget; covered by the feedback tests" },
   "src/web/pages/claim.ts": { sites: 1, why: "claiming the first admin seat needs a fresh forge with a claim link; same sessionCookie() as the walked doors" },

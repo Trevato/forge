@@ -5,12 +5,13 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import type { App } from "../src/app.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { getForkOf, type Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
-import { commitToBranch } from "../src/actions/repos.ts";
+import { commitToBranch, forkRepo } from "../src/actions/repos.ts";
 import { listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import type { Run } from "../src/core/runs.ts";
@@ -83,5 +84,54 @@ describe("the crew, with a stand-in Claude Code: declines", () => {
     expect(run.state).toBe("failed");
     expect(run.summary).toContain("lives in the repository itself");
     expect(run.costUsd).toBe(0);
+  }, 30_000);
+
+  test("a pull whose branch lives in another person's fork is continued on a fresh branch in the agent's own", async () => {
+    const forked = await forkRepo(app, alice, repo, "alice-copy");
+    if (!forked.ok) throw new Error(String(forked.error));
+    const seeded = await commitToBranch(app, alice, forked.value, {
+      branch: "alice/elsewhere",
+      message: "Elsewhere",
+      files: [{ path: "ELSEWHERE.md", content: "# elsewhere\n" }],
+    });
+    expect(seeded.ok).toBe(true);
+    const opened = await openPull(app, alice, repo, {
+      title: "Elsewhere",
+      baseBranch: repo.defaultBranch,
+      headBranch: "alice/elsewhere",
+      headRepo: forked.value,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    expect(assignIssue(app, alice, repo, opened.value, bot).ok).toBe(true);
+    const run = await settled((r) => r.issueId === opened.value.id);
+    expect(run.state).toBe("ok");
+    const mine = getForkOf(app.db, bot.id, repo.id)!;
+    expect(run.branch).not.toBe("alice/elsewhere");
+    // The author's work reached the agent in its brief, and the diff is theirs.
+    const prompt = readFileSync(standIn.promptFile, "utf8");
+    expect(prompt).toContain("alice/elsewhere");
+    expect(prompt).toContain("ELSEWHERE.md");
+    // A new pull opened from the agent's own fork, and says it is a fresh start.
+    const fresh = listPulls(app.db, repo.id, { state: "open" }).find(
+      (p) => p.headBranch === run.branch,
+    );
+    expect(fresh).toBeDefined();
+    expect(fresh!.number).not.toBe(opened.value.number);
+    expect(fresh!.headRepoId).toBe(mine.id);
+    expect(fresh!.authorName).toBe("bot");
+    expect(fresh!.body).toContain("A fresh start");
+    expect(
+      await resolveOid(
+        repoDir(app.reposRoot, mine.ownerName, mine.name),
+        `refs/heads/${run.branch}`,
+      ),
+    ).toBe(fresh!.headOid);
+    // The person's pull and fork are untouched.
+    expect(
+      await resolveOid(
+        repoDir(app.reposRoot, forked.value.ownerName, forked.value.name),
+        "refs/heads/alice/elsewhere",
+      ),
+    ).toBe(opened.value.headOid);
   }, 30_000);
 });

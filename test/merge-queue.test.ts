@@ -13,8 +13,9 @@ import { createApp, type App } from "../src/app.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { readLearned } from "../src/checks/learned.ts";
-import { enqueue, gateDeadlineForTest, MAX_CANDIDATE, gateRuns, queueStatus, queueWords, type Queued } from "../src/checks/queue.ts";
+import { batchWords, enqueue, gateDeadlineForTest, MAX_CANDIDATE, gateRuns, queueStatus, queueWords, type Queued } from "../src/checks/queue.ts";
 import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
+import { queueBatch, setCapacity, validCapacity } from "../src/core/capacity.ts";
 import { latestDecision } from "../src/core/decisions.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -27,6 +28,7 @@ import { repoDir } from "../src/git/repos.ts";
 import { logLevel, setLogLevel } from "../src/kernel/log.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { forgetFlow } from "../src/system/flow_cache.ts";
 import { flowLines } from "../src/tui/screens/flow.ts";
 
 /**
@@ -158,6 +160,7 @@ describe("the merge queue", () => {
   };
   /** The MCP `flow` tool's `queue` field, as alice reads it. */
   const mcpQueue = async () => {
+    forgetFlow(app); // the MCP flow tool answers a copy a few seconds old
     const res = await fetch(`${servers.url}/mcp`, {
       method: "POST",
       headers: {
@@ -223,6 +226,31 @@ describe("the merge queue", () => {
     expect(queue.some((l) => /\[queue\] gating 8 pulls since \d\d:\d\d .*waiting=\d/.test(l))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 8 pulls: green"))).toBe(true);
     expect(queue.some((l) => l.includes("[queue] gated 2 pulls: green"))).toBe(true);
+  }, SLOW);
+
+  test("queue.batch is read on each sweep: three per candidate when it says 3, and /settings/capacity explains the trade-off (#6674)", async () => {
+    const repo = await autonomousRepo("batch-of-three");
+    const base = git(repo, "rev-parse", "refs/heads/main");
+    const pulls = [];
+    for (let i = 0; i < 7; i++) pulls.push(await greenPull(repo, `b${i}.ts`));
+    expect(validCapacity("queue.batch", "33")).toBe(false);
+    expect(validCapacity("queue.batch", "0")).toBe(false);
+    setCapacity(app.db, "queue.batch", "3", alice.id);
+    try {
+      expect(await sweepGreen(app, repo)).toBe(7);
+    } finally {
+      setCapacity(app.db, "queue.batch", null, alice.id);
+    }
+    const carried = gatesOf(repo)
+      .map((g) => Number(git(repo, "rev-list", "--count", `${base}..${g.commit}`)))
+      .sort((a, b) => a - b);
+    expect(carried).toEqual([3, 6, 7]);
+    for (const pull of pulls) expect(merged(repo, pull)).toBe(true);
+    expect(batchWords(repo.id, queueBatch(app.db))).toBe("8");
+    const page = await fetch(`${servers.url}/settings/capacity`, { headers: { cookie: await login() } });
+    const html = await page.text();
+    expect(html).toContain("Merge queue batch size");
+    expect(html).toContain("a red one costs more search gates");
   }, SLOW);
 
   test("after a red batch, the good pulls go back into ONE candidate up to the cap, not one gate each (#4053)", async () => {
@@ -356,6 +384,105 @@ describe("the merge queue", () => {
     expect(merged(repo, last)).toBe(true);
     expect(merged(repo, other)).toBe(false);
     expect(tree(repo, "refs/heads/main")).toBe(tree(repo, gatesOf(repo)[0]!.commit));
+  });
+
+  test("a release cut while a gate is green and in flight does not void it: the pulls land on the new tip, one gate (#6640)", async () => {
+    const repo = await autonomousRepo("release-mid-gate");
+    const pulls = [];
+    for (const name of ["a.ts", "b.ts"]) pulls.push(await greenPull(repo, name));
+    // The release record is pushed to main while the gate runs.
+    held = (async () => {
+      const cut = await commitToBranch(app, alice, repo, {
+        message: "Release 0.0.1",
+        files: [{ path: "src/core/releases.json", content: "[]\n" }],
+      });
+      if (!cut.ok) throw new Error(JSON.stringify(cut.error));
+    })();
+    const base = git(repo, "rev-parse", "refs/heads/main");
+    try {
+      expect(await sweepGreen(app, repo)).toBe(2);
+    } finally {
+      held = undefined;
+    }
+    expect(git(repo, "rev-parse", "refs/heads/main")).not.toBe(base);
+    expect(gatesOf(repo)).toHaveLength(1);
+    for (const pull of pulls) expect(merged(repo, pull)).toBe(true);
+    const files = git(repo, "ls-tree", "--name-only", "refs/heads/main");
+    expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/main")).toContain("src/core/releases.json");
+    expect(files).toContain("a.ts");
+    expect(files).toContain("b.ts");
+  });
+
+  test("a base move that touches a file the candidate changes still voids the gate (#6640)", async () => {
+    const repo = await autonomousRepo("overlap-mid-gate");
+    const pull = await greenPull(repo, "a.ts");
+    held = (async () => {
+      const moved = await commitToBranch(app, alice, repo, {
+        message: "Same file",
+        files: [{ path: "a.ts", content: "export const n = 'other';\n" }],
+      });
+      if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    })();
+    const base = git(repo, "rev-parse", "refs/heads/main");
+    try {
+      await sweepGreen(app, repo);
+    } finally {
+      held = undefined;
+    }
+    expect(merged(repo, pull)).toBe(false);
+    // Main moved by the competing commit alone, and nothing is left half-landed.
+    expect(git(repo, "rev-list", "--count", `${base}..refs/heads/main`)).toBe("1");
+    expect(git(repo, "log", "-1", "--format=%s", "refs/heads/main")).toBe("Same file");
+    expect(gatesOf(repo).length).toBeLessThanOrEqual(1);
+  });
+
+  test("a disjoint move of live files that breaks the gate is no exemption: the pull does not land (#6640)", async () => {
+    const repo = await autonomousRepo("breaking-mid-gate");
+    const pull = await greenPull(repo, "a.ts");
+    held = (async () => {
+      const moved = await commitToBranch(app, alice, repo, {
+        message: "Breaks the gate",
+        files: [{ path: "red-other.ts", content: "export const x = 1;\n" }],
+      });
+      if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    })();
+    try {
+      await sweepGreen(app, repo);
+    } finally {
+      held = undefined;
+    }
+    expect(merged(repo, pull)).toBe(false);
+    expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/main")).not.toContain("a.ts");
+  });
+
+  test("a docs-only move voids the gate: tests read docs, so the pull is gated again on the new base (#6640)", async () => {
+    const repo = await autonomousRepo("docs-mid-gate");
+    const pull = await greenPull(repo, "a.ts");
+    // The doc lands while the gate runs, not before it starts: on a loaded
+    // machine a move begun up front can beat the sweep, and the gate then
+    // rightly runs on the new base and lands.
+    atGate = () => {
+      atGate = undefined;
+      held = (async () => {
+        const moved = await commitToBranch(app, alice, repo, {
+          message: "A doc",
+          files: [{ path: "docs/NOTE.md", content: "# note\n" }],
+        });
+        if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+      })();
+    };
+    try {
+      await sweepGreen(app, repo);
+    } finally {
+      atGate = undefined;
+      held = undefined;
+    }
+    // Voided: not landed on the gate that ran before the move.
+    expect(merged(repo, pull)).toBe(false);
+    expect(gatesOf(repo)).toHaveLength(1);
+    await sweepGreen(app, repo);
+    expect(gatesOf(repo)).toHaveLength(2);
+    expect(merged(repo, pull)).toBe(true);
   });
 
   test("a gated step lands only on the base and as the tree it was gated with", async () => {
@@ -576,7 +703,7 @@ describe("the merge queue", () => {
     expect(gatesOf(repo)).toHaveLength(before);
   });
 
-  test("a red pull stays out of the queue when main moves, and the re-gate checks it alone after the fresh pulls (#4235)", async () => {
+  test("a red pull stays out of the queue when main moves, and the re-gate gates it fresh with the pulls then waiting (#4235, #6493)", async () => {
     const repo = await autonomousRepo("red-stays-out");
     const a = await greenPull(repo, "a.ts");
     const red = await greenPull(repo, "red-x.ts");
@@ -596,19 +723,18 @@ describe("the merge queue", () => {
     before = gatesOf(repo).length;
     expect(await sweepGreen(app, repo)).toBe(1);
     expect(merged(repo, c)).toBe(true);
-    const [fresh, recheck] = gatesOf(repo).slice(before);
-    expect(fresh?.ok).toBe(true);
-    expect(git(repo, "ls-tree", "--name-only", fresh!.commit)).not.toContain("red-x.ts");
-    expect(recheck?.ok).toBe(false);
-    // Gated on main once c had landed: c is under it, and nothing else rode with it.
-    expect(git(repo, "ls-tree", "--name-only", recheck!.commit).split("\n").sort()).toEqual(
-      ["README.md", "a.ts", "b.ts", "c.ts", "forge.json", "red-x.ts"],
-    );
-    // /boards: one red candidate of three in the hour; the re-check is none.
+    // Main moved since it went red: it gates again as a fresh entry (#6493),
+    // in the candidate with c, not behind c as a re-check.
+    const [batch, ...rest] = gatesOf(repo).slice(before);
+    expect(batch?.ok).toBe(false);
+    expect(git(repo, "ls-tree", "--name-only", batch!.commit)).toContain("c.ts");
+    expect(git(repo, "ls-tree", "--name-only", batch!.commit)).toContain("red-x.ts");
+    expect(rest.at(-1)?.ok).toBe(true);
+    // /boards: two red candidates of four in the hour.
     const page = await (await fetch(`${servers.url}/boards`, { headers: { cookie: await login() } })).text();
-    expect(page).toMatch(/data-queue="alice\/red-stays-out">[\s\S]*?data-red-batches>1 of 3</);
+    expect(page).toMatch(/data-queue="alice\/red-stays-out">[\s\S]*?data-red-batches>2 of 4</);
     // The terminal's Flow dialog says the same, on a line of its own under the table.
-    expect(flowLines(app.db).join(" ").replace(/\s+/g, " ")).toMatch(/Red batches, last hour: [^.]*alice\/red-stays-out 1 of 3/);
+    expect(flowLines(app.db).join(" ").replace(/\s+/g, " ")).toMatch(/Red batches, last hour: [^.]*alice\/red-stays-out 2 of 4/);
     // The MCP rows keep their shape: the rate is the page's and the terminal's.
     expect(Object.keys((await mcpQueue()).find((q) => (q as { repo: string }).repo === "alice/red-stays-out") as object)).not.toContain("batches");
   });

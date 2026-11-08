@@ -11,8 +11,9 @@
  * what the forge has.
  */
 
+import { noteMeasure } from "../core/measure.ts";
 import { capacityEnv } from "../core/capacity.ts";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
@@ -32,7 +33,11 @@ import { announceRun } from "../actions/runs.ts";
 import { Stopwatch } from "../apps/timing.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { chooseModel, modelFacts } from "./model_choice.ts";
 import { ownApp, ownAppUrls } from "./app_hosts.ts";
+import { machineEnv, machineFor, machineLimits, reachableApps } from "./machines.ts";
+import { repoMachines } from "./machines_read.ts";
+import { authorsInRepoPull } from "./authors_pull.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../core/apps.ts";
 import {
@@ -43,7 +48,8 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { refreshPullHead } from "../core/following.ts";
-import { UPSTREAM_TITLE, upstreamFollowing } from "../actions/upstream_follow.ts";
+import { reviewSourceNote } from "./source_held.ts";
+import { UPSTREAM_TITLE, sourceFollowing, upstreamFollowing } from "../actions/upstream_follow.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
   canWrite,
@@ -59,6 +65,7 @@ import {
   type Review,
 } from "../core/reviews.ts";
 import {
+  answerCancelled,
   cancelRun,
   checkSummary,
   claimRun,
@@ -72,16 +79,24 @@ import {
 import { mintRunToken } from "../core/run_token.ts";
 import { deleteToken } from "../core/tokens.ts";
 import { runGit } from "../git/env.ts";
+import { installPinHook } from "./pin_hook.ts";
 import { cloneWithMirror } from "./mirror.ts";
 import { isSafeRef } from "../git/guard.ts";
 import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
-import { aheadCount, resolveOid } from "../git/merge.ts";
+import { aheadCount, contentOnBase, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { bar } from "../cloud/gate.ts";
 import { declarationsOf } from "../cloud/declared.ts";
 import { accountOfSecret } from "../core/cloud_account.ts";
-import { alreadyDoneSummary, namedCommits, onBase } from "./already.ts";
+import {
+  alreadyDoneSummary,
+  answeredBeforeStop,
+  declineOf,
+  isAnswer,
+  namedCommits,
+  onBase,
+} from "./already.ts";
 import { touchesDesign } from "./review.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { createLog, redactValues } from "../kernel/log.ts";
@@ -112,6 +127,7 @@ import {
   limitOf,
   MAX_PAUSES,
   resumeAt,
+  takeLimit,
   whenText,
 } from "./limits.ts";
 import { clearStaleLocks, lockedOut } from "./locks.ts";
@@ -119,10 +135,11 @@ import { interruptedSummary } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
 import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
+import { boxesOf, landedBoxes } from "./box_pass.ts";
+import { reviewRange } from "./review_range.ts";
 import { heldNow, stuckOf } from "./held.ts";
 import { reserveOf } from "./reserve.ts";
 import { owed } from "./team_share.ts";
-import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import { grantLeft } from "../core/model_grant.ts";
 import { dailyLeft, reserveCeiling } from "../core/account_ceiling.ts";
@@ -132,7 +149,6 @@ import {
   MIN_RUN_USD,
   pickSubscription,
   PLATFORM,
-  restSubscription,
   type Pick,
 } from "../core/subscriptions.ts";
 import {
@@ -144,7 +160,15 @@ import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { installCacheEnv, sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
-import { removeClone, workdirFor } from "./workdir.ts";
+import {
+  installCacheDir,
+  installDependencies,
+  installNote,
+  type InstallRunner,
+  removeClone,
+  workdirFor,
+  claimWorkdir,
+} from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
 import { handedOverPulls, RETRY_SUMMARY, SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
@@ -178,12 +202,25 @@ export interface CrewOptions {
   readonly tickMs?: number | undefined;
   /** The clock a run's timing line reads; tests pass a fake. @default Date.now */
   readonly now?: (() => number) | undefined;
+  /** What runs `bun install` in a clone; tests pass a stand-in. @default bun */
+  readonly installRunner?: InstallRunner | undefined;
 }
 
 export { crewRoot, workdirFor } from "./workdir.ts";
 
 /** Runs with an agent listening: what a person says reaches it next. */
 const steering = new Map<string, (text: string) => boolean>();
+
+/** A session starts listening to a run; the answer stops it. */
+export function listenForSteer(
+  runId: string,
+  send: (text: string) => boolean,
+): () => void {
+  steering.set(runId, send);
+  return () => {
+    if (steering.get(runId) === send) steering.delete(runId);
+  };
+}
 
 /**
  * Say something to an agent while its run goes. Written to the run's log
@@ -203,32 +240,37 @@ export function steerRun(app: App, runId: string, text: string): boolean {
   return send(text);
 }
 
-/** What a reviewer reads: the pull's diff against its base, and its pictures. */
+/**
+ * What a reviewer reads: the pull's diff (`review_range.ts` — a landed pull's
+ * is its merge commit's), and its pictures. `landedAs` names the merge commit
+ * the diff was read from, when it was.
+ */
 export async function reviewInputs(
   app: App,
   repo: Repo,
   pull: Pull,
   record: AppRecord | undefined,
   bare: string,
-): Promise<{ reviewDiff: string; looks: string[]; design: boolean }> {
-  const base = (await resolveOid(bare, `refs/heads/${pull.baseBranch}`)) ?? "";
+): Promise<{ reviewDiff: string; looks: string[]; design: boolean; landedAs?: string }> {
+  const range = await reviewRange(bare, pull);
   let reviewDiff = "(no diff available)";
   let design = false;
-  if (base !== "") {
+  if (range !== undefined) {
     const names = await runGitCapture(
-      ["diff", "--name-only", `${base}...${pull.headOid}`],
+      ["diff", "--name-only", range.from, range.to],
       { cwd: bare },
     );
     design = touchesDesign(names.stdout.toString().split("\n").filter((n) => n !== ""));
     const out = await runGitCapture(
-      ["diff", "--stat", "-p", `${base}...${pull.headOid}`],
+      ["diff", "--stat", "-p", range.from, range.to],
       { cwd: bare },
     );
     const text = out.stdout.toString();
-    reviewDiff =
-      text.length > REVIEW_DIFF_MAX
-        ? `${text.slice(0, REVIEW_DIFF_MAX)}\n… (cut at ${REVIEW_DIFF_MAX} bytes)`
-        : text;
+    if (out.code === 0)
+      reviewDiff =
+        text.length > REVIEW_DIFF_MAX
+          ? `${text.slice(0, REVIEW_DIFF_MAX)}\n… (cut at ${REVIEW_DIFF_MAX} bytes)`
+          : text;
   }
   const looks =
     record === undefined
@@ -247,7 +289,12 @@ export async function reviewInputs(
           .map((l) =>
             l.path.startsWith("/") ? l.path : join(app.config.dataDir, l.path),
           );
-  return { reviewDiff, looks, design };
+  return {
+    reviewDiff,
+    looks,
+    design,
+    ...(range?.landed === true && reviewDiff !== "(no diff available)" ? { landedAs: range.to } : {}),
+  };
 }
 
 const REVIEW_DIFF_MAX = 60 * 1024;
@@ -461,6 +508,14 @@ async function runClaimed(
     commitOid: left,
   });
   if (done) announceRun(app, done);
+  else if (isAnswer(outcome.summary)) {
+    // Its pull closed under it, but it had found the work done: say so.
+    const answered = answerCancelled(app.db, run.id, {
+      state: outcome.state,
+      summary,
+    });
+    if (answered) announceRun(app, answered);
+  }
   return undefined;
 }
 
@@ -797,7 +852,7 @@ export function convergeFollowing(
   user: User,
 ): TaskInput["following"] {
   if (issue.title.startsWith(UPSTREAM_TITLE)) {
-    const upstream = upstreamFollowing(app, repo.id);
+    const upstream = sourceFollowing(app, issue.id) ?? upstreamFollowing(app, repo.id);
     if (upstream !== undefined) return upstream;
   }
   // Only a parent the agent may read is put in its brief.
@@ -805,6 +860,12 @@ export function convergeFollowing(
   return parent === undefined
     ? undefined
     : { parent: `${parent.ownerName}/${parent.name}`, branch: parent.defaultBranch };
+}
+
+/** The paragraphs a pull description opens with, or nothing when there are none. */
+function pullNote(...parts: (string | undefined)[]): string | undefined {
+  const present = parts.filter((part): part is string => part !== undefined);
+  return present.length === 0 ? undefined : present.join("\n\n");
 }
 
 async function work(
@@ -855,14 +916,26 @@ async function work(
   // brief, its clone is its own fork at a scratch branch, and it pushes
   // nothing. The pull's branch is not its to move, and it never tries.
   const reviewing = reason === "review";
-  if (pull !== undefined && !reviewing && pull.headRepoId !== fork.value.id)
+  // A person's such pull is theirs to push, and stays open (#7572).
+  if (pull !== undefined && !reviewing && pull.headRepoId === repo.id)
     return {
       state: "failed",
-      summary:
-        pull.headRepoId === repo.id
-          ? `pull #${pull.number}'s branch lives in the repository itself; the crew works from forks now — close it and assign the issue again`
-          : "this pull's branch lives in a fork the agent cannot push to",
+      summary: authorsInRepoPull(pull)
+        ? `pull #${pull.number}'s branch lives in the repository itself and only its author, a person, can push it; the crew leaves it with them`
+        : `pull #${pull.number}'s branch lives in the repository itself; the crew works from forks now — close it and assign the issue again`,
     };
+  // A pull whose branch lives in someone else's fork is not the agent's to
+  // push to, and the run no longer fails for it: like a merged pull's
+  // follow-up, it starts a fresh branch in the agent's own fork and lands as
+  // a pull of its own.
+  const foreign =
+    pull !== undefined && !reviewing && pull.headRepoId !== fork.value.id
+      ? pull
+      : undefined;
+  if (foreign)
+    write(
+      `pull #${foreign.number}'s branch lives in another fork: starting a fresh branch in the agent's own, with the diff in the brief`,
+    );
   // A pull the conversation outlived. Closed without a merge, the proposal
   // was declined and there is nothing to continue. Merged before the run
   // began, its branch is spent: the follow-up starts a fresh branch from the
@@ -872,7 +945,8 @@ async function work(
       state: "failed",
       summary: `pull #${pull.number} was closed before the run began`,
     };
-  const continuing = pull !== undefined && pull.mergedAt !== null;
+  const continuing =
+    pull !== undefined && (pull.mergedAt !== null || foreign !== undefined);
   const pullStands = pull !== undefined && !continuing;
   const branch =
     pull !== undefined && !continuing && !reviewing
@@ -887,7 +961,6 @@ async function work(
     pull === undefined
       ? issue.number
       : (issueOfBranch(agent, pull.headBranch) ?? issue.number);
-  const dir = workdirFor(app.config.dataDir, agent, repo, taskNumber);
   write(
     `${agent.user.username} on ${repo.ownerName}/${repo.name}#${issue.number} (${reason}), branch ${branch}`,
   );
@@ -927,7 +1000,17 @@ async function work(
   // A paused run resumes: its pull keeps saying "In progress".
   let pausing = false;
   let ending: Ending | undefined;
+  // The clone is claimed last, right before the `try` whose `finally` frees
+  // it: a throw anywhere above would otherwise hold it for the life of the
+  // process, and every later run on the issue would work beside it.
+  const workdir = claimWorkdir(
+    workdirFor(app.config.dataDir, agent, repo, taskNumber),
+    run.id,
+  );
+  const dir = workdir.dir;
   try {
+    if (workdir.own)
+      write(`another run holds the issue's clone; working in ${dir}`);
     // The secrets this run declared, for this run only: opened now, held for
     // redaction from this moment, dropped in the `finally` below — a crash
     // included.
@@ -980,6 +1063,15 @@ async function work(
     );
     watch.lap("clone");
     if (!prepared.ok) return { state: "failed", summary: prepared.error };
+    // Dependencies before the agent starts, so the type check has its types;
+    // a failure is logged and the run goes on.
+    const deps = await installDependencies(
+      dir,
+      installCacheDir(app.config.dataDir, repo.id),
+      options.installRunner,
+    );
+    const note = installNote(deps);
+    if (note !== undefined) write(note);
 
     // What the agent is told.
     // The session belongs to the task, which spans the issue and the pull
@@ -1000,9 +1092,13 @@ async function work(
         : undefined;
     const policy =
       record === undefined ? undefined : await policyBrief(app, repo);
+    // The machine this seat runs in, from the default branch's forge.json.
+    const role = crewRole(app.db, repo.id, agent.user.id);
+    const machine = machineFor(await repoMachines(app, repo), role);
     const brief = {
       agent,
       repo,
+      machine,
       issue,
       pull,
       branch,
@@ -1017,7 +1113,7 @@ async function work(
         !reviewing &&
         previous?.sessionId !== undefined &&
         previous.sessionId !== "",
-      role: crewRole(app.db, repo.id, agent.user.id),
+      role,
     };
     const failedCheck =
       reason === "check_failed" && pull
@@ -1061,6 +1157,14 @@ async function work(
           ? lastTryOf(app, issue.id, run, reviews)
           : undefined,
       checkSummary: failedCheck?.run?.summary,
+      foreignPull:
+        foreign
+          ? {
+              branch: foreign.headBranch,
+              diff: (await reviewInputs(app, repo, foreign, undefined, bare))
+                .reviewDiff,
+            }
+          : undefined,
       resolution:
         reason === "resolve" && pull
           ? await resolutionBrief(app, repo, pull)
@@ -1074,6 +1178,8 @@ async function work(
       ...(reason === "review" && pull
         ? {
             ...(await reviewInputs(app, repo, pull, record, bare)),
+            sourceNote: await reviewSourceNote(app, repo, pull, bare),
+            boxes: boxesOf(app, repo, pull),
             retry: app.db
               .query<{ n: number }, [string, string, string]>(
                 `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND kind = 'agent'
@@ -1094,6 +1200,7 @@ async function work(
             ...(() => {
               const held = heldNow(app, repo);
               return {
+                landed: landedBoxes(held.by.landed),
                 stuck: stuckOf(held),
                 reserve: reserveOf(held.startable.length, repo.autonomySlots),
               };
@@ -1219,6 +1326,7 @@ async function work(
       ...passportEnv(app.config.dataDir),
       ...credentialEnv(picked),
       ...grant.env,
+      ...machineEnv(machine),
       ...(options.configDir === undefined
         ? {}
         : { CLAUDE_CONFIG_DIR: options.configDir }),
@@ -1238,7 +1346,7 @@ async function work(
         dataDir: app.config.dataDir,
         agentName: agent.user.username,
         urls: [options.localUrl, options.forgeUrl],
-        appUrls: ownAppUrls(ownApp(app, repo)),
+        appUrls: reachableApps(machine, ownAppUrls(ownApp(app, repo))),
         extraHosts: [
           ...(options.allowHosts ?? []),
           ...hosts,
@@ -1268,6 +1376,16 @@ async function work(
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
     const deadline = Date.now() + options.runTimeoutMs;
+    // The agent's own model, unless the work asks for Opus (#7570).
+    const facts = modelFacts(
+      app.db,
+      repo,
+      taskIssue === undefined ? [issue] : [issue, taskIssue],
+      agent.model,
+      brief.role,
+      reviewing,
+    );
+    const chosen = chooseModel(facts);
     const invoke = async (
       prompt: string,
       budgetUsd: number,
@@ -1279,16 +1397,20 @@ async function work(
           cwd: dir,
           prompt,
           appendSystemPrompt: systemPrompt(brief),
-          model: agent.model || undefined,
+          model: chosen.model || undefined,
           budgetUsd,
           resume,
           env,
           sandbox: shellPolicy(),
+          limits: machineLimits(machine),
           label: `crew:${agent.user.username}`,
           timeoutMs: Math.max(deadline - Date.now(), 0),
           log: write,
           signal,
-          onSteer: (send) => steering.set(run.id, send),
+          onSteer: (send) => {
+            listenForSteer(run.id, send);
+          },
+          onMeasure: (m) => noteMeasure(app.db, meter.subscriptionId ?? PLATFORM, m),
           onUsage: (so) =>
             meterLive(
               app,
@@ -1313,7 +1435,8 @@ async function work(
       `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
     );
     noteRunProgress(app.db, run.id, {
-      model: agent.model,
+      model: chosen.model,
+      modelReason: chosen.reason,
       promptVersion: promptVersion(agent, brief.role),
       sandbox: {
         enforced: sandbox.enforced,
@@ -1435,30 +1558,17 @@ async function work(
     // A limit that never lifts is not waited on forever.
     let limitLifts: Date | undefined;
     if (isRateLimited(result) && !signal.aborted) {
-      const said = (
-        result.result.split("\n").find((l) => l.trim() !== "") ?? result.reason
-      ).slice(0, 160);
+      const now = new Date();
       // The account rests until the provider's time; another on the same
       // grant, if one is awake, takes the run straight away.
+      const { until, limit, said } = takeLimit(
+        app.db,
+        picked.kind === "ready" ? picked.subscription.id : undefined,
+        result.result,
+        result.reason,
+        now,
+      );
       if (picked.kind === "ready") {
-        const now = new Date();
-        const until = resumeAt(result.result, now);
-        // Which window is full and when it resets, in the provider's own
-        // words, for the account's standing (`core/standing.ts`).
-        const limit = limitOf(result.result, now);
-        if (limit !== undefined)
-          noteLimit(app.db, picked.subscription.id, {
-            window: limit.window,
-            resetsAt: limit.resetsAt.toISOString(),
-            observedAt: now.toISOString(),
-            said,
-          });
-        restSubscription(
-          app.db,
-          picked.subscription.id,
-          until.toISOString(),
-          said,
-        );
         // Only a look at who could take over: no reservation is made here.
         // The run pauses, and on resume it picks again with its reserve.
         const next = pickSubscription(
@@ -1483,18 +1593,6 @@ async function work(
             costUsd: result.costUsd,
           };
         }
-      } else {
-        // The platform's token is not rested — nothing else would take the
-        // run — but its window is noted, so its standing reads true.
-        const now = new Date();
-        const limit = limitOf(result.result, now);
-        if (limit !== undefined)
-          noteLimit(app.db, PLATFORM, {
-            window: limit.window,
-            resetsAt: limit.resetsAt.toISOString(),
-            observedAt: now.toISOString(),
-            said,
-          });
       }
       if (run.attempt < MAX_PAUSES) {
         const at = resumeAt(result.result, new Date());
@@ -1552,7 +1650,9 @@ async function work(
       watch.lap("wrap-up");
       ran.inWrapUp = false;
     }
-    if (signal.aborted)
+    // A run whose pull closed under it may still have reached its answer: an
+    // already-done decline is kept (`answerCancelled`). One the meter stopped is not.
+    if (signal.aborted && !answeredBeforeStop(meter.stoppedFor, result.result))
       return {
         state: "failed",
         summary: meter.stoppedFor ?? "cancelled",
@@ -1563,9 +1663,8 @@ async function work(
 
     // The decline contract: an agent that should not do the task says so
     // instead of guessing, and nothing it touched becomes a proposal.
-    const declined = /^\s*DECLINED\b/i.test(result.result);
-    if (declined) {
-      const why = result.result.replace(/^\s*DECLINED:?\s*/i, "").trim();
+    const why = declineOf(result.result);
+    if (why !== undefined) {
       write(`declined: ${why.split("\n")[0] ?? ""}`);
       ending = { kind: "declined", sentence: why.split("\n")[0] ?? "" };
       // Done on the base already, by a commit that is there: its own
@@ -1630,9 +1729,14 @@ async function work(
       bare,
       { ...gitAuth, ...identity },
       result.result,
-      stoppedAt === undefined
-        ? undefined
-        : `Budget reached at $${stoppedAt.toFixed(2)}; this is where it stopped.`,
+      pullNote(
+        foreign
+          ? `A fresh start: pull #${foreign.number}'s branch \`${foreign.headBranch}\` lives in another fork, which the crew cannot push to, so this work began from \`${repo.defaultBranch}\` and does not carry that branch's commits.`
+          : undefined,
+        stoppedAt === undefined
+          ? undefined
+          : `Budget reached at $${stoppedAt.toFixed(2)}; this is where it stopped.`,
+      ),
       write,
       Object.values(grant.env),
       run.variantGroup,
@@ -1654,6 +1758,7 @@ async function work(
     await early?.stop();
     if (!pausing) early?.settle(ending);
     grant?.release();
+    await workdir.release();
     deleteToken(app.db, agent.user.id, token.id);
     if (runTmp !== undefined) rmSync(runTmp, { recursive: true, force: true });
   }
@@ -1700,6 +1805,15 @@ export async function forkFor(
   return ok(made.value);
 }
 
+/** Whether `dir` is empty, or a work tree git can read: its `.git` resolves. */
+async function readsAsClone(dir: string, env: Record<string, string>): Promise<boolean> {
+  if (readdirSync(dir).length === 0) return true;
+  if (!existsSync(join(dir, ".git"))) return false;
+  // Its own `.git`, named: never a repository above it that git would find.
+  const top = await runGit(["--git-dir", join(dir, ".git"), "rev-parse", "--git-dir"], { cwd: dir, env });
+  return top.ok;
+}
+
 /**
  * A clone on `branch`, matching what the forge holds. The clone is the
  * triangle git was built for: it fetches from the repository and pushes to
@@ -1731,6 +1845,14 @@ async function prepareClone(
   const agentUrl = `${options.forgeUrl}/${repo.ownerName}/${repo.name}.git`;
   const agentForkUrl = `${options.forgeUrl}/${fork.ownerName}/${fork.name}.git`;
   if (signal.aborted) return { ok: false, error: "cancelled" };
+  // A kept clone git no longer reads as one — a clone a network blip cut
+  // short — is moved aside, never reused, and cloned afresh (#6263).
+  if (existsSync(dir) && !(await readsAsClone(dir, env))) {
+    const aside = `${dir}.broken-${Date.now()}`;
+    renameSync(dir, aside);
+    write(`the kept clone is not a git repository; moved aside to ${aside}, cloning afresh`);
+    return prepareClone(app, options, repo, fork, branch, dir, env, write, signal, false, true);
+  }
   if (!existsSync(join(dir, ".git"))) {
     mkdirSync(dir, { recursive: true });
     write(`cloning ${repo.ownerName}/${repo.name}`);
@@ -1877,6 +1999,8 @@ async function prepareClone(
   // own exclude file — the repository's `.gitignore` is the repository's.
   mkdirSync(join(dir, ".git", "info"), { recursive: true });
   writeFileSync(join(dir, ".git", "info", "exclude"), CLONE_EXCLUDES);
+  // A push that adds a migration commits its pin first (#6938).
+  installPinHook(dir);
   write(
     remote === undefined
       ? `branch ${branch} from ${repo.defaultBranch}`
@@ -1995,6 +2119,8 @@ async function landWork(
         [
           "push",
           "--quiet",
+          // The clone's hooks are the agent's sandbox's, never the forge's.
+          "--no-verify",
           `${options.localUrl}/${fork.ownerName}/${fork.name}.git`,
           `${branch}:${branch}`,
         ],
@@ -2009,7 +2135,9 @@ async function landWork(
   // alternates and its own on top.
   const proposed =
     remote !== undefined && base !== undefined
-      ? await aheadCount(forkBare, base, remote)
+      ? (await contentOnBase(forkBare, base, remote))
+        ? 0
+        : await aheadCount(forkBare, base, remote)
       : 0;
   const report = [message.trim(), note]
     .filter((part): part is string => part !== undefined && part !== "")
@@ -2081,7 +2209,7 @@ function redactResult<T extends { result: string }>(r: T): T {
  * the account has one), or — with nothing granted — whatever the forge
  * itself was started with.
  */
-function credentialEnv(picked: Pick): Record<string, string> {
+export function credentialEnv(picked: Pick): Record<string, string> {
   if (picked.kind === "ready") return credentialEnvOf(picked);
   const own: Record<string, string> = {};
   for (const name of [

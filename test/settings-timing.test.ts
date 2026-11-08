@@ -1,6 +1,6 @@
-/** `/settings/keys`, `/settings/tokens` and `/settings/password` name their phases signed in and answer within budget (#4316). */
+/** `/settings/keys`, `/settings/tokens` and `/settings/password` name their phases signed in and cost a bounded number of statements (#4316). */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { baselineMs, expectBudget } from "./helpers/budget.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +45,13 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+/** The most statements a request may run: today's count with room for a read or two. */
+const MAX_STATEMENTS: Record<string, number> = {
+  "/settings/keys": 12,
+  "/settings/tokens": 13,
+  "/settings/password": 10,
+};
+
 const PAGES: [string, string[]][] = [
   ["/settings/keys", ["session", "keys", "render"]],
   ["/settings/tokens", ["session", "tokens", "sessions", "render"]],
@@ -52,23 +59,15 @@ const PAGES: [string, string[]][] = [
 ];
 
 for (const [path, names] of PAGES)
-  test(`GET ${path} names its phases and answers within its budget`, async () => {
-    const against = await baselineMs(servers.url);
+  test(`GET ${path} names its phases and costs a bounded number of statements`, async () => {
     await fetch(`${servers.url}${path}`, { headers: { cookie } }); // warm
-    const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
-    await res.text();
-    expect(res.status).toBe(200);
-    const parts = (res.headers.get("server-timing") ?? "").split(", ");
-    const dur = (name: string) => {
-      const part = parts.find((p) => p.startsWith(`${name};`));
-      expect(part).toMatch(/^[a-z]+;dur=\d+\.\d$/);
-      return Number(part!.slice(`${name};dur=`.length));
-    };
-    expect(parts.map((p) => p.split(";")[0]).filter((n) => n !== "app")).toEqual(names);
-    expectBudget(dur("app"), { ms: 50, against });
-    const sum = names.reduce((t, n) => t + dur(n), 0);
-    // The rest of `app` is the server's own routing and header work, outside any page (~1-2 ms on every page).
-    expect(sum).toBeLessThanOrEqual(dur("app") + 0.3);
-    const gap = dur("app") - sum;
-    expect(gap).toBeLessThanOrEqual(5); // accounting, not speed
+    {
+      const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
+      await res.text();
+      expect(res.status).toBe(200);
+      const parts = (res.headers.get("server-timing") ?? "").split(", ");
+      expect(parts.map((p) => p.split(";")[0]).filter((n) => n !== "app")).toEqual(names);
+      for (const name of names) expect(parts.find((p) => p.startsWith(`${name};`))).toMatch(/^[a-z]+;dur=\d+\.\d$/);
+    }
+    expectWork(await requestStatements(app.db, `${servers.url}${path}`, { headers: { cookie } }), { max: MAX_STATEMENTS[path]! });
   });

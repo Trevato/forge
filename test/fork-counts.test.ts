@@ -112,7 +112,7 @@ describe("fork counts hold only the forks the viewer may read", () => {
       const api = await fetch(`${base}/api/v1/repos/alice/lib/forks`, {
         headers: { cookie: cookies[who]! },
       });
-      expect(await api.json()).toEqual([]);
+      expect(await api.json()).toEqual({ parent: null, items: [], next_cursor: null });
     }
     const owners = await page("/alice/lib/forks", "bob");
     expect(owners).toContain("1 fork");

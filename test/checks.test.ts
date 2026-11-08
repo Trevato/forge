@@ -18,9 +18,11 @@ import { summariseCheckFailure } from "../src/checks/summary.ts";
 import { SLOW_SECONDS, summaryLines } from "../scripts/gate-summary.ts";
 import { tally } from "../scripts/shards.ts";
 import {
+  holdsLastSlot,
   pickNext,
   requeueAbandonedChecks,
   startChecks,
+  sweepSoon,
   STARVATION_MS,
   type ChecksHandle,
 } from "../src/checks/service.ts";
@@ -170,6 +172,51 @@ describe("parseBunTestFailure: a convenience over one known runner, not a genera
     });
   });
 
+  test("a shard's named failure leads; the (unnamed) fallout behind it is not named", () => {
+    const lines = [
+      "── shard 1/1 (exit 1, 3s): test/a.test.ts",
+      "test/a.test.ts:",
+      "(fail) a > writes the row [2ms]",
+      "error: database is closed",
+      "(fail) (unnamed) [1ms]",
+      " 4 pass",
+      " 2 fail",
+    ];
+    expect(parseBunTestFailure(lines)?.names).toEqual(["a > writes the row"]);
+    // Only a shard that named nothing else is named by its fallout.
+    const only = ["test/b.test.ts:", "error: boom", "(fail) (unnamed)", " 0 pass", " 1 fail"];
+    expect(parseBunTestFailure(only)?.names).toEqual(["test/b.test.ts > (unnamed): error: boom"]);
+  });
+
+  test("shards that finished out of order are named in shard order, each shard's first failure first", () => {
+    const lines = [
+      "── shard 3/3 (exit 1, 2s): test/c.test.ts",
+      "test/c.test.ts:",
+      "(fail) c one [1ms]",
+      "(fail) c two [1ms]",
+      " 1 pass",
+      " 2 fail",
+      "── shard 1/3 (exit 1, 9s): test/a.test.ts",
+      "test/a.test.ts:",
+      "error: boom",
+      "(fail) (unnamed) [1ms]",
+      " 3 pass",
+      " 1 fail",
+      "── shard 2/3 (exit 0, 5s): test/b.test.ts",
+      " 7 pass",
+      " 0 fail",
+      "2 of 3 shards failed:",
+      "(fail) test/a.test.ts > (unnamed): error: boom [1ms] [shard 1]",
+      "(fail) c one [1ms] [shard 3]",
+      "(fail) c two [1ms] [shard 3]",
+    ];
+    expect(parseBunTestFailure(lines)).toEqual({
+      passed: 11,
+      failed: 3,
+      names: ["test/a.test.ts > (unnamed): error: boom", "c one", "c two"],
+    });
+  });
+
   test("output that is not bun test's own shape is not guessed at", () => {
     expect(
       parseBunTestFailure([
@@ -228,6 +275,29 @@ describe("summariseCheckFailure: what a failed check's summary says first", () =
       summary: "check exited with code 1",
       detail: undefined,
     });
+  });
+
+  const failing = (n: number) => [
+    ...Array.from({ length: n }, (_, i) => `(fail) t${i + 1} [1.00ms]`),
+    " 5 pass",
+    ` ${n} fail`,
+  ];
+
+  test("three failures name all three; five name three and how many more", () => {
+    expect(summariseCheckFailure(failing(3), "x").summary).toBe(
+      '3 of 8 tests — "t1", "t2" and "t3"',
+    );
+    expect(summariseCheckFailure(failing(5), "x").summary).toBe(
+      '5 of 10 tests — "t1", "t2", "t3" and 2 more',
+    );
+  });
+
+  test("a name list longer than the limit is still bounded to one line", () => {
+    const long = "y".repeat(100);
+    const lines = ["a", "b", "c", "d"].map((c) => `(fail) ${c}${long} [1.00ms]`);
+    const { summary } = summariseCheckFailure([...lines, " 0 pass", " 4 fail"], "x");
+    expect(summary.length).toBe(200);
+    expect(summary.endsWith("…")).toBe(true);
   });
 
   test("a very long name is bounded to one line", () => {
@@ -298,6 +368,15 @@ describe("summariseCheckFailure: a red gate is summarised by its red test, never
     expect(summariseCheckFailure(log(crashed), "check exited with code 1").summary).toBe(
       "shard 1 exited 137 without naming a test: test/standards.test.ts",
     );
+  });
+
+  test("a killed shard's line is the summary, and the old line is still recognised", () => {
+    expect(
+      summariseCheckFailure(["shard 258 killed after 412 s, running test/x.test.ts"], "check exited with code 1").summary,
+    ).toBe("shard 258 killed after 412 s, running test/x.test.ts");
+    expect(
+      summariseCheckFailure(["shard 258 exited 143 without naming a test: a b"], "check exited with code 1").summary,
+    ).toBe("shard 258 exited 143 without naming a test: a b");
   });
 
   test("without names or a tally, the last line before the gate summary block, never a line of it", () => {
@@ -549,7 +628,7 @@ describe("checks", () => {
       names: ["first failing test", "second failing test"],
     });
     expect(failed.summary).toBe(
-      'check failed: 2 of 3 tests — "first failing test"',
+      'check failed: 2 of 3 tests — "first failing test" and "second failing test"',
     );
   }, 30_000);
 
@@ -789,6 +868,7 @@ describe("checks", () => {
       const until = async (done: () => boolean): Promise<void> => {
         const deadline = Date.now() + 10_000;
         while (!done() && Date.now() < deadline) await Bun.sleep(25);
+        if (!done()) throw new Error(`never came: still waiting while !done()`);
       };
       await until(() => mine().length > 0);
       expect(mine().some((r) => r.state === "queued")).toBe(true);
@@ -808,6 +888,15 @@ describe("checks", () => {
         ),
       ).toBe(true);
     }, 60_000);
+
+  test("a queued gate keeps the last free slot from pull checks", () => {
+    // One slot free, a gate queued: the pull check passes, the gate starts.
+    expect(holdsLastSlot(1, true)).toBe(true);
+    // With no gate queued the pull check takes it, as every slot.
+    expect(holdsLastSlot(1, false)).toBe(false);
+    // More than one free: the pull check starts, one is still left.
+    expect(holdsLastSlot(2, true)).toBe(false);
+  });
 
   test("pickNext takes the newest queued check, unless one has starved", () => {
     const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
@@ -833,6 +922,27 @@ describe("checks", () => {
 
     // These never named a real commit: cancel them rather than leave them
     // for the live checks service running beside this test to trip over.
+    for (const run of [a, b, c]) cancelRun(app.db, run.id);
+  });
+
+  test("pickNext puts an approved pull's check first, newest among them, and the starved before all", () => {
+    const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
+    const b = createRun(app.db, { repoId: repo.id, kind: "check", env: "b" });
+    const c = createRun(app.db, { repoId: repo.id, kind: "check", env: "c" });
+    const now = Date.parse(c.createdAt);
+    const only = (...ids: string[]) => (run: { id: string }) => ids.includes(run.id);
+    // An older approved check beats a newer unapproved one.
+    expect(pickNext([a, b, c], now, only(a.id))?.id).toBe(a.id);
+    // Newest first among the approved.
+    expect(pickNext([a, b, c], now, only(a.id, b.id))?.id).toBe(b.id);
+    // With none approved, the order is unchanged.
+    expect(pickNext([a, b, c], now, () => false)?.id).toBe(c.id);
+    // A starved unapproved check still goes first.
+    const later = now + STARVATION_MS + 1_000;
+    const old = { ...a, createdAt: new Date(now - 1_000).toISOString() };
+    const fresh = { ...b, createdAt: new Date(later).toISOString() };
+    const approvedFresh = { ...c, createdAt: new Date(later + 1).toISOString() };
+    expect(pickNext([fresh, approvedFresh, old], later, only(approvedFresh.id))?.id).toBe(old.id);
     for (const run of [a, b, c]) cancelRun(app.db, run.id);
   });
 
@@ -1253,6 +1363,7 @@ describe("startChecks: a booting forge removes only checkouts nobody is running 
       for (const id of [live.id, lapsed.id, "no-such-run"])
         mkdirSync(where(id), { recursive: true });
       const handle = startChecks(db, { forgeUrl: "http://localhost" });
+      await sweepSoon(db);
       await handle.stop();
       expect(existsSync(where(live.id))).toBe(true);
       expect(existsSync(where(lapsed.id))).toBe(false);

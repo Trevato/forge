@@ -88,6 +88,8 @@ export interface Screen {
   load?(signal: AbortSignal): Promise<void>;
   /** Palette rows only this screen offers, listed after the app's own. */
   commands?(): Command[];
+  /** The local repository this screen shows, so `leaveRepo` can find it when it is deleted. */
+  readonly repoId?: string;
 }
 
 /**
@@ -139,6 +141,11 @@ export interface Ctx {
   push(screen: Screen): void;
   pop(): void;
   replace(screen: Screen): void;
+  /**
+   * A repository is gone: drop its lowest screen and everything above it, down
+   * to the one beneath (never the root), so nothing reads the deleted row.
+   */
+  leaveRepo(repoId: string): void;
   invalidate(): void;
   toast(text: string, tone?: Tone): void;
   /** Where the terminal caret belongs this frame, if anywhere. */
@@ -263,6 +270,8 @@ export interface AppOpts extends SessionOpts {
     graphics: GraphicsSetting;
     icons: IconSetting;
   }) => void;
+  /** How long a toast stays up. @default 4000 */
+  readonly toastMs?: number;
   readonly root: (ctx: Ctx) => Screen;
   readonly commands?: (ctx: Ctx) => Command[];
   /** Turns the palette into the global search box. */
@@ -336,6 +345,15 @@ export class App {
     return !this.dirty && !this.busy;
   }
 
+  /**
+   * No palette search waiting on its debounce or in flight. `settled` does
+   * not count it, so typing in the palette stays snappy under a harness; a
+   * test that acts on the results waits on this, not on a sleep.
+   */
+  get paletteSettled(): boolean {
+    return this.paletteTimers.length === 0;
+  }
+
   /** Frames actually painted. A harness watches it stop changing. */
   get frameCount(): number {
     return this.frames;
@@ -384,6 +402,7 @@ export class App {
       push: (s) => app.push(s),
       pop: () => app.pop(),
       replace: (s) => app.replace(s),
+      leaveRepo: (id) => app.leaveRepo(id),
       invalidate: () => app.invalidate(),
       toast: (text, tone) => app.toast(text, tone),
       track: (work) => app.track(work),
@@ -454,6 +473,13 @@ export class App {
     // The cancellation Bubble Tea's commands cannot do: popping a screen
     // aborts whatever it had in flight, and nothing lands on a dead screen.
     this.stack.pop()?.abort.abort();
+    this.invalidate();
+  }
+
+  leaveRepo(repoId: string): void {
+    const at = this.stack.findIndex((e) => e.screen.repoId === repoId);
+    if (at < 0) return;
+    for (const e of this.stack.splice(Math.max(at, 1))) e.abort.abort();
     this.invalidate();
   }
 
@@ -554,7 +580,7 @@ export class App {
   }
 
   toast(text: string, tone: Tone = "default"): void {
-    this.toastState = { text, tone, until: Date.now() + TOAST_MS };
+    this.toastState = { text, tone, until: Date.now() + (this.opts.toastMs ?? TOAST_MS) };
     this.invalidate();
   }
 
@@ -843,6 +869,10 @@ export class App {
         })
         .catch(() => {
           if (!abort.signal.aborted) this.palette.searching = false;
+        })
+        .finally(() => {
+          // The live run is the last; once it lands this query has nothing left to do.
+          if (live && this.paletteAbort === abort) this.paletteTimers = [];
         });
     };
     this.paletteTimers = [

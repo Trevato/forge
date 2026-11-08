@@ -5,7 +5,8 @@
  * key in one transaction as an upsert that adds to `n` and `sum_us`; it runs
  * by itself about a second after the first pending record, once 500 keys are
  * pending, and on `stop()`. The timer is `unref`'d. A failed write loses
- * nothing: the records go back and the timer retries. Rows older than
+ * nothing: the records go back and the timer retries. A flush never waits on
+ * another process's write lock (`withoutWaiting`): it fails and retries. Rows older than
  * `KEEP_DAYS` are deleted, checked once per hour at flush.
  *
  * `record` also adds to totals kept in memory per database for the life of
@@ -18,6 +19,8 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { withoutWaiting } from "../kernel/db.ts";
+import { quietly } from "./write_clock.ts";
 
 /** Upper edges in ms; bucket `i` holds durations `<= EDGES_MS[i]`, the last is everything slower. */
 export const EDGES_MS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500] as const;
@@ -126,7 +129,8 @@ export function createRouteTiming(
          DO UPDATE SET n = n + excluded.n, sum_us = sum_us + excluded.sum_us`,
       );
       const hourNo = Math.floor(now() / HOUR_MS);
-      db.transaction(() => {
+      // Behind another process's lock this throws at once and the records go back (#6957).
+      withoutWaiting(db, db.transaction(() => quietly(db, () => {
         for (const [key, v] of batch) {
           const [h, pattern, b] = key.split(SEP) as [string, string, string];
           upsert.run(hourText(Number(h)), pattern, Number(b), v.n, v.us);
@@ -137,7 +141,7 @@ export function createRouteTiming(
           );
           prunedHour = hourNo;
         }
-      })();
+      })));
     } catch (err) {
       prunedHour = -1;
       for (const [key, v] of batch) {
@@ -214,8 +218,8 @@ export interface Phase {
   readonly hit?: boolean;
 }
 
-/** A phase name is a header token: lowercase letters, nothing a viewer chose. */
-const PHASE_NAME = /^[a-z][a-z0-9-]{0,15}$/;
+/** A phase name is a header token: lowercase letters, a dot for a part (`kpis.live`), nothing a viewer chose. */
+const PHASE_NAME = /^[a-z][a-z0-9.-]{0,15}$/;
 
 const phaseLists = new WeakMap<Request, Phase[]>();
 
@@ -248,7 +252,13 @@ const snap = (counts?: Counts): [number, number] | undefined => {
 export function timePhase<T>(request: Request, name: string, work: () => T, counts?: Counts): T {
   const before = snap(counts);
   const started = performance.now();
-  const value = work();
+  let value: T;
+  try {
+    value = work();
+  } catch (err) {
+    noteSince(request, name, started, before, counts);
+    throw err;
+  }
   noteSince(request, name, started, before, counts);
   return value;
 }
@@ -256,7 +266,13 @@ export function timePhase<T>(request: Request, name: string, work: () => T, coun
 export async function timePhaseAsync<T>(request: Request, name: string, work: () => Promise<T>, counts?: Counts): Promise<T> {
   const before = snap(counts);
   const started = performance.now();
-  const value = await work();
+  let value: T;
+  try {
+    value = await work();
+  } catch (err) {
+    noteSince(request, name, started, before, counts);
+    throw err;
+  }
   noteSince(request, name, started, before, counts);
   return value;
 }
@@ -278,6 +294,11 @@ const startTimes = new WeakMap<Request, number>();
 /** The server stamps when it took a request, so the work before the handler can be named `route`. */
 export function noteStart(request: Request, at: number): void {
   startTimes.set(request, at);
+}
+
+/** When the server took the request (`noteStart`), if it did. */
+export function startedAt(request: Request): number | undefined {
+  return startTimes.get(request);
 }
 
 const framed = new WeakSet<Request>();
@@ -306,7 +327,9 @@ export function noteSessionTime(request: Request, ms: number): void {
 }
 
 export function takeSessionTime(request: Request): number {
-  return sessionTimes.get(request) ?? 0;
+  const ms = sessionTimes.get(request) ?? 0;
+  sessionTimes.delete(request);
+  return ms;
 }
 
 const dbTimes = new WeakMap<Request, number>();

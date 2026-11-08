@@ -5,7 +5,7 @@
  */
 
 import { join } from "node:path";
-import { rm } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { defect } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { runGit, type GitFailure } from "./env.ts";
@@ -77,8 +77,28 @@ export async function forkBareRepo(
   const reflog = await runGit(["config", "core.logAllRefUpdates", "true"], {
     cwd: forkDir,
   });
-  if (!reflog.ok) return reflog;
+  if (!reflog.ok) return await undo(forkDir, reflog);
+  // A bare clone carries heads and tags only. A pin's refs ride with it:
+  // the build, its cover and its curated screenshots.
+  const pins = await runGit(
+    [
+      "fetch",
+      "--no-tags",
+      parentDir,
+      "+refs/builds/*:refs/builds/*",
+      "+refs/covers/*:refs/covers/*",
+      "+refs/shots/*:refs/shots/*",
+    ],
+    { cwd: forkDir, timeoutMs: 120_000 },
+  );
+  if (!pins.ok) return await undo(forkDir, pins);
   return ok();
+}
+
+/** A fork half made is no fork: remove it, so a second try finds a free place. */
+async function undo<E>(forkDir: string, failure: E): Promise<E> {
+  await rm(forkDir, { recursive: true, force: true });
+  return failure;
 }
 
 /**
@@ -119,15 +139,31 @@ export async function setDefaultBranch(
   return result.ok ? ok() : result;
 }
 
-/** Permanently delete a repository directory. The caller owns the ceremony. */
+/** Is anything at this path? Keyed on the directory, so a half-removed repo counts. */
+export async function repoDirExists(dir: string): Promise<boolean> {
+  return await stat(dir).then(
+    () => true,
+    () => false,
+  );
+}
+
+/**
+ * Permanently delete a repository directory. The caller owns the ceremony.
+ * Presence is the directory, not HEAD: a removal that died partway leaves no
+ * HEAD but still leaves files, and a retry must finish the job.
+ */
 export async function deleteRepoDir(
   dir: string,
 ): Promise<Result<void, { message: string }>> {
   if (!dir.endsWith(".git")) {
     defect("git.refuse_delete", `refusing to delete non-repo path: ${dir}`);
   }
-  if (!(await repoExists(dir)))
+  if (!(await repoDirExists(dir)))
     return err({ message: `not a repository: ${dir}` });
-  await rm(dir, { recursive: true, force: true });
+  try {
+    await rm(dir, { recursive: true, force: true });
+  } catch (e) {
+    return err({ message: e instanceof Error ? e.message : String(e) });
+  }
   return ok();
 }

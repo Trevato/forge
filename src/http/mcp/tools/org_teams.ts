@@ -12,7 +12,7 @@ export const tool: Tool = {
       org: { type: "string", maxLength: 64 },
       action: { type: "string", enum: ["create", "add_member", "remove"] },
       team: { type: "string", maxLength: 64 },
-      user: { type: "string", maxLength: 64, description: "add_member" },
+      user: { type: "string", maxLength: 64 },
       permission: { type: "string", enum: ["read", "write", "admin"], description: "create" },
     },
     required: ["org", "action", "team"],

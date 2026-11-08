@@ -29,11 +29,11 @@ const MODE_LABELS: Record<FollowMode, string> = {
   "take-updates": "Take the parent's updates",
 };
 
-function modeCard(base: string, current: FollowMode | null): Html {
-  return card(
-    html`<form method="post" action="${base}/following/mode">
+/** The mode choice as a form: a forge's, or a plain fork's on its own page. */
+export function modeForm(base: string, current: FollowMode | null, legend: string): Html {
+  return html`<form method="post" action="${base}/following/mode">
       <fieldset class="form-field">
-        <legend>How this forge follows its parent</legend>
+        <legend>${legend}</legend>
         ${FOLLOW_MODES.map(
           (m) => html`<label class="row"
             ><input type="radio" name="mode" value="${m}" ${m === current ? "checked" : null} />
@@ -42,9 +42,11 @@ function modeCard(base: string, current: FollowMode | null): Html {
         )}
       </fieldset>
       <div class="form-actions">${btn("Save", { type: "submit" })}</div>
-    </form>`,
-    { head: html`<h2>Follow mode</h2>` },
-  );
+    </form>`;
+}
+
+function modeCard(base: string, current: FollowMode | null): Html {
+  return card(modeForm(base, current, "How this forge follows its parent"), { head: html`<h2>Follow mode</h2>` });
 }
 
 const MODE_WORDS = { "tell-me": "tell me", "take-updates": "take updates (as a pull you merge)" } as const;

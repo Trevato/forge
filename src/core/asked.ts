@@ -19,14 +19,17 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { alreadyDone } from "./done_on_main.ts";
+import { marksByName, type Mark } from "./marks.ts";
+import { alreadyDone, BY_CREW, PARK_LEAD, PARK_LIKE } from "./done_on_main.ts";
 import { getIssuesByIds, type Issue } from "./issues.ts";
 import { closesFromBody } from "./pulls.ts";
 import { getRepo, listReposWritableTo, type Repo } from "./repos.ts";
 import { listActiveRuns } from "./runs.ts";
 import type { User } from "./users.ts";
 
-export type AskedState = "waiting" | "building" | "shipped" | "closed";
+/** Every state an ask can be in, in the order it moves through them. */
+export const ASKED_STATES = ["waiting", "building", "shipped", "closed"] as const;
+export type AskedState = (typeof ASKED_STATES)[number];
 
 export interface AskedPull {
   /** The pull's issue id, for reads; not part of the JSON. */
@@ -36,7 +39,26 @@ export interface AskedPull {
   readonly state: "open" | "merged" | "closed";
   /** When the pull was opened. */
   readonly openedAt: string;
+  /** When it merged; null otherwise. */
+  readonly mergedAt: string | null;
+  /** Closed by the crew because it could not finish it, not by a person. */
+  readonly parked: boolean;
+  /** Who opened it. */
+  readonly author: string;
 }
+
+/**
+ * What became of an ask, read from its issue, pulls and runs alone:
+ * `parked` and `failed` need the owner; `building` and `unplaced` are in
+ * progress; `landed` is merged; `closed` is closed with nothing merged.
+ */
+export type AskedOutcome =
+  | { readonly kind: "landed"; readonly pull: number; readonly at: string }
+  | { readonly kind: "building"; readonly by: string; readonly byMark?: Mark; readonly pull: number | null }
+  | { readonly kind: "parked"; readonly pull: number; readonly note: string }
+  | { readonly kind: "failed"; readonly by: string; readonly byMark?: Mark; readonly at: string }
+  | { readonly kind: "unplaced" }
+  | { readonly kind: "closed" };
 
 export interface Asked {
   readonly source: "issue";
@@ -56,6 +78,7 @@ export interface Asked {
   readonly lastCrewAt: string | null;
   /** The commits the crew found it done by on the base, while it waits for the asker to close it; empty otherwise. */
   readonly doneBy: readonly string[];
+  readonly outcome: AskedOutcome;
 }
 
 export type AskedShow = "all" | "unshipped" | "flagged";
@@ -81,7 +104,7 @@ const DAY = 24 * 60 * 60 * 1000;
 const SCAN_STEP = 500;
 
 /** An ask with everything but the crew's last activity, which is read per page. */
-type Scanned = Omit<Asked, "lastCrewAt" | "doneBy">;
+type Scanned = Omit<Asked, "lastCrewAt" | "doneBy" | "outcome">;
 
 const shown = (a: Scanned, show: AskedShow): boolean =>
   show === "all" ||
@@ -101,6 +124,8 @@ interface PullRow {
   state: "open" | "closed";
   created_at: string;
   merged_at: string | null;
+  parked: number;
+  author: string;
 }
 
 const placeholders = (n: number, from = 1): string =>
@@ -144,9 +169,12 @@ export function pullsByAsk(
   const rows = db
     .query<PullRow & { repo_id: string }, string[]>(
       `SELECT issue.id, issue.repo_id, issue.number, issue.title, issue.body, issue.state,
-              issue.created_at, pull.merged_at
-       FROM issue JOIN pull ON pull.issue_id = issue.id
-       WHERE issue.repo_id IN (${placeholders(repoIds.length)})
+              issue.created_at, issue.parked, pull.merged_at,
+              user.username AS author
+       FROM issue JOIN pull ON pull.issue_id = issue.id JOIN user ON user.id = issue.author_id
+       WHERE issue.repo_id IN (${placeholders(repoIds.length)}) AND issue.kind = 'pull'
+         AND issue.body LIKE '%#%'
+         AND (issue.body LIKE '%close%' OR issue.body LIKE '%fix%' OR issue.body LIKE '%resolve%')
        ORDER BY issue.number`,
     )
     .all(...repoIds);
@@ -165,6 +193,9 @@ export function pullsByAsk(
               ? "open"
               : "closed",
         openedAt: row.created_at,
+        mergedAt: row.merged_at,
+        parked: row.parked === 1,
+        author: row.author,
       });
       pulls.set(key, list);
     }
@@ -287,14 +318,146 @@ export function askedIn(
     db,
     page.filter((a) => a.issue.state === "open").map((a) => a.issue.id),
   );
+  const outcomes = outcomesOf(db, page);
   return page.map((a) => {
     let at: string | null = last.get(a.issue.id) ?? null;
     for (const p of a.pulls) {
       const t = last.get(p.id);
       if (t !== undefined && (at === null || t > at)) at = t;
     }
-    return { ...a, lastCrewAt: at, doneBy: done.get(a.issue.id) ?? [] };
+    return {
+      ...a,
+      lastCrewAt: at,
+      doneBy: done.get(a.issue.id) ?? [],
+      outcome: outcomes.get(a.issue.id)!,
+    };
   });
+}
+
+/** The first sentence of a parking note, without the crew's fixed lead-in. */
+export function firstSentence(text: string): string {
+  const lead = text.startsWith(PARK_LEAD) ? text.slice(PARK_LEAD.length).replace(/^:\s*/, "") : text;
+  const plain = lead.replace(/\s+/g, " ").trim();
+  const end = plain.search(/[.!?](\s|$)/);
+  return end === -1 ? plain : plain.slice(0, end + 1);
+}
+
+type Run = { state: string; by: string; at: string };
+
+/** The newest agent run of each issue or pull in `ids`, in grouped reads. */
+function lastRuns(db: Database, ids: readonly string[]): Map<string, Run> {
+  const out = new Map<string, Run>();
+  for (let i = 0; i < ids.length; i += 400) {
+    const batch = ids.slice(i, i + 400);
+    for (const r of db
+      .query<{ issue_id: string; state: string; by: string | null; at: string }, string[]>(
+        `SELECT run.issue_id, run.state, user.username AS by, run.created_at AS at
+         FROM run LEFT JOIN user ON user.id = run.actor_id
+         WHERE run.kind = 'agent' AND run.issue_id IN (${placeholders(batch.length)})
+         ORDER BY run.created_at, run.id`,
+      )
+      .all(...batch))
+      out.set(r.issue_id, { state: r.state, by: r.by ?? "the crew", at: r.at });
+  }
+  return out;
+}
+
+/** The newest parking note on each of the pulls `ids`, in grouped reads. */
+function parkingNotes(db: Database, ids: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 400) {
+    const batch = ids.slice(i, i + 400);
+    for (const c of db
+      .query<{ issue_id: string; body: string }, string[]>(
+        `SELECT n.issue_id, n.body FROM comment n
+         WHERE n.body LIKE '${PARK_LIKE}' AND ${BY_CREW} AND n.issue_id IN (${placeholders(batch.length)})
+         ORDER BY n.created_at, n.id`,
+      )
+      .all(...batch))
+      out.set(c.issue_id, c.body);
+  }
+  return out;
+}
+
+const newest = <T>(items: readonly T[], keep: (item: T) => boolean): T | undefined => {
+  for (let i = items.length - 1; i >= 0; i--) if (keep(items[i]!)) return items[i];
+  return undefined;
+};
+
+/** The outcome of each ask: its pulls first, then the issue, then the newest agent run. */
+function outcomesOf(db: Database, page: readonly Scanned[]): Map<string, AskedOutcome> {
+  const runs = lastRuns(db, page.flatMap((a) => [a.issue.id, ...a.pulls.map((p) => p.id)]));
+  const notes = parkingNotes(db, page.flatMap((a) => a.pulls.filter((p) => p.parked).map((p) => p.id)));
+  const out = new Map<string, AskedOutcome>();
+  for (const a of page) {
+    const merged = newest(a.pulls, (p) => p.state === "merged");
+    const open = newest(a.pulls, (p) => p.state === "open");
+    const parked = newest(a.pulls, (p) => p.parked);
+    let run: Run | undefined;
+    for (const id of [a.issue.id, ...a.pulls.map((p) => p.id)]) {
+      const r = runs.get(id);
+      if (r !== undefined && (run === undefined || r.at > run.at)) run = r;
+    }
+    let outcome: AskedOutcome;
+    if (merged !== undefined)
+      outcome = { kind: "landed", pull: merged.number, at: merged.mergedAt ?? merged.openedAt };
+    else if (open !== undefined) outcome = { kind: "building", by: open.author, pull: open.number };
+    else if (a.state === "building") outcome = { kind: "building", by: run?.by ?? "the crew", pull: null };
+    else if (a.state === "closed") outcome = { kind: "closed" };
+    else if (parked !== undefined)
+      outcome = { kind: "parked", pull: parked.number, note: firstSentence(notes.get(parked.id) ?? "") };
+    else if (run?.state === "failed") outcome = { kind: "failed", by: run.by, at: run.at };
+    else outcome = { kind: "unplaced" };
+    out.set(a.issue.id, outcome);
+  }
+  // A name says who it is: the mark comes from the account, never from the name.
+  const marks = marksByName(db, [...out.values()].flatMap((o) => ("by" in o ? [o.by] : [])));
+  for (const [id, o] of out) {
+    const byMark = "by" in o ? marks.get(o.by) : undefined;
+    if (byMark !== undefined && "by" in o) out.set(id, { ...o, byMark });
+  }
+  return out;
+}
+
+/** 0 needs the owner, 1 is in progress, 2 landed, 3 closed with nothing merged. */
+export function askedTier(a: Asked): 0 | 1 | 2 | 3 {
+  if (a.doneBy.length > 0 && a.outcome.kind !== "closed") return 0;
+  switch (a.outcome.kind) {
+    case "parked":
+    case "failed":
+      return 0;
+    case "building":
+    case "unplaced":
+      return 1;
+    case "landed":
+      return 2;
+    case "closed":
+      return 3;
+  }
+}
+
+/** A name with its mark word, as the terminal and the API print it. */
+const named = (by: string, mark: Mark | undefined): string => (mark === undefined ? by : `${by} (${mark})`);
+
+/** What became of the ask as plain words, for the terminal; the page links the same words. */
+export function outcomeText(a: Asked): string {
+  if (a.doneBy.length > 0)
+    return `on main in ${a.doneBy.map((o) => o.slice(0, 7)).join(", ")}, waiting for you to close it`;
+  const o = a.outcome;
+  switch (o.kind) {
+    case "landed":
+      return `landed in #${o.pull}`;
+    case "building":
+      return o.pull === null ? `${named(o.by, o.byMark)} building` : `${named(o.by, o.byMark)} building in #${o.pull}`;
+    case "parked":
+      return `parked: ${o.note === "" ? "no note left" : o.note}`;
+    case "failed":
+      return `${named(o.by, o.byMark)} failed`;
+    case "unplaced":
+      return "not placed yet";
+    case "closed":
+      return "closed, nothing merged";
+  }
 }
 
 export interface AskedCounts {
@@ -420,6 +583,8 @@ export function askedJson(a: Asked) {
     flagged: a.flagged,
     lastCrewAt: a.lastCrewAt,
     doneBy: a.doneBy,
+    outcome: a.outcome,
+    outcomeText: outcomeText(a),
     pulls: a.pulls.map((p) => ({
       number: p.number,
       title: p.title,

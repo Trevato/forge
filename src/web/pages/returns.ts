@@ -15,7 +15,7 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { card, listCard, row } from "../ui.ts";
-import { usd } from "./board.ts";
+import { usd } from "../../core/money.ts";
 
 const runs = (m: Money): string => `${m.runs} ${m.runs === 1 ? "run" : "runs"}`;
 

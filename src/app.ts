@@ -4,6 +4,9 @@
  * side-effect-contained, so tests boot real forges by the dozen.
  */
 
+import { ownHost, setOwnHost } from "./core/trusted_sources.ts";
+import { commitIdentity } from "./core/commit_identity.ts";
+import { getUserById } from "./core/users.ts";
 import type { MailConfig, Mailer } from "./kernel/mail.ts";
 import type { Database } from "bun:sqlite";
 import type { Decider } from "./crew/decide.ts";
@@ -62,6 +65,13 @@ export interface ForgeConfig {
    * in by the platform. Unset, those headers are a claim and are ignored.
    */
   edgeToken?: string;
+  /**
+   * In a preview of this forge run as another's app, the key the parent
+   * signs its visitors' identity with (`FORGE_APP_IDENTITY_KEY`): set, a
+   * visitor it names as an admin is the preview admin
+   * (`spawn/preview-owner.ts`). Never set in production.
+   */
+  previewIdentityKey?: string;
   /**
    * Let anyone, not only an admin, migrate from a host inside the network
    * (loopback, private ranges): a forge run for one person on one machine.
@@ -167,6 +177,11 @@ export interface ForgeConfig {
    */
   appSsh?: string;
   /**
+   * The rolling intent doc a person's build note is copied into, once,
+   * under "## Iterator notes" (`core/intent_notes.ts`). Unset copies none.
+   */
+  notesIntent?: string;
+  /**
    * The repository holding this forge's own code, as `owner/name`
    * (`FORGE_REPO`, e.g. `trevato-apps/forge`). A spawned child forks it,
    * so every child starts from the forge's code and can follow its
@@ -225,6 +240,7 @@ export function createApp(config: ForgeConfig): App {
   const dbPath = join(dataDir, "forge.db");
   const fresh = !existsSync(dbPath);
   const db = openDb(dbPath, migrationFiles);
+  setOwnHost(db, ownHost(config));
   if (config.seedSignup === true) seedSignup(db, fresh);
   // Hand-installed new-account guards become the `guard_new_accounts`
   // setting (default off): drop the legacy triggers once, here, on boot.
@@ -239,7 +255,15 @@ export function createApp(config: ForgeConfig): App {
   bus.subscribe((event) => enqueueForEvent(db, event));
   // What a push moves besides its own branch: the pulls it heads elsewhere,
   // and the forks whose default branch is still a copy of this one's.
-  follow({ db, reposRoot, bus });
+  follow({
+    db,
+    reposRoot,
+    bus,
+    authorOf: (userId) => {
+      const who = getUserById(db, userId);
+      return who === undefined ? undefined : { id: who.id, ...commitIdentity(config, who) };
+    },
+  });
 
   const owner = id();
   const errors = forgeErrorLedger(owner);

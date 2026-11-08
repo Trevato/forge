@@ -26,6 +26,8 @@ export interface Hold {
   /** Why, in one line. */
   readonly why: string;
   readonly heldAt: string;
+  /** "green": the forge lets it go when a check passes on the pull's head. */
+  readonly until?: "green";
 }
 
 interface Row {
@@ -34,6 +36,7 @@ interface Row {
   username: string;
   why: string;
   held_at: string;
+  until_green: number;
 }
 
 const fromRow = (row: Row): Hold => ({
@@ -42,10 +45,11 @@ const fromRow = (row: Row): Hold => ({
   heldByName: row.username,
   why: row.why,
   heldAt: row.held_at,
+  ...(row.until_green === 1 ? { until: "green" as const } : {}),
 });
 
 const STANDING = `SELECT pull_hold.issue_id, pull_hold.held_by, user.username,
-    pull_hold.why, pull_hold.held_at
+    pull_hold.why, pull_hold.held_at, pull_hold.until_green
   FROM pull_hold JOIN user ON user.id = pull_hold.held_by
   WHERE pull_hold.released_at IS NULL`;
 
@@ -94,17 +98,19 @@ export function setHold(
   pullId: string,
   by: string,
   why: string,
+  until?: "green",
 ): Hold {
+  const green = until === "green" ? 1 : 0;
   const changed = db
     .query(
-      `UPDATE pull_hold SET held_by = ?2, why = ?3
+      `UPDATE pull_hold SET held_by = ?2, why = ?3, until_green = ?4
         WHERE issue_id = ?1 AND released_at IS NULL`,
     )
-    .run(pullId, by, why).changes;
+    .run(pullId, by, why, green).changes;
   if (changed === 0)
     db.query(
-      "INSERT INTO pull_hold (id, issue_id, held_by, why) VALUES (?1, ?2, ?3, ?4)",
-    ).run(id(), pullId, by, why);
+      "INSERT INTO pull_hold (id, issue_id, held_by, why, until_green) VALUES (?1, ?2, ?3, ?4, ?5)",
+    ).run(id(), pullId, by, why, green);
   return getHold(db, pullId)!;
 }
 
@@ -119,6 +125,35 @@ export function releaseHold(db: Database, pullId: string, by: string): boolean {
       )
       .run(pullId, by).changes > 0
   );
+}
+
+/**
+ * The forge lets go of a hold set "until green". False when none stands or
+ * the hold is a plain one: a green check never lifts those.
+ */
+export function releaseGreenHold(db: Database, pullId: string): boolean {
+  return (
+    db
+      .query(
+        `UPDATE pull_hold SET released_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          WHERE issue_id = ?1 AND released_at IS NULL AND until_green = 1`,
+      )
+      .run(pullId).changes > 0
+  );
+}
+
+/** How long a hold the crew placed may stand before the forge lets it go. */
+export const CREW_HOLD_MS = 24 * 3_600_000;
+
+/** Standing holds the crew placed (an agent's) at or before `before`, oldest first. */
+export function crewHoldsPlacedBefore(db: Database, before: string): Hold[] {
+  return db
+    .query<Row, [string]>(
+      `${STANDING} AND user.is_agent = 1 AND pull_hold.held_at <= ?1
+        ORDER BY pull_hold.held_at, pull_hold.id`,
+    )
+    .all(before)
+    .map(fromRow);
 }
 
 /** When a hold on this pull was last released, if one ever was. */

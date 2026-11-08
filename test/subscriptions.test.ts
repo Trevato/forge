@@ -21,6 +21,7 @@ import {
   kindOfToken,
   listGrants,
   listSubscriptions,
+  normalizeToken,
   parseApiBase,
   pickSubscription,
   restSubscription,
@@ -41,15 +42,21 @@ const OR_KEY = "sk-or-v1-openrouter-key-for-the-test-aaaaaaaa";
 const GATEWAY = "https://openrouter.ai/api";
 
 describe("a token's kind", () => {
-  test("a setup-token is a plan; any other one-line secret is an API key; spaces, nothing and absurd lengths are refused", () => {
+  test("a setup-token is a plan; any other secret is an API key; whitespace and a Bearer prefix from the paste are dropped; nothing and absurd lengths are refused", () => {
     expect(kindOfToken(OAT)).toBe("oauth");
     expect(kindOfToken(KEY)).toBe("api_key");
     expect(kindOfToken(OR_KEY)).toBe("api_key");
     expect(kindOfToken("sk-ant-usr01-credits-with-a-subscription")).toBe("api_key");
     expect(kindOfToken("hunter2")).toBe("api_key");
     expect(kindOfToken("")).toBeUndefined();
-    expect(kindOfToken("sk-ant-oat01-with space")).toBeUndefined();
-    expect(kindOfToken(`sk-ant-api03-${"x".repeat(600)}`)).toBeUndefined();
+    expect(kindOfToken(normalizeToken("sk-ant-oat01-wrapped\nacross lines"))).toBe("oauth");
+    expect(normalizeToken(`${KEY}\n`)).toBe(KEY);
+    expect(normalizeToken("  Bearer my-own-gateway.key/v2:abc")).toBe("my-own-gateway.key/v2:abc");
+    expect(normalizeToken(" sk-ant-api03-a\u00a0b\u200bc \n")).toBe("sk-ant-api03-abc");
+    expect(kindOfToken(normalizeToken(" \n\u200b "))).toBeUndefined();
+    // Only a cleaned token is judged: whitespace left in is refused, never quietly kept.
+    expect(kindOfToken(`${KEY}\n`)).toBeUndefined();
+    expect(kindOfToken(`sk-ant-api03-${"x".repeat(5000)}`)).toBeUndefined();
   });
 
   test("parses an Anthropic-compatible base URL, stripping /v1", () => {
@@ -96,7 +103,7 @@ describe("the pool", () => {
       error: "invalid_name",
     });
     expect(
-      addSubscription(app.db, dataDir, { name: "nope", token: "hunter 2" }),
+      addSubscription(app.db, dataDir, { name: "nope", token: " \n " }),
     ).toEqual({ ok: false, error: "invalid_token" });
     expect(JSON.stringify(listSubscriptions(app.db))).not.toContain(OAT);
     const raw = app.db
@@ -262,6 +269,8 @@ describe("the provider's reset time", () => {
         turns: 0,
         tokensIn: 0,
         tokensOut: 0,
+        contextTokens: 0,
+        contextWindow: 0,
         reason: "error_during_execution",
       }),
     ).toBe(true);
@@ -537,7 +546,7 @@ describe("the pages", () => {
     expect(added.status).toBe(303);
     const refused = await post("/settings/subscriptions", {
       name: "nope",
-      token: "hunter 2",
+      token: "\u200b",
     });
     expect(refused.status).toBe(303);
     expect(listSubscriptions(app.db).map((s) => s.name)).toEqual(["work"]);

@@ -26,6 +26,7 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { listAt } from "./mcp-list.ts";
 
 quietLogs();
 
@@ -193,16 +194,7 @@ describe("the standing rule over MCP", () => {
   });
 
   test("asks_decide no longer takes a `by`", async () => {
-    const tools = await fetch(`${servers.url}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: `Bearer ${admin["founder"]}`,
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-    });
-    const list = ((await tools.json()) as any).result.tools as any[];
+    const list = (await listAt(servers.url, admin["founder"]!)).result.tools as any[];
     expect(list.find((t) => t.name === "asks_decide").inputSchema.properties.by).toBeUndefined();
   });
 });

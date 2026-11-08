@@ -170,7 +170,8 @@ describe("the releases page", () => {
     const cookie = await login("alice", "a-good-passphrase");
     const body = await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
     expect(body).toContain('href="/releases"');
-    expect(body).toContain("live:");
+    // An admin's tile, or the plain line anyone else gets: both name the live version.
+    expect(body).toMatch(/live: <span class="sha">aaaaaaa|Live version: a{7}/);
     expect(body).toContain("aaaaaaa");
   });
 

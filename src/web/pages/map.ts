@@ -15,13 +15,13 @@
  *
  * Drawn on the server as SVG, laid out by hand: a plan bigger than the few
  * hundred issues this handles is not one a person reads. The global map at
- * `/map` is the same drawing once per repository the viewer can see, one
- * lane each, at one scale, so a column means the same thing in every lane.
+ * `/map` (global-map.ts) is the same drawing once per repository the viewer
+ * can see, one lane each.
  */
 
-import { mayViewId, sealedScope } from "../../core/sealed.ts";
+import type { MapHold } from "../../crew/held.ts";
+import { sealedScope } from "../../core/sealed.ts";
 import type { Database } from "bun:sqlite";
-import type { App } from "../../app.ts";
 import {
   blockedOn,
   criticalPath,
@@ -34,31 +34,24 @@ import {
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
-import { cachedLane, cachedLayout, repoHeads, scopeKey } from "../map_cache.ts";
+import { cachedLayout } from "../map_cache.ts";
 import { holdsFor } from "../../core/holds.ts";
-import {
-  getRepoById,
-  listReposVisibleTo,
-  type Repo,
-} from "../../core/repos.ts";
-import { listActiveRuns, reposWithActiveRuns, type Run, type RunState } from "../../core/runs.ts";
-import { getUsersByIds, type User } from "../../core/users.ts";
+import { firstMarksInRepo } from "../../core/first.ts";
+import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { listActiveRuns, type Run, type RunState } from "../../core/runs.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
   loadRepo,
   notFoundPage,
-  pageHead,
   repoBase,
   repoHeader,
   repoPalette,
-  signInFirst,
 } from "../chrome.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { avatar, badge, btn, card, empty, icon, listCard, row } from "../ui.ts";
-import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
+import { badge, btn, card, empty, row } from "../ui.ts";
 import {
   parkedTwice,
   struckOut,
@@ -930,7 +923,10 @@ export function countWords(words: readonly Word[]): Record<Word, number> {
   return out;
 }
 
-function countsLine(counts: Record<Word, number>): Html {
+export function countsLine(
+  counts: Record<Word, number>,
+  toggle?: { readonly base: string; readonly showDone: boolean },
+): Html {
   const always = new Set<Word>(["ready", "working", "blocked", "done"]);
   const tone: Partial<Record<Word, string>> = {
     ready: "success",
@@ -945,6 +941,13 @@ function countsLine(counts: Record<Word, number>): Html {
       (w) =>
         html`<span class="badge" data-variant="${tone[w] ?? "secondary"}" data-state="${w}">${w} <b>${counts[w]}</b></span> `,
     )}
+    ${toggle === undefined || counts.done === 0
+      ? null
+      : html`<a
+          class="map-toggle"
+          href="${toggle.showDone ? toggle.base : `${toggle.base}?done=1`}"
+          >${toggle.showDone ? "Open only" : "Show done"}</a
+        >`}
   </span>`;
 }
 
@@ -955,6 +958,7 @@ function rankedList(
   say: (r: Ranked) => string,
   empty: string,
   issueHref: (base: string, number: number) => string,
+  first?: { writer: boolean; by: ReadonlyMap<string, string> },
 ): Html {
   const base = repoBase(repo);
   return html`<section class="stack-tight">
@@ -968,7 +972,20 @@ function rankedList(
                 href: issueHref(base, r.issue.number),
                 title: r.issue.title,
                 titleAttr: r.issue.title,
-                meta: html`#${r.issue.number} · ${say(r)}`,
+                meta: html`#${r.issue.number} · ${say(r)}${first?.by.has(r.issue.id)
+                  ? ` · first, by ${first.by.get(r.issue.id)}`
+                  : ""}`,
+                ...(first?.writer
+                  ? {
+                      trail: html`<form
+                        method="post"
+                        action="${base}/issues/${r.issue.number}/first"
+                      >
+                        <input type="hidden" name="back" value="${base}/map" />
+                        ${btn("First", { variant: "outline", size: "sm" })}
+                      </form>`,
+                    }
+                  : {}),
               }),
             )}
           </ul>`,
@@ -1168,6 +1185,8 @@ export const mapCss = /* css */ `
 
 /* ---- beside the drawing ---- */
 .map-ask { display: inline; }
+.map-toggle { display: inline-block; padding: 2px 8px; font-size: 12.5px; }
+@media (pointer: coarse) { .map-toggle { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; } }
 
 /* ---- lanes: §5 list rows that fold ---- */
 #lanes { margin-top: 16px; }
@@ -1339,7 +1358,7 @@ export const mapViewJs = /* js */ `
 })();
 `;
 
-const LIVE_KINDS = "run.queued,run.started,run.finished,issue.*,pull.*";
+export const LIVE_KINDS = "run.queued,run.started,run.finished,issue.*,pull.*";
 
 /** The empty state in the studio's own words, pointing at the app page's
  * own box for telling the crew (`#tell`, `src/web/studio/app.ts`). */
@@ -1349,32 +1368,55 @@ const studioEmpty = (base: string): MapEmpty => ({
   action: btn("Say one", { href: `${base}#tell`, variant: "primary" }),
 });
 
-/** GET /:owner/:name/map */
+/**
+ * The graph as the page draws it by default: open issues and the edges
+ * between them. Readiness is judged on the whole graph, not on this.
+ */
+function openOnly(graph: Graph): Graph {
+  const issues = graph.issues.filter((i) => i.state === "open");
+  const kept = new Set(issues.map((i) => i.id));
+  return {
+    ...graph,
+    issues,
+    edges: graph.edges.filter(
+      (e) => kept.has(e.blockedById) && kept.has(e.issueId),
+    ),
+  };
+}
+
+/** GET /:owner/:name/map (`?done=1` draws the closed issues too) */
 export async function mapPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
   const studio = studioRecord(ctx, repo) !== undefined;
-  // The read: graph, marks and pillars, one phase; `render` is the page's own.
-  const { graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask } =
-    timePhase(ctx.request, "map", () => {
-      const graph = repoGraph(db, repo.id, {
-        ...sealedScope(db, repo, ctx.auth.user),
-      });
-      const ready = readyNow(graph);
-      const blocked = blockedOn(graph);
-      const critical = criticalPath(graph);
-      const placed = cachedLayout(graph, layout);
-      const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
-      const readySet = new Set(ready.map((r) => r.issue.id));
-      const counts = countWords(
-        graph.issues.map((i) => wordFor(i, readySet, marks)),
-      );
-      const pillars = pillarView(db, repo);
-      const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
-      return { graph, ready, blocked, critical, placed, marks, readySet, counts, pillars, ask };
-    });
+  const showDone = ctx.url.searchParams.get("done") === "1";
+  // The read, one Server-Timing phase per step (#8381); `render` is the page's own.
+  const rq = ctx.request;
+  const reading = performance.now();
+  const graph = timePhase(rq, "map-graph", () =>
+    repoGraph(db, repo.id, { ...sealedScope(db, repo, ctx.auth.user), lean: true }),
+  );
+  const ready = timePhase(rq, "map-ready", () => readyNow(graph));
+  const blocked = timePhase(rq, "map-blocked", () => blockedOn(graph));
+  const critical = timePhase(rq, "map-critical", () => criticalPath(graph));
+  const shown = timePhase(rq, "map-shown", () => (showDone ? graph : openOnly(graph)));
+  const placed = timePhase(rq, "map-layout", () => cachedLayout(shown, layout));
+  const marks = timePhase(rq, "map-marks", () =>
+    marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id])),
+  );
+  const { readySet, counts } = timePhase(rq, "map-words", () => {
+    const readySet = new Set(ready.map((r) => r.issue.id));
+    return { readySet, counts: countWords(graph.issues.map((i) => wordFor(i, readySet, marks))) };
+  });
+  const pillars = timePhase(rq, "map-pillars", () => pillarView(db, repo));
+  const ask = timePhase(rq, "map-ask", () =>
+    askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
+  );
+  // The ten named steps above replace the old single `map` phase; `map` is
+  // still noted, by hand, as their total, for readers of the header.
+  notePhase(rq, "map", performance.now() - reading);
   const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
@@ -1383,6 +1425,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         What waits for what. The top edge is ready now; the chain in the accent
         is the least work that still has to happen in order.
         <a href="${repoBase(repo)}/milestones">How far each milestone is</a>.
+        <a href="${repoBase(repo)}/next">Next up</a> is the one ranked list the crew builds from.
       </p>
     </div>
     <div
@@ -1392,13 +1435,13 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
       data-live-repo="${repo.ownerName}/${repo.name}"
     >
       <div class="map-main">
-        ${drawMap(repo, graph, placed, emphasisFor(ready, critical, marks), {
+        ${drawMap(repo, shown, placed, emphasisFor(ready, critical, marks), {
           id: "map-canvas",
           cap: 1,
           issueHref: tellHref,
           ...(studio ? { empty: studioEmpty(repoBase(repo)) } : {}),
         })}
-        ${placed.nodes.length === 0 ? null : countsLine(counts)}
+        ${placed.nodes.length === 0 && counts.done === 0 ? null : countsLine(counts, { base: `${repoBase(repo)}/map`, showDone })}
       </div>
       <aside class="stack">
         ${pillars === undefined
@@ -1414,11 +1457,20 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
               "Ready now",
               ready,
               (r) =>
-                r.holdsUp === 0
-                  ? "holds nothing up"
-                  : `finishing it frees ${r.holdsUp}`,
+                `${graph.flow?.has(r.issue.id) ? "flow · " : ""}${
+                  r.holdsUp === 0
+                    ? "holds nothing up"
+                    : `finishing it frees ${r.holdsUp}`
+                }`,
               "Nothing is ready: everything open waits for something.",
               tellHref,
+              {
+                writer:
+                  ctx.auth.user !== undefined &&
+                  ctx.auth.user.kind !== "agent" &&
+                  canWrite(db, repo, ctx.auth.user),
+                by: new Map([...firstMarksInRepo(db, repo.id)].map(([id, m]) => [id, m.by])),
+              },
             )}
         ${rankedList(
           repo,
@@ -1448,6 +1500,22 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
 }
 
 /**
+ * The map's answer without its closed history (#6176): `issues` keeps the
+ * open ones and `edges` those between them. Everything computed on the whole
+ * graph, `counts.done` included, stays as it was.
+ */
+export function withoutDone(json: Record<string, unknown>): Record<string, unknown> {
+  const issues = (json.issues as { number: number; state: string }[]).filter(
+    (i) => i.state === "open",
+  );
+  const open = new Set(issues.map((i) => i.number));
+  const edges = (json.edges as { issue?: number; blockedBy?: number }[]).filter(
+    (e) => open.has(e.issue ?? -1) && open.has(e.blockedBy ?? -1),
+  );
+  return { ...json, issues, edges };
+}
+
+/**
  * The map as data, for the crew and the tick: the same three lists,
  * `working`, the issues the crew is on right now, and every issue with its
  * word and the words counted.
@@ -1458,9 +1526,19 @@ export function mapJson(
   marks: Marks = NO_MARKS,
   pillars?: PillarView,
   ask: readonly AskToLiveCount[] = [],
+  held?: { holds: ReadonlyMap<number, MapHold>; startable: readonly number[] },
 ): Record<string, unknown> {
   const ready = readyNow(graph);
   const readySet = new Set(ready.map((r) => r.issue.id));
+  const free = held === undefined ? undefined : new Set(held.startable);
+  const startable = ready
+    .filter(
+      (r) =>
+        r.issue.assigneeName === null &&
+        wordFor(r.issue, readySet, marks) === "ready" &&
+        (free === undefined || free.has(r.issue.number)),
+    )
+    .map((r) => r.issue.number);
   const brief = (i: Issue) => ({
     number: i.number,
     title: i.title,
@@ -1484,7 +1562,10 @@ export function mapJson(
     ready: ready.map((r) => ({
       ...brief(r.issue),
       holdsUp: r.holdsUp,
+      ...(held === undefined ? {} : { held: held.holds.get(r.issue.number) ?? null }),
     })),
+    // What a builder may start now: ready, unassigned, no filter holding it.
+    startable,
     blockedOn: blockedOn(graph).map((r) => ({
       ...brief(r.issue),
       holdsUp: r.holdsUp,
@@ -1501,7 +1582,10 @@ export function mapJson(
       title: t.title,
       reasons: t.reasons,
     })),
-    counts: countWords(graph.issues.map((i) => wordFor(i, readySet, marks))),
+    counts: {
+      ...countWords(graph.issues.map((i) => wordFor(i, readySet, marks))),
+      ready: startable.length,
+    },
     edges: graph.edges.map((e) => {
       const a = graph.issues.find((i) => i.id === e.issueId);
       const b = graph.issues.find((i) => i.id === e.blockedById);
@@ -1531,264 +1615,5 @@ export function mapJson(
             }),
           },
         }),
-  };
-}
-
-// ---- every app, one lane each ----
-
-export interface Lane {
-  readonly repo: Repo;
-  readonly graph: Graph;
-  readonly placed: Layout;
-  readonly marks: Marks;
-  readonly ready: Ranked[];
-  readonly critical: Issue[];
-  readonly counts: Record<Word, number>;
-  /** Agent runs queued or running here now. */
-  readonly inFlight: number;
-  /** Who those runs are: usernames, the running ones first. */
-  readonly workers: string[];
-  /** Nothing in flight and nothing ready: the lane folds to its header. */
-  readonly idle: boolean;
-  /** Set when the repository runs itself; `off` has no spend to show. */
-  readonly status: AutonomyStatus | undefined;
-}
-
-/** A lane as kept: everything but the repository and the workers' names. */
-type KeptLane = Omit<Lane, "repo" | "workers"> & {
-  /** The runs' actors, running ones first; their names are read per request. */
-  readonly workerIds: string[];
-};
-
-/** Milliseconds a request spent laying graphs out, inside the lanes' build. */
-export interface Spent {
-  layoutMs: number;
-}
-
-function timed<T>(spent: Spent | undefined, run: () => T): T {
-  if (spent === undefined) return run();
-  const started = performance.now();
-  try {
-    return run();
-  } finally {
-    spent.layoutMs += performance.now() - started;
-  }
-}
-
-/**
- * One repository's lane for one scope, or null when it has nothing to draw.
- * Every read of issues here respects `scope`, so the entry it becomes is
- * the same for everyone whose scope computes to the same key.
- */
-function buildLane(
-  app: App,
-  repo: Repo,
-  viewer: User | undefined,
-  scope: ReturnType<typeof sealedScope>,
-  spent?: Spent,
-): KeptLane | null {
-  const db = app.db;
-  // A run on a sealed report is not shown to who may not see the report.
-  const flying = listActiveRuns(db, [repo.id]).filter((r) =>
-    mayViewId(db, repo, r.issueId, viewer),
-  );
-  if ((repo.counts?.openIssues ?? 0) === 0 && flying.length === 0) return null;
-  const graph = repoGraph(db, repo.id, scope);
-  const marks = marksFor(db, repo.id, graph, flying);
-  const ready = readyNow(graph);
-  const readySet = new Set(ready.map((r) => r.issue.id));
-  const workerIds = [
-    ...new Set(
-      [...flying]
-        .sort(
-          (a, b) =>
-            (a.state === "running" ? -1 : 0) - (b.state === "running" ? -1 : 0),
-        )
-        .map((r) => r.actorId)
-        .filter((id): id is string => id !== null),
-    ),
-  ];
-  const counts = countWords(
-    graph.issues.map((i) => wordFor(i, readySet, marks)),
-  );
-  return {
-    graph,
-    placed: timed(spent, () => cachedLayout(graph, layout)),
-    marks,
-    ready,
-    critical: criticalPath(graph),
-    counts,
-    inFlight: flying.length,
-    workerIds,
-    // Nothing in flight and no card that says ready: a parked or proposed
-    // issue is not one a free slot would take.
-    idle: flying.length === 0 && counts.ready === 0,
-    status: repo.autonomy === "off" ? undefined : autonomyStatus(app, repo),
-  };
-}
-
-/**
- * One lane per repository the viewer can see that has something to draw:
- * an open issue, or a run in flight. The rest are left out rather than
- * drawn empty, so the page is as long as the work and no longer. One read
- * for every run in flight and one for who runs them; a graph and its marks
- * only for the lanes that stay.
- */
-export function globalLanes(
-  app: App,
-  viewer: User | undefined,
-  spent?: Spent,
-): Lane[] {
-  const db = app.db;
-  const now = new Date();
-  // Access first, every request, and into the key (docs/CACHING.md rule 1).
-  const repos = listReposVisibleTo(db, viewer, { limit: 200, withoutArchived: true });
-  const heads = repoHeads(
-    db,
-    repos.map((r) => r.id),
-  );
-  const running = reposWithActiveRuns(db, repos.map((r) => r.id));
-  const built: { repo: Repo; lane: KeptLane }[] = [];
-  for (const repo of repos) {
-    // Nothing open and nobody running: no lane for anyone, so no scope to work out.
-    if ((repo.counts?.openIssues ?? 0) === 0 && !running.has(repo.id)) continue;
-    const scope = sealedScope(db, repo, viewer);
-    const lane = cachedLane(
-      {
-        repoId: repo.id,
-        head: heads.get(repo.id) ?? 0,
-        scope: scopeKey(scope),
-        now,
-      },
-      () => buildLane(app, repo, viewer, scope, spent),
-    );
-    if (lane !== null) built.push({ repo, lane });
-  }
-  // Names are read now, not kept: a renamed account shows on the next view.
-  const actors = getUsersByIds(
-    db,
-    built.flatMap(({ lane }) => lane.workerIds),
-  );
-  const lanes: Lane[] = built.map(({ repo, lane }) => {
-    const { workerIds, ...rest } = lane;
-    return {
-      ...rest,
-      repo,
-      workers: [
-        ...new Set(
-          workerIds
-            .map((id) => actors.get(id)?.username)
-            .filter((n): n is string => n !== undefined),
-        ),
-      ],
-    };
-  });
-  // Where the crew is first, then what has work ready, idle lanes last;
-  // by name within each, so the page reads the same twice.
-  return lanes.sort(
-    (a, b) =>
-      Number(b.inFlight > 0) - Number(a.inFlight > 0) ||
-      Number(a.idle) - Number(b.idle) ||
-      b.counts.ready - a.counts.ready ||
-      `${a.repo.ownerName}/${a.repo.name}`.localeCompare(
-        `${b.repo.ownerName}/${b.repo.name}`,
-      ),
-  );
-}
-
-/** A lane: one folding list row — the caret, the repository's name and its
- * autonomy mode, who is on it, its counts — over its map. */
-export function laneHtml(lane: Lane, width: number): Html {
-  const { repo } = lane;
-  return row({
-    lead: icon("chevronRight"),
-    title: html`<a href="${repoBase(repo)}/map"
-        ><span class="muted">${repo.ownerName}/</span>${repo.name}</a
-      >
-      ${badge(repo.autonomy, { variant: "outline" })}`,
-    meta: countsLine(lane.counts),
-    trail:
-      lane.workers.length === 0
-        ? html``
-        : html`<span title="Working: ${lane.workers.join(", ")}"
-            >${lane.workers.slice(0, 5).map((w) => html`${avatar(w)} `)}${lane
-              .workers.length > 5
-              ? html`<span class="muted small"
-                  >+${lane.workers.length - 5}</span
-                >`
-              : null}</span
-          >`,
-    data: lane.idle
-      ? { autonomy: repo.autonomy, idle: "1" }
-      : { autonomy: repo.autonomy },
-    fold: {
-      id: `lane-${repo.ownerName}-${repo.name}`,
-      open: !lane.idle,
-      body: drawMap(
-        repo,
-        lane.graph,
-        lane.placed,
-        emphasisFor(lane.ready, lane.critical, lane.marks),
-        {
-          id: `map-canvas-${repo.ownerName}-${repo.name}`,
-          minWidth: width,
-          cap: 0.6,
-        },
-      ),
-    },
-  });
-}
-
-/** GET /map — every app the viewer can see, one lane each. */
-export function globalMapPage(ctx: Ctx): Response {
-  const viewer = ctx.auth.user;
-  if (!viewer) return signInFirst(ctx);
-  const { request } = ctx;
-  notePhase(request, "session", takeSessionTime(request));
-  const spent: Spent = { layoutMs: 0 };
-  const lanesStart = performance.now();
-  const lanes = globalLanes(ctx.app, viewer, spent);
-  const lanesMs = performance.now() - lanesStart;
-  notePhase(request, "lanes", Math.max(0, lanesMs - spent.layoutMs));
-  notePhase(request, "layout", spent.layoutMs);
-  const renderStart = performance.now();
-  const width = Math.max(0, ...lanes.map((l) => drawingWidth(l.placed)));
-  const body = html`${pageHead("Map", {
-      sub: "Every app you can see, laid out by what waits for what. The top edge of each lane is ready now; a ringed card is where the crew is.",
-    })}
-    <div id="lanes" data-live="${LIVE_KINDS}">
-      ${lanes.length === 0
-        ? html`<p class="muted">
-            Nothing to map: no open issues anywhere you can see, and nobody
-            working.
-          </p>`
-        : listCard(lanes.map((lane) => laneHtml(lane, width)))}
-    </div>`;
-  const response = page({
-    ctx,
-    title: "Map",
-    body,
-    styleCss: mapCss,
-    scriptJs: `${liveRegionsJs}\n${mapViewJs}`,
-  });
-  notePhase(request, "render", performance.now() - renderStart);
-  return response;
-}
-
-/** GET /api/v1/map — the lanes as data, one entry per repository. */
-export function globalMapJson(
-  app: App,
-  viewer: User | undefined,
-): Record<string, unknown> {
-  return {
-    repos: globalLanes(app, viewer).map((lane) => ({
-      ...mapJson(lane.repo, lane.graph, lane.marks),
-      autonomy: lane.repo.autonomy,
-      spentTodayUsd: lane.status?.spentTodayUsd ?? null,
-      ceilingUsd: lane.status?.ceilingUsd ?? null,
-      inFlight: lane.inFlight,
-      workers: lane.workers,
-      idle: lane.idle,
-    })),
   };
 }

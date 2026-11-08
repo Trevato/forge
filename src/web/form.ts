@@ -8,6 +8,7 @@
  * enforce. Auth routes (sign in / up) pass no scope.
  */
 
+import { CAME_FROM_ELSEWHERE, forbiddenPage, SENT_FROM_ELSEWHERE } from "./chrome.ts";
 import { BODY_MAX, readBounded, STRANGER_MAX } from "../http/limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import { isLocalPath } from "./flash.ts";
@@ -25,13 +26,13 @@ export async function readForm(
   max: number = ctx.auth.user === undefined ? STRANGER_MAX : BODY_MAX,
 ): Promise<Form | Response> {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
-    return new Response("forbidden", { status: 403 });
+    return forbiddenPage(ctx, SENT_FROM_ELSEWHERE, CAME_FROM_ELSEWHERE);
   if (minScope !== undefined) {
     if (
       ctx.auth.scope === undefined ||
       !scopeAllows(ctx.auth.scope, minScope)
     ) {
-      return new Response("forbidden", { status: 403 });
+      return forbiddenPage(ctx, "This token is not allowed to do this.");
     }
   }
   // Counted as it arrives (\`http/limits.ts\`), then parsed as what it says

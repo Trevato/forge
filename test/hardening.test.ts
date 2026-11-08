@@ -249,11 +249,18 @@ describe("running-forge attacks", () => {
 
   test("blob rendering caps line count (C-1)", async () => {
     const html = await (await fetch(`${base}/t/r/blob/main/many.txt`)).text();
-    expect(html).toContain('id="L5000"');
-    expect(html).not.toContain('id="L5001"'); // capped, not 20k rows
-    expect(html).toContain("Showing the first");
-    // The 20k-line file must not produce a multi-megabyte page.
-    expect(html.length).toBeLessThan(2_000_000);
+    expect(html).toContain('id="L1500"');
+    expect(html).not.toContain('id="L1501"'); // the first 1,500 only
+    expect(html).toContain("18,500 more lines");
+    expect(html).toContain("?all=1");
+    expect(html.length).toBeLessThan(400_000);
+    // Even ?all=1 stops at a ceiling: the 20k-line file is not drawn whole.
+    const all = await (
+      await fetch(`${base}/t/r/blob/main/many.txt?all=1`)
+    ).text();
+    expect(all).toContain('id="L10000"');
+    expect(all).not.toContain('id="L10001"');
+    expect(all).toContain("10,000 more lines");
   });
 
   test("oversized blob is refused by stat, not read into memory (C-2)", async () => {

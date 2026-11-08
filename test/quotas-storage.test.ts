@@ -120,6 +120,7 @@ describe("storage quota", () => {
     // The measuring is off the request path: wait for the refresh the push began.
     for (let i = 0; i < 100 && (await accountBytes(app, bobId)) < 1_500_000; i++)
       await Bun.sleep(20);
+    if ((await accountBytes(app, bobId)) < 1_500_000) throw new Error(`never came: still waiting while (await accountBytes(app, bobId)) < 1_500_000`);
     setQuota(app.db, "storage", 1, adaId);
     const third = await push("bob", bobToken, "ok", 10);
     expect(third.code).not.toBe(0);
@@ -332,6 +333,7 @@ describe("storage quota", () => {
     expect((await push(username, token, "data", 1_500_000)).code).toBe(0);
     for (let i = 0; i < 100 && (await accountBytes(app, made.value.id)) < 1_500_000; i++)
       await Bun.sleep(20);
+    if ((await accountBytes(app, made.value.id)) < 1_500_000) throw new Error(`never came: still waiting while (await accountBytes(app, made.value.id)) < 1_500_000`);
     setQuota(app.db, "storage", 1, adaId);
     return getUserById(app.db, made.value.id)!;
   }
@@ -380,6 +382,7 @@ describe("storage quota", () => {
     expect((await push("guild", token, "big", 1_500_000)).code).toBe(0);
     for (let i = 0; i < 100 && (await accountBytes(app, org.value.id)) < 1_500_000; i++)
       await Bun.sleep(20);
+    if ((await accountBytes(app, org.value.id)) < 1_500_000) throw new Error(`never came: still waiting while (await accountBytes(app, org.value.id)) < 1_500_000`);
     setQuota(app.db, "storage", 1, adaId);
     // Gwen herself holds nothing: only the organisation is over.
     expect(await accountBytes(app, gwen.value.id)).toBe(0);

@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "thought",
   doc: "`{ id }`: where one of your thoughts went (its id comes from `tell` without a repo): the placement, and the earlier thoughts it repeats or takes back and the later ones that did the same; not yours and not there answer alike, `not_found`",
   description:
-    "Where a thought went: its id (from `tell` without a repo) answers placement and reply.",
+    "Where a thought went, by its id (from `tell` without a repo).",
   inputSchema: {
     type: "object",
     properties: { id: { type: "string", maxLength: 64 } },

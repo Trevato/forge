@@ -1,14 +1,17 @@
 /** The API's list of pulls names its Server-Timing phases (#3964). */
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { openPull } from "../src/actions/pulls.ts";
+import { mergeReadingsSettled } from "../src/core/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
-import { createUser } from "../src/core/users.ts";
+import type { Repo } from "../src/core/repos.ts";
+import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { expectWork, requestStatements } from "./helpers/work.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -17,6 +20,8 @@ let dataDir: string;
 let app: App;
 let servers: Servers;
 let cookie = "";
+let alice: User;
+let repo: Repo;
 const cells = process.env["FORGE_CELLS"];
 
 beforeAll(async () => {
@@ -33,23 +38,24 @@ beforeAll(async () => {
     adminIfFirst: true,
   });
   if (!made.ok) throw new Error(String(made.error));
-  const alice = made.value;
+  alice = made.value;
   cookie = `forge_session=${createSession(app.db, alice.id).token}`;
-  const repo = await createRepo(app, alice, { name: "r", visibility: "public" });
-  if (!repo.ok) throw new Error(String(repo.error));
-  const first = await commitToBranch(app, alice, repo.value, {
+  const created = await createRepo(app, alice, { name: "r", visibility: "public" });
+  if (!created.ok) throw new Error(String(created.error));
+  repo = created.value;
+  const first = await commitToBranch(app, alice, repo, {
     message: "change",
     files: [{ path: "forge.json", content: "{}" }],
   });
   if (!first.ok) throw new Error(JSON.stringify(first.error));
   for (const branch of ["one", "two"]) {
-    const done = await commitToBranch(app, alice, repo.value, {
+    const done = await commitToBranch(app, alice, repo, {
       branch,
       message: "change",
       files: [{ path: `${branch}.txt`, content: "x" }],
     });
     if (!done.ok) throw new Error(JSON.stringify(done.error));
-    const pull = await openPull(app, alice, repo.value, {
+    const pull = await openPull(app, alice, repo, {
       title: branch,
       body: "",
       baseBranch: "main",
@@ -86,3 +92,36 @@ test("an unknown repository still names session", async () => {
   expect(got.status).toBe(404);
   expect(got.names).toEqual(["session"]);
 });
+
+test("130 open pulls read their mergeability from the cache: the merge phase is cheap and spawns no git", async () => {
+  for (let i = 0; i < 128; i++) {
+    const branch = `b${i}`;
+    const done = await commitToBranch(app, alice, repo, {
+      branch,
+      message: "change",
+      files: [{ path: `${branch}.txt`, content: "x" }],
+    });
+    if (!done.ok) throw new Error(JSON.stringify(done.error));
+    const pull = await openPull(app, alice, repo, {
+      title: branch,
+      body: "",
+      baseBranch: "main",
+      headBranch: branch,
+    });
+    if (!pull.ok) throw new Error(JSON.stringify(pull.error));
+  }
+  const url = `${servers.url}/api/v1/repos/alice/r/pulls?limit=200`;
+  const res = await fetch(url, { headers: { cookie } });
+  expect((JSON.parse(await res.text()) as { items: unknown[] }).items.length).toBeGreaterThanOrEqual(130);
+  // Past the list's budget the first readings finish in the background (#8156).
+  await mergeReadingsSettled();
+  const spawn = spyOn(Bun, "spawn");
+  try {
+    // Counted, not timed: one read per page, not one per pull (130 pulls, no N+1).
+    const reads = await requestStatements(app.db, url, { headers: { cookie } });
+    expect(spawn.mock.calls.filter((c) => (c[0] as string[]).includes("merge-tree")).length).toBe(0);
+    expectWork(reads, { max: 16 });
+  } finally {
+    spawn.mockRestore();
+  }
+}, 120_000);

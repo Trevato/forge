@@ -1,18 +1,19 @@
-import { changeCapacity, listCapacity } from "../../../actions/capacity.ts";
+import { SETTABLE_CAPACITY, changeCapacity, listCapacity } from "../../../actions/capacity.ts";
 import { SETTING_WORDS } from "../../../actions/setting_words.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "capacity",
+  doc: "`{ key?, value?, dryRun? }` (forge admin): the forge's capacity and guards, live (crew and checks concurrency, check shards, cell egress, the new-account guard, the sign-in edge, queue depth, child forges, `egress.npmBytesLastHour` and `npmTopRepoLastHour`, and `selfSwap: { enabled, migrateReq, blocked }`: whether `FORGE_SELF_SWAP=1`, the kernel's `tcp_migrate_req` (`1`, `0`, `unreadable`), and why this forge cannot swap itself, null when it can; only the first six are settable by `key`); with `key` and `value` (`\"\"` restores the default), planned first (`dryRun` is true unless `false`); applying needs an admin-scope token",
   description:
-    "The forge's capacity and guards, live. With `key` and `value` (\"\" restores default), plans.",
+    "Forge capacity and guards, live. With `key` and `value` (\"\" restores default), plans.",
   inputSchema: {
     type: "object",
     properties: {
       key: {
         type: "string",
-        enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts", "signin.edge"],
+        enum: [...SETTABLE_CAPACITY],
       },
       value: { type: "string", maxLength: 16 },
       dryRun: { type: "boolean" },

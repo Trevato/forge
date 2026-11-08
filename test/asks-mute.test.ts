@@ -26,6 +26,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { mcpTool } from "./helpers/mcp.ts";
 import { askCountFor, askLinesFor, forgeNeedsFor, repoAsks } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { listAt } from "./mcp-list.ts";
 
 quietLogs();
 // Every test here is HTTP round trips against a server on a shared machine: the 5s default measures its load, not the code.
@@ -144,7 +145,7 @@ describe("muting a repository's asks", () => {
 
     const res = await post(cookie, "/asks/mute", [["repo", repo.id]]);
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/asks");
+    expect(res.headers.get("location")).toBe(`/asks?muted=${repo.id}`);
     expect(mutedRepos(app.db, alice.id).has(repo.id)).toBe(true);
     // Idempotent: twice is the same as once.
     await post(cookie, "/asks/mute", [["repo", repo.id]]);
@@ -205,6 +206,42 @@ describe("muting a repository's asks", () => {
     expect(repoAsks(app.db, alice, repo)).toEqual({ count: 1, muted: false });
   });
 
+  test("muting and listening keep the reader on the page they were on, with Undo in place", async () => {
+    const page = (path: string) => fetch(`${servers.url}${path}`, { headers: headers(cookie) }).then((r) => r.text());
+    const res = await post(cookie, "/asks/mute", [["repo", repo.id], ["back", "/asks?kind=pulls"]]);
+    expect(res.status).toBe(303);
+    const to = res.headers.get("location")!;
+    expect(to).toBe(`/asks?kind=pulls&muted=${repo.id}`);
+    const flash = await page(to);
+    expect(flash).toContain("Muted alice/muted");
+    expect(flash).toContain('action="/asks/listen"');
+    const back = await post(cookie, "/asks/listen", [["repo", repo.id], ["back", "/asks?kind=pulls"]]);
+    expect(back.headers.get("location")).toBe(`/asks?kind=pulls&listened=${repo.id}`);
+    expect(await page(back.headers.get("location")!)).toContain("Listening to alice/muted again");
+    for (const evil of ["https://evil.example/", "/settings", "//evil.example/asks", "/asksfoo?x=1"]) {
+      const r = await post(cookie, "/asks/mute", [["repo", repo.id], ["back", evil]]);
+      expect(r.headers.get("location")).toBe(`/asks?muted=${repo.id}`);
+    }
+    await post(cookie, "/asks/listen", [["repo", repo.id]]);
+  });
+
+  test("the flash and its back are guarded: unreadable, malformed and fragment cases render or follow nothing", async () => {
+    const page = (c: string, path: string) =>
+      fetch(`${servers.url}${path}`, { headers: headers(c) }).then((r) => r.text());
+    const secret = await createRepo(app, alice, { name: "hush", visibility: "private" });
+    if (!secret.ok) throw new Error(String(secret.error));
+    // Bob cannot read it: no flash, even with the id in the address.
+    expect(await page(bobCookie, `/asks?muted=${secret.value.id}`)).not.toContain("Muted alice/hush");
+    expect(await page(cookie, `/asks?muted=${secret.value.id}`)).toContain("Muted alice/hush");
+    // A malformed id renders nothing.
+    for (const bad of ["../x", "a b", "x".repeat(65), ""])
+      expect(await page(cookie, `/asks?muted=${encodeURIComponent(bad)}`)).not.toContain('class="toast"');
+    // A back with a fragment falls back.
+    const r = await post(cookie, "/asks/mute", [["repo", repo.id], ["back", "/asks?kind=pulls#x"]]);
+    expect(r.headers.get("location")).toBe(`/asks?muted=${repo.id}`);
+    await post(cookie, "/asks/listen", [["repo", repo.id]]);
+  });
+
   test("a chip leaves the inbox: the change's chip or its author's, and no other", async () => {
     const bot = getUserByName(app.db, "bot")!;
     const lines = () => askLinesFor(app.db, alice).length;
@@ -254,12 +291,7 @@ describe("muting a repository's asks", () => {
     expect(((await tool(token, "asks", { hide_people: ["nobody"] })) as any).error).toContain("hide_people");
     expect(((await tool(token, "asks", { hide_kinds: "reviews" })) as any).error).toContain("lists");
     // The manifest says so.
-    const res = await fetch(`${servers.url}/mcp`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
-    });
-    const tools = ((await res.json()) as any).result.tools as any[];
+    const tools = (await listAt(servers.url, token)).result.tools as any[];
     for (const name of ["asks", "feed"]) {
       const t = tools.find((x) => x.name === name);
       expect(t.description).toContain("saved filter");

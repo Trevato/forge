@@ -50,7 +50,7 @@ describe("the note door on a mirrored app", () => {
     github = serveFakeForge(newFakeState("github", "alice", secret));
     forgetProviders(dataDir);
     const connected = await connectOrigin(app, alice, { host: github.url, kind: "github", token: secret });
-    if (!connected.ok) throw new Error(connected.error);
+    if (!connected.ok) throw new Error(JSON.stringify(connected.error));
     const created = await newApp(app, alice, { name: "mirrored", description: "Words", visibility: "public" });
     if (!created.ok) throw new Error(String(created.error));
     const repo = getRepo(app.db, "alice", "mirrored")!;

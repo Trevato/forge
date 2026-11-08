@@ -1,3 +1,4 @@
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -58,6 +59,7 @@ async function boot(kind: "github" | "forgejo"): Promise<Fixture> {
   state.oauth = oauth;
   const fake = serveFakeForge(state);
   const app = createApp({ dataDir, port: 0 });
+  everyoneIsAMember(app.db);
   const servers = await serve(app);
   for (const username of ["alice", "bob", "carol"]) {
     await fetch(`${servers.url}/api/v1/users`, {

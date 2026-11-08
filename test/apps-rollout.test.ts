@@ -117,14 +117,21 @@ function connect(forge: Forge) {
   return { ws, opened, closed, echo };
 }
 
-/** Ask `/` until `stop` is set, from whichever forge `target` names; every status seen. */
-function loop(target: () => Forge, stop: { done: boolean }): Promise<number[]> {
+/**
+ * Ask `/` until `stop` is set, from whichever forge `target` names; every
+ * status seen. `stop.asking` is the request in flight, so a test can let it
+ * land before it stops the forge it went to.
+ */
+function loop(target: () => Forge, stop: { done: boolean; asking?: Promise<unknown> }): Promise<number[]> {
   return (async () => {
     const seen: number[] = [];
     while (!stop.done) {
-      const res = await get(target(), "/");
-      await res.arrayBuffer();
-      seen.push(res.status);
+      const asking = get(target(), "/").then(async (res) => {
+        await res.arrayBuffer();
+        return res.status;
+      });
+      stop.asking = asking;
+      seen.push(await asking);
       await Bun.sleep(20);
     }
     return seen;
@@ -237,7 +244,7 @@ describe("apps: through a rollout", () => {
     expect(await socket.opened).toBe(true);
     expect(await socket.echo("held")).toBe("held");
 
-    const stop = { done: false };
+    const stop: { done: boolean; asking?: Promise<unknown> } = { done: false };
     let current: Forge = a;
     const statuses = loop(() => current, stop);
 
@@ -259,6 +266,9 @@ describe("apps: through a rollout", () => {
 
     // The platform routes to the new forge; the old one stops its apps.
     current = next;
+    // The request already sent to the old forge lands first, as the
+    // SIGTERM linger in `main.ts` lets it in production (#4496).
+    await stop.asking;
     await a.runtime.stop();
     a.presence.stop();
     const closed = await socket.closed;

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { REPO_INIT_FAILED, REPO_NAME_RULES } from "../src/actions/repo_words.ts";
 
 const WORDS = { REPO_NAME_RULES, REPO_INIT_FAILED };
-const READERS = ["src/actions/migrate.ts", "src/web/pages/apps.ts", "src/web/pages/site.ts"];
+const READERS = ["src/actions/migrate.ts", "src/actions/apps.ts", "src/web/pages/site.ts"];
 
 describe("a repository's refusal words", () => {
   for (const [name, words] of Object.entries(WORDS)) {

@@ -3,6 +3,7 @@
  * origin and version, tagged by its own bytes, answered 304 to that tag.
  */
 
+import { encodeOnce, negotiate } from "../http/compress.ts";
 import { holds, weakEtag } from "../http/etag.ts";
 import type { Handler } from "../http/context.ts";
 import type { Router } from "../http/router.ts";
@@ -31,9 +32,16 @@ export function openapiText(origin: string, version: string): { text: string; et
 
 export function openapiRoute(router: Router<Handler>): void {
   router.add("GET", "/contract/openapi.json", (ctx) => {
-    const { text, etag } = openapiText(ctx.url.origin, running().version);
-    const headers = { "cache-control": "public, max-age=300", etag };
-    if (holds(ctx.request, etag)) return new Response(null, { status: 304, headers });
-    return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+    const hit = openapiText(ctx.url.origin, running().version);
+    const headers = { "cache-control": "public, max-age=300", etag: hit.etag, vary: "accept-encoding" };
+    if (holds(ctx.request, hit.etag)) return new Response(null, { status: 304, headers });
+    const type = { "content-type": "application/json", ...headers };
+    // Encoded once per build at the slow, small level, not per request.
+    const encoding = negotiate(ctx.request.headers.get("accept-encoding"));
+    if (encoding !== null) {
+      const bytes = encodeOnce(hit.etag, new TextEncoder().encode(hit.text), encoding);
+      return new Response(bytes as Uint8Array<ArrayBuffer>, { headers: { ...type, "content-encoding": encoding } });
+    }
+    return new Response(hit.text, { headers: type });
   });
 }

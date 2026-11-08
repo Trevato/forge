@@ -4,17 +4,18 @@
  * or lands it. The refusals come first.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { seatAs } from "./helpers/seat.ts";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { holdPull, releasePull } from "../src/actions/holds.ts";
+import { addToCrew, createAgent, removeFromCrew } from "../src/actions/crew.ts";
+import { expireCrewHolds, holdPull, releaseOnGreen, releasePull } from "../src/actions/holds.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import {
   cleanWhy,
@@ -25,6 +26,7 @@ import {
   setHold,
   WHY_MAX,
 } from "../src/core/holds.ts";
+import { getIssueById, listComments } from "../src/core/issues.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
@@ -33,6 +35,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { landIfGreen, parkPull } from "../src/crew/autonomy.ts";
 import { sendToReview, sweepReviews } from "../src/crew/review.ts";
+import { startChecks } from "../src/checks/service.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { recordAskLedger } from "../src/web/studio/asks.ts";
 
@@ -402,7 +405,9 @@ describe("a held pull and the rules", () => {
     f.app.db
       .query("UPDATE issue SET author_id = ?2 WHERE id = ?1")
       .run(pull.id, author.id);
-    return f.passCheck(pull, minutesAgo);
+    f.passCheck(pull, minutesAgo);
+    // Read again: the author decides whose pull it is (#7572).
+    return getPull(f.app.db, f.repo.id, pull.number)!;
   };
   const approve = (pull: Pull, by: User) =>
     submitReview(f.app.db, {
@@ -449,7 +454,7 @@ describe("a held pull and the rules", () => {
   });
 
   test("a held green pull with an approving review does not land", async () => {
-    setCrewRole(f.app.db, f.repo.id, quill.id, "reviewer");
+    seatAs(f.app.db, f.repo.id, quill.id, "reviewer");
     const pull = await greenPull("approved", mason);
     approve(pull, f.alice);
     hold(pull);
@@ -680,6 +685,7 @@ describe("a hold is set, shown and lifted", () => {
     const cookie = await signIn("alice");
     const change = `/alice/garden/pulls/${pull.number}`;
     const before = await page(change, cookie);
+    expect(before).toContain(`id="hold"`);
     expect(before).toContain("Hold this pull request");
     expect(before).toContain(
       `action="/alice/garden/pulls/${pull.number}/hold"`,
@@ -781,6 +787,56 @@ describe("a hold is set, shown and lifted", () => {
     // She said "not yet"; dana is still asked.
     expect([how(f.alice), how(dana)]).toEqual([["acted"], [null]]);
   });
+
+  test("until green: the form sets it, the card says it, and the release shows on the pull page as the forge's line", async () => {
+    const cookie = await signIn("alice");
+    const mine = await f.pullOn("until-green-page");
+    const change = `/alice/garden/pulls/${mine.number}`;
+    expect(await page(change, cookie)).toContain('name="until"');
+    const sent = await form(`${change}/hold`, cookie, {
+      why: "red alone",
+      until: "green",
+    });
+    expect(sent.status).toBe(303);
+    expect(getHold(f.app.db, mine.id)?.until).toBe("green");
+    expect(await page(change, cookie)).toContain("Releases on green.");
+    // The MCP door sets it too.
+    releaseHold(f.app.db, mine.id, f.alice.id);
+    const planned = await mcp("hold", {
+      app: "alice/garden",
+      pull: mine.number,
+      why: "red alone",
+      until: "green",
+      dryRun: false,
+    });
+    expect(planned.error).toBeUndefined();
+    expect(getHold(f.app.db, mine.id)?.until).toBe("green");
+    releaseHold(f.app.db, mine.id, f.alice.id);
+    const typo = await mcp("hold", {
+      app: "alice/garden",
+      pull: mine.number,
+      why: "red alone",
+      until: "red",
+      dryRun: false,
+    });
+    expect(typo.error).toContain("bad_until");
+    expect(getHold(f.app.db, mine.id)).toBeUndefined();
+    holdPull(f.app, f.alice, f.repo, mine, "red alone", false, "green");
+    const check = createRun(f.app.db, {
+      repoId: f.repo.id,
+      kind: "check",
+      issueId: mine.id,
+      env: `pull-${mine.number}`,
+      commitOid: mine.headOid,
+      reason: "pull",
+    });
+    claimRun(f.app.db, check.id);
+    const done = finishRun(f.app.db, check.id, { state: "ok", summary: "ok" })!;
+    expect(releaseOnGreen(f.app, done)).toBe(true);
+    const text = await page(change, cookie);
+    expect(text).toContain(`hold released: green on ${mine.headOid.slice(0, 7)}`);
+    expect(text).toContain("the forge");
+  });
 });
 
 describe("a hold, as it is kept", () => {
@@ -849,5 +905,258 @@ describe("a hold, as it is kept", () => {
     setHold(app.db, pull.id, alice.id, "once more");
     expect(getHold(app.db, pull.id)?.why).toBe("once more");
     expect(lastRelease(app.db, pull.id)).toBe(released);
+  });
+});
+
+describe("a hold set until green", () => {
+  let f: Awaited<ReturnType<typeof forge>>;
+  let app: App;
+
+  beforeAll(async () => {
+    f = await forge("forge-holds-green-", "private");
+    app = f.app;
+  }, 30_000);
+
+  afterAll(() => f.close());
+
+  /** A finished check on the pull's head, as the verdict leaves it. */
+  const verdict = (pull: Pull, state: "ok" | "failed", oid = pull.headOid) => {
+    const check = createRun(app.db, {
+      repoId: f.repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: oid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    return finishRun(app.db, check.id, { state, summary: state })!;
+  };
+  const notes = (pull: Pull) =>
+    (
+      app.db
+        .query("SELECT payload FROM event WHERE kind = 'pull.released'")
+        .all() as { payload: string }[]
+    )
+      .map((r) => JSON.parse(r.payload))
+      .filter((p) => p.number === pull.number)
+      .map((p) => p.note);
+
+  test("a green check on the head releases it, with one line saying so", async () => {
+    const pull = await f.pullOn("green-one");
+    const held = setHold(app.db, pull.id, f.alice.id, "red alone", "green");
+    expect(held.until).toBe("green");
+    expect(releaseOnGreen(app, verdict(pull, "failed"))).toBe(false);
+    expect(getHold(app.db, pull.id)).toBeDefined();
+    expect(releaseOnGreen(app, verdict(pull, "ok", "0".repeat(40)))).toBe(false);
+    expect(getHold(app.db, pull.id)).toBeDefined();
+    expect(releaseOnGreen(app, verdict(pull, "ok"))).toBe(true);
+    expect(getHold(app.db, pull.id)).toBeUndefined();
+    expect(lastRelease(app.db, pull.id)).toBeDefined();
+    expect(notes(pull)).toEqual([
+      `hold released: green on ${pull.headOid.slice(0, 7)}`,
+    ]);
+  });
+
+  test("a plain hold stays through a green check", async () => {
+    const pull = await f.pullOn("green-two");
+    setHold(app.db, pull.id, f.alice.id, "waiting");
+    expect(getHold(app.db, pull.id)?.until).toBeUndefined();
+    expect(releaseOnGreen(app, verdict(pull, "ok"))).toBe(false);
+    expect(getHold(app.db, pull.id)?.why).toBe("waiting");
+    expect(notes(pull)).toEqual([]);
+  });
+
+  test("holding a held pull again sets whether it waits for green", async () => {
+    const pull = await f.pullOn("green-three");
+    setHold(app.db, pull.id, f.alice.id, "waiting", "green");
+    expect(setHold(app.db, pull.id, f.alice.id, "waiting").until).toBeUndefined();
+    expect(releaseOnGreen(app, verdict(pull, "ok"))).toBe(false);
+  });
+
+  test("holdPull takes until: green", async () => {
+    const pull = await f.pullOn("green-four");
+    const held = holdPull(app, f.alice, f.repo, pull, "red alone", false, "green");
+    expect(held.ok && held.value.until).toBe("green");
+    expect(releaseOnGreen(app, verdict(pull, "ok"))).toBe(true);
+  });
+});
+
+describe("a crew hold that outlives its reason expires", () => {
+  const HOUR = 3_600_000;
+  async function setup() {
+    const f = await forge("forge-holds-expire-", "private");
+    const agent = await createAgent(f.app, f.alice, { username: "mason" });
+    if (!agent.ok) throw new Error(String(agent.error));
+    expect(addToCrew(f.app, f.alice, f.repo, "mason").ok).toBe(true);
+    const mason = getUserByName(f.app.db, "mason")!;
+    /** A pull mason built, held by `by` since `hours` ago. */
+    const held = async (branch: string, by: User, hours: number) => {
+      const pull = await f.pullOn(branch);
+      f.app.db.query("UPDATE issue SET author_id = ?2 WHERE id = ?1").run(pull.id, mason.id);
+      setHold(f.app.db, pull.id, by.id, "waiting on the vault key", undefined);
+      f.app.db
+        .query("UPDATE pull_hold SET held_at = ?2 WHERE issue_id = ?1")
+        .run(pull.id, new Date(Date.now() - hours * HOUR).toISOString());
+      return pull;
+    };
+    return { ...f, mason, held };
+  }
+
+  test("a 25 h crew hold is released with a note naming the reason, and the pull goes back to its builder", async () => {
+    const f = await setup();
+    const pull = await f.held("old", f.mason, 25);
+    expect(expireCrewHolds(f.app)).toBe(1);
+    expect(getHold(f.app.db, pull.id)).toBeUndefined();
+    const issue = getIssueById(f.app.db, pull.id)!;
+    expect(issue.assigneeId).toBe(f.mason.id);
+    const said = listComments(f.app.db, pull.id).map((c) => c.body);
+    expect(said).toContain("Hold expired after 24 h: waiting on the vault key. Back to @mason.");
+    expect(expireCrewHolds(f.app)).toBe(0);
+    await f.close();
+  });
+
+  test("a 25 h crew hold on a closed pull is released with no comment and no hand-back", async () => {
+    const f = await setup();
+    const pull = await f.held("closed", f.mason, 25);
+    f.app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(pull.id);
+    const before = getIssueById(f.app.db, pull.id)!.assigneeId;
+    expect(expireCrewHolds(f.app)).toBe(1);
+    expect(getHold(f.app.db, pull.id)).toBeUndefined();
+    expect(listComments(f.app.db, pull.id)).toHaveLength(0);
+    expect(getIssueById(f.app.db, pull.id)!.assigneeId).toBe(before);
+    await f.close();
+  });
+
+  test("a 25 h crew hold on a pull a person authored is released with a note that has no 'Back to'", async () => {
+    const f = await setup();
+    const pull = await f.held("person-built", f.mason, 25);
+    f.app.db.query("UPDATE issue SET author_id = ?2 WHERE id = ?1").run(pull.id, f.alice.id);
+    const before = getIssueById(f.app.db, pull.id)!.assigneeId;
+    expect(expireCrewHolds(f.app)).toBe(1);
+    expect(getHold(f.app.db, pull.id)).toBeUndefined();
+    expect(listComments(f.app.db, pull.id).map((c) => c.body)).toEqual([
+      "Hold expired after 24 h: waiting on the vault key.",
+    ]);
+    expect(getIssueById(f.app.db, pull.id)!.assigneeId).toBe(before);
+    expect(before).not.toBe(f.mason.id);
+    await f.close();
+  });
+
+  test("when the holder has left the crew the note is still posted, by the builder", async () => {
+    const f = await setup();
+    const quill = await createAgent(f.app, f.alice, { username: "quill" });
+    if (!quill.ok) throw new Error(String(quill.error));
+    expect(addToCrew(f.app, f.alice, f.repo, "quill").ok).toBe(true);
+    const pull = await f.held("left", getUserByName(f.app.db, "quill")!, 25);
+    expect(removeFromCrew(f.app, f.alice, f.repo, "quill").ok).toBe(true);
+    expect(expireCrewHolds(f.app)).toBe(1);
+    const comments = listComments(f.app.db, pull.id);
+    expect(comments.map((c) => c.body)).toEqual([
+      "Hold expired after 24 h: waiting on the vault key. Back to @mason.",
+    ]);
+    expect(comments[0]!.authorId).toBe(f.mason.id);
+    await f.close();
+  });
+
+  test("when nobody can post the note the hold is still released and the loss is logged", async () => {
+    const f = await setup();
+    const quill = await createAgent(f.app, f.alice, { username: "quill" });
+    if (!quill.ok) throw new Error(String(quill.error));
+    expect(addToCrew(f.app, f.alice, f.repo, "quill").ok).toBe(true);
+    const pull = await f.held("lost", getUserByName(f.app.db, "quill")!, 25);
+    f.app.db.query("UPDATE issue SET author_id = ?2 WHERE id = ?1").run(pull.id, f.alice.id);
+    expect(removeFromCrew(f.app, f.alice, f.repo, "quill").ok).toBe(true);
+    const warn = spyOn(f.app.log, "warn").mockImplementation(() => {});
+    expect(expireCrewHolds(f.app)).toBe(1);
+    expect(getHold(f.app.db, pull.id)).toBeUndefined();
+    expect(listComments(f.app.db, pull.id)).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith("hold expiry note not posted", expect.objectContaining({ pull: pull.number }));
+    await f.close();
+  });
+
+  test("a 23 h crew hold stays", async () => {
+    const f = await setup();
+    const pull = await f.held("young", f.mason, 23);
+    expect(expireCrewHolds(f.app)).toBe(0);
+    expect(getHold(f.app.db, pull.id)).toBeDefined();
+    expect(listComments(f.app.db, pull.id)).toHaveLength(0);
+    await f.close();
+  });
+
+  test("a person's hold never expires", async () => {
+    const f = await setup();
+    const pull = await f.held("person", f.alice, 500);
+    expect(expireCrewHolds(f.app)).toBe(0);
+    expect(getHold(f.app.db, pull.id)).toBeDefined();
+    await f.close();
+  });
+});
+
+describe("an until-green hold, through the checks service", () => {
+  let f: Awaited<ReturnType<typeof forge>>;
+  let servers: Servers;
+  let checks: ReturnType<typeof startChecks>;
+
+  beforeAll(async () => {
+    f = await forge("forge-holds-service-", "private");
+    servers = await serve(f.app);
+    checks = startChecks(f.app, { forgeUrl: servers.url, concurrency: 1 });
+    const declared = await commitToBranch(f.app, f.alice, f.repo, {
+      message: "Declare a check",
+      files: [
+        {
+          path: "forge.json",
+          content: '{"check": {"run": "true", "install": ""}}\n',
+        },
+      ],
+    });
+    if (!declared.ok) throw new Error(JSON.stringify(declared.error));
+  }, 30_000);
+
+  afterAll(async () => {
+    await checks.stop();
+    servers.stop();
+    await f.close();
+  });
+
+  const notes = (pull: Pull) =>
+    (
+      f.app.db
+        .query("SELECT payload FROM event WHERE kind = 'pull.released'")
+        .all() as { payload: string }[]
+    )
+      .map((r) => JSON.parse(r.payload))
+      .filter((p) => p.number === pull.number)
+      .map((p) => p.note);
+
+  test("a passing check run by the service releases the hold", async () => {
+    const pull = await f.pullOn("svc-one");
+    setHold(f.app.db, pull.id, f.alice.id, "red alone", "green");
+    const run = await checks.request(f.repo, `pull-${pull.number}`, pull.headOid, "pull", pull.id);
+    expect(run).toBeDefined();
+    const deadline = Date.now() + 30_000;
+    while (getHold(f.app.db, pull.id) && Date.now() < deadline) await Bun.sleep(50);
+    expect(getHold(f.app.db, pull.id)).toBeUndefined();
+    expect(notes(pull)).toEqual([
+      `hold released: green on ${pull.headOid.slice(0, 7)}`,
+    ]);
+  }, 60_000);
+
+  test("holding a head that is already green releases at once", async () => {
+    const pull = f.passCheck(await f.pullOn("svc-two"));
+    const held = holdPull(f.app, f.alice, f.repo, pull, "red alone", false, "green");
+    expect(held.ok).toBe(true);
+    expect(getHold(f.app.db, pull.id)).toBeUndefined();
+    expect(notes(pull)).toEqual([
+      `hold released: green on ${pull.headOid.slice(0, 7)}`,
+    ]);
+    // A plain hold on a green head stays; so does one on a head with no green.
+    const plain = f.passCheck(await f.pullOn("svc-three"));
+    holdPull(f.app, f.alice, f.repo, plain, "waiting");
+    expect(getHold(f.app.db, plain.id)).toBeDefined();
+    const bare = await f.pullOn("svc-four");
+    holdPull(f.app, f.alice, f.repo, bare, "red alone", false, "green");
+    expect(getHold(f.app.db, bare.id)).toBeDefined();
   });
 });

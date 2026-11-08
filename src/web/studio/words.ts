@@ -8,8 +8,9 @@
  * thing about the same commit. Nothing here knows about a page.
  */
 
+import { shownState } from "../../runs/state.ts";
 import type { Database } from "bun:sqlite";
-import { ancestorsOf } from "../../git/merge.ts";
+import { ancestries, type AncestryCache } from "./ancestry.ts";
 import {
   NO_TESTS_TAIL,
   TESTS_PASSED_TAIL,
@@ -19,7 +20,6 @@ import {
 import type { AppRecord } from "../../core/apps.ts";
 import { canEnterApp, getRepoById, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
-import type { Efficiency } from "../../core/efficiency.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
 import { reviewWaitsFor, waitsForReviewer } from "../../crew/review.ts";
@@ -41,6 +41,7 @@ import {
 } from "../../core/runs.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../ui.ts";
+import type { Paused } from "../../crew/autonomy.ts";
 
 /**
  * The empty crew, said once: the shelf's stuck tell, the app page's autonomy
@@ -65,7 +66,9 @@ export type Word =
   | "planned"
   | "told"
   | "done"
-  | "cancelled";
+  | "cancelled"
+  | "silent"
+  | "needs input";
 
 /**
  * Production's history as one page has asked it: the ancestry of each
@@ -99,6 +102,8 @@ export interface WordCtx {
   readonly history: ServingHistory;
   /** Who is reading: a private app's production is theirs only if they may enter it. */
   readonly viewer: User | undefined;
+  /** Where ancestries are kept; the process's own unless a test brings its own. */
+  readonly ancestries?: AncestryCache;
 }
 
 /** What a page read ahead for its rows, so `pullWord` and `runWord` do not read per row. */
@@ -106,6 +111,9 @@ interface Ahead {
   readonly checks: Map<string, CheckSummary>;
   readonly reviewers: Map<string, string | undefined>;
   readonly runPulls: Map<string, Pull | undefined>;
+  readonly parked: Map<string, boolean>;
+  /** Production as a merged pull sees it; `null` when the viewer may not see it. */
+  production?: { env: EnvStatus | undefined } | null;
 }
 // Keyed by the page's `WordCtx`, which is made fresh for each request and
 // dropped with it, so nothing here outlives the render it was read for.
@@ -113,7 +121,7 @@ const ahead = new WeakMap<WordCtx, Ahead>();
 const aheadOf = (ctx: WordCtx): Ahead => {
   let a = ahead.get(ctx);
   if (a === undefined)
-    ahead.set(ctx, (a = { checks: new Map(), reviewers: new Map(), runPulls: new Map() }));
+    ahead.set(ctx, (a = { checks: new Map(), reviewers: new Map(), runPulls: new Map(), parked: new Map() }));
   return a;
 };
 
@@ -147,6 +155,44 @@ export function knowPulls(ctx: WordCtx, pulls: readonly Pull[]): void {
   });
   const waits = reviewWaitsFor(ctx.db, have);
   for (const p of green) a.reviewers.set(p.id, waits.get(p.id)?.reviewer);
+}
+
+/**
+ * `pullWord` for a page of pulls: checks, reviewers, close reasons and
+ * production's status are read together first, so the page costs a handful
+ * of queries rather than several per row. Each word is the one `pullWord`
+ * gives, in the order of `pulls`.
+ */
+export async function pullWords(
+  ctx: WordCtx,
+  pulls: readonly Pull[],
+): Promise<{ word: Word; note: string }[]> {
+  knowPulls(ctx, pulls);
+  const a = aheadOf(ctx);
+  const closed = pulls.filter((p) => p.mergedAt === null && p.state === "closed");
+  if (closed.length > 0) {
+    const issues = getIssuesByIds(ctx.db, closed.map((p) => p.id));
+    for (const p of closed)
+      a.parked.set(p.id, issues.get(p.id)?.closeReason === "parked");
+  }
+  if (
+    a.production === undefined &&
+    pulls.some((p) => p.mergedAt !== null) &&
+    ctx.runtime !== undefined &&
+    ctx.record !== undefined
+  ) {
+    const repo = getRepoById(ctx.db, ctx.record.repoId);
+    a.production =
+      repo === undefined ||
+      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
+        ? null
+        : {
+            env: ctx.runtime
+              .status(ctx.record)
+              .find((e) => e.env === "production"),
+          };
+  }
+  return await Promise.all(pulls.map((p) => pullWord(ctx, p)));
 }
 
 /** `knowPulls` for the pull each of these finished runs produced (`pullFromRun`). */
@@ -212,7 +258,7 @@ async function caughtUp(
   const key = `${ctx.dir}\0${production.commitOid}`;
   let ancestry = ctx.history.get(key);
   if (ancestry === undefined) {
-    ancestry = ancestorsOf(ctx.dir, production.commitOid);
+    ancestry = (ctx.ancestries ?? ancestries).of(ctx.dir, production.commitOid);
     ctx.history.set(key, ancestry);
   }
   return (await ancestry)?.has(commitOid) ?? false;
@@ -308,15 +354,21 @@ export async function pullWord(
       return { word: "shipped", note: "merged" };
     // A private app's production — its state, its deploy's error — is for
     // those who may enter it (`canEnterApp`); anyone else reads "merged".
-    const repo = getRepoById(ctx.db, ctx.record.repoId);
-    if (
-      repo === undefined ||
-      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
-    )
-      return { word: "shipped", note: "merged" };
-    const production = ctx.runtime
-      .status(ctx.record)
-      .find((e) => e.env === "production");
+    const read = ahead.get(ctx)?.production;
+    if (read === null) return { word: "shipped", note: "merged" };
+    let production: EnvStatus | undefined;
+    if (read !== undefined) production = read.env;
+    else {
+      const repo = getRepoById(ctx.db, ctx.record.repoId);
+      if (
+        repo === undefined ||
+        !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
+      )
+        return { word: "shipped", note: "merged" };
+      production = ctx.runtime
+        .status(ctx.record)
+        .find((e) => e.env === "production");
+    }
     if (await caughtUp(ctx, production, commitOid))
       return { word: "shipped", note: "production is serving it" };
     return mergedPullWord(production, commitOid);
@@ -325,7 +377,8 @@ export async function pullWord(
     return {
       word: "stopped",
       note:
-        getIssueById(ctx.db, pull.id)?.closeReason === "parked"
+        (ahead.get(ctx)?.parked.get(pull.id) ??
+          getIssueById(ctx.db, pull.id)?.closeReason === "parked")
           ? "parked by the crew"
           : "closed without shipping",
     };
@@ -364,7 +417,13 @@ export async function runWord(
     return run.notBefore === null
       ? { word: "waiting", note: "queued" }
       : { word: "waiting", note: "paused, resumes soon" };
-  if (run.state === "running") return { word: "working", note: "now" };
+  if (run.state === "running") {
+    // Worked out from what the run did, never what it says (`runs/state.ts`).
+    const shown = shownState(ctx.db, run);
+    if (shown === "silent") return { word: "silent", note: "no sign of life" };
+    if (shown === "needs input") return { word: "needs input", note: "waiting on a person" };
+    return { word: "working", note: "now" };
+  }
   if (run.state === "failed")
     return { word: "stopped", note: run.summary || run.state };
   // A cancelled run is not a broken one — superseded by a newer push, its
@@ -477,28 +536,96 @@ export function productionFact(
   return failed ?? shipped;
 }
 
+/** The colour a word is drawn in. */
+export type WordVariant = "success" | "danger" | "accent" | "secondary";
+
+/**
+ * Each word's colour, decided once: the badge draws it and the board
+ * colours its cards by it, so a word added to `Word` cannot render
+ * uncoloured anywhere — the `Record` will not compile without it.
+ * `cancelled` draws the same quiet, secondary look as `waiting` and
+ * `planned` — a restart is never the danger red a real failure earns.
+ */
+const WORD_VARIANT: Record<Word, WordVariant> = {
+  working: "accent",
+  look: "success",
+  shipped: "success",
+  stopped: "danger",
+  waiting: "secondary",
+  planned: "secondary",
+  told: "secondary",
+  done: "success",
+  cancelled: "secondary",
+  silent: "danger",
+  "needs input": "secondary",
+};
+
+export const wordVariant = (word: Word): WordVariant => WORD_VARIANT[word];
+
 /** One of the five (or six) studio words, as a badge. An id names the one a
- * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws
- * the same quiet, secondary look as `waiting` and `planned` — a restart is
- * never the danger red a real failure earns. */
+ * live script repaints as a run finishes (`studioRunJs`). */
 export function wordBadge(word: Word, id?: string): Html {
-  const variant =
-    word === "look" || word === "shipped" || word === "done"
-      ? "success"
-      : word === "stopped"
-        ? "danger"
-        : word === "working"
-          ? "accent"
-          : "secondary";
   return html`<span
     class="badge"
-    data-variant="${variant}"
+    data-variant="${wordVariant(word)}"
     data-word="${word}"
     ${id === undefined ? null : html`id="${id}"`}
     >${word === "working" ? icon("loader") : null}${word === "told"
       ? "open"
       : word}</span
   >`;
+}
+
+/** Why an app that runs on its own is not running right now, in words —
+ * the app page's *On its own* card and the board's *Today* row both. */
+export function pausedWords(paused: Paused): string {
+  switch (paused) {
+    case "ceiling":
+      return "at the ceiling, until 00:00 UTC";
+    case "forge ceiling":
+      return "at the forge's ceiling, until 00:00 UTC";
+    case "nobody":
+      return "nobody turned it on";
+    case "no crew":
+      return "no crew";
+  }
+}
+
+/** A word at rest: one small coloured dot, the word (and its note) for a
+ * screen reader. Colour alone is not a mark, so a state that needs someone
+ * (`wordNeedsText`) is also written beside the row (see `wordText`). */
+export function wordNeedsText(word: Word): boolean {
+  return word === "working" || word === "look" || word === "stopped";
+}
+
+/** The visible word for a state that needs someone; nothing for the rest. */
+export function wordText(word: Word): Html | null {
+  return wordNeedsText(word)
+    ? html`<span class="word-text" data-word="${word}">${word}</span> · `
+    : null;
+}
+
+export function wordDot(word: Word, note?: string): Html {
+  const tone =
+    word === "look" || word === "shipped" || word === "done"
+      ? "success"
+      : word === "stopped"
+        ? "danger"
+        : word === "working"
+          ? "attn"
+          : "none";
+  const said = `${word === "told" ? "open" : word}${note ? ` — ${note}` : ""}`;
+  return html`<span class="dot" data-tone="${tone}" data-word="${word}" role="img" aria-label="${said}"></span>`;
+}
+
+/** A pull's own state at rest: the dot, its word for a screen reader. */
+export function stateDot(state: "open" | "closed" | "merged", parked = false): Html {
+  const said = state === "closed" && parked ? "parked" : state;
+  const tone = state === "open" ? "success" : state === "merged" ? "merged" : "none";
+  // Open is the quiet state; a settled one is written out beside its dot.
+  return html`<span class="dot" data-state="${state}" data-tone="${tone}" role="img" aria-label="${said}"></span>${
+    state === "open" ? null : html`<span class="word-text">${said === "merged" ? "Merged" : said === "parked" ? "Parked" : "Closed"}</span>`
+  }`;
 }
 
 // ---- what a subscription has left, and what a change costs ----
@@ -554,14 +681,4 @@ export function windowWords(w: WindowStanding): WindowWords {
           },
     usedPct,
   };
-}
-
-/** An app's spend per shipped change (`core/efficiency.ts`) in a few words:
- * `$1.37 per shipped change`, or what is true when there is no ratio. */
-export function perShippedWords(e: Efficiency | undefined): string {
-  if (e === undefined || (e.spentUsd === 0 && e.shipped === 0))
-    return "nothing spent or shipped";
-  if (e.perShippedUsd === null)
-    return `${dollars(e.spentUsd)} spent, nothing shipped`;
-  return `${dollars(e.perShippedUsd)} per shipped change`;
 }

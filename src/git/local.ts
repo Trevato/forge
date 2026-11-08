@@ -19,6 +19,8 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { parseUnifiedDiff, type Diff, type Hunk } from "./diff.ts";
 import type { GitFailure } from "./env.ts";
 import { isSafeRef } from "./guard.ts";
+import { noteGit } from "../perf/git.ts";
+import { gitRecord } from "../perf/live.ts";
 
 export type { GitFailure };
 export type LocalResult<T> = Result<T, GitFailure>;
@@ -62,6 +64,7 @@ export async function runLocal(
   args: readonly string[],
   opts: RunOpts,
 ): Promise<LocalResult<string>> {
+  const start = performance.now();
   const proc = Bun.spawn(["git", ...args], {
     cwd: opts.cwd,
     env: localGitEnv(opts.env),
@@ -83,6 +86,7 @@ export async function runLocal(
     return ok(stdout);
   } finally {
     clearTimeout(timer);
+    noteGit(gitRecord, args, start);
   }
 }
 
@@ -357,17 +361,23 @@ export async function diff(
       "/dev/null",
       opts.path,
     ];
+    const start = performance.now();
     const proc = Bun.spawn(["git", ...args], {
       cwd: dir,
       env: localGitEnv(),
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [text, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    let text: string, stderr: string, code: number;
+    try {
+      [text, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+    } finally {
+      noteGit(gitRecord, args, start);
+    }
     if (code > 1) return err({ code, stderr: stderr.trim(), args });
     return ok(parseUnifiedDiff(text));
   }
@@ -441,10 +451,16 @@ export async function unstageAll(dir: string): Promise<LocalResult<void>> {
 export async function discardPath(
   dir: string,
   path: string,
-  opts: { untracked?: boolean } = {},
+  opts: { untracked?: boolean; unstagedOnly?: boolean } = {},
 ): Promise<LocalResult<void>> {
   if (opts.untracked === true)
     return done(await runLocal(["clean", "-fd", "--", path], { cwd: dir }));
+  // The unstaged half only: the working file goes back to the index, and
+  // whatever is staged stays staged.
+  if (opts.unstagedOnly === true)
+    return done(
+      await runLocal(["restore", "--worktree", "--", path], { cwd: dir }),
+    );
   const out = await runLocal(
     ["restore", "--staged", "--worktree", "--source=HEAD", "--", path],
     { cwd: dir },
@@ -864,7 +880,9 @@ export async function isAncestor(
 /** Is `oid` a commit object in the repository? One `git cat-file -e`. */
 export async function hasCommit(dir: string, oid: string): Promise<boolean> {
   if (!isSafeRef(oid)) return false;
-  const out = await runLocal(["cat-file", "-e", `${oid}^{commit}`], { cwd: dir });
+  const out = await runLocal(["cat-file", "-e", `${oid}^{commit}`], {
+    cwd: dir,
+  });
   return out.ok;
 }
 

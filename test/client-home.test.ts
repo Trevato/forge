@@ -5,6 +5,7 @@
  * developer's words.
  */
 
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,7 +18,7 @@ import { getAppByRepo } from "../src/core/apps.ts";
 import { clientApps } from "../src/web/studio/client_home.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { clientAppRows, cutTitle, doingLine } from "../src/core/client-apps.ts";
-import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { moveArchived } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { linkEveryday } from "../src/core/everyday.ts";
@@ -103,7 +104,7 @@ describe("a client's first screen", () => {
       createdBy: alice.id,
     });
     addCrew(parent.db, repo.value.id, atlas.value.id, alice.id);
-    setCrewRole(parent.db, repo.value.id, atlas.value.id, "planner");
+    seatAs(parent.db, repo.value.id, atlas.value.id, "planner");
     parentServers = await serve(parent);
     const spawned = await spawnForge(
       parent,
@@ -176,7 +177,7 @@ describe("a client's first screen", () => {
     expect(apps).toContain('href="/marias/bakery"');
     expect(apps).toMatch(/data-agents="(working|waiting)"/);
     expect(apps).toContain("agents are waiting");
-    expect(home).not.toContain('id="live-apps"');
+    expect(home).not.toContain('id="live-chips"');
     for (const gone of ['href="/map"', 'href="/board"', 'href="/audit"', 'href="/settings"'])
       expect(home).not.toContain(gone);
     expect(home).toContain('href="/?all=1"');
@@ -335,6 +336,21 @@ describe("a client's first screen", () => {
     child.db.query("DELETE FROM run WHERE id = 'r-client-1'").run();
   });
 
+  test("the card refreshes itself: /live/client-apps answers it, to a client only", async () => {
+    const repo = child.db
+      .query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'bakery'")
+      .get()!;
+    expect(await page(owner)).toContain('data-live-src="/live/client-apps"');
+    child.db
+      .query("INSERT INTO run (id, repo_id, kind, state) VALUES ('r-client-2', ?1, 'agent', 'running')")
+      .run(repo.id);
+    const live = await page(owner, "/live/client-apps");
+    expect(live).toContain('id="client-apps"');
+    expect(live).toContain("One agent is working on it now.");
+    child.db.query("DELETE FROM run WHERE id = 'r-client-2'").run();
+    expect((await fetch(url("/live/client-apps"))).status).toBe(404);
+  });
+
   test("none of the developer's words appear on it, composer included", async () => {
     const text = words(await page(owner));
     expect(text).toContain("Your apps");
@@ -344,7 +360,7 @@ describe("a client's first screen", () => {
 
   test("asked for, the whole home is still there", async () => {
     const home = await page(owner, "/?all=1");
-    expect(home).toContain('id="live-apps"');
+    expect(home).toContain('id="live-chips"');
     expect(home).not.toContain('id="client-apps"');
   });
 
@@ -359,6 +375,8 @@ describe("a client's first screen", () => {
     if (!reader.ok) throw new Error("reader");
     const session = createSession(child.db, reader.value.id);
     expect(await page(`forge_session=${session.token}`)).not.toContain('id="client-apps"');
+    const live = await fetch(url("/live/client-apps"), { headers: { cookie: `forge_session=${session.token}` } });
+    expect(live.status).toBe(404);
   });
 
   const visibleWords = async (cookie: string): Promise<string> => {
@@ -388,8 +406,8 @@ describe("a client's first screen", () => {
   });
 
   test("a client sees no forge-wide figures, lean or whole", async () => {
-    expect(await page(owner)).not.toContain('class="stats mb"');
-    expect(await page(owner, "/?all=1")).not.toContain('class="stats mb"');
+    expect(await page(owner)).not.toContain('class="stats kpi-row mb"');
+    expect(await page(owner, "/?all=1")).not.toContain('class="stats kpi-row mb"');
   });
 
   test("queued agents and no running ones read as about to start", async () => {

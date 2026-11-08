@@ -9,25 +9,37 @@
 import { canAdmin, canRead, getRepo } from "../../core/repos.ts";
 import { notFound } from "../../http/respond.ts";
 import { holds, stamp, xml } from "../feeds.ts";
+import { STARTED } from "../started.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { VERSION, type Wave } from "../../story/wave.ts";
+import { movedForViewer } from "../../story/wave_moved.ts";
 import { carriedPulls, pullPath } from "../../story/wave_pulls.ts";
 import { pullRefs, readWave, readWaves } from "../../story/waves.ts";
 import { NO_WAVES } from "../../story/words.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
 import { escapeHtml, html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, empty, listCard, row } from "../ui.ts";
+import { btn, empty, listCard, pill, row } from "../ui.ts";
 import { localScope } from "../scope.ts";
+import { milestoneHref, planFor, progress } from "./milestones.ts";
+
+/**
+ * A wave's headline is the writer's words, so a row lets it wrap (a long word
+ * breaks anywhere) instead of the list's one-line ellipsis, and the page
+ * never scrolls sideways at 390 px. Scoped to `[data-waves]`; no new class.
+ */
+export const WAVES_CSS = `[data-waves] { overflow-wrap: anywhere; }
+[data-waves] .row-title, [data-waves] .row-meta { white-space: normal; overflow: visible; text-overflow: clip; }
+[data-waves] .row { align-items: flex-start; }`;
 
 const WHAT_A_WAVE =
   "A wave is a release note in waves/<version>.md that names its highlights and the pulls merged since the last one.";
 
-/** A wave's row title: `<version> · <headline> · N pulls`, N being the pulls this viewer can see. */
+/** A wave's row title: `<version> · <date> · <headline> · N pulls`, N being the pulls this viewer can see. */
 export function waveLine(w: Wave, visible: number): string {
-  return `${w.version} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
+  return `${w.version} · ${w.date} · ${w.headline} · ${visible} ${visible === 1 ? "pull" : "pulls"}`;
 }
 
 // GET /:owner/:name/waves
@@ -52,7 +64,6 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
           href: fileHref(e.file),
           // The wave's own page lists these same pulls, so the two agree.
           title: waveLine(e.wave, carriedPulls(ctx.app.db, pullRefs(e.wave), ctx.auth.user).length),
-          meta: html`${e.wave.date}`,
         })
       : row({
           href: fileHref(e.file),
@@ -62,7 +73,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
   );
 
   const body = html`${scopeHeader(ctx, scope, "none", { compact: true })}
-    <div class="mt">
+    <div class="mt" data-waves>
       ${entries.length === 0
         ? empty({
             title: "No waves yet",
@@ -84,6 +95,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    styleCss: WAVES_CSS,
     feed: {
       href: `${repoBase(repo)}/waves.atom`,
       title: `${repo.ownerName}/${repo.name} waves`,
@@ -137,7 +149,7 @@ export async function wavesAtom(ctx: Ctx): Promise<Response> {
   <id>${xml(base)}/waves.atom</id>
   <title>${xml(`${repo.ownerName}/${repo.name} waves`)}</title>
   <subtitle>${xml(repo.description === "" ? "Waves" : repo.description)}</subtitle>
-  <updated>${xml(newest ? updatedAt(newest.date) : new Date(0).toISOString())}</updated>
+  <updated>${xml(newest ? updatedAt(newest.date) : STARTED)}</updated>
   <link rel="self" type="application/atom+xml" href="${xml(base)}/waves.atom"/>
   <link rel="alternate" type="text/html" href="${xml(base)}/waves"/>
   <generator>forge</generator>
@@ -173,6 +185,17 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
         carriedPulls(ctx.app.db, pullRefs(entry.wave), ctx.auth.user),
       )
     : [];
+  const moved = entry.ok
+    ? timePhase(ctx.request, "moved", () =>
+        movedForViewer({
+          db: ctx.app.db,
+          repo,
+          refs: pullRefs(entry.wave),
+          viewer: ctx.auth.user,
+          plan: () => planFor(ctx, repo, false, new Date()),
+        }),
+      )
+    : [];
   const rendering = performance.now();
   const scope = localScope(ctx, repo);
   const back = html`<a href="${repoBase(repo)}/waves">All waves</a>`;
@@ -186,6 +209,19 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
             (h) => html`<li><strong>${h.title}</strong> — ${h.why}</li>`,
           )}
         </ul>
+        ${moved.length === 0
+          ? ""
+          : listCard(
+              moved.map((m) =>
+                row({
+                  href: milestoneHref(repoBase(repo), m.number),
+                  title: m.title,
+                  meta: progress(m.done, m.total, `${m.done} of ${m.total} done`),
+                  trail: pill(`${m.done} of ${m.total} done`),
+                }),
+              ),
+              { head: html`<h2>Moved</h2>` },
+            )}
         ${carried.length === 0
           ? html`<p class="muted">No pulls to show here.</p>`
           : listCard(

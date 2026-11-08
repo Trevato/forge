@@ -25,7 +25,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("home renders the nine tiles; only an admin sees them", async () => {
+test("home renders the eleven tiles; only an admin sees them", async () => {
   const mk = async (username: string, first = false): Promise<User> => {
     const r = await createUser(app.db, {
       origin: "seed",
@@ -59,8 +59,8 @@ test("home renders the nine tiles; only an admin sees them", async () => {
   view(day, "a", 1900, null);
   view(yesterday, "z", 400, 160);
   const a = await home(admin);
-  expect(a).toContain('class="stats mb"');
-  expect((a.match(/class="stat"/g) ?? []).length).toBe(9);
+  expect(a).toContain('class="stats kpi-row mb"');
+  expect((a.match(/class="stat"/g) ?? []).length).toBe(11);
   for (const href of ["/board", "/releases", "/boards", "/settings/crew", "/settings/backups"]) expect(a).toContain(`class="stat" href="${href}"`);
   // The tiles are §5 stats (#3982): none of the page-local kpi classes is left on home.
   for (const name of ["kpis", "kpi", "kpi-value", "kpi-note", "kpi-spark"]) expect(a).not.toMatch(new RegExp(`class="[^"]*\\b${name}\\b(?!-)`));
@@ -78,9 +78,9 @@ test("home renders the nine tiles; only an admin sees them", async () => {
   // The figures count every repository, so a non-admin sees none.
   expect(a).toContain("no forge ceiling");
   expect(a).toContain("last 30 days");
-  expect(await home(bob)).not.toContain('class="stats mb"');
+  expect(await home(bob)).not.toContain('class="stats kpi-row mb"');
   expect(await home(bob)).not.toContain("last 30 days");
-  expect(await home()).not.toContain('class="stats mb"');
+  expect(await home()).not.toContain('class="stats kpi-row mb"');
   expect(await home()).not.toContain("last 30 days");
 });
 

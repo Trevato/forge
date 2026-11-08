@@ -47,12 +47,12 @@ afterAll(async () => {
 });
 
 const screenText = async (
-  who: User = alice,
+  who: User | null = alice,
   of: Repo = repo,
 ): Promise<string> => {
   const { app, session } = createForgeApp(
     forge,
-    { sshUsername: who.username, remoteAddress: "127.0.0.1", user: who },
+    { sshUsername: who?.username ?? "guest", remoteAddress: "127.0.0.1", ...(who === null ? {} : { user: who }) },
     { terminal: headlessTerminal(120, 30), exitHooks: false },
   );
   app.start();
@@ -172,4 +172,135 @@ test("the app's open pulls list below the deploys with check word and preview, a
   app.stop();
   expect(text).not.toContain("Add a lamp");
   expect(text).not.toContain("Open pulls");
+});
+
+test("production's terminal names the newest open preview to a reader, and a guest sees neither", async () => {
+  const { AppsRuntime } = await import("../src/apps/runtime.ts");
+  const { appSideLines } = await import("../src/actions/apps.ts");
+  const runtime = new AppsRuntime(forge, { domain: "apps.test", scheme: "https", forgeUrl: "https://forge.test", concurrency: 1 });
+  const r = await createRepo(forge, alice, { name: "beacon", visibility: "public" });
+  if (!r.ok) throw new Error("repo failed");
+  const made = createAppRecord(forge.db, { repoId: r.value.id, slug: "beacon", access: "public" });
+  if (!made.ok) throw new Error(made.error);
+  const id = crypto.randomUUID();
+  forge.db
+    .query("INSERT INTO issue (id, repo_id, number, kind, title, author_id) VALUES (?, ?, 7, 'pull', 'Dim the beacon', ?)")
+    .run(id, r.value.id, alice.id);
+  forge.db
+    .query("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?, 'main', 'dim', 'b', 'h7')")
+    .run(id);
+  const real = runtime.envStatus.bind(runtime);
+  runtime.envStatus = ((rec, env) =>
+    env === "pull-7" ? ({ state: "running" } as ReturnType<typeof real>) : real(rec, env)) as typeof runtime.envStatus;
+  try {
+    const lines = ["Production: https://beacon.apps.test", "Newest preview: #7 Dim the beacon https://beacon--7.apps.test"];
+    expect(appSideLines(forge, alice, r.value)).toEqual(lines);
+    const text = await screenText(alice, r.value);
+    for (const l of lines) expect(text).toContain(l);
+    expect(appSideLines(forge, undefined, r.value)).toEqual([]);
+    const guest = await screenText(null, r.value);
+    expect(guest).not.toContain("Production:");
+    expect(guest).not.toContain("Newest preview");
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("the app's admin lists, adds, checks and removes a domain; a reader is offered none of it", async () => {
+  const { AppsRuntime } = await import("../src/apps/runtime.ts");
+  const { listAppDomains } = await import("../src/actions/domains.ts");
+  const none = () => Promise.reject(Object.assign(new Error("x"), { code: "ENODATA" }));
+  const runtime = new AppsRuntime(forge, {
+    domain: "apps.test",
+    scheme: "https",
+    forgeUrl: "https://forge.test",
+    concurrency: 1,
+    dns: { resolveTxt: none, resolveCname: none },
+  });
+  const r = await createRepo(forge, alice, { name: "parlour", visibility: "public" });
+  if (!r.ok) throw new Error("repo failed");
+  const made = createAppRecord(forge.db, { repoId: r.value.id, slug: "parlour", access: "public" });
+  if (!made.ok) throw new Error(made.error);
+  const drive = async (who: User, keys: string[], of: Repo = r.value): Promise<string> => {
+    const terminal = headlessTerminal(140, 30);
+    const { app, session } = createForgeApp(
+      forge,
+      { sshUsername: who.username, remoteAddress: "127.0.0.1", user: who },
+      { terminal, exitHooks: false },
+    );
+    app.start();
+    await settleApp(app);
+    app.push(deploysScreen(session, app.ctx, of));
+    await settleApp(app);
+    for (const k of keys) {
+      terminal.feed(k === "enter" ? "\r" : k);
+      await settleApp(app);
+    }
+    const text = app.screen.toText();
+    app.stop();
+    return text;
+  };
+  const hosts = () => {
+    const listed = listAppDomains(forge, alice, r.value);
+    return listed.ok ? listed.value.map((d) => d.host) : [];
+  };
+  try {
+    // A bad name and a taken one are refused in the page's words, and nothing is added.
+    expect(await drive(alice, ["n", "+", ..."not a host", "enter"])).toContain("A domain is a hostname");
+    expect(hosts()).toEqual([]);
+
+    expect(await drive(alice, ["n", "+", ..."parlour.example.com", "enter"])).toContain("parlour.example.com is added.");
+    expect(hosts()).toEqual(["parlour.example.com"]);
+    const listed = await drive(alice, []);
+    expect(listed).toContain("Domains: parlour.example.com waiting for DNS");
+
+    const other = await createRepo(forge, alice, { name: "salon", visibility: "public" });
+    if (!other.ok) throw new Error("repo failed");
+    const otherApp = createAppRecord(forge.db, { repoId: other.value.id, slug: "salon", access: "public" });
+    if (!otherApp.ok) throw new Error(otherApp.error);
+    expect(await drive(alice, ["n", "+", ..."parlour.example.com", "enter"], other.value)).toContain(
+      "Another app already answers to that domain.",
+    );
+
+    const checked = await drive(alice, ["n", "c"]);
+    expect(checked).toContain("No TXT record at _forge-verify.parlour.example.com yet.");
+    expect(checked).toContain("Still needed: a TXT record at _forge-verify.parlour.example.com");
+
+    // A reader sees neither the domains nor the key, and the screen refuses them in words.
+    const d = await signUp(forge, {
+      username: "dana",
+      email: "dana@forge.test",
+      password: "a-long-passphrase",
+    }, { slot: fixtureSlot(forge) });
+    if (!d.ok) throw new Error("signup failed");
+    const reader = await drive(d.value, ["n"]);
+    expect(reader).not.toContain("parlour.example.com");
+    expect(reader).not.toContain("the app's own domains");
+    const { domainsScreen } = await import("../src/tui/screens/deploys.ts");
+    const terminal = headlessTerminal(140, 30);
+    const { app, session } = createForgeApp(
+      forge,
+      { sshUsername: "dana", remoteAddress: "127.0.0.1", user: d.value },
+      { terminal, exitHooks: false },
+    );
+    app.start();
+    await settleApp(app);
+    app.push(domainsScreen(session, app.ctx, r.value));
+    await settleApp(app);
+    terminal.feed("+");
+    await settleApp(app);
+    const refused = app.screen.toText();
+    app.stop();
+    expect(refused).toContain("Only the app's admin manages its domains.");
+    expect(refused).not.toContain("Add a domain");
+
+    // `-` asks first: `n` keeps it, `y` removes it.
+    expect(await drive(alice, ["n", "-"])).toContain("remove parlour.example.com? y/n");
+    await drive(alice, ["n", "-", "n"]);
+    expect(hosts()).toEqual(["parlour.example.com"]);
+    expect(await drive(alice, ["n", "-", "y"])).toContain("parlour.example.com is removed.");
+    expect(hosts()).toEqual([]);
+  } finally {
+    await runtime.stop();
+  }
 });

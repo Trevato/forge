@@ -5,8 +5,9 @@ import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "quotas",
+  doc: "`{ key?, value?, dryRun? }` (forge admin): the per-account quotas `repositories`, `apps`, `storage` (MB), `previews`, `runs`, `checks`, each a number or null for none. `repositories` bounds repos on create, fork and copy; `apps` the apps made; `storage` the MB of repos plus app data, asked on push, create and fork; `previews` live previews; `runs` concurrent agent runs; `checks` concurrent checks. Each is asked before the thing is made or started and a forge admin is never limited; with `key` and `value` (`\"\"` clears), planned first (`dryRun` is true unless `false`); applying needs an admin-scope token",
   description:
-    "Per-account repo and app quotas (unenforced).",
+    "Enforced per-account quotas (never an admin): repositories, apps, storage, previews, runs, checks. key+value plans.",
   inputSchema: {
     type: "object",
     properties: {

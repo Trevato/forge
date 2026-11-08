@@ -15,11 +15,14 @@ import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { liveRegionsJs } from "../client.ts";
-import { notFoundPage } from "../chrome.ts";
+import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
-import { btn, card, chartBox, empty, field, selectField } from "../ui.ts";
+import { btn, card, chartBox, confirmAction, empty, field, selectField } from "../ui.ts";
 import { flowPanel } from "./flow-panel.ts";
+import { boardsHoldsCard } from "./boards-holds.ts";
+import { forgeCeiling } from "../../flow/ceiling.ts";
+import { alarmLines, cachedAlarms } from "../studio/alarm_lines.ts";
 import { isPinned, listPins } from "../../boards/pins.ts";
 import { panelData, runFor } from "../../boards/panel_data.ts";
 import { cellsOf, paramsOf, queryFields, readParams } from "./boards.ts";
@@ -81,8 +84,14 @@ const denied = (ctx: Ctx) => {
 // GET /boards
 export async function boardsList(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  if (ctx.auth.user === undefined) return signInFirst(ctx);
   const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, ctx.auth.user));
-  if (!listed.ok) return notFoundPage(ctx);
+  if (!listed.ok) {
+    // Not a forge admin: the page is the holds of the repositories they administer, or not found.
+    const holds = boardsHoldsCard(ctx.app.db, ctx.auth.user);
+    if (holds === null) return notFoundPage(ctx);
+    return page({ ctx, title: "Boards", body: html`<div class="page-head"><h1>Boards</h1></div>${holds}` });
+  }
   const make = html`<form method="post" action="/boards/new" class="bar">
     ${field({ label: "New board", name: "title", id: "new-board-title", required: true, maxlength: MAX_TITLE, placeholder: "Title" })}
     ${btn("Make board", { variant: "primary" })}
@@ -107,8 +116,10 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Boards</h1>
+        ${btn("Flow", { href: "/flow", variant: "ghost" })}
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
-      ${card(make)} ${body} ${flow}`,
+      ${alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))}
+      ${card(make)} ${body} ${flow} ${boardsHoldsCard(ctx.app.db, ctx.auth.user, true)}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
@@ -149,10 +160,7 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
         ${btn("Up", { size: "sm", name: "by", value: "-1", label: `Move ${p.title} up` })}
         ${btn("Down", { size: "sm", name: "by", value: "1", label: `Move ${p.title} down` })}
       </form>
-      <form method="post" action="/boards/${slug}/remove">
-        <input type="hidden" name="index" value="${String(i)}" />
-        ${btn("Remove", { size: "sm", variant: "danger", label: `Remove ${p.title}` })}
-      </form>
+      ${confirmAction({ action: `/boards/${slug}/remove?index=${String(i)}&title=${encodeURIComponent(p.title)}`, verb: "Remove", size: "sm", label: `Remove ${p.title}` })}
     </div>
   </li>`;
   return html`${card(
@@ -177,7 +185,7 @@ function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeo
           ${btn("Save settings")}
         </form>
         <form method="post" action="/boards/${slug}/duplicate">${btn("Duplicate")}</form>
-        <form method="post" action="/boards/${slug}/delete">${btn("Delete this board", { variant: "danger" })}</form></div>`,
+        ${confirmAction({ action: `/boards/${slug}/delete`, verb: "Delete this board" })}</div>`,
       { head: html`<h2>Board</h2>` },
     )}`;
 }

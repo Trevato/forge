@@ -49,7 +49,7 @@ function forgeOutbox(storage, send, now) {
   function run() {
     var list = read();
     if (list.length === 0) return Promise.resolve({ sent: 0, left: 0 });
-    var sent = 0;
+    var sent = 0, refused = 0;
     function next() {
       var entry = read()[0];
       if (!entry) return Promise.resolve();
@@ -60,11 +60,11 @@ function forgeOutbox(storage, send, now) {
       }).then(function (r) {
         if (!final(r.status)) return;
         write(read().filter(function (e) { return e.key !== entry.key; }));
-        sent++;
+        if (r.status < 300) sent++; else refused++;
         return next();
       }, function () {});
     }
-    return next().then(function () { return { sent: sent, left: read().length }; });
+    return next().then(function () { return { sent: sent, refused: refused, left: read().length }; });
   }
   // One flush at a time: two tabs of one page share storage, two flushes in
   // one page must not send an entry twice before the first has been dropped.

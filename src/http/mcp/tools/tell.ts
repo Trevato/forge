@@ -1,12 +1,13 @@
 import { contextNote, parseContext } from "../../../actions/tell_context.ts";
 import { keepThought } from "../../../actions/thought.ts";
-import { FROM_WORDS, parseFrom, tell, toldWords, UNVERIFIED_WORDS } from "../../../actions/tell.ts";
+import { parseFrom } from "../../../actions/tell_from.ts";
+import { FROM_WORDS, tell, toldWords, UNVERIFIED_WORDS } from "../../../actions/tell.ts";
 import { DIRECTION_NOTE } from "../../../crew/direct.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "tell",
-  doc: "a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick",
+  doc: "`{ repo?, text, from?, context? }`: a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick",
   description:
     "Tell an app's crew what to change (first line: title). No `repo`: kept.",
   inputSchema: {
@@ -22,8 +23,6 @@ export const tool: Tool = {
       },
       context: {
         type: "object",
-        description:
-          "Where it was told.",
         properties: {
           page: { type: "string" },
           pull: { type: "integer", minimum: 1 },

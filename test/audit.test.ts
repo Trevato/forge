@@ -342,6 +342,7 @@ describe("the audit reads every app's policy from git", () => {
         state: {
           head: pull.value.headOid,
           cells: ["note.delete as anon: was no, now yes"],
+          plain: ["anyone signed out could delete note records"],
         },
         answer: "wall",
         p: 1,
@@ -352,6 +353,9 @@ describe("the audit reads every app's policy from git", () => {
       expect(waiting.map((c) => c.pull.title)).toEqual(["Anyone may delete"]);
       expect(waiting[0]!.cells).toEqual([
         "note.delete as anon: was no, now yes",
+      ]);
+      expect(waiting[0]!.plain).toEqual([
+        "anyone signed out could delete note records",
       ]);
 
       // Two probes, the second disagreeing with the first.
@@ -383,6 +387,7 @@ describe("the audit reads every app's policy from git", () => {
       expect(body).toContain("What changed");
       expect(body).toContain("1 pull waits");
       expect(body).toContain("Anyone may delete");
+      expect(body).toContain("anyone signed out could delete note records");
       expect(body).toContain("only the signed-in read");
       expect(body).toContain("2 doors narrower");
       expect(body).toContain("1 door wider");
@@ -432,7 +437,7 @@ describe("the audit reads every app's policy from git", () => {
 
   test("the way in: the studio home links the audit, and an app's page says its policy in one line", async () => {
     const home = await (
-      await fetch(`${servers.url}/`, {
+      await fetch(`${servers.url}/feed`, {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();

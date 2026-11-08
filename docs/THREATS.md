@@ -94,6 +94,21 @@ person approved.
   and only this repository's directory re-allowed, so a cache made later is
   denied too, and deleting the repository removes it.
   Test: `test/crew-install-cache.test.ts`
+- A check's cell reads its repository's shared bun cache
+  (`check-install/<repo id>/bun`) through a read-only bind and cannot write
+  it, so one pull cannot plant a package the gate on main installs. The
+  forge fills it on the host with `--ignore-scripts`, and reads no
+  `bunfig.toml` or `.npmrc` of the pull's.
+  Test: `test/check-install.test.ts`
+- An app environment's cell (#7544) reads that same cache read-only and
+  copies from it, so a preview cannot plant a package production installs;
+  the forge fills it through the same lockfile rule as a check's.
+  Test: `test/app-install-cache.test.ts`
+- The forge fills that cache only from a lockfile whose every package is a
+  registry `name@version` with a sha512 integrity (`checks/fillable.ts`):
+  the host never fetches a URL a pull chose and reads no file, link or
+  workspace a pull points at, an override's or resolution's included.
+  Test: `test/check-fillable.test.ts`
 - The same policy holds against a real bubblewrap, not only as a string.
   Test: `test/crew-sandbox-real.test.ts`
 - An agent cannot push to the default branch or merge; a person merges.
@@ -131,6 +146,16 @@ Wants: accounts, spam, resources, or a way to exhaust the forge.
 - A new-account guard can refuse repository creation and forks for young
   accounts.
   Test: `test/guard-new-accounts.test.ts`
+- Sign-up has a ceiling per address and for the whole forge, per minute and per
+  hour, and an admin can close it at once.
+  Test: `test/guest-contribute.test.ts`
+- A guest owns only a contribution fork of a public repository. It holds no
+  settings, secrets or app, nothing runs for it, and its storage, forks and
+  pulls are limited (`docs/ROLES.md`).
+  Test: `test/guest-contribute.test.ts`
+- A guest's pull runs nothing until a person who can write the repository
+  approves that exact head, and the crew never lands it.
+  Test: `test/guest-contribute.test.ts`
 - Every limit is a setting with its reason, changed by an admin only.
   Test: `test/limits.test.ts`
 - Distributed attacks across many addresses: only the whole-forge caps stand

@@ -25,6 +25,21 @@ import { err, ok, type Result } from "../kernel/result.ts";
 
 export type BoardError = StoreError | "not_found" | "no_slug" | "repo" | { refused: string };
 
+/** A refusal in words, for every door (the page, the terminal). A refused panel's text is the caller's to clean. */
+export function boardRefusal(e: BoardError): string {
+  if (typeof e === "object") return `That was refused: ${e.refused}.`;
+  const words: Partial<Record<string, string>> = {
+    not_found: "That board is gone.",
+    invalid: "That is not a board.",
+    exists: "A board with that name is already there.",
+    no_slug: "A title needs letters or digits.",
+    too_many: "There are too many boards already.",
+    branch_moved: "The boards changed while you were saving; try again.",
+    repo: "The boards repo could not be made.",
+  };
+  return words[e] ?? "That could not be saved.";
+}
+
 function admin(actor: User | undefined): Result<User, "not_found"> {
   return actor?.isAdmin === true && actor.kind !== "agent" ? ok(actor) : err("not_found");
 }

@@ -11,10 +11,10 @@ test("a page head's subtitle is the shared muted, small text, not a page-local c
 });
 
 test("only the subtitle is forced onto its own line: the stylesheet keys on .page-head-sub, not on shared utilities", async () => {
-  const { content } = await import("../src/web/style/content.ts");
-  expect(content).toContain(".page-head > .page-head-sub {");
-  expect(content).not.toContain(".page-head > .muted.small");
-  expect(content).not.toContain(".page-head > .bar");
+  const { components } = await import("../src/web/style/components.ts");
+  expect(components).toContain(".page-head > .page-head-sub {");
+  expect(components).not.toContain(".page-head > .muted.small");
+  expect(components).not.toContain(".page-head > .bar");
   // The system page's sort row is a plain muted small child, beside its heading.
   const src = await Bun.file(new URL("../src/web/pages/system.ts", import.meta.url)).text();
   expect(src).not.toContain("page-head-sub");

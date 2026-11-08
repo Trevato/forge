@@ -8,6 +8,7 @@
  */
 
 import { parseShardProgress, type CheckProgress } from "./progress.ts";
+import { clip } from "../text/clip.ts";
 
 export type PinnedFailure = {
   readonly name: string;
@@ -35,8 +36,7 @@ export const PIN_LINES = 3;
 const LINE_MAX = 200;
 
 const names = (text: string): string[] => text.split(" ").filter((n) => n !== "");
-const bound = (text: string): string =>
-  text.length > LINE_MAX ? `${text.slice(0, LINE_MAX - 1)}…` : text;
+const bound = (text: string): string => clip(text, LINE_MAX);
 
 export function parseTestsRow(lines: readonly string[]): TestsRow {
   const base = parseShardProgress(lines);

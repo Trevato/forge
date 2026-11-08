@@ -6,6 +6,8 @@
  * about having reached the end.
  */
 
+import { checkOfCommit, verdictsOfCommits } from "../../actions/runs.ts";
+import type { CommitCheck } from "../../checks/commit_check.ts";
 import type { FileDiff } from "../../git/diff.ts";
 import type { Commit, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -31,7 +33,34 @@ import {
   runAsync,
 } from "./common.ts";
 import { refPickerScreen } from "./refs.ts";
-import { sourceName, whereRows, whereStrip } from "./where.ts";
+import { localRepo, sourceName, whereRows, whereStrip } from "./where.ts";
+
+/** A log row's mark: ✓ green, ✗ red, blank where the commit's own check has no verdict. */
+const markOf = (check: CommitCheck | undefined): string =>
+  check === undefined ? " " : check.state === "ok" ? "✓" : "✗";
+
+/**
+ * One line for a commit's check: green, red with the failing step, or not
+ * run. When a later main commit's check answers (`checkedCommit`), it says
+ * whose, so a row the log left unmarked never opens to a bare "green".
+ */
+export function checkLine(check: CommitCheck | null): string {
+  if (check === null) return "";
+  const step = check.summary.split("\n")[0]?.trim() ?? "";
+  const via = check.checkedCommit === check.commit ? "" : ` · via ${check.checkedCommit.slice(0, 8)}`;
+  switch (check.state) {
+    case "ok":
+      return `check: green${via}`;
+    case "failed":
+      return step === "" ? `check: red${via}` : `check: red · ${step}${via}`;
+    case "pending":
+      return `check: running${via}`;
+    case "superseded":
+      return "check: superseded";
+    default:
+      return "check: not run";
+  }
+}
 
 export function commitsScreen(
   f: Session,
@@ -45,6 +74,8 @@ export function commitsScreen(
   /** "No commits" is a claim, and it waits for the first page to answer. */
   let loaded = false;
   const state = new ListState();
+  /** Green or red marks for the log, one query per page; empty where the viewer may not read runs. */
+  const marks = new Map<string, CommitCheck>();
 
   const page = async (): Promise<void> => {
     const result = await src.commits(ref, cursor);
@@ -53,6 +84,15 @@ export function commitsScreen(
       if (commits.length === 0)
         ctx.toast(`no commits on ${ref}: ${errorText(result.error)}`, "danger");
     } else {
+      const repo = localRepo(src);
+      if (repo !== undefined)
+        for (const [oid, check] of verdictsOfCommits(
+          f.app,
+          f.user,
+          repo,
+          result.value.items.map((commit) => commit.oid),
+        ))
+          marks.set(oid, check);
       commits = [...commits, ...result.value.items];
       cursor = result.value.next ?? undefined;
       more = result.value.next !== null;
@@ -104,7 +144,7 @@ export function commitsScreen(
       const rows = commits.map((commit) => ({
         title: commit.subject,
         secondary: commit.login ?? commit.author,
-        meta: `${commit.oid.slice(0, 8)}  ${relTime(commit.date)}`,
+        meta: `${markOf(marks.get(commit.oid))} ${commit.oid.slice(0, 8)}  ${relTime(commit.date)}`,
       }));
       if (more) rows.push({ title: "Load more…", secondary: "", meta: "" });
       drawList(s, body!, c, state, rows);
@@ -127,6 +167,7 @@ export function commitsScreen(
       }
       if (e.key === "r") {
         commits = [];
+        marks.clear();
         cursor = undefined;
         more = true;
         loaded = false;
@@ -146,12 +187,22 @@ export function commitScreen(
   commit: Commit,
 ): Screen {
   const view = new DiffView();
+  let check: CommitCheck | null = null;
   return {
     title: commit.oid.slice(0, 8),
     keys: view.keys,
     async load() {
       const result = await src.commit(commit.oid);
       view.setFiles(result.ok ? result.value.diff.files : []);
+      const repo = localRepo(src);
+      if (repo !== undefined) {
+        try {
+          const answer = await checkOfCommit(f.app, f.user, repo, commit.oid);
+          check = answer.ok ? answer.value : null;
+        } catch {
+          check = null; // the diff still draws without its check line
+        }
+      }
       ctx.invalidate();
     },
     render(area, s) {
@@ -171,10 +222,27 @@ export function commitScreen(
         style(c.fg, c.card, 1),
         inner.x + inner.w,
       );
-      if (inner.h > 1)
+      const verdict = checkLine(check);
+      const at = verdict === "" ? 0 : 1;
+      if (verdict !== "" && inner.h > 1)
         s.text(
           inner.x,
           inner.y + 1,
+          truncate(verdict, inner.w),
+          style(
+            check?.state === "ok"
+              ? c.success
+              : check?.state === "failed"
+                ? c.danger
+                : c.mutedFg,
+            c.card,
+          ),
+          inner.x + inner.w,
+        );
+      if (inner.h > 1 + at)
+        s.text(
+          inner.x,
+          inner.y + 1 + at,
           truncate(
             `${commit.author} <${commit.email}> · ${relTime(commit.date)} · ${view.summary()}`,
             inner.w,
@@ -182,10 +250,10 @@ export function commitScreen(
           style(c.mutedFg, c.card),
           inner.x + inner.w,
         );
-      if (inner.h > 2 && commit.body !== "")
+      if (inner.h > 2 + at && commit.body !== "")
         s.text(
           inner.x,
-          inner.y + 2,
+          inner.y + 2 + at,
           truncate(commit.body.split("\n")[0] ?? "", inner.w),
           style(c.faint, c.card),
           inner.x + inner.w,

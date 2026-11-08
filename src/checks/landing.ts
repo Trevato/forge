@@ -26,7 +26,12 @@ import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { failuresOf } from "./failures.ts";
 import { keepForgeGate } from "./gate_last.ts";
-import { checksFor } from "./service.ts";
+import { gateReason } from "./gate_reason.ts";
+import { gateTests } from "./gate_tests.ts";
+import { keepGateLog } from "./gate_log.ts";
+import { GATE_DEADLINE_MS, type GateRecord } from "./queue.ts";
+import { gateRecorded, gateRunning, recordedVerdict } from "./queue_store.ts";
+import { checksFor, type GateDone } from "./service.ts";
 import { landVerdict, type LandVerdict } from "./tiers.ts";
 import { ownProbeHeaders } from "../kernel/probe.ts";
 
@@ -54,12 +59,57 @@ export async function gateCandidate(
   const declared = parseCheck(forgeJson, packageJson);
   if (!declared.ok || declared.value === undefined || declared.value.fast === null)
     return { lands: true };
-  const done = await checks.gate(repo, pull, commitOid, signal);
+  return gateVerdict(app, repo, commitOid, await checks.gate(repo, pull, commitOid, signal));
+}
+
+/** How long the queue waits between reads of a gate another forge runs (#6611). */
+export const ADOPT_POLL_MS = 5_000;
+
+/**
+ * A recorded merge-queue gate the check lane still runs (#6611), adopted:
+ * this forge's own run of its tip, waited on; or the forge before this one
+ * still draining it, whose verdict comes into the record. Undefined when
+ * the run is gone and the queue must gate the candidate again.
+ */
+export async function adoptGate(
+  app: App,
+  repo: Repo,
+  record: GateRecord,
+  signal: AbortSignal,
+  pollMs = ADOPT_POLL_MS,
+): Promise<LandVerdict | undefined> {
+  const here = checksFor(app)?.adopt?.(record.tipOid);
+  if (here !== undefined) {
+    const done = await here;
+    return done.interrupted === true ? undefined : gateVerdict(app, repo, record.tipOid, done);
+  }
+  // The trace closes a moment before the verdict is kept: read once more after it.
+  let open = gateRunning(app.db, record.tipOid, GATE_DEADLINE_MS);
+  if (!open) return undefined;
+  while (!signal.aborted) {
+    await Bun.sleep(pollMs);
+    // The record gone: the forge that ran it acted on its verdict itself
+    // (its queue was not stopped). No verdict here, and nothing to gate again.
+    if (!gateRecorded(app.db, record.id)) return { lands: false, interrupted: true };
+    const verdict = recordedVerdict(app.db, record.id);
+    if (verdict !== undefined || !open) return verdict;
+    open = gateRunning(app.db, record.tipOid, GATE_DEADLINE_MS);
+  }
+  return undefined;
+}
+
+/** What the lane's answer on `commitOid` decides: its log kept, its red named. */
+function gateVerdict(app: App, repo: Repo, commitOid: string, done: GateDone, last = true): LandVerdict {
   // Cut off, not judged: no verdict, and not the gate log a red reads (#3155).
   if (done.interrupted === true) return { lands: false, interrupted: true };
-  keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
+  if (last) keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
+  const slug = `${repo.ownerName}/${repo.name}`;
+  const kept = keepGateLog(app.config.dataDir, slug, commitOid, done.ok, done.lines, Date.now());
   const failed = failuresOf(done.lines);
-  return landVerdict(done.ok, failed.tests, failed.files);
+  const link = kept === undefined ? undefined : `/api/v1/repos/${slug}/gates/${kept}/log`;
+  // Why it went red, said in the queue's log and read by its search (#5276).
+  const reason = done.ok ? undefined : gateReason(done.stage ?? "check", done.error, done.lines, failed.tests.length);
+  return landVerdict(done.ok, failed.tests, failed.files, link, reason, done.ok ? undefined : gateTests(done.lines));
 }
 
 /**

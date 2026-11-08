@@ -6,7 +6,7 @@ export const tool: Tool = {
   name: "cloud_accounts",
   doc: "the forge's cloud accounts, each attached provider token with its use, verification, write permission and today's calls; a forge admin only (counted as a write so a `ro` token never lists them)",
   description:
-    "Cloud accounts (admin): each token's use and verification.",
+    "Cloud accounts (admin): each token's use.",
   inputSchema: { type: "object", properties: {} },
   // A read, but marked a write so a `ro` token never lists the accounts; it
   // is a forge admin's and the audit rows name every vendor call.

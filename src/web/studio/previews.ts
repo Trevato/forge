@@ -7,8 +7,9 @@
  * deploy event refreshes (`appStateFragment`) share.
  */
 
+import { HELP_BUILD } from "../../core/contribute.ts";
+import { lacks } from "../../core/roles.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
-import { audienceFacts, audienceOf } from "../../core/audience.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { terminalFor } from "../../actions/apps.ts";
 import { envPull, previewEnv } from "../../apps/data.ts";
@@ -41,6 +42,8 @@ import {
   terminalLine,
 } from "../ui.ts";
 import { lookNow } from "../pages/looks.ts";
+import { testCopyLink } from "../pages/apps.ts";
+import { shownProduction } from "../../core/forge_repo.ts";
 import { LOG_TAIL_CAP, logBox, runVoice } from "./log.ts";
 
 /**
@@ -50,8 +53,9 @@ import { LOG_TAIL_CAP, logBox, runVoice } from "./log.ts";
  * disabled, with the reason it is not there in its title: never a link to
  * a host nothing is serving yet.
  */
-function openAppBtn(base: string, env: EnvStatus | undefined): Html {
-  if (env?.state === "running")
+function openAppBtn(base: string, env: EnvStatus | undefined, forge = false): Html {
+  // The forge's own source opens the forge, which is up whatever its test copy is doing.
+  if (forge || env?.state === "running")
     return btn("Open the app", {
       href: `${base}/app/production/open`,
       variant: "primary",
@@ -122,10 +126,6 @@ function previewRow(
     runtime === undefined
       ? undefined
       : `${base}/app/${previewEnv(pull.number)}/open`;
-  const host =
-    runtime === undefined
-      ? undefined
-      : runtime.urlFor(record, previewEnv(pull.number)).replace(/^https?:\/\//, "");
   const bits: Html[] = [html`#${pull.number} ${pull.title}`];
   if (env !== undefined) bits.push(...envLine(base, env));
   // A serving preview whose deploy finished green says what its tests did.
@@ -143,10 +143,12 @@ function previewRow(
     return row({
       ...(href === undefined ? {} : { nav: true }),
       lead: icon("rocket"),
+      // Named for its pull, not its host: the address is the link, and a
+      // visitor reads "Preview of #N" where an internal name said nothing.
       title:
-        host === undefined || href === undefined
+        href === undefined
           ? `#${pull.number} ${pull.title}`
-          : html`<a href="${href}" class="mono">${host}</a>`,
+          : html`<a href="${href}">Preview of #${pull.number}</a>`,
       meta,
       trail: writer
         ? html`${previewBadge(env)} ${envActions(base, env, writer)}`
@@ -155,10 +157,7 @@ function previewRow(
   return row({
     ...(href === undefined ? {} : { href, nav: true }),
     lead: icon("rocket"),
-    title:
-      host === undefined
-        ? `#${pull.number} ${pull.title}`
-        : html`<span class="mono">${host}</span>`,
+    title: href === undefined ? `#${pull.number} ${pull.title}` : `Preview of #${pull.number}`,
     meta,
     trail: previewBadge(env),
   });
@@ -294,15 +293,12 @@ export function appPanels(
   const checks = latestRunsForIssues(db, openPulls.map((p) => p.id));
   const previews = previewsPanel(base, runtime, record, openPulls, envs, writer, checks);
   const production = envs.find((e) => e.env === "production");
-  const url = runtime?.urlFor(record, "production");
+  // The forge's own source shows the forge as its production; the app is its test copy.
+  const { url, copy } = shownProduction(ctx.app, repo, runtime?.urlFor(record, "production"));
   const tail = productionTail(ctx, repo, production, writer);
   // The state in one word, and under it the facts — why it is not up, and
   // the deploy whose log says the rest.
   const live = envPhrase(production);
-  // Who the app answers to, in the sentence the forge's own rules produce.
-  const audience = audienceOf(
-    audienceFacts(db, repo, ctx.auth.user),
-  ).sentence;
   const head = html`<div class="page-head">
     <div class="stack stack-tight">
       <h1 class="bar">
@@ -318,14 +314,14 @@ export function appPanels(
         ${repo.description || "No description yet."}
         ${url === undefined
           ? null
-          : production?.state === "running"
+          : copy !== undefined || production?.state === "running"
             ? html`·
                 <a href="${base}/app/production/open" class="mono"
                   >${url.replace(/^https?:\/\//, "")}</a
                 >`
             : html`· <span class="mono">${url.replace(/^https?:\/\//, "")}</span>`}
+        ${when(copy, (c) => html`· ${testCopyLink(c)}`)}
       </p>
-      <p class="muted small" id="app-audience">${audience}</p>
       ${when(production, (env) => envFacts(base, env))}
       ${when(writer, () =>
         terminalLine(
@@ -337,9 +333,9 @@ export function appPanels(
     </div>
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}
-    ${openAppBtn(base, production)}
+    ${openAppBtn(base, production, copy !== undefined)}
     ${when(!writer, () =>
-      btn("Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
+      btn(ctx.auth.user !== undefined && lacks(db, ctx.auth.user, "make_it_yours") ? HELP_BUILD : "Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
     )}
     ${when(production, (env) => envActions(base, env, writer))}
   </div>`;

@@ -1,6 +1,7 @@
 import { getUserByName } from "../../../core/users.ts";
 import { ARCHIVED_WHY } from "../../../core/repos.ts";
 import { NOT_A_MEMBER } from "../../../core/roles.ts";
+import { AGENT_NOT_ON_CREW } from "../../../actions/crew_limit_words.ts";
 import { assignIssue } from "../../../actions/issues.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, issueArg, isAnswer } from "../shared.ts";
 
@@ -40,7 +41,7 @@ export const tool: Tool = {
       if (e === "archived") return bad(e, ARCHIVED_WHY);
       if (e === "not_member") return bad(e, NOT_A_MEMBER);
       if (e === "assignee_cannot_read") return bad(e, "the assignee cannot read this repository");
-      if (e === "agent_not_on_crew") return bad(e, "that agent is not on this repository's crew");
+      if (e === "agent_not_on_crew") return bad(e, AGENT_NOT_ON_CREW);
       if (user.kind === "agent" && e === "forbidden")
         return bad(e, "an agent may not assign; that is a person's call");
       if (e === "forbidden" || e === "unauthorized")

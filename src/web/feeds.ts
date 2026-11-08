@@ -20,9 +20,11 @@ import { listEvents, type ForgeEvent } from "../core/events.ts";
 import { getIssuesByRef } from "../core/issues.ts";
 import { canRead, forkParentFor, getRepo } from "../core/repos.ts";
 import { getUsersByIds } from "../core/users.ts";
-import { notePhase, takeSessionTime, timePhase } from "../core/route_timing.ts";
+import { shippedAnswer } from "../release/answer.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
+import { STARTED } from "./started.ts";
 
 const FEED_KINDS = new Set([
   "push",
@@ -60,7 +62,7 @@ export const stamp = (iso: string): string =>
   /Z$|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}Z`;
 
 /** The branch a push moved, from the one payload field a push always has. */
-function pushedBranch(event: ForgeEvent): string {
+export function pushedBranch(event: ForgeEvent): string {
   const updates = event.payload["updates"];
   const ref = Array.isArray(updates)
     ? (updates[0] as { ref?: unknown } | undefined)?.ref
@@ -164,7 +166,7 @@ export function activityAtom(ctx: Ctx): Response {
   </entry>`;
   });
 
-  const updated = events[0]?.createdAt ?? new Date(0).toISOString();
+  const updated = events[0]?.createdAt ?? STARTED;
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <id>${xml(base)}/activity.atom</id>
@@ -188,4 +190,59 @@ ${entries.join("\n")}
       vary,
     },
   });
+}
+
+const CHANGELOG_ENTRIES = 50;
+
+/**
+ * The weak tag of a changelog answer: the live version, the rows' repo,
+ * number, title and time, and `scope` (the chosen repo, the viewer when the
+ * answer depends on who asks). The Atom feed and the JSON share it, so the
+ * two cannot drift; with no scope the tag is the Atom's own, unchanged.
+ */
+export function changelogTag(
+  version: string,
+  rows: readonly { repo: string; number: number; title: string; at: string }[],
+  scope: readonly unknown[] = [],
+): string {
+  const key = [version, rows.map((l) => [l.repo, l.number, l.title, l.at]), ...scope];
+  return `W/"${Bun.hash(JSON.stringify(key)).toString(36)}"`;
+}
+
+/**
+ * `GET /changelog.atom`: what went live, as /changelog lists it (the forge's
+ * own repository, public pulls only). Landed-but-not-shipped is left out.
+ */
+export async function changelogAtom(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  const answer = await timePhaseAsync(ctx.request, "releases", () => shippedAnswer(ctx.app));
+  const origin = ctx.url.origin;
+  const live = answer.live.slice(0, CHANGELOG_ENTRIES);
+  const etag = changelogTag(answer.version, live);
+  const headers = { etag, "cache-control": "public, max-age=300" };
+  if (holds(ctx.request.headers.get("if-none-match"), etag)) return new Response(null, { status: 304, headers });
+  const entries = live.map((l) => {
+    const link = `${origin}/${l.repo}/pulls/${l.number}`;
+    return `  <entry>
+    <id>urn:forge:landing:${xml(l.repo)}#${l.number}</id>
+    <title>${xml(`Went live: ${l.title}`)}</title>
+    <updated>${xml(stamp(l.at))}</updated>
+    <link rel="alternate" type="text/html" href="${xml(link)}"/>
+  </entry>`;
+  });
+  const updated = live[0]?.at ?? STARTED;
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>${xml(origin)}/changelog.atom</id>
+  <title>Changelog</title>
+  <subtitle>What went live</subtitle>
+  <author><name>forge</name></author>
+  <updated>${xml(stamp(updated))}</updated>
+  <link rel="self" type="application/atom+xml" href="${xml(origin)}/changelog.atom"/>
+  <link rel="alternate" type="text/html" href="${xml(origin)}/changelog"/>
+  <generator>forge</generator>
+${entries.join("\n")}
+</feed>
+`;
+  return new Response(body, { headers: { ...headers, "content-type": "application/atom+xml; charset=utf-8" } });
 }

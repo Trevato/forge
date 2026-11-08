@@ -3,7 +3,7 @@
  * an account authenticates with over the SSH listener.
  */
 
-import { withinPasswordCap } from "../core/hash-gate.ts";
+import { PASSWORD_TOO_LONG, withinPasswordCap } from "../core/hash-gate.ts";
 import { emailChanged, welcome } from "./verify.ts";
 import type { App } from "../app.ts";
 import type { Credential } from "../auth/webauthn.ts";
@@ -11,7 +11,9 @@ import { addPasskey, findPasskey } from "../core/passkeys.ts";
 import {
   addKey,
   deleteKey,
+  keyName,
   parseAuthorizedKey,
+  renameKey,
   type UserKey,
 } from "../core/keys.ts";
 import { turnstileVerifier } from "../core/turnstile.ts";
@@ -22,6 +24,8 @@ import {
   deleteToken as revokeToken,
   type TokenScope,
 } from "../core/tokens.ts";
+import { mintViaToken, VIA_TOKEN_MAX_MS } from "../core/via_token.ts";
+import { id } from "../kernel/id.ts";
 import { inviteSpentBy } from "../core/invites.ts";
 import {
   changePassword as rehash,
@@ -256,6 +260,52 @@ export function createToken(
   return ok(minted);
 }
 
+/** Most conversation tokens one person holds alive at once (#8321). */
+export const CONVERSATION_TOKENS_MAX = 30;
+
+/**
+ * Mint the token the forge's agent acts with in one conversation: the
+ * person's own, rw, expiring within the turn (`core/via_token.ts`), gated to
+ * `/mcp` and fenced there. Without `conversation` a fresh one starts; with
+ * it, only one this person's earlier token named, so nobody resets the
+ * fence's marks of a conversation that is not theirs. `words` are what the
+ * person said to start the turn. The caller owes the door: the person's own
+ * session, same-origin, never a token.
+ */
+export function mintConversationToken(
+  app: App,
+  actor: User | undefined,
+  input: { conversation?: string; words: string },
+): Result<{ id: string; token: string; expiresAt: string; via: string }, "unauthorized" | "invalid_via" | "rate_limited"> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const via = `conversation:${input.conversation ?? id()}`;
+  if (input.conversation !== undefined) {
+    const theirs = app.db
+      .query<{ n: number }, [string, string]>(
+        "SELECT COUNT(*) AS n FROM via_token v JOIN token t ON t.id = v.token_id WHERE v.via = ?1 AND t.user_id = ?2",
+      )
+      .get(via, user.value.id);
+    if (!theirs || theirs.n === 0) return err("invalid_via");
+  }
+  // A token lives an hour, so what is alive is what one session minted in it.
+  const alive = app.db
+    .query<{ n: number }, [string, string]>(
+      "SELECT COUNT(*) AS n FROM via_token v JOIN token t ON t.id = v.token_id WHERE t.user_id = ?1 AND t.expires_at > ?2",
+    )
+    .get(user.value.id, new Date().toISOString());
+  if (alive !== null && alive.n >= CONVERSATION_TOKENS_MAX) return err("rate_limited");
+  const expiresAt = new Date(Date.now() + VIA_TOKEN_MAX_MS).toISOString();
+  const minted = mintViaToken(app.db, user.value.id, via, input.words, expiresAt);
+  if (!minted.ok) return err("invalid_via");
+  app.bus.append({
+    kind: "token.created",
+    actorId: user.value.id,
+    payload: { tokenId: minted.value.id, name: `via:${via}`, scope: "rw", expiresAt, via },
+  });
+  return ok({ ...minted.value, expiresAt, via });
+}
+
 export function deleteToken(
   app: App,
   actor: User | undefined,
@@ -324,6 +374,21 @@ export type ChangePasswordError =
   | "weak_password"
   | "password_too_long";
 
+/**
+ * What a refused password change reads as, one sentence each: Settings ›
+ * Password and the terminal's Sessions screen say the same words.
+ */
+export const CHANGE_PASSWORD_WORDS: Record<ChangePasswordError, string> = {
+  unauthorized: "Something went wrong.",
+  bad_credentials: "That isn't your current password.",
+  throttled: "Too many attempts. Try again in a minute.",
+  weak_password: "Passwords need at least 10 characters.",
+  password_too_long: PASSWORD_TOO_LONG,
+};
+
+/** What a changed password reads as, on every surface. */
+export const PASSWORD_CHANGED_WORDS = "Password changed. Existing sessions stay signed in.";
+
 /** Replace the password; the current one must be presented and verified. */
 export async function changePassword(
   app: App,
@@ -389,6 +454,25 @@ export function deleteSshKey(
     kind: "user.key_removed",
     actorId: user.value.id,
     payload: { fingerprint: removed.fingerprint, name: removed.name },
+  });
+  return ok();
+}
+
+/** Rename one of the actor's keys, so each says which machine holds it. */
+export function renameSshKey(
+  app: App,
+  actor: User | undefined,
+  keyId: string,
+  name: string,
+): Result<void, "unauthorized" | "not_found" | "invalid_name"> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  if (keyName(name) === undefined) return err("invalid_name");
+  if (!renameKey(app.db, user.value.id, keyId, name)) return err("not_found");
+  app.bus.append({
+    kind: "user.key_renamed",
+    actorId: user.value.id,
+    payload: { keyId },
   });
   return ok();
 }

@@ -51,7 +51,9 @@ each fork's standing as a badge. The JSON is
 The parent serves `/releases.json` as `{"releases":[{"name","url"}]}`, newest
 first; the child reads it with a 3 s timeout, no redirects and a 256 KB cap,
 caches it under `FORGE_APP_DATA` for 10 minutes, and says "N releases behind
-<parent>" on a fork's following card and in the terminal's About card (`I`). A
+<parent>" on a fork's following card, in the terminal's About card (`I`), and as `parentForge`
+(`{host, behind, releases, fetchedAt, down}`, null when unset) in
+`GET /api/v1/repos/:owner/:name/following` and the MCP `following` tool. A
 page never waits for the parent: it shows the cached copy and refreshes in the
 background, and a parent that is down or answering garbage leaves a "could not
 be reached" with the age of the last copy. Unset, nothing is shown. Read only:
@@ -193,3 +195,104 @@ has none. The step is `takeOrTell` in `src/actions/follow.ts`, shared by the
 page, `POST /api/v1/repos/:owner/:name/following/take` (409, naming the
 converge issue), and the MCP `take_updates` tool, so the same press does the
 same thing at every door.
+
+## Ranked forks
+
+`/:owner/:name/forks` and the terminal's forks screen (`f` in a repository)
+list a repository's direct forks the same way, so the best of a fork tree
+rises. Order: commits ahead of the parent's default branch (most first),
+then fewest behind, then the newest tip commit. Each row reads `N ahead · M
+behind` and when the fork last moved; a fork that is ahead has a **Compare**
+button (on the page) to its `/pulls/new`, which proposes it to the parent.
+Each fork's own forks are listed indented beneath it (one more level, on the
+page and in the terminal alike); the forks below those are a count, `and N more
+forks below`, linking on the page to that fork's forks page. A private fork is
+never named or counted to someone who cannot read it.
+
+In the terminal, a repository that follows another opens its forks screen
+with `follows owner/name` and MCP `following`'s standing: `in step`, or the
+state with `N ahead · M behind` (`parent frozen` behind a disconnected
+origin). When the crew has a converge in hand, a second line says what it is
+doing, in the words the following page uses; a fork that merges cleanly needs
+no crew and has no such line. `enter` on the first opens the parent; on the
+second, the converge issue. A parent the viewer may not read is never named
+(`relationOf` hides it), and a repository that follows nothing shows neither
+line.
+
+On a fork behind a parent that is not frozen, a person who writes the fork is
+offered `t`: a confirm says what will happen (`Fast-forward to owner/name: N
+commits.`, a merge that keeps the fork's own commits, or the converge issue
+when both sides changed the same files), and `y` calls `takeOrTell`, as the
+following page and MCP `take_updates` do. The answer is the page's sentence
+(`takeWords`); on a conflict the crew's line names the converge issue opened
+or found, and `enter` opens it. A reader, an agent, a fork in step and a
+repository that follows nothing are not offered `t`.
+
+On a fork, a person who can write to it presses `u` on the forks screen. A
+confirm says how many commits are ahead and which repository they would go to;
+confirming calls `proposeUpstream`, as the following page's Propose button
+does, and one pull opens on the parent. When a proposal is already open the
+screen shows `#N is open on owner/name`, and `u` (or `enter` on that row)
+opens that pull instead of making another. Readers and agents are not offered
+`u`. Refusals are said in the following page's words (`actions/follow_words.ts`):
+`This repository follows nothing.`, `Nothing here is ahead of owner/name.`,
+`You need write access to propose from here.` and `owner/name did not take the
+proposal: …`.
+
+Forks with nothing ahead (or whose standing git cannot read) follow under
+`N forks with nothing new`. At most 60 forks are ranked per view; past that
+the page says `Ranking the first 60 of N forks`. A fork's standing is cached
+by the pair of tips (`actions/forks.ts`), so a view of forks that have not
+moved costs one `git log` per fork.
+
+### Proposing to a parent forge
+
+A spawned forge can offer its own change to the forge it came from. The
+parent mints a proposal token for the child (above); the child keeps it in
+`parent.json` as `"proposal": {"child": "kid", "token": "…"}` beside the
+parent's address. On the child's `/<org>/forge/following` page a writer
+presses **Propose to the parent forge** (or `POST …/following/propose-parent`):
+the default branch is pushed to `child/<name>/<branch>-<tip>` at the parent,
+and the pull opens there, titled by the change that landed last and naming it
+(`org/forge#7`). Asking again for the same tip returns the pull already made.
+
+The repository's admin changes how the forge follows its parent (`tell-me` or
+`take-updates`) from the radio form on the same page, with `PATCH
+/api/v1/forge/following {"mode"}`, with the MCP `follow_mode` tool, or by pressing `m` on the chain screen in the terminal. The
+record in `parent.json` is rewritten atomically and a `forge.follow_mode` event
+is appended. A non-admin is refused (403), a value outside the two modes is
+422, and a severed forge is 409; each leaves `parent.json` untouched.
+
+**Take the N new commits** (shown to the admin on `/<org>/forge/following` when
+the parent is ahead, `POST /api/v1/repos/:owner/:name/following/take`, the MCP `take_updates`
+tool, or `t` on the chain screen in the terminal) opens, or updates, the one `forge/take-updates`
+pull whatever the follow mode, and never moves the default branch; a conflict
+opens the converge issue instead, and nothing behind answers "Already up to date."
+
+The page and `GET …/following/proposals` show each proposal as open, merged or
+closed, read from the parent (the token may read back only pulls it opened) and
+cached for a minute (only a signed-in viewer makes the parent get asked); a merged or closed one is final. A parent that does not
+answer shows the last state with "parent unreachable" — never an error page.
+In the terminal, the Chain card lists the proposals and `p` proposes. The MCP `propose_to_parent_forge` tool (writer only) proposes with the page's
+words, and `forge_proposals` lists each proposal with its state and "parent
+unreachable" where that applies. No dependency was added. Left out: a UI to paste
+the token into `parent.json` (part 2 of #2182 covers minting and handing over).
+
+Minting, listing and revoking go through one action
+(`src/actions/proposal_tokens.ts`) at every door, and only a writer of the
+repository may; anyone else is told "no such resource here, or it is not
+visible to you", as the API says it. The secret is shown once, on minting.
+The repository's settings page is one more door: a writer sees their proposal
+tokens one to a line (child, origin, expires, last used) with Revoke, and a
+form that mints one and shows its secret once; others see no section.
+
+The check cell's memory is on the same page under **Check cell**, and in the terminal on a repository's About card (`I`, for an admin): the limit the machine enforces, read from `forge.json` on the default branch. When `check.limits.memory` asks for more than the machine's ceiling it shows both numbers and where the cut comes from (`FORGE_CELL_MEMORY_MAX_MIB`, else a share of the pod's memory); otherwise one number. The ceiling is read once and kept (`src/apps/check-memory.ts`).
+
+- **MCP**: the `proposal_tokens` tool with `repo` and a `verb`: `mint`
+  (`child`, `origin`, optionally `childRepo`), `list` (the ones you minted for
+  the repository) or `revoke` (`id`).
+- **Terminal**: `ctrl+k`, **Proposal tokens**, then the repository as
+  `owner/name`. `n` mints (the child's name, then its https address) and shows
+  the secret once on its own screen; `x` asks before it revokes the one under
+  the cursor ("Revoke the token for <child>?", Keep selected): `y` revokes,
+  `n`, esc or enter keeps it.

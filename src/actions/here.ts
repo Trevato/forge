@@ -12,8 +12,10 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { lacks } from "../core/roles.ts";
+import { activeEdgeToken } from "../http/edge.ts";
 import { sshTellCommand } from "../ssh/command.ts";
-import { mcpPointers } from "../core/mcp_card.ts";
+import { mcpPointers, TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { isCrew } from "../core/agents.ts";
@@ -26,6 +28,7 @@ import {
   getRepo,
   type Repo,
 } from "../core/repos.ts";
+import { getUserByName, hiddenFrom } from "../core/users.ts";
 import { SYSTEM_NAMES } from "../core/reserved.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
@@ -43,6 +46,8 @@ export interface Action {
   readonly http?: string;
   /** The MCP tool that does the same, when there is one. */
   readonly mcp?: string;
+  /** The arguments that tool takes here, plain data (`{ q }` for a filter). */
+  readonly mcpArgs?: Readonly<Record<string, string>>;
   /** The shell command that does the same, when the forge's SSH is on. */
   readonly ssh?: string;
   /** `true`: needs an account the caller does not have; `false`: needs none. */
@@ -54,6 +59,8 @@ export interface Action {
 export interface Manifest {
   readonly here:
     | { readonly kind: "forge" | "explore" | "search" }
+    | { readonly kind: "person"; readonly username: string }
+    | { readonly kind: "org"; readonly org: string }
     | {
         readonly kind: "repository";
         readonly name: string;
@@ -111,6 +118,49 @@ export function manifestFor(
     name === undefined && (owner === "explore" || owner === "search")
       ? owner
       : undefined;
+  // One segment, or `/:owner/-/…`, that is not a page the forge keeps for
+  // itself names an account: a person, an organization, or nobody.
+  if (
+    owner !== undefined &&
+    page === undefined &&
+    (name === undefined || name === "-") &&
+    !SYSTEM.has(owner.toLowerCase())
+  ) {
+    const account = getUserByName(app.db, owner);
+    if (account === undefined || hiddenFrom(account, viewer))
+      return err("not_found");
+    const you = youFor(viewer, scope, undefined, app);
+    const rest = forgeActions(app, viewer, scope);
+    if (account.kind === "org")
+      return ok({
+        here: { kind: "org", org: account.username },
+        you,
+        actions: [
+          {
+            do: "list the organization's teams",
+            http: `GET /api/v1/orgs/${account.username}/teams`,
+          },
+          {
+            do: "list its public repositories",
+            http: `GET /api/v1/users/${account.username}/repos`,
+          },
+          ...rest,
+        ],
+        ...common,
+      });
+    return ok({
+      here: { kind: "person", username: account.username },
+      you,
+      actions: [
+        {
+          do: "read their public repositories",
+          http: `GET /api/v1/users/${account.username}/repos`,
+        },
+        ...rest,
+      ],
+      ...common,
+    });
+  }
   // Two segments under a name the forge keeps for itself are its own page,
   // never a repository (`core/reserved.ts`).
   // `/:owner/-/…` is an account's or an org's own page (its teams), never
@@ -224,6 +274,7 @@ function pageRead(page: "explore" | "search", path: string): Action {
     do: `${page === "explore" ? "browse the forge" : "search the forge"}${q === "" ? "" : `: ${q.slice(0, 200)}`}`,
     http,
     mcp: page,
+    mcpArgs: { q: q.slice(0, 200) },
   };
 }
 
@@ -241,24 +292,58 @@ function forgeActions(
       do: "explore apps and repositories",
       http: "GET /api/v1/explore?q=",
       mcp: "explore",
+      mcpArgs: { q: "" },
     },
     {
       do: "search issues, pulls, repositories and code",
       http: "GET /api/v1/search?q=",
       mcp: "search",
+      mcpArgs: { q: "" },
     },
     { do: "list public repositories", http: "GET /api/v1/repos" },
     {
       do: "report a problem",
       http: "POST /api/v1/repos/{owner}/{name}/reports",
       mcp: "report",
+      ...tokenFree("report"),
+    },
+    {
+      // The HTTP route is open, but the MCP tool is not, so no claim is made.
+      do: "see how to help build this forge",
+      http: "GET /api/v1/contribute",
+      mcp: "contribute",
+      ...tokenFree("contribute"),
+    },
+    {
+      do: "see what went live",
+      http: "GET /api/v1/changelog",
+      mcp: "releases",
+    },
+    {
+      do: "read the HTTP contract",
+      http: "GET /contract/openapi.json",
       account: false,
     },
     ...(viewer === undefined
       ? [{ do: "use the MCP", http: "POST /mcp", account: true }]
       : [{ do: "use the MCP", http: "POST /mcp" }]),
     ...(tellSsh === undefined ? [] : [{ do: "tell the crew", ssh: tellSsh }]),
+    // How a stranger gets the account the rows above ask for. An edge-login
+    // forge makes no account at /signup, as the home page's buttons say.
+    ...(viewer !== undefined
+      ? []
+      : [
+          ...(activeEdgeToken(app) === undefined
+            ? [{ do: "make an account", http: "GET /signup", account: false }]
+            : []),
+          { do: "sign in", http: "GET /signin", account: false },
+        ]),
   ];
+}
+
+/** `account: false` only for an MCP tool the gate really lets through. */
+function tokenFree(tool: string): { account?: false } {
+  return TOKEN_FREE_TOOLS.includes(tool) ? { account: false } : {};
 }
 
 function repoActions(
@@ -279,7 +364,7 @@ function repoActions(
       do: "report a problem",
       http: `POST ${r}/reports`,
       mcp: "report",
-      account: false,
+      ...tokenFree("report"),
     });
   // What creates or costs waits for a proven email (`requireVerified`).
   const unproven =
@@ -308,6 +393,27 @@ function repoActions(
   const record = getAppByRepo(db, repo.id);
   if (record !== undefined && canEnterApp(db, repo, record, viewer))
     out.push({ do: "open the app", http: `GET ${r}/app/production/open` });
+  // The copy is for whoever cannot write the app (the web's button, `!canWrite`);
+  // its dry run is `ro`, so a read-only token sees it too.
+  if (
+    record !== undefined &&
+    canEnterApp(db, repo, record, viewer) &&
+    !canWrite(db, repo, viewer)
+  )
+    out.push({
+      do: "make it yours",
+      http: `POST ${r}/make-it-yours`,
+      mcp: "make_it_yours",
+      ...(viewer === undefined ? { account: true } : unproven),
+    });
+  // A guest on a public repository they cannot write: help build it.
+  if (
+    viewer !== undefined &&
+    repo.visibility === "public" &&
+    !canWrite(db, repo, viewer) &&
+    lacks(db, viewer, "make_it_yours")
+  )
+    out.push({ do: "help build this", http: `POST ${r}/forks`, ...unproven });
   if (!acts) return out;
   const tellSsh = sshTellCommand(app);
   if (mayDirectCrew(db, repo, viewer))
@@ -331,5 +437,21 @@ function repoActions(
     out.push({ do: "merge a pull", http: `POST ${r}/pulls/{number}/merge` });
   if (canAdmin(db, repo, viewer))
     out.push({ do: "change settings", http: `PATCH ${r}` });
+  // How a native fork follows its parent: a writer's moves, the same rule
+  // `takeOrTell` and `proposeToParentForge` ask (`requireWriter`).
+  if (
+    repo.forkParentId !== null &&
+    repo.origin === null &&
+    canWrite(db, repo, viewer)
+  )
+    out.push(
+      { do: "read how it follows its parent", http: `GET ${r}/following`, mcp: "following" },
+      { do: "take the parent's updates", http: `POST ${r}/following/take`, mcp: "take_updates" },
+      {
+        do: "propose its changes to the parent",
+        http: `POST ${r}/following/propose-parent`,
+        mcp: "propose_to_parent_forge",
+      },
+    );
   return out;
 }

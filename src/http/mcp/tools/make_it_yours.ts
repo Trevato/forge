@@ -3,6 +3,7 @@ import { NOT_A_MEMBER } from "../../../core/roles.ts";
 import { COPIES_PER_DAY, makeItYours } from "../../../actions/make_it_yours.ts";
 import { PROVE_FIRST } from "../../../actions/verify_words.ts";
 import { good, bad, type Tool, str, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
+import { VISIBILITY_WORDS } from "../../../core/arg_words.ts";
 
 export const tool: Tool = {
   name: "make_it_yours",
@@ -27,7 +28,7 @@ export const tool: Tool = {
     const name = str(args["name"]);
     const visibility = str(args["visibility"]);
     if (visibility !== "" && visibility !== "public" && visibility !== "private")
-      return bad("invalid", "visibility is public or private");
+      return bad("invalid", VISIBILITY_WORDS);
     const made = await makeItYours(ctx.app, user, repo, {
       dryRun: args["dryRun"] !== false,
       ...(name === "" ? {} : { name }),

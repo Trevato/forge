@@ -16,6 +16,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { memoryLimitBytes } from "../core/capacity.ts";
+import { noteGit } from "../perf/git.ts";
+import { gitRecord } from "../perf/live.ts";
 
 /** Base env for all server-side git. Nothing from the host leaks in. */
 export function gitEnv(extra?: Record<string, string>): Record<string, string> {
@@ -196,6 +198,13 @@ const limitFromEnv = (name: string, fallback: number): number => {
 export const gitGate = new Gate(limitFromEnv("FORGE_GIT_CONCURRENCY", 8));
 
 /**
+ * Blob streams for the media route: a video seeks for minutes, so a stream
+ * holds its permit until the last byte or the reader hangs up. A pool of its
+ * own, so a page of videos never takes the plumbing permits every page needs.
+ */
+export const mediaGate = new Gate(limitFromEnv("FORGE_MEDIA_CONCURRENCY", 16));
+
+/**
  * How many pack transfers a host of `bytes` memory runs at once by default:
  * one per 64 MiB, at least two, at most sixteen. A push is not one process
  * but three while it runs: `receive-pack`, the pre-receive hook (a whole Bun
@@ -245,6 +254,8 @@ export async function runGitRaw(
   args: readonly string[],
   options: RunOptions = {},
 ): Promise<Result<Uint8Array, GitFailure>> {
+  // Timed from before the gate: a wait for a permit is the queue #8158 names.
+  const start = performance.now();
   return gitGate.run(async () => {
     const proc = Bun.spawn(["git", ...args], {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
@@ -270,6 +281,7 @@ export async function runGitRaw(
     } finally {
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", stop);
+      noteGit(gitRecord, args, start);
     }
   });
 }
@@ -288,6 +300,8 @@ export interface GitCapture {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
+  /** The timeout killed the process. */
+  readonly timedOut?: boolean;
 }
 
 /**
@@ -299,6 +313,7 @@ export async function runGitCapture(
   args: readonly string[],
   options: RunOptions = {},
 ): Promise<GitCapture> {
+  const start = performance.now();
   return gitGate.run(async () => {
     const proc = Bun.spawn(["git", ...args], {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
@@ -307,8 +322,12 @@ export async function runGitCapture(
       stdout: "pipe",
       stderr: "pipe",
     });
+    let timedOut = false;
     const timer = setTimeout(
-      () => proc.kill("SIGKILL"),
+      () => {
+        timedOut = true;
+        proc.kill("SIGKILL");
+      },
       options.timeoutMs ?? 30_000,
     );
     try {
@@ -317,9 +336,10 @@ export async function runGitCapture(
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
-      return { code, stdout, stderr };
+      return { code, stdout, stderr, ...(timedOut ? { timedOut } : {}) };
     } finally {
       clearTimeout(timer);
+      noteGit(gitRecord, args, start);
     }
   });
 }

@@ -16,6 +16,7 @@ import {
 } from "../../actions/forks.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import {
+  canAdmin,
   canRead,
   canWrite,
   forkParentFor,
@@ -36,10 +37,13 @@ import {
   type ParentReleases,
 } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
+import { modeForm } from "./chain.ts";
+import type { FollowMode } from "../../spawn/chain.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { convergeWords, takeOrTell } from "../../actions/follow.ts";
-import { FOLLOWS_NOTHING, PROPOSE_NEEDS_WRITE } from "../../actions/follow_words.ts";
+import { convergeWords, followModeOf, takeOrTell, takeWords } from "../../actions/follow.ts";
+import { FOLLOWS_NOTHING, proposeRefusalWords } from "../../actions/follow_words.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
+import { proposesViaFork } from "../../origins/fork-route.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
@@ -91,6 +95,8 @@ export interface Following {
   readonly converge: Converge | undefined;
   /** The parent forge's releases, when this forge names a parent forge. */
   readonly releases: { url: string; view: ParentReleases } | undefined;
+  /** How this repository follows its parent (`followModeOf`). */
+  readonly mode: FollowMode;
 }
 
 /** Everything the card needs, for a repo that follows something. */
@@ -99,6 +105,7 @@ export async function followingOf(
   repo: Repo,
 ): Promise<Following | undefined> {
   if (repo.forkParentId === null) return undefined;
+  if (archivedParent(ctx, repo) !== undefined) return undefined;
   const relation = await relationOf(ctx.app, ctx.auth.user, repo);
   if (relation === undefined) return undefined;
   // A parent the viewer may not read is not named here at all.
@@ -117,7 +124,30 @@ export async function followingOf(
             loopback: ctx.app.config.parentLoopback === true,
           }),
         };
-  return { relation, converge, releases };
+  return { relation, converge, releases, mode: await followModeOf(ctx.app, repo) };
+}
+
+/** The parent, when the viewer may read it and an admin has archived it. */
+function archivedParent(ctx: Ctx, repo: Repo): Repo | undefined {
+  const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
+  return parent?.archivedAt === null ? undefined : parent;
+}
+
+/**
+ * In place of the Following card, when the parent is archived (#7452): one
+ * quiet line. A frozen parent's "N ahead" reads as unshipped work, and there
+ * is nothing to take from it or offer it, so no count and no button.
+ */
+export function archivedParentLine(ctx: Ctx, repo: Repo): Html | null {
+  const parent = archivedParent(ctx, repo);
+  if (parent === undefined) return null;
+  return html`<p class="mt small muted" data-archived-parent>
+    ${icon("fork")} forked from
+    <a href="/${parent.ownerName}/${parent.name}">${parent.ownerName}/${parent.name}</a>
+    (archived)${canAdmin(ctx.app.db, repo, ctx.auth.user)
+      ? html` · <a href="${repoBase(repo)}/settings/danger#detach">detach from it</a>`
+      : null}
+  </p>`;
 }
 
 /**
@@ -255,11 +285,18 @@ export function followingCard(
       proposal === undefined
         ? html`<form method="post" action="${base}/following">
             <input type="hidden" name="do" value="propose" />
-            ${btn("Propose upstream", {
-              size: "sm",
-              type: "submit",
-              icon: "merge",
-            })}
+            ${proposesViaFork(ctx.app, parent)
+              ? btn("Propose via your fork", {
+                  size: "sm",
+                  type: "submit",
+                  icon: "fork",
+                  title: `Your account can only read ${parent.ownerName}/${parent.name}'s origin, or its operator protects it: the change goes to your own fork there, and the pull opens from it`,
+                })
+              : btn("Propose upstream", {
+                  size: "sm",
+                  type: "submit",
+                  icon: "merge",
+                })}
           </form>`
         : btn("See the upstream proposal", {
             size: "sm",
@@ -275,10 +312,13 @@ export function followingCard(
           ? writer
             ? null
             : html`A writer can ask the crew to converge it.`
-          : html`Nobody is on the crew to converge it: add someone under
-              <a href="${base}/settings/crew">Settings → Crew</a>, or merge
-              <span class="mono">refs/following/${parent.defaultBranch}</span>
-              by hand.`
+          : // Only a writer can do either; a visitor is not told to.
+            writer
+            ? html`Nobody is on the crew to converge it: add someone under
+                <a href="${base}/settings/crew">Settings → Crew</a>, or merge
+                <span class="mono">refs/following/${parent.defaultBranch}</span>
+                by hand.`
+            : null
         : null
       : converge.kind === "working"
         ? html`${converge.agent === undefined
@@ -329,6 +369,8 @@ export function followingCard(
     rows.push(...block.links);
   }
   if (foot !== null) prose.push(html`<p class="muted small">${foot}</p>`);
+  if (canAdmin(ctx.app.db, repo, ctx.auth.user) && writer)
+    prose.push(modeForm(base, following.mode, "How this fork follows its parent"));
   if (followers > 0)
     rows.push(
       row({
@@ -350,18 +392,6 @@ export function followingCard(
       pad: false,
     },
   );
-}
-
-/**
- * What taking updates says when there was nothing to take. "Up to date"
- * only of a parent that is itself up to date: a frozen one may be far
- * behind its own upstream, and the take only knows the frozen copy.
- */
-export function nothingNew(parent: Repo): string {
-  const name = `${parent.ownerName}/${parent.name}`;
-  return parent.detached === null
-    ? `Already up to date with ${name}.`
-    : `Nothing new from ${name}, which is frozen: its origin was disconnected, so upstream may have moved. Reconnect it.`;
 }
 
 /**
@@ -398,14 +428,7 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
       const e = proposed.error;
       return flashOrJson(ctx, base, {
         tone: "danger",
-        message:
-          e === "not_a_fork"
-            ? FOLLOWS_NOTHING
-            : e === "nothing_to_propose"
-              ? `Nothing here is ahead of ${parentName}.`
-              : typeof e === "string"
-                ? PROPOSE_NEEDS_WRITE
-                : `${parentName} did not take the proposal: ${e.reason}.`,
+        message: proposeRefusalWords(e, parentName),
       });
     }
     const { pull, opened, changes } = proposed.value;
@@ -421,35 +444,5 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   }
 
   const took = await takeOrTell(ctx.app, ctx.auth.user, repo);
-  if (!took.ok) {
-    const e = took.error;
-    if (typeof e === "string")
-      return flashOrJson(ctx, base, {
-        tone: "danger",
-        message:
-          e === "not_a_fork"
-            ? FOLLOWS_NOTHING
-            : "You need write access to take updates here.",
-      });
-    // A conflict is a tell for the crew (`actions/follow.ts`).
-    if (e.kind === "conflict") {
-      const files = `${e.files.length === 1 ? "One file needs" : `${e.files.length} files need`} a decision (${e.files.join(", ")})`;
-      const words = "converge" in e ? convergeWords(e.converge, parentName) : { message: "" };
-      return flashOrJson(ctx, base, { tone: "danger", message: `${files}. ${words.message}` });
-    }
-    return flashOrJson(ctx, base, {
-      tone: "danger",
-      message:
-        e.kind === "moved"
-            ? "Something moved while this was read; try again."
-            : `Git could not take the updates: ${e.message}`,
-    });
-  }
-  return flashOrJson(ctx, base, {
-    message: !took.value.updated
-      ? nothingNew(parent)
-      : took.value.merged
-        ? `Took ${parentName}'s updates: merged into ${repo.defaultBranch} at ${took.value.to.slice(0, 7)}.`
-        : `Took ${parentName}'s updates: ${repo.defaultBranch} is at ${took.value.to.slice(0, 7)}.`,
-  });
+  return flashOrJson(ctx, base, takeWords(took, repo, parent));
 }

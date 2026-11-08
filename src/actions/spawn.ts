@@ -37,6 +37,7 @@ import { createUser, getUserByName, type User } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { commitFiles } from "../git/write.ts";
+import { birthFromTemplate, type TemplateMark } from "../spawn/template_birth.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -45,6 +46,7 @@ import {
   addSubscription,
   getSubscriptionByName,
   lockBudget,
+  normalizeToken,
   setGrants,
   subscriptionAad,
 } from "../core/subscriptions.ts";
@@ -114,6 +116,8 @@ interface Ledger {
   readonly createdAt?: string;
   /** Absent on a ledger written before sizes; reads as small. */
   readonly size?: Size;
+  /** The template chosen (`spawn/templates.ts`); absent means `blank`. */
+  readonly template?: string;
   /** Absent on a ledger written before cells; reads as hosted. */
   readonly placement?: PlacementKind;
   /** Why a child that wanted a cell is hosted instead (`spawn/host.ts`). */
@@ -224,6 +228,8 @@ async function make(
   plan: SpawnPlan,
   deps: SpawnDeps,
 ): Promise<Result<Spawned, SpawnError>> {
+  // The key as the person meant it: whitespace and a `Bearer ` prefix from the paste dropped.
+  if (deps.modelKey !== undefined) deps = { ...deps, modelKey: normalizeToken(deps.modelKey) };
   const planHash = sha256(JSON.stringify(plan));
   let ledger = await readLedger(app, plan.name);
   if (ledger) {
@@ -267,6 +273,7 @@ async function make(
       apps: plan.apps.map((a) => a.ref),
       createdAt: new Date().toISOString(),
       size: plan.size ?? DEFAULT_SIZE,
+      ...(plan.template === undefined ? {} : { template: plan.template }),
       placement: placed.value.kind ?? "hosted",
       statusToken: secret(),
       beatKey: secret(),
@@ -344,6 +351,7 @@ async function copyInto(
       org = made.value;
     }
 
+    let templateMark: TemplateMark | undefined;
     const copiedRepos: { parent: Repo; child: Repo }[] = [];
     for (const a of plan.apps) {
       const [o, n] = a.ref.split("/") as [string, string];
@@ -382,7 +390,18 @@ async function copyInto(
 
     // A fresh app, begun from the spawner's sentence: a README and the
     // smallest app that answers, committed once.
-    if (plan.fresh !== undefined) {
+    // With a template, the sentence describes the template's app instead:
+    // one repository, not two (`spawn/template_birth.ts`).
+    if (plan.template !== undefined) {
+      const born = await birthFromTemplate(child, org, {
+        template: plan.template,
+        ...(plan.fresh === undefined ? {} : { fresh: plan.fresh }),
+        direction: plan.direction,
+        taken: new Set(plan.apps.map((a) => a.ref.split("/")[1]!)),
+      });
+      if (!born.ok) return err(born.error);
+      templateMark = born.value;
+    } else if (plan.fresh !== undefined) {
       const made = await startFresh(child, org, plan.fresh, plan.direction);
       if (!made.ok) return err(made.error);
     }
@@ -396,9 +415,11 @@ async function copyInto(
     if (!forgeCode.ok) return err(forgeCode.error);
 
     for (const b of plan.briefs) {
+      // The jobs it declares travel with it (#8907).
+      const roles = getAgentByName(app.db, b.agent)?.roles;
       const existing = getAgentByName(child.db, b.agent);
       if (existing) {
-        updateAgent(child.db, existing.user.id, { brief: b.text });
+        updateAgent(child.db, existing.user.id, { brief: b.text, ...(roles ? { roles } : {}) });
         continue;
       }
       const made = await createUser(child.db, {
@@ -408,7 +429,7 @@ async function copyInto(
         origin: "spawn",
       });
       if (!made.ok) return err(`could not make crew member ${b.agent}: ${made.error}`);
-      createAgentRow(child.db, { userId: made.value.id, brief: b.text, createdBy: founder.id });
+      createAgentRow(child.db, { userId: made.value.id, brief: b.text, roles, createdBy: founder.id });
     }
 
     // A carried crew member keeps its place on each app: the role it had on
@@ -464,6 +485,7 @@ async function copyInto(
         url: liveChildUrl(app, plan.name),
         keepAccess: plan.keepAccess,
         size: plan.size ?? DEFAULT_SIZE,
+        ...(plan.template === undefined ? {} : { template: templateMark ?? { id: plan.template } }),
         // Each app is a fork: where it came from, so the child can follow it.
         apps: plan.apps.map((a) => ({ repo: `${plan.org}/${a.ref.split("/")[1]}`, upstream: a.ref })),
         ...(plan.fresh === undefined ? {} : { fresh: `${plan.org}/${plan.fresh.name}` }),
@@ -673,6 +695,8 @@ export interface Child {
   /** When it was begun; null on a ledger older than the client list. */
   readonly createdAt: string | null;
   readonly size: Size;
+  /** The template it started from; absent when `blank`. */
+  readonly template?: string;
   readonly placement: PlacementKind;
   /** Why it is hosted when it asked for a cell; null otherwise. */
   readonly placementNote: string | null;
@@ -695,6 +719,7 @@ export async function listChildren(app: App): Promise<Child[]> {
         apps: ledger.apps ?? [],
         createdAt: ledger.createdAt ?? null,
         size: isSize(ledger.size) ? ledger.size : DEFAULT_SIZE,
+        ...(typeof ledger.template === "string" ? { template: ledger.template } : {}),
         placement: ledger.placement ?? "hosted",
         placementNote: ledger.placementNote ?? null,
       });

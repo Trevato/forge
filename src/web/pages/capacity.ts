@@ -6,8 +6,8 @@
  * and each one is listed below the settings: who, when, from what to what.
  */
 
-import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
-import { CAPACITY, type CapacityKey } from "../../core/capacity.ts";
+import { changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
+import { CAPACITY, belowCeiling, type CapacityKey } from "../../core/capacity.ts";
 import { bytes } from "../../system/format.ts";
 import { egressSnapshot } from "../../apps/egress.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -16,7 +16,7 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo } from "../layout.ts";
-import { btn, card, icon, row, time } from "../ui.ts";
+import { badge, btn, card, icon, row, time } from "../ui.ts";
 import { usageShell } from "./usage-tabs.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -76,7 +76,7 @@ export function capacityPage(ctx: Ctx): Response {
     listCapacity(ctx.app, ctx.auth.user),
   );
   if (!listed.ok) return notFoundPage(ctx);
-  const { settings, changes } = listed.value;
+  const { settings, changes, egress, selfSwap } = listed.value;
   const errs = timePhase(ctx.request, "errors", () =>
     ctx.app.signals.errors.recent(10),
   );
@@ -85,10 +85,14 @@ export function capacityPage(ctx: Ctx): Response {
   );
   const now = Date.now();
   const rendering = performance.now();
-  const rows = settings.map((s) =>
-    row({
+  const rows = settings.map((s) => {
+    const low = belowCeiling(ctx.app.db, s.key);
+    return row({
       lead: icon("activity"),
-      title: html`${s.label} <span class="muted small mono">${s.key}</span>`,
+      title: html`${s.label} <span class="muted small mono">${s.key}</span>${when(
+        low !== null,
+        () => html` ${badge(`below ceiling ${low?.ceiling}`, { tone: "attn" })}`,
+      )}`,
       meta: html`${s.help} <br />Now <span class="mono">${s.value === "" ? "auto" : s.value}</span>. ${s.source === "setting"
           ? html`Set here; the boot default is
               <span class="mono">${s.default === "" ? "auto" : s.default}</span>
@@ -108,6 +112,10 @@ export function capacityPage(ctx: Ctx): Response {
           label: `Save ${s.label}`,
         })}
         ${when(
+          s.key === "signin.edge",
+          () => html`${btn("Dry run", { size: "sm", name: "dry", value: "1", label: "List who switching the edge off would lock out" })}`,
+        )}
+        ${when(
           s.source === "setting",
           () =>
             html`${btn(s.changed === undefined ? "Default" : "Put back", {
@@ -118,8 +126,8 @@ export function capacityPage(ctx: Ctx): Response {
             })}`,
         )}
       </form>`,
-    }),
-  );
+    });
+  });
   const history = changes.map((c) =>
     row({
       lead: icon("history"),
@@ -158,14 +166,25 @@ export function capacityPage(ctx: Ctx): Response {
     },
   );
   const open = egressSnapshot();
+  // The bun cache at work (#7546): a warm cache keeps this near zero.
+  const npm = html`The npm registry sent
+    <span class="mono">${bytes(egress.npmBytesLastHour)}</span> over the last hour${
+      egress.npmTopRepoLastHour === null
+        ? "."
+        : html`, most to
+            <span class="mono">${egress.npmTopRepoLastHour.repo}</span>
+            (<span class="mono">${bytes(egress.npmTopRepoLastHour.bytes)}</span>).`
+    }`;
   const connections = card(
     open.length === 0
       ? html`<div class="card-body">
+          <p class="muted small" id="egress-npm">${npm}</p>
           <p class="muted small" id="egress-open">
             No app holds an egress connection open.
           </p>
         </div>`
       : html`<ul class="list" id="egress-open">
+          ${row({ id: "egress-npm", lead: icon("activity"), title: npm })}
           ${open.map((r) =>
             row({
               lead: icon("activity"),
@@ -182,7 +201,28 @@ export function capacityPage(ctx: Ctx): Response {
       pad: false,
     },
   );
-  const body = html`${happened}${connections}${when(
+  // Whether a landing here can swap the forge in place (#8383): the reason, before one is refused.
+  const swap = card(
+    html`<ul class="list">
+      ${row({
+        id: "self-swap",
+        title: "Self-swap",
+        meta: html`${selfSwap.blocked ?? "A landed release of the forge takes over the port in place."}
+          · <span class="mono">FORGE_SELF_SWAP</span> ${selfSwap.enabled ? "is set" : "is off"}
+          · <span class="mono">net.ipv4.tcp_migrate_req</span> reads
+          <span class="mono">${selfSwap.migrateReq}</span>`,
+        trail: badge(selfSwap.blocked === null ? "ready" : "blocked", {
+          tone: selfSwap.blocked === null ? "success" : "attn",
+        }),
+      })}
+    </ul>`,
+    {
+      head: html`${icon("activity")}
+        <h2>Self-swap</h2>`,
+      pad: false,
+    },
+  );
+  const body = html`${happened}${connections}${swap}${when(
       reported,
       () => html`<p class="muted small mb" id="egress-reported">
         ${icon("activity")} Egress is reported, not enforced: every new app,
@@ -242,6 +282,18 @@ export async function capacitySet(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const key = field(form, "key");
+  if (field(form, "dry") === "1") {
+    const dry = edgeOffDryRun(ctx.app.db, ctx.auth.user);
+    if (!dry.ok) return notFoundPage(ctx);
+    const d = dry.value;
+    const names = d.lockedOut.map((a) => a.username + (a.isAdmin ? " (admin)" : "")).join(", ");
+    return flashTo(ctx, "/settings/capacity", {
+      tone: d.lockedOut.length === 0 && d.allowed ? "success" : "danger",
+      message: `${d.own} of ${d.total} accounts sign in without the edge. ${
+        d.lockedOut.length === 0 ? "Nobody would be locked out." : `Would be locked out: ${names}.`
+      }${d.youLockedOut ? " You would be too, so the switch is refused until you add a passkey." : ""}`,
+    });
+  }
   const reset = field(form, "reset") === "1";
   const changed = changeCapacity(
     ctx.app,

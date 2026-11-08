@@ -2,6 +2,7 @@
  * The planner's one close on a pull (#3301): an agent's pull whose issue is
  * closed. An open issue, a person's pull, a merge and a reopen stay refused.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { listComments } from "../src/core/issues.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -71,7 +72,7 @@ describe("the planner closes a pull", () => {
     }
     atlas = getUserByName(app.db, "atlas")!;
     mason = getUserByName(app.db, "mason")!;
-    setCrewRole(app.db, repo.id, atlas.id, "planner");
+    seatAs(app.db, repo.id, atlas.id, "planner");
     token = createToken(app.db, atlas.id, "rw", "rw").token;
   });
 

@@ -272,15 +272,14 @@ describe("what you asked for", () => {
     expect(page).toContain("Not shipped");
     expect(page).toContain("Nothing built");
     expect(page).toContain("Show newest first");
-    expect(page).toContain("nothing built in 3 days");
     expect(page).not.toContain("Refactor the watering module");
     // The default view is what has nothing merged yet: the shipped ask waits behind "All".
     expect(page).not.toContain("Prune the roses");
-    expect(page).toContain("crew not on it yet");
+    expect(page).toContain("not placed yet");
     expect(page.indexOf("Fix the gate")).toBeLessThan(page.indexOf("Plant tomatoes"));
     // Reached from the board and the feed's header, not only the asks page.
     expect(await (await fetch(`${servers.url}/board`, { headers: { cookie } })).text()).toContain('href="/asked"');
-    expect(await (await fetch(`${servers.url}/`, { headers: { cookie } })).text()).toContain('href="/asked"');
+    expect(await (await fetch(`${servers.url}/feed`, { headers: { cookie } })).text()).toContain('href="/asked"');
     const flagged = (
       await (
         await fetch(`${servers.url}/asked?show=flagged`, {
@@ -343,7 +342,7 @@ describe("what you asked for", () => {
       (
         page.match(
           new RegExp(
-            `${title}</span\\s*>\\s*<span class="row-meta">([\\s\\S]*?)</span>`,
+            `${title}</a></span\\s*>\\s*<span class="row-meta">([\\s\\S]*?)</span>`,
           ),
         )?.[1] ?? ""
       )
@@ -351,10 +350,10 @@ describe("what you asked for", () => {
         .replace(/\s+/g, " ")
         .trim();
     expect(meta("Plant tomatoes")).toStartWith(
-      "crew not on it yet · no pull yet · alice/garden #",
+      "not placed yet · alice/garden #",
     );
     expect(meta("A watering schedule")).toMatch(
-      /^crew .+ · pull #\d+ open · alice\/garden #\d+ · alice · /,
+      /^aliceowner building in #\d+ · alice\/garden #\d+$/,
     );
   });
 
@@ -520,7 +519,7 @@ describe("an old ask says what exists for it", () => {
       const row =
         page.match(
           new RegExp(
-            `${title}</span[\\s\\S]*?<span class="row-trail">([\\s\\S]*?)</a>`,
+            `${title}</a></span[\\s\\S]*?<span class="row-trail">([\\s\\S]*?)</li>`,
           ),
         )?.[1] ?? "";
       const tone = row.match(/data-variant="(\w+)"/)?.[1] ?? "default";
@@ -531,10 +530,10 @@ describe("an old ask says what exists for it", () => {
     };
     expect(badgeOf("Nothing at all")).toBe("danger: Nothing built");
     expect(badgeOf("Its only pull closed")).toBe("danger: Nothing built");
-    expect(badgeOf("A pull is open")).toBe("attn: Pull open 2d");
+    expect(badgeOf("A pull is open")).toBe("attn: Building");
     expect(badgeOf("The crew is on it")).toBe("attn: Building");
     expect(badgeOf("Asked today")).toBe("attn: Building");
-    expect(page).toContain("5 asked · 0 shipped · 2 with nothing built");
+    expect(page).toContain("5 asked · 0 landed · 2 with nothing built");
   });
 
   test("the API and the MCP say stale and flagged apart, and when each pull was opened", async () => {

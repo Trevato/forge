@@ -365,6 +365,8 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(owner).toContain(">Crew<");
     expect(owner).toContain(">On its own<");
     expect(owner).toMatch(/\$42\.50\s+of\s+\$25/);
+    // The crew card says the governor's reason in one line (#7644).
+    expect(owner).toMatch(/<dt>Governor<\/dt>\s*<dd>Builders \d+: /);
     expect(owner).toContain("Remove");
     expect(owner).toContain("Save");
     // The rest is beneath, on the same page and in the same frame.
@@ -619,13 +621,13 @@ describe("a person's own change ships from its own studio page", () => {
       await get(`/alice/garden/pulls/${pull.number}`, readerCookie)
     ).text();
     expect(readerPage).toContain('data-word="look"');
-    expect(readerPage).not.toContain("<h2>Decide</h2>");
+    expect(readerPage).not.toContain(`id="decide"`);
     expect(readerPage).not.toContain("Ship");
 
     const ownerPage = await (
       await get(`/alice/garden/pulls/${pull.number}`, ownerCookie)
     ).text();
-    expect(ownerPage).toContain("<h2>Decide</h2>");
+    expect(ownerPage).toContain(`id="decide"`);
     expect(ownerPage).toContain("Ship");
     // The words a person's own green change is offered in are `asks.ts`'s
     // (#224: a green change asks to be looked at whoever opened it, and the
@@ -690,7 +692,7 @@ describe("a person's own change ships from its own studio page", () => {
     const studio = await (
       await get(`/alice/garden/pulls/${pull.number}`, ownerCookie)
     ).text();
-    expect(studio).toContain("<h2>Decide</h2>");
+    expect(studio).toContain(`id="decide"`);
     expect(studio).toContain("conflicts with main");
     expect(studio).toContain("bring the branch up to date");
     expect(studio).toContain("Bring up to date");

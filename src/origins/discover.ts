@@ -54,6 +54,25 @@ function allowedHosts(env: Record<string, string | undefined>): Set<string> {
   );
 }
 
+/**
+ * Whether the operator named this URL's host in `FORGE_ORIGIN_ALLOW`: its
+ * `host:port` for that port, or its bare hostname for every port. Discovery
+ * reads it, and so does the mirror's git (`origins/git-mirror.ts`), so a
+ * host an origin may be connected from is a host it may be mirrored from.
+ */
+export function operatorAllowed(
+  href: string,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const url = URL.parse(href);
+  if (url === null) return false;
+  const allowed = allowedHosts(env);
+  return (
+    allowed.has(url.host.toLowerCase()) ||
+    allowed.has(url.hostname.toLowerCase())
+  );
+}
+
 /** A development instance (`FORGE_DEV=1`, also set for the test suite). */
 function isDev(env: Record<string, string | undefined>): boolean {
   return env.FORGE_DEV === "1";
@@ -147,11 +166,7 @@ export function allowedOrigin(
   if (url.hostname === "") return undefined;
   if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
 
-  const allowed = allowedHosts(env);
-  const named =
-    allowed.has(url.host.toLowerCase()) ||
-    allowed.has(url.hostname.toLowerCase());
-  if (named) return url.origin;
+  if (operatorAllowed(url.href, env)) return url.origin;
   if (isDev(env) && isLoopback(url.hostname)) return url.origin;
   if (url.protocol !== "https:") return undefined;
   if (isPrivateLiteral(url.hostname)) return undefined;
@@ -212,6 +227,10 @@ export async function discover(
   const version = await viaVersionEndpoint(web, probe);
   if (version) return ok(version);
 
+  // A forge from before `/api/v1/version` still answers health and here.
+  const older = await viaOlderForge(web, probe);
+  if (older) return ok(older);
+
   return err(probe.refused ? "private_host" : "unreachable");
 }
 
@@ -230,14 +249,66 @@ async function viaVersionEndpoint(
   if (!doc.ok) return undefined;
   const version = asString(field(doc.value, "version"));
   if (version === "") return undefined;
+  // Another forge of this kind says so, and speaks the Gitea dialect: it is
+  // stored as a Gitea origin and shown as a forge (`docs/features/forge-origin.md`).
+  const forge = asString(field(doc.value, "software")) === "forge";
   const kind: OriginKind = version.includes("+gitea-") ? "forgejo" : "gitea";
   return {
     kind,
     apiUrl: `${web}/api/v1`,
     webUrl: web,
     via: "version-endpoint",
-    software: version,
+    software: forge ? `forge ${version}` : version,
   };
+}
+
+/**
+ * A forge too old to answer `/api/v1/version` (0.5.x). It is known by two
+ * answers no other software gives together: `/api/v1/health` with a boolean
+ * `ok`; and either its OAuth metadata naming its own `/oauth/authorize` and
+ * `/oauth/register` (an unstamped build says `dev`, and no commit), or a dotted
+ * `version` and a `commit` beside `/api/v1/here` with the manifest's `here` and
+ * `actions`. Its repositories are then listed through
+ * `GET /api/v1/repos` (`ForgeProvider.listRepos`).
+ */
+async function viaOlderForge(
+  web: string,
+  probe: Probe,
+): Promise<Discovered | undefined> {
+  const health = await getJson(`${web}/api/v1/health`, web, probe);
+  if (!health.ok) return undefined;
+  const version = asString(field(health.value, "version"));
+  if (typeof field(health.value, "ok") !== "boolean") return undefined;
+  if (!(await oauthPathsAreForges(web, probe))) {
+    if (
+      !/^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,40}$/.test(version) ||
+      asString(field(health.value, "commit")) === ""
+    )
+      return undefined;
+    const here = await getJson(`${web}/api/v1/here`, web, probe);
+    if (
+      !here.ok ||
+      typeof field(here.value, "here") !== "object" ||
+      field(here.value, "here") === null ||
+      !Array.isArray(field(here.value, "actions"))
+    )
+      return undefined;
+  }
+  return {
+    kind: "gitea",
+    apiUrl: `${web}/api/v1`,
+    webUrl: web,
+    via: "health",
+    software: `forge ${version}`,
+  };
+}
+
+/** A forge's OAuth metadata names `/oauth/authorize` and `/oauth/register`; Forgejo's and Gitea's do not. */
+async function oauthPathsAreForges(web: string, probe: Probe): Promise<boolean> {
+  const doc = await getJson(`${web}/.well-known/oauth-authorization-server`, web, probe);
+  if (!doc.ok) return false;
+  const path = (name: string): string | undefined => URL.parse(asString(field(doc.value, name)))?.pathname;
+  return path("authorization_endpoint") === "/oauth/authorize" && path("registration_endpoint") === "/oauth/register";
 }
 
 async function viaNodeInfo(
@@ -291,12 +362,9 @@ function exempt(
   href: string,
   env: Record<string, string | undefined>,
 ): boolean {
-  const url = new URL(href);
-  const allowed = allowedHosts(env);
   return (
-    allowed.has(url.host.toLowerCase()) ||
-    allowed.has(url.hostname.toLowerCase()) ||
-    (isDev(env) && isLoopback(url.hostname))
+    operatorAllowed(href, env) ||
+    (isDev(env) && isLoopback(new URL(href).hostname))
   );
 }
 

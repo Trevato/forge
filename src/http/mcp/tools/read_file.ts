@@ -2,11 +2,14 @@ import { repoDir } from "../../../git/repos.ts";
 import { runGit } from "../../../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../../../git/guard.ts";
 import { blobForRender, listTree } from "../../../git/read.ts";
+import { readStl, sayStl, stlSize, TOO_LARGE } from "../../../text/stl.ts";
+import { checkConfig, configKind, type ConfigKind } from "../../../text/config_check.ts";
+import { describeMedia } from "../../../text/mp4.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "read_file",
-  doc: "a file (utf-8, or base64 for binary) or a directory listing at a ref, as GET …/contents",
+  doc: "`{ repo, path, ref? }`: a file (utf-8, or base64 for binary) or a directory listing at a ref, as GET …/contents; MP4/MOV/M4A files also carry about: {kind, seconds, width?, height?, says}",
   description:
     "Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge.",
   inputSchema: {
@@ -45,15 +48,43 @@ export const tool: Tool = {
     if (blob.kind === "too_large")
       return good({ type: "file", tooLarge: true, size: blob.size });
     const binary = blob.kind === "binary";
+    const content = binary ? "" : new TextDecoder().decode(blob.body);
+    const about = aboutFile(rawPath, blob.body, binary ? undefined : content);
     return good({
       type: "file",
       ref,
       path: rawPath,
       size: blob.size,
       encoding: binary ? "base64" : "utf-8",
-      content: binary
-        ? Buffer.from(blob.body).toString("base64")
-        : new TextDecoder().decode(blob.body),
+      content: binary ? Buffer.from(blob.body).toString("base64") : content,
+      ...(about ? { about } : {}),
     });
   },
 };
+
+/** A file described in words beside its content; one branch per kind. */
+function aboutFile(path: string, body: Uint8Array, text: string | undefined): Record<string, unknown> | undefined {
+  if (/\.stl$/i.test(path)) {
+    const stl = readStl(body);
+    if (!stl.ok && stl.error === TOO_LARGE) return { kind: "stl", says: `STL, ${TOO_LARGE}` };
+    if (!stl.ok) return { kind: "stl", says: `STL, unreadable: ${stl.error}` };
+    const { format, triangles } = stl.value;
+    return { kind: "stl", format, triangles, size: stlSize(stl.value), says: sayStl(stl.value) };
+  }
+  const media = describeMedia(path, body);
+  if (media) return media;
+  if (text === undefined) return undefined;
+  const kind = configKind(path);
+  return kind === null ? undefined : aboutConfig(kind, text);
+}
+
+function aboutConfig(kind: ConfigKind, content: string) {
+  const check = checkConfig(kind, content);
+  if (check.ok) return { kind, parses: true };
+  return {
+    kind,
+    parses: false,
+    ...(check.line === undefined ? {} : { line: check.line, column: check.column }),
+    message: check.message,
+  };
+}

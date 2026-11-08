@@ -7,7 +7,7 @@ its own mark. Nothing here is configured, and nothing here is optional.
 
 | path                           | what it is                                                        | from                                                                         |
 | ------------------------------ | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `/.well-known/security.txt`    | who to tell about a vulnerability (RFC 9116), with a fixed expiry | the first account's page here; an address only from `FORGE_SECURITY_CONTACT` |
+| `/.well-known/security.txt`    | who to tell about a vulnerability (RFC 9116), with a fixed expiry | the sealed new-issue form of `FORGE_REPO` when it is public, else the first account's page here; an address only from `FORGE_SECURITY_CONTACT` |
 | `/.well-known/change-password` | where a password manager sends a person                           | `/settings/password`                                                         |
 | `/robots.txt`                  | crawlers stay out of accounts, search and the API; the sitemap    | —                                                                            |
 | `/sitemap.xml`                 | the front page and every public repository, never a private one   | `listReposVisibleTo(db, nobody)`                                             |
@@ -35,11 +35,21 @@ the list by default: it would tell anyone which accounts exist.
 
 Anyone, with no account, can tell a public repository that something is
 wrong: the form at `/:owner/:name/report`, or
-`POST /api/v1/repos/:owner/:name/reports` with JSON `{title, body?, page?}`
-(202, `{id, state: "pending"}`). A private repository answers `not_found`, as
+`POST /api/v1/repos/:owner/:name/reports` with JSON `{title, body?, page?, agent?}`
+(202, `{id, state: "pending", filedBy}`). Sent with a token or password (the
+API, or MCP `report`), or with a session cookie from this forge's own page
+(`proofOf` in `src/http/report_filer.ts`), the report carries that account,
+`filedBy: {how: "signed", name}`; an `agent` name given without one is kept as
+a claim, `how: "claimed"`, and shown as unproven; with neither it is
+`how: "anonymous"`, `name: null`. The owner reads the waiting ones grouped by
+filer with a count (`byAgent` in the API and MCP `reports`, headed groups on
+the page), each `untrusted` unless a writer of the repository filed it. A private repository answers `not_found`, as
 a missing one does. A report is plain text, capped (a 200-character title, an
 8,000-character body), limited per source, per repository and for the whole
-forge, and a repository holds at most 100 waiting.
+forge, and a repository holds at most 100 waiting. A person who writes the
+repository decides them on the web, through the API, MCP `reports`, or the
+terminal: a repository's `:` palette shows "Reports (N)" while any wait, `a`
+accepts one as an issue and `d` dismisses one (`src/tui/screens/reports.ts`).
 
 Every page also says what its reader can do there: `rel="alternate"
 type="application/json"` (tag and `Link` header) points at

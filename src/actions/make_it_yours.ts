@@ -69,7 +69,7 @@ export type MakeItYoursError =
   | { readonly kind: "not_found" }
   | { readonly kind: "unauthorized" }
   | { readonly kind: "unverified" }
-  /** A guest: the owner has not made this account a member. */
+  /** A guest: a person the owner has not made a member. */
   | { readonly kind: "not_member" }
   | { readonly kind: "own" }
   /** Today's copies are made; another may be made from `resetsAt`. */

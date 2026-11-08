@@ -16,6 +16,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("live browsing pages", () => {
   let dataDir: string;
@@ -57,19 +58,19 @@ describe("live browsing pages", () => {
     const html = await (await fetch(`${base}/lex/proj`)).text();
     expect(html).toContain('id="live"');
     expect(html).toContain('data-repo="/lex/proj"');
-    expect(html).toContain("new EventSource");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource");
   });
 
   test("the commit history wires up the live client", async () => {
     const html = await (await fetch(`${base}/lex/proj/commits`)).text();
     expect(html).toContain('id="live"');
-    expect(html).toContain("new EventSource");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource");
   });
 
   test("the branches page wires up the live client", async () => {
     const html = await (await fetch(`${base}/lex/proj/branches`)).text();
     expect(html).toContain('id="live"');
-    expect(html).toContain("new EventSource");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource");
   });
 
   test("the studio app page wires up the live client with data-app, so a deploy run event refetches the app's own fragment", async () => {
@@ -103,11 +104,11 @@ describe("live browsing pages", () => {
     ).text();
     expect(html).toContain('id="live"');
     expect(html).toContain('data-app="1"');
-    expect(html).toContain("new EventSource");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource");
     // `app.serving` fires at the swap-in, seconds to half a minute before
     // the deploy run's own `run.finished` — the client must listen for it
     // directly, not only learn a preview is live once its tests are done.
-    expect(html).toContain("app.serving");
+    expect(await withScripts(servers.url, html)).toContain("app.serving");
     // The polite region a swap must speak into — the one place a screen
     // reader learns a preview just went live.
     expect(html).toContain('id="live-status"');
@@ -156,18 +157,26 @@ describe("live browsing pages", () => {
     ).split(";")[0]!;
 
     const html = await (
-      await fetch(`${base}/`, {
+      await fetch(`${base}/feed`, {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();
     expect(html).toContain('id="live-apps"');
     expect(html).not.toContain('id="live-on-you"');
-    expect(html).toContain("new EventSource('/events')");
+    expect(await withScripts(servers.url, html)).toContain("new EventSource('/events')");
   });
 
   test("a live region never swaps out from under a card that is mid-decision", async () => {
     const { liveRegionsJs } = await import("../src/web/client.ts");
     expect(liveRegionsJs).toContain("data-busy");
+  });
+
+  test("the whole page is refetched at most once per 30 s, however many events arrive", async () => {
+    const { liveRegionsJs } = await import("../src/web/client.ts");
+    expect(liveRegionsJs).toContain("var PAGE_GAP = 30000;");
+    const refresh = liveRegionsJs.slice(liveRegionsJs.indexOf("function refresh("));
+    expect(refresh).toContain("src === location.href && last - lastPage < PAGE_GAP");
+    expect(refresh.indexOf("PAGE_GAP")).toBeLessThan(refresh.indexOf("pull(src"));
   });
 
   test("a live region never swaps out from under ticked boxes", async () => {

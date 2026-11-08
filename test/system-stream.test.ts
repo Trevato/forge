@@ -11,6 +11,7 @@ import { eventStream, sseDroppedCount } from "../src/http/sse.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createLive, useLive } from "../src/system/live.ts";
+import { withScripts } from "./helpers/page-script.ts";
 
 describe("/system over server-sent events", () => {
   let dataDir: string;
@@ -56,7 +57,7 @@ describe("/system over server-sent events", () => {
     expect(body).not.toContain("location.reload");
     expect(body).not.toContain("setTimeout");
     expect(body).not.toContain("setInterval");
-    expect(body).toContain("new EventSource('/system/stream')");
+    expect(await withScripts(servers.url, body)).toContain("new EventSource('/system/stream')");
     // First paint is server-rendered with the latest sample.
     expect(body).toContain('id="summary"');
     expect(body).toMatch(/id="summary"[^>]*>\s*<[^>]*>CPU /);
@@ -79,6 +80,7 @@ describe("/system over server-sent events", () => {
       if (done) break;
       text += decoder.decode(value);
     }
+    if (!text.includes("98765")) throw new Error(`never came: still waiting while !text.includes("98765")`);
     await reader.cancel();
     expect(text).toContain("event: sample");
     expect(text).toContain("98765 processes");

@@ -831,10 +831,19 @@ describe("the forge's health in the terminal", () => {
       expect(laned.text()).toContain("Lane: 2 checks queued");
       laned.stop();
 
+      forge.db
+        .query("INSERT INTO check_flake (id, repo_id, run_id, commit_oid, test, file) VALUES ('f1', ?1, 'r1', 'abc1234', 'grp > flaky', 't/a.test.ts')")
+        .run(made.value.id);
+      const flaky = boot(forge, as(a.value));
+      await flaky.settle();
+      expect(flaky.text()).toContain("Flaky this week: grp > flaky ×1");
+      flaky.stop();
+
       const other = boot(forge, as(b.value));
       await other.settle();
       expect(other.text()).not.toContain("quota refused");
       expect(other.text()).not.toContain("Lane:");
+      expect(other.text()).not.toContain("Flaky this week");
       expect(other.text()).not.toContain("All fine");
       other.stop();
     } finally {

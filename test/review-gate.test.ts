@@ -5,6 +5,7 @@
  * reviewer: it waits for a person (#597). A person's own pull lands as
  * before.
  */
+import { seatAs } from "./helpers/seat.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setCrewRole } from "../src/core/agents.ts";
+import {} from "../src/core/agents.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { listComments } from "../src/core/issues.ts";
 import {
@@ -137,7 +138,7 @@ describe("the review gate", () => {
     ["an agent's", () => mason],
   ] as const) {
     test(`${who} green pull is reviewed, and lands only on an approval of its head`, async () => {
-      setCrewRole(app.db, repo.id, quill.id, "reviewer");
+      seatAs(app.db, repo.id, quill.id, "reviewer");
       const name = who.includes("person") ? "by-person" : "by-agent";
       const pull = await greenPull(author(), name);
       expect(await landIfGreen(app, fresh(), pull)).toBe(false);
@@ -180,7 +181,7 @@ describe("the review gate", () => {
   };
 
   test("an agent's pull whose review lapses never ships: it waits for a person, and a person's approval lands it", async () => {
-    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    seatAs(app.db, repo.id, quill.id, "reviewer");
     const pull = await greenPull(mason, "unanswered");
     expect(await landIfGreen(app, fresh(), pull)).toBe(false);
     unanswered(pull);
@@ -200,7 +201,7 @@ describe("the review gate", () => {
   });
 
   test("with no reviewer on the crew an agent's pull waits for a person and says why", async () => {
-    setCrewRole(app.db, repo.id, quill.id, "builder");
+    seatAs(app.db, repo.id, quill.id, "builder");
     const pull = await greenPull(mason, "no-reviewer");
     expect(await landIfGreen(app, fresh(), pull)).toBe(false);
     expect(reviewRuns(pull)).toHaveLength(0);
@@ -210,7 +211,7 @@ describe("the review gate", () => {
   });
 
   test("a person's own pull is unchanged: a review that lapses does not hold it; it lands, and says so", async () => {
-    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    seatAs(app.db, repo.id, quill.id, "reviewer");
     const pull = await greenPull(alice, "person-unanswered");
     expect(await landIfGreen(app, fresh(), pull)).toBe(false);
     unanswered(pull);
@@ -222,7 +223,7 @@ describe("the review gate", () => {
   });
 
   test("a change requested on the head holds the pull", async () => {
-    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    seatAs(app.db, repo.id, quill.id, "reviewer");
     const pull = await greenPull(alice, "contested");
     submitReview(app.db, {
       issueId: pull.id,
@@ -255,11 +256,11 @@ describe("the review gate", () => {
   }
 
   test("a reviewer taken off the crew no longer holds the pulls it judged", async () => {
-    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    seatAs(app.db, repo.id, quill.id, "reviewer");
     const pull = await greenPull(mason, "judged");
     askChanges(pull, quill);
     expect(reviewSummary(app.db, pull.id, pull.headOid).changesRequested).toBe(1);
-    setCrewRole(app.db, repo.id, quill.id, "builder");
+    seatAs(app.db, repo.id, quill.id, "builder");
     expect(reviewSummary(app.db, pull.id, pull.headOid).changesRequested).toBe(0);
     // A person's request is the person's, whatever their crew.
     askChanges(pull, alice);
@@ -267,7 +268,7 @@ describe("the review gate", () => {
   });
 
   test(`the reviewer gets ${REVIEW_ROUNDS} rounds of changes; a third is advice and the pull lands`, async () => {
-    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    seatAs(app.db, repo.id, quill.id, "reviewer");
     let pull = await greenPull(mason, "rounds");
     askChanges(pull, quill);
     // Asked twice on one head is still one round.
@@ -283,8 +284,8 @@ describe("the review gate", () => {
   });
 
   test("a builder's run that answers a change request without pushing parks the pull", async () => {
-    setCrewRole(app.db, repo.id, quill.id, "reviewer");
-    setCrewRole(app.db, repo.id, mason.id, "builder");
+    seatAs(app.db, repo.id, quill.id, "reviewer");
+    seatAs(app.db, repo.id, mason.id, "builder");
     const pull = await greenPull(mason, "unmoved");
     askChanges(pull, quill);
     expect(
@@ -348,7 +349,7 @@ describe("a pull nobody reviewed, however old (#1655)", () => {
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
     mason = getUserByName(app.db, "mason")!;
-    setCrewRole(app.db, repo.id, getUserByName(app.db, "quill")!.id, "reviewer");
+    seatAs(app.db, repo.id, getUserByName(app.db, "quill")!.id, "reviewer");
   });
 
   afterAll(async () => {

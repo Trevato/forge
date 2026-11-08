@@ -1,9 +1,9 @@
 /**
  * Is production behind main? Every ten minutes the forge compares the version
  * it is running (the one `/healthz` sends as `X-Forge-Version`) with the newest
- * release in `src/core/releases.json` on the default branch of its own
- * repository, read from the git store and never the network. When that
- * release has been on main for over an hour and is not the version serving,
+ * release tagged in its own repository (`release/shipped.ts`), read from the
+ * git store and never the network. When that release was cut over an hour
+ * ago and is not the version serving,
  * vitals carry one `release:behind` cause ("production is 0.7.162; main
  * released 0.7.165 2 h ago"); the incident pager pages it once, as it does
  * any cause, and it clears when the versions match. #2574 proves a release
@@ -13,18 +13,15 @@
  * answer is kept in memory (it is derived from git and rebuilt on boot).
  */
 
-import { runGit } from "../git/env.ts";
 import { UNSTAMPED } from "../kernel/version.ts";
+import { readTagged, setTagged, type Shipped } from "./shipped.ts";
 
 /** How often the forge looks. */
 export const CHECK_EVERY_MS = 10 * 60_000;
 /** How long a release may sit on main before production not serving it is a cause. */
 export const GRACE_MS = 60 * 60_000;
 
-const FILE = "src/core/releases.json";
-const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/;
-
-/** The newest release on main and when it landed there (epoch ms). */
+/** The newest release and when it was cut (epoch ms). */
 export interface Newest {
   readonly version: string;
   readonly at: number;
@@ -35,31 +32,20 @@ export interface BehindNeed {
   readonly since: string;
 }
 
-/** The newest version in a releases document (newest first), or undefined when it names none. */
-export function newestVersion(text: string): string | undefined {
-  try {
-    const list = (JSON.parse(text) as { releases?: unknown }).releases;
-    const v = Array.isArray(list) ? (list[0] as { version?: unknown } | undefined)?.version : undefined;
-    return typeof v === "string" && VERSION.test(v) ? v : undefined;
-  } catch {
-    return undefined;
-  }
+/** The newest of the tagged releases (newest first), or undefined while none is tagged. */
+export function newestOf(tagged: readonly Shipped[]): Newest | undefined {
+  const first = tagged[0];
+  return first?.at === undefined ? undefined : { version: first.version, at: first.at };
 }
 
-/** The newest release of the bare repository at `dir`, on `branch`; undefined when git cannot say. */
-export async function readNewest(dir: string, branch: string): Promise<Newest | undefined> {
-  if (!/^[\w][\w./-]{0,200}$/.test(branch) || branch.includes("..")) return undefined;
-  const doc = await runGit(["show", `refs/heads/${branch}:${FILE}`], { cwd: dir });
-  if (!doc.ok) return undefined;
-  const version = newestVersion(doc.value);
-  if (version === undefined) return undefined;
-  // The commit that put this version in the list is when main released it.
-  const when = await runGit(
-    ["log", "-1", "--format=%ct", `-S"version": "${version}"`, `refs/heads/${branch}`, "--", FILE],
-    { cwd: dir },
-  );
-  const secs = when.ok ? Number(when.value) : NaN;
-  return Number.isFinite(secs) && secs > 0 ? { version, at: secs * 1000 } : undefined;
+/**
+ * Read the release tags of the bare repository at `dir`, keep them as the
+ * shipped releases, and answer the newest; undefined when none is tagged.
+ */
+export async function readNewest(dir: string): Promise<Newest | undefined> {
+  const tagged = await readTagged(dir);
+  setTagged(tagged);
+  return newestOf(tagged);
 }
 
 /** "40 min ago", "2 h ago", "3 d ago". */

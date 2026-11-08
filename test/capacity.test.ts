@@ -18,7 +18,7 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { enableApp } from "../src/actions/apps.ts";
-import { startEgress } from "../src/apps/egress.ts";
+import { meterEgress, NPM_REGISTRY, recordEgress, resetEgressTotals, startEgress } from "../src/apps/egress.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import {
@@ -140,6 +140,43 @@ describe("capacity: only a forge admin reads or changes it", () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("MCP capacity and the page answer the npm registry's bytes over the last hour (#7546)", async () => {
+    resetEgressTotals();
+    recordEgress("check:r1", NPM_REGISTRY, 3_000_000, 4_000);
+    recordEgress("check:r1", "example.com:443", 10, 0);
+    const read = await mcp(aliceRo, {});
+    expect(read.error).toBe(false);
+    const egress = (JSON.parse(read.text) as { egress: { npmBytesLastHour: number; destinations: { destination: string }[] } }).egress;
+    expect(egress.npmBytesLastHour).toBe(3_000_000);
+    // Other files' proxies share this process's tally; only the order of ours is asserted.
+    const named = egress.destinations.map((d) => d.destination);
+    expect(named[0]).toBe(NPM_REGISTRY);
+    expect(named).toContain("example.com:443");
+    const cookie = await login("alice");
+    const page = await (await fetch(`${servers.url}/settings/capacity`, { headers: { cookie } })).text();
+    // 3,000,000 B / 1024² = 2.86 MiB.
+    expect(page).toMatch(/id="egress-npm"[\s\S]*?2\.9 MiB/);
+    resetEgressTotals();
+  });
+
+  test("MCP capacity and the page name the repository the registry sent most this hour (#8382)", async () => {
+    resetEgressTotals();
+    const made = await createRepo(app, alice, { name: "npm-heavy", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const meter = meterEgress("check:heavy", made.value.id);
+    recordEgress("check:heavy", NPM_REGISTRY, 5 * 1024 * 1024, 0);
+    meter.stop();
+    const read = await mcp(aliceRo, {});
+    const egress = (JSON.parse(read.text) as { egress: { npmTopRepoLastHour: { repo: string; bytes: number } | null } }).egress;
+    expect(egress.npmTopRepoLastHour).toEqual({ repo: "alice/npm-heavy", bytes: 5 * 1024 * 1024 });
+    const cookie = await login("alice");
+    const page = await (await fetch(`${servers.url}/settings/capacity`, { headers: { cookie } })).text();
+    expect(page).toMatch(/id="egress-npm"[\s\S]*?alice\/npm-heavy[\s\S]*?5\.0 MiB/);
+    resetEgressTotals();
+    const none = await mcp(aliceRo, {});
+    expect((JSON.parse(none.text) as { egress: { npmTopRepoLastHour: unknown } }).egress.npmTopRepoLastHour).toBeNull();
   });
 
   test("a member, an agent and nobody are told it is not there, at every door", async () => {
@@ -381,6 +418,43 @@ describe("report mode is loud to admins, and to nobody else", () => {
   };
   const needs = (who: User | undefined): string[] =>
     "needs" in readHealth(app, who) ? (readHealth(app, who) as { needs: string[] }).needs : [];
+
+  const signedIn = async (): Promise<string> => {
+    const res = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url },
+      body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+    });
+    return (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+  };
+  const post = (cookie: string, origin: string, body: Record<string, string>): Promise<Response> =>
+    fetch(`${servers.url}/settings/capacity`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "content-type": "application/x-www-form-urlencoded", origin },
+      body: new URLSearchParams(body),
+    });
+
+  test("below its ceiling: a lowered crew concurrency is flagged, a cross-origin reset is refused, one reset clears it", async () => {
+    const ceiling = Number(capacityDefault("crew.concurrency"));
+    expect(ceiling).toBeGreaterThan(1);
+    const cookie = await signedIn();
+    expect(changeCapacity(app, alice, "crew.concurrency", String(ceiling)).ok).toBe(true);
+    expect(await page()).not.toContain("below ceiling");
+    expect(changeCapacity(app, alice, "crew.concurrency", "1").ok).toBe(true);
+    expect(await page()).toContain(`below ceiling ${ceiling}`);
+
+    const refused = await post(cookie, "https://evil.example", { key: "crew.concurrency", reset: "1" });
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+    expect(capacityValue(app.db, "crew.concurrency")).toBe("1");
+
+    const before = capacityChanges(app.db, 100).length;
+    expect((await post(cookie, servers.url, { key: "crew.concurrency", reset: "1" })).status).toBe(303);
+    expect(capacityValue(app.db, "crew.concurrency")).toBe(String(ceiling));
+    expect(capacityChanges(app.db, 100).length).toBe(before + 1);
+    expect(await page()).not.toContain("below ceiling");
+  });
 
   test("reported: the Capacity page says it once, as a note; vitals do not", async () => {
     expect(changeCapacity(app, alice, "cells.egress", "report").ok).toBe(true);

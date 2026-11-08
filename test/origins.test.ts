@@ -1,3 +1,4 @@
+import { everyoneIsAMember } from "./helpers/members.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -152,6 +153,7 @@ describe("origins: connecting, mirroring, writing through", () => {
 
     // The forge under test.
     app = createApp({ dataDir, port: 0 });
+    everyoneIsAMember(app.db);
     servers = await serve(app);
     base = servers.url;
     await seedAdmin(app, { username: "alice", email: "alice@forge.test", password: ALICE_PASSWORD });
@@ -418,8 +420,8 @@ describe("origins: connecting, mirroring, writing through", () => {
     // Labels, issues and pulls carry the origin's numbers and its authors.
     const labels = (await (
       await api("/api/v1/repos/alice/widgets/labels")
-    ).json()) as { name: string }[];
-    expect(labels.map((l) => l.name).sort()).toEqual(["bug", "chore"]);
+    ).json()) as { items: { name: string }[] };
+    expect(labels.items.map((l) => l.name).sort()).toEqual(["bug", "chore"]);
 
     const issues = (await (
       await api("/api/v1/repos/alice/widgets/issues?state=all")

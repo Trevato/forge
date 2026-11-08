@@ -35,6 +35,16 @@ describe("the forge as a browser search engine", () => {
     expect(found.status).toBe(200);
   });
 
+  test("the description names the JSON search too, and it answers JSON", async () => {
+    const xml = await (await fetch(`${base}/opensearch.xml`)).text();
+    const template = /<Url type="application\/json" method="get" template="([^"]+)"/.exec(xml)?.[1];
+    expect(template).toBe("https://forge.example.org/api/v1/search?q={searchTerms}");
+    const path = new URL(template!.replace("{searchTerms}", "hello")).pathname;
+    const found = await fetch(`${base}${path}?q=hello`);
+    expect(found.status).toBe(200);
+    expect(found.headers.get("content-type")).toContain("application/json");
+  });
+
   test("a forged Host never reaches the description", async () => {
     const res = await fetch(`${base}/opensearch.xml`, { headers: { host: "evil.example" } });
     expect(await res.text()).not.toContain("evil.example");

@@ -8,6 +8,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { listAt } from "./mcp-list.ts";
 
 describe("MCP repo_labels", () => {
   let dataDir: string;
@@ -69,16 +70,7 @@ describe("MCP repo_labels", () => {
   });
 
   test("it is listed with a schema", async () => {
-    const res = await fetch(`${servers.url}/mcp`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: `Bearer ${admin}`,
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 999, method: "tools/list" }),
-    });
-    const body: any = await res.json();
+    const body = await listAt(servers.url, admin);
     const t = body.result.tools.find((x: any) => x.name === "repo_labels");
     expect(t.inputSchema.required).toEqual(["repo"]);
   });
@@ -108,9 +100,25 @@ describe("MCP repo_labels", () => {
     expect(c.error).toContain("not_found");
     const r = await call(bob, { repo: R, action: "remove", id: before[0].id });
     expect(r.error).toContain("not_found");
-    expect((await call(bob, { repo: R })).value.items).toEqual(before);
+    // A reader sees the same labels, without the writer-only `open` count.
+    expect((await call(bob, { repo: R })).value.items).toEqual(before.map(({ open: _open, ...l }: any) => l));
     expect((await call(adminRw, { repo: R, action: "create", name: "no" })).error).toContain("admin token");
     expect((await call(admin, { repo: R, action: "remove", id: "nope" })).error).toContain("not_found");
+  });
+
+  test("list pages by limit and cursor, and refuses what the route refuses", async () => {
+    for (const name of ["pa", "pb", "pc"]) await call(admin, { repo: R, action: "create", name, color: "aabbcc" });
+    const first = await call(admin, { repo: R, action: "list", limit: 2 });
+    expect(first.value.items.map((l: any) => l.name)).toEqual(["pa", "pb"]);
+    expect(first.value.next_cursor).toBe(first.value.items[1].id);
+    const second = await call(admin, { repo: R, action: "list", limit: 3, cursor: first.value.next_cursor });
+    expect(second.value.items.map((l: any) => l.name)).toEqual(["pc", "ui"]);
+    expect(second.value.next_cursor).toBeNull();
+    for (const limit of [0, 201, 1.5, "5"])
+      expect((await call(admin, { repo: R, action: "list", limit })).error).toContain("invalid_limit");
+    expect((await call(admin, { repo: R, action: "list", cursor: "gone" })).error).toContain("invalid_cursor");
+    for (const l of (await call(admin, { repo: R, action: "list" })).value.items)
+      await call(admin, { repo: R, action: "remove", id: l.id });
   });
 
   test("a read-only token lists, named or by default, and cannot change", async () => {

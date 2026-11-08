@@ -267,7 +267,7 @@ export const liveClientJs = /* js */ `
         });
         var mark = document.querySelector('#pull-check [data-head]');
         if (mark && mark.getAttribute('data-head')) head = mark.getAttribute('data-head');
-        var word = textOf(document.querySelector('#pull-check .badge'));
+        var word = textOf(document.querySelector('#pull-check [data-pull-word]'));
         if (status && word) status.textContent = word.charAt(0).toUpperCase() + word.slice(1);
       })
       .catch(function () {})
@@ -299,12 +299,12 @@ export const liveClientJs = /* js */ `
     'push', 'repo.created', 'repo.forked',
     'issue.opened', 'issue.closed', 'issue.reopened', 'issue.commented', 'issue.labeled', 'issue.teams', 'issue.edited',
     'pull.opened', 'pull.closed', 'pull.reopened', 'pull.merged', 'pull.commented', 'pull.reviewed',
-    'pull.held', 'pull.released', 'pull.edited', 'pull.run_granted',
+    'pull.held', 'pull.released', 'pull.edited', 'pull.run_granted', 'pull.guest_approved',
     'branch.created', 'branch.deleted',
     'label.created', 'label.updated', 'label.deleted',
     'run.queued', 'run.started', 'run.finished', 'app.serving',
     'app.created', 'app.updated', 'app.deleted', 'app.stopped',
-    'repo.upstream_checked', 'repo.upstream_follow', 'repo.following', 'limb.moved', 'limb.replan', 'limb.replan_taken_back', 'issue.assigned', 'pull.assigned', 'crew.added', 'crew.removed',
+    'repo.upstream_checked', 'repo.source_added', 'repo.source_removed', 'repo.upstream_follow', 'repo.following', 'limb.moved', 'limb.replan', 'limb.replan_taken_back', 'issue.assigned', 'pull.assigned', 'crew.added', 'crew.removed',
   ];
   var extra = (cfg.getAttribute('data-repos') || '').split(' ').filter(Boolean);
   var watching = [repo].concat(extra).filter(function (r, i, all) {

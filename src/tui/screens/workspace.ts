@@ -35,6 +35,8 @@
  */
 
 import { editFiles } from "../../actions/contents.ts";
+import { proposeEdit, proposeEditText } from "../../actions/propose_edit.ts";
+import { schemaRefusal } from "../../web/render/json-schema.ts";
 import { err, ok } from "../../kernel/result.ts";
 import { createBranch } from "../../actions/branches.ts";
 import { NAME_THE_BRANCH } from "../../actions/branch_words.ts";
@@ -43,10 +45,13 @@ import { isPinned } from "../../core/pins.ts";
 import { setDecisionsBy } from "../../actions/repos.ts";
 import { stopMirroring } from "../../actions/mirror_target.ts";
 import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
-import { canAdmin, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
+import { canAdmin, canWrite, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
 import type { TreeEntry } from "../../git/read.ts";
+import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
+import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
+import { layoutTable, type Grid } from "../ui/grid.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
@@ -74,6 +79,7 @@ import {
 } from "../ui/image.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { renderMarkdown, type Line } from "../ui/markdown.ts";
+import { mediaNote } from "../ui/media-note.ts";
 import { tokColor, type Tokens } from "../ui/theme.ts";
 import { card, emptyState, input, scrollbar } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
@@ -98,6 +104,8 @@ import { canSeeAnswers } from "../../web/studio/answers.ts";
 import { answersScreen } from "./answers.ts";
 import { commitsScreen } from "./commits.ts";
 import { deploysScreen } from "./deploys.ts";
+import { hooksCommands } from "./hooks.ts";
+import { runsScreen } from "./runs.ts";
 import {
   Filter,
   ListState,
@@ -117,9 +125,21 @@ import {
 } from "./common.ts";
 import { noteCommands } from "./notes.ts";
 import { reportCommands } from "./report.ts";
+import { reportsCommands } from "./reports.ts";
 import { tellCommands } from "./tell.ts";
 import { workingCommands } from "./working.ts";
-import { yoursCommands } from "./yours.ts";
+import { forgeItCommands } from "./forge_it.ts";
+import { makeItYoursScreen, yoursCommands } from "./yours.ts";
+import { deleteRepoCommands } from "./deleterepo.ts";
+import { grantsCommands } from "./grants.ts";
+import { visionCommands } from "./vision.ts";
+import { buildsCommands } from "./builds.ts";
+import { displayCommands } from "./display.ts";
+import { iterationsCommands } from "./iterations.ts";
+import { labelsCommands } from "./labels.ts";
+import { appEnvCommands } from "./appenv.ts";
+import { autonomyCommands } from "./autonomy.ts";
+import { trafficCommands } from "./trafficview.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
 import { issuesScreen } from "./issues.ts";
@@ -253,10 +273,15 @@ type FindMode = "off" | "find" | "replace";
 /** What a path is, as far as the file pane is concerned. */
 type TabKind = "image" | "markdown" | "code";
 
+/** `.csv` and `.tsv`: files that read as a table. */
+function isTablePath(path: string): boolean {
+  return /\.[ct]sv$/i.test(path);
+}
+
 /** `README.md`, `NOTES.markdown`, `readme` — the prose a repo opens on. */
 function isMarkdownPath(path: string): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1);
-  return /\.(md|markdown)$/i.test(name) || /^readme(\.|$)/i.test(name);
+  return fileKind(name, NO_BYTES) === "markdown" || /^readme(\.|$)/i.test(name);
 }
 
 class Tab {
@@ -299,6 +324,11 @@ class Tab {
   doc: Line[] = [];
   docPlain: string[] = [];
   docWidth = 0;
+  /** `s` on a CSV/TSV: the aligned table, or the source behind it. */
+  asTable = true;
+  /** The parsed file, when its name says table. Parse errors ride along. */
+  table: Table | null = null;
+  grid: Grid = { header: "", rows: [] };
 
   constructor(readonly path: string) {}
 
@@ -316,9 +346,21 @@ class Tab {
     return this.kind === "markdown" && this.rendered && this.mode === "view";
   }
 
+  /** True when the pane is showing a CSV/TSV as columns. */
+  get tabular(): boolean {
+    return (
+      this.table !== null &&
+      this.table.error === undefined &&
+      this.table.header.length > 0 &&
+      this.asTable &&
+      this.mode === "view"
+    );
+  }
+
   /** The lines `/` searches and `j` scrolls: whichever view is up. */
   get body(): string[] {
-    return this.reading ? this.docPlain : this.plain;
+    if (this.reading) return this.docPlain;
+    return this.tabular ? this.grid.rows : this.plain;
   }
 
   /** Wrap the markdown for this width, and only when the width moved. */
@@ -365,6 +407,12 @@ class Tab {
     const built = buildLines(new TextDecoder().decode(source), this.path, c);
     this.plain = built.plain;
     this.lines = built.lines;
+    if (isTablePath(this.path)) {
+      // The decoded source, not `plain`: `expandTabs` has eaten every tab there.
+      const delimiter = /\.tsv$/i.test(this.path) ? "\t" : undefined;
+      this.table = parseCsv(new TextDecoder().decode(source), { delimiter });
+      this.grid = layoutTable(this.table);
+    } else this.table = null;
     // The rendered document is derived from the same text, so an edit, a
     // theme switch or a re-read has to throw it away with everything else.
     this.doc = [];
@@ -465,6 +513,11 @@ export function workspaceScreen(
 ): Screen {
   const key = memoryKey(src);
   const memory = recall(f, key);
+  /** This repository on the web, where its media route plays a file; none for a mirror. */
+  const mediaWeb = (): string | undefined =>
+    src.where.kind === "local" && f.app.config.url !== undefined
+      ? `${f.app.config.url.replace(/\/+$/, "")}/${src.where.repo.ownerName}/${src.where.repo.name}`
+      : undefined;
   // An explicit `open`/`ref` from the caller wins over what we remembered:
   // arriving from a search hit means "show me *that*", not "show me where I
   // was". Everything else is restored.
@@ -518,8 +571,15 @@ export function workspaceScreen(
   /** Set when a change made here has to travel to another forge to land. */
   const proposal = (): OriginTarget | undefined =>
     proposeTarget(src, canPushUpstream());
+  /**
+   * A forge repository you can read and not write: a change to it goes on
+   * your fork, as a pull back here (`actions/propose_edit.ts`). A mirror
+   * proposes through its origin instead (`proposal`).
+   */
+  const forkable = (): boolean =>
+    !writable() && repo !== undefined && repo.origin == null && f.user !== undefined && src.where.kind === "local";
   /** Editing is allowed wherever the change has somewhere to go. */
-  const editable = (): boolean => writable() || proposal() !== undefined;
+  const editable = (): boolean => writable() || proposal() !== undefined || forkable();
   const admin = (): boolean =>
     repo !== undefined && canAdmin(f.db, repo, f.user);
   const readPin = (): void => {
@@ -663,15 +723,23 @@ export function workspaceScreen(
           read.error === "not_found"
             ? "No such file at this revision."
             : errorText(read.error);
-      else if (read.value.kind === "too_large")
-        note = `${formatSize(read.value.size)} — too large to display.`;
-      else if (read.value.kind === "binary") {
-        // A binary blob whose *name* says picture is the one binary we do
-        // something with. Everything else keeps the honest note: showing
-        // bytes as text is how a terminal ends up beeping at you.
-        if (looksLikeImage(t.path)) picture = read.value.body;
-        else note = `Binary file, ${formatSize(read.value.size)}.`;
-      } else raw = read.value.body;
+      else {
+        // Audio and video are not played here; the note says where they are.
+        const media =
+          read.value.kind === "text"
+            ? undefined
+            : mediaNote(t.path, formatSize(read.value.size), mediaWeb(), ref);
+        if (media !== undefined) note = media;
+        else if (read.value.kind === "too_large")
+          note = `${formatSize(read.value.size)} — too large to display.`;
+        else if (read.value.kind === "binary") {
+          // A binary blob whose *name* says picture is the one binary we do
+          // something with. Everything else keeps the honest note: showing
+          // bytes as text is how a terminal ends up beeping at you.
+          if (looksLikeImage(t.path)) picture = read.value.body;
+          else note = `Binary file, ${formatSize(read.value.size)}.`;
+        } else raw = read.value.body;
+      }
       entry = { note, raw, picture };
       remember(key, entry);
     }
@@ -685,6 +753,7 @@ export function workspaceScreen(
         : prepareImage(entry.picture, imageId(t.path), ctx.caps);
     t.showImage = true;
     t.rendered = true;
+    t.asTable = true;
     t.editor = null;
     t.mode = "view";
     t.find = "off";
@@ -791,9 +860,28 @@ export function workspaceScreen(
 
   // ---- mutations ----
 
+  /**
+   * Why the change breaks a schema one of its JSON files names, or
+   * undefined. The same check the web form makes before a save.
+   */
+  const schemaCheck = async (
+    files: readonly { path: string; content: Uint8Array | null }[],
+  ): Promise<string | undefined> => {
+    const read = async (p: string): Promise<string | undefined> => {
+      const blob = await src.blob(ref, p);
+      return blob.ok && blob.value.kind === "text" ? new TextDecoder().decode(blob.value.body) : undefined;
+    };
+    for (const file of files) {
+      if (file.content === null) continue;
+      const refused = await schemaRefusal(file.path, new TextDecoder().decode(file.content), read);
+      if (refused !== undefined) return refused;
+    }
+    return undefined;
+  };
+
   const commit = (): void => {
     const target = proposal();
-    if (!writable() && target === undefined) {
+    if (!writable() && target === undefined && !forkable()) {
       readOnlyToast();
       return;
     }
@@ -830,6 +918,10 @@ export function workspaceScreen(
       proposeChange(target, files, subject, payload);
       return;
     }
+    if (forkable() && repo !== undefined) {
+      proposeHere(repo, files, subject, payload);
+      return;
+    }
     if (repo === undefined) {
       readOnlyToast();
       return;
@@ -845,6 +937,8 @@ export function workspaceScreen(
         files,
         defaultBranchName: suggestBranch(f, "edit", slug(first.path)),
         commit: async (plan) => {
+          const broken = await schemaCheck(payload(plan.paths));
+          if (broken !== undefined) return err(broken);
           const made = await editFiles(f.app, f.user, here, {
             branch: ref,
             base: ref,
@@ -871,6 +965,68 @@ export function workspaceScreen(
               pending.clear();
               ref = result.branch;
               runAsync(ctx, reload);
+            },
+          });
+        },
+      }),
+    );
+  };
+
+  /**
+   * The same dialog, for a forge repository you can only read: the commit
+   * goes on a branch of your fork (made if you have none) and a pull asks
+   * for it here — what the web's Propose change does.
+   */
+  const proposeHere = (
+    here: Repo,
+    files: readonly CommitFile[],
+    subject: string,
+    payload: (paths: readonly string[]) => {
+      path: string;
+      content: Uint8Array | null;
+    }[],
+  ): void => {
+    const first = files[0]!;
+    const base = ref === "" ? here.defaultBranch : ref;
+    const fullName = `${here.ownerName}/${here.name}`;
+    ctx.push(
+      commitScreen(f, ctx, screen, {
+        repo: here,
+        where: fullName,
+        branch: ref,
+        title: "Propose a change",
+        subject,
+        files,
+        mode: "propose",
+        upstream: { fullName, base },
+        defaultBranchName: suggestBranch(f, "edit", slug(first.path)),
+        commit: async (plan) => {
+          const chosen = payload(plan.paths);
+          const broken = await schemaCheck(chosen);
+          if (broken !== undefined) return err(broken);
+          const sent = await proposeEdit(f.app, f.user, here, {
+            base,
+            files: chosen,
+            message: plan.message,
+            title: plan.pull?.title ?? subject,
+            ...(plan.pull?.body === undefined ? {} : { body: plan.pull.body }),
+            ...(plan.newBranch === undefined ? {} : { branch: plan.newBranch }),
+          });
+          if (!sent.ok) return err(proposeEditText(sent.error));
+          const pull = sent.value.pull;
+          return ok({
+            message: `opened pull #${pull.number} on ${fullName} from ${sent.value.head.ownerName}/${sent.value.head.name}`,
+            then: () => {
+              // The work lives on the fork and in the pull: the buffers go
+              // back to what this repository holds.
+              for (const t of tabs) {
+                t.creating = false;
+                t.editor = null;
+                t.mode = "view";
+                t.rebuild(ctx.theme.c);
+              }
+              pending.clear();
+              ctx.invalidate();
             },
           });
         },
@@ -1190,6 +1346,7 @@ export function workspaceScreen(
     // You edit the bytes, never the rendering of them. Leaving `rendered`
     // set would put the document back on `esc` with the edits invisible.
     t.rendered = false;
+    t.asTable = false;
     t.mode = "edit";
     focus = "file";
     ctx.invalidate();
@@ -1257,6 +1414,13 @@ export function workspaceScreen(
     const two =
       t !== undefined && (t.image !== null || isMarkdownPath(t.path));
     return [
+      ...(t?.table == null
+        ? []
+        : [
+            binding(["s"], t.asTable ? "show the source" : "show the table", {
+              disabled: t.table.error !== undefined || t.table.header.length === 0,
+            }),
+          ]),
       binding(["tab"], "focus explorer"),
       binding(["e"], "edit", { disabled: !editable() }),
       binding(
@@ -1276,12 +1440,26 @@ export function workspaceScreen(
   };
 
   const screen: Screen = {
+    ...(repo === undefined ? {} : { repoId: repo.id }),
     commands: () => [
       ...workingCommands(f, ctx, repo),
       ...tellCommands(f, ctx, () => screen, repo),
       ...reportCommands(f, ctx, () => screen, repo),
+      ...reportsCommands(f, ctx, repo),
       ...noteCommands(f, ctx, () => screen, repo),
       ...yoursCommands(f, ctx, repo),
+      ...deleteRepoCommands(f, ctx, repo),
+      ...grantsCommands(f, ctx, repo),
+      ...forgeItCommands(f, ctx, repo, () => screen),
+      ...hooksCommands(f, ctx, repo),
+      ...visionCommands(f, ctx, repo),
+      ...labelsCommands(f, ctx, repo),
+      ...buildsCommands(f, ctx, repo),
+      ...iterationsCommands(f, ctx, repo),
+      ...displayCommands(f, ctx, repo),
+      ...appEnvCommands(f, ctx, repo),
+      ...autonomyCommands(f, ctx, repo),
+      ...trafficCommands(f, ctx, repo),
     ],
     get title() {
       return sourceName(src);
@@ -1308,6 +1486,7 @@ export function workspaceScreen(
               binding(["I"], "about this repository"),
               binding(["V"], "waves"),
               ...(repo === undefined ? [] : [binding(["d"], "production deploys")]),
+              ...(repo === undefined ? [] : [binding(["H"], "runs, by state")]),
               ...(repo !== undefined && canSeeAnswers(f.db, repo, f.user)
                 ? [binding(["a"], "your issues and the crew's answers")]
                 : []),
@@ -1331,6 +1510,9 @@ export function workspaceScreen(
                       { disabled: !f.signedIn },
                     ),
                   ]),
+              ...(repo === undefined || canWrite(f.db, repo, f.user)
+                ? []
+                : [binding(["Y"], "make it yours", { disabled: !f.signedIn })]),
               ...(repo === undefined
                 ? []
                 : [
@@ -1585,6 +1767,10 @@ export function workspaceScreen(
         toggleView();
         return true;
       }
+      if (plain && e.key === "s" && focus === "file" && t !== undefined) {
+        toggleTable(t);
+        return true;
+      }
 
       // ---- the repository ----
       if (plain && e.key === "c") {
@@ -1644,6 +1830,10 @@ export function workspaceScreen(
       }
       if (plain && e.key === "d" && repo !== undefined) {
         ctx.push(deploysScreen(f, ctx, repo));
+        return true;
+      }
+      if (plain && e.key === "H" && repo !== undefined) {
+        ctx.push(runsScreen(f, ctx, repo));
         return true;
       }
       if (plain && e.key === "a" && repo !== undefined && canSeeAnswers(f.db, repo, f.user)) {
@@ -1706,12 +1896,38 @@ export function workspaceScreen(
         admin() &&
         getMirrorTarget(f.db, repo.id) !== undefined
       ) {
-        const stopped = stopMirroring(f.app, f.user, repo);
-        ctx.toast(
-          stopped.ok && stopped.value ? "stopped mirroring" : "not mirrored",
-          stopped.ok && stopped.value ? "success" : "danger",
+        const source = getMirrorTarget(f.db, repo.id)?.fullName ?? "";
+        // The only way out of a mirror, and there is no way back in from
+        // here: ask first, naming the repository and where it goes.
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: "Stop mirroring",
+            body: [
+              `Stop mirroring ${repo.ownerName}/${repo.name} to ${source}?`,
+              "Nothing more is pushed there, and this cannot be",
+              "turned back on from here.",
+            ],
+            actions: [
+              { label: "Cancel", variant: "ghost" },
+              { label: "Stop mirroring", variant: "danger" },
+            ],
+            selected: 0,
+            width: 64,
+            onChoose: (choice) => {
+              if (choice !== 1) return;
+              const stopped = stopMirroring(f.app, f.user, repo);
+              ctx.toast(
+                stopped.ok && stopped.value ? "stopped mirroring" : "not mirrored",
+                stopped.ok && stopped.value ? "success" : "danger",
+              );
+              ctx.invalidate();
+            },
+          }),
         );
-        ctx.invalidate();
+        return true;
+      }
+      if (plain && e.key === "Y" && f.signedIn && repo !== undefined) {
+        ctx.push(makeItYoursScreen(f, ctx, repo));
         return true;
       }
       if (plain && e.key === "F" && f.signedIn) {
@@ -2003,6 +2219,20 @@ export function workspaceScreen(
     t.findHits();
   }
 
+  /** `s` — a table file's two views: aligned columns, or the text itself. */
+  function toggleTable(t: Tab): void {
+    // A stray `s` on anything else is not worth a toast.
+    if (t.table === null || t.mode === "edit") return;
+    if (t.table.error !== undefined) {
+      ctx.toast(tableProblem(t.table), "attn");
+      return;
+    }
+    t.asTable = !t.asTable;
+    t.scroll.top = 0;
+    t.left = 0;
+    t.findHits();
+  }
+
   function drawPane(s: Surface, r: Rect, c: Tokens): void {
     const t = tab();
     if (t === undefined) {
@@ -2037,6 +2267,10 @@ export function workspaceScreen(
       // renders it. `v` shows the bytes; `e` edits them, always.
       t.document(Math.max(8, r.w - 2), c);
       drawDoc(s, r, c, t);
+      return;
+    }
+    if (t.tabular) {
+      drawTable(s, r, c, t);
       return;
     }
     drawCode(s, r, c, t);
@@ -2217,11 +2451,19 @@ export function workspaceScreen(
               }· ${humanBytes(t.image.byteLength)}`
             : t.note !== ""
               ? ""
-              : `${t.path} · ${plural(
-                  t.reading ? t.doc.length : t.plain.length,
-                  "line",
-                )}${t.reading ? " rendered" : ""}${
-                  writable() || target !== undefined ? "" : " · read only"
+              : `${t.path} · ${
+                  t.tabular && t.table !== null
+                    ? tableStatus(t.table)
+                    : `${plural(
+                        t.reading ? t.doc.length : t.plain.length,
+                        "line",
+                      )}${t.reading ? " rendered" : ""}${
+                        t.table?.error === undefined || t.mode === "edit"
+                          ? ""
+                          : ` · ${tableProblem(t.table)}`
+                      }`
+                }${
+                  writable() || target !== undefined ? "" : forkable() ? " · proposes from your fork" : " · read only"
                 }`;
     if (tail === "") return;
     const shown = truncate(tail, Math.max(0, r.w - 4));
@@ -2540,6 +2782,68 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
   }
   scrollbar(s, { x: r.x + r.w - 1, y: r.y, w: 1, h: r.h }, c, {
     total,
+    offset: from,
+  });
+}
+
+/** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
+function tableStatus(table: Table): string {
+  const rows = table.rows.length + table.more;
+  return `${plural(rows, "row")}${
+    table.more > 0 ? `, first ${table.rows.length} shown` : ""
+  }${
+    table.columns > MAX_COLUMNS
+      ? ` · ${table.columns - MAX_COLUMNS} more columns`
+      : ""
+  }`;
+}
+
+/** The one line a broken table file gets: where, and what. */
+function tableProblem(table: Table): string {
+  return table.error === undefined
+    ? ""
+    : `not a table: line ${table.error.line}, ${table.error.message}`;
+}
+
+/**
+ * A table: the header pinned on the top row in bold, the data scrolling under
+ * it, `t.left` shifting both so a wide table can be read across.
+ */
+function drawTable(s: Surface, r: Rect, c: Tokens, t: Tab): void {
+  if (r.w <= 1 || r.h <= 1) return;
+  const textW = r.w - 1;
+  const rows = t.grid.rows;
+  const body = r.h - 1;
+  const from = t.scroll.window(body, rows.length);
+  const hits = new Set(t.hits);
+  s.fill({ x: r.x, y: r.y, w: textW, h: 1 }, " ", style(c.fg, c.bg));
+  drawShifted(
+    s,
+    r.x,
+    r.y,
+    [{ text: t.grid.header, style: style(c.accent, c.bg, BOLD) }],
+    t.left,
+    textW,
+    c.bg,
+  );
+  for (let i = 0; i < body; i++) {
+    const row = from + i;
+    if (row >= rows.length) break;
+    const y = r.y + 1 + i;
+    const bg = hits.has(row) ? c.muted : c.bg;
+    s.fill({ x: r.x, y, w: textW, h: 1 }, " ", style(c.fg, bg));
+    drawShifted(
+      s,
+      r.x,
+      y,
+      [{ text: rows[row]!, style: style(c.fg, bg) }],
+      t.left,
+      textW,
+      bg,
+    );
+  }
+  scrollbar(s, { x: r.x + r.w - 1, y: r.y + 1, w: 1, h: body }, c, {
+    total: rows.length,
     offset: from,
   });
 }

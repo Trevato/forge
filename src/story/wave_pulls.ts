@@ -5,6 +5,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { closesFromBody } from "../core/pulls.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { PullRef } from "./waves.ts";
@@ -68,3 +69,23 @@ export function carriedPulls(
 /** Where the pull lives on this forge: the local path, never the host the wave file was written with. */
 export const pullPath = (p: Pick<CarriedPull, "owner" | "name" | "number">): string =>
   `/${encodeURIComponent(p.owner)}/${encodeURIComponent(p.name)}/pulls/${p.number}`;
+
+/** The issue numbers each merged pull of `repo` closes, by pull number: one query. */
+export function closesOfMerged(
+  db: Database,
+  repo: Repo,
+  numbers: readonly number[],
+): Map<number, number[]> {
+  const out = new Map<number, number[]>();
+  const wanted = [...new Set(numbers)].slice(0, MAX_PULLS);
+  if (wanted.length === 0) return out;
+  const rows = db
+    .query<{ number: number; body: string }, (string | number)[]>(
+      `SELECT issue.number, issue.body FROM issue JOIN pull ON pull.issue_id = issue.id
+        WHERE issue.repo_id = ? AND pull.merged_at IS NOT NULL
+          AND issue.number IN (${wanted.map(() => "?").join(",")})`,
+    )
+    .all(repo.id, ...wanted);
+  for (const r of rows) out.set(r.number, closesFromBody(r.body));
+  return out;
+}

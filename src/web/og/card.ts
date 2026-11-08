@@ -47,6 +47,8 @@ export interface CardInput {
   title: string;
   lines?: readonly string[];
   stat?: string;
+  /** A second title line in the muted color, as the home page sets its own. */
+  tagline?: string;
   figure?: Figure;
   images?: readonly CardImage[];
 }
@@ -70,17 +72,6 @@ const TITLE_LINES = 2;
 /** Widest average glyph advance, in em, for the bold sans: wider than the regular face. */
 const EM_BOLD = 0.68;
 const EM_MONO = 0.62;
-
-const KIND_COLOR: Record<CardKind, string> = {
-  repo: T.accent,
-  issue: T.success,
-  pull: T.merged,
-  run: T.primary,
-  app: T.attn,
-  map: T.accent,
-  audit: T.success,
-  page: T.primary,
-};
 
 /** Break a title into at most `n` lines of `max` chars; the last is clamped. */
 function wrap(text: string, size: number, n: number, em: number, width = INNER): string[] {
@@ -171,24 +162,18 @@ function drawImages(images: unknown): string {
 }
 
 export function renderCard(input: CardInput): string {
-  const kind: CardKind = CARD_KINDS.includes(input?.kind) ? input.kind : "page";
-  const color = KIND_COLOR[kind];
   const out: string[] = [];
 
   out.push(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" viewBox="0 0 ${CARD_WIDTH} ${CARD_HEIGHT}" role="img" font-family="${FONT}">`,
     `<defs><linearGradient id="m" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${THEMES.dark.tokens.accent}"/><stop offset="1" stop-color="${THEMES.dark.tokens.merged}"/></linearGradient></defs>`,
     `<rect width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="${T.bg}"/>`,
-    `<rect x="0" y="0" width="12" height="${CARD_HEIGHT}" fill="${color}"/>`,
     `<rect x="${PAD}" y="${PAD - 8}" width="44" height="44" rx="10" fill="url(#m)"/>`,
     text(PAD + 60, PAD + 26, 30, T.fg, "forge", ` font-weight="700"`),
   );
 
-  // Kind badge, right-aligned in the header.
-  const label = kind.toUpperCase();
-  out.push(
-    text(CARD_WIDTH - PAD, PAD + 24, 24, color, label, ` font-weight="700" text-anchor="end" letter-spacing="2"`),
-  );
+  // Every card is as plain as the home page: no kind badge, no edge strip,
+  // one background, one text colour. The kind picks the card, not its look.
 
   const figure = drawFigure(input?.figure) || drawImages(input?.images);
   const column = figure ? COLUMN : INNER;
@@ -197,9 +182,15 @@ export function renderCard(input: CardInput): string {
   // Title: up to two lines, 64px bold (56px beside a figure).
   const tsize = figure ? 56 : 64;
   const title = wrap(input?.title ?? "", tsize, TITLE_LINES, EM_BOLD, column);
-  let y = 270;
+  const tagline = clean(input?.tagline);
+  const tight = ` letter-spacing="-1.5"`;
+  let y = tagline ? 230 : 270;
   for (const row of title) {
-    out.push(text(PAD, y, tsize, T.fg, row, ` font-weight="700"`));
+    out.push(text(PAD, y, tsize, T.fg, row, ` font-weight="700"${tight}`));
+    y += tsize + 14;
+  }
+  if (tagline) {
+    out.push(text(PAD, y, tsize, T["muted-fg"], fit(tagline, tsize, column, EM_BOLD), ` font-weight="700"${tight}`));
     y += tsize + 14;
   }
 
@@ -222,7 +213,7 @@ export function renderCard(input: CardInput): string {
   const stat = clean(input?.stat);
   if (stat) {
     out.push(
-      text(PAD, CARD_HEIGHT - 52, 32, color, fit(stat, 32, INNER, EM_MONO), ` font-family="${MONO}" font-weight="600"`),
+      text(PAD, CARD_HEIGHT - 52, 32, T["muted-fg"], fit(stat, 32, INNER, EM_MONO), ` font-family="${MONO}" font-weight="600"`),
     );
   }
   out.push(`</svg>`);

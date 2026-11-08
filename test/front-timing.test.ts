@@ -33,15 +33,15 @@ async function read(): Promise<string[]> {
   return (res.headers.get("server-timing") ?? "").split(", ");
 }
 
-test("GET / signed out names session, shelf, render in order and covers the handler's share of app", async () => {
+test("GET / signed out names session, key, shelf, tiles, render in order and covers the handler's share of app", async () => {
   for (let i = 0; i < 5; i++) await read(); // warm
   const shares: number[] = [];
   for (let i = 0; i < 15; i++) {
     const parts = await read();
     const names = parts.map((p) => p.split(";")[0]);
-    expect(names.filter((n) => n !== "app" && n !== "db")).toEqual(["session", "shelf", "render"]);
+    expect(names.filter((n) => n !== "app" && n !== "db")).toEqual(["session", "key", "shelf", "tiles", "render"]);
     const total = dur(parts.find((p) => p.startsWith("app;"))!);
-    const named = parts.filter((p) => /^(session|shelf|render);/.test(p)).reduce((s, p) => s + dur(p), 0);
+    const named = parts.filter((p) => /^(session|shelf|tiles|render);/.test(p)).reduce((s, p) => s + dur(p), 0);
     shares.push(total === 0 ? 1 : named / total);
   }
   // The handler's own phases are all of the handler; what `app` also holds

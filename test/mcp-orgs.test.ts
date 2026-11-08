@@ -18,7 +18,7 @@ describe("MCP orgs", () => {
   let stranger: string;
   let id = 1;
 
-  const tool = async (token: string, args: unknown) => {
+  const tool = async (token: string, args: unknown, name = "orgs") => {
     const res = await fetch(`${servers.url}/mcp`, {
       method: "POST",
       headers: {
@@ -30,7 +30,7 @@ describe("MCP orgs", () => {
         jsonrpc: "2.0",
         id: id++,
         method: "tools/call",
-        params: { name: "orgs", arguments: args },
+        params: { name, arguments: args },
       }),
     });
     const body = (await res.json()) as any;
@@ -89,5 +89,20 @@ describe("MCP orgs", () => {
     expect(JSON.parse(got.text).teams).toEqual([]);
     expect((await tool(owner, { org: "nope" })).isError).toBe(true);
     expect((await tool(owner, { org: 7 })).isError).toBe(true);
+  });
+
+  test("org_create makes an organization that orgs then reads back", async () => {
+    const made = await tool(stranger, { name: "newco" }, "org_create");
+    expect(made.isError).toBe(false);
+    expect(JSON.parse(made.text).username).toBe("newco");
+    const got = await tool(stranger, { org: "newco" });
+    expect(JSON.parse(got.text).teams.map((t: any) => t.name)).toEqual(["Owners"]);
+    expect(JSON.parse((await tool(stranger, {})).text).map((o: any) => o.username)).toEqual(["newco"]);
+  });
+
+  test("org_create refuses a taken name and an invalid one", async () => {
+    expect((await tool(owner, { name: "acme" }, "org_create")).isError).toBe(true);
+    expect((await tool(owner, { name: "not valid!" }, "org_create")).isError).toBe(true);
+    expect((await tool(owner, {}, "org_create")).isError).toBe(true);
   });
 });

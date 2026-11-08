@@ -14,10 +14,12 @@
 import { isActive } from "../core/users.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import type { App } from "../app.ts";
+import { appsForRepos } from "../core/apps.ts";
 import { listOrigins } from "../core/origins.ts";
-import { canRead, listReposVisibleTo } from "../core/repos.ts";
+import { canRead, enterableApps, listReposVisibleTo } from "../core/repos.ts";
 import {
   cleanQuery,
+  searchKind,
   grepRepos,
   searchLocalIssues,
   matchOneRepo,
@@ -39,6 +41,27 @@ import { providerForOrigin } from "../origins/credential.ts";
 export const SEARCH_LIMIT = 20;
 /** Hard ceiling on a caller-chosen limit. */
 export const SEARCH_LIMIT_MAX = 100;
+
+/**
+ * The refusal an API or MCP caller gets for a `kind` or `limit` the search
+ * does not accept, in one set of words; undefined when both are fine. The
+ * page keeps its softer `searchNote`.
+ */
+export function searchRefusal(
+  rawKind: string | null | undefined,
+  rawLimit: string | number | null | undefined,
+): { code: "invalid_kind" | "invalid_limit"; message: string } | undefined {
+  if (rawKind !== null && rawKind !== undefined && rawKind !== "all" && searchKind(rawKind) === "all") {
+    const asked = rawKind.length > 40 ? `${rawKind.slice(0, 39)}…` : rawKind;
+    return { code: "invalid_kind", message: `kind ${JSON.stringify(asked)} is not a kind — use all, repos, issues or code` };
+  }
+  if (rawLimit !== null && rawLimit !== undefined) {
+    const n = typeof rawLimit === "number" ? rawLimit : /^\d{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+    if (!Number.isInteger(n) || n < 1 || n > SEARCH_LIMIT_MAX)
+      return { code: "invalid_limit", message: `limit is a whole number from 1 to ${SEARCH_LIMIT_MAX}` };
+  }
+  return undefined;
+}
 
 /**
  * The whole live half gets this long, all origins together. A search box
@@ -70,13 +93,27 @@ export interface SearchInput {
   repo?: Repo;
   /** Start no new grep after this many ms and report `moreCode`. @default unset: grep every repository */
   codeBudgetMs?: number;
+  /** Told how long each part took, once per part asked for, for Server-Timing. */
+  phase?: (name: SearchPhase, ms: number) => void;
 }
+
+/** The parts a search is timed in. */
+export type SearchPhase = "repos" | "issues" | "code";
 
 /**
  * Search everything the actor can reach. Anonymous callers get the public
  * half — the same rows a signed-out repo listing shows — and no origins,
  * because an origin belongs to the person who connected it.
  */
+/** Whether the repository runs an app the actor may enter (a private one is its writers'). */
+function hasEnterableApp(app: App, actor: User | undefined, repo: Repo): boolean {
+  const record = appsForRepos(app.db, [repo.id]).get(repo.id);
+  return (
+    record !== undefined &&
+    enterableApps(app.db, [{ repo, app: record }], actor, { named: false }).has(record.id)
+  );
+}
+
 export async function search(
   app: App,
   actor: User | undefined,
@@ -94,11 +131,15 @@ export async function search(
     code: [],
     truncated: { repos: false, issues: false, code: false },
     moreCode: false,
+    codeSkipped: false,
   };
   if (q === "") return empty;
 
   const wants = (which: SearchKind) => kind === "all" || kind === which;
 
+  const phase = input.phase ?? (() => {});
+  // The visibility pass is the first of the repos' work, so its clock starts here.
+  const reposAt = performance.now();
   // One visibility pass. Issues and code both search "the repos this actor
   // may read", so it is resolved once and shared rather than re-derived.
   const visible =
@@ -111,12 +152,16 @@ export async function search(
   const repos = !wants("repos")
     ? []
     : input.repo !== undefined
-      ? matchOneRepo(input.repo, q)
+      ? matchOneRepo(input.repo, q, hasEnterableApp(app, actor, input.repo))
       : [
           ...searchLocalRepos(app.db, actor, q, limit),
           ...(actor ? searchOriginRepos(app.db, actor.id, q, limit) : []),
         ];
 
+  // Named whenever it did work: asked for, or the pass issues and code share.
+  if (wants("repos") || (input.repo === undefined && visible.length > 0)) phase("repos", performance.now() - reposAt);
+
+  const issuesAt = performance.now();
   const issues: IssueHit[] = wants("issues")
     ? searchLocalIssues(
         app.db,
@@ -136,7 +181,9 @@ export async function search(
   if (wants("issues") && input.live === true && actor !== undefined) {
     issues.push(...(await liveIssues(app, actor, q, limit)));
   }
+  if (wants("issues")) phase("issues", performance.now() - issuesAt);
 
+  const codeAt = performance.now();
   const code = wants("code") && input.withCode !== false
     ? await grepRepos(
         app.reposRoot,
@@ -144,8 +191,11 @@ export async function search(
         q,
         Math.min(limit * 5, MAX_CODE_HITS),
         input.codeBudgetMs ?? Infinity,
+        // The slot is keyed on the actor the session resolved, never on input.
+        { memberId: actor?.id },
       )
-    : { hits: [], truncated: false, more: false };
+    : { hits: [], truncated: false, more: false, skipped: false };
+  if (wants("code")) phase("code", performance.now() - codeAt);
 
   return {
     repos,
@@ -157,6 +207,7 @@ export async function search(
       code: code.truncated,
     },
     moreCode: code.more,
+    codeSkipped: code.skipped,
   };
 }
 
@@ -232,9 +283,15 @@ export async function searchWithin(
   const hits = { repos: [] as RepoHit[], issues: [] as IssueHit[], code: [] as CodeHit[] };
   const truncated = { repos: false, issues: false, code: false };
   let moreCode = false;
+  let codeSkipped = false;
+  // One figure per part, summed over the repositories, not one per repository.
+  const spent: Partial<Record<SearchPhase, number>> = {};
+  const sum = (name: SearchPhase, ms: number) => {
+    spent[name] = (spent[name] ?? 0) + ms;
+  };
   for (const repo of repos) {
     if (!canRead(app.db, repo, actor)) continue;
-    const one = await search(app, actor, { ...input, live: false, repo });
+    const one = await search(app, actor, { ...input, live: false, repo, phase: sum });
     hits.repos.push(...one.repos);
     hits.issues.push(...one.issues);
     hits.code.push(...one.code);
@@ -242,6 +299,11 @@ export async function searchWithin(
     truncated.issues ||= one.truncated.issues;
     truncated.code ||= one.truncated.code;
     moreCode ||= one.moreCode;
+    codeSkipped ||= one.codeSkipped;
   }
-  return { ...hits, truncated, moreCode };
+  for (const name of ["repos", "issues", "code"] as const) {
+    const ms = spent[name];
+    if (ms !== undefined) input.phase?.(name, ms);
+  }
+  return { ...hits, truncated, moreCode, codeSkipped };
 }

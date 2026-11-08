@@ -23,3 +23,5 @@ file.
 - `.wd` — a changed word inside an added or deleted line, underlined on a stronger tint.
 - `.tok-inserted` — an inserted token in highlighted code, in the add colour.
 - `.tok-deleted` — a deleted token in highlighted code, in the delete colour.
+
+The commits list and a commit's page (#9348) add no class: inside `[data-commits]` (an attribute, `COMMITS_CSS` in `src/web/pages/commits.ts`) a row's subject and author wrap, a long word breaks anywhere, and the diff scrolls inside its own `.diff-body`.

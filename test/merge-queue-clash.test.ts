@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Candidate, enqueue, type Expect, queueClashes, type Queued, redBatchRate } from "../src/checks/queue.ts";
+import { batchWords, type Candidate, enqueue, type Expect, queueClashes, type Queued, redBatchRate, redMark } from "../src/checks/queue.ts";
 import type { Pull } from "../src/core/pulls.ts";
 
 describe("the merge queue remembers clashes", () => {
@@ -72,6 +72,10 @@ describe("the merge queue remembers clashes", () => {
   }
 
   const repoId = "clash-line";
+  /** B red on its own merge on main as it is now: the mark names this base (#6493). */
+  const markedNow = async () => {
+    expect(await enqueue(repoId, [entry(2, git("rev-parse", "b"))], gate)).toEqual([false]);
+  };
   const together = (a: number, b: number) => gates.filter((g) => g.pulls.includes(a) && g.pulls.includes(b)).length;
 
   test("A and B clash, C is fine: A and C land, B is handed back once on top of A", async () => {
@@ -90,6 +94,7 @@ describe("the merge queue remembers clashes", () => {
   });
 
   test("B joining again at the same head is re-checked alone, after the fresh pulls, and cuts nothing off", async () => {
+    await markedNow();
     const b = entry(2, git("rev-parse", "b"));
     const [d, e] = [entry(4, await headAdding("d", "d.txt")), entry(5, await headAdding("e", "e.txt"))];
     const before = gates.length;
@@ -104,11 +109,12 @@ describe("the merge queue remembers clashes", () => {
     // Alone on main as it is now, B is red on its own merge.
     expect(told.at(-1)).toEqual({ pull: 2, together: [] });
     expect(queueClashes(repoId)).toBe(0);
-    // A red re-check is no red batch.
-    expect(redBatchRate(repoId)).toEqual({ batches: 3, red: 1 });
+    // A red re-check is no red batch; the fresh try before it was one.
+    expect(redBatchRate(repoId)).toEqual({ batches: 4, red: 2 });
   });
 
   test("a fresh pull joining behind a re-check is not stacked on it", async () => {
+    await markedNow();
     const b = entry(2, git("rev-parse", "b"));
     let release = (): void => {};
     const held = new Promise<void>((r) => (release = r));
@@ -122,6 +128,7 @@ describe("the merge queue remembers clashes", () => {
     const options = { depth: 2, room: () => 4 };
     const first = enqueue(repoId, [b], holding, options);
     for (let i = 0; i < 2000 && open < 1; i++) await Bun.sleep(5);
+    if (open < 1) throw new Error(`never came: still waiting while open < 1`);
     const f = entry(6, await headAdding("f", "f.txt"));
     const second = enqueue(repoId, [f], holding, options);
     for (let i = 0; i < 40; i++) await Bun.sleep(5);
@@ -135,12 +142,54 @@ describe("the merge queue remembers clashes", () => {
     ]);
   });
 
-  test("a push is a new head: B is forgotten, batched with the rest, and lands", async () => {
+  test("red alone, then main moves: the pull gates again as a fresh entry", async () => {
+    await markedNow();
+    const h = entry(8, await headAdding("h", "h.txt"));
+    expect(await enqueue(repoId, [h], gate)).toEqual([true]); // main moves
+    const b = entry(2, git("rev-parse", "b"));
+    const before = gates.length;
+    // Fresh: it rides with the new pull in one candidate, not behind it as a re-check.
+    const i = entry(9, await headAdding("i", "i.txt"));
+    expect(await enqueue(repoId, [b, i], gate)).toEqual([false, true]);
+    expect(gates.slice(before)[0]).toEqual({ pulls: [2, 9], ok: false });
+  });
+
+  test("red alone, main unmoved: the mark still holds it for a re-check", async () => {
+    await markedNow();
+    const before = gates.length;
+    const j = entry(10, await headAdding("j", "j.txt"));
+    const b = entry(2, git("rev-parse", "b"));
+    expect(await enqueue(repoId, [b, j], gate)).toEqual([false, true]);
+    expect(gates.slice(before)).toEqual([
+      { pulls: [10], ok: true },
+      { pulls: [2], ok: false },
+    ]);
+  });
+
+  test("red alone is readable as a mark at its head and base, and nowhere else", async () => {
+    await markedNow();
+    const head = git("rev-parse", "b");
+    const mark = redMark(repoId, "clash-2", head);
+    expect(mark?.head).toBe(head);
+    expect(mark?.base).toBe(git("rev-parse", "refs/heads/main"));
+    expect(new Date(mark!.at).toISOString()).toBe(mark!.at);
+    expect(redMark(repoId, "clash-2", "0".repeat(40))).toBeUndefined();
+    expect(redMark(repoId, "clash-99", head)).toBeUndefined();
+    expect(redMark("no-such-line", "clash-2", head)).toBeUndefined();
+  });
+
+  test("a push is a new head: B is forgotten, gated as a fresh pull, and lands", async () => {
     const pushed = entry(2, await headAdding("b2", "b2.txt"));
     const g = entry(7, await headAdding("g", "g.txt"));
     const before = gates.length;
     expect(await enqueue(repoId, [pushed, g], gate)).toEqual([true, true]);
-    expect(gates.slice(before)).toEqual([{ pulls: [2, 7], ok: true }]);
+    // Not a re-check: B goes first, as fresh. Its red batches halved this
+    // line's batch to one (#6674); two greens in a row double it.
+    expect(gates.slice(before)).toEqual([
+      { pulls: [2], ok: true },
+      { pulls: [7], ok: true },
+    ]);
+    expect(batchWords(repoId, 8)).toBe("2 of 8");
     expect(queueClashes(repoId)).toBe(0);
   });
 });

@@ -28,7 +28,41 @@ export function signupWindow(app: App, address: string): number | undefined {
   const one = limiter.take(`source:${bucketOf(address)}`, "ro");
   if (!one.allowed) return one.retryAfter;
   const whole = limiter.take("forge", "admin");
-  return whole.allowed ? undefined : whole.retryAfter;
+  if (!whole.allowed) return whole.retryAfter;
+  return accountsWindow(app, address, Date.now());
+}
+
+const HOUR_MS = 3_600_000;
+const FORGE_ROW = "*";
+
+/**
+ * Accounts made in the last hour, per source and forge-wide, kept in a table so
+ * a restart does not hand out a fresh hour. A source's ceiling is never below
+ * its per-minute limit, so raising that one on `/admin/limits` is enough.
+ * Counted when an account is made: a typo in a password spends nothing here.
+ */
+function accountsWindow(app: App, address: string, now: number): number | undefined {
+  const since = now - HOUR_MS;
+  const made = (source: string): { n: number; first: number | null } =>
+    app.db
+      .query<{ n: number; first: number | null }, [string, number]>(
+        "SELECT COUNT(*) AS n, MIN(made_at) AS first FROM signup_made WHERE source = ?1 AND made_at >= ?2",
+      )
+      .get(source, since) ?? { n: 0, first: null };
+  const wait = (first: number | null): number => Math.max(1, Math.ceil(((first ?? now) + HOUR_MS - now) / 1000));
+  const one = made(`source:${bucketOf(address)}`);
+  if (one.n >= Math.max(limitValue(app.db, "signup.per_source_hour"), limitValue(app.db, "signup.per_source")))
+    return wait(one.first);
+  const whole = made(FORGE_ROW);
+  return whole.n >= limitValue(app.db, "signup.per_forge_hour") ? wait(whole.first) : undefined;
+}
+
+/** One account made from `address`: counted, and the table pruned as it is written. */
+function accountMade(app: App, address: string, now: number): void {
+  app.db.query("DELETE FROM signup_made WHERE made_at < ?1").run(now - HOUR_MS);
+  const add = app.db.query("INSERT INTO signup_made (source, made_at) VALUES (?1, ?2)");
+  add.run(`source:${bucketOf(address)}`, now);
+  add.run(FORGE_ROW, now);
 }
 
 /**
@@ -40,12 +74,15 @@ export function signupWindow(app: App, address: string): number | undefined {
  */
 export class SignupSlot {
   #spent = false;
-  private constructor() {}
+  readonly #made: () => void;
+  private constructor(made: () => void) {
+    this.#made = made;
+  }
 
   /** A slot, or the seconds to wait when the window is spent. */
   static take(app: App, address: string): SignupSlot | number {
     const wait = signupWindow(app, address);
-    return wait === undefined ? new SignupSlot() : wait;
+    return wait === undefined ? new SignupSlot(() => accountMade(app, address, Date.now())) : wait;
   }
 
   get spent(): boolean {
@@ -54,8 +91,11 @@ export class SignupSlot {
 
   spend(): void {
     this.#spent = true;
+    this.#made();
   }
 }
 
 export const waitText = (seconds: number): string =>
-  `Too many attempts. Try again in ${seconds === 1 ? "a second" : `${seconds} seconds`}.`;
+  seconds >= 120
+    ? `Too many new accounts just now. Try again in ${Math.ceil(seconds / 60)} minutes.`
+    : `Too many attempts. Try again in ${seconds === 1 ? "a second" : `${seconds} seconds`}.`;

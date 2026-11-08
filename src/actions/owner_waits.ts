@@ -10,12 +10,13 @@ import { getIssuesByIds, type Issue } from "../core/issues.ts";
 import { joinMany } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { plannerDeclines } from "../crew/autonomy.ts";
+import { reviewerPaused } from "../crew/reviewer_paused.ts";
 import { reviewersOf, waitsForPerson } from "../crew/review.ts";
 import type { Database } from "bun:sqlite";
 
 export type OwnerWait =
   | { kind: "declined"; repo: Repo; issue: Issue; runId: string }
-  | { kind: "review"; repo: Repo; none: boolean; waiting: number; since: string | null };
+  | { kind: "review"; repo: Repo; none: boolean; paused: boolean; waiting: number; since: string | null };
 
 /** The planner declines among these repositories, one per app. */
 export function declinedWaits(db: Database, repos: readonly Repo[]): OwnerWait[] {
@@ -51,10 +52,11 @@ export function reviewWaits(db: Database, repos: readonly Repo[]): OwnerWait[] {
         const w = waitsForPerson(db, repo.id, p);
         return w === undefined ? [] : [w];
       });
+    const paused = reviewerPaused(repo);
     const none = reviewersOf(db, repo.id).length === 0;
-    if (!none && waits.length === 0) return [];
+    if (!none && !paused && waits.length === 0) return [];
     return [
-      { kind: "review", repo, none, waiting: waits.length, since: waits.map((w) => w.since).sort()[0] ?? null },
+      { kind: "review", repo, none, paused, waiting: waits.length, since: waits.map((w) => w.since).sort()[0] ?? null },
     ];
   });
 }
@@ -68,7 +70,7 @@ export function ownerWaits(db: Database, repos: readonly Repo[]): OwnerWait[] {
 export function waitLine(w: OwnerWait): string {
   if (w.kind === "declined")
     return `${w.repo.name}: the planner declined the direction and waits for you (issue #${w.issue.number})`;
-  return `${w.repo.name}: ${w.none ? "no reviewer: agent pulls wait for you" : "agent pulls wait for your review"}${
+  return `${w.repo.name}: ${w.none ? "no reviewer: agent pulls wait for you" : w.paused ? "the reviewer is paused: agent pulls wait for you" : "agent pulls wait for your review"}${
     w.waiting === 0 || w.since === null ? "" : ` · ${w.waiting} waiting since ${w.since.slice(0, 10)}`
   }`;
 }
