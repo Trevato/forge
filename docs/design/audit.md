@@ -64,6 +64,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/talk` — `pages/talk.ts` · the person's one conversation with the forge: history, composer, Confirm and Cancel; replies stream in over `/talk/stream` · `/settings/confirms` (the same yes, as a list), the home tell box (one line to an app's crew) · none seen; styles in `docs/design/areas/talk.md`.
 - `/notes` — `pages/notes.ts` · what the person wrote, newest first, with the planner's verdict and live state in one line, and one tap to overrule it · the home tell box (Notes button), the user menu, the palette · none seen; styles in `docs/design/areas/notes.md`.
 - `/pipeline` — `pages/pipeline.ts` · the four steps a change follows (check, review, land, live), for a newcomer · a pull page's step line, `/flow` · none seen.
+- `/packs` — `pages/packs.ts` · the premade forges this forge ships, what each brings, how to deploy it and how a stranger helps build its apps · the user menu, the signed-out menu, the palette · none seen; uses the shared card, list and button components.
 - `/map` — `pages/map.ts` (1,806 lines) · the dependency map of work across the forge · `/board`, issue dependency lists, `/:owner/:name/map` · colours 3, sizes 12: the largest private vocabulary.
 - `/audit` — `pages/audit.ts` · every app's contract, who can do what · the app page's one-line policy · none seen. Names the audit of apps, not this document.
 - `/repos` — `pages/my-repos.ts` · the repositories you may write, from the account menu · `/` (your apps), `/:owner` (a profile's repositories) · none seen.

@@ -114,7 +114,7 @@ test("a visitor's palette holds places to go and Sign in; a signed-in one holds 
     return (JSON.parse(m[1]!) as { items: { t: string; h: string; c?: string }[] }).items.filter((i) => i.c !== "Repositories");
   };
   const out = await rows({}, "/explore?q=a%26b");
-  expect(out.map((i) => i.t)).toEqual(["Home", "Apps", "Explore", "Front page", "Search", "Sign in"]);
+  expect(out.map((i) => i.t)).toEqual(["Home", "Apps", "Explore", "Forge packs", "Front page", "Search", "Sign in"]);
   expect(out.find((i) => i.t === "Sign in")!.h).toBe("/signin");
   const inn = (await rows({ cookie }, "/explore")).map((i) => i.t);
   for (const t of ["New app", "New repository", "Migrate a repository", "New organization", "What you asked for", "Account settings", "Access tokens", "SSH keys", "Origins", "Map"]) expect(inn).toContain(t);

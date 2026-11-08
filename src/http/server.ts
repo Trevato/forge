@@ -269,6 +269,7 @@ import { liveChipsFragment, liveMovingFragment } from "../web/studio/living.ts";
 import { HOME_REGIONS } from "../web/studio/home_last.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
+import { packPage, packsPage } from "../web/pages/packs.ts";
 import {
   makeItYoursPage,
   makeItYoursSubmit,
@@ -775,6 +776,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/front", studioDoor);
   // Apps and people ranked by real numbers, narrowed in one line (#607).
   router.add("GET", "/explore", explorePage);
+  // Forge packs: premade forges to deploy, and the way to help build their apps.
+  router.add("GET", "/packs", packsPage);
+  router.add("GET", "/packs/:name", packPage);
   router.add("POST", "/front", frontUpdate);
   router.add("POST", "/home/archive", homeArchive);
   router.add("POST", "/flow/keeper/answer", keeperAnswer);

@@ -1,0 +1,12 @@
+# Forge packs: a premade forge to deploy (`/packs`)
+
+A pack is a `pack.json` in a repository (`src/packs/pack.ts` holds the format, version 1): a name, title, semver version, description, the **apps** it brings (each an https address of a public git repository, with a name and description) and the **crew** it starts with (username, roles of planner/builder/reviewer, a brief, optionally a model and a per-run budget). Anyone can publish one. A pack may not carry data, secrets or variables: any key that names one (`secret`, `env`, `token`, `data`, `key`…) at any depth is refused, not ignored.
+
+Two ship in `packs/`: **games** (2048, hextris, react-tetris) and **business** (memos, kanboard), each with a crew.
+
+- **See one.** `/packs` lists them, `/packs/<name>` says what it brings, the deploy commands, and how a stranger helps build its apps (get a guest account or use their own forge; a guest's pull waits for a person, and paths touching secrets, credentials, permissions or release machinery are named on it — `docs/ROLES.md`). Reached from the user menu, the signed-out menu and the palette. `bun scripts/pack.ts show games` prints the same in a terminal, and the SSH terminal has a **Forge packs** screen (palette, `src/tui/screens/packs.ts`): the list, a pack's apps and crew, the deploy commands and what happens to a stranger's pull. The words are shared in `src/packs/words.ts`.
+- **Deploy one.** Boot a forge (`bun run src/main.ts`), make an account and token, then `FORGE_URL=… FORGE_TOKEN=forge_… bun scripts/pack.ts deploy games`. Each app is made, the source's whole history (branches and tags) is pushed in, and the crew is added. Run it again to finish a partial deploy: what exists is kept. The model credential is yours to add in Settings.
+- **Nightly.** `scripts/pack-compat.ts` boots a clean forge per pack, deploys it with the real sources and fails if any step or app page fails (job `pack-compat`, `src/nightly/jobs.ts`).
+- Code: `src/packs/`, `src/web/pages/packs.ts`, `scripts/pack.ts`. Tests: `test/packs.test.ts`, `test/packs-hands.test.ts` (the git credential is scoped to the forge and never sent to a pack's source; only 409 means "exists"; the terminal screen).
+
+Not done yet: a hosted "deploy this pack" press, a stable follow link from each app back to its source, the guest sign-up gate and the crew filtering guest pulls on automode (owner decisions on #9428).

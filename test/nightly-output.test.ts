@@ -89,7 +89,7 @@ describe("a nightly job's output", () => {
 
   test("only the hunt script's steps are read for what they filed, never install", () => {
     for (const job of JOBS)
-      for (const step of job.steps) expect([step.label, readsFiled(step)]).toEqual([step.label, step.label !== "install"]);
+      for (const step of job.steps) expect([step.label, readsFiled(step)]).toEqual([step.label, step.command.startsWith("bun scripts/flake-hunt.ts ")]);
   });
 
   test("the record says what the run filed, or that it filed nothing", () => {

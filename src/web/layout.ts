@@ -220,7 +220,7 @@ const newIssueItem = (ctx: Ctx): MenuItem[] =>
 function guestMenu(ctx: Ctx, theme: ThemeName | undefined): Html {
   return menu({
     trigger: themeGlyph,
-    items: [...newIssueItem(ctx), helpItem, themeForm(theme)],
+    items: [...newIssueItem(ctx), { label: "Packs", href: "/packs", icon: "rocket" }, helpItem, themeForm(theme)],
     label: "Appearance and help",
     triggerOptions: { extra: "btn-icon" },
   });
@@ -294,6 +294,7 @@ function userMenu(
     { label: "Notes", href: "/notes", icon: "comment" },
     { label: "Talk", href: "/talk", icon: "comment" },
     { label: "Explore", href: "/explore", icon: "search" },
+    { label: "Packs", href: "/packs", icon: "rocket" },
     { label: "Map", href: "/map", icon: "map" },
     ...featureItems(ctx, user),
     { separator: true, label: "" },
@@ -365,6 +366,7 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Explore", h: "/explore", c: "Go to" },
+  { t: "Forge packs", h: "/packs", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "Front page", h: "/front", c: "Go to" },
@@ -382,7 +384,7 @@ const STATIC_PALETTE: PaletteItem[] = [
 ];
 
 /** What a signed-out visitor can reach: places to go, not Create and Settings rows that end at a sign-in wall. */
-const VISITOR_PALETTE = new Set(["Home", "Apps", "Explore", "Front page", "Search"]);
+const VISITOR_PALETTE = new Set(["Home", "Apps", "Explore", "Forge packs", "Front page", "Search"]);
 
 /** First path segments that are the forge's own pages, never an owner: no repository read for them. */
 const NOT_AN_OWNER = new Set([

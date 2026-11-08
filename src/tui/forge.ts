@@ -14,6 +14,7 @@ import { cleanQuery } from "../core/search.ts";
 import { guestCodeSearch } from "../http/strangers.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { sourceFor } from "../view/source.ts";
+import { packsCommand } from "./screens/packs.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
 import type { Command, PaletteItem, PaletteSearch } from "./app/palette.ts";
 import { G } from "./term/screen.ts";
@@ -191,6 +192,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "on the web",
         run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
       },
+      packsCommand(session, ctx),
       {
         // A person's or an org's page is the web's (#636): the terminal
         // hands over its address.

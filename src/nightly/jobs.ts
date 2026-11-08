@@ -17,7 +17,7 @@ export interface Step {
 }
 
 export interface Job {
-  readonly name: "outside-gate" | "flake-hunt";
+  readonly name: "outside-gate" | "flake-hunt" | "pack-compat";
   readonly slot: Slot;
   readonly steps: readonly Step[];
   /** After the steps: the file whose quarantined edit is proposed as a pull. */
@@ -69,6 +69,19 @@ export const JOBS: readonly Job[] = [
         command: "bun scripts/flake-hunt.ts outside --file-issues",
         timeoutMs: SLICE_MS,
         reports: true,
+      },
+    ],
+  },
+  {
+    name: "pack-compat",
+    slot: { hour: 4, minute: 37 },
+    steps: [
+      install,
+      {
+        label: "deploy each pack on a clean forge",
+        command: "bun scripts/pack-compat.ts",
+        timeoutMs: 30 * 60_000,
+        reports: false,
       },
     ],
   },

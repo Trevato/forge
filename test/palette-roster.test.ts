@@ -47,6 +47,7 @@ test("a site-admin person is offered the whole roster", () => {
   expect(roster(admin)).toEqual([
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
+    ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
     ["profile", "Open a profile", "username or org"],
     ["repos", "Repositories", "the repositories you may write"],
     ["displays", "Displays", "the displays you may read"],
@@ -150,6 +151,7 @@ test("a site-admin agent is offered the roster without the person-only entries",
   expect(roster({ ...admin, kind: "agent" })).toEqual([
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
+    ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
     ["profile", "Open a profile", "username or org"],
     ["repos", "Repositories", "the repositories you may write"],
     ["displays", "Displays", "the displays you may read"],
@@ -217,6 +219,7 @@ test("a member person is offered the signed-in roster without the admin entries"
   expect(roster(member)).toEqual([
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
+    ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
     ["profile", "Open a profile", "username or org"],
     ["repos", "Repositories", "the repositories you may write"],
     ["displays", "Displays", "the displays you may read"],
@@ -280,6 +283,7 @@ test("signed out, the palette offers sign-in and the public entries", () => {
   expect(roster()).toEqual([
     ["home", "Home", "your repositories"],
     ["explore", "Explore", "on the web"],
+    ["packs", "Forge packs", "premade forges to deploy, and how to help build their apps"],
     ["profile", "Open a profile", "username or org"],
     ["repo", "Open a repository", "owner/name"],
     ["issues", "Issues in a repository", "owner/name"],
