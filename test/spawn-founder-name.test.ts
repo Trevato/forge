@@ -7,7 +7,8 @@
  * - the spawner could never claim their child as themselves: the claim now
  *   takes over that untouched founder account, but only when the spawner is
  *   leaving (keepAccess false) and the account has no credential of its own
- *   (no password, passkey, token or SSH key). That is deliberate: whoever
+ *   (no password, passkey, token, SSH key, session, parent sign-in, edge
+ *   link or OAuth-client grant). That is deliberate: whoever
  *   holds the link becomes the spawner's name on the child, and the claim
  *   page says so before anyone submits.
  */
@@ -19,8 +20,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { childDirOf, founderClash } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
+import { linkEdgeLogin } from "../src/core/edge_links.ts";
+import { linkParent } from "../src/core/federation.ts";
 import { addKey, parseAuthorizedKey } from "../src/core/keys.ts";
 import { listPasskeys } from "../src/core/passkeys.ts";
+import { createSession, sessionUser } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -210,5 +214,60 @@ describe("a child's founder holds the spawner's name", () => {
     const res = await kid.claim({ username: "alice", email: "alice@x.test", password: PASSWORD });
     expect(res.status).toBe(422);
     expect(await res.text()).toContain("That username is taken.");
+  });
+
+  test("a founder with a session can already sign in, so it is never handed over", async () => {
+    const kid = await child("ivy", false);
+    const founder = getUserByName(kid.app.db, "alice")!;
+    const sess = createSession(kid.app.db, founder.id);
+    const res = await kid.claim({ username: "alice", email: "alice@x.test", password: PASSWORD });
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain("That username is taken.");
+    const now = getUserByName(kid.app.db, "alice")!;
+    expect(now.email).toBe(founder.email);
+    expect(now.isAdmin).toBe(founder.isAdmin);
+    // The old cookie still belongs to the untouched founder, not a new admin.
+    const who = sessionUser(kid.app.db, sess.token);
+    expect(who.ok).toBe(true);
+    if (who.ok) expect(who.value.id).toBe(founder.id);
+  });
+
+  test("a founder linked to a parent sign-in is never handed over", async () => {
+    const kid = await child("joy", false);
+    const founder = getUserByName(kid.app.db, "alice")!;
+    expect(linkParent(kid.app.db, founder.id, "https://parent.test", "alice-sub").ok).toBe(true);
+    const res = await kid.claim({ username: "alice", email: "alice@x.test", password: PASSWORD });
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain("That username is taken.");
+    expect(getUserByName(kid.app.db, "alice")!.email).toBe(founder.email);
+    expect(getUserByName(kid.app.db, "alice")!.isAdmin).toBe(founder.isAdmin);
+  });
+
+  test("a founder with an edge login link is never handed over", async () => {
+    const kid = await child("kim", false);
+    const founder = getUserByName(kid.app.db, "alice")!;
+    expect(linkEdgeLogin(kid.app.db, founder, "alice-edge").ok).toBe(true);
+    const res = await kid.claim({ username: "alice", email: "alice@x.test", password: PASSWORD });
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain("That username is taken.");
+    expect(getUserByName(kid.app.db, "alice")!.email).toBe(founder.email);
+    expect(getUserByName(kid.app.db, "alice")!.isAdmin).toBe(founder.isAdmin);
+  });
+
+  test("a founder with an OAuth-client grant is never handed over", async () => {
+    const kid = await child("pat", false);
+    const founder = getUserByName(kid.app.db, "alice")!;
+    // A refresh token is a live grant even with no access token row.
+    kid.app.db
+      .query(
+        `INSERT INTO oauth_refresh (token_hash, family, client_id, user_id, scope, name, lifetime_s, expires_at)
+         VALUES (?1, ?2, ?3, ?4, 'rw', 'grant', 3600, '2099-01-01T00:00:00.000Z')`,
+      )
+      .run(`rh-${founder.id}`, `fam-${founder.id}`, "client-test", founder.id);
+    const res = await kid.claim({ username: "alice", email: "alice@x.test", password: PASSWORD });
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain("That username is taken.");
+    expect(getUserByName(kid.app.db, "alice")!.email).toBe(founder.email);
+    expect(getUserByName(kid.app.db, "alice")!.isAdmin).toBe(founder.isAdmin);
   });
 });

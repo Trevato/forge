@@ -230,7 +230,8 @@ export function unburnClaim(db: Database, orgId: string, token: string): void {
  * its name: the account `copyInto` made under the spawner's own username,
  * so the spawner could never claim their child as themselves. Only while
  * it is untouched — the Owners team's first member, a person, active, with
- * no password, passkey, token or SSH key — and only when the spawner is
+ * no password, passkey, token, SSH key, session, parent sign-in, edge
+ * link or OAuth-client grant — and only when the spawner is
  * leaving (`keepAccess` false): an account the spawner keeps is theirs, not the
  * claimant's to take. Never on a forge with edge sign-in on.
  *
@@ -257,7 +258,7 @@ export function founderToTake(
   return untouched(db, user.id) ? user : undefined;
 }
 
-/** No way in of its own: no password, passkey, token, or SSH key (which can already push). */
+/** No way in of its own: no password, passkey, token, SSH key, session, parent link, edge link, or OAuth-client grant. */
 function untouched(db: Database, userId: string): boolean {
   return (
     db
@@ -265,7 +266,12 @@ function untouched(db: Database, userId: string): boolean {
         `SELECT count(*) AS n FROM user u WHERE u.id = ?1 AND u.password_hash = '' AND u.is_agent = 0
            AND NOT EXISTS (SELECT 1 FROM passkey WHERE user_id = ?1)
            AND NOT EXISTS (SELECT 1 FROM token WHERE user_id = ?1)
-           AND NOT EXISTS (SELECT 1 FROM user_key WHERE user_id = ?1)`,
+           AND NOT EXISTS (SELECT 1 FROM user_key WHERE user_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM session WHERE user_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM federated_identity WHERE user_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM edge_link WHERE user_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM oauth_refresh WHERE user_id = ?1)
+           AND NOT EXISTS (SELECT 1 FROM oauth_code WHERE user_id = ?1)`,
       )
       .get(userId)!.n === 1
   );
@@ -274,9 +280,10 @@ function untouched(db: Database, userId: string): boolean {
 /**
  * The claimant becomes the founder: its credential (a password hash, or a
  * passkey with an empty hash), its email, and admin, in one transaction
- * that re-checks the account is still untouched. "gone" when it is not
- * (or the passkey would not go on); "email_taken" when another account
- * holds the address.
+ * that re-checks the account is still untouched and drops any leftover
+ * sessions so an old cookie cannot keep acting as the new admin. "gone"
+ * when it is not (or the passkey would not go on); "email_taken" when
+ * another account holds the address.
  */
 export function takeFounder(
   db: Database,
@@ -292,6 +299,7 @@ export function takeFounder(
     );
     if (input.credential !== undefined && !addPasskey(db, userId, "Passkey", input.credential).ok)
       throw new PasskeyRefused();
+    db.query("DELETE FROM session WHERE user_id = ?1").run(userId);
     return true;
   });
   try {
