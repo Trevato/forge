@@ -20,3 +20,15 @@ No baseline is kept in `bench/results/` yet: the pull's preview holds no reposit
 Follow-ups: profile #9503, baseline and release wiring #9504, media #9505.
 
 Not done here: the profile of tree/blob/raw/media under production's shape, the p95 targets at 500/s, and wiring the comparison into the release check. Those need a machine and data this run does not have.
+
+## The per-phase profile (#9503)
+
+`bench/code-phases.ts` holds the same open-loop rate and tallies each answer's `Server-Timing` by page kind (tree, blob, raw, media), printing p50/p95 of wall time and of every named phase as a table. `git`, `render`, `highlight` and `session` are always listed; n = 0 means that page never names the phase (today `/raw` and `/media` name none, so only their wall time is profiled).
+
+```sh
+bun bench/code-phases.ts --url https://copy.example --repo owner/name --rate 500 --seconds 20
+```
+
+The numbers themselves are **not attached**: this run's sandbox reaches no copy holding production's repositories, and the load must not be aimed at production. Run the command per repository on such a copy and post the tables on #9503.
+
+Only 200 (and 206) answers are samples. A redirect, 401 or 404 is counted by status in the line printed under `answered N`, so a run that was all refusals says so. A private copy needs `--token` (or `FORGE_TOKEN`); the first pages answering non-200 stops the run with the status. Connection failures and requests the client itself could not send (2000 in flight) are counted, not hidden.
