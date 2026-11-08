@@ -187,7 +187,7 @@ describe("the pages", () => {
 
   test("an app opens on its description and whether it is up", async () => {
     const line = unfurl(await get("/alice/open/app"));
-    expect(line).toMatch(/^open app for the unfurl test · [a-z ·]+\.$/);
+    expect(line).toMatch(/^open app for the unfurl test\. Status: [a-z ·]+\.$/);
   });
 
   test("no sentence uses dev's vocabulary", async () => {

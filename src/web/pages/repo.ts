@@ -8,6 +8,7 @@
  * path segment and can never smuggle a path of its own.
  */
 
+import { repoLine } from "../describe.ts";
 import { recordLook } from "../../flow/valve_store.ts";
 import { PINNED_PUBLIC, immutableWhenAddressed, mayShare } from "../../http/addressed.ts";
 import { EDGE_VARY } from "../../http/edge_cache.ts";
@@ -1331,7 +1332,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     const emptyResponse = page({
       ctx,
       title: repo.name,
-      description: repo.description,
+      description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
       ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
       feed: {
         href: `${repoBase(repo)}/activity.atom`,
@@ -1405,7 +1406,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const response = page({
     ctx,
     title: repo.name,
-    description: repo.description,
+    description: repoLine({ private: repo.visibility === "private", name: repo.name, description: repo.description }),
     ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
     feed: {
       href: `${repoBase(repo)}/activity.atom`,
