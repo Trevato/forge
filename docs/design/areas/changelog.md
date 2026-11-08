@@ -12,3 +12,7 @@ the sample before its forks are made, so the preview's `/changelog` phone look s
 ## Rows, not boxes (#9688)
 
 Each day is a `<section data-day>` with an `<h2>` (the day, the UTC mark when the zone is not the reader's, the count) over a `list setting-list`; "On its way" is an `<h2>` over the same list. The empty state is one muted line, `<p class="mt muted">Nothing has shipped yet.</p>`, the same quiet line the board's Landed region uses (`region()` in `pages/board.ts`); not `empty()`, which is a card. No card, no new class; `test/changelog.test.ts` holds it, and `localDaysJs` still finds `[data-day]`, `h2 time`, `[data-zone]` and `.badge`.
+
+## Releases as rows (#9753)
+
+`/releases` is one `list setting-list` of `row()`s, no table, no card. The title is the short sha with its `live` and `preflight failed` badges; the meta line is the pull (`#7`), when it landed and, for the live one, since when it has been healthy. A release with a pull is one `<a>` to that pull; the Roll back form sits in the row's `after` slot, outside the link, so it posts with JavaScript off. The empty state is one muted line. No new class; `test/releases-page.test.ts` holds the shape.

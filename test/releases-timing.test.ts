@@ -102,6 +102,7 @@ test("20 listed releases over 2 repositories cost one repository read; a deleted
   const body = await res.text();
   expect(reads).toBe(1);
   expect(res.headers.get("server-timing")).toMatch(/repos;dur=\d+\.\d/);
-  expect(body).toContain("/pulls/100\">#100</a>");
-  expect(body).toMatch(/<td>#777<\/td>/);
+  expect(body).toContain('href="/alice/forge/pulls/100"');
+  expect(body).toMatch(/<span class="row-meta">#777 · landed/);
+  expect(body).not.toContain("/pulls/777");
 });

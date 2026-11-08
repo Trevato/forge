@@ -7,18 +7,18 @@
  * `--rollback`, then this process drains.
  */
 
-import { getReposByIds, type Repo } from "../../core/repos.ts";
+import { getReposByIds } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { running } from "../../kernel/version.ts";
 import type { Ctx } from "../../http/context.ts";
-import { listReleases, type Release } from "../../release/record.ts";
+import { listReleases } from "../../release/record.ts";
 import { BOOTED, canRollBackTo, mayRead, mayRollBack, rollBackTo } from "../../release/gate.ts";
 import { liveSince, NO_RELEASES_YET } from "../../release/words.ts";
 import { notFoundPage, signInFirst, NOT_ADMIN_HERE, SIGN_IN_TO_DO, forbiddenPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, card, empty, sha, time } from "../ui.ts";
+import { badge, btn, row, sha, time } from "../ui.ts";
 import { holdAs, liftAs } from "../../keeper/hold.ts";
 import { keeperPanel } from "./keeper-panel.ts";
 
@@ -29,14 +29,6 @@ export function liveLine(ctx: Ctx): Html | undefined {
   return html`<p class="small muted" id="live-release">
     <a href="/releases">${liveSince(html, html`<span class="sha">${live.slice(0, 7)}</span>`, time(BOOTED))}</a>
   </p>`;
-}
-
-function pullCell(repos: ReadonlyMap<string, Repo>, r: Release): Html {
-  if (r.pullNumber === null) return html`—`;
-  const repo = repos.get(r.repoId);
-  return repo === undefined
-    ? html`#${r.pullNumber}`
-    : html`<a href="/${repo.ownerName}/${repo.name}/pulls/${r.pullNumber}">#${r.pullNumber}</a>`;
 }
 
 export async function releasesPage(ctx: Ctx): Promise<Response> {
@@ -61,25 +53,23 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
   const rows: Html[] = [];
   for (const [i, r] of releases.entries()) {
     const isLive = live !== null && r.sha === live;
-    const button = rollable[i] === true;
-    rows.push(html`<tr>
-      <td>${sha(r.sha)} ${when(isLive, () => badge("live", { tone: "success" }))}
-        ${when(!r.ok, () => badge("preflight failed", { tone: "danger" }))}</td>
-      <td>${pullCell(repos, r)}</td>
-      <td>${time(r.createdAt)}</td>
-      <td>${isLive ? html`since ${time(BOOTED)}` : html`—`}</td>
-      <td>${when(button, () =>
-        html`<form method="post" action="/releases/${r.sha}/rollback">${btn("Roll back", { type: "submit" })}</form>`,
-      )}</td>
-    </tr>`);
+    const repo = r.pullNumber === null ? undefined : repos.get(r.repoId);
+    rows.push(
+      row({
+        ...(repo === undefined || r.pullNumber === null ? {} : { href: `/${repo.ownerName}/${repo.name}/pulls/${r.pullNumber}` }),
+        title: html`${sha(r.sha)} ${when(isLive, () => badge("live", { tone: "success" }))}
+          ${when(!r.ok, () => badge("preflight failed", { tone: "danger" }))}`,
+        meta: html`${r.pullNumber === null ? null : html`#${r.pullNumber} · `}landed ${time(r.createdAt)}${isLive ? html` · healthy since ${time(BOOTED)}` : null}`,
+        ...(rollable[i] === true
+          ? { after: html`<form method="post" action="/releases/${r.sha}/rollback">${btn("Roll back", { type: "submit" })}</form>` }
+          : {}),
+      }),
+    );
   }
   const body =
     rows.length === 0
-      ? empty({ icon: "clock", title: "No releases yet", note: NO_RELEASES_YET })
-      : card(html`<table class="table">
-          <thead><tr><th>Release</th><th>Pull</th><th>Landed</th><th>Healthy</th><th></th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>`);
+      ? html`<p class="mt muted">No releases yet. ${NO_RELEASES_YET}</p>`
+      : html`<ul class="list setting-list">${rows}</ul>`;
   const response = page({
     ctx,
     title: "Releases",
