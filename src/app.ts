@@ -205,6 +205,8 @@ export interface ForgeConfig {
    * The listener is bound with SO_REUSEPORT so the new process can share it.
    */
   selfSwap?: boolean;
+  /** A standby: reads are answered, every mutation is a 503 (`FORGE_READ_ONLY=1`; `http/read_only.ts`, #9657). */
+  readOnly?: boolean;
   /** How long a swapped-in release has to read healthy (`FORGE_SWAP_BUDGET_S`). @default 60000 */
   swapBudgetMs?: number;
 }

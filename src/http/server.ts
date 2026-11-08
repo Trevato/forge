@@ -81,6 +81,7 @@ import { activeEdgeToken, edgeIdentity } from "./edge.ts";
 import { shieldState } from "../actions/shield.ts";
 import { crawlRefused, familyOf, finishedStrangerDeep, isCrawler, isDeepPath, isShieldedPath, noteCrawler, noteDeepStranger, noteShielded, shieldRefused, takeCrawl, wasCrawler, wasDeepStranger, wasShielded } from "./crawl.ts";
 import { liveResponse, readyResponse } from "./health.ts";
+import { readOnlyRefusal } from "./read_only.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
 import { noteRefusedInternal } from "../kernel/internal_refused.ts";
@@ -572,6 +573,9 @@ const SHELL_IDLE_MS = 30 * 60_000;
 const NO_AUTH: Auth = { user: undefined, scope: undefined, via: "none" };
 
 async function resolveAuth(app: App, request: Request): Promise<Auth> {
+  // A read-only standby knows no one: a session or token of the main forge
+  // must not show its private pages on a copy (#9657).
+  if (app.config.readOnly === true) return NO_AUTH;
   // The platform edge, when there is one, has already signed this person
   // in; its word outranks a cookie of ours.
   const login = edgeIdentity(request, activeEdgeToken(app));
@@ -2418,6 +2422,11 @@ export async function serve(app: App): Promise<Servers> {
   ): Promise<Response | undefined> => {
       const started = performance.now();
       noteStart(request, started);
+      // A read-only standby refuses every mutation here, before any route.
+      if (app.config.readOnly === true) {
+        const refused = readOnlyRefusal(request);
+        if (refused !== undefined) return securityFloor(refused);
+      }
       // An app's hostname is answered before any route: `hello.<domain>` is
       // the app, whatever its path, and the forge's own routes never apply.
       const holding = await holdAppHost(app, request);

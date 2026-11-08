@@ -17,6 +17,7 @@ import { drainOnHandover, handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
+import { readOnlyFrom } from "./http/read_only.ts";
 import { warmFlow } from "./system/flow_cache.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { loadTrustedHosts } from "./origins/trusted-hosts.ts";
@@ -169,7 +170,10 @@ const hosted = hostedAt !== "";
 
 // SSH is on by default: the terminal UI is a first-class surface, not an
 // add-on. `FORGE_SSH_PORT=0` turns the listener off entirely.
-const sshPort = Number(process.env.FORGE_SSH_PORT ?? (hosted ? 0 : 2222));
+// A read-only standby (FORGE_READ_ONLY=1, #9657) serves reads from a restored
+// directory: no terminal, no apps, no crew, no jobs.
+const readOnly = readOnlyFrom(process.env);
+const sshPort = readOnly ? 0 : Number(process.env.FORGE_SSH_PORT ?? (hosted ? 0 : 2222));
 
 // FORGE_URL is the address people reach the forge at when a proxy in front
 // terminates TLS. Parsed once here so a typo fails the boot, not a request.
@@ -235,6 +239,7 @@ const previewKey = previewIdentityKey(process.env);
 
 const app = createApp({
   dataDir,
+  ...(readOnly ? { readOnly } : {}),
   // A new forge starts with signup = invite (FORGE_SIGNUP below still wins).
   seedSignup: true,
   ...(parentUrl === "" ? {} : { parentUrl }),
@@ -323,6 +328,19 @@ const app = createApp({
 timeStatements(app.db, createLog("sql"));
 loadFlags(app.db);
 loadTrustedHosts(app.db);
+if (readOnly) {
+  const servers = await serve(app);
+  // Only the listener runs: no reconcile, perf watcher, timers, apps, crew,
+  // checks, releases, mirrors, snapshots or nightly jobs. Reads are answered until a signal.
+  app.log.info("forge is up, read-only standby", { url: servers.url, data: app.config.dataDir });
+  const stop = (): void => {
+    servers.stop();
+    app.close();
+    process.exit(0);
+  };
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.once(signal, stop);
+  await new Promise<never>(() => {});
+}
 // FORGE_SIGNUP (checked in configProblem) sets who may sign up; kept like any change.
 const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
 if (bootSignup.ok && bootSignup.value !== null)

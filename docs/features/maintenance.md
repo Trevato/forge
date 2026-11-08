@@ -41,10 +41,31 @@ return the same HTML with status 503 and `Retry-After`.
 apps 13 GB) plus one snapshot and headroom, so 64 GB; 4 GB of memory free for the
 forge alone, 8 GB with apps running. The 16 GB droplet cannot hold it.
 
+**Take over reads (#9657).** On a second machine of that size, with the backup
+store's variables (`S3_*`, or `FORGE_SNAPSHOT_DIR`) and `FORGE_SNAPSHOT_PASSPHRASE`:
+
+    bun scripts/standby-restore.ts latest /srv/standby      # or a snapshot name; the directory must be empty
+    FORGE_READ_ONLY=1 FORGE_DATA=/srv/standby PORT=3000 bun run src/main.ts
+
+The script restores the snapshot (`src/snapshot/restore.ts`), runs SQLite's
+integrity check and confirms every repository the database lists is on disk;
+it exits 1 and names what is wrong otherwise. With `FORGE_READ_ONLY=1` the forge
+serves pages, the API's reads and git clone/fetch from that directory. One guard
+at the front of the request path (`src/http/read_only.ts`) answers every other
+method, a WebSocket upgrade and the push door (`git-receive-pack`) with a plain
+503 "read-only standby", so a route added later is covered. Nothing past the
+listener starts: no terminal, apps, crew, checks, releases, mirrors, snapshots
+or nightly jobs, and not even the boot's reconcile or any timer. The
+standby knows no one: a session or token of the main forge is read as signed
+out, so it shows public pages only, and sign-in (a POST) is refused. Opening
+the database still migrates it forward, on the restored copy only. Point the tunnel's origin at it for the move.
+Test: `test/standby-restore.test.ts`.
+
 ## Not done
-- No standby takeover: nothing replicates data to a second machine, so the
-  droplet can only show the page. That needs the snapshot mirror restored onto a
-  machine of the size above, and is a separate issue.
+- Writes on the standby, and switching back: the standby is a copy as of its
+  snapshot, so anything written on the main forge after it is not there, and
+  nothing carries standby-time changes back (there are none; it takes no writes).
+  Nothing replicates continuously; re-restore into a new directory to catch up.
 - The page is not pushed to Cloudflare automatically; `standby.ts` is started by hand.
 - The admin is told on the page, event and status, and by the notification address they saved (`/account`); no mail.
 - Where the kernel gives no boot id, any restart ends maintenance.
