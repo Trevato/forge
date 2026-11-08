@@ -81,6 +81,7 @@ import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { nextScreen } from "./screens/next.ts";
 import { weekScreen } from "./screens/week.ts";
+import { machinesScreen } from "./screens/machines.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newForgeScreen } from "./screens/newforge.ts";
 import { newOrgScreen } from "./screens/neworg.ts";
@@ -142,6 +143,12 @@ const REPO_VERBS: readonly {
     id: "week",
     title: "The week in a repository",
     open: (f, ctx, repo) => weekScreen(f, ctx, repo),
+  },
+  {
+    // Settings → Machines' other door: the machines and last shell sessions, writers only (#9471).
+    id: "machines",
+    title: "Machines of a repository",
+    open: (f, ctx, repo) => machinesScreen(f, ctx, repo),
   },
   {
     // What the crew's tokens bought on one app, as MCP `returns` with `repo` (#7271).

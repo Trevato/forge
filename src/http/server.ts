@@ -534,8 +534,25 @@ import {
 } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 import { previewOwner } from "../spawn/preview-owner.ts";
+import { cellsAvailable } from "../apps/contain.ts";
+import { machinesSettingsPage } from "../web/pages/machines.ts";
+import {
+  defaultCommand,
+  mayOpenShell,
+  setShellOptions,
+  shellOptions,
+  shellTarget,
+  stopShells,
+  withShells,
+  closeStaleSessions,
+  type ForgeSocket,
+  type ShellSocket,
+} from "../machines/shell.ts";
 
 // ---- auth ----
+
+/** A machine's shell with no keystroke for this long ends (`machines/shell.ts`). */
+const SHELL_IDLE_MS = 30 * 60_000;
 
 const NO_AUTH: Auth = { user: undefined, scope: undefined, via: "none" };
 
@@ -1353,6 +1370,7 @@ export function buildRouter(): Router<Handler> {
     proposalTokenRevoke,
   );
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
+  router.add("GET", "/:owner/:name/settings/machines", machinesSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
   router.add("POST", "/:owner/:name/settings/app/members", appMembersUpdate);
@@ -2143,6 +2161,8 @@ export function forgeHttp(app: App): ForgeHttp {
 
 export async function serve(app: App): Promise<Servers> {
   const router = buildRouter();
+  // No shell outlives its forge: a row a stop or crash left open is closed.
+  closeStaleSessions(app.db);
   const apiRouter = buildApiRouter();
   await clearStaleSockets(app);
   // One limiter per listener: its state is a minute of timestamps, and two
@@ -2338,7 +2358,7 @@ export async function serve(app: App): Promise<Servers> {
 
   const handle = async (
     request: Request,
-    server: Bun.Server<AppSocket>,
+    server: Bun.Server<ForgeSocket<AppSocket>>,
   ): Promise<Response | undefined> => {
       const started = performance.now();
       noteStart(request, started);
@@ -2432,6 +2452,34 @@ export async function serve(app: App): Promise<Servers> {
       if (ownUnknown)
         return securityFloor(new Response("not found", { status: 404 }));
       notePeer(request, server.requestIP(request)?.address, trust);
+      // A writer's shell into a machine: decided here, before any route,
+      // because an upgrade is answered by the socket, not a response.
+      if (isWebSocketHandshake(request)) {
+        const target = shellTarget(new URL(request.url).pathname);
+        if (target !== undefined) {
+          const auth = await resolveAuth(app, request);
+          const may = await mayOpenShell(app, request, publicUrl(request, app.config.url), target, auth);
+          if (!may.ok) {
+            const [status, text] =
+              may.refusal === "not_found" ? [404, "not found"] : may.refusal === "busy" ? [429, "too many shells"] : [403, "forbidden"];
+            return securityFloor(new Response(text, { status }));
+          }
+          // A machine's shell runs only where a cell holds it, asked at the
+          // first shell rather than at boot; a test that set its own keeps them.
+          if (shellOptions(app) === undefined) {
+            const cells = await cellsAvailable();
+            if (shellOptions(app) === undefined)
+              setShellOptions(app, {
+                idleMs: SHELL_IDLE_MS,
+                contain: cells.ok ? "cell" : "refuse",
+                command: defaultCommand(),
+              });
+          }
+          const data: ShellSocket = { shell: { ...may.grant, app } };
+          if (server.upgrade(request, { data })) return undefined;
+          return securityFloor(new Response("upgrade refused", { status: 400 }));
+        }
+      }
       // A body refused part-way, or one left unread with no declared length,
       // ends its connection once answered (`http/limits.ts`).
       armClose(request, () => server.timeout(request, 1));
@@ -2460,7 +2508,7 @@ export async function serve(app: App): Promise<Servers> {
     maxRequestBodySize: REQUEST_MAX,
     // The only sockets the forge holds are an app's, carried through the
     // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
-    websocket: appWebSocket,
+    websocket: withShells(appWebSocket),
     fetch: handle,
     // A last resort: `handle` answers a throw itself, so it is counted.
     error: (error) => failure(app, error),
@@ -2484,6 +2532,7 @@ export async function serve(app: App): Promise<Servers> {
     },
     stop() {
       endOpen();
+      stopShells(app);
       prerender();
       clearInterval(sweep);
       // Counts first: a hosted child's database closes with its app.

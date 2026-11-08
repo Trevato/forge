@@ -1,0 +1,520 @@
+/**
+ * A writer's shell into a machine (#9471): a WebSocket at
+ * `/:owner/:name/machines/:machine/shell` that a signed-in person with write
+ * permission on the repository may open, from this forge's own pages only
+ * (the Origin must be the forge's). It runs tmux on a real pty
+ * (`Bun.spawn({terminal})`), held in a cell (`apps/contain.ts`) — the same
+ * bubblewrap the forge holds repository code in — with the machine's memory
+ * and CPU ceilings and no reach beyond the forge. A forge that cannot hold a
+ * cell refuses the shell rather than hand out one on the host.
+ *
+ * One session per person, repository and machine: a second connection (a
+ * second tab, a reload) joins the session that is running and sees the same
+ * screen. Binary frames are keystrokes in and screen bytes out; a text frame
+ * is JSON and says only `{"type":"resize","cols":n,"rows":n}`. The session
+ * ends when its program exits or after `idleMs` with no keystroke, and each
+ * one is a row in `machine_sessions`: machine, owner, start, end and why.
+ *
+ * No text a person sends ever reaches a command line: the command is a
+ * constant, and the names in the path only pick a row and a directory after
+ * they have been validated.
+ */
+
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Database } from "bun:sqlite";
+import type { App } from "../app.ts";
+import { openCell, resolveLimits, type Cell, type CellSpec } from "../apps/contain.ts";
+import { startTerminal, type TerminalProgram } from "../apps/tty.ts";
+import { holdOpen } from "../http/caller.ts";
+import { canWrite, getRepo, getRepoById, type Repo } from "../core/repos.ts";
+import { getUserById, isActive } from "../core/users.ts";
+import { isSafeName } from "../git/guard.ts";
+import type { User } from "../core/users.ts";
+import { repoMachines } from "../crew/machines_read.ts";
+import type { Machine } from "../crew/machines.ts";
+import { id as newId } from "../kernel/id.ts";
+
+// ---- the route ----
+
+export interface ShellTarget {
+  readonly owner: string;
+  readonly name: string;
+  readonly machine: string;
+}
+
+const MACHINE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+/** The repository and machine a shell path names, or undefined when it names none. */
+export function shellTarget(pathname: string): ShellTarget | undefined {
+  const parts = pathname.split("/");
+  if (parts.length !== 6 || parts[0] !== "" || parts[3] !== "machines" || parts[5] !== "shell")
+    return undefined;
+  const [, owner, name, , machine] = parts as [string, string, string, string, string];
+  if (!isSafeName(owner) || !isSafeName(name) || !MACHINE_NAME.test(machine)) return undefined;
+  return { owner, name, machine };
+}
+
+/** Same origin, strictly: a browser always sends Origin on a WebSocket, so none is a refusal. */
+function sameOrigin(request: Request, forgeUrl: URL): boolean {
+  const origin = request.headers.get("origin");
+  if (origin === null) return false;
+  try {
+    return new URL(origin).origin === forgeUrl.origin;
+  } catch {
+    return false;
+  }
+}
+
+export type ShellRefusal = "not_found" | "forbidden" | "busy";
+
+export interface ShellGrant {
+  readonly repo: Repo;
+  readonly machine: Machine;
+  readonly user: User;
+  readonly sessionId: string | undefined;
+}
+
+/**
+ * Who may open this shell, decided before the upgrade. A repository the
+ * caller cannot see, or a machine it does not declare, is `not_found`; a
+ * reader, a token, a cross-origin page is `forbidden`.
+ */
+export async function mayOpenShell(
+  app: App,
+  request: Request,
+  forgeUrl: URL,
+  target: ShellTarget,
+  auth: { user: User | undefined; via: string; sessionId?: string | undefined },
+): Promise<{ ok: true; grant: ShellGrant } | { ok: false; refusal: ShellRefusal }> {
+  const repo = getRepo(app.db, target.owner, target.name);
+  const user = auth.user;
+  if (repo === undefined) return { ok: false, refusal: "not_found" };
+  // A browser identity only: a token cannot open a shell.
+  if (user === undefined || (auth.via !== "session" && auth.via !== "edge"))
+    return { ok: false, refusal: repo.visibility === "public" ? "forbidden" : "not_found" };
+  if (!sameOrigin(request, forgeUrl)) return { ok: false, refusal: "forbidden" };
+  if (!canWrite(app.db, repo, user))
+    return { ok: false, refusal: repo.visibility === "public" ? "forbidden" : "not_found" };
+  const config = await repoMachines(app, repo);
+  const machine = config.machines.find((m) => m.name === target.machine);
+  if (machine === undefined) return { ok: false, refusal: "not_found" };
+  const grant = { repo, machine, user, sessionId: auth.sessionId };
+  if (!roomFor(app, grant)) return { ok: false, refusal: "busy" };
+  return { ok: true, grant };
+}
+
+// ---- frames ----
+
+export const RESIZE = { cols: { min: 1, max: 500 }, rows: { min: 1, max: 300 } } as const;
+
+/** A text frame's resize, or undefined for anything else. */
+export function parseControl(text: string): { cols: number; rows: number } | undefined {
+  if (text.length > 200) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null) return undefined;
+  const { type, cols, rows } = value as Record<string, unknown>;
+  if (type !== "resize") return undefined;
+  const fits = (n: unknown, r: { min: number; max: number }): n is number =>
+    Number.isInteger(n) && (n as number) >= r.min && (n as number) <= r.max;
+  if (!fits(cols, RESIZE.cols) || !fits(rows, RESIZE.rows)) return undefined;
+  return { cols, rows };
+}
+
+// ---- the records ----
+
+export type EndReason = "exit" | "idle" | "stopped" | "revoked" | "failed";
+
+export interface SessionRecord {
+  readonly id: string;
+  readonly machine: string;
+  readonly ownerId: string;
+  readonly ownerName: string;
+  readonly startedAt: string;
+  readonly endedAt: string | undefined;
+  readonly endReason: EndReason | undefined;
+}
+
+export function recordStart(db: Database, repoId: string, machine: string, ownerId: string): string {
+  const row = newId();
+  db.query(
+    "INSERT INTO machine_sessions (id, repo_id, machine, owner_id, started_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(row, repoId, machine, ownerId, new Date().toISOString());
+  return row;
+}
+
+export function recordEnd(db: Database, row: string, reason: EndReason): void {
+  db.query(
+    "UPDATE machine_sessions SET ended_at = ?, end_reason = ? WHERE id = ? AND ended_at IS NULL",
+  ).run(new Date().toISOString(), reason, row);
+}
+
+/**
+ * At boot, every row still open belongs to a forge that stopped or crashed
+ * without ending it: no shell survives its forge, so each is closed as
+ * `stopped`. Returns how many.
+ */
+export function closeStaleSessions(db: Database): number {
+  return db
+    .query("UPDATE machine_sessions SET ended_at = ?, end_reason = 'stopped' WHERE ended_at IS NULL")
+    .run(new Date().toISOString()).changes;
+}
+
+/** The repository's last sessions, newest first (index `machine_sessions_repo_started`). */
+export function lastSessions(db: Database, repoId: string, limit = 20): SessionRecord[] {
+  return db
+    .query<
+      { id: string; machine: string; owner_id: string; username: string | null; started_at: string; ended_at: string | null; end_reason: EndReason | null },
+      [string, number]
+    >(
+      `SELECT s.id, s.machine, s.owner_id, u.username, s.started_at, s.ended_at, s.end_reason
+         FROM machine_sessions s LEFT JOIN user u ON u.id = s.owner_id
+        WHERE s.repo_id = ? ORDER BY s.started_at DESC LIMIT ?`,
+    )
+    .all(repoId, limit)
+    .map((r) => ({
+      id: r.id,
+      machine: r.machine,
+      ownerId: r.owner_id,
+      ownerName: r.username ?? "someone",
+      startedAt: r.started_at,
+      endedAt: r.ended_at ?? undefined,
+      endReason: r.end_reason ?? undefined,
+    }));
+}
+
+/** How each end reads, on the page and in the terminal. */
+export const ENDED: Record<EndReason, string> = {
+  exit: "the shell exited",
+  idle: "idle too long",
+  stopped: "the forge stopped",
+  revoked: "its owner could no longer write here",
+  failed: "the shell could not start",
+};
+
+// ---- the sessions ----
+
+/** What a socket carries: its grant, and the session it joined once open. */
+export interface ShellSocket {
+  readonly shell: ShellGrant & { readonly app: App };
+  joined?: Session;
+  release?: () => void;
+}
+
+type Peer = Bun.ServerWebSocket<ShellSocket>;
+
+interface Session {
+  readonly key: string;
+  readonly userId: string;
+  readonly repoId: string;
+  readonly row: string;
+  readonly terminal: Bun.Terminal;
+  readonly program: TerminalProgram;
+  readonly peers: Set<Peer>;
+  lastInput: number;
+  ended: boolean;
+  readonly timer: ReturnType<typeof setInterval>;
+}
+
+export interface ShellOptions {
+  /** No keystroke for this long ends the session. */
+  readonly idleMs: number;
+  /**
+   * Whether this forge can hold a cell. Without one the shell is refused —
+   * except where a test says `uncontained`, on purpose, to run the bridge.
+   */
+  readonly contain: "cell" | "uncontained" | "refuse";
+  /** The command the pty runs: constant, never built from a request. */
+  readonly command: string;
+  /** How often a session asks again whether its owner may still write; defaults to `CHECK_MS`. */
+  readonly checkMs?: number;
+  /** Handshakes one person may make in a minute; defaults to `HANDSHAKES_PER_MINUTE`. */
+  readonly handshakesPerMinute?: number;
+}
+
+/** Sessions the whole forge runs at once, and one person runs at once. */
+export const MAX_SESSIONS = { forge: 16, person: 3 } as const;
+/** Handshakes one person may make in a minute. */
+export const HANDSHAKES_PER_MINUTE = 20;
+/** The largest keystroke frame: a paste, not a file. */
+export const MAX_INPUT_BYTES = 64 * 1024;
+/** Output waiting on a peer that is not reading, past which it is closed. */
+export const MAX_BUFFERED_BYTES = 1024 * 1024;
+export const CHECK_MS = 5_000;
+
+/** tmux where the machine has it, so a person's windows survive a closed tab; else a login shell. */
+export function defaultCommand(): string {
+  return Bun.which("tmux") !== null
+    ? "exec tmux -L forge new-session -A -s shell"
+    : "exec /bin/sh -i";
+}
+
+const sessions = new WeakMap<App, Map<string, Session>>();
+const options = new WeakMap<App, ShellOptions>();
+const handshakes = new WeakMap<App, Map<string, number[]>>();
+
+export function setShellOptions(app: App, next: ShellOptions): void {
+  options.set(app, next);
+}
+
+export function shellOptions(app: App): ShellOptions | undefined {
+  return options.get(app);
+}
+
+function sessionsOf(app: App): Map<string, Session> {
+  let map = sessions.get(app);
+  if (map === undefined) {
+    map = new Map();
+    sessions.set(app, map);
+  }
+  return map;
+}
+
+/** The sessions running now. */
+export function liveSessions(app: App): number {
+  return sessionsOf(app).size;
+}
+
+const keyOf = (g: ShellGrant): string => `${g.repo.id}\0${g.machine.name}\0${g.user.id}`;
+
+/**
+ * Whether this handshake may go on: within the person's handshakes this
+ * minute, and either joining their running session or within the caps.
+ */
+function roomFor(app: App, grant: ShellGrant, now = Date.now()): boolean {
+  let byUser = handshakes.get(app);
+  if (byUser === undefined) handshakes.set(app, (byUser = new Map()));
+  const recent = (byUser.get(grant.user.id) ?? []).filter((t) => now - t < 60_000);
+  if (recent.length >= (options.get(app)?.handshakesPerMinute ?? HANDSHAKES_PER_MINUTE)) return false;
+  recent.push(now);
+  byUser.set(grant.user.id, recent);
+  const live = sessionsOf(app);
+  if (live.has(keyOf(grant))) return true;
+  if (live.size >= MAX_SESSIONS.forge) return false;
+  let mine = 0;
+  for (const s of live.values()) if (s.userId === grant.user.id) mine++;
+  return mine < MAX_SESSIONS.person;
+}
+
+/** Each person's own directory on each machine: one writer's files and history are never the next's. */
+export function workspace(app: App, repo: Repo, machine: Machine, userId: string): string {
+  return join(app.config.dataDir, "machines", repo.id, machine.name, userId);
+}
+
+/** The cell a shell runs in: its own directory, the forge's data hidden, the machine's ceilings. */
+export function shellCell(app: App, dir: string, machine: Machine, label: string): CellSpec {
+  const step = resolveLimits("step", undefined);
+  return {
+    dir,
+    writable: [],
+    home: join(dir, "home"),
+    hide: [app.config.dataDir, process.env["HOME"] ?? "", tmpdir()],
+    egress: [],
+    reach: [app.config.url ?? ""].filter((u) => u !== ""),
+    limits: {
+      ...step,
+      memoryMiB: machine.memoryMiB ?? step.memoryMiB,
+      cpus: machine.cpus ?? step.cpus,
+    },
+    terminal: true,
+    label,
+  };
+}
+
+function end(app: App, session: Session, reason: EndReason): void {
+  if (session.ended) return;
+  session.ended = true;
+  clearInterval(session.timer);
+  sessionsOf(app).delete(session.key);
+  recordEnd(app.db, session.row, reason);
+  if (reason !== "exit") session.program.hangup();
+  for (const peer of session.peers) if (peer.readyState === WebSocket.OPEN) peer.close(1000, ENDED[reason]);
+  session.peers.clear();
+}
+
+/** Whether the session's owner may still hold it: active, and still a writer of the repository. */
+function stillMay(app: App, session: Session): boolean {
+  const user = getUserById(app.db, session.userId);
+  const repo = getRepoById(app.db, session.repoId);
+  return user !== undefined && repo !== undefined && isActive(user) && canWrite(app.db, repo, user);
+}
+
+function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, rows: number): Session | undefined {
+  const dir = workspace(app, grant.repo, grant.machine, grant.user.id);
+  const peers = new Set<Peer>();
+  let terminal: Bun.Terminal | undefined;
+  let cell: Cell | undefined;
+  let row: string | undefined;
+  try {
+    mkdirSync(join(dir, "home"), { recursive: true });
+    row = recordStart(app.db, grant.repo.id, grant.machine.name, grant.user.id);
+    terminal = new Bun.Terminal({
+      cols,
+      rows,
+      data: (_t, chunk) => {
+        for (const peer of peers) {
+          if (peer.readyState !== WebSocket.OPEN) continue;
+          // A peer that is not reading is closed, never buffered without end.
+          if (peer.sendBinary(chunk) === 0 || peer.getBufferedAmount() > MAX_BUFFERED_BYTES)
+            peer.close(1008, "not reading");
+        }
+      },
+    });
+    if (opts.contain === "cell")
+      cell = openCell(shellCell(app, dir, grant.machine, `machine:${grant.repo.id}/${grant.machine.name}`));
+    const env: Record<string, string> = {
+      PATH: process.env["PATH"] ?? "/usr/bin:/bin",
+      HOME: join(dir, "home"),
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      LANG: "C.UTF-8",
+      FORGE_MACHINE: grant.machine.name,
+      FORGE_MACHINE_TOOLS: grant.machine.tools.join(" "),
+    };
+    const program = startTerminal(opts.command, { terminal, env, cwd: dir, cell });
+    const term = terminal;
+    const session: Session = {
+      key: keyOf(grant),
+      userId: grant.user.id,
+      repoId: grant.repo.id,
+      row,
+      terminal: term,
+      program,
+      peers,
+      lastInput: Date.now(),
+      ended: false,
+      timer: setInterval(
+        () => {
+          if (Date.now() - session.lastInput >= opts.idleMs) end(app, session, "idle");
+          else if (!stillMay(app, session)) end(app, session, "revoked");
+        },
+        Math.max(10, Math.min(opts.idleMs, opts.checkMs ?? CHECK_MS)),
+      ),
+    };
+    void program.exited.then(() => {
+      term.close();
+      end(app, session, "exit");
+    });
+    sessionsOf(app).set(session.key, session);
+    app.log.info("machine shell started", {
+      repo: `${grant.repo.ownerName}/${grant.repo.name}`,
+      machine: grant.machine.name,
+      user: grant.user.username,
+    });
+    return session;
+  } catch (error) {
+    // Nothing half-made is left behind: the pty, the cell, and an open row.
+    try {
+      terminal?.close();
+    } catch {
+      /* already closed */
+    }
+    cell?.close();
+    if (row !== undefined) recordEnd(app.db, row, "failed");
+    app.log.warn("machine shell did not start", { machine: grant.machine.name, error: String(error) });
+    return undefined;
+  }
+}
+
+/** End every session (the forge is stopping). */
+export function stopShells(app: App): void {
+  for (const session of [...sessionsOf(app).values()]) end(app, session, "stopped");
+}
+
+/** Whether a socket's data is a shell's, so the forge's one handler can tell. */
+export function isShellSocket(data: unknown): data is ShellSocket {
+  return typeof data === "object" && data !== null && "shell" in data;
+}
+
+export const shellWebSocket = {
+  open(ws: Peer): void {
+    const { app, user, sessionId } = ws.data.shell;
+    const opts = options.get(app);
+    if (opts === undefined || opts.contain === "refuse") {
+      ws.close(1011, "this forge cannot hold a machine's shell");
+      return;
+    }
+    const session = sessionsOf(app).get(keyOf(ws.data.shell)) ?? start(app, ws.data.shell, opts, 80, 24);
+    if (session === undefined) {
+      ws.close(1011, ENDED.failed);
+      return;
+    }
+    session.peers.add(ws);
+    ws.data.joined = session;
+    ws.data.release = holdOpen(app.db, user.id, sessionId, () => {
+      if (ws.readyState === WebSocket.OPEN) ws.close(1008, "this account was suspended");
+    });
+  },
+  message(ws: Peer, message: string | Buffer): void {
+    const session = ws.data.joined;
+    if (session === undefined || session.ended) return;
+    if (typeof message === "string") {
+      const resize = parseControl(message);
+      if (resize === undefined) {
+        ws.close(1003, "a text frame is a resize");
+        return;
+      }
+      if (!session.terminal.closed) session.terminal.resize(resize.cols, resize.rows);
+      return;
+    }
+    if (message.byteLength > MAX_INPUT_BYTES) {
+      ws.close(1009, "a keystroke frame is at most 64 KiB");
+      return;
+    }
+    session.lastInput = Date.now();
+    if (session.terminal.closed) return;
+    try {
+      session.terminal.write(message);
+    } catch {
+      /* the program is gone; the keystroke has nowhere to go */
+    }
+  },
+  close(ws: Peer): void {
+    ws.data.release?.();
+    const session = ws.data.joined;
+    if (session === undefined) return;
+    session.peers.delete(ws);
+    // The session stays for the next connection until it is idle or exits —
+    // unless its owner was suspended or may no longer write here.
+    if (session.peers.size === 0 && !stillMay(ws.data.shell.app, session))
+      end(ws.data.shell.app, session, "revoked");
+  },
+};
+
+/** What the forge's one `websocket` handler carries: an app's proxied socket, or a shell's. */
+export type ForgeSocket<A> = A | ShellSocket;
+
+/** The forge's one `websocket` handler, with a shell's sockets taken first. */
+export function withShells<A extends object>(inner: Bun.WebSocketHandler<A>): Bun.WebSocketHandler<ForgeSocket<A>> {
+  type W = Bun.ServerWebSocket<ForgeSocket<A>>;
+  const asApp = (ws: W) => ws as Bun.ServerWebSocket<A>;
+  const asShell = (ws: W) => ws as Peer;
+  return {
+    ...(inner.maxPayloadLength !== undefined ? { maxPayloadLength: inner.maxPayloadLength } : {}),
+    ...(inner.backpressureLimit !== undefined ? { backpressureLimit: inner.backpressureLimit } : {}),
+    ...(inner.closeOnBackpressureLimit !== undefined ? { closeOnBackpressureLimit: inner.closeOnBackpressureLimit } : {}),
+    ...(inner.idleTimeout !== undefined ? { idleTimeout: inner.idleTimeout } : {}),
+    open(ws) {
+      if (isShellSocket(ws.data)) return shellWebSocket.open(asShell(ws));
+      return inner.open?.(asApp(ws));
+    },
+    message(ws, message) {
+      if (isShellSocket(ws.data)) return shellWebSocket.message(asShell(ws), message);
+      return inner.message(asApp(ws), message);
+    },
+    close(ws, code, reason) {
+      if (isShellSocket(ws.data)) return shellWebSocket.close(asShell(ws));
+      return inner.close?.(asApp(ws), code, reason);
+    },
+    drain(ws) {
+      if (isShellSocket(ws.data)) return;
+      return inner.drain?.(asApp(ws));
+    },
+  };
+}

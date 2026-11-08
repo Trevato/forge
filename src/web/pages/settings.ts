@@ -116,6 +116,7 @@ type Section =
   | "prompts"
   | "labels"
   | "hooks"
+  | "machines"
   | "danger";
 
 /** The repo, but only for someone who administers it. A non-admin is told
@@ -164,6 +165,12 @@ function sections(base: string, active: Section) {
       href: `${base}/settings/hooks`,
       icon: "webhook" as const,
       current: active === "hooks",
+    },
+    {
+      label: "Machines",
+      href: `${base}/settings/machines`,
+      icon: "terminal" as const,
+      current: active === "machines",
     },
     {
       label: "Danger zone",

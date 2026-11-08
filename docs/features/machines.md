@@ -44,7 +44,50 @@ cannot widen its own machine by editing the file on its branch):
 `FORGE_MACHINE` and `FORGE_MACHINE_TOOLS` (names only) in its environment, a
 line in its brief naming the tools its machine carries, and its `apps` reach.
 
+## A shell into a machine (#9471)
+
+`src/machines/shell.ts`. A WebSocket at
+`/<owner>/<repo>/machines/<machine>/shell` opens a shell into one of the
+repository's machines:
+
+- **Who.** A signed-in person (a session cookie or the platform edge, never a
+  token) with write permission on the repository, from this forge's own
+  pages: the `Origin` must be the forge's, and a missing one is refused. A
+  reader is refused 403 on a public repository; a private one, or a machine
+  it does not declare, answers 404.
+- **Where.** tmux (or `/bin/sh` where tmux is not installed) on a real pty,
+  in a cell (`apps/contain.ts`) under the machine's memory and CPU ceilings,
+  with the forge's data hidden and no reach beyond the forge. Each writer has
+  a directory and home of their own on each machine,
+  `<data>/machines/<repo id>/<machine>/<user id>`: one writer's files and
+  shell history are never the next's. A forge that cannot hold a cell closes
+  the socket (1011, "this forge cannot hold a machine's shell") rather than
+  hand out a shell on its host. The command is a constant: nothing a person
+  sends reaches a command line. A shell that fails to start leaves no pty,
+  cell or open row behind (its row ends `failed`).
+- **Frames.** Binary frames are keystrokes in (at most 64 KiB each; a bigger
+  one closes with 1009) and screen bytes out; a peer that stops reading
+  (over 1 MiB waiting) is closed. A text frame is
+  `{"type":"resize","cols":n,"rows":n}` (cols 1–500, rows 1–300); any other
+  text frame closes the connection (1003).
+- **Limits.** 16 sessions on the forge at once and 3 per person; 20
+  handshakes per person a minute. Past either the handshake answers 429.
+- **One session per person, repository and machine.** A second connection
+  (another tab, a reload) joins the running session and sees the same
+  output. The session ends when the shell exits, after 30 minutes with no
+  keystroke, or — checked every 5 seconds and when its last connection
+  closes — once its owner is suspended or can no longer write here.
+- **Records.** Each session is a row in `machine_sessions` (machine, owner,
+  start, end and why: `exit`, `idle`, `stopped`, `revoked`, `failed`). No
+  shell outlives its forge, so a row a stop or crash left open is closed as
+  `stopped` when the forge boots. Writers see the last 20 at
+  `/<owner>/<repo>/settings/machines` (in the settings frame for an admin,
+  on its own for a writer who is not one), and in the terminal: the palette's
+  **Machines of a repository** (`src/tui/screens/machines.ts`), writers only.
+
 ## Not done yet (split from #9418)
 
-Disk ceilings are not declared (#9460); the tools are declared, not yet installed in an image; the browser
-shell (ghostty-web, tmux, WebSocket, session records) is not started.
+Disk ceilings are not declared (#9460); the tools are declared, not yet
+installed in an image; the browser terminal (ghostty-web) that speaks to the
+shell socket is not built; the shell's cell does not reach the repository's
+apps even when its machine says `apps`.
