@@ -696,7 +696,11 @@ form.inline { display: inline; margin-left: auto; }
    tree's width is one custom property, \`--ex-w\`, so the divider's script
    has exactly one thing to set and the stylesheet keeps the fallback. */
 .code-layout { display: grid; gap: 12px; margin-top: 12px; align-items: start; }
+/* The files page (#9376): long names wrap, code scrolls in its own .code box. */
+.code-layout { overflow-wrap: anywhere; }
 .code-layout > #code-main { min-width: 0; }
+.code-layout #code-main > * { min-width: 0; }
+.code-layout #code-main .bar { flex-wrap: wrap; }
 .code-layout > #code-main[aria-busy="true"] { opacity: .55; transition: opacity 120ms var(--ease); }
 /* The divider is nothing until a script can drag it, and nothing on one
    column either. */
