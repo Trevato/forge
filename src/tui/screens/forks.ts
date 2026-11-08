@@ -94,8 +94,8 @@ export function followingRows(
       : relation.state === "synced"
         ? "in step"
         : relation.state === "diverged"
-          ? `diverged · ${counts}${relation.clean ? " · merges cleanly" : ""}`
-          : `${relation.state} · ${counts}`;
+          ? `diverged · ${counts}${relation.clean ? " · merges cleanly" : ""} · ${relation.action}`
+          : `${relation.state} · ${counts}${relation.action === "none" ? "" : ` · ${relation.action}`}`;
   return [
     {
       repo: parent,

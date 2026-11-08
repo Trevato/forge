@@ -82,6 +82,9 @@ export function followingRoutes(router: Router<Handler>): void {
       ahead: relation.ahead,
       clean: relation.clean,
       conflicts: relation.conflicts,
+      // The sync contract's one reconciling action and the words for it (src/git/sync_link.ts).
+      action: relation.action,
+      words: relation.words,
       forkTip: relation.forkTip,
       parentTip: relation.parentTip,
       parentForge: parentForgeFor(ctx.app.config),

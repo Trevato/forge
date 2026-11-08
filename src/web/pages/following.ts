@@ -368,6 +368,8 @@ export function followingCard(
     prose.push(block.sentence);
     rows.push(...block.links);
   }
+  if (parent.detached === null && relation.action !== "none")
+    prose.push(html`<p class="muted small">${relation.words}</p>`);
   if (foot !== null) prose.push(html`<p class="muted small">${foot}</p>`);
   if (canAdmin(ctx.app.db, repo, ctx.auth.user) && writer)
     prose.push(modeForm(base, following.mode, "How this fork follows its parent"));

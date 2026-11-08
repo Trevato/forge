@@ -44,6 +44,18 @@ The preview of the pull was not exercised: the write-through is proven by `test/
 
 Any of them can be mirrored here, and a mirror follows the one there. Sending work back from a repository someone else owns takes a token that can write there: `contribute` forks it there and opens a pull, and a read-only connection is refused in words. Test: `test/origin-repo-groups.test.ts`.
 
+## The sync contract (`src/git/sync_link.ts`)
+
+One contract written for every shape a network takes: a follower, a fork, a mirror, two forges syncing both ways, a forge with several upstreams, and a diamond. Today only one shape has a door: a fork following its parent on the same forge. Nothing yet calls it between two forges (no API, MCP, web or terminal door syncs a repository with one on another forge); the other shapes are exercised by tests alone. A link is judged (`judgeLink`: synced, behind, ahead or diverged, with the counts and the one action that reconciles it: fast-forward, offer, merge, or keep both) and synced (`syncLink`).
+
+- **Idempotent.** A tip already held is a no-op, by whichever route it comes; a diamond lands once.
+- **Resumable.** Their tip arrives by a fetch into a staging ref, which git writes whole or not at all, and our branch moves by compare-and-swap. A sync cut off at any point leaves the branch where it was; the next try finishes.
+- **Divergence is never silent and never moved.** The branch stays; their tip is staged at the stage ref; both sides compute the same words and the same action.
+
+**Where you meet it.** A fork's standing against its parent now names the one action that reconciles it (`none`, `fast-forward`, `offer`, `merge`, `keep-both`) and says it in words: in the `following` API read (`action`, `words`), on the fork's home card, in the terminal's forks screen (`Forks` → the follows row), and in MCP `following`. Taking the parent's work (`fastForwardFork`, which every push to the parent triggers) goes through `syncLink`, so it is compare-and-swap, stages the parent's tip at `refs/following/<branch>`, and refuses a divergence. `source` is always a repository path computed from rows, never text a person typed. Syncs into the same repository's stage ref take turns, so a push's follow-on and a person's click at once never race on that ref (test: "syncs at once into one stage ref take turns").
+
+`test/sync-shapes.test.ts` walks each shape with real git between bare repositories on one machine. `scripts/forge-compat-lab/shapes.ts` holds the same shapes as lab cells between two real forges, but **they have not run yet**: they run only when asked for (`LAB_ONLY=shapes scripts/forge-compat-lab.sh`) and are not proven until a docker host has walked them. Not shown either: that a sync at one door reaches a web viewer live (the card reads the standing on each load; nothing pushes it). Not yet wired: the flows-view health of each link, the schedule probe, and the crew taking the action on autonomous repositories (the rest of #9451).
+
 ## A downstream forge as a peer (#9451)
 
 A child forge's proposal (`child/<name>/…` head, proposal token) used to wait for a person to approve the exact head even when that forge was trusted. Now a writer trusts the pair *(forge, `child:<name>`)* in the same trusted-sources list as an origin's account, on the same page (`/settings/trusted`) and in the same terminal screen: write `child:kid` as the account. The forge is the host of the origin the proposal token was minted for; the name is the one the writer chose when minting it. Its pulls then run their checks and fold in like a trusted origin's (`foldsIn`, `src/core/trusted_sources.ts`).

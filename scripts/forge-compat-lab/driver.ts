@@ -6,6 +6,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { runShapes } from "./shapes.ts";
 
 type Seeded = { cookie: string; ro: string; rw: string; admin: string; revokable: { id: string; token: string } };
 type Seed = Record<"ann" | "rick" | "boss" | "ona" | "pat" | "uma" | "dee", Seeded>;
@@ -872,6 +873,17 @@ const main = async (): Promise<void> => {
   }
   for (const [r, s] of [["forge-new", "forge-old"], ["forge-old", "forge-new"], ["forge-new2", "forge-new"]] as const)
     if (wanted(`${r}:${s}`)) await runPair(r, s, work[s] ?? null);
+  // Opt-in until the cells have run once on a docker host (docs/features/forge-origin.md).
+  if (only.includes("shapes"))
+    await runShapes({
+      a: { base: addr("forge-new"), user: "ann", rw: seeds["forge-new"]!.ann.rw },
+      b: { base: addr("forge-new2"), user: "ann", rw: seeds["forge-new2"]!.ann.rw },
+      api,
+      git,
+      gitEnv,
+      cell,
+      must,
+    });
   await results();
   console.log(`${cells.filter((c) => c.verdict === "pass").length} pass, ${cells.filter((c) => c.verdict === "fail").length} fail, ${cells.filter((c) => c.verdict === "absent").length} absent`);
 };
