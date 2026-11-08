@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { openIssue, setIssueState } from "../src/actions/issues.ts";
+import { assignIssue, openIssue, setIssueState } from "../src/actions/issues.ts";
 import { NEXT_ALREADY_AWAY, NEXT_FULL, placeOf, rankIssue } from "../src/actions/next.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { addDependency, readyNow, repoGraph } from "../src/core/dependencies.ts";
@@ -17,6 +17,7 @@ import { getIssue, getIssueById } from "../src/core/issues.ts";
 import { MAX_RANKED, writeOrder } from "../src/core/rank.ts";
 import { nextUp } from "../src/core/next_up.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -310,6 +311,90 @@ describe("the picker follows the page (#8826)", () => {
       expect(started).toEqual(page);
     } finally {
       app.db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Next up page shape (#9764)", () => {
+  test("renders rows straight under headings: one-sentence head, no card, no badge, plain-text role, forms still POST", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-next-shape-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    const servers = await serve(app);
+    try {
+      const mk = async (username: string, first: boolean) => {
+        const made = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@forge.local`, password: "a-good-passphrase", adminIfFirst: first });
+        if (!made.ok) throw new Error(made.error);
+        return made.value;
+      };
+      const alice = await mk("alice", true);
+      const bob = await mk("bob", false);
+      const made = await createRepo(app, alice, { name: "shape", visibility: "public" });
+      if (!made.ok) throw new Error(String(made.error));
+      const repo = made.value;
+      const open = (title: string) => {
+        const o = openIssue(app, alice, repo, { title });
+        if (!o.ok) throw new Error(String(o.error));
+        return o.value;
+      };
+      const first = open("First job");
+      const second = open("Second job");
+      const waits = open("Waits on first");
+      addDependency(app.db, waits, first, alice.id);
+      expect(rankIssue(app, alice, repo, waits.number, placeOf("top")!).ok).toBe(true);
+      const given = assignIssue(app, alice, repo, second, bob);
+      if (!given.ok) throw new Error(String(given.error));
+      const cookie = `forge_session=${createSession(app.db, alice.id).token}`;
+      const res = await fetch(`${servers.url}/alice/shape/next`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      const body = (await res.text()).replace(/\s+/g, " ");
+
+      expect(body).toContain("<h2>Ready, in order</h2>");
+      // The list is rows straight under its heading: no card, bare or boxed.
+      expect(body).toMatch(/<h2>Ready, in order<\/h2> ?<ul class="list setting-list" id="next-list"/);
+      const main = body.slice(body.indexOf("<div data-next>"));
+      expect(main).not.toMatch(/class="card\b/);
+      // One sentence in the head, from pageHead; the key hint sits after the list, not in the lead.
+      expect(main).toMatch(/<div class="page-head"> ?<h1>Next up<\/h1> ?<span class="page-head-sub muted small">The crew builds strictly from the top\.<\/span>/);
+      expect(main.indexOf("j and k move between rows")).toBeGreaterThan(main.indexOf("</ul>"));
+      expect(body).not.toMatch(/class="[^"]*\bbadge\b/);
+      expect(body).not.toMatch(/<(?:span|em|strong)[^>]*badge/);
+
+      const rows = body.match(/<li[^>]*data-number="\d+"[\s\S]*?<\/li>/g) ?? [];
+      expect(rows.length).toBe(3);
+      const rowOf = (n: number) => rows.find((r) => r.includes(`data-number="${n}"`))!;
+      for (const [issue, role] of [[first, "Blocker"], [second, "Enabler"]] as const) {
+        const meta = /<span class="row-meta">([\s\S]*?)<\/span>/.exec(rowOf(issue.number))![1]!;
+        expect(meta).toContain(`${role} · #${issue.number}`);
+        expect(meta.split("<span")[0]).not.toContain("<");
+      }
+      expect(rowOf(second.number)).toContain("on it: bob");
+      expect(rowOf(waits.number)).toContain(`waits for #${first.number}`);
+
+      // Every action is still a form that posts.
+      for (const label of ["Top", "Up", "Down", "Not now"]) {
+        expect(body).toMatch(new RegExp(`<form method="post" action="[^"]*/next"[^>]*>(?:(?!</form>).)*${label} <kbd>`));
+      }
+      expect(body).not.toMatch(/<form(?![^>]*method="post")[^>]*action="[^"]*\/next"/);
+
+      // Not now (?all=1) is rows under its own heading too, and Top is the one move it offers.
+      const gate = open("Later gate: not now");
+      const far = open("Far off");
+      addDependency(app.db, far, gate, alice.id);
+      const all = (await (await fetch(`${servers.url}/alice/shape/next?all=1`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
+      const notNow = all.slice(all.indexOf("<h2>Not now</h2>"));
+      expect(notNow).toMatch(/^<h2>Not now<\/h2> ?<ul class="list setting-list">/);
+      expect(notNow).not.toMatch(/class="card\b/);
+      expect(notNow).not.toContain("Behind the Later gate. Top lifts");
+      const farRow = /<li[^>]*data-number="(\d+)"[\s\S]*?<\/li>/.exec(notNow)!;
+      expect(farRow[1]).toBe(String(far.number));
+      expect(farRow[0]).toContain("behind the Later gate");
+      expect(farRow[0]).toMatch(/<form method="post" action="[^"]*\/next"[^>]*>(?:(?!<\/form>).)*value="top"/);
+      expect(farRow[0]).not.toMatch(/\bUp <kbd>/);
+      expect(farRow[0]).not.toMatch(/\bDown <kbd>/);
+    } finally {
+      await servers.stop();
+      app.close();
       await rm(dir, { recursive: true, force: true });
     }
   });

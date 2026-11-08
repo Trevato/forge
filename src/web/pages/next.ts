@@ -14,19 +14,24 @@ import { sealedScope } from "../../core/sealed.ts";
 import { notStartable } from "../../crew/not_startable.ts";
 import { CUT_TOP_WORDS, cutWords, FIT_COUNT_JS, rangeWords, rowCosts, weekView, type Cut, type Priced } from "../../flow/week.ts";
 import type { Ctx } from "../../http/context.ts";
-import { crumbsFor, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette, signInFirst } from "../chrome.ts";
+import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, repoHeader, repoPalette, signInFirst } from "../chrome.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashOrJson, page } from "../layout.ts";
-import { badge, btn, card, kbd, row } from "../ui.ts";
+import { btn, kbd, row } from "../ui.ts";
 
 /**
  * The owner's issue titles are their own words, so inside `[data-next]` a long
  * word breaks anywhere, and a row's actions drop under its text (the row asks
  * for 14rem, not 0) in place of squeezing the title to a sliver at 390 px.
+ * The lists sit straight on the page and are spaced, not ruled (DESIGN.md §1,
+ * principles 3 and 7): no hairline between rows, a small gap instead.
  * No new class.
  */
 export const NEXT_CSS = `[data-next] { overflow-wrap: anywhere; }
+[data-next] .list { display: flex; flex-direction: column; gap: 4px; padding: 0; margin: 0; }
+[data-next] .list > li + li { border-top: 0; }
+[data-next] .list .row { border-radius: var(--radius); }
 [data-next] .list > li.has-after > .row { flex: 1 1 14rem; }
 [data-next] .row-after { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; padding: 0 14px 8px; }
 [data-next] .cut-line { overflow-wrap: anywhere; }`;
@@ -159,8 +164,7 @@ function line(
     title: r.issue.title,
     titleAttr: r.issue.title,
     lead: html`${r.place === null ? "·" : String(r.place)}`,
-    meta: html`${badge(r.role === "blocker" ? "Blocker" : "Enabler", { variant: r.role === "blocker" ? "secondary" : "outline" })}
-      #${n} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
+    meta: html`${r.role === "blocker" ? "Blocker" : "Enabler"} · #${n} · ${r.roleWhy}${away ? null : html` · <span class="estimate">${rangeWords(priced.find((p) => p.number === n)?.estimate ?? { known: false, samples: 0, basis: "no estimate" })}</span>`}${r.onIt === null ? "" : ` · on it: ${r.onIt}`}${r.why === null ? "" : ` · ${r.why}`}`,
     nav: true,
     data: { number: String(n), ...(cost === undefined ? {} : { cost: String(cost) }) },
     ...(controls === null ? {} : { after: controls }),
@@ -199,26 +203,16 @@ export function nextPage(ctx: Ctx): Response {
   };
   const body = html`${repoHeader(ctx, repo, "issues")}
     <div data-next>
-    <div class="page-head mt">
-      <h1>Next up</h1>
-      <p class="muted">
-        The crew builds strictly from the top.
-        ${writer
-          ? "Drag a row, or press the key beside an action on the row you are on (j and k move between rows): each saves at once."
-          : "Only someone who writes here can change the order."}
-        Dependencies order work within the list; they are shown, not edited.
-      </p>
-    </div>
-    <p class="muted" id="next-week">${sentence} <a href="${base}/week">The week</a></p>
+    ${pageHead("Next up", { sub: "The crew builds strictly from the top." })}
     <p class="error" id="next-flash" role="alert" hidden></p>
     ${next.rows.length === 0
       ? html`<p class="muted">Nothing is ready: everything open waits for something. <a href="${base}/map">See the map</a>.</p>`
-      : card(
-          html`<ul class="list setting-list" id="next-list"${costs !== null && capacity !== null && cut.unsure === null ? html` data-capacity="${String(capacity.usd)}"` : null}>
+      : html`<section class="stack-tight mt"><h2>Ready, in order</h2><ul class="list setting-list" id="next-list"${costs !== null && capacity !== null && cut.unsure === null ? html` data-capacity="${String(capacity.usd)}"` : null}>
             ${rowsHtml()}
-          </ul>`,
-          { pad: false },
-        )}
+          </ul></section>`}
+    <p class="muted small mt" id="next-week">${sentence} <a href="${base}/week">The week</a>${writer
+      ? " · Drag a row, or press the key on its button; j and k move between rows."
+      : null}</p>
     ${all
       ? null
       : rest > 0 || next.notNowTotal > 0
@@ -233,14 +227,9 @@ export function nextPage(ctx: Ctx): Response {
         : null}
     ${all && next.notNow.length > 0
       ? html`<section class="stack-tight mt">
-          <h2>Not now</h2>
-          <p class="muted small">Behind the Later gate. Top lifts one past it in one action.</p>
-          ${card(
-            html`<ul class="list setting-list">
-              ${next.notNow.map((_, at) => line(base, next.notNow, at, writer, back, true))}
-            </ul>`,
-            { pad: false },
-          )}
+          <h2>Not now</h2><ul class="list setting-list">
+            ${next.notNow.map((_, at) => line(base, next.notNow, at, writer, back, true))}
+          </ul>
         </section>`
       : null}
     </div>`;
