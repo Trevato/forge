@@ -39,6 +39,8 @@ Only 200 (and 206) answers are samples. A redirect, 401 or 404 is counted by sta
 
 Anonymous tree, blob, raw and media pages take a permit from `strangerCodeGate` (`src/http/stranger_code.ts`) before they do any work: at most half the plumbing pool (`gitGate`), `FORGE_STRANGER_CODE_CONCURRENCY` overrides, with at most 256 waiting before the next stranger gets 503 + `Retry-After`. Holding the permit, a page yields one turn of the event loop before it renders, so a queue of strangers' cached pages cannot run back to back while a person's request goes unread. A signed-in request never touches the gate. The admission limit in `strangers.ts` still answers 429 above its per-minute budget.
 
+Cold code pages build their rows and encode their bytes on a pool of workers (`src/web/code_rows_pool.ts`): two by default; `FORGE_CODE_ROWS_WORKERS` sets a number (capped at 8, about 8 MB of heap each) or `auto` for the machine's available parallelism within [2, 8]. Eight did not cut cold 500/s refusals beyond noise (bench/results/cold-forge-500.md, "After the pool").
+
 `bench/signed-in-under-load.ts` boots a throwaway forge in-process with the Shield `open` (so the whole flood reaches the code pages), seeds a repository and a session, and runs `bench/load.ts` against it with `FORGE_LOAD_COOKIE` set: anonymous code pages open-loop at `--rate`, and a signed-in `/` and repository home every 50 ms beside them. It prints both streams' p50/p95, the event loop's lag and the `gitGate` waits. On a sandbox at 500/s for 15 s: signed-in p95 91 ms with the yield, 22.5 s without it.
 
 `bench/signed-in-under-load.ts` boots a throwaway forge in-process, floods it with anonymous code pages open-loop and times a signed-in `/` and repository home at the same time:

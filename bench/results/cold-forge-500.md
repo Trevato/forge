@@ -68,3 +68,40 @@ Each needs this same bench as its done-test.
 - **No code under `src/` changes.**
 - **The kept-pages-across-a-swap idea (#9631, pull #9632) stays dropped.**
 - **The run on the deployed edge is not repeated here.** That is `bench/load.ts` against the deployment (docs/features/load-test.md).
+
+## After the pool (#9671)
+
+**Sizing the code-page worker pool from the machine did not cut refusals beyond noise. The default stays 2.**
+
+`src/web/code_rows_pool.ts` now reads `FORGE_CODE_ROWS_WORKERS`: a number (capped at 8), or `auto` for the machine's available parallelism within [2, 8]. Unset, it is 2, as before. That let both sides run from the same tree with no code change between them.
+
+- **Same command:** `bun bench/code-pages-at-rate.ts --rate 500 --seconds 20 --warm 0 --crawl 3000`.
+- **Same copy:** this clone's HEAD `b4137c8c`, 5,304 files.
+- **Machine:** 80 cores, shared with the load generator, so `auto` is 8.
+- **Order of runs:** 2, 8, 8, 2, then 8, 2.
+
+| | served | refused (429) | served/s | p50 | p95 |
+|---|---|---|---|---|---|
+| 2 workers, run 1 | 7,338 | 2,661 | 367 | 59 ms | 451 ms |
+| 2 workers, run 2 | 7,054 | 2,945 | 353 | 122 ms | 595 ms |
+| 2 workers, run 3 | 7,856 | 2,143 | 393 | — | 458 ms |
+| 8 workers, run 1 | 8,080 | 1,919 | 404 | 26 ms | 414 ms |
+| 8 workers, run 2 | 8,081 | 1,918 | 404 | 88 ms | 382 ms |
+| 8 workers, run 3 | 7,900 | 2,099 | 395 | — | 399 ms |
+
+All refusals were 429. There were no 503s.
+
+Served/refused per second for the first pair (2 workers, then 8 workers, run 1):
+
+- 2 workers, run 1: `233/266 55/445 258/242 330/170 221/279 236/264 226/274 273/227 367/133 405/95 349/151 500/0 385/115 500/0 500/0 499/0 501/0 500/0 499/0 501/0`
+- 8 workers, run 1: `202/297 209/291 280/220 266/234 293/207 302/198 285/215 376/124 489/11 453/47 425/75 500/0 500/0 500/0 500/0 500/0 500/0 500/0 500/0 500/0`
+
+### What this says
+
+- **Refused:** 8 workers refused 1,918–2,099, a mean of about 1,980. 2 workers refused 2,143–2,945 here, and 1,802–2,463 in the "After" runs above. So the 8-worker range sits inside the 2-worker range. In the last back-to-back pair the gap was 44 (2,099 against 2,143).
+- **p95:** 382–414 ms with 8 workers, against 451–595 ms with 2 here. That is a little lower, but 376–498 ms above was also 2 workers.
+- **The ceiling did not move.** Served/s still levels off at about 400. Seconds 1–4 still refuse 220–300 a second with either size. If two workers at about 5 ms a page had been the limit, eight would have lifted the served rate well past 400. They did not.
+
+**So the pool is not the limit.** That fits the finding above: the refusals come from the strangers' in-flight test (`behindAll`, with the oldest waiting past 250 ms) while git permits are held. The other lever named above, counting queueing at the worker pool rather than at the strangers' gate, has not been tried.
+
+**Memory.** Each worker is about 8 MB of heap when idle (measured with four `code_rows_worker.ts` workers, Bun 1.3.14). The cap of 8 bounds that at about 64 MB idle, more while pages are in flight.

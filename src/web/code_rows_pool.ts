@@ -1,14 +1,53 @@
 /**
  * Cold code pages highlight and lay out their rows on worker threads, so the
  * main loop keeps serving while a crawl asks for pages nobody has kept (#9630).
- * Two workers, started on first use; a job that fails or runs past
- * `JOB_MS` answers undefined and the caller does the work inline.
+ * `poolSize()` workers (two; `FORGE_CODE_ROWS_WORKERS` sets a number or `auto`),
+ * started on first use; a job that fails or runs past `JOB_MS` answers
+ * undefined and the caller does the work inline.
  */
+import { availableParallelism } from "node:os";
 import type { Encoding } from "../http/compress.ts";
 import type { CodeRows } from "./code_rows.ts";
 import type { Job } from "./code_rows_worker.ts";
 
-const WORKERS = 2;
+/** The floor: one worker busy on a long file must not stall every cold page. */
+const MIN_WORKERS = 2;
+/**
+ * The cap: each worker is its own JS heap, about 8 MB idle (measured, #9671)
+ * and more while it holds a page's bytes to encode. Eight bounds that near
+ * 100 MB on any machine and leaves cores for git, which a cold page also waits on.
+ */
+const MAX_WORKERS = 8;
+
+/**
+ * The default, kept at the floor: sizing from the machine (8 here, on 80 cores)
+ * did not cut a cold 500/s crawl's refusals beyond noise, and served/s still
+ * levelled near 400 (bench/results/cold-forge-500.md, "After the pool", #9671).
+ */
+const DEFAULT_WORKERS = MIN_WORKERS;
+
+/** The machine's share: its available parallelism clamped to [MIN_WORKERS, MAX_WORKERS]. */
+export const machineWorkers = (cores: number = availableParallelism()): number =>
+  Math.min(MAX_WORKERS, Math.max(MIN_WORKERS, Math.floor(cores)));
+
+/**
+ * Workers in the pool, read like the git pool's `FORGE_GIT_CONCURRENCY`:
+ * `FORGE_CODE_ROWS_WORKERS` as a positive number (floored, capped at
+ * MAX_WORKERS), or `auto` for `machineWorkers()`; unset or anything else is
+ * DEFAULT_WORKERS.
+ */
+export function poolSize(
+  override: string | undefined = process.env.FORGE_CODE_ROWS_WORKERS,
+  cores: number = availableParallelism(),
+): number {
+  const text = override?.trim() ?? "";
+  if (text === "auto") return machineWorkers(cores);
+  const asked = Number(text);
+  if (text !== "" && Number.isFinite(asked) && asked >= 1) return Math.min(MAX_WORKERS, Math.floor(asked));
+  return DEFAULT_WORKERS;
+}
+
+const WORKERS = poolSize();
 const JOB_MS = 5_000;
 /** Jobs in flight past which the caller renders inline instead of queueing. */
 const MAX_PENDING = 64;
