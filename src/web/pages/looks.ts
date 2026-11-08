@@ -29,6 +29,7 @@ import type { Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
+import { pairCounts, pairsLine } from "../../looks/pairs.ts";
 import { mayFetchLook as mayFetchLookFor } from "../../looks/readable.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
@@ -294,9 +295,14 @@ export function lookCard(
       </figcaption>
     </figure>`;
   };
+  // One line over the pictures, counted from the data `compare` uses.
+  const line = pairsLine(pairCounts(taken, mainLooks));
+  const summary = line === undefined
+    ? html``
+    : html`<p class="muted small" data-pairs>${line}</p>`;
   return card(
     html`<div class="stack">
-      ${pages.map(group)}${when(attached.length > 0, () =>
+      ${summary}${pages.map(group)}${when(attached.length > 0, () =>
         html`<div class="looks">${attached.map(person)}</div>`,
       )}
     </div>`,

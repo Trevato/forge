@@ -233,5 +233,6 @@ test("the terminal screen lists the same looks, gated the same", async () => {
     return tui.screen.toText();
   };
   expect(await shown("alice", "hush")).toContain("phone · private");
+  expect(await shown("alice", "hush")).toContain("main has no pictures yet.");
   expect(await shown("bob", "hush")).toContain("No looks yet");
 });

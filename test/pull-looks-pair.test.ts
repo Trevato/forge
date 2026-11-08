@@ -102,3 +102,38 @@ test("with no picture on main, the head stands alone under one line, no empty fr
   expect(text).toContain(`/${HEAD}/desktop.png`);
   expect(text).not.toContain(MAIN);
 });
+
+/** Runs `body` against an empty look table, then puts every saved row back. */
+async function withLooksSwapped(body: () => Promise<void>): Promise<void> {
+  type Row = Record<string, unknown>;
+  const saved = app.db.query("SELECT * FROM look").all() as Row[];
+  app.db.run("DELETE FROM look");
+  try {
+    await body();
+  } finally {
+    app.db.run("DELETE FROM look");
+    for (const r of saved) {
+      const cols = Object.keys(r);
+      app.db
+        .query(`INSERT INTO look (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`)
+        .run(...(Object.values(r) as never[]));
+    }
+  }
+}
+
+test("one line over the pictures counts pages beside main and pages new to this pull", async () => {
+  const a = app.db.query("SELECT id FROM app LIMIT 1").get() as { id: string };
+  await withLooksSwapped(async () => {
+    const take = (env: string, commitOid: string, p: string) =>
+      recordLook(app.db, { appId: a.id, env, commitOid, path: "looks/x.png", takenAs: "nobody", kind: "phone", page: p });
+    take("production", MAIN, "/");
+    take(previewEnv(pullNumber), HEAD, "/");
+    take(previewEnv(pullNumber), HEAD, "/about");
+    const text = await (await fetch(`${servers.url}/alice/garden/pulls/${pullNumber}`)).text();
+    expect(text).toContain("1 page beside main · 1 new to this pull");
+    app.db.run("DELETE FROM look WHERE env = 'production'");
+    const none = await (await fetch(`${servers.url}/alice/garden/pulls/${pullNumber}`)).text();
+    expect(none).toContain("main has no pictures yet.");
+    expect(none).toContain("data-no-main");
+  });
+});
