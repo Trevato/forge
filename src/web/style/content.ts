@@ -84,6 +84,10 @@ a.where-place:hover, button.where-place:hover {
 #live-chips a:hover, #live-chips a:focus-visible, .home-doors a:hover, .home-doors a:focus-visible { text-decoration-thickness: 2px; }
 #live-chips a { max-width: 100%; overflow-wrap: anywhere; }
 .home-doors { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.step-body { padding: 4px 16px 16px 44px; }
+.step-body > :first-child { margin-top: 0; }
+.step-body > :last-child { margin-bottom: 0; }
+@media (max-width: 719px) { .step-body { padding-left: 16px; } }
 .tell-box .input { min-width: 0; max-width: 100%; }
 .row-trail form { display: inline-flex; }
 

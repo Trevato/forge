@@ -220,7 +220,7 @@ describe("the first login to a spawned forge", () => {
     // A pending step's body is a block of its own, never inside the row's
     // one-line, clipped `.row-meta`.
     expect(home).not.toContain("row-meta");
-    expect(home).toMatch(/<div class="card-body">\s*<p class="muted small">/);
+    expect(home).toMatch(/<div class="step-body">\s*<p class="muted small">/);
     // Each app with its way in.
     expect(home).toContain('href="/marias/bakery"');
   });

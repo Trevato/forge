@@ -180,6 +180,18 @@ describe("the next-steps card of a spawned forge", () => {
     expect([...at].sort((a, b) => a - b)).toEqual(at);
   });
 
+  test("the steps are one plain section, not boxed in cards", async () => {
+    const card = cardOf(await page(owner));
+    expect(card).not.toContain('class="card');
+    expect(card).not.toContain("card-body");
+    // A pending step's body is a block under its row, never an inline sibling of the title.
+    expect(card).toMatch(/<\/ul>\s*<div class="step-body">/);
+    // The first pending step, and only it, is the primary one.
+    expect(card).toMatch(/data-step="everyday"[^>]*data-primary/);
+    expect(card.match(/data-primary/g)?.length).toBe(1);
+    expect(keys(await page(owner))).toEqual(["everyday", "apps", "tell"]);
+  });
+
   test("each step's way in answers 200 for the admin", async () => {
     const home = await page(owner);
     const card = cardOf(home);
