@@ -165,7 +165,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 [data-tell] .page-head-sub { flex-wrap: wrap; }
 [data-tell] .comment-body img { max-width: 100%; height: auto; }
 [data-tell] pre { max-width: 100%; overflow-x: auto; }
-[data-apps], [data-apps-page], [data-bet-card], [data-explore], [data-family], [data-forges], [data-milestone], [data-now], [data-people] { overflow-wrap: anywhere; }
+[data-apps], [data-apps-page], [data-bet-card], [data-explore], [data-family], [data-forges], [data-milestone], [data-new-repo], [data-now], [data-people] { overflow-wrap: anywhere; }
+/* /new (#9830): a long owner name or refused value stays inside the form on a phone. */
+[data-new-repo] form, [data-new-repo] .error { min-width: 0; max-width: 100%; }
+[data-new-repo] select.input { text-overflow: ellipsis; }
 /* /explore (#9370): rows wrap rather than truncate a long name or description. */
 [data-explore] .row-title, [data-explore] .row-meta { white-space: normal; overflow: visible; }
 [data-explore] .row { flex-wrap: wrap; }

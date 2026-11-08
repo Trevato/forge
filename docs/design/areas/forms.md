@@ -8,3 +8,5 @@ A form's fields and its buttons sit in two rows, one for what you fill in and on
 - The gate break-glass (#7790) on the pull's Files step is a plain `field()` with a hint and a `.form-actions` row holding one `btn` in the `danger` variant; no new class. It sits under the disabled primary Merge button, so the page keeps one accent.
 
 - `/signin` and `/signup` (#9812) speak the home page's language and add no class: `authForm` in `pages/site.ts` draws the page's one `<h1>` (`pageHead`), then the passkey door, the form and its `.form-actions` row straight on the page, no `.card`. `test/auth-language.test.ts` holds the shape.
+
+- `/new` (#9830) fits a 390 px phone with no new class: the page's wrapper carries the `data-new-repo` hook (not a class), which `style/content.ts` gives `overflow-wrap: anywhere` like the other long-text pages. `test/new-repo-fit.test.ts` holds it.

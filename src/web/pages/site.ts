@@ -761,7 +761,7 @@ function ownersFor(ctx: Ctx, user: User): string[] {
 }
 
 function newRepoForm(ctx: Ctx, values: RepoValues, owners: string[], error?: string): Html {
-  return html`<div class="narrow-wide">
+  return html`<div class="narrow-wide" data-new-repo>
     ${pageHead("New repository", {
       sub: "A repository is a bare git repo plus its issues, pulls and settings.",
     })}
