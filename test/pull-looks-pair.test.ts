@@ -19,6 +19,7 @@ let dataDir: string;
 let app: App;
 let servers: Servers;
 let page = "";
+let pullNumber = 0;
 const MAIN = "b".repeat(40);
 const HEAD = "c".repeat(40);
 
@@ -46,6 +47,7 @@ beforeAll(async () => {
   take(pr, HEAD, { kind: "phone" });
   take(pr, HEAD, { kind: "phone", theme: "dark" });
   take(pr, HEAD, { kind: "desktop" }); // main has no desktop look
+  pullNumber = o.value.number;
   servers = await serve(app);
   page = await (await fetch(`${servers.url}/alice/garden/pulls/${o.value.number}`)).text();
 }, 30_000);
@@ -87,4 +89,16 @@ test("an unpaired look stands alone, and every image keeps its size", () => {
   expect(dark).not.toContain("desktop");
   for (const img of page.match(/<img[^>]*looks\/[^>]*>/g) ?? [])
     expect(img).toMatch(/width="\d+"[\s\S]*height="\d+"/);
+});
+
+test("with no picture on main, the head stands alone under one line, no empty frame", async () => {
+  expect(page).not.toContain("data-no-main");
+  app.db.run("DELETE FROM look WHERE env = 'production'");
+  const text = await (await fetch(`${servers.url}/alice/garden/pulls/${pullNumber}`)).text();
+  expect(text).toContain("main has no picture of this page yet.");
+  expect(text).not.toContain("data-compare");
+  expect(text).not.toContain(">this pull<");
+  expect(text).toContain(`/${HEAD}/phone.png`);
+  expect(text).toContain(`/${HEAD}/desktop.png`);
+  expect(text).not.toContain(MAIN);
 });

@@ -226,8 +226,11 @@ export function lookCard(
     const compare = (before: readonly Look[], after: readonly Look[]): Html =>
       before.length === 0
         ? html`<div class="looks">
-            ${after.map((l) => picture(l, l.kind, page))}
-          </div>`
+              ${after.map((l) => picture(l, l.kind, page))}
+            </div>
+            <p class="muted small" data-no-main>
+              main has no picture of ${page === DEFAULT_PAGE ? "this page" : page} yet.
+            </p>`
         : html`<div class="looks" data-compare>
             <div>
               <p class="muted small">main</p>
