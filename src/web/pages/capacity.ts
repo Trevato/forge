@@ -14,9 +14,9 @@ import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, when } from "../html.ts";
+import { html, when, type Html } from "../html.ts";
 import { flashTo } from "../layout.ts";
-import { badge, btn, card, icon, row, time } from "../ui.ts";
+import { badge, btn, row, time } from "../ui.ts";
 import { usageShell } from "./usage-tabs.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -67,6 +67,11 @@ function input(key: CapacityKey, value: string) {
   />`;
 }
 
+/** A titled part of the page: a small heading over its rows, never a card box (docs/DESIGN.md §7). */
+function block(title: string, content: Html) {
+  return html`<section class="settings-block"><h2>${title}</h2>${content}</section>`;
+}
+
 // GET /settings/capacity
 export function capacityPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -88,7 +93,6 @@ export function capacityPage(ctx: Ctx): Response {
   const rows = settings.map((s) => {
     const low = belowCeiling(ctx.app.db, s.key);
     return row({
-      lead: icon("activity"),
       title: html`${s.label} <span class="muted small mono">${s.key}</span>${when(
         low !== null,
         () => html` ${badge(`below ceiling ${low?.ceiling}`, { tone: "attn" })}`,
@@ -130,7 +134,6 @@ export function capacityPage(ctx: Ctx): Response {
   });
   const history = changes.map((c) =>
     row({
-      lead: icon("history"),
       title: html`<span class="mono">${c.key}</span>
         <span class="mono">${c.from === "" ? "auto" : c.from}</span> →
         <span class="mono">${c.to === "" ? "auto" : c.to}</span>`,
@@ -140,9 +143,9 @@ export function capacityPage(ctx: Ctx): Response {
   const reported = settings.some(
     (s) => s.key === "cells.egress" && s.value === "report",
   );
-  const happened = card(
-    html`<div class="card-body">
-      <p class="muted small" id="errors">
+  const happened = block(
+    "Errors and refused calls",
+    html`<p class="muted small" id="errors">
         ${errs.lastHour} error${errs.lastHour === 1 ? "" : "s"} in the last
         hour; the latest ${errs.latest.length}, newest first.
       </p>
@@ -157,13 +160,7 @@ export function capacityPage(ctx: Ctx): Response {
           ? html`; the latest was
               <span class="mono">${refused.latest.method} ${refused.latest.path}</span>`
           : ""}.
-      </p>
-    </div>`,
-    {
-      head: html`${icon("activity")}
-        <h2>Errors and refused calls</h2>`,
-      pad: false,
-    },
+      </p>`,
   );
   const open = egressSnapshot();
   // The bun cache at work (#7546): a warm cache keeps this near zero.
@@ -175,19 +172,17 @@ export function capacityPage(ctx: Ctx): Response {
             <span class="mono">${egress.npmTopRepoLastHour.repo}</span>
             (<span class="mono">${bytes(egress.npmTopRepoLastHour.bytes)}</span>).`
     }`;
-  const connections = card(
+  const connections = block(
+    "Egress connections",
     open.length === 0
-      ? html`<div class="card-body">
-          <p class="muted small" id="egress-npm">${npm}</p>
+      ? html`<p class="muted small" id="egress-npm">${npm}</p>
           <p class="muted small" id="egress-open">
             No app holds an egress connection open.
-          </p>
-        </div>`
-      : html`<ul class="list" id="egress-open">
-          ${row({ id: "egress-npm", lead: icon("activity"), title: npm })}
+          </p>`
+      : html`<ul class="list setting-list" id="egress-open">
+          ${row({ id: "egress-npm", title: npm })}
           ${open.map((r) =>
             row({
-              lead: icon("activity"),
               title: r.label === "" ? "(unlabelled)" : r.label,
               meta: html`<span class="mono">${r.destination}</span> ·
                 ${bytes(r.bytesIn)} in · ${bytes(r.bytesOut)} out`,
@@ -195,20 +190,15 @@ export function capacityPage(ctx: Ctx): Response {
             }),
           )}
         </ul>`,
-    {
-      head: html`${icon("activity")}
-        <h2>Egress connections</h2>`,
-      pad: false,
-    },
   );
   // Whether a landing here can swap the forge in place (#8383): the reason, before one is refused.
-  const swap = card(
-    html`<ul class="list">
+  const swap = block(
+    "Self-swap",
+    html`<ul class="list setting-list">
       ${row({
         id: "self-swap",
-        title: "Self-swap",
-        meta: html`${selfSwap.blocked ?? "A landed release of the forge takes over the port in place."}
-          · <span class="mono">FORGE_SELF_SWAP</span> ${selfSwap.enabled ? "is set" : "is off"}
+        title: selfSwap.blocked ?? "A landed release of the forge takes over the port in place.",
+        meta: html`<span class="mono">FORGE_SELF_SWAP</span> ${selfSwap.enabled ? "is set" : "is off"}
           · <span class="mono">net.ipv4.tcp_migrate_req</span> reads
           <span class="mono">${selfSwap.migrateReq}</span>`,
         trail: badge(selfSwap.blocked === null ? "ready" : "blocked", {
@@ -216,53 +206,31 @@ export function capacityPage(ctx: Ctx): Response {
         }),
       })}
     </ul>`,
-    {
-      head: html`${icon("activity")}
-        <h2>Self-swap</h2>`,
-      pad: false,
-    },
   );
-  const body = html`${happened}${connections}${swap}${when(
+  // The settings first: they are what this page is for; what happened follows.
+  const body = html`<p class="muted small mb">
+      How much the forge does at once. A change takes effect on the next crew
+      run, check or app start — running work is left to finish — and never
+      needs a restart.
+    </p>
+    ${when(
       reported,
       () => html`<p class="muted small mb" id="egress-reported">
-        ${icon("activity")} Egress is reported, not enforced: every new app,
+        Egress is reported, not enforced: every new app,
         preview, terminal and check cell may reach any public host on ports
         80 and 443, declared or not. Private, loopback and cluster addresses,
         and every other port, stay refused. Set it back to enforce once each
         app's reported hosts are in its forge.json.
       </p>`,
     )}
-    ${card(
-    html`<div class="card-body">
-        <p class="muted small">
-          How much the forge does at once. A change here takes effect on the
-          next crew run, check or app start — running work is left to finish —
-          and never needs a restart.
-        </p>
-      </div>
-      <ul class="list setting-list">
-        ${rows}
-      </ul>`,
-    {
-      head: html`${icon("activity")}
-        <h2>Capacity</h2>`,
-      pad: false,
-    },
-  )}
-  ${card(
-    history.length === 0
-      ? html`<div class="card-body">
-          <p class="muted small">No change yet.</p>
-        </div>`
-      : html`<ul class="list">
-          ${history}
-        </ul>`,
-    {
-      head: html`${icon("history")}
-        <h2>Changes</h2>`,
-      pad: false,
-    },
-  )}`;
+    ${block("Capacity", html`<ul class="list setting-list">${rows}</ul>`)}
+    ${block(
+      "Changes",
+      history.length === 0
+        ? html`<p class="muted small">No change yet.</p>`
+        : html`<ul class="list">${history}</ul>`,
+    )}
+    ${happened}${connections}${swap}`;
   const response = usageShell(ctx, "capacity", body);
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;

@@ -77,3 +77,8 @@ full width, when it has rows. Styled in `src/web/style/components.ts`.
 - `.segmented` — a few mutually exclusive states side by side, the one on pressed; each other state is a one-button form.
 - `.segmented-on` — the state that is on, in `.segmented`.
 - `.setting-table` — a table of settings rows (Limits): name and reason, value and bounds, the form to change it; each row stacks on a phone.
+
+Settings › Capacity (`capacityPage()` in `src/web/pages/capacity.ts`, #9709) has no card: one line of what a change does,
+the egress note when cells only report, then `.settings-block` sections — Capacity (the `.setting-list` of settings
+rows), Changes, Errors and refused calls, Egress connections, Self-swap. No new class. Pinned by
+`test/capacity-rows.test.ts`.
