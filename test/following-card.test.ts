@@ -61,13 +61,15 @@ afterAll(async () => {
 test("a fork's page draws the following panel with card, row and btn", async () => {
   const res = await fetch(`${servers.url}/bob/lib`, { headers: { cookie: "forge_mode=dev" } });
   const page = await res.text();
-  const m = page.match(/<div\s+class="card"\s+id="following"[\s\S]*?<\/ul>/);
+  const m = page.match(/<div\s+class="card bare"\s+id="following"[\s\S]*?<\/ul>/);
   expect(m).not.toBeNull();
   const panel = m![0];
   for (const old of ["following-actions", "following-eyebrow", "following-foot", "following-head", "following-sentence"])
     expect(page).not.toContain(old);
   expect(page).not.toMatch(/class="[^"]*\bfollowing\b[^"]*"/);
   expect(panel).toContain("card-head");
+  // The fork line under it is bare too.
+  expect(page).toMatch(/class="mt">\s*<div\s+class="card bare"/);
   expect(panel).toContain('class="badge');
   expect(panel).toMatch(/<div class="card-body stack">\s*<p>\s*Everything here is up to date with alice\/lib\./);
   expect(panel).toContain('href="/alice/lib"');
@@ -108,3 +110,11 @@ test("the card foot holds the take and propose forms, each a post form with a bt
   expect(forms.map((f) => f[1]!.match(/name="do" value="(\w+)"/)![1])).toEqual(["take", "propose"]);
   for (const f of forms) expect(f[1]).toMatch(/<button[^>]*type="submit"[^>]*class="btn|<button[^>]*class="btn[^>]*type="submit"/);
 }, 30_000);
+
+test("the studio app page keeps the Following panel boxed", async () => {
+  const { followingCard } = await import("../src/web/pages/following.ts");
+  expect(followingCard.length).toBeLessThanOrEqual(4);
+  const src = await Bun.file(new URL("../src/web/studio/app.ts", import.meta.url)).text();
+  expect(src).toContain("followingCard(ctx, repo, following)");
+  expect(src).not.toContain("bare");
+});

@@ -374,6 +374,15 @@ a.sha:hover { color: var(--accent); }
 .held-pulls { display: flex; flex-wrap: wrap; gap: 0 4px; align-items: center; }
 .held-pulls a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; }
 :is(.stack, .split, .timeline) > .card + .card { margin-top: 0; }
+/* A card that is not a box: space, not lines (DESIGN.md §1). Same markup, no frame. */
+.card.bare { background: none; border: 0; box-shadow: none; border-radius: 0; overflow: visible; }
+.card.bare > .card-head { background: none; border: 0; padding: 0 0 8px; }
+.card.bare > .card-foot { background: none; border: 0; padding: 8px 0 0; }
+.card.bare > .card-body { padding: 0; }
+.card.bare .card-body.stack { padding: 0 0 8px; }
+.card.bare .list > li + li { border-top: 0; }
+.card.bare .prose { padding: 0; }
+.card.bare .row { border-radius: var(--radius); }
 .card-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--muted);

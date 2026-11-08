@@ -229,6 +229,7 @@ export function followingCard(
   ctx: Ctx,
   repo: Repo,
   following: Following,
+  o: { bare?: boolean } = {},
 ): Html {
   const { relation, converge } = following;
   const parent = relation.parent;
@@ -389,6 +390,7 @@ export function followingCard(
       )}`,
     {
       id: "following",
+      ...(o.bare === true ? { extra: "bare" } : {}),
       head,
       ...(actions.length > 0 ? { foot: html`${actions}` } : {}),
       pad: false,

@@ -97,6 +97,7 @@ import {
   tokenCount,
   icon,
   listCard,
+  type CardOptions,
   row,
   seg,
   time,
@@ -274,29 +275,26 @@ function forkBar(ctx: Ctx, repo: Repo): Html {
   const canForge = ctx.auth.user?.kind === "user";
   const forkCount = forksFor(ctx, repo).length;
   if (!canFork && !canForge && forkCount === 0) return html``;
-  return html`<div class="mt">
-    ${listCard([
-      row({
-        lead: icon("fork"),
-        title:
-          forkCount > 0
-            ? html`<a href="${repoBase(repo)}/forks"
-                >${badge(`${forkCount} fork${forkCount === 1 ? "" : "s"}`)}</a
-              >`
-            : "Forks",
-        ...(guest && canFork ? { meta: html`${HELP_BUILD_NEXT}` } : {}),
-        trail: html`${canFork
-          ? html`<form method="post" action="${repoBase(repo)}/fork">
-              ${btn(guest ? HELP_BUILD : "Fork", { size: "sm", icon: "fork" })}
-            </form>`
-          : html``}${canForge
-          ? html`<form method="post" action="${repoBase(repo)}/forge">
-              ${btn("Forge it", { size: "sm", icon: "rocket", variant: "outline" })}
-            </form>`
-          : html``}`,
-      }),
-    ])}
-  </div>`;
+  const forks = row({
+    lead: icon("fork"),
+    title:
+      forkCount > 0
+        ? html`<a href="${repoBase(repo)}/forks"
+            >${badge(`${forkCount} fork${forkCount === 1 ? "" : "s"}`)}</a
+          >`
+        : "Forks",
+    ...(guest && canFork ? { meta: html`${HELP_BUILD_NEXT}` } : {}),
+    trail: html`${canFork
+      ? html`<form method="post" action="${repoBase(repo)}/fork">
+          ${btn(guest ? HELP_BUILD : "Fork", { size: "sm", icon: "fork" })}
+        </form>`
+      : html``}${canForge
+      ? html`<form method="post" action="${repoBase(repo)}/forge">
+          ${btn("Forge it", { size: "sm", icon: "rocket", variant: "outline" })}
+        </form>`
+        : html``}`,
+  });
+  return html`<div class="mt">${listCard([forks], { extra: "bare" })}</div>`;
 }
 
 // POST /:owner/:name/fork
@@ -517,7 +515,9 @@ export function treeListing(
           >
           ${total}`
       : total;
-  return listCard(rows, foot.text.trim() === "" ? {} : { foot });
+  const options: CardOptions = { extra: "bare" };
+  if (foot.text.trim() !== "") options.foot = foot;
+  return listCard(rows, options);
 }
 
 /**
@@ -661,6 +661,7 @@ export async function readmeFor(
       ? html``
       : html`<p><a href="${`${whole}/${at.split("/").map(encodeURIComponent).join("/")}`}">Read the whole README</a></p>`;
   const made = card(html`<div class="prose">${rendered}${more}</div>`, {
+    extra: "bare",
     pad: false,
     head: html`${icon("file")}
       <h2>${readme.name}</h2>`,
@@ -1387,7 +1388,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     ? contributionBar(repo)
     : following === undefined
       ? html`${archivedParentLine(ctx, repo)}${forkBar(ctx, repo)}`
-      : followingCard(ctx, repo, following)}
+      : followingCard(ctx, repo, following, { bare: true })}
   ${await renderCode(scope, {
     refs,
     ref,
