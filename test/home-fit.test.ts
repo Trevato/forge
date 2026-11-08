@@ -85,7 +85,8 @@ describe("the signed-in home at 390 px", () => {
   });
 
   test("the chip wraps and the tell box shrinks: the rules exist, scoped to the home", () => {
-    expect(content).toMatch(/#live-chips \.btn\s*\{[^}]*height:\s*auto[^}]*white-space:\s*normal[^}]*overflow-wrap:\s*anywhere/);
+    expect(content).toMatch(/#live-chips a\s*\{[^}]*max-width:\s*100%[^}]*overflow-wrap:\s*anywhere/);
+    expect(content).toMatch(/#live-chips a, \.home-doors a\s*\{[^}]*underline[^}]*min-height:\s*44px/);
     expect(content).toMatch(/\.tell-box \.input\s*\{[^}]*min-width:\s*0/);
   });
 });
@@ -101,14 +102,19 @@ describe.skipIf(chromium === undefined)("the home, measured at 390x844", () => {
       // Only a one-line ellipsis title inside main is excused: it clips by design.
       const clipped = (el) => { for (let p = el.parentElement; p && p.tagName !== "MAIN"; p = p.parentElement) { const c = getComputedStyle(p); if (c.textOverflow === "ellipsis" && c.overflowX === "hidden") return true; } return false; };
       const overflowing = [...document.querySelectorAll("main *")].filter((el) => el.getBoundingClientRect().right > vw + 1 && !clipped(el)).slice(0, 8).map((el) => el.tagName.toLowerCase() + "." + el.className);
-      const chip = document.querySelector("#live-chips .btn");
+      const chip = document.querySelector("#live-chips a");
       const chipRight = chip ? Math.round(chip.getBoundingClientRect().right) : -1;
+      const tall = [...document.querySelectorAll("#live-chips a, .home-doors a")].map((a) => Math.round(a.getBoundingClientRect().height));
+      const underlined = [...document.querySelectorAll("#live-chips a, .home-doors a")].every((a) => getComputedStyle(a).textDecorationLine.includes("underline"));
       const sel = document.querySelector("#tell-box select");
       const selRight = sel ? Math.round(sel.getBoundingClientRect().right) : -1;
-      return JSON.stringify({ scrollWidth: document.documentElement.scrollWidth, viewportWidth: vw, overflowing, chipRight, selRight });
+      return JSON.stringify({ tall, underlined, scrollWidth: document.documentElement.scrollWidth, viewportWidth: vw, overflowing, chipRight, selRight });
     })()`;
-    const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}/`, { width: 390, height: 844 }, [session], measure)) as { scrollWidth: number; viewportWidth: number; overflowing: string[]; chipRight: number; selRight: number };
+    const m = JSON.parse(await evaluateLoaded(chromium!, `${servers.url}/`, { width: 390, height: 844 }, [session], measure)) as { tall: number[]; underlined: boolean; scrollWidth: number; viewportWidth: number; overflowing: string[]; chipRight: number; selRight: number };
     console.log(`home 390x844: ${JSON.stringify(m)}`);
+    expect(m.tall.length).toBeGreaterThan(2);
+    for (const h of m.tall) expect(h).toBeGreaterThanOrEqual(44);
+    expect(m.underlined).toBe(true);
     expect(m.chipRight).toBeGreaterThan(0);
     expect(m.selRight).toBeGreaterThan(0);
     expect(m.chipRight).toBeLessThanOrEqual(m.viewportWidth);

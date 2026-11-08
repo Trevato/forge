@@ -80,7 +80,10 @@ a.where-place:hover, button.where-place:hover {
    long app name, which wraps inside its chip, and the tell box's input and
    select, which may shrink. The chip row is server-rendered, so a wrapped
    chip is its final height on first paint. */
-#live-chips .btn { max-width: 100%; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+#live-chips a, .home-doors a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; box-sizing: border-box; }
+#live-chips a:hover, #live-chips a:focus-visible, .home-doors a:hover, .home-doors a:focus-visible { text-decoration-thickness: 2px; }
+#live-chips a { max-width: 100%; overflow-wrap: anywhere; }
+.home-doors { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .tell-box .input { min-width: 0; max-width: 100%; }
 .row-trail form { display: inline-flex; }
 

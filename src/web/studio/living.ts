@@ -14,7 +14,7 @@ import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
-import { btn, listCard, row, timeAgo } from "../ui.ts";
+import { btn, row, timeAgo } from "../ui.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { NowStage } from "../../flow/now_rows.ts";
 import { nowHref } from "../pages/now.ts";
@@ -67,7 +67,9 @@ function listOf(label: string, rows: readonly MovingRow[], empty: string): Html 
     shown.push(row({ title: html`<span class="muted small">${i === 0 ? empty : " "}</span>` }));
   return html`<section aria-label="${label}">
     <h2 class="small muted">${label}</h2>
-    ${listCard(shown)}
+    <ul class="list">
+      ${shown}
+    </ul>
   </section>`;
 }
 
@@ -114,9 +116,11 @@ export function tellBox(ctx: Ctx, user: User): Html {
           <option value="${FORGE_TARGET}">the forge</option>
         </select>`}
     ${btn("Tell", { variant: "primary" })}
-    ${btn("Notes", { href: "/notes", icon: "comment", title: "Your notes and where they stand" })}
-    ${btn("Talk", { href: "/talk", icon: "comment", title: "Talk to the forge" })}
-  </form>`;
+  </form>
+  <p class="small muted home-doors">
+    <a href="/notes" title="Your notes and where they stand">Notes</a> 
+    <a href="/talk" title="Talk to the forge">Talk</a>
+  </p>`;
 }
 
 /** Your apps as chips, each a link to the app, and a plus for a new one. */
@@ -124,11 +128,11 @@ export function appChips(ctx: Ctx, user: User): Html {
   const { repos } = writableAppsOf(ctx, user);
   return html`<section aria-label="Your apps" id="live-chips" data-live="app.serving,app.stopped,app.created,app.deleted" data-live-src="/live/chips">
     <h2 class="small muted">Your apps</h2>
-    <div class="bar">
-      ${repos.slice(0, 12).map((r) => btn(r.name, { href: repoBase(r), size: "sm" }))}
-      ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}
-      ${repos.length > 12 ? btn(`All ${repos.length}`, { href: "/apps", size: "sm" }) : null}
-    </div>
+    <p class="bar small">
+      ${repos.slice(0, 12).map((r) => html`<a href="${repoBase(r)}">${r.name}</a>`)}
+      <a href="/apps/new">New app</a>
+      ${repos.length > 12 ? html`<a href="/apps">All ${repos.length}</a>` : null}
+    </p>
   </section>`;
 }
 
