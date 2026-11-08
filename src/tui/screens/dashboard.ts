@@ -1063,8 +1063,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         );
         body = rest!;
       }
-      // A short terminal drops the last figures before it drops the list.
-      const shown = figures.slice(0, Math.max(0, body.h - FIGURES_ROOM));
+      // A short terminal drops lesser figures before it drops the list; the spend line goes last.
+      const shown = keepFigures(figures, body.h - FIGURES_ROOM);
       if (shown.length > 0) {
         const [strip, rest] = split(body, "v", [len(shown.length), fill(1)]);
         shown.forEach((line, i) =>
@@ -1522,6 +1522,23 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   return screen;
 }
+
+/**
+ * The figures a strip of `room` rows keeps, in the order they are drawn:
+ * the crew spend line (with its ceiling words) is kept ahead of every other
+ * figure, and the rest fill what room is left from the top (#9512).
+ */
+export function keepFigures(figures: readonly string[], room: number): string[] {
+  const n = Math.max(0, room);
+  if (figures.length <= n) return [...figures];
+  const first = figures.findIndex((line) => line.startsWith(SPEND_LINE));
+  const order = first < 0 ? figures.map((_, i) => i) : [first, ...figures.map((_, i) => i).filter((i) => i !== first)];
+  const kept = new Set(order.slice(0, n));
+  return figures.filter((_, i) => kept.has(i));
+}
+
+/** How the crew spend figure begins, as `kpiLines` says it. */
+const SPEND_LINE = "Crew spend today";
 
 /** Why the builders are idle, as the one line an admin's home reads; none while they are not. */
 function idleLines(app: App, now: Date): string[] {
