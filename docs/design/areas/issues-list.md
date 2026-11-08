@@ -17,3 +17,10 @@ sideways. No new class. The owner's phone look of `/preview-admin/sample/issues`
 
 The list is rows on the page, not a card: the list card is `.card.bare` (no box, no hairlines between rows), and
 space does the separating. Its title is the system's row title, the same type the home page's rows use (no size of its own, no padding literal); the one link is the title's row. Filters, labels, the word and the pillar are unchanged. No new class.
+
+## An issue's side cards (#9816)
+
+The side column of an issue (`labelsCard`, `assigneeCard`, `issueTeamsCard`, `dependenciesCard` in
+`src/web/pages/thread.ts`) reads like the pull page's side: a small heading over its rows, `.card.bare`, no box and
+no hairline. Chips, forms and empty lines are unchanged; titles stay escaped. The pull page draws the same label and
+assignee cards, so it follows. No new class. `test/issue-side-bare.test.ts` holds the shape.

@@ -666,6 +666,7 @@ export function labelsCard(
     return card(chips, {
       head: html`${icon("tag")}
         <h2>Labels</h2>`,
+      extra: "bare",
     });
 
   const applies = new Set(applied.map((l) => l.id));
@@ -694,6 +695,7 @@ export function labelsCard(
     {
       head: html`${icon("tag")}
         <h2>Labels</h2>`,
+      extra: "bare",
     },
   );
 }
@@ -762,6 +764,7 @@ export function assigneeCard(
     return card(current, {
       head: html`${icon("user")}
         <h2>Assignee</h2>`,
+      extra: "bare",
     });
   const candidates = assigneeCandidates(ctx, repo, issue);
   return card(
@@ -790,6 +793,7 @@ export function assigneeCard(
     {
       head: html`${icon("user")}
         <h2>Assignee</h2>`,
+      extra: "bare",
     },
   );
 }
@@ -1027,7 +1031,7 @@ export function issueTeamsCard(ctx: Ctx, repo: Repo, issue: Issue, action: strin
       ? html`<p class="muted small">None named.</p>`
       : html`<p>${named.map((slug) => all.find((t) => t.slug === slug)?.name ?? slug).join(", ")}</p>`;
   if (!canWrite(ctx.app.db, repo, ctx.auth.user) || repo.origin !== null)
-    return card(chips, { head });
+    return card(chips, { head, extra: "bare" });
   return card(
     html`${chips}
       <form method="post" action="${action}" class="mt">
@@ -1042,7 +1046,7 @@ export function issueTeamsCard(ctx: Ctx, repo: Repo, issue: Issue, action: strin
         </fieldset>
         <div class="form-actions">${btn("Name teams", { size: "sm", variant: "primary" })}</div>
       </form>`,
-    { head },
+    { head, extra: "bare" },
   );
 }
 
@@ -1165,6 +1169,7 @@ export function dependenciesCard(
   return card(body, {
     head: html`${icon("map")}
       <h2>Depends on</h2>`,
+    extra: "bare",
   });
 }
 
