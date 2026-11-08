@@ -13,7 +13,7 @@ import { field, readForm } from "../form.ts";
 import { eventStream } from "../../http/sse.ts";
 import { html, raw, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, icon } from "../ui.ts";
+import { btn, icon } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const isAdminPerson = (ctx: Ctx): boolean =>
@@ -29,8 +29,9 @@ function regions(ctx: Ctx, timed = false): Record<string, string> | undefined {
   const changes = phase("changes", () => teamChanges(ctx.app, 10));
   const total = teams.reduce((n, t) => n + t.dial, 0);
   const cards = teams.map((t) =>
-    card(
-      html`<form method="post" action="/settings/teams/${t.slug}">
+    html`<section>
+      <h2>${icon("bot")} ${t.name}</h2>
+      <form method="post" action="/settings/teams/${t.slug}">
         <div class="field">
           <label for="charter-${t.slug}">Charter</label>
           <textarea class="input" id="charter-${t.slug}" name="charter" rows="3" maxlength="${String(CHARTER_MAX)}">${t.charter}</textarea>
@@ -56,9 +57,8 @@ function regions(ctx: Ctx, timed = false): Record<string, string> | undefined {
         <div class="form-actions">
           ${btn("Save", { variant: "primary", label: `Save ${t.name}` })}
         </div>
-      </form>`,
-      { head: html`${icon("bot")}<h2>${t.name}</h2>` },
-    ),
+      </form>
+    </section>`,
   );
   const out: Record<string, Html> = {
     "teams-total": html`${String(total)}%`,
@@ -66,12 +66,12 @@ function regions(ctx: Ctx, timed = false): Record<string, string> | undefined {
     "teams-changes":
       changes.length === 0
         ? html``
-        : card(
-            html`<ul class="small">${changes.map(
+        : html`<section>
+            <h2>Recent changes</h2>
+            <ul class="small">${changes.map(
               (c) => html`<li><span class="mono">${c.at.slice(0, 16)}</span> ${c.slug}: ${c.from} → ${c.to} <span class="muted">${c.actorName}</span></li>`,
-            )}</ul>`,
-            { head: html`<h2>Recent changes</h2>` },
-          ),
+            )}</ul>
+          </section>`,
   };
   return Object.fromEntries(Object.entries(out).map(([k, h]) => [k, h.text]));
 }
