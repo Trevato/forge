@@ -56,7 +56,7 @@ import { page, redirect } from "../layout.ts";
 import { makeOptions, PASSKEY_WORDS, passkeyFields, readPasskey } from "../passkey-ceremony.ts";
 import { passkeyJs } from "../passkey-client.ts";
 import { passkeyNote, passkeyState } from "../passkey-state.ts";
-import { btn, card, field as formField } from "../ui.ts";
+import { btn, field as formField } from "../ui.ts";
 import { sessionCookie, signinAllowed } from "./site.ts";
 import { EMAIL_TAKEN_MESSAGE, NAME_RESERVED, USERNAME_TAKEN } from "../../actions/signup_words.ts";
 
@@ -99,14 +99,14 @@ function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
       title: says.title,
       body: html`<div class="narrow">
         ${pageHead(says.title)}
-        ${card(
-          html`<p>${says.text}</p>
-            ${state === "used" || state === "owned"
-              ? html`<div class="form-actions">
-                  ${btn("Sign in", { href: "/signin", variant: "primary" })}
-                </div>`
-              : null}`,
-        )}
+        <section class="settings-block">
+          <p>${says.text}</p>
+          ${state === "used" || state === "owned"
+            ? html`<div class="form-actions">
+                ${btn("Sign in", { href: "/signin", variant: "primary" })}
+              </div>`
+            : null}
+        </section>
       </div>`,
     },
     says.status,
@@ -145,8 +145,8 @@ function claimForm(
 ): Html {
   return html`<div class="narrow">
     ${pageHead("This forge is yours")}
-    ${card(
-      html`<p class="mb">
+    <section class="settings-block">
+      <p class="mb">
           ${spawned.org.username} was made for you, with its apps and a crew
           ready to build them. Make your account to take it: this first account
           is the forge's admin, so it can change everything here.
@@ -206,8 +206,8 @@ function claimForm(
             <button type="button" id="passkey-make" class="btn" data-variant="outline" data-options="/claim/options" data-needs-email>Claim with a passkey instead</button>
             </div>
           </div>
-        </form>`,
-    )}
+        </form>
+    </section>
   </div>`;
 }
 
