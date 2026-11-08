@@ -31,7 +31,7 @@ import {
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, empty, seg } from "../ui.ts";
+import { btn, seg } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 import { settingsPageResponse, timedAdminRepo } from "./settings.ts";
 import { getAppByRepo } from "../../core/apps.ts";
@@ -105,15 +105,19 @@ function columns(days: readonly Counted[], label: string): Html {
   return raw(`<svg viewBox="0 0 ${CHART_W} ${CHART_H}" width="${CHART_W}" height="${CHART_H}" role="img" aria-label="${escapeHtml(label)}">${bars.join("")}</svg>`);
 }
 
+function block(title: Html | string, content: Html): Html {
+  return html`<section class="settings-block"><h2>${title}</h2>${content}</section>`;
+}
+
 function panel(q: Query, title: string, rows: readonly Counted[], dimension: Dimension | null): Html {
-  return card(
+  return block(
+    title,
     rows.length === 0
       ? html`<p class="muted small">None in the window.</p>`
       : html`<div class="table-scroll">
           <table class="table" data-dense>
-            <caption class="sr-only">${title}</caption>
             <thead>
-              <tr><th scope="col">${title}</th><th scope="col" class="num">Visits</th></tr>
+              <tr><th scope="col">Value</th><th scope="col" class="num">Visits</th></tr>
             </thead>
             <tbody>
               ${rows.map(
@@ -143,7 +147,8 @@ function filters(q: Query): Html {
 
 function path(q: Query, now: number, db: Ctx["app"]["db"]): Html {
   const rows = q.steps.length === 0 ? [] : funnel(db, q.scope, q.window, q.filter, q.steps, now);
-  return card(
+  return block(
+    "A path to a goal",
     html`<p class="muted small mb">
         Name the steps a visit takes, in order, ending in a goal: a path such as
         <code>/signup</code> (a path also counts its sub-pages) or an outbound
@@ -186,7 +191,8 @@ function github(db: Ctx["app"]["db"], q: Query, now: number): Html {
       GitHub's own traffic is not pulled: set <code>FORGE_GITHUB_TOKEN</code> (a token that may read repository
       traffic) and <code>FORGE_GITHUB_REPOS</code> (<code>owner/name,…</code>) and it is stored daily, since GitHub keeps only 14 days.
     </p>`;
-  return card(
+  return block(
+    "GitHub",
     html`<div class="table-scroll">
       <table class="table" data-dense>
         <caption class="sr-only">GitHub repository traffic, pulled daily</caption>
@@ -205,7 +211,6 @@ function github(db: Ctx["app"]["db"], q: Query, now: number): Html {
         </tbody>
       </table>
     </div>`,
-    { head: html`<h2>GitHub</h2>` },
   );
 }
 
@@ -224,8 +229,9 @@ export function sourcesBody(ctx: Ctx, q: Query, label: string): Html {
     </div>
     ${filters(q)}
     ${empties
-      ? empty({ icon: "users", title: `No visits recorded for ${label} in ${WINDOWS[q.window]} days`, note: "Views are written every few seconds; a page counts when it is left." })
-      : html`${card(
+      ? html`<p class="muted">No visits recorded for ${label} in ${WINDOWS[q.window]} days.</p>`
+      : html`${block(
+            "Visits",
             html`<dl class="stats">
                 <div><dt>${scraping ? "Scraper visits" : "Visits"}</dt><dd>${figure(q, r.visits, { number: scraping ? "scrapers" : "visits" })}</dd></div>
                 <div><dt>Pages per visit</dt><dd><a href="${probe(q, { number: "page_views" })}" title="How this was counted">${r.pagesPerVisit}</a></dd></div>
@@ -240,7 +246,6 @@ export function sourcesBody(ctx: Ctx, q: Query, label: string): Html {
           ${panel(q, "Landing page", r.landings, "landing")}
           ${panel(q, "Where people left (last page)", r.exits, "exit")}
           ${panel(q, `Outbound clicks to ${outboundNames().join(", ")}`, r.outbound, null)}`}
-    <h2 class="mt">A path to a goal</h2>
     ${path(q, now, db)}
     ${q.scope === "forge" ? github(db, q, now) : null}
     <p class="small muted mt">
