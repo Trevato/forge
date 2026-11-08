@@ -5,6 +5,7 @@
  */
 
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import { statusWithStandby } from "../../maintenance/standby.ts";
 import { ABOUT_TO_STOP_ROWS, prepare, resumeNow, status } from "../../maintenance/service.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -22,14 +23,15 @@ function admin(ctx: Ctx): Response | undefined {
 /** One fact of the page: what it is and how it stands, as a `dl` row. */
 const fact = (label: string, value: Html | string): Html => html`<div class="status-row"><dt>${label}</dt><dd>${value}</dd></div>`;
 
-export function maintenancePage(ctx: Ctx): Response {
+export async function maintenancePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const denied = admin(ctx);
   if (denied) return denied;
   const rendering = performance.now();
-  const s = status(ctx.app);
+  const s = await statusWithStandby(status(ctx.app));
   const body = html`<div class="page-head"><h1>Maintenance</h1></div>
     <p id="maintenance-says">${s.says}</p>
+    ${s.phase === "idle" ? html`<p id="maintenance-standby" class="muted">${s.standby.says}</p>` : null}
     ${s.phase === "idle"
       ? html`<p class="muted">Get the forge ready for a planned power-off. What stops:</p>
           <dl class="status-rows">${ABOUT_TO_STOP_ROWS.map((r) => fact(r.what, r.stops))}</dl>
@@ -49,6 +51,7 @@ export function maintenancePage(ctx: Ctx): Response {
                   : html`<ul id="maintenance-checks" class="muted">${s.last.verified.map((v) => html`<li>${v}</li>`)}</ul>`}`
             : null}`
       : html`<dl class="status-rows">
+            ${s.phase === "ready" ? null : fact("Standby", s.standby.says)}
             ${fact("Since", s.since ?? "")} ${s.reason ? fact("Reason", s.reason) : null}
             ${fact("Backup", s.backup?.says ?? "")} ${fact("Still working", String(s.working))}
           </dl>

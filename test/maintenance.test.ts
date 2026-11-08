@@ -9,14 +9,14 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { standingHolds } from "../src/keeper/hold.ts";
 import { maintenanceHtml, MAINTENANCE_HEADERS } from "../src/maintenance/page.ts";
+import { forgetStandby } from "../src/maintenance/standby.ts";
 import { prepare, resume, resumeAtBoot, resumeNow, status } from "../src/maintenance/service.ts";
 import { inMaintenance, readState, writeState } from "../src/maintenance/state.ts";
 import { HOLD_WORDS } from "../src/runs/held.ts";
 import { startSnapshots, type SnapshotsHandle } from "../src/snapshot/service.ts";
 import { dirStore } from "../src/snapshot/store.ts";
 import { runnerCheck, tunnelCheck } from "../src/maintenance/checks.ts";
-import { maintenanceLines } from "../src/tui/screens/maintenance.ts";
-import { entry, maintenanceScreen } from "../src/tui/screens/maintenance.ts";
+import { entry, maintenanceLines, maintenanceScreen } from "../src/tui/screens/maintenance.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -148,6 +148,31 @@ describe("prepare and come back", () => {
     expect(inMaintenance(dataDir)).toBe(false);
   });
 
+  test("the standby is said on the page, the API and MCP; idle shows its line, once", async () => {
+    const standby = Bun.serve({ port: 0, fetch: () => new Response(maintenanceHtml(), { status: 503, headers: MAINTENANCE_HEADERS }) });
+    const before = process.env["MAINTENANCE_STANDBY_URL"];
+    process.env["MAINTENANCE_STANDBY_URL"] = `http://127.0.0.1:${standby.port}/`;
+    forgetStandby();
+    try {
+      const cookie = await login("alice");
+      const html = await (await fetch(`${servers.url}/maintenance`, { headers: { cookie } })).text();
+      expect(html).toContain('id="maintenance-standby"');
+      expect(html).toContain("Standby answering");
+      const api = (await (await fetch(`${servers.url}/api/v1/admin/maintenance`, { headers: { authorization: `Bearer ${adminRo}` } })).json()) as { standby: { state: string } };
+      expect(api.standby.state).toBe("answering");
+      const mcp = await (await post("/mcp", { authorization: `Bearer ${adminAdmin}`, accept: "application/json, text/event-stream" },
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "maintenance", arguments: { action: "status" } } }))).text();
+      expect(mcp).toContain("answering");
+      const lines = maintenanceLines({ user: admin, app, db: app.db } as never, api.standby as never).join("\n");
+      expect(lines).toContain("Standby answering");
+    } finally {
+      if (before === undefined) delete process.env["MAINTENANCE_STANDBY_URL"];
+      else process.env["MAINTENANCE_STANDBY_URL"] = before;
+      forgetStandby();
+      standby.stop(true);
+    }
+  });
+
   test("page: the confirm box is required to prepare", async () => {
     const cookie = await login("alice");
     const idle = await (await fetch(`${servers.url}/maintenance`, { headers: { cookie } })).text();
@@ -173,7 +198,7 @@ describe("prepare and come back", () => {
     const session = (user: User) => ({ user, app, db: app.db }) as never;
     expect(entry.offered(session(admin))).toBe(true);
     expect(entry.offered(session(bob))).toBe(false);
-    const screen = maintenanceScreen(session(admin), {} as never);
+    const screen = maintenanceScreen(session(admin), { track: (p: Promise<unknown>) => p, invalidate: () => undefined } as never);
     expect(screen.title).toBe("Maintenance");
     expect(screen.keys.map((k) => k.help).join(" ")).toContain("end maintenance");
   });

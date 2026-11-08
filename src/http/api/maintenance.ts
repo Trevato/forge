@@ -1,5 +1,6 @@
 /** `/api/v1/admin/maintenance`: what the Maintenance page and MCP `maintenance` do, for a forge admin's admin-scope credential. */
 
+import { statusWithStandby } from "../../maintenance/standby.ts";
 import { prepare, resumeNow, status } from "../../maintenance/service.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { crossOrigin, type Handler } from "../context.ts";
@@ -10,13 +11,13 @@ import type { Router } from "../router.ts";
 const BODY_MAX = 4096;
 
 export function maintenanceRoutes(router: Router<Handler>): void {
-  router.add("GET", "/api/v1/admin/maintenance", (ctx) => {
+  router.add("GET", "/api/v1/admin/maintenance", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
     if (!ctx.auth.user) return unauthorized();
     if (!ctx.auth.user.isAdmin) return notFound();
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
-    return json(status(ctx.app));
+    return json(await statusWithStandby(status(ctx.app)));
   });
   router.add("POST", "/api/v1/admin/maintenance/prepare", async (ctx) => {
     if (!ctx.auth.user) return unauthorized();

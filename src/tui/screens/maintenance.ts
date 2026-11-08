@@ -8,6 +8,7 @@
  */
 
 import { ABOUT_TO_STOP_ROWS, prepare, resumeNow, status } from "../../maintenance/service.ts";
+import { probeStandby, withStandby, type Standby } from "../../maintenance/standby.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
@@ -19,12 +20,15 @@ import type { PaletteEntry } from "./entries.ts";
 const WIDTH = 72;
 const INNER = WIDTH - 6;
 
-export function maintenanceLines(f: Session): string[] {
-  const s = status(f.app);
+export function maintenanceLines(f: Session, standby?: Standby): string[] {
+  const s = standby ? withStandby(status(f.app), standby) : status(f.app);
+  // Said once: the lead sentence carries it when ready; otherwise its own line.
+  const standbyLine = standby && s.phase !== "ready" ? wrap(standby.says, INNER) : [];
   const facts =
     s.phase === "idle"
-      ? ABOUT_TO_STOP_ROWS.flatMap((r) => wrap(`${r.what}: ${r.stops}`, INNER))
+      ? [...standbyLine, ...ABOUT_TO_STOP_ROWS.flatMap((r) => wrap(`${r.what}: ${r.stops}`, INNER))]
       : [
+          ...standbyLine,
           ...wrap(`Since ${s.since ?? ""}${s.reason ? `: ${s.reason}` : ""}`, INNER),
           ...wrap(`Backup: ${s.backup?.says ?? ""}`, INNER),
           `Still working: ${s.working}`,
@@ -44,6 +48,13 @@ export function maintenanceLines(f: Session): string[] {
 export function maintenanceScreen(f: Session, ctx: Ctx): Screen {
   const mayAct = (): boolean => f.user?.isAdmin === true && f.user.kind !== "agent";
   let busy = false;
+  let standby: Standby | undefined;
+  const learnStandby = (): void =>
+    runAsync(ctx, async () => {
+      standby = await probeStandby();
+      ctx.invalidate();
+    });
+  learnStandby();
   let note = "";
   const say = (text: string): void => {
     note = text;
@@ -117,7 +128,7 @@ export function maintenanceScreen(f: Session, ctx: Ctx): Screen {
     render(area, s) {
       const buttons = dialog(s, area, ctx.theme.c, {
         title: "Maintenance",
-        body: [...(note === "" ? [] : [...wrap(note, INNER), ""]), ...maintenanceLines(f)],
+        body: [...(note === "" ? [] : [...wrap(note, INNER), ""]), ...maintenanceLines(f, standby)],
         actions: [{ label: "Close" }],
         selected: 0,
         width: WIDTH,

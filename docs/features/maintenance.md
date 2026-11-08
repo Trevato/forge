@@ -37,6 +37,13 @@ No Kubernetes is asked anything; the state is one file.
 Cloudflare's origin at it for the move, and back after. A Cloudflare Worker can
 return the same HTML with status 503 and `Retry-After`.
 
+**Is the standby up?** Set `MAINTENANCE_STANDBY_URL` (an http(s) URL, e.g. `http://127.0.0.1:8080/`) in
+the forge's environment. `/maintenance` and `GET /api/v1/admin/maintenance` (field `standby`) then fetch
+that one URL server-side (2 s timeout, no redirects) and say whether it answers 503 with the maintenance
+page. The URL is never taken from a request. When ready, the line reads "Ready, standby answering",
+"Ready, standby not answering" or "Ready, no standby". Unset, the page says how to start one:
+`bun scripts/standby.ts 8080` on the droplet, then point the tunnel or Cloudflare origin at it.
+
 **Size of a standby.** For reads or a whole forge: disk for the data (38 GB now,
 apps 13 GB) plus one snapshot and headroom, so 64 GB; 4 GB of memory free for the
 forge alone, 8 GB with apps running. The 16 GB droplet cannot hold it.
@@ -66,6 +73,6 @@ Test: `test/standby-restore.test.ts`.
   snapshot, so anything written on the main forge after it is not there, and
   nothing carries standby-time changes back (there are none; it takes no writes).
   Nothing replicates continuously; re-restore into a new directory to catch up.
-- The page is not pushed to Cloudflare automatically; `standby.ts` is started by hand.
+- The page is not pushed to Cloudflare automatically; `standby.ts` is started by hand (the forge only checks it).
 - The admin is told on the page, event and status, and by the notification address they saved (`/account`); no mail.
 - Where the kernel gives no boot id, any restart ends maintenance.
