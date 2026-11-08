@@ -73,17 +73,6 @@ const TITLE_LINES = 2;
 const EM_BOLD = 0.68;
 const EM_MONO = 0.62;
 
-const KIND_COLOR: Record<CardKind, string> = {
-  repo: T.accent,
-  issue: T.success,
-  pull: T.merged,
-  run: T.primary,
-  app: T.attn,
-  map: T.accent,
-  audit: T.success,
-  page: T.primary,
-};
-
 /** Break a title into at most `n` lines of `max` chars; the last is clamped. */
 function wrap(text: string, size: number, n: number, em: number, width = INNER): string[] {
   const max = Math.max(1, Math.floor(width / (size * em)));
@@ -173,8 +162,6 @@ function drawImages(images: unknown): string {
 }
 
 export function renderCard(input: CardInput): string {
-  const kind: CardKind = CARD_KINDS.includes(input?.kind) ? input.kind : "page";
-  const color = KIND_COLOR[kind];
   const out: string[] = [];
 
   out.push(
@@ -185,16 +172,8 @@ export function renderCard(input: CardInput): string {
     text(PAD + 60, PAD + 26, 30, T.fg, "forge", ` font-weight="700"`),
   );
 
-  // A card about one thing is marked with its kind: a strip down the left
-  // edge and a badge in the header. The forge's own card is plain, as the
-  // home page is.
-  const plain = kind === "page";
-  if (!plain) {
-    out.push(
-      `<rect x="0" y="0" width="12" height="${CARD_HEIGHT}" fill="${color}"/>`,
-      text(CARD_WIDTH - PAD, PAD + 24, 24, color, kind.toUpperCase(), ` font-weight="700" text-anchor="end" letter-spacing="2"`),
-    );
-  }
+  // Every card is as plain as the home page: no kind badge, no edge strip,
+  // one background, one text colour. The kind picks the card, not its look.
 
   const figure = drawFigure(input?.figure) || drawImages(input?.images);
   const column = figure ? COLUMN : INNER;
@@ -204,7 +183,7 @@ export function renderCard(input: CardInput): string {
   const tsize = figure ? 56 : 64;
   const title = wrap(input?.title ?? "", tsize, TITLE_LINES, EM_BOLD, column);
   const tagline = clean(input?.tagline);
-  const tight = plain ? ` letter-spacing="-1.5"` : "";
+  const tight = ` letter-spacing="-1.5"`;
   let y = tagline ? 230 : 270;
   for (const row of title) {
     out.push(text(PAD, y, tsize, T.fg, row, ` font-weight="700"${tight}`));
@@ -234,7 +213,7 @@ export function renderCard(input: CardInput): string {
   const stat = clean(input?.stat);
   if (stat) {
     out.push(
-      text(PAD, CARD_HEIGHT - 52, 32, plain ? T["muted-fg"] : color, fit(stat, 32, INNER, EM_MONO), ` font-family="${MONO}" font-weight="600"`),
+      text(PAD, CARD_HEIGHT - 52, 32, T["muted-fg"], fit(stat, 32, INNER, EM_MONO), ` font-family="${MONO}" font-weight="600"`),
     );
   }
   out.push(`</svg>`);
