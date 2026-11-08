@@ -43,7 +43,7 @@ export async function displaysPage(ctx: Ctx): Promise<Response> {
                     const base = repoBase(d.repo);
                     const name = `${d.repo.ownerName}/${d.repo.name}`;
                     return html`<tr data-display="${name}">
-                      <td><a href="${base}">${d.config.ok ? d.config.value.title : INVALID_TITLE}</a></td>
+                      <td><a href="${base}/display">${d.config.ok ? d.config.value.title : INVALID_TITLE}</a></td>
                       <td>${d.config.ok ? LAYOUT_WORD[d.config.value.layout] : "None"}</td>
                       <td><a class="mono" href="${base}">${name}</a></td>
                       <td data-demos>${d.demos === undefined ? "None" : String(d.demos)}</td>

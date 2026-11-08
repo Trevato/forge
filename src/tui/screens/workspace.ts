@@ -134,6 +134,7 @@ import { deleteRepoCommands } from "./deleterepo.ts";
 import { grantsCommands } from "./grants.ts";
 import { visionCommands } from "./vision.ts";
 import { buildsCommands } from "./builds.ts";
+import { displayCommands } from "./display.ts";
 import { iterationsCommands } from "./iterations.ts";
 import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
@@ -1455,6 +1456,7 @@ export function workspaceScreen(
       ...labelsCommands(f, ctx, repo),
       ...buildsCommands(f, ctx, repo),
       ...iterationsCommands(f, ctx, repo),
+      ...displayCommands(f, ctx, repo),
       ...appEnvCommands(f, ctx, repo),
       ...autonomyCommands(f, ctx, repo),
       ...trafficCommands(f, ctx, repo),
