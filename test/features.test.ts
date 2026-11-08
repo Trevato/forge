@@ -15,8 +15,12 @@ import { join } from "node:path";
 import { statements } from "./helpers/statements.ts";
 import { expectWork } from "./helpers/work.ts";
 import { createApp, type App } from "../src/app.ts";
-import { absorbApp, acceptDeclaration, declaresFeature, absorbedForNav, declaredFeature, changeFeatureSettings, getFeature, unabsorbApp } from "../src/actions/features.ts";
+import { absorbApp, acceptDeclaration, declaresFeature, absorbedForNav, declaredFeature, changeFeatureSettings, getFeature, lastChange, provenanceFacts, unabsorbApp } from "../src/actions/features.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { forkRepo } from "../src/core/repos.ts";
+import { resolveOid } from "../src/git/merge.ts";
+import { commitLog } from "../src/git/read.ts";
+import { repoDir } from "../src/git/repos.ts";
 import { checkSetting, featureEnv, parseFeature, settingEnvName } from "../src/apps/feature.ts";
 import { featureVarsAt } from "../src/apps/feature_env.ts";
 import { appEnv } from "../src/apps/process.ts";
@@ -27,6 +31,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { eventVerb } from "../src/design/activity.ts";
+import { provenanceRows } from "../src/web/pages/features.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { mcpTool } from "./helpers/mcp.ts";
@@ -324,6 +329,85 @@ describe("absorbing an app", () => {
     expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar");
   });
 
+  test("a row says who last changed the declaration, on the list and on the feature's page", async () => {
+    const view = await getFeature(app, ada, "radar");
+    expect(view.ok && view.value.provenance).toMatchObject({ upstream: null, changedBy: "cy" });
+    const detail = await (await web(adaCookie, "/settings/features/radar")).text();
+    expect(detail).toContain("<dt>Last changed by</dt>");
+    const list = await (await web(adaCookie, "/settings/features")).text();
+    expect(list).toMatch(/<dl class="row-facts"><div><dt>Last changed by<\/dt><dd>cy, \d{4}-\d{2}-\d{2}<\/dd><\/div><\/dl>/);
+  });
+
+  test("the facts are plain and escaped", () => {
+    const facts = provenanceFacts({ repo: "me/r", upstream: "them/r", changedBy: "<b>x</b>", changedAt: "2026-11-01T10:00:00Z" });
+    expect(facts).toEqual([
+      { label: "Fork of", value: "them/r" },
+      { label: "Last changed by", value: "<b>x</b>, 2026-11-01" },
+    ]);
+    const rows = provenanceRows({ repo: "me/r", upstream: null, changedBy: "<b>x</b>", changedAt: null })!.toString();
+    expect(rows).toContain("&lt;b&gt;x&lt;/b&gt;");
+    expect(provenanceRows({ repo: "me/r", upstream: null, changedBy: null, changedAt: null })).toBeNull();
+  });
+
+  test("the last change is read from git once per tip", async () => {
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const tip = (await resolveOid(dir, `refs/heads/${repo.defaultBranch}`))!;
+    let reads = 0;
+    const counting: typeof commitLog = (...args) => {
+      reads++;
+      return commitLog(...args);
+    };
+    const first = await lastChange(dir, tip, counting);
+    const again = await lastChange(dir, tip, counting);
+    expect(again).toEqual(first);
+    expect(reads).toBeLessThanOrEqual(1);
+    // A tip never seen: read once, then kept, even when it found nothing.
+    const before = reads;
+    const fresh = `${"0".repeat(39)}1`;
+    expect(await lastChange(dir, fresh, counting)).toBeNull();
+    expect(await lastChange(dir, fresh, counting)).toBeNull();
+    expect(reads - before).toBe(1);
+  });
+
+  test("a fork names its upstream only to whoever may read the upstream, on the page and in the terminal", async () => {
+    // bob forks cy's private radar: he may read his fork, not its parent.
+    const forked = await forkRepo(app.db, app.reposRoot, repo, bob.id, "radar-fork");
+    if (!forked.ok) throw new Error(String(forked.error));
+    const declare = (name: string) =>
+      commitToBranch(app, bob, forked.value, {
+        message: name,
+        files: [{ path: "forge.json", content: JSON.stringify({ app: { run: "x" }, feature: { ...FEATURE, name } }) }],
+      });
+    await declare("Radar Fork");
+    const row = insertApp(app.db, { repoId: forked.value.id, slug: "radar-fork", access: "private" });
+    if (!row.ok) throw new Error(row.error);
+    try {
+      const upstream = `${repo.ownerName}/${repo.name}`;
+      const seen = await getFeature(app, ada, "radar-fork");
+      expect(seen.ok && seen.value.provenance.upstream).toBe(upstream);
+      const hidden = await getFeature(app, bob, "radar-fork");
+      expect(hidden.ok && hidden.value.provenance.upstream).toBeNull();
+      expect(JSON.stringify(hidden)).not.toContain(upstream);
+      const list = await (await web(adaCookie, "/settings/features")).text();
+      expect(list).toContain(`<dt>Fork of</dt><dd>${upstream}</dd>`);
+
+      expect((await absorbApp(app, ada, "radar-fork")).ok).toBe(true);
+      await declare("Radar Fork Later");
+      const { featuresScreen } = await import("../src/tui/screens/features.ts");
+      const { Screen: Surface } = await import("../src/tui/term/screen.ts");
+      const { theme } = await import("../src/tui/ui/theme.ts");
+      const ctx = { theme: theme("dark"), invalidate() {}, push() {}, pop() {}, copy() {}, toast() {} } as never;
+      const screen = featuresScreen({ app, db: app.db, user: ada } as never, ctx);
+      await screen.busy();
+      const shown = new Surface(200, 20);
+      screen.render({ x: 0, y: 0, w: 200, h: 20 }, shown);
+      expect(shown.toText()).toContain(`Fork of ${upstream}`);
+    } finally {
+      await unabsorbApp(app, ada, "radar-fork");
+      deleteApp(app.db, row.value.id);
+    }
+  });
+
   test("a changed summary alone is pending, and accepting stores it for the menu title", async () => {
     const before = absorbedForNav(app, ada)[0]!;
     expect(before.summary).toBe(FEATURE.summary);
@@ -378,6 +462,7 @@ describe("absorbing an app", () => {
     const shown = new Surface(110, 20);
     (await open(ada)).render({ x: 0, y: 0, w: 110, h: 20 }, shown);
     expect(shown.toText()).toContain("Radar TUI");
+    expect(shown.toText()).toContain("Last changed by");
     const denied = await open(cy);
     expect(denied.key!({ key: "a" } as never)).toBe(false);
     expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar");

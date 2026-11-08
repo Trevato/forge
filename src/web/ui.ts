@@ -946,6 +946,9 @@ export interface RowOptions {
   href?: string;
   title: Html | string;
   meta?: Html;
+  /** Facts about the row, one `dt`/`dd` pair each, in a `dl.row-facts` under the meta. With facts the row's
+   * main column is a `<div>`, so the `dl` is valid HTML: not for a `fold` row, whose `<summary>` takes phrasing only. */
+  facts?: readonly { label: string; value: Html | string }[];
   /** Draw `.row-meta` even when `meta` is empty, for a script to write into. */
   metaSlot?: boolean;
   lead?: Html;
@@ -975,17 +978,26 @@ export interface RowOptions {
  * controls, `<summary>` when it folds — the hover affordance follows
  * automatically. */
 export function row(o: RowOptions): Html {
+  const facts = o.facts !== undefined && o.facts.length > 0 && o.fold === undefined;
   const inner = html`${o.lead
       ? html`<span class="row-lead">${o.lead}</span>`
       : null}
-    <span class="row-main">
+    ${facts ? html`<div class="row-main">
       <span
         class="row-title"
         ${o.titleAttr ? html`title="${o.titleAttr}"` : null}
         >${o.title}</span
       >
       ${o.meta || o.metaSlot ? html`<span class="row-meta">${o.meta}</span>` : null}
-    </span>
+      <dl class="row-facts">${o.facts!.map((f) => html`<div><dt>${f.label}</dt><dd>${f.value}</dd></div>`)}</dl>
+    </div>` : html`<span class="row-main">
+      <span
+        class="row-title"
+        ${o.titleAttr ? html`title="${o.titleAttr}"` : null}
+        >${o.title}</span
+      >
+      ${o.meta || o.metaSlot ? html`<span class="row-meta">${o.meta}</span>` : null}
+    </span>`}
     ${o.trail && o.trail.text.trim() !== ""
       ? html`<span class="row-trail">${o.trail}</span>`
       : null}`;

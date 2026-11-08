@@ -466,6 +466,10 @@ a.row:hover .row-title { color: var(--accent); }
   font-variant-numeric: tabular-nums;
 }
 .row-meta .byline { display: inline; }
+.row-facts { display: flex; flex-wrap: wrap; gap: 0 16px; margin: 0; font-size: 12.5px; color: var(--muted-fg); line-height: 1.5; }
+.row-facts > div { display: flex; gap: 6px; min-width: 0; }
+.row-facts dt { font-weight: 550; }
+.row-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .row-meta .avatar { width: 16px; height: 16px; font-size: var(--fs-min); vertical-align: -0.28em; }
 .row-meta .byline-name { margin-left: 4px; }
 .row-lead { color: var(--faint); display: inline-flex; flex: none; }

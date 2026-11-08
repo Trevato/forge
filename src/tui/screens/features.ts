@@ -6,7 +6,7 @@
  * refused. Offered to a site admin who is a person, as the page is.
  */
 
-import { acceptDeclaration, listFeatures, type FeatureView } from "../../actions/features.ts";
+import { acceptDeclaration, listFeatures, provenanceFacts, type FeatureView } from "../../actions/features.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -50,7 +50,7 @@ export function featuresScreen(f: Session, ctx: Ctx): FeaturesScreen {
       s.text(head!.x, head!.y, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       const list: ListRow[] = rows.map((r) => ({
         title: `${r.name} (${r.page})`,
-        secondary: `${r.repo} declares ${r.pending!.name} (${r.pending!.page})`,
+        secondary: [`${r.repo} declares ${r.pending!.name} (${r.pending!.page})`, ...provenanceFacts(r.provenance).map((x) => `${x.label} ${x.value}`)].join(" · "),
         meta: "",
       }));
       drawList(s, body!, c, state, list);

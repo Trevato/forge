@@ -107,3 +107,12 @@ their own "Features from apps" heading. The declared `summary` is the entry's `t
 Open the palette and choose "Menu entries to review" (site admins who are people only). It lists the
 absorbed apps whose declaration changed; `j`/`k` move, `a` accepts the selected row. The accept posts the
 name and page the screen showed, so one that changed since is refused ("review it again"), as on the page.
+
+## Where an app comes from
+
+Beside each app on Settings › Features, on its own page, and in the terminal's "Menu entries to review", two facts may show (the repository is already in the title):
+
+- **Fork of**: the repository the app's repository was forked from. It shows only to someone who may read that repository, so a fork of a private repository does not name it to anyone else.
+- **Last changed by**: the author and date of the latest commit on the default branch that touched `forge.json`. The author is the name the commit carries, not a verified identity: anyone who can push can write any name.
+
+Nothing shows when there is nothing to say. The last change is read from git once per tip and kept.

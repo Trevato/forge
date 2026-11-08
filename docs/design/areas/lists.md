@@ -12,6 +12,10 @@ trails a palette row.
   end, ellipsised past 45% of the row. Written by `src/web/client.ts` (the file finder's rows and the command
   palette's `row()`), never in server markup. Styled in `src/web/style/components.ts` (`.palette-item .cat`) and
   `src/web/style/content.ts` (`.finder .palette-item .cat`).
+- `.row-facts` — the `dl` of a §5 row's facts (`row({ facts })` in `src/web/ui.ts`): label and value pairs under the
+  meta, wrapping as a phone narrows, in the meta's size and colour. The row's main column is then a `<div>`, so the
+  `dl` is valid. First used by Settings › Features for where an app comes from (#9770). Styled in
+  `src/web/style/components.ts` (list rows).
 - `.flow-row` — a §5 `.row` link on the flow panel (`flow-panel.ts`: idle pulls and the "and K more" row) with a 44px
   minimum height, so it is a touch target on a 360px phone. Styled in `src/web/style/components.ts` (list rows).
 

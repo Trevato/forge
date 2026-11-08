@@ -34,6 +34,7 @@ import {
 import { canRead, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
+import { commitLog } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -80,6 +81,75 @@ export interface FeatureView {
   /** Why the declaration is not usable, when it is not; `settings` is then empty. */
   readonly problem: string | null;
   readonly settings: readonly SettingView[];
+  /** Where the app comes from: the upstream only when the reader may read it. */
+  readonly provenance: Provenance;
+}
+
+/**
+ * Who stands behind an app's declaration: its repository, the repository it
+ * was forked from, and who last changed forge.json.
+ */
+export interface Provenance {
+  readonly repo: string;
+  readonly upstream: string | null;
+  readonly changedBy: string | null;
+  readonly changedAt: string | null;
+}
+
+/** The last change by tip. Bounded on its own, apart from the declarations': cleared whole when full. */
+const changed = new Map<string, { by: string; at: string } | null>();
+const CHANGED_MAX = 500;
+
+/**
+ * The facts a door shows for a provenance, label and value, in the order
+ * shown. The repository is not one: the row's title has it.
+ */
+export function provenanceFacts(p: Provenance): { label: string; value: string }[] {
+  const facts: { label: string; value: string }[] = [];
+  if (p.upstream !== null) facts.push({ label: "Fork of", value: p.upstream });
+  if (p.changedBy !== null) {
+    const on = p.changedAt === null ? "" : `, ${p.changedAt.slice(0, 10)}`;
+    facts.push({ label: "Last changed by", value: `${p.changedBy}${on}` });
+  }
+  return facts;
+}
+
+/**
+ * The latest commit at or under `tip` that touched forge.json: its author and
+ * date. A commit never changes, so it is read from git once per tip and kept;
+ * `read` is git's log, or a stand-in that counts.
+ */
+export async function lastChange(
+  dir: string,
+  tip: string,
+  read: typeof commitLog = commitLog,
+): Promise<{ by: string; at: string } | null> {
+  if (changed.has(tip)) return changed.get(tip) ?? null;
+  const log = await read(dir, tip, { limit: 1, path: "forge.json" });
+  const c = log.ok ? log.value[0] : undefined;
+  const last = c === undefined ? null : { by: c.author, at: c.date };
+  if (changed.size >= CHANGED_MAX) changed.clear();
+  changed.set(tip, last);
+  return last;
+}
+
+/**
+ * The repository's provenance as the actor may see it: the upstream is named
+ * only to one who may read it, so a fork does not leak a private parent's name.
+ * The last change is the default branch's latest commit touching forge.json, kept by tip.
+ */
+async function provenanceOf(app: App, actor: User | undefined, repo: Repo): Promise<Provenance> {
+  const found = repo.forkParentId === null ? undefined : getRepoById(app.db, repo.forkParentId);
+  const parent = found !== undefined && canRead(app.db, found, actor) ? found : undefined;
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const tip = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+  const last = tip === undefined ? null : await lastChange(dir, tip);
+  return {
+    repo: `${repo.ownerName}/${repo.name}`,
+    upstream: parent === undefined ? null : `${parent.ownerName}/${parent.name}`,
+    changedBy: last?.by ?? null,
+    changedAt: last?.at ?? null,
+  };
 }
 
 const siteAdmin = (actor: User | undefined): actor is User =>
@@ -132,7 +202,14 @@ export async function declaresFeature(app: App, actor: User | undefined, repo: R
   return read.ok && read.value !== undefined;
 }
 
-function viewOf(record: AppRecord, repo: Repo, app: App, spec: FeatureSpec | undefined, problem: string | null): FeatureView {
+function viewOf(
+  record: AppRecord,
+  repo: Repo,
+  app: App,
+  spec: FeatureSpec | undefined,
+  problem: string | null,
+  provenance: Provenance,
+): FeatureView {
   const kept = featureSettings(app.db, record.id);
   const absorbed = getAbsorbed(app.db, record.id);
   const env = spec === undefined ? {} : featureEnv(spec, kept);
@@ -152,6 +229,7 @@ function viewOf(record: AppRecord, repo: Repo, app: App, spec: FeatureSpec | und
     absorbedBy: absorbed?.absorbedBy ?? null,
     absorbedAt: absorbed?.absorbedAt ?? null,
     problem,
+    provenance,
     settings: (spec?.settings ?? []).map((s) => {
       const name = settingEnvName(s.key);
       return {
@@ -193,7 +271,9 @@ export async function listFeatures(app: App, actor: User | undefined): Promise<R
     if (repo === undefined) continue;
     const declared = await declaredFeature(app, repo);
     if (declared.ok && declared.value === undefined && getAbsorbed(app.db, record.id) === undefined) continue;
-    out.push(viewOf(record, repo, app, declared.ok ? declared.value : undefined, declared.ok ? null : declared.error));
+    const spec = declared.ok ? declared.value : undefined;
+    const provenance = await provenanceOf(app, actor, repo);
+    out.push(viewOf(record, repo, app, spec, declared.ok ? null : declared.error, provenance));
   }
   return ok(out.sort((a, b) => Number(b.absorbed) - Number(a.absorbed) || a.name.localeCompare(b.name)));
 }
@@ -232,7 +312,9 @@ export async function getFeature(app: App, actor: User | undefined, slug: string
   const declared = await declaredFeature(app, found.repo);
   if (declared.ok && declared.value === undefined && getAbsorbed(app.db, found.record.id) === undefined)
     return err("not_a_feature");
-  return ok(viewOf(found.record, found.repo, app, declared.ok ? declared.value : undefined, declared.ok ? null : declared.error));
+  const spec = declared.ok ? declared.value : undefined;
+  const provenance = await provenanceOf(app, actor, found.repo);
+  return ok(viewOf(found.record, found.repo, app, spec, declared.ok ? null : declared.error, provenance));
 }
 
 async function redeployAll(app: App, record: AppRecord, repo: Repo): Promise<void> {
@@ -250,7 +332,7 @@ export async function absorbApp(app: App, actor: User | undefined, slug: string)
     app.bus.append({ kind: "app.absorbed", repoId: found.repo.id, actorId: actor.id, payload: { slug, name: declared.value.name } });
     await redeployAll(app, found.record, found.repo);
   }
-  return ok(viewOf(found.record, found.repo, app, declared.value, null));
+  return ok(viewOf(found.record, found.repo, app, declared.value, null, await provenanceOf(app, actor, found.repo)));
 }
 
 /**
@@ -283,7 +365,7 @@ export async function acceptDeclaration(
       payload: { slug, name, page, was: { name: before.name, page: before.page } },
     });
   }
-  return ok(viewOf(found.record, found.repo, app, declared.value, null));
+  return ok(viewOf(found.record, found.repo, app, declared.value, null, await provenanceOf(app, actor, found.repo)));
 }
 
 /** Put an absorbed app back as an ordinary app. Its settings are kept for the next absorb. */
@@ -295,7 +377,9 @@ export async function unabsorbApp(app: App, actor: User | undefined, slug: strin
   app.bus.append({ kind: "app.unabsorbed", repoId: found.repo.id, actorId: actor.id, payload: { slug } });
   await redeployAll(app, found.record, found.repo);
   const declared = await declaredFeature(app, found.repo);
-  return ok(viewOf(found.record, found.repo, app, declared.ok ? declared.value : undefined, declared.ok ? null : declared.error));
+  const spec = declared.ok ? declared.value : undefined;
+  const provenance = await provenanceOf(app, actor, found.repo);
+  return ok(viewOf(found.record, found.repo, app, spec, declared.ok ? null : declared.error, provenance));
 }
 
 /**
@@ -336,5 +420,5 @@ export async function changeFeatureSettings(
     });
     await redeployAll(app, found.record, found.repo);
   }
-  return ok(viewOf(found.record, found.repo, app, declared.value, null));
+  return ok(viewOf(found.record, found.repo, app, declared.value, null, await provenanceOf(app, actor, found.repo)));
 }

@@ -15,6 +15,7 @@ import {
   unabsorbApp,
   type FeatureView,
   type SettingView,
+  provenanceFacts,
 } from "../../actions/features.ts";
 import { DAYS } from "../../apps/feature.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -51,12 +52,20 @@ export function switchNote(f: Pick<FeatureView, "name" | "absorbed">): string {
   return f.absorbed ? `Un-absorbing takes ${f.name} off every menu; its settings are kept.` : `Absorbing restarts ${f.name} and adds it to the menu.`;
 }
 
+/** Where the app comes from, on a feature's own page: `dl` rows, the upstream when a fork and who last changed it. */
+export function provenanceRows(p: FeatureView["provenance"]) {
+  const facts = provenanceFacts(p);
+  if (facts.length === 0) return null;
+  return html`<dl class="status-rows">${facts.map((f) => html`<div class="status-row"><dt>${f.label}</dt><dd>${f.value}</dd></div>`)}</dl>`;
+}
+
 function featureRow(f: FeatureView) {
   const base = `/settings/features/${encodeURIComponent(f.slug)}`;
   return row({
     title: html`${f.name} <span class="muted small mono">${f.repo}</span>
       ${f.absorbed ? badge("absorbed", { tone: "success" }) : null}
       ${f.pending !== null ? badge("declaration changed: review", { tone: "attn" }) : null}`,
+    facts: provenanceFacts(f.provenance),
     meta: html`${f.pending !== null
       ? html`Menu: <strong>${f.name}</strong> at <span class="mono">${f.page}</span> → app: <strong>${f.pending.name}</strong> at
           <span class="mono">${f.pending.page}</span>${f.pending.summary !== null
@@ -183,6 +192,7 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused): Response {
         <h2>${f.name}</h2>
         ${f.absorbed ? badge("absorbed", { tone: "success" }) : badge("not absorbed", { variant: "outline" })}
       </div>
+      ${provenanceRows(f.provenance)}
       ${f.settings.length === 0
         ? html`<p class="muted small">${f.problem ?? "This feature declares no settings."}</p>`
         : html`<form method="post" action="${base}">
