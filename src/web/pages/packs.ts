@@ -12,7 +12,7 @@ import { notFoundPage, offersSignup, pageHead } from "../chrome.ts";
 import { deployCommands, BRINGS_WORDS, STRANGER_WORDS } from "../../packs/words.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, listCard, row } from "../ui.ts";
+import { btn, card, copyField, listCard, row } from "../ui.ts";
 
 const plural = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
 
@@ -63,9 +63,13 @@ export function packPage(ctx: Ctx): Response {
       { head: html`<h2>What it brings</h2>` },
     )}
     ${card(
-      html`<div class="stack stack-tight">
-        ${deployCommands(pack, ctx.app.config.url).map((l) => html`<code class="mono break">${l}</code>`)}
-      </div>`,
+      copyField(
+        "pack-command",
+        deployCommands(pack, ctx.app.config.url).join("\n"),
+        `The command that deploys the ${pack.title} pack`,
+        "Copy the command",
+        { lines: deployCommands(pack, ctx.app.config.url).length },
+      ),
       { head: html`<h2>Deploy it on your own machine</h2>` },
     )}
     ${card(

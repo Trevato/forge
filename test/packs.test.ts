@@ -109,4 +109,30 @@ describe("pages", () => {
     expect(body).toContain("gabrielecirulli/2048");
     expect((await fetch(`${servers.url}/packs/nothing`)).status).toBe(404);
   });
+  test("the home page has one press for each pack, a link in its row; following it finds the command", async () => {
+    const { Window } = await import("happy-dom");
+    const dom = (h: string) => {
+      const w = new Window();
+      w.document.body.innerHTML = h;
+      return w.document;
+    };
+    const home = dom(await (await fetch(`${servers.url}/`)).text());
+    const presses = [...home.querySelectorAll(".door-press")];
+    expect(presses.length).toBe(2);
+    for (const name of ["games", "business"]) {
+      const press = presses.find((p) => p.querySelector(`h3 > a[href="/packs/${name}"]`) !== null);
+      expect(press).toBeDefined();
+      expect(press!.querySelector(`.door-press-actions > a[href="/packs/${name}"]`)).not.toBeNull();
+      const slot = press!.querySelector('.door-press-actions > [data-slot="host"]');
+      expect(slot).not.toBeNull();
+      expect(slot!.children.length).toBe(0);
+      const page = dom(await (await fetch(`${servers.url}/packs/${name}`)).text());
+      const field = page.getElementById("pack-command");
+      expect(field).not.toBeNull();
+      expect(field!.textContent).toContain(`scripts/pack.ts deploy ${name}`);
+      const copy = page.querySelector('[data-copy="pack-command"]');
+      expect(copy).not.toBeNull();
+      expect(copy!.className).toContain("js-only");
+    }
+  });
 });

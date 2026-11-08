@@ -17,6 +17,7 @@ import {
   type FrontPage,
   type FrontPicksJson,
 } from "../../actions/front.ts";
+import { catalog } from "../../packs/catalog.ts";
 import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
 import { signupClosed } from "../../actions/users.ts";
 import { getSignup } from "../../settings/signup.ts";
@@ -663,6 +664,34 @@ function doorPulse(days: FrontPage["pulse"]["days"]): Html | null {
 
 const FORGE_REPO = "https://forge.open-platform.sh/trevato/forge";
 
+/**
+ * One press for each shipped pack (#9572): what it is, and the way to its page,
+ * where the command is. The `data-slot="host"` element is the named place a
+ * later "host it for me" action sits beside "See what it brings"; it is empty
+ * today, so there is no dead button.
+ */
+function packPresses(): Html | null {
+  const { packs } = catalog();
+  if (packs.length === 0) return null;
+  const count = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
+  return html`<div class="door-packs" aria-label="Ready-made forges">
+    <p class="door-kick">Start from a ready-made forge</p>
+    <div class="door-press-row">
+      ${packs.map(
+        (p) => html`<article class="door-press">
+          <h3><a href="/packs/${p.name}">${p.title}</a></h3>
+          <p class="muted small">${p.description}</p>
+          <p class="muted small">${count(p.apps.length, "app")}, ${count(p.crew.length, "crew member")}</p>
+          <div class="door-press-actions">
+            ${btn("See what it brings", { href: `/packs/${p.name}`, size: "sm" })}
+            <span data-slot="host"></span>
+          </div>
+        </article>`,
+      )}
+    </div>
+  </div>`;
+}
+
 /** The page the prompt and the Open in ChatGPT, Claude and Grok links send an assistant to. */
 const AGENTS = "/agents";
 
@@ -829,9 +858,7 @@ bun run src/main.ts</code></pre>
             <p class="muted small">Or visit this forge from your terminal: your key is your identity.</p>
           </div>`,
         )}
-        <p class="door-packs">
-          <span class="door-kick">Coming</span> Ready-made forges to start from: the software a business or a game studio needs, with more over time.
-        </p>
+        ${packPresses()}
       </div>
     </section>
     <p class="door-org">

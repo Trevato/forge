@@ -268,7 +268,13 @@ form.inline { display: inline; margin-left: auto; }
 .door-points dd { max-width: 58ch; }
 .door-code { margin: 0; padding: 18px 20px; overflow-x: auto; border-radius: var(--radius); background: var(--muted); font-family: var(--mono); font-size: 13px; line-height: 1.7; }
 .door-packs { margin: 8px 0 0; color: var(--muted-fg); }
-.door-packs .door-kick { display: block; margin-bottom: 4px; }
+.door-packs .door-kick { display: block; margin-bottom: 8px; }
+.door-press-row { display: grid; gap: 12px; }
+.door-press { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius); }
+.door-press h3 { margin: 0; font-size: 16px; font-weight: 500; }
+.door-press p { margin: 0; }
+.door-press-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.door-press-actions [data-slot]:empty { display: none; }
 @media (max-width: 559px) {
   .door-wide { display: none; }
 }
@@ -276,6 +282,7 @@ form.inline { display: inline; margin-left: auto; }
   .door-shelf { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .door-points { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
   .door-steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; }
+  .door-press-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .door-split { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 48px; }
 }
 @media (min-width: 1000px) {

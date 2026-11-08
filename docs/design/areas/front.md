@@ -35,5 +35,7 @@ The page a visitor reads first runs past §3's working scale on purpose, in `cla
 - `.door-pulse-quiet` — a day with no finished work.
 - `.door-org` — one calm line for organizations.
 - `.door-code` — the commands that run a forge.
-- `.door-packs` — ready-made forges, said as coming, with no button until they deploy.
+- `.door-packs` — the ready-made forges: a kicker, then one press for each pack.
+- `.door-press-row` / `.door-press` — the presses, side by side from 720px; each names the pack, what it holds, and links to `/packs/:name`.
+- `.door-press-actions` — a press's actions; its empty `data-slot="host"` is where a later "host it for me" sits.
 - `.door-wide` — a visitor's top-bar link that a phone leaves out, so the bar never overflows.

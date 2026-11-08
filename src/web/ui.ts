@@ -248,22 +248,40 @@ export function copyField(
   value: string,
   label: string,
   copyLabel: string,
+  o: { lines?: number } = {},
 ): Html {
-  return html`<span class="bar"
-    ><input
-      class="input grow mono"
-      id="${id}"
-      type="text"
-      readonly
-      value="${value}"
-      aria-label="${label}"
-      data-size="sm"
-    />${iconBtn("copy", copyLabel, {
-      size: "sm",
-      type: "button",
-      copy: id,
-    })}</span
-  >`;
+  // The button needs script, so it is only on the page when there is script;
+  // without it the field is still there to select.
+  const button = iconBtn("copy", copyLabel, {
+    size: "sm",
+    type: "button",
+    copy: id,
+    extra: "js-only",
+  });
+  return o.lines !== undefined && o.lines > 1
+    ? html`<span class="stack stack-tight"
+        ><textarea
+          class="input mono"
+          id="${id}"
+          rows="${o.lines}"
+          wrap="off"
+          readonly
+          aria-label="${label}"
+          data-size="sm"
+        >${value}</textarea
+        >${button}</span
+      >`
+    : html`<span class="bar"
+        ><input
+          class="input grow mono"
+          id="${id}"
+          type="text"
+          readonly
+          value="${value}"
+          aria-label="${label}"
+          data-size="sm"
+        />${button}</span
+      >`;
 }
 
 // ---- badges, labels, pills, dots ----
