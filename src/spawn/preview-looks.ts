@@ -102,6 +102,18 @@ export const PREVIEW_HELD_THEMES: readonly { readonly theme: string; readonly ti
   { theme: "digest", titles: ["Digest groups mentions", "Digest honours quiet hours", "Digest links threads"] },
 ];
 
+/**
+ * The owner's settings pages that list things (#9781): tokens, the crew,
+ * subscriptions and usage. The seed gives each something to show and
+ * refuses to finish if any would answer anything but 200.
+ */
+export const PREVIEW_SETTINGS_PAGES: readonly string[] = [
+  "/settings/tokens",
+  "/settings/crew",
+  "/settings/subscriptions",
+  "/settings/usage",
+];
+
 export interface OwnerLook {
   readonly page: string;
   readonly kind: LookKind;
@@ -127,6 +139,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_ISSUE_PAGE,
   PREVIEW_RESILIENCE_PAGE,
   PREVIEW_SEARCH_PAGE,
+  ...PREVIEW_SETTINGS_PAGES,
 ].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));
 
 /**

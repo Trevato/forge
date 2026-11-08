@@ -9,8 +9,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
-import { PREVIEW_HELD_PAGE, PREVIEW_HELD_THEMES, ownerLooksFor, PREVIEW_ADMIN, PREVIEW_REPO } from "../src/spawn/preview-looks.ts";
-import { seedPreview } from "../src/spawn/preview-seed.ts";
+import { PREVIEW_SETTINGS_PAGES, PREVIEW_HELD_PAGE, PREVIEW_HELD_THEMES, PREVIEW_OWNER_LOOKS, ownerLooksFor, PREVIEW_ADMIN, PREVIEW_REPO } from "../src/spawn/preview-looks.ts";
+import { previewAdmin, seedPreview } from "../src/spawn/preview-seed.ts";
+import { listTokens } from "../src/core/tokens.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { forgeHttp } from "../src/http/server.ts";
 import { THEMES_AT_REST } from "../src/web/pages/gate.ts";
 import { reviewGate } from "../src/actions/gate_review.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -87,4 +90,77 @@ describe("the seeded first issue", () => {
     expect(html).toContain("<h2>Closes with</h2>");
     expect(html).toContain("A seeded run");
   });
+});
+
+describe("the owner's settings pages (#9781)", () => {
+  const pages = ["/settings/tokens", "/settings/crew", "/settings/subscriptions", "/settings/usage"];
+  test("each is named at desk and phone", () => {
+    for (const page of pages)
+      for (const kind of ["desktop", "phone"] as const)
+        expect(PREVIEW_OWNER_LOOKS).toContainEqual({ page, kind });
+  });
+
+  test("the seed gives each a row and answers 200 to the owner", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-preview-settings-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    try {
+      const seeded = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+      if (!seeded.ok) throw new Error(seeded.error);
+      const admin = previewAdmin(app)!;
+      const cookie = `forge_session=${createSession(app.db, admin.id).token}`;
+      const http = forgeHttp(app);
+      const get = async (p: string) => {
+        const res = await http.handle(new Request(`http://localhost${p}`, { headers: { cookie } }));
+        expect(res.status).toBe(200);
+        return res.text();
+      };
+      expect(await get("/settings/tokens")).toContain("preview fake token");
+      expect(await get("/settings/crew")).toContain("preview-agent");
+      expect(await get("/settings/subscriptions")).toContain("preview sample");
+      await get("/settings/usage");
+    } finally {
+      app.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test("a named page that is not 200 refuses the seed, naming the path, and a retry adds no second token", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-preview-refuse-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    const pages = PREVIEW_SETTINGS_PAGES as string[];
+    pages.push("/settings/no-such-page");
+    try {
+      const refused = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+      expect(!refused.ok && refused.error).toContain("/settings/no-such-page");
+      await seedPreview(app, { FORGE_APP_ENV: "preview" });
+      const admin = previewAdmin(app)!;
+      expect(listTokens(app.db, admin.id).length).toBe(1);
+    } finally {
+      pages.pop();
+      app.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test("a preview already seeded gets its settings rows once, and a second seed adds no token", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-preview-older-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    try {
+      const first = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+      if (!first.ok) throw new Error(first.error);
+      const admin = previewAdmin(app)!;
+      // An older preview: world seeded, settings rows not.
+      app.db.query("DELETE FROM token WHERE user_id = ?1").run(admin.id);
+      app.db.query("DELETE FROM user_setting WHERE user_id = ?1 AND key = 'preview_settings_seeded'").run(admin.id);
+      expect(listTokens(app.db, admin.id).length).toBe(0);
+      const again = await seedPreview(app, { FORGE_APP_ENV: "preview" });
+      expect(again.ok && again.value.seeded).toBe(false);
+      expect(listTokens(app.db, admin.id).map((t) => t.name)).toEqual(["preview fake token, not a credential"]);
+      await seedPreview(app, { FORGE_APP_ENV: "preview" });
+      expect(listTokens(app.db, admin.id).length).toBe(1);
+    } finally {
+      app.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

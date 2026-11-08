@@ -37,7 +37,11 @@ import { addDependency } from "../core/dependencies.ts";
 import { claimRun, createRun, finishRun } from "../core/runs.ts";
 import { setMember } from "../core/roles.ts";
 import { noteLimit } from "../core/standing.ts";
-import { addSubscription } from "../core/subscriptions.ts";
+import { addSubscription, listSubscriptions } from "../core/subscriptions.ts";
+import { createAgent } from "../actions/crew.ts";
+import { getAgentByName } from "../core/agents.ts";
+import { createSession, destroySession } from "../core/sessions.ts";
+import { createToken, listTokens } from "../core/tokens.ts";
 import { recordUsage } from "../core/usage.ts";
 import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { createUser, getUserByName, type User } from "../core/users.ts";
@@ -54,6 +58,7 @@ import {
   PREVIEW_PULL,
   PREVIEW_PULL_PAGE,
   PREVIEW_REPO,
+  PREVIEW_SETTINGS_PAGES,
 } from "./preview-looks.ts";
 
 export {
@@ -82,8 +87,11 @@ export const PREVIEW_WAVE_HEADLINE = "The sample says hello";
 export const PREVIEW_LANDING_TITLE = `The changelog wraps a long landing title on a phone ${"L".repeat(120)} and the words after it`;
 /** The board whose panels are pinned to home. */
 const PREVIEW_BOARD = "preview";
+const PREVIEW_AGENT = "preview-agent";
+const PREVIEW_TOKEN = "preview fake token, not a credential";
 const SEEDED = "preview_seeded";
 const CONFIG_SEEDED = "preview_config_seeded";
+const SETTINGS_SEEDED = "preview_settings_seeded";
 
 type Env = Record<string, string | undefined>;
 
@@ -124,14 +132,63 @@ export async function seedPreview(
   if (!admin.isAdmin || admin.kind === "agent")
     return err("the preview admin's name is someone else's");
   if (getUserSetting(app.db, admin.id, SEEDED) !== undefined) {
+    const settings = await seedSettingsPages(app, admin);
+    if (!settings.ok) return settings;
     const files = await seedConfigFiles(app, admin);
     return files.ok ? ok({ seeded: false }) : files;
   }
   const world = await seedWorld(app, admin);
   if (!world.ok) return world;
   setUserSetting(app.db, admin.id, SEEDED, new Date().toISOString());
+  const settings = await seedSettingsPages(app, admin);
+  if (!settings.ok) return settings;
   const files = await seedConfigFiles(app, admin);
   return files.ok ? ok({ seeded: true }) : files;
+}
+
+/**
+ * Something on each settings page the owner looks at (#9781), once: a token
+ * whose value is plainly fake (the page shows its name, never its secret),
+ * an agent for the crew, and a subscription if none was seeded. Then each
+ * page is asked for as the admin, and any answer but 200 refuses the seed.
+ */
+async function seedSettingsPages(app: App, admin: User): Promise<Result<void, string>> {
+  if (getUserSetting(app.db, admin.id, SETTINGS_SEEDED) !== undefined) return ok(undefined);
+  // Guarded like the agent and the subscription: a refused seed retries on the next boot and adds no second token.
+  if (!listTokens(app.db, admin.id).some((t) => t.name === PREVIEW_TOKEN))
+    createToken(app.db, admin.id, PREVIEW_TOKEN, "ro");
+  if (getAgentByName(app.db, PREVIEW_AGENT) === undefined) {
+    const made = await createAgent(app, admin, {
+      username: PREVIEW_AGENT,
+      displayName: "Preview agent",
+      brief: "A seeded crew member, to give the crew page a row.",
+      roles: ["builder"],
+    });
+    if (!made.ok) return err(`the preview agent: ${String(made.error)}`);
+  }
+  if (listSubscriptions(app.db).length === 0) {
+    const added = addSubscription(app.db, app.config.dataDir, {
+      name: "preview sample",
+      token: "sk-ant-oat01-preview-sample-not-a-credential",
+    });
+    if (!added.ok) return err(`the sample account: ${added.error}`);
+  }
+  const { forgeHttp } = await import("../http/server.ts");
+  const http = forgeHttp(app);
+  const session = createSession(app.db, admin.id);
+  try {
+    for (const path of PREVIEW_SETTINGS_PAGES) {
+      const res = await http.handle(
+        new Request(`http://localhost${path}`, { headers: { cookie: `forge_session=${session.token}` } }),
+      );
+      if (res.status !== 200) return err(`${path} answers ${String(res.status)}, not 200`);
+    }
+  } finally {
+    destroySession(app.db, session.token);
+    http.close();
+  }
+  setUserSetting(app.db, admin.id, SETTINGS_SEEDED, new Date().toISOString());
+  return ok(undefined);
 }
 
 /**
