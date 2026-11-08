@@ -118,6 +118,7 @@ describe("terminal screen", () => {
     tui.ctx.pop();
     const lines = packLines(packNamed("games")!, undefined).join("\n");
     expect(lines).toContain("scripts/pack.ts deploy games");
+    expect(lines).toContain("scripts/pack.ts up games");
     expect(lines).toContain("waits for a person");
     expect(lines).toContain("2048");
     tui.stop?.();

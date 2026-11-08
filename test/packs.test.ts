@@ -68,6 +68,13 @@ describe("deploy", () => {
         calls.push(`history ${source} -> ${owner}/${name}`);
         return { ok: true };
       },
+      async defaultBranch() {
+        return "main";
+      },
+      async follow(owner, name, source, branch) {
+        calls.push(`follow ${owner}/${name} ${source} ${branch}`);
+        return { ok: true };
+      },
       async makeAgent(a) {
         calls.push(`agent ${a.username}`);
         return { ok: false, exists: false, why: "no" };
@@ -76,7 +83,7 @@ describe("deploy", () => {
     const pack = parse({ ...good, apps: [...good.apps, { name: "two", description: "d", source: "https://github.com/c/d" }] });
     if (!pack.ok) throw new Error(pack.error);
     const steps = await deployPack(pack.value, hands);
-    expect(calls).toEqual(["app one", "history https://github.com/a/b -> me/one", "app two", "agent helper"]);
+    expect(calls).toEqual(["app one", "history https://github.com/a/b -> me/one", "follow me/one https://github.com/a/b undefined", "app two", "agent helper"]);
     expect(steps.map((s) => s.state)).toEqual(["done", "kept", "failed"]);
   });
 });

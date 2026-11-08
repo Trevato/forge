@@ -10,9 +10,8 @@ export function deployCommands(p: Pack, origin: string | undefined): readonly st
   const from = origin === undefined ? "<this forge's address>" : origin.replace(/\/+$/, "");
   return [
     `git clone ${from}/trevato/forge.git && cd forge && bun install`,
-    `bun run src/main.ts            # your forge, on http://localhost:3000`,
-    `# make an account there, create an access token, then:`,
-    `FORGE_URL=http://localhost:3000 FORGE_TOKEN=forge_… bun scripts/pack.ts deploy ${p.name}`,
+    `bun scripts/pack.ts up ${p.name}   # boots your forge on http://localhost:3000, deploys the pack, asks nothing`,
+    `# already have a forge? FORGE_URL=… FORGE_TOKEN=forge_… bun scripts/pack.ts deploy ${p.name}`,
   ];
 }
 
@@ -22,4 +21,4 @@ export const STRANGER_WORDS: readonly string[] = [
 ];
 
 export const BRINGS_WORDS =
-  "Each app comes with its history. No data, secrets or variables come with a pack, and the crew waits for the model credential you give it.";
+  "Each app comes with its history. No data, secrets or variables come with a pack, and the crew stays off until you give it a model credential, the one thing asked of you.";
