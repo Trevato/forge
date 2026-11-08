@@ -19,6 +19,8 @@ COPY package.json tsconfig.json ./
 COPY src ./src
 # The principles the forge's own agents are briefed with (src/crew/principles.ts).
 COPY docs/PRINCIPLES.md ./docs/PRINCIPLES.md
+# The design principles a src/web/ review is held to (src/crew/design_principles.ts).
+COPY docs/DESIGN.md ./docs/DESIGN.md
 # src/ alone: nothing under it imports scripts/ or test/ (test/src-imports.test.ts),
 # and the boot proof below fails the build if that ever stops being so (#2652).
 

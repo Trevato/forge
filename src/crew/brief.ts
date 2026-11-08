@@ -16,6 +16,7 @@ import type { Pull } from "../core/pulls.ts";
 import { saysFromApp } from "../actions/app_notes.ts";
 import { OUTSIDE_LABEL, OUTSIDE_TITLE, saysOutside } from "../core/reports.ts";
 import type { Repo } from "../core/repos.ts";
+import { DESIGN_POINTER, DESIGN_PRINCIPLES } from "./design_principles.ts";
 import { READER } from "./direct.ts";
 import { hotFiles, hotWords } from "./hot_files.ts";
 import { newsSince } from "./news.ts";
@@ -184,7 +185,9 @@ export function systemPrompt(input: BriefInput): string {
       "- Keep state under `FORGE_APP_DATA`. Never write elsewhere at runtime.",
       "- The app's terminal (`tty` in forge.json) is reached with the exact command in `FORGE_APP_SSH` (for example `ssh -p 2222 notes@localhost`: the app is the login name, the forge is the host). When a page or the terminal tells people how to connect, print that variable verbatim and never invent a form like `you@app.host`; when it is unset, say the terminal is off.",
       "- Run the tests (`bun test`, or whatever `forge.json` names) before you push: the deploy runs them, and a failing test fails the preview. When a test fails, fix the code; change the test only when the test was wrong, and say which in the pull.",
-      "- Touching src/web/: run `bun scripts/design-lint.ts` before you push; it names the file:line and what to use instead. A new component class is named in your own docs/design/areas/<area>.md, never in docs/DESIGN.md, which every pull would otherwise edit.",
+      "- Touching src/web/: " +
+        (isForge(repo) && DESIGN_PRINCIPLES.length > 0 ? `review holds it to ${DESIGN_POINTER}; ` : "") +
+        "run `bun scripts/design-lint.ts` before you push; it names what to fix. A new component class goes in your docs/design/areas/<area>.md, never docs/DESIGN.md.",
       "- The bar is the forge's own: small modules named for one concept, every input validated at the boundary and every output escaped, the security floor in " +
         (isForge(repo) ? "`src/http/respond.ts` (`securityFloor`)" : "`src/server.ts`") +
         " kept on every response, no dependency without a reason in the pull, and a page that answers in milliseconds. `AGENTS.md` in the repository says how this app is shaped; keep its shape.",
@@ -360,6 +363,19 @@ const MCP_SIZE_RULE =
 const PLAN_RULE =
   "Keep a short plan on this issue with the `keep_plan` tool (up to 12 items, replaced whole each time): call it once you have read the code and again as items finish, so a person sees where you are without a log.";
 
+/**
+ * For the review of a forge pull that touches src/web/: the principles that
+ * open docs/DESIGN.md, and a finding asked for each one the change breaks.
+ * Another repository's docs/DESIGN.md is its own, so it gets none of these.
+ */
+function designPrincipleLines(repo: { readonly name: string }): string[] {
+  if (!isForge(repo) || DESIGN_PRINCIPLES.length === 0) return [];
+  return [
+    `  Hold it to ${DESIGN_POINTER}, each one in turn, and for every principle the change breaks leave one finding — a line comment where it breaks, naming the principle by its number:`,
+    ...DESIGN_PRINCIPLES.map((p) => `    ${p}`),
+  ];
+}
+
 /** The forge's own repository: its briefs name paths in the forge's tree, not an app scaffold's. */
 function isForge(repo: { readonly name: string }): boolean {
   return repo.name === "forge";
@@ -490,6 +506,7 @@ function taskBody(input: TaskInput): string {
       ...(input.design === true
         ? [
             "- The design system: this change touches src/web/, so you read it as the design team. Read docs/DESIGN.md first, then hold the change to it strictly — tokens and the named components rather than hand-rolled markup, one accent per page, anything that navigates an <a> and anything that mutates a <button> in a post form, everything working with JavaScript off. A page that departs from docs/DESIGN.md is a change request, whatever else it does well.",
+            ...designPrincipleLines(input.repo),
           ]
         : []),
       "- True to the direction: it does what the issue asked and nothing the direction did not, and the preview shows it working.",
