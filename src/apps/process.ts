@@ -128,9 +128,18 @@ const STOP_GRACE_MS = 5_000;
 const HEALTH_INTERVAL_MS = 250;
 
 /**
+ * The way out of the cell this forge runs in (`apps/contain.ts` sets them).
+ * A child forge's cell has no route but its proxy, so a process the child
+ * starts without them (its crew's Claude Code) reaches nothing: every model
+ * call ended ENETUNREACH. Where the forge runs in no cell they are unset.
+ */
+const PROXY_VARS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"] as const;
+
+/**
  * The environment every child starts from. Explicit, and short: the path,
  * the home, who the operator is (the macOS keychain answers to `USER`, and
- * Claude Code's own login lives there), a locale, a temp dir.
+ * Claude Code's own login lives there), a locale, a temp dir, and the
+ * proxy that is the only way out of the forge's own cell.
  */
 export function childEnv(
   extra: Record<string, string>,
@@ -140,7 +149,7 @@ export function childEnv(
     HOME: process.env["HOME"] ?? "/",
     LANG: process.env["LANG"] ?? "C.UTF-8",
   };
-  for (const name of ["USER", "LOGNAME", "TMPDIR"]) {
+  for (const name of ["USER", "LOGNAME", "TMPDIR", ...PROXY_VARS]) {
     const value = process.env[name];
     if (value !== undefined) base[name] = value;
   }

@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { askUntilBelieved, cellsAvailable, openCell } from "../src/apps/contain.ts";
 import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/spawn/host.ts";
 import { createApp } from "../src/app.ts";
-import { cellChildren, stopCellChildren, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
+import { childEnv } from "../src/apps/process.ts";
+import { cellChildren, crewAtWork, stopCellChildren, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
@@ -74,6 +75,44 @@ describe("a child forge's cell", () => {
       expect(env["PORT"]).toBe("4100");
     } finally {
       delete process.env["FORGE_EDGE_TOKEN"];
+    }
+  });
+});
+
+describe("a child forge's crew inside its cell", () => {
+  test("what the child starts keeps the cell's proxy: the only way out, so its crew reaches its model", () => {
+    const keys = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "NO_PROXY"] as const;
+    const saved = keys.map((k) => process.env[k]);
+    try {
+      process.env["HTTPS_PROXY"] = "http://127.0.0.1:3128";
+      process.env["https_proxy"] = "http://127.0.0.1:3128";
+      process.env["HTTP_PROXY"] = "http://127.0.0.1:3128";
+      process.env["NO_PROXY"] = "localhost,127.0.0.1,::1";
+      const env = childEnv({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" });
+      expect(env["HTTPS_PROXY"]).toBe("http://127.0.0.1:3128");
+      expect(env["https_proxy"]).toBe("http://127.0.0.1:3128");
+      expect(env["HTTP_PROXY"]).toBe("http://127.0.0.1:3128");
+      expect(env["NO_PROXY"]).toBe("localhost,127.0.0.1,::1");
+    } finally {
+      keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i])));
+    }
+  });
+
+  test("a child with a run queued or running is at work, however quiet its visitors; one with none is not", () => {
+    const dir = join(tmp, "at-work");
+    expect(crewAtWork(dir)).toBe(false);
+    const child = createApp({ dataDir: dir, url: "https://kid--f.test" });
+    try {
+      expect(crewAtWork(dir)).toBe(false);
+      child.db.exec("PRAGMA foreign_keys = OFF");
+      child.db.query("INSERT INTO run (id, repo_id, kind, state) VALUES ('r1', 'repo', 'agent', 'running')").run();
+      expect(crewAtWork(dir)).toBe(true);
+      child.db.query("UPDATE run SET state = 'queued' WHERE id = 'r1'").run();
+      expect(crewAtWork(dir)).toBe(true);
+      child.db.query("UPDATE run SET state = 'failed' WHERE id = 'r1'").run();
+      expect(crewAtWork(dir)).toBe(false);
+    } finally {
+      child.close();
     }
   });
 });

@@ -8,6 +8,8 @@
  * (`spawn/placement.ts` `fallbackPlacement`), and the ledger says which.
  */
 
+import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { clientAddress } from "../http/peer.ts";
 import type { App } from "../app.ts";
@@ -22,6 +24,27 @@ import { childModelHosts } from "../core/capacity.ts";
 
 export const CELL_PREFIX = "cell-";
 export const ownsBody = (bodyId: string): boolean => bodyId.startsWith(CELL_PREFIX);
+
+/**
+ * Whether the child forge whose data is `dir` has crew work queued or
+ * running. Its own process, not a request, is what a run keeps busy: a run
+ * outlasts the idle window with no visitor at all, and a sleep killed it
+ * (grokbot-agency: every run "interrupted by a restart" ten minutes in).
+ * Read from its database, read-only; a database that cannot be read says no.
+ */
+export function crewAtWork(dir: string): boolean {
+  const path = join(dir, "forge.db");
+  if (!existsSync(path)) return false;
+  let db: Database | undefined;
+  try {
+    db = new Database(path, { readonly: true });
+    return db.query("SELECT 1 FROM run WHERE state IN ('queued','running') LIMIT 1").get() !== null;
+  } catch {
+    return false;
+  } finally {
+    db?.close();
+  }
+}
 
 /** After a child fails to start, requests are answered 503 at once for this long. */
 export const START_BACKOFF_MS = 30_000;
@@ -268,6 +291,7 @@ function makeRegistry(parent: App): CellChildren {
       const asleep: string[] = [];
       for (const child of [...held.values()]) {
         if (now - (seen.get(child.bodyId) ?? now) < idleMs || (busy.get(child.bodyId) ?? 0) > 0) continue;
+        if (crewAtWork(childDirOf(parent, child.bodyId))) continue;
         asleep.push(child.name);
         seen.delete(child.bodyId);
         await this.stop(child.bodyId);
