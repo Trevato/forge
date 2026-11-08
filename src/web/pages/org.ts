@@ -170,6 +170,7 @@ function repoSection(
           {
             head: html`${icon("repo")}
               <h2>${anyApps ? "Other repositories" : "Repositories"}</h2>`,
+            extra: "bare",
           },
         )}
     ${pager(
@@ -217,6 +218,7 @@ async function appsSection(
 
   const rows = await shelfRows(ctx, appRepos);
   return { count: appRepos.length, html: listCard(rows, {
+    extra: "bare",
     head: html`${icon("rocket")}
       <h2>Apps</h2>
       ${when(
@@ -263,6 +265,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
               ...(m.displayName ? { meta: html`@${m.username}` } : {}),
             }),
           ),
+          { extra: "bare" },
         )}
 
     <h2 class="mt" id="teams">Teams</h2>
@@ -280,6 +283,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
           )}`,
         }),
       ),
+      { extra: "bare" },
     )}
     ${when(canManage, () =>
       card(
@@ -303,7 +307,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
             ${btn("Create team", { variant: "primary" })}
           </div>
         </form>`,
-        { head: html`<h3>New team</h3>` },
+        { head: html`<h3>New team</h3>`, extra: "bare" },
       ),
     )}`;
 }

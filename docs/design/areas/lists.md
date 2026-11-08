@@ -39,3 +39,10 @@ contract changes, doors over time) is a `.card.bare`: an `<h3>` over its rows on
 frame, no tone and no icon before the heading. The state is a badge's word ("contract unsound", "1 door disobeys",
 "at the wall"), so dropping the tone loses nothing. The table, the `id` each app section is linked by
 (`/audit#owner-name`) and the probe form do not change. No new class. Pinned by `test/audit.test.ts`.
+
+## The profile page, rows and space (#9694)
+
+`/:owner` (`src/web/pages/org.ts`) draws its apps, repositories, members and teams as `.card.bare` lists under
+their own headings, and the new-team form as a bare card: one background, no frame. The notice for an org with no
+owner keeps its tone. A person and an org share the template; team changes still go through `src/actions/orgs.ts`.
+No new class.
