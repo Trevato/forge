@@ -476,6 +476,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
                 : {}),
             }),
           ),
+          { extra: "bare" },
         );
   const lastNumber = fetched[fetched.length - 1]?.number;
   // Self-links follow the address that reached this page.

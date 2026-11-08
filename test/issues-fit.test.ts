@@ -76,6 +76,18 @@ describe("the issues list at 390 px", () => {
   });
 });
 
+describe("the issues list speaks the home page's language (#9741)", () => {
+  test("the list is bare rows on the page, not a boxed card", () => {
+    expect(page).toMatch(/class="card bare"/);
+    expect(page.match(/<li[^>]*>\s*<a href="\/alice\/fit\/issues\/\d+" class="row"/g)?.length ?? 0).toBeGreaterThanOrEqual(12);
+  });
+
+  test("a title is the system's row title: the list sets no type size of its own", () => {
+    const css = (page.match(/<style[^>]*>[\s\S]*?<\/style>/g) ?? []).join("\n");
+    expect(css).not.toMatch(/\[data-tells\][^{]*\{[^}]*font-size/);
+  });
+});
+
 test("the owner's phone look takes the issues list", () => {
   expect(PREVIEW_ISSUES_PAGE).toBe("/preview-admin/sample/issues");
   expect(PREVIEW_OWNER_LOOKS).toContainEqual({ page: PREVIEW_ISSUES_PAGE, kind: "phone" });

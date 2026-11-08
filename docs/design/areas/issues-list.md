@@ -12,3 +12,8 @@ every one is also a palette entry ("Issues labelled …").
 An issue's title is the writer's words, so inside `[data-tells]` (an attribute, not a class) the row's title and meta
 wrap and break long words anywhere, in place of the one-line ellipsis. No fixed width; the page does not scroll
 sideways. No new class. The owner's phone look of `/preview-admin/sample/issues` is attached to the pull.
+
+## Speaking the home page's language (#9741)
+
+The list is rows on the page, not a card: the list card is `.card.bare` (no box, no hairlines between rows), and
+space does the separating. Its title is the system's row title, the same type the home page's rows use (no size of its own, no padding literal); the one link is the title's row. Filters, labels, the word and the pillar are unchanged. No new class.
