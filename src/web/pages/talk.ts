@@ -22,6 +22,8 @@ import {
   archiveConversation,
   type Conversation,
   DEFAULT_PAGE,
+  findConversations,
+  pageAround,
   lastExchange,
   getConversation,
   listConversations,
@@ -50,7 +52,7 @@ import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { btn, time } from "../ui.ts";
+import { badge, btn, row, time } from "../ui.ts";
 import { talkCss, talkJs } from "./talk_client.ts";
 
 /** A stream lasts this long at most; the client reconnects from its last turn id. */
@@ -64,6 +66,8 @@ export const clock = { streamMs: STREAM_MS, running: turnRunning };
 const open = new Map<string, number>();
 const TURN_ID = /^[0-9a-z]{0,40}$/;
 const HERE = "/talk";
+/** Longest search typed, in characters. */
+const FIND_CHARS = 100;
 const CONVERSATION_ID = /^[0-9a-z]{1,40}$/;
 
 /** What a conversation is called in a list: its title, else the day it began. */
@@ -210,8 +214,9 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number
 }
 
 /** The conversations list, then this one's name with Rename and Archive: each a plain form, so none needs the script. */
-function chats(ctx: Ctx, conversation: Conversation, showArchived: boolean): Html {
+function chats(ctx: Ctx, conversation: Conversation, showArchived: boolean, typed: string): Html {
   const user = ctx.auth.user!;
+  const found = typed === "" ? undefined : findConversations(ctx.app.db, user.id, typed);
   const shown = listConversations(ctx.app.db, user.id, { archived: showArchived });
   const put = listConversations(ctx.app.db, user.id, { archived: !showArchived }).length;
   const archived = conversation.archivedAt !== null;
@@ -225,10 +230,28 @@ function chats(ctx: Ctx, conversation: Conversation, showArchived: boolean): Htm
             ? html`<a class="small" href="${HERE}?archived=1">Archived (${put})</a>`
             : null}
       </div>
-      <ul>
+      <form class="bar" method="get" action="${HERE}" role="search">
+        <input class="input" type="search" name="find" value="${typed}" maxlength="${FIND_CHARS}" aria-label="Search conversations" placeholder="Search conversations" />
+        ${btn("Search")}
+      </form>
+      ${found === undefined
+        ? null
+        : html`<ul class="list" aria-label="Search results">
+            ${found.length === 0
+              ? html`<li class="muted small">Nothing found for "${typed}".</li>`
+              : found.map((f) =>
+                  row({
+                    href: `${urlOf(f.conversation)}${f.turnId === undefined ? "" : `?turn=${f.turnId}#t-${f.turnId}`}`,
+                    title: nameOf(f.conversation),
+                    meta: html`${f.snippet}`,
+                    ...(f.conversation.archivedAt === null ? {} : { trail: badge("archived") }),
+                  }),
+                )}
+          </ul>`}
+      <ul class="list">
         ${shown.length === 0
           ? html`<li class="muted small">${showArchived ? "Nothing archived." : "No conversations yet."}</li>`
-          : shown.map((c) => html`<li ${c.id === conversation.id ? html`aria-current="page"` : null}><a href="${urlOf(c)}"><span>${nameOf(c)}</span><span class="muted small">${time(c.updatedAt)}</span></a></li>`)}
+          : shown.map((c) => row({ href: urlOf(c), title: nameOf(c), meta: html`${time(c.updatedAt)}`, current: c.id === conversation.id }))}
       </ul>
     </nav>
     <div class="talk-here bar">
@@ -247,10 +270,17 @@ function chats(ctx: Ctx, conversation: Conversation, showArchived: boolean): Htm
     </div>`;
 }
 
-function talkPage(ctx: Ctx, conversation: Conversation, before: string | undefined, prefill: string, latest: boolean, edit: boolean): Response {
+function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefined, prefill: string, latest: boolean, edit: boolean): Response {
   const user = ctx.auth.user!;
+  let before = before0;
   const here = latest ? HERE : urlOf(conversation);
   const showArchived = latest && ctx.url.searchParams.get("archived") === "1";
+  const typed = (ctx.url.searchParams.get("find") ?? "").slice(0, FIND_CHARS);
+  // A search result names its turn: show the page that holds it, and let the fragment scroll there.
+  const focus = ctx.url.searchParams.get("turn");
+  // Near the end pageAround has no `before`: that is the latest page, unpaged, and the fragment still lands.
+  if (before === undefined && focus !== null && focus !== "" && TURN_ID.test(focus)) before = pageAround(ctx.app.db, user.id, conversation.id, focus);
+  const paged = before !== undefined;
   const listed = listTurns(ctx.app.db, user.id, conversation.id, {
     limit: DEFAULT_PAGE,
     ...(before === undefined ? {} : { before }),
@@ -265,24 +295,24 @@ function talkPage(ctx: Ctx, conversation: Conversation, before: string | undefin
   const works = worksOf(ctx.app.db, user.id, conversation.id, turns);
   // Paging back, the log ends before the newest turn: it does not follow.
   const last = turns.at(-1)?.id ?? "";
-  const acts = before === undefined ? exchangeActs(ctx.app.db, user.id, conversation.id, running, here) : new Map<string, Html>();
+  const acts = !paged ? exchangeActs(ctx.app.db, user.id, conversation.id, running, here) : new Map<string, Html>();
   // Edit shows the composer holding the last message, posting to Edit instead of Send.
   const editing = edit ? lastExchange(ctx.app.db, user.id, conversation.id).person : undefined;
   const body = html`<div class="page-head"><h1>Talk</h1></div>
-    ${chats(ctx, conversation, showArchived)}
-    <div class="talk" data-talk data-user="${user.id}" data-c="${conversation.id}" data-here="${here}" data-paged="${before === undefined ? "0" : "1"}" data-running="${running && before === undefined ? "1" : "0"}">
+    ${chats(ctx, conversation, showArchived, typed)}
+    <div class="talk" data-talk data-user="${user.id}" data-c="${conversation.id}" data-here="${here}" data-paged="${paged ? "1" : "0"}" data-running="${running && !paged ? "1" : "0"}">
       <div>
         ${contextLine(context)}
         ${turns.length === DEFAULT_PAGE && turns[0] !== undefined
           ? html`<p class="talk-more small"><a href="${here}?before=${turns[0].id}">Earlier</a></p>`
           : null}
-        ${before === undefined ? null : html`<p class="talk-more small"><a href="${here}">Latest</a></p>`}
+        ${!paged ? null : html`<p class="talk-more small"><a href="${here}">Latest</a></p>`}
         <ol class="talk-log" role="log" data-last="${last}" aria-label="Conversation with the forge">
           ${turns.length === 0
             ? html`<li class="muted talk-turn">Ask the forge anything, or tell it what to change. It acts as you, with your permissions, and asks before anything hard to undo.
                 <span class="talk-suggest">${SUGGESTIONS.map((q) => html`<a class="btn" href="${here}?q=${encodeURIComponent(q)}" data-suggest="${q}">${q}</a>`)}</span></li>`
             : turns.map((t) => turnHtml(t, waiting, costs.get(t.id), acts.get(t.id), works.get(t.id), sent.get(t.id), expired))}
-          ${before === undefined && running ? queuedTalk(ctx.app, user, conversation.id).map(queuedHtml) : null}
+          ${!paged && running ? queuedTalk(ctx.app, user, conversation.id).map(queuedHtml) : null}
         </ol>
         <div id="end"></div>
       </div>

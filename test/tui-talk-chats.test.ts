@@ -8,7 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { appendTurn, CONVERSATIONS_MAX, createConversation, listConversations, listTurns, renameConversation } from "../src/core/conversations.ts";
+import { appendTurn, archiveConversation, CONVERSATIONS_MAX, createConversation, listConversations, listTurns, renameConversation } from "../src/core/conversations.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -32,6 +32,8 @@ async function drive(user: User, keys: string[]): Promise<string> {
   await settleApp(tui);
   for (const k of keys) {
     terminal.feed(k);
+    // A lone escape is held back a moment to tell it from a key sequence.
+    if (k === "\x1b") await Bun.sleep(150);
     await settleApp(tui);
   }
   const text = tui.screen.toText();
@@ -105,5 +107,30 @@ describe("the terminal's conversations screen", () => {
     const text = await drive(alice, [...open, "n", "one too many", "\r"]);
     expect(text).toContain("the most there can be");
     expect((app.db.query("SELECT COUNT(*) AS n FROM conversation WHERE user_id = ?1").get(alice.id) as { n: number }).n).toBe(CONVERSATIONS_MAX);
+  });
+
+  test("/ searches the person's own conversations, archived too, and Enter opens at the match", async () => {
+    const mine = createConversation(app.db, bob.id);
+    // Alice is at the cap from the test above: her newest conversation is the other person's.
+    const theirs = { ok: true as const, value: listConversations(app.db, alice.id)[0]! };
+    if (!mine.ok) throw new Error("conversation");
+    renameConversation(app.db, bob.id, mine.value.id, "Harbour notes");
+    const hit = appendTurn(app.db, bob.id, mine.value.id, { role: "person", text: "the quokka migration plan" });
+    for (let i = 0; i < 70; i++) appendTurn(app.db, bob.id, mine.value.id, { role: "agent", text: `later ${i}` });
+    appendTurn(app.db, alice.id, theirs.value.id, { role: "person", text: "alice quokka secret" });
+    archiveConversation(app.db, bob.id, mine.value.id, true);
+    const found = await drive(bob, [...open, "/", "quokk", "\r"]);
+    expect(found).toContain("Harbour notes");
+    expect(found).toContain("archived");
+    expect(found).not.toContain("secret");
+    expect(found).not.toContain(theirs.value.id);
+    const opened = await drive(bob, [...open, "/", "quokk", "\r", "\r"]);
+    expect(opened).toContain("the quokka migration plan");
+    expect(opened).toContain("▶");
+    expect(hit.ok).toBe(true);
+    const none = await drive(bob, [...open, "/", "zzzqqq", "\r"]);
+    expect(none).toContain("Nothing found");
+    const back = await drive(bob, [...open, "/", "quokk", "\r", "\x1b"]);
+    expect(back).not.toContain("Found for");
   });
 });

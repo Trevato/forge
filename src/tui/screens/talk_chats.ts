@@ -10,6 +10,9 @@ import { TALK_WORDS, talk } from "../../actions/talk.ts";
 import {
   archiveConversation,
   createConversation,
+  findConversations,
+  pageAround,
+  type Found,
   listConversations,
   listTurns,
   renameConversation,
@@ -29,23 +32,38 @@ const BAD_TITLE = `A title is up to ${TITLE_MAX} characters, on one line.`;
 
 const WHO: Readonly<Record<string, string>> = { person: "You", agent: "Forge", tool: "Tool", confirm: "Asks" };
 
-/** One conversation, newest turns last: j/k scroll, s says something in it, r reloads. */
-function chatScreen(f: Session, ctx: Ctx, chat: Conversation): Screen {
+/**
+ * One conversation, newest turns last: j/k scroll, s says something in it, r
+ * reloads. `hit` is a search result's turn: the view opens on the page around
+ * it, that turn marked ▶.
+ */
+function chatScreen(f: Session, ctx: Ctx, chat: Conversation, hit?: string): Screen {
   const scroll = new Scroll();
   let note = "";
   let width = 80;
   // Opened, and after r, the view sits on the newest turns.
-  let follow = true;
+  let follow = hit === undefined;
+  // The page around a search hit, until r goes back to the newest; `mark` is the hit's first line.
+  let around = hit;
+  let mark = 0;
+  let placed = false;
   const lines = (): { text: string; style: ReturnType<typeof style> }[][] => {
     const c = ctx.theme.c;
-    const listed = f.user === undefined ? undefined : listTurns(f.app.db, f.user.id, chat.id, { limit: 50 });
+    const before = f.user === undefined || around === undefined ? undefined : pageAround(f.app.db, f.user.id, chat.id, around);
+    const listed = f.user === undefined ? undefined : listTurns(f.app.db, f.user.id, chat.id, { limit: 50, ...(before === undefined ? {} : { before }) });
     const turns = listed?.ok ? listed.value : [];
     if (turns.length === 0) return [[{ text: "Nothing said yet; s says something.", style: style(c.mutedFg, c.bg) }]];
-    return turns.flatMap((t) => [
-      [{ text: `${WHO[t.role] ?? t.role}${t.replaced ? " · replaced" : ""} · ${ago(t.createdAt)}`, style: style(c.mutedFg, c.bg) }],
-      ...t.text.split("\n").flatMap((l) => wrap(l, Math.max(10, width - 2))).map((l) => [{ text: l, style: style(c.fg, c.bg) }]),
-      [],
-    ]);
+    let n = 0;
+    return turns.flatMap((t) => {
+      if (t.id === around) mark = n;
+      const own = t.text.split("\n").flatMap((l) => wrap(l, Math.max(10, width - 2)));
+      n += own.length + 2;
+      return [
+        [{ text: `${t.id === around ? "▶ " : ""}${WHO[t.role] ?? t.role}${t.replaced ? " · replaced" : ""} · ${ago(t.createdAt)}`, style: style(c.mutedFg, c.bg) }],
+        ...own.map((l) => [{ text: l, style: style(c.fg, c.bg) }]),
+        [],
+      ];
+    });
   };
   const screen: Screen = {
     get title() {
@@ -60,6 +78,10 @@ function chatScreen(f: Session, ctx: Ctx, chat: Conversation): Screen {
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       const all = lines();
       if (follow) scroll.to(all.length - body!.h, all.length);
+      else if (around !== undefined && !placed) {
+        scroll.to(mark, all.length);
+        placed = true;
+      }
       drawLines(s, body!, c, scroll, all);
     },
     key(e) {
@@ -76,6 +98,7 @@ function chatScreen(f: Session, ctx: Ctx, chat: Conversation): Screen {
       if (e.key === "r") {
         note = "";
         follow = true;
+        around = undefined;
         ctx.invalidate();
         return true;
       }
@@ -105,10 +128,20 @@ export function talkChatsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
   let archived = false;
   let note = "";
-  const items = (): Conversation[] => (f.user === undefined ? [] : listConversations(f.app.db, f.user.id, { archived }));
+  // A search's results replace the list until esc; each opens its chat at the matching turn.
+  let found: { typed: string; hits: Found[] } | undefined;
+  const items = (): Conversation[] =>
+    found !== undefined ? found.hits.map((h) => h.conversation) : f.user === undefined ? [] : listConversations(f.app.db, f.user.id, { archived });
   const rows = (): ListRow[] =>
-    items().map((c) => ({ title: c.title === "" ? "Untitled" : c.title, secondary: `/talk/${c.id}`, meta: `active ${ago(c.updatedAt)}` }));
+    found !== undefined
+      ? found.hits.map((h) => ({
+          title: h.conversation.title === "" ? "Untitled" : h.conversation.title,
+          secondary: `${h.conversation.archivedAt === null ? "" : "archived · "}${h.snippet.replace(/\s+/g, " ")}`,
+          meta: `/talk/${h.conversation.id}`,
+        }))
+      : items().map((c) => ({ title: c.title === "" ? "Untitled" : c.title, secondary: `/talk/${c.id}`, meta: `active ${ago(c.updatedAt)}` }));
   const say = (text: string): void => {
+    found = undefined;
     note = text;
     ctx.invalidate();
   };
@@ -124,6 +157,7 @@ export function talkChatsScreen(f: Session, ctx: Ctx): Screen {
       binding(["r"], "rename"),
       binding(["x"], "archive or restore"),
       binding(["a"], "archived"),
+      binding(["/"], "search"),
     ],
     render(area, s) {
       const c = ctx.theme.c;
@@ -131,7 +165,9 @@ export function talkChatsScreen(f: Session, ctx: Ctx): Screen {
       const text =
         note !== ""
           ? note
-          : items().length === 0
+          : found !== undefined
+            ? found.hits.length === 0 ? `Nothing found for "${found.typed}"; esc goes back.` : `Found for "${found.typed}" (archived ones too); enter opens at the match, esc goes back.`
+            : items().length === 0
             ? archived ? "Nothing archived." : "No conversations yet; n starts one."
             : archived ? "Archived; x brings one back." : "Your talks with the forge's agent; each opens at its /talk address.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
@@ -142,7 +178,30 @@ export function talkChatsScreen(f: Session, ctx: Ctx): Screen {
       const user = f.user;
       if (user === undefined || e.ctrl || e.alt) return false;
       const here = items()[state.index];
-      if (e.key === "a") {
+      if (e.key === "esc" && found !== undefined) {
+        found = undefined;
+        state.index = 0;
+        ctx.invalidate();
+        return true;
+      }
+      if (e.key === "/") {
+        ctx.push(
+          promptScreen(ctx, screen, {
+            title: "Search conversations",
+            label: "words in a title or in what was said",
+            onSubmit: (typed) => {
+              const hits = findConversations(f.app.db, user.id, typed);
+              found = typed.trim() === "" ? undefined : { typed: typed.trim(), hits };
+              state.index = 0;
+              note = "";
+              ctx.invalidate();
+              return undefined;
+            },
+          }),
+        );
+        return true;
+      }
+      if (e.key === "a" && found === undefined) {
         archived = !archived;
         state.index = 0;
         note = "";
@@ -169,7 +228,7 @@ export function talkChatsScreen(f: Session, ctx: Ctx): Screen {
       }
       if (here === undefined) return false;
       if (e.key === "enter") {
-        ctx.push(chatScreen(f, ctx, here));
+        ctx.push(chatScreen(f, ctx, here, found?.hits[state.index]?.turnId));
         return true;
       }
       if (e.key === "r") {

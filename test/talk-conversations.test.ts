@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { appendTurn, CONVERSATIONS_MAX, createConversation, listConversations, listTurns, newConversation, openConversation, renameConversation } from "../src/core/conversations.ts";
+import { appendTurn, archiveConversation, CONVERSATIONS_MAX, createConversation, listConversations, listTurns, newConversation, openConversation, renameConversation } from "../src/core/conversations.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { migrations } from "../src/core/schema.ts";
@@ -286,5 +286,39 @@ describe("the MCP rename", () => {
     expect(answer.ok).toBe(false);
     expect(answer.error).toBe("invalid_title");
     expect(listConversations(app.db, alice.id).find((x) => x.id === made.id)?.title).toBe("Keep me");
+  });
+});
+
+describe("search (#8823)", () => {
+  test("a result links to its conversation at the matching turn, the page shows that turn, and nothing of another person's", async () => {
+    const c = newConversation(app.db, alice.id);
+    const t = appendTurn(app.db, alice.id, c.id, { role: "person", text: "remember the narwhal budget" });
+    for (let i = 0; i < 70; i++) appendTurn(app.db, alice.id, c.id, { role: "agent", text: `later ${i}` });
+    const turn = t.ok ? t.value.id : "";
+    const theirs = newConversation(app.db, bob.id);
+    appendTurn(app.db, bob.id, theirs.id, { role: "person", text: "bob's narwhal secret" });
+    const found = await (await get("/talk?find=narwha", alice)).text();
+    expect(found).toContain(`href="/talk/${c.id}?turn=${turn}#t-${turn}"`);
+    expect(found).not.toContain(theirs.id);
+    expect(found).not.toContain("secret");
+    const opened = await (await get(`/talk/${c.id}?turn=${turn}`, alice)).text();
+    expect(opened).toContain(`id="t-${turn}"`);
+    expect(opened).toContain('data-paged="1"');
+    expect((await get("/talk?find=zzzqqq", alice).then((r) => r.text()))).toContain("Nothing found");
+  });
+
+  test("a hit in the last turns is the latest page: unpaged, no Latest link; archived results are labelled", async () => {
+    const c = newConversation(app.db, alice.id);
+    const t = appendTurn(app.db, alice.id, c.id, { role: "person", text: "the kraken ledger" });
+    appendTurn(app.db, alice.id, c.id, { role: "agent", text: "noted" });
+    const turn = t.ok ? t.value.id : "";
+    const opened = await (await get(`/talk/${c.id}?turn=${turn}`, alice)).text();
+    expect(opened).toContain('data-paged="0"');
+    expect(opened).not.toContain(">Latest</a>");
+    expect(opened).toContain(`id="t-${turn}"`);
+    archiveConversation(app.db, alice.id, c.id, true);
+    const found = await (await get("/talk?find=kraken", alice)).text();
+    expect(found).toContain("archived");
+    expect(found).toContain('class="row"');
   });
 });

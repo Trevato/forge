@@ -326,3 +326,77 @@ export function setClaudeSession(
     .run(conversationId, userId, sessionId, new Date().toISOString()).changes;
   return changed === 0 ? err("not_found") : ok();
 }
+
+/** Most conversations one search answers. */
+export const FIND_MAX = 20;
+/** Most words of a query used; the rest are dropped. */
+const FIND_WORDS = 8;
+
+/** Turns shown after a search hit. */
+const AFTER_HIT = 9;
+
+export interface Found {
+  readonly conversation: Conversation;
+  /** The best-matching turn, or undefined when only the title matched. */
+  readonly turnId: string | undefined;
+  /** The matching words in context, plain text (the page escapes it). */
+  readonly snippet: string;
+}
+
+/**
+ * The FTS5 query for what a person typed: letters and digits only, every word
+ * must be present, the last as a prefix so a search can follow the typing.
+ * Nothing else a person types reaches the engine's syntax.
+ */
+export function findQuery(typed: string): string | undefined {
+  const words = (typed.normalize("NFKC").match(/[\p{L}\p{N}]+/gu) ?? []).slice(0, FIND_WORDS).map((w) => w.slice(0, 40));
+  if (words.length === 0) return undefined;
+  return words.map((w, i) => `"${w}"${i === words.length - 1 ? "*" : ""}`).join(" ");
+}
+
+/**
+ * The person's conversations whose title or standing turns hold every word of
+ * `typed`, best match first, each with the turn to open it at. Answered from
+ * the `conversation_find` index, never by reading turns; only the person's
+ * own conversations are ever looked at.
+ */
+export function findConversations(db: Database, userId: string, typed: string): Found[] {
+  const query = findQuery(typed);
+  if (query === undefined) return [];
+  const rows = db
+    .query<{ conversation_id: string; turn_id: string; snip: string }, [string]>(
+      `SELECT conversation_id, turn_id, snippet(conversation_find, 0, '', '', '…', 12) AS snip
+         FROM conversation_find WHERE conversation_find MATCH ?1 ORDER BY rank LIMIT 200`,
+    )
+    // The owner is in the MATCH, so the limit counts this person's rows only.
+    .all(`user_id : "${userId.replace(/[^0-9A-Za-z]/g, "")}" AND text : (${query})`);
+  const seen = new Map<string, { turnId: string; snip: string }>();
+  for (const r of rows) {
+    const had = seen.get(r.conversation_id);
+    // A turn is where to open; the title row only says the title matched.
+    if (had === undefined || (had.turnId === "" && r.turn_id !== "")) seen.set(r.conversation_id, { turnId: r.turn_id, snip: r.snip });
+  }
+  const out: Found[] = [];
+  for (const [conversationId, hit] of seen) {
+    const conversation = getConversation(db, userId, conversationId);
+    if (conversation === undefined) continue;
+    out.push({ conversation, turnId: hit.turnId === "" ? undefined : hit.turnId, snippet: hit.snip });
+    if (out.length >= FIND_MAX) break;
+  }
+  return out;
+}
+
+/**
+ * The `before` that shows the turn `turnId` with a few turns after it: the
+ * turn `AFTER_HIT` places past it, or undefined when it is near enough to the
+ * end for the latest page to hold it. Undefined too for a turn not here.
+ */
+export function pageAround(db: Database, userId: string, conversationId: string, turnId: string): string | undefined {
+  if (!owned(db, userId, conversationId)) return undefined;
+  const row = db
+    .query<{ id: string }, [string, string, number]>(
+      "SELECT id FROM conversation_turn WHERE conversation_id = ?1 AND rowid > (SELECT rowid FROM conversation_turn WHERE id = ?2 AND conversation_id = ?1) ORDER BY rowid LIMIT 1 OFFSET ?3",
+    )
+    .get(conversationId, turnId, AFTER_HIT);
+  return row?.id;
+}

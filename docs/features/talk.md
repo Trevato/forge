@@ -97,3 +97,12 @@ An agent reply is Markdown, drawn on the server by the same renderer as a README
 A reply arrives as one finished turn, never as growing text, and the page only appends a turn whose id it has not drawn (a repeat is ignored). Turns already on the page are not touched, so nothing above a new reply moves, and the page follows the end only if you were already there (otherwise "Latest" appears). An unfinished fence in a stored reply is closed for drawing. The page's own bytes are held by a test: the stylesheet under 3.5 KB, the script under 7.4 KB, and a page with a code reply under 40 KB.
 
 **Copy:** each code block and each message has a Copy button, which copies the text, not the markup. The buttons are drawn by the script: with JavaScript off there are none, and the code is still there to select.
+
+## Search (#8823)
+
+Finds a conversation by a word in its title or in what was said, among the person's own conversations only, archived ones included (labelled "archived").
+
+- **Web:** the search box above the list is a plain GET form, `/talk?find=<words>`, so it works without the script. Every word must be present and the last may be a prefix (`narwha` finds "narwhal"); at most 8 words and 100 characters count, and punctuation is only a separator. A result opens at its turn, `/talk/<id>?turn=<turn id>#t-<turn id>`: the page that holds it, the turn outlined. A hit in the last few turns opens the latest page, live as usual.
+- **Terminal:** in Conversations, `/` asks for words and the results replace the list (archived ones marked); Enter opens the chat on the page around the match, that turn marked `▶`; `r` goes to the newest turns; esc leaves the results.
+- **How:** an FTS5 table, `conversation_find` (title and standing turns, kept in step by triggers; a turn set aside is left out), with the owner as an indexed column that the query names in its MATCH, so the engine's 200-row limit counts only the person's rows. `findConversations` and `pageAround` in `src/core/conversations.ts` are the one door for both screens.
+- **Left out:** the API and MCP do not search yet; no ranking beyond FTS5's, no highlighting of the words inside a turn.

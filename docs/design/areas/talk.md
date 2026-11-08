@@ -34,3 +34,5 @@
 
 Under a reply, `.talk-cost` is one quiet line with the turn's dollars; above the log, `.talk-context` says how full the context is and, from 80 %, suggests a new conversation. Both are `small muted` text, no new colour.
 - `.talk-queued` — a message waiting for the running turn: the person bubble, dimmed with a dashed border, its "Queued" line and Cancel under it.
+
+Search (#8823) adds no component class: the form is a `.bar` with `.input` and `.btn`, and the results and the conversations list are `.list` of `row()`s (an "archived" `badge` as the trail, the match as the row's meta). The turn a result opens at is marked by a muted hairline on its left edge, `.talk-turn:target`, the one new rule, which replaces the two `.talk-chats li a` rules the rows made unnecessary.

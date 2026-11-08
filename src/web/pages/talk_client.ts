@@ -48,8 +48,7 @@ export const talkCss = /* css */ `
 .talk-files { justify-content: flex-end; }
 .talk-more { text-align: center; }
 .talk-chats, .talk-here { margin-bottom: 12px; }
-.talk-chats li a { display: flex; justify-content: space-between; }
-.talk-chats [aria-current] { font-weight: 600; }
+.talk-turn:target { box-shadow: -2px 0 0 var(--muted); scroll-margin-top: 4rem; }
 .talk-replaced { opacity: 0.55; }
 .talk-failed form { margin-top: 6px; }
 .talk-failed .btn, .talk-act { min-height: 2.75rem; }
