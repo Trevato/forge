@@ -51,7 +51,7 @@ import {
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, empty, row } from "../ui.ts";
+import { btn, empty, row } from "../ui.ts";
 import {
   parkedTwice,
   struckOut,
@@ -965,8 +965,7 @@ function rankedList(
     <h2>${title}</h2>
     ${items.length === 0
       ? html`<p class="muted small">${empty}</p>`
-      : card(
-          html`<ul class="list setting-list">
+      : html`<ul class="list setting-list">
             ${items.slice(0, 6).map((r) =>
               row({
                 href: issueHref(base, r.issue.number),
@@ -988,9 +987,7 @@ function rankedList(
                   : {}),
               }),
             )}
-          </ul>`,
-          { pad: false, extra: "bare" },
-        )}
+          </ul>`}
   </section>`;
 }
 
@@ -1081,8 +1078,7 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
       : `${r.open} open · ${r.ready} ready · ${r.blocked} blocked`;
   return html`<section class="stack-tight" id="map-pillars">
     <h2>By pillar</h2>
-    ${card(
-      html`<ul class="list setting-list">
+    ${html`<ul class="list setting-list">
         ${rows.map((r) =>
           r.name === null
             ? row({
@@ -1118,9 +1114,7 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
                 data: { pillar: r.name },
               }),
         )}
-      </ul>`,
-      { pad: false, extra: "bare" },
-    )}
+      </ul>`}
   </section>`;
 }
 

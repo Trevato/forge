@@ -404,9 +404,14 @@ describe("pillars", () => {
     expect(page).toMatch(/class="muted small"\s*>3 open · 2 ready · 1 blocked<\/span/);
     const pillarsBlock = page.slice(page.indexOf('id="map-pillars"'), page.indexOf("</section>", page.indexOf('id="map-pillars"')));
     expect(pillarsBlock).not.toContain('class="badge"');
+    // The side lists sit straight under their headings, in no card box (#9848).
+    expect(pillarsBlock).not.toContain('class="card');
+    expect(pillarsBlock).toContain(`href="/alice/engine/issues/${loose.number}"`);
     // A Ready now row leads with its pillar's name.
     const readyBlock = page.slice(page.indexOf("<h2>Ready now</h2>"), page.indexOf("</section>", page.indexOf("<h2>Ready now</h2>")));
     expect(readyBlock).toMatch(/#\d+ · ready · P[01] [A-Za-z]+ · /);
+    expect(readyBlock).not.toContain('class="card');
+    expect(readyBlock).toContain('href="/alice/engine/issues/');
     // §5's rows draw the section; the old names are gone (#4292).
     expect(page).not.toMatch(/class="[^"]*\bmap-list\b/);
     expect(page).not.toMatch(/class="[^"]*\bmap-empty\b/);

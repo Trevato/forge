@@ -30,7 +30,7 @@ The Ready now list's **First** button (a writer's `method="post"` form in the ro
 
 ## Rows and space, not boxes (#9760)
 
-The side column is two headed lists, Ready now first, then By pillar and Blocked on: each a `.card.bare` list, one row an
+The side column is two headed lists, Ready now first, then By pillar and Blocked on: each a bare `ul.list.setting-list` under its heading (no card box), one row an
 issue on the page's one background, no frame and no badge. A row says its word (ready, blocked, waiting, held, parked), what
 stands in front of it (`waits for N`) and what it holds up; a pillar row says its counts as muted text. `.map-canvas` has
 no border: the drawing sits on the page. The First button, its same-origin POST form and the 390px single column are
