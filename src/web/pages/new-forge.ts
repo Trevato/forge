@@ -66,6 +66,9 @@ const EMPTY: Values = {
   hadKey: false,
 };
 
+/** The fields behind "More options": an error on one opens it. */
+const MORE_FIELDS = ["followMode", "crew", "keepAccess", "modelKey", "modelEndpoint", "budgetUsd", "template", "size"];
+
 type Errors = Partial<Record<string, string>>;
 
 const all = (form: Form, name: string): string[] =>
@@ -152,11 +155,11 @@ function formView(
   return html`<div class="narrow-wide" data-forges>
     ${pageHead("New forge", {
       sub: anon
-        ? "Your own forge: pick a name, and the public apps to start from. Whoever opens the claim link becomes its admin."
-        : "Your own forge, or one for someone else: the apps you choose, a crew, and one link to claim.",
+        ? "Pick a name and the apps to start from. Whoever opens the claim link becomes its admin."
+        : "Pick a name and the apps to start from; you get one link to send.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
-    <p class="muted small" id="hosting-terms">Free within limits while hosting is not sold: a few forges per person, and a forge sleeps when idle and wakes on its next visit. Its crew stays off until you bring your own model credential.</p>
+    <p class="muted small" id="hosting-terms">Free within limits: it sleeps when idle, and its crew stays off until you bring a model key.</p>
     ${quota ? html`<p role="status" id="quota-full">This forge cannot hold another child: ${quota}.</p>` : null}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
@@ -179,7 +182,7 @@ function formView(
               label: "For whom",
               name: "for",
               value: values.forWhom,
-              hint: `A person, a client or an organisation, for your list of forges sent (at most ${MAX_FOR_CHARS} characters). Never copied into the child.`,
+              hint: `A person or a client, for your list (at most ${MAX_FOR_CHARS} characters). Not copied into the forge.`,
               ...(errors["for"] ? { error: errors["for"] } : {}),
             })}
         ${formField({
@@ -209,6 +212,8 @@ function formView(
           hint: `One line on what it is; the child gets a small app to start from (at most ${MAX_FRESH_CHARS} characters).`,
           ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
         })}
+        <details class="disclosure" ${Object.keys(errors).some((k) => MORE_FIELDS.includes(k)) ? html`open` : null}>
+          <summary>More options</summary>
         <fieldset class="field" ${errors["followMode"] ? html`data-invalid` : null}>
           <legend>How it follows this forge's code</legend>
           <label class="check">
@@ -307,9 +312,10 @@ function formView(
           options: sizeOptions(values.size),
           ...(errors["size"] ? { error: errors["size"] } : {}),
         })}
-        <p class="muted small">
-          Never copied: ${LEFT_BEHIND.join(", ")}. The child mints its own.
-        </p>
+          <p class="muted small">
+            Never copied: ${LEFT_BEHIND.join(", ")}. The child mints its own.
+          </p>
+        </details>
         <div class="form-actions">
           <button class="btn" type="submit" name="do" value="plan">
             See the plan

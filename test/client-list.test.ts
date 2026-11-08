@@ -199,6 +199,11 @@ describe("the client list", () => {
     const maria = html.slice(html.indexOf('data-forge="maria"'));
     expect(maria).toContain("Maria&#39;s bakery");
     expect(maria).toContain("alice/bakery");
+    // One plain line first: for whom, then the apps; the state facts follow.
+    const line = maria.slice(0, maria.indexOf("</li>"));
+    expect(line.indexOf("Maria&#39;s bakery")).toBeLessThan(line.indexOf("alice/bakery"));
+    expect(line.indexOf("alice/bakery")).toBeLessThan(line.indexOf("has not reported yet"));
+    expect(line).not.toContain('class="card');
     expect(maria).toContain('href="https://maria--forge.test"');
     expect(maria).toMatch(/data-claimed="no"/);
     expect(html).not.toContain("forges-sent");

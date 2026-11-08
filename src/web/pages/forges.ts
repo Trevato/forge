@@ -44,11 +44,11 @@ function spendNote(r: ClientRow): Html | null {
 function forgeRow(r: ClientRow): Html {
   const state = claimState(r);
   const meta = [
+    r.for === null ? null : html`for ${r.for}`,
+    r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
     state === "unknown" ? html`it did not answer just now` : null,
     r.made ? badge(r.awake === true ? "awake" : "asleep", r.awake === true ? { tone: "success" } : { variant: "outline" }) : null,
     r.made ? html`${sizeWords(r.size)}` : null,
-    r.for === null ? null : html`for ${r.for}`,
-    r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
     runningNote(r),
     spendNote(r),
     r.sentAt === null ? null : html`sent ${time(r.sentAt)}`,
@@ -144,7 +144,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
     title: "Forges you sent",
     body: html`<div class="narrow-wide" data-forges>
       ${pageHead("Forges you sent", {
-        sub: "For whom each is, what it was given, and whether its person has claimed it.",
+        sub: "Each forge you sent: who it is for and what runs there.",
         actions: action,
       })}
       ${rows.length === 0
@@ -154,15 +154,12 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
             note: "A whole forge for someone: the apps you choose, a crew, and one link to send.",
             action,
           })
-        : card(sideBySide(rows), { pad: false, id: "forges-compare" })}
+        : html`<section id="forges-compare">${sideBySide(rows)}</section>`}
       ${rows.length === 0
         ? null
-        : card(
-            html`<ul class="list setting-list">
-              ${rows.map(forgeRow)}
-            </ul>`,
-            { pad: false },
-          )}
+        : html`<ul class="list setting-list">
+            ${rows.map(forgeRow)}
+          </ul>`}
       <p class="mt"><a href="/fleet/graph">Fleet graph</a></p>
     </div>`,
   });
