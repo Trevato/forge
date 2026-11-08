@@ -67,7 +67,8 @@ test("--bypass sends every request with a cookie the edge must pass, --warm is n
     expect(withCookie).toBeGreaterThan(result.served);
     expect(result.served).toBeLessThanOrEqual(41);
     expect(out).toContain("warm-up, per second");
-    expect(out).toContain("target met");
+    // 40/s is under the 500/s the goal is held at, so the verdict says by how much (#9596).
+    expect(out).toContain("target missed: asked 40/s, 460/s under the 500/s target");
   } finally {
     server.stop(true);
   }

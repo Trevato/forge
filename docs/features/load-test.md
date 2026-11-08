@@ -15,9 +15,9 @@ Media (`/media/…`, the route a PDF or image is drawn from) is **not covered**:
 
 The bypasses are tested (`test/anonymous-deep.test.ts`): a signed-in reader, a repository made private, `?fragment=1` and a branch-name ref never get a page kept for a stranger. `--compare` exiting 1 is tested (`test/load-bench.test.ts`).
 
-**Release step:** `bun scripts/release-load.ts <version> --url <copy> --repo <owner/name>` runs the load twice, through the edge and with it bypassed, at 500/s for 20 s after a 20 s warm-up, writes `bench/results/<version>.json` and `<version>.bypass.json`, and compares each with the newest older kept file of its kind (`src/perf/baseline.ts`); exit 1 from either is the gate. With no older file it only writes the first; commit it. `scripts/cut-release.ts` prints this command as its last step; it does not run it (it needs a copy with data), and no baseline is kept yet — the first release run writes it.
+**Release step:** `bun scripts/release-load.ts <version> --url <copy> --repo <owner/name>` runs the load twice, through the edge and with it bypassed, at 500/s for 20 s after a 20 s warm-up, writes `bench/results/<version>.json` and `<version>.bypass.json` (`--results DIR` writes them elsewhere), and compares each with the newest older kept file of its kind (`src/perf/baseline.ts`); exit 1 from either is the gate. With no older file it only writes the first; commit it. `scripts/cut-release.ts` prints this command as its last step; it does not run it (it needs a copy with data). See [the person's run](#the-persons-release-run-9596) below for the steps.
 
-No release baseline (`<version>.json`) is kept in `bench/results/` yet: the pull's preview holds no repository to read, and the load must not be aimed at production. The first files are written by the first run against a copy with data. The two `9514-*.json` files there are the in-process measurements below; `lastBaseline` ignores them.
+No release baseline (`<version>.json`) is kept in `bench/results/` yet: the pull's preview holds no repository to read, and the load must not be aimed at production. The first files are written by the first run against a copy with data. The two `9514-*.json` files there are the in-process measurements below; `lastBaseline` ignores them. The crew writes no result file it did not measure.
 
 Follow-ups: profile #9503, baseline #9504 (the file itself, still to be written from a copy with data), media #9505.
 
@@ -96,12 +96,28 @@ What the caches hold (entries, bytes beside the cap, hits and misses) is on `/sy
 
 A bigger git pool (`FORGE_GIT_CONCURRENCY=32`) changed nothing before item 5: the main thread was the limit, not git.
 
-### Not done: the run through the edge, on a copy with production's data (#9565)
+### The run through the edge, on a copy with production's data (#9565, #9596)
 
-This sandbox reaches no copy holding production's repositories and no edge in front of one. The load must not be aimed at production, and a pull's preview holds no repository. The numbers above are the best case on a copy of one repository: no edge, the client on the same machine, and a warm start. They are not the `Done` of #9514. To take them, run from a machine that is not the server:
+A crew sandbox reaches no copy holding production's repositories and no edge in front of one, so the numbers above are the best case: one repository, no edge, the client on the same machine, a warm start. They are not the `Done` of #9514. The run below is a person's, from a machine that is not the server.
 
-```sh
-bun scripts/release-load.ts <version> --url <copy behind the edge> --repo trevato/forge
-```
+## The person's release run (#9596)
 
-This writes both kinds and compares each with its last kept result.
+**Never at production.** `scripts/release-load.ts` and `bench/load.ts` both refuse, with exit 2 and before any request goes out, a `--url` whose host is production's (`forge.open-platform.sh`), any name under it, or an address production's name resolves to (`src/perf/production_guard.ts`). A different name on the same edge (a hosted child, `<name>--forge.open-platform.sh`) is a different forge and is not refused. Load it only if it is yours.
+
+1. **Restore a copy of production's data** on a box that is not production: `bun scripts/restore-drill.ts /srv/forge-copy` restores the newest snapshot into that empty directory (the `S3_*` variables, or `FORGE_SNAPSHOT_DIR`, and `FORGE_SNAPSHOT_PASSPHRASE`, as on the restore card), boots it once on a side port and checks it against production's public counts. The directory stays.
+2. **Boot the copy as a forge**: `FORGE_DATA=/srv/forge-copy PORT=3100 bun run src/main.ts` from a clone at the release's tag. It runs the code you are releasing on production's repositories.
+3. **Put the edge in front of it**, the same way production has it: a Cloudflare tunnel (or the cluster ingress) to `localhost:3100` under a name of your own, with the cache rule production has: cache HTML that is `public` and `s-maxage`, **bypass any request with a Cookie or Authorization header** (`src/http/addressed.ts`). Without that rule, the bypass pass reads cached pages and the two files show the same thing. Behind the tunnel, set `FORGE_TRUSTED_PROXIES` and `FORGE_CLIENT_IP_HEADER=cf-connecting-ip` ([OPERATING](../OPERATING.md)) so strangers are counted per address, not as one.
+4. **Check the copy answers** at its name: `curl -sI https://<copy>/trevato/forge` is 200.
+5. **Run it from a third machine** (not the copy's box, not production):
+
+   ```sh
+   bun install
+   bun scripts/release-load.ts <version> --url https://<copy> --repo trevato/forge
+   ```
+
+   It takes about 80 s: per pass, a 20 s warm-up that is not counted (its per-second `served/refused` line is printed), then 20 s at 500/s. Add `--crawl 3000` to spread the load over the repository rather than its top folder.
+6. **Read the verdicts.** It ends with one line per file. Each of `bench/results/<version>.json` (through the edge) and `bench/results/<version>.bypass.json` (past it) holds `asked` (the rate), `servedPerSecond`, `refused` and `refusedBy`, `p50` and `p95` in ms, `warm` (`seconds`, `served`, `refused`), `target` (`{"rate": 500, "refused": 0, "p95UnderMs": 100}`) and `verdict`: `"target met"`, or how far it missed, e.g. `"12 refused of 10000; p95 131.4 ms, 31.4 ms over the 100 ms target"` or `"served 400/s, 100/s under the 500/s target"`. A missed target is written, not an error; exit 1 means the served rate fell more than 20% from the last kept file of the same kind.
+7. **Post both files** as a comment on #9514, with the version, the machine the load ran from and the copy's box, and commit them in a pull to `bench/results/`. They become the first baseline the next release compares with.
+
+Tests: `test/release-load-run.test.ts` runs the whole command against a local fake forge, one that keeps up (both files `"target met"`) and one that answers in 150 ms (both files say how far p95 missed), and checks that production is refused by name and by address before any request.
+

@@ -39,7 +39,8 @@
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { fell, missed, summarize, type LoadResult } from "../src/perf/load_verdict.ts";
+import { fell, missed, summarize, TARGET, type LoadResult } from "../src/perf/load_verdict.ts";
+import { refuseProduction, systemResolve } from "../src/perf/production_guard.ts";
 
 const arg = (name: string, fallback?: string): string => {
   const at = process.argv.indexOf(`--${name}`);
@@ -49,6 +50,12 @@ const arg = (name: string, fallback?: string): string => {
 };
 
 const base = arg("url").replace(/\/$/, "");
+// Never at production (#9596): decided from the URL, before the first request.
+const notHere = await refuseProduction(base, systemResolve);
+if (notHere !== undefined) {
+  console.error(`load: refused: ${notHere}`);
+  process.exit(2);
+}
 const repo = arg("repo");
 const rate = Number(arg("rate", "100"));
 const seconds = Number(arg("seconds", "10"));
@@ -180,11 +187,17 @@ counting = true;
 await flood(seconds);
 await Promise.all(inflight);
 
-const result: LoadResult = { ...summarize(version, rate, seconds, latencies, refused), cache: bypass ? "bypass" : "edge", refusedBy };
+const warmTotals = warmPerSecond.reduce(([s, r], [a, b]) => [s + a, r + b], [0, 0]);
+const result: LoadResult = {
+  ...summarize(version, rate, seconds, latencies, refused),
+  cache: bypass ? "bypass" : "edge",
+  refusedBy,
+  warm: { seconds: warm, served: warmTotals[0]!, refused: warmTotals[1]! },
+};
 console.log(JSON.stringify(result, null, 2));
 console.log(`per second, served/refused: ${perSecond.map(([a, b]) => `${a}/${b}`).join(" ")}`);
 const short = missed(result);
-console.log(short === undefined ? "target met: none refused, p95 under 100 ms" : `target missed: ${short}`);
+console.log(short === undefined ? `target met: ${TARGET.rate}/s, none refused, p95 under ${TARGET.p95UnderMs} ms` : `target missed: ${short}`);
 if (cookie !== undefined) {
   const s = [...signedIn].sort((a, b) => a - b);
   const at = (p: number) => (s.length === 0 ? null : Math.round(s[Math.min(s.length - 1, Math.floor(p * s.length))]! * 10) / 10);
@@ -192,7 +205,7 @@ if (cookie !== undefined) {
 }
 const out = process.argv.includes("--out") ? arg("out") : undefined;
 // The file says itself whether the run met the goal, so a kept result can be read without rerunning it.
-if (out !== undefined) writeFileSync(out, JSON.stringify({ ...result, verdict: short ?? "target met" }, null, 2) + "\n");
+if (out !== undefined) writeFileSync(out, JSON.stringify({ ...result, target: TARGET, verdict: short ?? "target met" }, null, 2) + "\n");
 const last = process.argv.includes("--compare") ? (JSON.parse(readFileSync(arg("compare"), "utf8")) as LoadResult) : undefined;
 const why = last === undefined ? undefined : fell(last, result);
 if (why !== undefined) {

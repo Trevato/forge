@@ -26,17 +26,38 @@ export interface LoadResult {
   readonly refusedBy?: Readonly<Record<string, number>>;
   /** `"target met"`, or `missed()`'s words, as the run that wrote it judged (#9548). Absent in results kept before. */
   readonly verdict?: string;
+  /** The uncounted warm-up before the measured window (#9596): its seconds and what it got. Absent in results kept before. */
+  readonly warm?: { readonly seconds: number; readonly served: number; readonly refused: number };
 }
 
 /** The goal a release is held to (#9514): at the asked rate, no refusal and p95 under this, ms. */
 export const TARGET_P95_MS = 100;
+/** The rate the goal is held at, requests per second (#9514). */
+export const TARGET_RATE = 500;
+/**
+ * The share of the asked rate a run must serve. The open loop sends
+ * floor(elapsed × rate), so a full run lands a request or two under; 95% is
+ * the slack for that, not for a forge that cannot keep up (refusals count apart).
+ */
+export const SERVED_SHARE = 0.95;
 
-/** Words for how a run fell short of the goal, or undefined when it refused none and its p95 was under `TARGET_P95_MS`. */
+/** What the goal is, written into each result file so it reads on its own (#9596). */
+export const TARGET = { rate: TARGET_RATE, refused: 0, p95UnderMs: TARGET_P95_MS } as const;
+
+const tenth = (n: number) => Math.round(n * 10) / 10;
+
+/**
+ * Words for how far a run fell short of the goal (500/s asked and served, none
+ * refused, p95 under `TARGET_P95_MS`), or undefined when it met it.
+ */
 export function missed(r: LoadResult): string | undefined {
   const why: string[] = [];
-  if (r.refused > 0) why.push(`${r.refused} refused`);
+  if (r.asked < TARGET_RATE) why.push(`asked ${r.asked}/s, ${tenth(TARGET_RATE - r.asked)}/s under the ${TARGET_RATE}/s target`);
+  else if (r.served > 0 && r.servedPerSecond < TARGET_RATE * SERVED_SHARE)
+    why.push(`served ${r.servedPerSecond}/s, ${tenth(TARGET_RATE - r.servedPerSecond)}/s under the ${TARGET_RATE}/s target`);
+  if (r.refused > 0) why.push(`${r.refused} refused of ${r.served + r.refused}`);
   if (r.served === 0) why.push("none served");
-  else if (r.p95 >= TARGET_P95_MS) why.push(`p95 ${r.p95} ms, not under ${TARGET_P95_MS} ms`);
+  else if (r.p95 >= TARGET_P95_MS) why.push(`p95 ${r.p95} ms, ${tenth(r.p95 - TARGET_P95_MS)} ms over the ${TARGET_P95_MS} ms target`);
   return why.length === 0 ? undefined : why.join("; ");
 }
 
