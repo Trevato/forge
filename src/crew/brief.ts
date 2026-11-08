@@ -7,6 +7,7 @@
  * rules (docs/APPS.md) hold whether or not the agent reads them.
  */
 
+import { machineNote, type Machine } from "./machines.ts";
 import type { OwnApp } from "./app_hosts.ts";
 import type { Owed } from "./team_share.ts";
 import type { Agent, CrewRole } from "../core/agents.ts";
@@ -50,6 +51,8 @@ export interface BriefInput {
   readonly resuming: boolean;
   /** What this agent is for on this repository; a planner writes maps. */
   readonly role?: CrewRole | undefined;
+  /** The machine this role's shell runs in (`crew/machines.ts`). */
+  readonly machine?: Machine | undefined;
   /**
    * The policy in force: the app's contract as a table, when it has one.
    * A builder is told the room it works in before it starts, so the doors
@@ -100,6 +103,12 @@ export function fenced(text: string, info = ""): string[] {
   return [fence + info, text, fence];
 }
 
+/** The brief line naming a machine's tools; none for a machine without any. */
+function machineLines(machine: Machine | undefined): string[] {
+  const note = machine === undefined ? undefined : machineNote(machine);
+  return note === undefined ? [] : [note, ""];
+}
+
 /**
  * A short name for the prompt an agent ran on: a hash of its brief, its
  * role and the standing system-prompt text. Per-run facts (issue, branch)
@@ -123,6 +132,7 @@ export function systemPrompt(input: BriefInput): string {
     "",
     "Read docs/VISION.md first: it says what the forge is for and the order of work. Done means reachable: a function nobody can call is not done. Where the repository has docs/PRINCIPLES.md, read it too: what it holds to, and what enforces each.",
     "",
+    ...machineLines(input.machine),
     "How to finish:",
     "- Commit your work with clear messages and push: `git push`.",
     "- If `forge.json` declares a `check`, the forge runs it against every push to your pull, and that verdict is what lands it; a failing check comes back to you with its log.",

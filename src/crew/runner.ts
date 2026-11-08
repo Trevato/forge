@@ -35,6 +35,8 @@ import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { chooseModel, modelFacts } from "./model_choice.ts";
 import { ownApp, ownAppUrls } from "./app_hosts.ts";
+import { machineEnv, machineFor, reachableApps } from "./machines.ts";
+import { repoMachines } from "./machines_read.ts";
 import { authorsInRepoPull } from "./authors_pull.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../core/apps.ts";
@@ -1090,9 +1092,13 @@ async function work(
         : undefined;
     const policy =
       record === undefined ? undefined : await policyBrief(app, repo);
+    // The machine this seat runs in, from the default branch's forge.json.
+    const role = crewRole(app.db, repo.id, agent.user.id);
+    const machine = machineFor(await repoMachines(app, repo), role);
     const brief = {
       agent,
       repo,
+      machine,
       issue,
       pull,
       branch,
@@ -1107,7 +1113,7 @@ async function work(
         !reviewing &&
         previous?.sessionId !== undefined &&
         previous.sessionId !== "",
-      role: crewRole(app.db, repo.id, agent.user.id),
+      role,
     };
     const failedCheck =
       reason === "check_failed" && pull
@@ -1320,6 +1326,7 @@ async function work(
       ...passportEnv(app.config.dataDir),
       ...credentialEnv(picked),
       ...grant.env,
+      ...machineEnv(machine),
       ...(options.configDir === undefined
         ? {}
         : { CLAUDE_CONFIG_DIR: options.configDir }),
@@ -1339,7 +1346,7 @@ async function work(
         dataDir: app.config.dataDir,
         agentName: agent.user.username,
         urls: [options.localUrl, options.forgeUrl],
-        appUrls: ownAppUrls(ownApp(app, repo)),
+        appUrls: reachableApps(machine, ownAppUrls(ownApp(app, repo))),
         extraHosts: [
           ...(options.allowHosts ?? []),
           ...hosts,
