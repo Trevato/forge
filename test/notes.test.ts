@@ -92,6 +92,7 @@ describe("notes", () => {
   let servers: Servers;
   let alice: User;
   let bob: User;
+  let carol: User;
   let repo: Repo;
   const fresh = () => getRepoById(app.db, repo.id)!;
   const cookie = (u: User) => `forge_session=${createSession(app.db, u.id).token}`;
@@ -106,6 +107,7 @@ describe("notes", () => {
     };
     alice = await mk("alice", true);
     bob = await mk("bob");
+    carol = await mk("carol");
     const r = await createRepo(app, alice, { name: "forge", visibility: "private" });
     if (!r.ok) throw new Error(String(r.error));
     repo = r.value;
@@ -141,6 +143,19 @@ describe("notes", () => {
     expect(html.indexOf("second")).toBeLessThan(html.indexOf("first idea"));
     expect(html).toContain('enterkeyhint="send"');
     expect(await (await get(bob)).text()).not.toContain("first idea");
+  });
+
+  test("notes are bare rows with the state in the line and no badge; none is one muted line (#9731)", async () => {
+    await post(bob, "an idea for rows");
+    const flat = (r: string) => r.slice(r.indexOf("<main"), r.indexOf("</main>")).replace(/\s+/g, " ");
+    const list = flat(await (await get(bob)).text());
+    expect(list).toContain('<div class="card bare"');
+    expect(list).not.toContain("badge");
+    expect(list).toMatch(/<span class="note-line">.*Waiting for the planner/);
+    const empty = flat(await (await get(carol)).text());
+    expect(empty).toContain('<p class="muted small">No notes yet. Write one above.</p>');
+    expect(empty).not.toContain("bare");
+    expect(empty).not.toContain('class="empty');
   });
 
   test("refuses empty, oversized and cross-origin writes", async () => {

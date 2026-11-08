@@ -10,7 +10,7 @@
 
 import { overruleNote } from "../../actions/note_overrule.ts";
 import { keepThought, THOUGHT_MAX } from "../../actions/thought.ts";
-import { noteLine, type NotePhase } from "../../core/note_line.ts";
+import { noteLine } from "../../core/note_line.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { publicForgeRepo } from "../../core/forge_repo.ts";
 import { thoughtStream } from "../../core/thought_stream.ts";
@@ -20,23 +20,11 @@ import { signInFirst } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, empty, listCard, row, time, type Tone } from "../ui.ts";
+import { btn, listCard, row, time } from "../ui.ts";
 import { cut } from "../../actions/ask_state_words.ts";
 
 const HERE = "/notes";
 const SHOWN = 100;
-
-const TONE: Record<NotePhase, Tone> = {
-  waiting: "default",
-  declined: "default",
-  duplicate: "default",
-  snoozed: "default",
-  planned: "default",
-  building: "attn",
-  review: "attn",
-  shipped: "success",
-  superseded: "default",
-};
 
 /** Static code, never built from user text. */
 export const notesJs = `
@@ -82,7 +70,6 @@ export async function notesView(ctx: Ctx): Promise<Response> {
       meta: html`<span class="note-line">${time(n.receivedAt)} · ${line.text}${line.links.length === 0 ? null : " · "}${line.links.map(
         (l) => html`<a href="${l.href}">${l.label}</a>`,
       )}</span>`,
-      trail: badge(line.phase === "review" ? "In review" : line.phase[0]!.toUpperCase() + line.phase.slice(1), { tone: TONE[line.phase] }),
       ...(line.overrule === null
         ? {}
         : {
@@ -99,8 +86,8 @@ export async function notesView(ctx: Ctx): Promise<Response> {
       <div class="bar"><span class="muted small">Enter saves · Shift+Enter for a new line</span><span class="spacer"></span>${btn("Save", { variant: "primary" })}</div>
     </form>
     ${rows.length === 0
-      ? empty({ icon: "comment", title: "No notes yet", note: "Write an idea above. The crew plans it, builds it, and this page says where it is." })
-      : listCard(rows)}</div>`;
+      ? html`<p class="muted small">No notes yet. Write one above.</p>`
+      : listCard(rows, { extra: "bare" })}</div>`;
   return timePhase(ctx.request, "render", () =>
     page({ ctx, title: "Notes", body, styleCss: NOTES_CSS, scriptJs: notesJs, description: "Write an idea; watch it become shipped work." }),
   );
