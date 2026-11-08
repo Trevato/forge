@@ -94,6 +94,8 @@ accounts are `row()`s in `<ul class="list setting-list" id="accounts-list">` und
 (Sign-ins, Verify, Suspend, Remove) in the row's `after` slot; the mail, ownerless-organization, sign-in reach and
 confirm/refusal notices are plain `<section class="settings-block">` blocks with an `<h2>`. `test/accounts-rows.test.ts` holds the shape.
 
+`/oauth/authorize` (`src/web/pages/oauth.ts`) adds no component class. The consent, sign-in and can't-connect parts are each a `<section class="settings-block">` with an `<h2>` (What it gets, What it learns; the can't-connect part is the message alone) under the `pageHead`, no `.card`. The client's name, the return host, the token kind, name and lifetime fields are as they were. `test/oauth-page-shape.test.ts` holds the shape.
+
 Settings › Cloud (`src/web/pages/cloud.ts`) adds no component class. As on the home page it is headings over rows: Cloud accounts,
 Add an account and Every read are each a `<section class="settings-block">` with an `<h2>`; each account is a `row()` in
 `<ul class="list setting-list">`; with none, one plain sentence says how to add one. `/settings/cloud/audit` is unchanged.
