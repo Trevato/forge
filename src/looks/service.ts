@@ -435,8 +435,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         if (shot.ok) {
           const size = shot.value.size === undefined ? {} : { size: shot.value.size };
           vitals.push({ look, entries: shot.value.entries, ...size });
-        }
-        else if (isNoBrowser(shot.error))
+        } else if (isNoBrowser(shot.error))
           vitals.push({ look, skipped: "no browser" });
       }
       const taken =

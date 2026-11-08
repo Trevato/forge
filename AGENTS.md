@@ -13,3 +13,5 @@ A new terminal screen offered only to site admins exports its palette `entry` fr
 A new read of a table that grows (`event`, `issue`, `run`, `comment`) names the index it walks, in the migration that adds it, and a test shows it from the query plan (`test/hot-reads-indexed.test.ts` is the pattern): no `SCAN`, no `TEMP B-TREE`. Judge by plan or row count, never the clock. A read that stays slow with the best index is a summary table, kept as the rows change, before it is a worker.
 
 A new `/settings…` page route goes in `src/http/settings_routes.ts` (`settingsRoutes`), not `src/http/server.ts`.
+
+State shared between modules through process memory, not the database, is named here. `src/runs/held.ts`: each dispatcher pass (`src/crew/dispatch.ts`, `pump`) records which queued agent runs it held and why (valve, pace, limit), and vitals (`src/kernel/vitals.ts`) leaves those out of `queue:agent`. A record older than `HELD_FRESH_MS` is ignored, so a stopped dispatcher cannot hide its queue.

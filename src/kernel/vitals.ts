@@ -19,7 +19,9 @@ import {
   leaseLapsed,
   listRunning,
   queueDepth,
+  queuedApart,
 } from "../core/runs.ts";
+import { HOLD_WORDS, heldRuns, type HoldCause } from "../runs/held.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { ownRepoPath } from "./own_repo.ts";
 import { BUDGETS } from "./budgets.ts";
@@ -268,9 +270,17 @@ function holders(issues: (string | null)[], perIssue: boolean): number {
 }
 
 /** What a long queue is waiting behind: how many wait, how many run, and the slots in force. */
-function queueSentence(kind: string, queued: number, running: number, slots: number | null): string {
+function queueSentence(
+  kind: string,
+  queued: number,
+  running: number,
+  slots: number | null,
+  held: ReadonlyMap<HoldCause, number> = new Map(),
+): string {
   const behind = slots === null ? `${running} running` : `${running} of ${slots} slots running`;
-  return `The ${kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes: ${queued} queued, ${behind}.`;
+  const parts = [...held].map(([cause, n]) => `${n} by ${HOLD_WORDS[cause]}`);
+  const more = parts.length > 0 ? `; held on purpose: ${parts.join(", ")}` : "";
+  return `The ${kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes: ${queued} queued, ${behind}${more}.`;
 }
 
 /**
@@ -383,17 +393,35 @@ export function vitals(input: VitalsInput): Vitals {
         );
       continue;
     }
-    const waited = now - new Date(row.oldest).getTime();
+    // Agent runs the dispatcher holds on purpose (a shut valve, the week's
+    // pace, an account limit) are not waiting for a slot (#9403): age and
+    // "since" come from the rest, and the sentence names how many are held.
+    let waiting = row.queued;
+    let oldest: string | null = row.oldest;
+    const byCause = new Map<HoldCause, number>();
+    const holds = row.kind === "agent" ? heldRuns(input.db, now) : new Map<string, HoldCause>();
+    if (holds.size > 0) {
+      const apart = queuedApart(input.db, "agent", [...holds.keys()], now);
+      waiting = apart.waiting;
+      oldest = apart.oldest;
+      for (const id of apart.held) {
+        const cause = holds.get(id)!;
+        byCause.set(cause, (byCause.get(cause) ?? 0) + 1);
+      }
+    }
+    if (oldest === null) continue;
+    const waited = now - new Date(oldest).getTime();
     if (waited > QUEUE_WAIT_MAX_MS)
       need(
         `queue:${row.kind}`,
         queueSentence(
           row.kind,
-          row.queued,
+          waiting,
           holders(running.filter((r) => r.run.kind === row.kind).map((r) => r.run.issueId), row.kind === "agent"),
           row.kind === "agent" ? Number(capacityValue(input.db, "crew.concurrency")) : null,
+          byCause,
         ),
-        new Date(row.oldest).toISOString(),
+        new Date(oldest).toISOString(),
         "/settings/capacity",
       );
   }

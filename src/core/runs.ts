@@ -1381,6 +1381,37 @@ export function queueDepth(
     .all(new Date(now).toISOString());
 }
 
+/**
+ * The queued runs of one kind that may start now, weighed against the ids the
+ * dispatcher holds on purpose (#9403): which held ids are still queued, and the
+ * count and oldest of the rest. Two queries, however deep the queue, both on
+ * `run_queue`: the `state IN` repeats the partial index's own condition so
+ * SQLite may use it, and `+kind` keeps it off the per-repository agent index.
+ */
+export function queuedApart(
+  db: Database,
+  kind: RunKind,
+  heldIds: readonly string[],
+  now = Date.now(),
+): { held: string[]; waiting: number; oldest: string | null } {
+  const ids = JSON.stringify(heldIds);
+  const at = new Date(now).toISOString();
+  const eligible = "state IN ('queued','running') AND state = 'queued' AND +kind = ?1 AND (not_before IS NULL OR not_before <= ?2)";
+  const held = db
+    .query<{ id: string }, [RunKind, string, string]>(
+      `SELECT id FROM run WHERE ${eligible} AND id IN (SELECT value FROM json_each(?3))`,
+    )
+    .all(kind, at, ids)
+    .map((r) => r.id);
+  const rest = db
+    .query<{ waiting: number; oldest: string | null }, [RunKind, string, string]>(
+      `SELECT COUNT(*) AS waiting, MIN(created_at) AS oldest FROM run
+       WHERE ${eligible} AND id NOT IN (SELECT value FROM json_each(?3))`,
+    )
+    .get(kind, at, ids)!;
+  return { held, waiting: rest.waiting, oldest: rest.oldest };
+}
+
 /** Every running run with the repository and issue number it is about, in one query. */
 export function listRunning(
   db: Database,

@@ -43,6 +43,7 @@ import { resolveOpen } from "../core/decisions.ts";
 import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
+import { noteHeld, type HoldCause } from "../runs/held.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { bugsFirst } from "../flow/bugs.ts";
 import { byDials } from "./team_share.ts";
@@ -1511,7 +1512,10 @@ function pump(
   // Builder starts go to teams in proportion to their dials (`team_share.ts`),
   // then through the valves a person turned (`flow/valve_gate.ts`).
   const gated = startOrder(app);
+  // What this pass holds by policy, for vitals (`runs/held.ts`, #9403).
+  const held = new Map<string, HoldCause>();
   for (const shut of gated.held) {
+    held.set(shut.id, "valve");
     if (noted.has(shut.id)) continue;
     noted.add(shut.id);
     appendRunLog(app.config.dataDir, shut.id, "queued, not started: its repository's valve is shut (/flow)");
@@ -1540,11 +1544,12 @@ function pump(
       const priorityGoing =
         (priorityIn.get(home.id) ?? 0) +
         active.filter((r) => r.state === "running" && r.repoId === home.id && isPriorityRun(app, r, priorityMemo)).length;
-      const held = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, paceFloor(app.db));
-      if (held !== null) {
+      const paced = weekHold(weekFor(app, home, new Date()), home.autonomySlots, going - priorityGoing, isPriorityRun(app, fresh, priorityMemo) ? fresh.reason : "pick", priorityGoing, paceFloor(app.db));
+      if (paced !== null) {
+        held.set(fresh.id, "pace");
         if (!noted.has(fresh.id)) {
           noted.add(fresh.id);
-          appendRunLog(app.config.dataDir, fresh.id, held);
+          appendRunLog(app.config.dataDir, fresh.id, paced);
         }
         continue;
       }
@@ -1559,6 +1564,7 @@ function pump(
             runningRuns(app.db, "agent", owner, [...inFlight.keys(), ...started]),
           );
     if (full !== undefined) {
+      held.set(fresh.id, "limit");
       if (!noted.has(fresh.id)) {
         noted.add(fresh.id);
         appendRunLog(app.config.dataDir, fresh.id, `queued, not started: ${full}`);
@@ -1584,4 +1590,5 @@ function pump(
       .finally(() => inFlight.delete(queued.id));
     inFlight.set(queued.id, running);
   }
+  noteHeld(app.db, held);
 }

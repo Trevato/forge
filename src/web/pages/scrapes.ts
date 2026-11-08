@@ -119,7 +119,7 @@ function groupDetail(g: Group, net: NetworkTable): Html {
       <p class="small">${g.size} requests from ${g.addresses.length} addresses, confidence ${g.confidence}.</p>
       <ul class="small">${g.reasons.map((r) => html`<li>${r}</li>`)}</ul>
       <p class="small muted">${LIMITS}</p>
-      ${btn("Export for an abuse report", { href: `${BASE}/export?group=${g.id}`, size: "sm" })}
+      ${btn("Export for an abuse report", { href: `/settings/traffic/scrapes/export?group=${g.id}`, size: "sm" })}
       <div class="table-scroll">
         <table class="table" data-dense>
           <caption class="sr-only">Requests behind group ${g.id}</caption>

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
+import { queuedApart } from "../src/core/runs.ts";
 import { closedByReview, reviewedClosed } from "../src/core/gate_hold.ts";
 import { askToLiveByPillar } from "../src/core/pillars.ts";
 
@@ -74,4 +75,10 @@ test("whether the Later gate review closed an issue reads the event index, not t
   );
   expect(many.join("\n")).toContain("SEARCH e USING");
   noScan(many);
+});
+
+test("the queued agent runs weighed against the dispatcher's holds walk the queue index", () => {
+  const lines = plans(() => void queuedApart(app.db, "agent", ["a", "b"]));
+  expect(lines.filter((l) => l.includes("USING INDEX run_queue")).length).toBe(2);
+  noScan(lines.filter((l) => !l.startsWith("SCAN json_each")));
 });
