@@ -902,8 +902,9 @@ function appMembersView(
   access: AppAccess,
   named: readonly string[],
 ): Html {
-  return card(
-    html`<form method="post" action="${base}/settings/app/members">
+  return html`<section class="settings-block" id="members">
+    <h2>${icon("users")} Who may enter</h2>
+    <form method="post" action="${base}/settings/app/members">
       <div class="field">
         <label for="f-members">People</label>
         <textarea
@@ -924,12 +925,8 @@ ${named.join("\n")}</textarea
         </p>
       </div>
       <div class="form-actions">${btn("Save people", { variant: "primary" })}</div>
-    </form>`,
-    {
-      head: html`${icon("users")}
-        <h2>Who may enter</h2>`,
-    },
-  );
+    </form>
+  </section>`;
 }
 
 function appDomainsView(
@@ -970,14 +967,13 @@ function appDomainsView(
         </div>
       </li>`,
   );
-  return card(
-    html`<div class="card-body">
-        <p class="muted small">
+  return html`<section class="settings-block" id="domains">
+    <h2>${icon("globe")} Domains</h2>
+        <p class="muted small mb">
           Serve the app at a name of your own —
           <span class="mono">app.example.com</span>, or an apex. Add it, publish
           the two records it shows, and press Check now.
         </p>
-      </div>
       ${when(
         rows.length > 0,
         () =>
@@ -986,19 +982,15 @@ function appDomainsView(
           </ul>`,
       )}
       ${domains === undefined
-        ? html`<div class="card-body">
-            <p class="muted small">
+        ? html`<p class="muted small">
               Nothing is serving apps on this forge, so a domain would have
               nowhere to point.
+            </p>`
+        : html`<p class="muted small mb">
+              The forge serves the app there as soon as the record is
+              verified. The app itself learns its new address at its next
+              deploy.
             </p>
-          </div>`
-        : html`<div class="card-body">
-              <p class="muted small">
-                The forge serves the app there as soon as the record is
-                verified. The app itself learns its new address at its next
-                deploy.
-              </p>
-            </div>
             <form
               class="edit-row"
               method="post"
@@ -1015,13 +1007,8 @@ function appDomainsView(
                 required
               />
               ${btn("Add", { variant: "primary", size: "sm", icon: "plus" })}
-            </form>`}`,
-    {
-      head: html`${icon("globe")}
-        <h2>Domains</h2>`,
-      pad: false,
-    },
-  );
+            </form>`}
+  </section>`;
 }
 
 /** The records as a person copies them into a zone: type, name, value. */

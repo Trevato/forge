@@ -160,3 +160,19 @@ test("a writer who is not an admin is refused, as is a stranger who cannot read 
   expect(hidden.status).toBe(404);
   expect(rows()).toEqual([]);
 });
+
+test("the domains section is headings over rows, not a card, and says what to publish", async () => {
+  await post("founder", DOMAINS, { host: HOST });
+  const page = await (
+    await fetch(`${servers.url}/acme/shop/settings/app`, { headers: { cookie: `${cookies["founder"]}; forge_mode=dev` } })
+  ).text();
+  const start = page.indexOf('id="domains"');
+  expect(start).toBeGreaterThan(0);
+  const section = page.slice(start, page.indexOf("</section>", start));
+  expect(section).not.toContain('class="card');
+  expect(section).toContain("waiting for DNS");
+  expect(section).toContain(PROOF);
+  expect(section).toContain(`${DOMAINS}/${HOST}/check`);
+  expect(section).toContain(encodeURIComponent(`${DOMAINS}/${HOST}/delete`));
+  await post("founder", `${DOMAINS}/${HOST}/delete`);
+});
