@@ -963,6 +963,14 @@ textarea.editor:focus-visible { outline: none; }
 
 /* ---- branches ---- */
 .branch-row .row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.branch-row .row-meta { white-space: normal; overflow-wrap: anywhere; }
+.branch-row .row-trail { flex: 0 1 auto; flex-wrap: wrap; gap: 4px 12px; }
+.branch-row .branch-del { color: var(--muted-fg); }
+.branch-row .branch-del:hover, .branch-row .branch-del:focus-visible { color: var(--danger); }
+@media (max-width: 719px) {
+  .branch-row { flex-wrap: wrap; }
+  .branch-row .row-trail { flex: 1 1 100%; justify-content: flex-start; }
+}
 .branch-div { display: inline-flex; gap: 8px; font-size: 12.5px; }
 .branch-div .ahead { color: var(--add-fg); }
 .branch-div .behind { color: var(--del-fg); }
