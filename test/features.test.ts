@@ -307,7 +307,7 @@ describe("absorbing an app", () => {
     const c = await commitToBranch(app, cy, repo, { message: "rename", files: [{ path: "forge.json", content: renamed }] });
     if (!c.ok) throw new Error(JSON.stringify(c.error));
     const view = await getFeature(app, ada, "radar");
-    expect(view.ok && view.value.pending).toEqual({ name: "Radar Pro", page: "/pro" });
+    expect(view.ok && view.value.pending).toEqual({ name: "Radar Pro", page: "/pro", summary: FEATURE.summary });
     expect(view.ok && view.value.name).toBe("Radar");
     const list = await (await web(adaCookie, "/settings/features")).text();
     expect(list).toContain("declaration changed: review");
@@ -322,6 +322,24 @@ describe("absorbing an app", () => {
     await commitToBranch(app, cy, repo, { message: "back", files: [{ path: "forge.json", content: FORGE_JSON }] });
     await acceptDeclaration(app, ada, "radar", { name: "Radar", page: "/" });
     expect(absorbedForNav(app, ada)[0]!.name).toBe("Radar");
+  });
+
+  test("a changed summary alone is pending, and accepting stores it for the menu title", async () => {
+    const before = absorbedForNav(app, ada)[0]!;
+    expect(before.summary).toBe(FEATURE.summary);
+    const edit = JSON.stringify({ app: { run: "x" }, feature: { ...FEATURE, summary: "Now says more" } });
+    const c = await commitToBranch(app, cy, repo, { message: "summary", files: [{ path: "forge.json", content: edit }] });
+    if (!c.ok) throw new Error(JSON.stringify(c.error));
+    const view = await getFeature(app, ada, "radar");
+    expect(view.ok && view.value.pending).toEqual({ name: "Radar", page: "/", summary: "Now says more" });
+    expect(absorbedForNav(app, ada)[0]!.summary).toBe(FEATURE.summary); // the menu waits
+    const done = await acceptDeclaration(app, ada, "radar", { name: "Radar", page: "/" });
+    expect(done.ok).toBe(true);
+    expect(absorbedForNav(app, ada)[0]!.summary).toBe("Now says more");
+    const after = await getFeature(app, ada, "radar");
+    expect(after.ok && after.value.pending).toBeNull();
+    await commitToBranch(app, cy, repo, { message: "back", files: [{ path: "forge.json", content: FORGE_JSON }] });
+    await acceptDeclaration(app, ada, "radar", { name: "Radar", page: "/" });
   });
 
   test("accepting what the admin reviewed is refused when production declared something else since", async () => {
@@ -508,6 +526,29 @@ describe("absorbing an app", () => {
     expectWork(used, { max: 2 + 3 * n }); // one list, then at most three reads per absorbed app
     const page = await (await web(adaCookie, "/settings")).text();
     expect(page).toContain("Many 19");
+  });
+
+  test("a menu entry carries the declared summary as its title, escaped and shortened", async () => {
+    const make = async (slug: string, name: string, summary: string | null) => {
+      const r = await createRepo(app, cy, { name: slug, visibility: "public", description: "" });
+      if (!r.ok) throw new Error(String(r.error));
+      const row = insertApp(app.db, { repoId: r.value.id, slug, access: "public" });
+      if (!row.ok) throw new Error(row.error);
+      absorb(app.db, row.value.id, ada.id, name, "/", summary);
+    };
+    await make("with-sum", "Withsum", "Watches the fleet");
+    await make("no-sum", "Nosum", null);
+    await make("evil-sum", "Evilsum", "<script>alert(1)</script>");
+    await make("long-sum", "Longsum", `${"word ".repeat(60)}end`);
+    const page = await (await web(adaCookie, "/settings")).text();
+    const entry = (slug: string) => page.split(/<a\s/).find((c) => c.includes(`href="/cy/${slug}"`)) ?? "";
+    expect(entry("with-sum")).toContain('title="Watches the fleet"');
+    expect(entry("no-sum")).not.toContain("title=");
+    expect(entry("evil-sum")).toContain("title=\"&lt;script&gt;alert(1)&lt;/script&gt;\"");
+    expect(page).not.toContain("<script>alert(1)");
+    const long = /title="([^"]*)"/.exec(entry("long-sum"))?.[1] ?? "";
+    expect(long.length).toBeLessThanOrEqual(200);
+    expect(long.endsWith("word…")).toBe(true);
   });
 
   test("deleting the app takes its feature row and settings with it", () => {

@@ -94,7 +94,7 @@ The name and page in the menu are the ones the admin saw when absorbing. If the 
 `forge.json` later declares others, the menu keeps serving the absorbed ones and Settings ›
 Features shows "declaration changed: review" with the new values; an admin accepts them
 (`POST /settings/features/:slug/accept` with the reviewed `name` and `page`; refused with a re-review flash when the app declares something else by now; event `app.feature_declared`). Feature entries sit under
-their own "Features from apps" heading, and a name equal to a built-in menu label is refused.
+their own "Features from apps" heading. The declared `summary` is the entry's `title` (shortened at a word to 200 characters). It is copied, like the name and page, when an admin absorbs and when one accepts; a changed summary alone also shows "declaration changed: review". Apps absorbed before the summary was kept show no title, and appear to review once if they declare a summary, until an admin accepts. The title is a tooltip: a pointer's, not a keyboard's or a touch screen's. A name equal to a built-in menu label is refused.
 
 ### Accepting in the terminal
 

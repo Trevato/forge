@@ -12,10 +12,12 @@ export interface Absorbed {
   readonly absorbedAt: string;
   readonly name: string;
   readonly page: string;
+  /** The declared summary as last kept, for the nav's title. */
+  readonly summary: string | null;
 }
 
-type Row = { app_id: string; absorbed_by: string; absorbed_at: string; name: string; page: string };
-const fromRow = (r: Row): Absorbed => ({ appId: r.app_id, absorbedBy: r.absorbed_by, absorbedAt: r.absorbed_at, name: r.name, page: r.page });
+type Row = { app_id: string; absorbed_by: string; absorbed_at: string; name: string; page: string; summary: string | null };
+const fromRow = (r: Row): Absorbed => ({ appId: r.app_id, absorbedBy: r.absorbed_by, absorbedAt: r.absorbed_at, name: r.name, page: r.page, summary: r.summary });
 
 export function getAbsorbed(db: Database, appId: string): Absorbed | undefined {
   const row = db.query<Row, [string]>("SELECT * FROM app_feature WHERE app_id = ?1").get(appId);
@@ -28,17 +30,17 @@ export function listAbsorbed(db: Database): Absorbed[] {
 }
 
 /** True when the app was not absorbed before. */
-export function absorb(db: Database, appId: string, by: string, name: string, page: string): boolean {
+export function absorb(db: Database, appId: string, by: string, name: string, page: string, summary: string | null = null): boolean {
   return (
     db
-      .query("INSERT OR IGNORE INTO app_feature (app_id, absorbed_by, name, page) VALUES (?1, ?2, ?3, ?4)")
-      .run(appId, by, name, page).changes > 0
+      .query("INSERT OR IGNORE INTO app_feature (app_id, absorbed_by, name, page, summary) VALUES (?1, ?2, ?3, ?4, ?5)")
+      .run(appId, by, name, page, summary).changes > 0
   );
 }
 
 /** Keep this name and page for the nav: an admin's act (accepting a changed declaration), never a deploy's. */
-export function keepDeclaration(db: Database, appId: string, name: string, page: string): void {
-  db.query("UPDATE app_feature SET name = ?2, page = ?3 WHERE app_id = ?1").run(appId, name, page);
+export function keepDeclaration(db: Database, appId: string, name: string, page: string, summary: string | null = null): void {
+  db.query("UPDATE app_feature SET name = ?2, page = ?3, summary = ?4 WHERE app_id = ?1").run(appId, name, page, summary);
 }
 
 /** True when the app was absorbed. Its settings stay, so absorbing again picks them up. */

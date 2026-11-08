@@ -15,6 +15,7 @@ import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { wordClip } from "../text/word_clip.ts";
 import { absorbedForNav } from "../actions/features.ts";
 import {
   enterableApps,
@@ -264,6 +265,9 @@ function newMenu(ctx: Ctx): Html {
   });
 }
 
+/** A summary's longest title: a tooltip, not a paragraph. */
+const SUMMARY_TITLE_MAX = 200;
+
 /**
  * The apps absorbed as the forge's own features, for the menu: each
  * opens at its declared page through the forge's door, which vouches for the
@@ -277,7 +281,8 @@ function featureItems(ctx: Ctx, user: User): MenuItem[] {
       runtime === undefined
         ? `/${f.repo}`
         : `/apps/open?host=${encodeURIComponent(new URL(runtime.urlFor(f.record, "production")).host)}&to=${encodeURIComponent(f.page)}`;
-    return { label: f.name, href, icon: "rocket" as const };
+    const entry: MenuItem = { label: f.name, href, icon: "rocket" };
+    return f.summary ? { ...entry, title: wordClip(f.summary, SUMMARY_TITLE_MAX) } : entry;
   });
   // Under a heading of their own, so an app's chosen name cannot pass for a forge item.
   return entries.length === 0

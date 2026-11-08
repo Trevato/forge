@@ -59,7 +59,9 @@ function featureRow(f: FeatureView) {
       ${f.pending !== null ? badge("declaration changed: review", { tone: "attn" }) : null}`,
     meta: html`${f.pending !== null
       ? html`Menu: <strong>${f.name}</strong> at <span class="mono">${f.page}</span> → app: <strong>${f.pending.name}</strong> at
-          <span class="mono">${f.pending.page}</span>`
+          <span class="mono">${f.pending.page}</span>${f.pending.summary !== null
+            ? html`<br />Menu title: ${f.pending.summary}`
+            : html`<br />Menu title: none`}`
       : f.problem !== null
       ? html`<span class="danger">${f.problem}</span>`
       : html`${f.summary ?? ""}${when(f.summary !== null, () => html`<br />`)}${f.settings.length} setting${f.settings.length === 1 ? "" : "s"}${f.absorbed

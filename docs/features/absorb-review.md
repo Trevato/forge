@@ -8,3 +8,5 @@ One finding per angle, read from the code at `47c57bd6`. Work that follows is fi
 - **Product.** Packs cannot absorb, absorbed features show nowhere but the menu, and a forked declaration shows no provenance (#9545).
 - **Speed.** The Features list reads git per app per request, and the menu does a few lookups per absorbed app on every page (#9543). Not measured; no regression at the current two features is claimed.
 - **Credit.** Ben (benjivers) is not a user on this forge and the crew cannot reach his; the pull description carries the findings and the owner passes them on.
+
+Since #9681 the menu entry's `title` is the declared summary, copied at absorb and on accept; see `absorb.md`. Features absorbed earlier show no title until re-accepted.

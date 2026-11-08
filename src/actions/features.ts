@@ -73,7 +73,7 @@ export interface FeatureView {
   readonly summary: string | null;
   readonly page: string;
   /** The name and page the app declares now, when they differ from the absorbed ones: waits for an admin. */
-  readonly pending: { readonly name: string; readonly page: string } | null;
+  readonly pending: { readonly name: string; readonly page: string; readonly summary: string | null } | null;
   readonly absorbed: boolean;
   readonly absorbedBy: string | null;
   readonly absorbedAt: string | null;
@@ -143,8 +143,10 @@ function viewOf(record: AppRecord, repo: Repo, app: App, spec: FeatureSpec | und
     summary: spec?.summary ?? null,
     page: absorbed?.page ?? spec?.page ?? "/",
     pending:
-      absorbed !== undefined && spec !== undefined && (spec.name !== absorbed.name || spec.page !== absorbed.page)
-        ? { name: spec.name, page: spec.page }
+      absorbed !== undefined &&
+      spec !== undefined &&
+      (spec.name !== absorbed.name || spec.page !== absorbed.page || (spec.summary ?? null) !== absorbed.summary)
+        ? { name: spec.name, page: spec.page, summary: spec.summary ?? null }
         : null,
     absorbed: absorbed !== undefined,
     absorbedBy: absorbed?.absorbedBy ?? null,
@@ -204,6 +206,8 @@ export interface NavFeature {
   readonly name: string;
   /** The app path to open: the feature's page. */
   readonly page: string;
+  /** The declared summary as last kept; the menu entry's title. */
+  readonly summary: string | null;
   /** The app record already read, so the menu does not fetch it again. */
   readonly record: AppRecord;
 }
@@ -216,7 +220,7 @@ export function absorbedForNav(app: App, actor: User | undefined): NavFeature[] 
     if (record === undefined) continue;
     const repo = getRepoById(app.db, record.repoId);
     if (repo === undefined || !canRead(app.db, repo, actor)) continue;
-    out.push({ appId: record.id, slug: record.slug, repo: `${repo.ownerName}/${repo.name}`, name: row.name, page: row.page, record });
+    out.push({ appId: record.id, slug: record.slug, repo: `${repo.ownerName}/${repo.name}`, name: row.name, page: row.page, summary: row.summary, record });
   }
   return out;
 }
@@ -242,7 +246,7 @@ export async function absorbApp(app: App, actor: User | undefined, slug: string)
   if (!siteAdmin(actor)) return err("forbidden");
   const declared = await declaredFeature(app, found.repo);
   if (!declared.ok || declared.value === undefined) return err("not_a_feature");
-  if (absorb(app.db, found.record.id, actor.id, declared.value.name, declared.value.page)) {
+  if (absorb(app.db, found.record.id, actor.id, declared.value.name, declared.value.page, declared.value.summary ?? null)) {
     app.bus.append({ kind: "app.absorbed", repoId: found.repo.id, actorId: actor.id, payload: { slug, name: declared.value.name } });
     await redeployAll(app, found.record, found.repo);
   }
@@ -268,9 +272,10 @@ export async function acceptDeclaration(
   const declared = await declaredFeature(app, found.repo);
   if (!declared.ok || declared.value === undefined) return err("not_a_feature");
   const { name, page } = declared.value;
+  const summary = declared.value.summary ?? null;
   if (name !== reviewed.name || page !== reviewed.page) return err("declaration_changed");
-  if (name !== before.name || page !== before.page) {
-    keepDeclaration(app.db, found.record.id, name, page);
+  if (name !== before.name || page !== before.page || summary !== before.summary) {
+    keepDeclaration(app.db, found.record.id, name, page, summary);
     app.bus.append({
       kind: "app.feature_declared",
       repoId: found.repo.id,
