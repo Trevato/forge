@@ -27,7 +27,7 @@ afterAll(async () => {
 });
 
 const value = (html: string, id: string) =>
-  new RegExp(`id="${id}"[^>]*value="([^"]*)"`).exec(html)?.[1]?.replaceAll("&lt;", "<").replaceAll("&gt;", ">") ?? "";
+  new RegExp(`id="${id}"[^>]*value="([^"]*)"`).exec(html)?.[1]?.replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">") ?? "";
 
 test("lines use the forge's address, a placeholder, then the minted token once", async () => {
   const signup = await fetch(`${base}/signup`, {
@@ -41,7 +41,7 @@ test("lines use the forge's address, a placeholder, then the minted token once",
   const before = await (await fetch(`${base}/settings/tokens`, { headers: { cookie } })).text();
   expect(before).toContain("Connect your harness");
   expect(value(before, "connect-claude")).toBe(`FORGE_URL=${url} FORGE_TOKEN=<token> claude --plugin-dir plugins/claude-code`);
-  expect(value(before, "connect-opencode")).toContain(`FORGE_URL=${url} FORGE_TOKEN=<token> opencode`);
+  expect(value(before, "connect-opencode")).toBe(`mkdir -p .opencode/plugin && curl -fsSo .opencode/plugin/forge.ts ${url}/plugins/opencode/forge.ts && FORGE_URL=${url} FORGE_TOKEN=<token> opencode`);
 
   const made = await fetch(`${base}/settings/tokens`, {
     method: "POST",

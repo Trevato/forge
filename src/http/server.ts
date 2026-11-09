@@ -34,6 +34,7 @@ import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke }
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
 import { settingsRoutes } from "./settings_routes.ts";
+import { pluginRoutes } from "./plugin_routes.ts";
 import { pinnedRoutes } from "./pinned_routes.ts";
 import { boardsAsk, boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
@@ -917,6 +918,8 @@ export function buildRouter(): Router<Handler> {
   // Every /settings… page, in its own module (settings_routes.ts); literal, above /:owner.
   // The usage page is handed the pattern list, so settings_routes.ts never imports server.ts.
   settingsRoutes(router, knownPatterns);
+  // The OpenCode plugin file (#10198); literal, above /:owner.
+  pluginRoutes(router);
   // The Deploy to… page for a pinned forge (#8744); literal, above /:owner.
   pinnedRoutes(router);
   // Each THREATS.md protection against the last gate; literal, above /:owner.

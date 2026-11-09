@@ -43,6 +43,7 @@ import {
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
 import { ADMIN_TOKEN_WORDS, type TokenScope } from "../../core/tokens.ts";
+import { opencodeInstall } from "../../http/plugin_routes.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
 import { isStandInEmail } from "../../core/users.ts";
 import { cookieValue, isAccountItself, type Ctx } from "../../http/context.ts";
@@ -594,7 +595,7 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
       <p class="small">OpenCode</p>
       ${copyField(
         "connect-opencode",
-        `mkdir -p .opencode/plugin && cp plugins/opencode/forge.ts .opencode/plugin/ && ${env} opencode`,
+        `${opencodeInstall(url)} && ${env} opencode`,
         "OpenCode command",
         "Copy command",
       )}`,

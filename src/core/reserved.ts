@@ -108,6 +108,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "runs",
   "search",
   "settings",
+  "plugins",
   "signin",
   "signup",
   "sitemap.xml",
