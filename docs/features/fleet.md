@@ -14,19 +14,26 @@ Before a fleet operation acts, see the rows its query line selects. There are tw
 - `/` writes a new line. `s` sorts by the next column and `r` reverses the sort. `j` and `k` scroll, and `esc` goes back.
 - A line that does not parse keeps the prompt open with its reason.
 
-**The query line:** a kind, then `field:value` terms that must all hold. A value starting with `!` negates its term.
+**The query line:** a kind, then `field:value` terms that must all hold. Both doors show the same grammar under the line: one sentence, then each kind with its fields (`GRAMMAR` and `fieldsOf` in `src/fleet/selection.ts`).
+
+- A value starting with `!` negates its term: `repo:!trevato/forge`.
+- A comma means any of: `state:queued,running`.
+- `cost` and `number` take a number, and may compare it with `>`, `<`, `>=` or `<=`: `cost:>0.5`.
+- `created` and `updated` take an age: a whole number of minutes, hours, days or weeks (`30m`, `12h`, `7d`, `2w`). `created:<7d` is younger than seven days, `created:>7d` older, and a bare `created:7d` means within seven days.
+- A term that does not fit its field is refused, naming the field and what it wanted: "cost wants a number", "created wants an age like 30m, 12h, 7d or 2w", "state takes no comparison; only a value or values". Nothing is selected.
+- `issue number:` now refuses text it used to accept. `number:abc` once selected nothing without a word, and now it says "number wants a number".
 
 | Kind | Fields | Columns |
 | --- | --- | --- |
-| `repo` | `owner`, `name`, `repo`, `autonomy`, `visibility` | repository, autonomy, visibility, app |
-| `run` | `state`, `kind`, `agent`, `issue`, `repo` | started, repository, kind, agent, state, cost |
-| `issue` | `number`, `state`, `assignee` (`none` for unassigned), `label`, `limb`, `repo` | repository, #, title, state, assignee |
+| `repo` | `owner`, `name`, `repo`, `autonomy`, `visibility`, `created` | repository, autonomy, visibility, app |
+| `run` | `state`, `kind`, `agent`, `issue`, `repo`, `cost`, `created` | started, repository, kind, agent, state, cost |
+| `issue` | `number`, `state`, `assignee` (`none` for unassigned), `label`, `limb`, `repo`, `created`, `updated` | repository, #, title, state, assignee |
 
-Every kind also has `id`, and `repo` and `issue` share `owner` and `name`. Some examples:
+Every kind also has `id`, and all three share `owner` and `name`. Some examples:
 
 - `repo autonomy:autonomous`
-- `run state:queued repo:!trevato/forge`
-- `issue repo:engine label:bug assignee:none`
+- `run state:queued,running cost:>0.5 repo:!trevato/forge`
+- `issue repo:engine label:bug assignee:none created:<7d`
 
 **Shared code and rules:**
 

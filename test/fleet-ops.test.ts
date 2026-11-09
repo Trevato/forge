@@ -111,8 +111,8 @@ describe("fleet operations", () => {
     expect(q.ok && q.value).toEqual({
       kind: "repo",
       terms: [
-        { field: "autonomy", value: "assisted", negate: false },
-        { field: "repo", value: "alice/tools", negate: true },
+        { field: "autonomy", value: "assisted", negate: false, op: "=", values: ["assisted"] },
+        { field: "repo", value: "alice/tools", negate: true, op: "=", values: ["alice/tools"] },
       ],
     });
     for (const bad of ["", "pulls", "repo autonomy", "repo spent:4", "run label:x"]) {

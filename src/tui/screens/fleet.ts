@@ -9,13 +9,13 @@
 
 import { cellText, COLUMNS, sortRows, type Sort } from "../../fleet/columns.ts";
 import { viewFleet, type FleetView } from "../../fleet/rows.ts";
-import type { FleetKind } from "../../fleet/selection.ts";
+import { fieldsOf, GRAMMAR, GRAMMAR_EXAMPLES, FLEET_KINDS, type FleetKind } from "../../fleet/selection.ts";
 import type { FleetRow } from "../../fleet/rows.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
 import { style } from "../term/style.ts";
-import { pad, truncate } from "../term/width.ts";
+import { pad, truncate, wrap } from "../term/width.ts";
 import { promptScreen, Scroll } from "./common.ts";
 
 /** No column is padded past this, so a long title does not push the rest away. */
@@ -42,6 +42,20 @@ export function fleetLines(
   return [
     line(columns.map((c) => label(c.key, c.label))),
     ...sorted.map((r) => line(columns.map((c) => cellText(c, r) || "-"))),
+  ];
+}
+
+/**
+ * The grammar as the web page shows it (`fleet/selection.ts`): the sentence
+ * wrapped to `width`, one line a kind naming its fields, then the examples.
+ */
+export function grammarLines(width: number): string[] {
+  return [
+    ...wrap(GRAMMAR, width),
+    "",
+    ...FLEET_KINDS.map((kind) => `${pad(kind, 6)} ${fieldsOf(kind).join(", ")}`),
+    "",
+    ...GRAMMAR_EXAMPLES.map((e) => `e.g. ${e}`),
   ];
 }
 
@@ -81,6 +95,13 @@ export function fleetScreen(
             ? `${query}  ${view.rows.length} ${view.rows.length === 1 ? "row" : "rows"}`
             : `${query}  ${view.error}`;
       s.text(area.x + 1, area.y, truncate(head, area.w - 2), style(view?.ok === false ? c.danger : c.mutedFg, c.bg), area.x + area.w);
+      if (view?.ok !== true) {
+        // No rows to show: the grammar fills the space, as it sits under the web form.
+        grammarLines(Math.max(20, area.w - 2)).forEach((text, i) => {
+          if (2 + i < area.h)
+            s.text(area.x + 1, area.y + 2 + i, truncate(text, area.w - 2), style(c.mutedFg, c.bg), area.x + area.w);
+        });
+      }
       lines = view?.ok ? fleetLines(view.kind, view.rows, sort) : [];
       const [header, ...body] = lines;
       if (header !== undefined && area.h > 2)
@@ -108,6 +129,7 @@ export function fleetScreen(
       promptScreen(ctx, screen, {
         title: "Fleet query",
         label: "kind, then field:value terms",
+        hint: `e.g. ${GRAMMAR_EXAMPLES[0]}`,
         placeholder: "repo autonomy:autonomous",
         value: query,
         onSubmit: (text) => {

@@ -9,7 +9,7 @@
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { readSort } from "../../fleet/columns.ts";
 import { viewFleet, type FleetView } from "../../fleet/rows.ts";
-import { MAX_ROWS } from "../../fleet/selection.ts";
+import { fieldsOf, GRAMMAR, GRAMMAR_EXAMPLES, FLEET_KINDS, MAX_ROWS } from "../../fleet/selection.ts";
 import type { Ctx } from "../../http/context.ts";
 import { fleetTable } from "../fleet-table.ts";
 import { html } from "../html.ts";
@@ -50,6 +50,17 @@ export function fleetPage(ctx: Ctx): Response {
         })}
         ${btn("Select", { type: "submit", variant: "secondary" })}
       </form>
+      <div class="muted small mb" data-grammar>
+        <p>${GRAMMAR} For example, ${GRAMMAR_EXAMPLES.map(
+          (e, i) => html`${i === 0 ? "" : " or "}<code>${e}</code>`,
+        )}.</p>
+        <dl class="status-rows">
+          ${FLEET_KINDS.map(
+            (kind) =>
+              html`<div class="status-row"><dt class="mono">${kind}</dt><dd>${fieldsOf(kind).join(", ")}</dd></div>`,
+          )}
+        </dl>
+      </div>
       ${shown === undefined
         ? null
         : html`<p class="muted" data-count="${shown.rows.length}">

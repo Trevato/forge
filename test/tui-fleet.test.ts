@@ -93,6 +93,15 @@ test("the owner sees all three rows; a guest does not see the private one", asyn
   expect(guest.text()).toContain("alice/tools");
 });
 
+test("the screen shows the same grammar as the web page, fields per kind (#566)", async () => {
+  const t = boot(getUserByName(forge.db, "alice"));
+  await t.select("run cost:abc");
+  expect(t.text()).toContain("cost wants a number");
+  expect(t.text()).toContain("a comma means any of");
+  expect(t.text()).toMatch(/run +repo, [^\n]*cost, created/);
+  expect(t.text()).toContain("e.g. run state:queued,running cost:>0.5");
+});
+
 test("a line that does not parse keeps the prompt open with its error", async () => {
   const t = boot(getUserByName(forge.db, "alice"));
   await t.select("repo spent:4");

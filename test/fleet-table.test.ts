@@ -89,6 +89,14 @@ describe("the fleet table", () => {
     const body = await (await get("/fleet")).text();
     expect(body).toContain('name="q"');
     expect(body).not.toContain("data-count=");
+    // The grammar is listed under the query line (#566).
+    const grammar = body.slice(body.indexOf("data-grammar"));
+    expect(grammar).toContain("<code>run state:queued,running cost:&gt;0.5</code>");
+    expect(grammar).toContain("<code>issue created:&lt;7d assignee:none</code>");
+    // One row a kind naming its fields, never a middot-joined paragraph.
+    expect(grammar).toMatch(/<dt class="mono">run<\/dt><dd>repo, [^<]*cost, created<\/dd>/);
+    expect(grammar).toMatch(/<dt class="mono">issue<\/dt><dd>repo, [^<]*number, created, updated<\/dd>/);
+    expect(grammar.slice(0, grammar.indexOf("</div>"))).not.toContain("·");
   });
 
   test("a query that does not parse shows its error beside the line, status 200, nothing selected", async () => {
