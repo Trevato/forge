@@ -764,12 +764,12 @@ function fromEvent(
         `Webhook to ${host} failed ${failures} times${reason === "" ? "" : `: ${reason}`}`,
         300,
       );
-      // Settings › Webhooks is for admins, and a writer need not be one: the
-      // line links to the repository and says who can redeliver or pause.
+      // Settings › Webhooks is for admins; a writer who is not one lands on a
+      // page that names the admins, so the line links there for everyone.
       return {
         ...common,
         kind: "map",
-        link: base(repo),
+        link: `${base(repo)}/settings/hooks`,
         what: `${what} (a repository admin can redeliver or pause it in Settings › Webhooks)`,
         urgency: 3,
       };

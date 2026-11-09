@@ -144,7 +144,7 @@ describe("a failing webhook", () => {
     const line = lines.find((c) => c.what.includes("<img"))!;
     expect(line.what).toStartWith('Webhook to hooks.example.test failed 3 times: <img src=x');
     expect(line.what).toContain("a repository admin can redeliver or pause it in Settings › Webhooks");
-    expect(line.link).toBe(`/${repo.ownerName}/${repo.name}`);
+    expect(line.link).toBe(`/${repo.ownerName}/${repo.name}/settings/hooks`);
     expect(candidatesFor(app.db, bob, Date.now(), noChips).some((c) => c.what.startsWith("Webhook to "))).toBe(false);
   });
 
