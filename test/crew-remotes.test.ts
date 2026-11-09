@@ -18,6 +18,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { listPulls } from "../src/core/pulls.ts";
+import type { Issue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -42,11 +43,11 @@ describe("the remotes an agent is handed", () => {
   let remotesFile: string;
 
   async function settled(where: (run: Run) => boolean): Promise<Run> {
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 4_000;
     while (Date.now() < deadline) {
       const run = listRuns(app.db, repo.id, { kind: "agent" }).find(where);
       if (run && run.state !== "queued" && run.state !== "running") return run;
-      await Bun.sleep(100);
+      await Bun.sleep(20);
     }
     throw new Error("agent run did not settle");
   }
@@ -81,6 +82,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       concurrency: 1,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      // The pump's clock: a run queued is taken on the next tick, not 5 s on.
+      tickMs: 20,
     });
     const a = await createUser(app.db, {
       origin: "seed",
@@ -116,18 +119,26 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  // The issue and its first run, made by the first test; the second visits
+  // the clone that run left.
+  let issue: Issue;
+  let firstRun: Run;
+
   // The stand-in runs outside any sandbox, so what this proves is the
   // address the agent is handed and that a plain push over it lands — not
   // the sandbox's own reach, which is Claude Code's to hold.
   test("carry the forge's public URL, fetch from the repository and push to the agent's fork, and a plain push lands", async () => {
+    // Invariant: a fresh clone's fetch and push remotes are the forge's public URL, and a plain `git push` over them opens the pull.
     expect(publicUrl).not.toBe(servers.url);
-    const issue = openIssue(app, alice, repo, {
+    const opened = openIssue(app, alice, repo, {
       title: "Plant tulips",
       body: "Along the fence.",
     });
-    if (!issue.ok) throw new Error(String(issue.error));
-    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
-    const run = await settled((r) => r.issueId === issue.value.id);
+    if (!opened.ok) throw new Error(String(opened.error));
+    issue = opened.value;
+    expect(assignIssue(app, alice, repo, issue, bot).ok).toBe(true);
+    const run = await settled((r) => r.issueId === issue.id);
+    firstRun = run;
     expect(run.state).toBe("ok");
     expect(run.summary).toMatch(/^opened pull #\d+( \([0-9a-f]{7,40}\))?$/);
     const [fetchUrl, pushUrl] = readFileSync(remotesFile, "utf8")
@@ -137,16 +148,20 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(pushUrl).toBe(`${publicUrl}/bot/garden.git`);
     const pull = listPulls(app.db, repo.id, { state: "open" })[0]!;
     expect(pull.headBranch).toBe(run.branch);
+  });
 
-    // A clone kept from before the forge changed where its remotes point —
-    // a run resumed after a release — is set right again on every visit,
-    // not only when it is first made.
+  // A clone kept from before the forge changed where its remotes point —
+  // a run resumed after a release — is set right again on every visit,
+  // not only when it is first made.
+  test("are set right again on a kept clone whose remotes went stale", async () => {
+    // Invariant: a kept clone's stale remotes are reset to the forge's public URL on every visit, and the next push updates the pull.
+    expect(firstRun?.state).toBe("ok");
     const clone = join(
       dataDir,
       "crew",
       "bot",
       repo.id,
-      String(issue.value.number),
+      String(issue.number),
     );
     for (const key of ["remote.origin.url", "remote.origin.pushurl"]) {
       const stale = Bun.spawnSync(
@@ -159,12 +174,12 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       app,
       alice,
       repo,
-      issue.value,
+      issue,
       "Also plant daffodils.",
     );
     if (!said.ok) throw new Error(String(said.error));
     const again = await settled(
-      (r) => r.issueId === issue.value.id && r.id !== run.id,
+      (r) => r.issueId === issue.id && r.id !== firstRun.id,
     );
     expect(again.state).toBe("ok");
     expect(again.summary).toMatch(/^updated pull #\d+/);
@@ -173,5 +188,5 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       .split("\n");
     expect(fetchAgain).toBe(`${publicUrl}/alice/garden.git`);
     expect(pushAgain).toBe(`${publicUrl}/bot/garden.git`);
-  }, 90_000);
+  });
 });
