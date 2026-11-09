@@ -86,6 +86,7 @@ import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { overSize } from "../render/archive.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
+import { hasTable } from "../render/sqlite.ts";
 import { fileKind, HEAD_BYTES, RENDER_CAP } from "../render/kinds.ts";
 import { RENDERERS, rendererFor } from "../render/renderers.ts";
 import { mediaHref } from "./media.ts";
@@ -1129,6 +1130,8 @@ export function renderBlob(
     highlighted?: (ms: number) => void;
     /** Draw every line instead of the first 1,500. */
     all?: boolean;
+    /** `?table=` on a SQLite file. */
+    table?: string;
     /** Rows a worker already built for this file. */
     rows?: CodeRows;
   },
@@ -1147,6 +1150,7 @@ export function renderBlob(
           media: mediaHref(base, o.ref, o.path),
           pathHref: `${base}/blob/${encoded}/${o.path}`,
           all: o.all === true,
+          ...(o.table !== undefined ? { table: o.table } : {}),
         })
       : undefined;
   const fellBack = drawn?.fallback;
@@ -1639,6 +1643,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ctx.auth.user === undefined && repo.visibility === "public" && FULL_OID.test(ref) && ctx.url.searchParams.get("fragment") !== "1";
   const view = blobView(ctx.url.searchParams.get("view"));
   const all = ctx.url.searchParams.get("all") === "1";
+  const table = ctx.url.searchParams.get("table")?.slice(0, 256) ?? undefined;
   // The whole page as it last went out to a stranger, encoded (`kept_page.ts`).
   const keptKey = kept ? keptPageKey(ctx, repo.id) : undefined;
   const finished = keptKey === undefined ? undefined : keptPage(keptKey);
@@ -1646,9 +1651,11 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     git.done();
     return immutableWhenAddressed(ctx.request, true, repo, ref, finished);
   }
-  const keepFinished = (response: Response) => (keptKey === undefined ? response : keepPage(keptKey, response, true));
+  // A `?table=` that names nothing in the file is a stranger's string: its page is never kept.
+  let keepable = true;
+  const keepFinished = (response: Response) => (keptKey === undefined || !keepable ? response : keepPage(keptKey, response, true));
   if (kept) {
-    const hit = cachedBlobPage(repo.id, ref, path, String(view), all);
+    const hit = cachedBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}`, all);
     if (hit !== undefined) {
       git.done();
       return immutableWhenAddressed(
@@ -1674,7 +1681,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const refs = await git.read(() => (kept ? keptRefs(repo.id, () => refSetFrom(scope.source)) : refSetFrom(scope.source)));
   let highlightMs: number | undefined;
   const renderStart = performance.now();
-  const shown = capped(blob.value);
+  const shown = capped(blob.value, path);
+  if (table !== undefined) keepable = shown.kind !== "too_large" && hasTable(shown.body, table);
   // A cold page for a stranger highlights and lays out its rows on a worker (#9630).
   let rows: CodeRows | undefined;
   if (kept && shown.kind === "text" && (view === "source" || !blobRenderer(scope, path, shown))) {
@@ -1691,6 +1699,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     view,
     highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
     all,
+    ...(table !== undefined ? { table } : {}),
   });
   if (highlightMs !== undefined) notePhase(ctx.request, "highlight", highlightMs);
   const paneMs = performance.now() - renderStart - (highlightMs ?? 0);
@@ -1718,8 +1727,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ),
   });
   const objectSrc = drawsPdf(scope, path, shown, view);
-  if (kept)
-    keepBlobPage(repo.id, ref, path, String(view), all, {
+  if (kept && keepable)
+    keepBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}`, all, {
       title: `${filename} · ${repo.name}`,
       explorer: explorerHtml,
       content: pane,
@@ -1765,7 +1774,10 @@ export async function pathsJson(ctx: Ctx): Promise<Response> {
  * The page's own render ceiling, under the source's fetch ceiling. A body
  * over it is dropped and only its head kept, so a media kind is still drawn.
  */
-export function capped(blob: Blob): Blob {
+export function capped(blob: Blob, path = ""): Blob {
+  // A SQLite file is read whole, up to its own cap, because the database is opened from the bytes.
+  if (blob.kind !== "too_large" && fileKind(path, blob.body.subarray(0, HEAD_BYTES)) === "sqlite" && blob.size <= RENDER_CAP.sqlite)
+    return blob;
   return blob.kind !== "too_large" && blob.size > MAX_RENDER_BYTES
     ? { kind: "too_large", size: blob.size, head: blob.body.slice(0, HEAD_BYTES) }
     : blob;

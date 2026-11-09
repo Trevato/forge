@@ -19,6 +19,7 @@ export type FileKind =
   | "audio"
   | "video"
   | "csv"
+  | "sqlite"
   | "model3d"
   | "archive"
   | "config"
@@ -42,6 +43,8 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   audio: 500 * MB,
   video: 4_000 * MB,
   csv: 10 * MB,
+  // Under the source's own 5 MB read ceiling: a larger file is never read.
+  sqlite: 5 * MB,
   model3d: 100 * MB,
   archive: 50 * MB,
   config: 1 * MB,
@@ -119,6 +122,9 @@ const MEDIA: Readonly<Record<string, Media>> = {
   m4v: { kind: "video", name: "MPEG-4", type: "video/mp4", magic: ftyp },
   webm: { kind: "video", name: "WebM", type: "video/webm", magic: bytes(0x1a, 0x45, 0xdf, 0xa3) },
   mov: { kind: "video", name: "QuickTime", type: "video/quicktime", magic: quicktime },
+  db: { kind: "sqlite", name: "SQLite", type: "application/vnd.sqlite3", magic: ascii("SQLite format 3\0") },
+  sqlite: { kind: "sqlite", name: "SQLite", type: "application/vnd.sqlite3", magic: ascii("SQLite format 3\0") },
+  sqlite3: { kind: "sqlite", name: "SQLite", type: "application/vnd.sqlite3", magic: ascii("SQLite format 3\0") },
   stl: { kind: "model3d", name: "STL", type: "model/stl" },
   glb: { kind: "model3d", name: "glTF binary", type: "model/gltf-binary", magic: ascii("glTF") },
 };

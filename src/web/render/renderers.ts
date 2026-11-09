@@ -16,6 +16,7 @@ import { claimedMedia, fileKind, HEAD_BYTES, NO_BYTES, RENDER_CAP, type FileKind
 import { log, hasEscape } from "./log.ts";
 import { markdown } from "./markdown.ts";
 import { pdf } from "./pdf.ts";
+import { sqlite } from "./sqlite.ts";
 import { subtitles } from "./subtitles.ts";
 import { video } from "./video.ts";
 
@@ -34,6 +35,8 @@ export interface RenderInput {
   readonly pathHref?: string;
   /** `?all=1`: draw past the default window, up to the renderer's cap. */
   readonly all?: boolean;
+  /** `?table=<name>`: unchecked text; a renderer matches it against its own list. */
+  readonly table?: string;
 }
 
 export interface Rendered {
@@ -54,6 +57,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   markdown,
   pdf,
   csv,
+  sqlite,
   audio,
   video,
   config,
