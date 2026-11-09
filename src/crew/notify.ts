@@ -22,6 +22,7 @@
 
 import { newAccountLines } from "../actions/accounts.ts";
 import { mailCeilingLines } from "../actions/mail.ts";
+import { forgetOnboarding, onboardedLines } from "../apps/onboarding.ts";
 import type { Database } from "bun:sqlite";
 import { outboundFetch } from "../kernel/outbound.ts";
 import type { App } from "../app.ts";
@@ -61,10 +62,13 @@ const BACKOFF_MAX_MS = HOUR_MS;
 const WAKES = new Set([
   "clog.started",
   "run.finished",
+  "app.serving",
   "pull.opened",
   "pull.pushed",
   "pull.reviewed",
   "pull.merged",
+  // A new app's crew pull closed without landing: it needs its owner (`apps/onboarding.ts`).
+  "pull.closed",
   "issue.closed",
   "issue.commented",
   "repo.settings_updated",
@@ -500,6 +504,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...redLines(app, user, now()),
       ...alarmLines(app, user, now(), options.alarms?.()),
       ...clogLines(app, user),
+      ...onboardedLines(app.db, user, now()),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by
@@ -546,6 +551,8 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
   }
 
   const unsubscribe = app.bus.subscribe((event) => {
+    // A run or pull moved: a new app's notice is judged afresh (`apps/onboarding.ts`).
+    if (event.repoId !== null && /^(run|pull)\.|^app\.serving$/.test(event.kind)) forgetOnboarding(app.db, event.repoId);
     if (stopped || !WAKES.has(event.kind)) return;
     const own =
       event.kind === "account.notify_set" ? event.actorId : undefined;

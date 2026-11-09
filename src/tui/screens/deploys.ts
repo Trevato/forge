@@ -17,6 +17,9 @@
  * each: `#N title · check <word> · <preview address or none>`. A guest sees
  * none.
  *
+ * Until production first runs, the head carries one line of where the app
+ * stands (`apps/onboarding.ts`, #10295), as the app page says it.
+ *
  * A writer who is a person — never an agent — gets `b`: type a commit's
  * full id and `previewBuild` serves it at `<slug>--b<sha7>`, as the API's
  * `POST …/builds/preview` does (`docs/features/build-preview.md`).
@@ -55,6 +58,7 @@
  * then says the repository is no longer an app.
  */
 
+import { appOnboardingLine } from "../../apps/onboarding.ts";
 import {
   appPace,
   appPreviews,
@@ -211,6 +215,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let trend = "";
   let pace = "";
   let side: string[] = [];
+  /** Where a new or migrated app stands until production runs, or "". */
+  let onboarding = "";
   let egress: string[] = [];
   let pulls: AppPullLine[] = [];
   /** The app's previews, or undefined for anyone who may not see them. */
@@ -238,6 +244,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     trend = seen === undefined ? "" : trendLine(seen.loadDays);
     pace = appPace(f.app, f.user, repo);
     side = appSideLines(f.app, f.user, repo);
+    const standing = appOnboardingLine(f.app, repo, f.user);
+    onboarding = standing === undefined ? "" : `${standing.text}${standing.href === undefined ? "" : ` ${standing.href}`}`;
     egress = egressLines(f, repo);
     pulls = appPullLines(f.app, f.user, repo);
     previews = appPreviews(f.app, f.user, repo);
@@ -422,6 +430,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
             (trend === "" ? 0 : 1) +
             (pace === "" ? 0 : 1) +
             side.length +
+            (onboarding === "" ? 0 : 1) +
             egress.length +
             (named === "" ? 0 : 1),
         ),
@@ -452,7 +461,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
-      [visitors, trend, pace, ...side, named, ...egress]
+      [onboarding, visitors, trend, pace, ...side, named, ...egress]
         .filter((line) => line !== "")
         .forEach((line, i) =>
           s.text(head!.x, head!.y + 1 + i, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w),

@@ -13,6 +13,7 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import { sealedScope } from "../../core/sealed.ts";
 import { terminalFor } from "../../actions/apps.ts";
 import { envPull, previewEnv } from "../../apps/data.ts";
+import { appOnboardingLine } from "../../apps/onboarding.ts";
 import {
   appsRuntime,
   type AppsRuntime,
@@ -27,6 +28,7 @@ import { loadRepo, repoBase } from "../chrome.ts";
 import { testsClause } from "./words.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, missingFragment } from "../layout.ts";
+import { onboardingRow } from "../onboarding_row.ts";
 import {
   badge,
   btn,
@@ -299,6 +301,9 @@ export function appPanels(
   // The state in one word, and under it the facts — why it is not up, and
   // the deploy whose log says the rest.
   const live = envPhrase(production);
+  // Until production has a deploy of its own to speak of, a new app's facts
+  // row says where it stands instead (`apps/onboarding.ts`).
+  const onboarding = production?.runId === undefined ? appOnboardingLine(ctx.app, repo, ctx.auth.user) : undefined;
   const head = html`<div class="page-head">
     <div class="stack stack-tight">
       <h1 class="bar">
@@ -322,7 +327,9 @@ export function appPanels(
             : html`· <span class="mono">${url.replace(/^https?:\/\//, "")}</span>`}
         ${when(copy, (c) => html`· ${testCopyLink(c)}`)}
       </p>
-      ${when(production, (env) => envFacts(base, env))}
+      ${onboarding === undefined
+        ? when(production, (env) => envFacts(base, env))
+        : onboardingRow(onboarding)}
       ${when(writer, () =>
         terminalLine(
           terminalFor(ctx.app, record, "production", production),
