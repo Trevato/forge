@@ -110,6 +110,7 @@ describe("proving a release", () => {
     expect(p?.ok).toBe(false);
     expect(t).toBeLessThanOrEqual(10 * 60_000);
     expect(t).toBeGreaterThan(9 * 60_000);
+    expect(p?.slow).toBe(true); // a version not yet answering is retried in minutes, not backed off (#9942)
     expect(proofNeed(dir)?.sentence).toStartWith("Release 1.0.0 is unproven: the public URL never answered as 1.0.0. It is proven again at ");
     expect(old.hits.every((h) => h === "/healthz")).toBe(true);
   });

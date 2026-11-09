@@ -11,7 +11,7 @@
  * failure up to an hour), so one slow answer in the watch no longer stands
  * for the version's whole life (#7622) and a version that stays broken
  * costs its public URL a few loads an hour, not one every 5 minutes. It
- * gives up after ten minutes.
+ * gives up after ten minutes; a give-up is retried as a slow answer is, since the swap may only be late (#9942).
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -152,7 +152,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       } catch {
         // not up yet at its public address
       }
-      if (now() + POLL_MS > deadline) return finish(`the public URL never answered as ${o.version}`);
+      if (now() + POLL_MS > deadline) return finish(`the public URL never answered as ${o.version}`, true);
       await sleep(POLL_MS);
     }
     const failures = await smoke(o.url, o.token ?? "", {
