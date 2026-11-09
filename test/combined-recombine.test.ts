@@ -8,7 +8,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
-import { recombine } from "../src/core/recombine.ts";
+import { idle, recombine, runsStarted } from "../src/core/recombine.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { tokenFor } from "./helpers/tokens.ts";
@@ -126,8 +126,14 @@ async function moveMain(file: string): Promise<string> {
   return git(["rev-parse", "HEAD"], a);
 }
 
+/** The pass the push itself starts (the hook began it before it answered), awaited. */
+async function settled(main: string): Promise<string> {
+  await idle(repoId);
+  return main;
+}
+
 test("main moves, and every combined branch has the new main as a parent", async () => {
-  const main = await moveMain("m1.txt");
+  const main = await settled(await moveMain("m1.txt"));
   expect(await recombine(forge(), repoId)).toBe(1);
   for (const n of [first, second]) expect((await parents(`refs/heads/combined/${n}`))[1]).toBe(main);
 });
@@ -135,7 +141,7 @@ test("main moves, and every combined branch has the new main as a parent", async
 test("one pull that cannot combine is logged and skipped, the others still follow", async () => {
   await git(["update-ref", "-d", `refs/pull/${first}/head`], bare);
   const before = await git(["rev-parse", `refs/heads/combined/${first}`], bare);
-  const main = await moveMain("m2.txt");
+  const main = await settled(await moveMain("m2.txt"));
   warnings.length = 0;
   await recombine(forge(), repoId);
   expect(warnings.length).toBe(1);
@@ -144,8 +150,32 @@ test("one pull that cannot combine is logged and skipped, the others still follo
 });
 
 test("calls made during a pass share it: three at once run at most two passes", async () => {
-  await moveMain("m3.txt");
+  await settled(await moveMain("m3.txt"));
   const counts = await Promise.all([recombine(forge(), repoId), recombine(forge(), repoId), recombine(forge(), repoId)]);
   expect(Math.max(...counts)).toBeLessThanOrEqual(2);
   expect(Math.max(...counts)).toBe(2);
+});
+
+test("a push to main alone recombines every combined branch, with no call made", async () => {
+  const main = await moveMain("m4.txt");
+  await idle(repoId);
+  expect((await parents(`refs/heads/combined/${second}`))[1]).toBe(main);
+});
+
+test("a push to another branch, or a delete of the default branch, starts no pass", async () => {
+  const runs = runsStarted(repoId);
+  await git(["checkout", "-q", "-b", "side"], a);
+  await git(["push", "origin", "side"], a);
+  await git(["checkout", "-q", "main"], a);
+  await idle(repoId);
+  expect(runsStarted(repoId)).toBe(runs);
+  // The forge lets a bare repository's checked-out branch be deleted only if git does.
+  await git(["config", "receive.denyDeleteCurrent", "ignore"], bare);
+  await git(["push", "origin", ":refs/heads/main"], a);
+  await idle(repoId);
+  expect(runsStarted(repoId)).toBe(runs);
+  // The pass a push to main starts is counted: the check above can see one.
+  await git(["push", "origin", "main"], a);
+  await idle(repoId);
+  expect(runsStarted(repoId)).toBe(runs + 1);
 });

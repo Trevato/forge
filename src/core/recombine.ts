@@ -2,7 +2,8 @@
  * Bring every open kept-fork pull's `combined/N` up to date with the default
  * branch (#9012). One pass per repository at a time: a call made during a
  * pass sets one "again" flag, and when the pass ends exactly one more runs,
- * reading the tip then. Nothing calls this yet; a hook will.
+ * reading the tip then. The post-receive hook starts one, off its answer, for
+ * a push that moves the default branch (`http/server.ts`).
  */
 
 import type { Database } from "bun:sqlite";
@@ -22,6 +23,17 @@ export interface RecombineForge {
 }
 
 const running = new Map<string, { again: boolean; done: Promise<number> }>();
+const started = new Map<string, number>();
+
+/** How many runs have been started for the repository: what a test counts. */
+export function runsStarted(repoId: string): number {
+  return started.get(repoId) ?? 0;
+}
+
+/** Resolves when the run now going (if any) has ended; starts and joins none. */
+export async function idle(repoId: string): Promise<void> {
+  await running.get(repoId)?.done;
+}
 
 /** One pass: the tip is read once, each pull combined against it. */
 async function pass(forge: RecombineForge, repoId: string): Promise<void> {
@@ -61,6 +73,7 @@ export function recombine(forge: RecombineForge, repoId: string): Promise<number
     current.again = true;
     return current.done;
   }
+  started.set(repoId, runsStarted(repoId) + 1);
   const state = { again: false, done: Promise.resolve(0) };
   state.done = (async () => {
     let passes = 0;

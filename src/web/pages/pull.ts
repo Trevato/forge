@@ -1054,7 +1054,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${holdCard(ctx, repo, pull, { act: false })}
     ${teamsCard(teamVerdicts(ctx.app.db, { ...pull, headOid: status.headOid }))}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}
-    ${slicesCard(base, thread, slices, status.ahead, ends, pull.state === "open" && pull.mergedAt === null, mayLand)}
+    ${slicesCard(base, thread, slices, ends.length > 0 ? ends.length : status.ahead, ends, pull.state === "open" && pull.mergedAt === null, mayLand)}
     ${await combinedCard(dir, pull, status.headOid, status.baseOid)}
     <div class="split">
       <div>

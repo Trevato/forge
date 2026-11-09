@@ -68,6 +68,7 @@ import {
   getRepoById,
 } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
+import { recombine } from "../core/recombine.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../actions/repos.ts";
 import { sessionOf } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
@@ -2053,6 +2054,20 @@ async function handleHook(app: App, request: Request): Promise<Response> {
       error: String(error),
     }),
   );
+  // A push that moves the default branch brings every kept-fork pull's
+  // `combined/N` up to date (`core/recombine.ts`). Off the hook's answer:
+  // the pusher never waits for it, and never hears of its errors.
+  const tip = `refs/heads/${repo.defaultBranch}`;
+  if (input.updates.some((u) => u.ref === tip && !ZERO_OID.test(u.newOid)))
+    void recombine(
+      { db: app.db, reposRoot: app.reposRoot, log: app.log },
+      repo.id,
+    ).catch((error) =>
+      app.log.warn("could not recombine after the push", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        error: String(error),
+      }),
+    );
   // Every push is scanned for secrets and advisories (`checks/scan.ts`,
   // #9593). Off the hook's answer too: a finding is recorded, not refused.
   void queueScanPush(app, repo, input.updates).catch((error) =>
