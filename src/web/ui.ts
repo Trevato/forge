@@ -1343,7 +1343,7 @@ export function empty(o: {
   note?: string;
   action?: Html;
 }): Html {
-  return html`<div class="card empty">
+  return html`<div class="empty">
     ${o.icon ? icon(o.icon, 20) : null}
     <p class="empty-title">${o.title}</p>
     ${o.note ? html`<p>${o.note}</p>` : null} ${o.action ?? null}

@@ -576,7 +576,7 @@ describe("the map, per app and across the forge", () => {
         empty: { title: "Nothing yet", note: "Say one." },
       }),
     );
-    expect(out).toContain('class="card empty"');
+    expect(out).toContain('class="empty"');
     expect(out).toContain("Nothing yet");
     expect(out).toContain("Say one.");
     expect(out).not.toContain("map-empty");

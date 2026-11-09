@@ -1186,7 +1186,7 @@ export const mapCss = /* css */ `
 #lanes { margin-top: 16px; }
 #lanes li[data-autonomy="autonomous"] .row-title .badge { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
 #lanes li[data-idle] .row-title { color: var(--muted-fg); }
-#lanes details > .card.empty { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+#lanes details > .empty { border-top: 1px solid var(--border); }
 #lanes details > .map-canvas { border: 0; border-top: 1px solid var(--border); border-radius: 0; }
 @media (prefers-reduced-motion: reduce) {
   .map-card, .map-title { transition: none; }

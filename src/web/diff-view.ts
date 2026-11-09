@@ -571,7 +571,7 @@ export function renderDiff(
   const opts: DiffViewOptions =
     options instanceof Map ? { syntax: options } : (options ?? {});
   if (diff.files.length === 0) {
-    return html`<div class="card empty">No changes.</div>`;
+    return html`<div class="empty">No changes.</div>`;
   }
   const shown = diff.files.slice(0, MAX_DIFF_FILES);
   const hidden = diff.files.length - shown.length;

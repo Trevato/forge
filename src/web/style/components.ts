@@ -919,7 +919,6 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 }
 .empty p { font-size: 13px; max-width: 320px; text-wrap: pretty; margin: 0; }
 .empty .btn { margin-top: 8px; }
-.card.empty { border-style: dashed; box-shadow: none; }
 
 /* ---- board panel grid: a board's panels, on /boards and pinned in the studio ---- */
 .bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
