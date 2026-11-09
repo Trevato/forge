@@ -4,8 +4,9 @@
  * else gets the not-found page, before a body is read.
  */
 
-import { changeTeam, readTeams, teamChanges, TEAM_SAYS } from "../../actions/teams.ts";
+import { changeTeam, readTeamQueue, readTeams, teamChanges, TEAM_SAYS } from "../../actions/teams.ts";
 import { CHARTER_MAX, DIAL_MAX } from "../../core/teams.ts";
+import { timeAgo } from "../ui.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, settingsLayout } from "../chrome.ts";
@@ -28,9 +29,25 @@ function regions(ctx: Ctx, timed = false): Record<string, string> | undefined {
   const { teams, agents } = read.value;
   const changes = phase("changes", () => teamChanges(ctx.app, 10));
   const total = teams.reduce((n, t) => n + t.dial, 0);
-  const cards = teams.map((t) =>
-    html`<section>
+  const queues = phase("queue", () =>
+    new Map(teams.map((t) => {
+      const q = readTeamQueue(ctx.app, ctx.auth.user, t.slug);
+      return [t.slug, q.ok ? q.value : []] as const;
+    })),
+  );
+  const cards = teams.map((t) => {
+    const waiting = queues.get(t.slug) ?? [];
+    return html`<section>
       <h2>${icon("bot")} ${t.name}</h2>
+      ${waiting.length === 0
+        ? html`<p class="muted small">Nothing is waiting on this team.</p>`
+        : html`<p class="muted small">Waiting on this team, oldest first</p>
+          <dl class="status-rows">${waiting.map(
+            (w) => html`<div class="status-row">
+              <dt><a href="/${w.owner}/${w.repo}/pulls/${String(w.number)}">${w.owner}/${w.repo} #${String(w.number)}</a></dt>
+              <dd>${w.title} <span class="muted">${timeAgo(w.createdAt)}</span></dd>
+            </div>`,
+          )}</dl>`}
       <form method="post" action="/settings/teams/${t.slug}">
         <div class="field">
           <label for="charter-${t.slug}">Charter</label>
@@ -58,8 +75,8 @@ function regions(ctx: Ctx, timed = false): Record<string, string> | undefined {
           ${btn("Save", { variant: "primary", label: `Save ${t.name}` })}
         </div>
       </form>
-    </section>`,
-  );
+    </section>`;
+  });
   const out: Record<string, Html> = {
     "teams-total": html`${String(total)}%`,
     "teams-cards": html`${cards}`,

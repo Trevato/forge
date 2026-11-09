@@ -7,8 +7,7 @@
  * nothing and sets nothing.
  */
 
-import { pullsWaitingOn } from "../../actions/issue_teams.ts";
-import { changeTeam, readTeams, teamChanges, TEAM_SAYS } from "../../actions/teams.ts";
+import { changeTeam, readTeamQueue, readTeams, teamChanges, TEAM_SAYS } from "../../actions/teams.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -18,11 +17,14 @@ import { fill, len, split } from "../ui/layout.ts";
 import { ListState, drawList, promptScreen, type ListRow } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
 
-/** The open pulls a team's review holds, oldest first: `pullsWaitingOn`, as the MCP tool lists them. */
+/**
+ * The open pulls a team's review holds, oldest first: `readTeamQueue`, the
+ * same gate and list as the team's card on /settings/teams.
+ */
 function waitingScreen(f: Session, ctx: Ctx, slug: string, name: string): Screen {
   const state = new ListState();
   const read = () => {
-    const w = pullsWaitingOn(f.app, f.user, slug);
+    const w = readTeamQueue(f.app, f.user, slug);
     return w.ok ? w.value : [];
   };
   return {
@@ -30,9 +32,9 @@ function waitingScreen(f: Session, ctx: Ctx, slug: string, name: string): Screen
     keys: [binding(["j", "k"], "move cursor"), binding(["esc"], "back")],
     render(area, s) {
       const rows: ListRow[] = read().map((p) => ({
-        title: `${p.repo}#${p.number} ${p.title}`,
+        title: `${p.owner}/${p.repo}#${p.number} ${p.title}`,
         secondary: "",
-        meta: `since ${p.since.slice(0, 10)}`,
+        meta: `since ${p.createdAt.slice(0, 10)}`,
       }));
       if (rows.length === 0)
         s.text(area.x + 1, area.y, `${name} is holding no pull.`, style(ctx.theme.c.mutedFg, ctx.theme.c.bg), area.x + area.w);

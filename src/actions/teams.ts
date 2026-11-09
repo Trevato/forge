@@ -5,6 +5,7 @@
 
 import type { App } from "../app.ts";
 import { listAgents, type Agent } from "../core/agents.ts";
+import { pullsWaitingOn, type QueuedPull } from "../core/team_queue.ts";
 import { CHARTER_MAX, DIAL_MAX, getTeam, listTeams, parseDial, refusal, saveTeam, type Team, type TeamError } from "../core/teams.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -33,6 +34,17 @@ export function readTeams(
 ): Result<{ teams: Team[]; agents: Agent[] }, "not_found"> {
   const who = admin(actor);
   return who.ok ? ok({ teams: listTeams(app.db), agents: listAgents(app.db) }) : who;
+}
+
+/** The open pulls waiting on a team's review, as its viewer may read them: the page's list and the terminal's. */
+export function readTeamQueue(
+  app: App,
+  actor: User | undefined,
+  slug: string,
+): Result<QueuedPull[], "not_found"> {
+  const who = admin(actor);
+  if (!who.ok) return who;
+  return getTeam(app.db, slug) ? ok(pullsWaitingOn(app.db, slug, who.value)) : err("not_found");
 }
 
 /** What a change would make of a team, or why it is refused; nothing is written. */
