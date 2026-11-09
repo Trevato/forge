@@ -127,7 +127,7 @@ import {
   parkedCount as countParks,
   parkedTwice,
 } from "./parks.ts";
-import { reserveOf, reserveWords, short } from "./reserve.ts";
+import { due, reserveOf, reserveWords } from "./reserve.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
@@ -675,8 +675,8 @@ export function startable(
 }
 
 /**
- * Give the planner the direction when the reserve is short — fewer
- * startable issues than two per builder slot (`reserve.ts`) — or when the crew has handed it an issue it parked twice,
+ * Give the planner the direction when the reserve is due a pass — down to
+ * half of two startable issues per builder slot (`reserve.ts`) — or when the crew has handed it an issue it parked twice,
  * and no planning run is in flight, and the last one is old enough.
  * Returns whether a planning run was set up. Planning runs alongside
  * building: the builders are never waited for.
@@ -806,7 +806,7 @@ async function planIfThin(
   const handed = [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)];
   const limbs = pendingReplans(app.db, repo);
   const reserve = reserveOf(ready, repo.autonomySlots);
-  if (!short(reserve) && handed.length === 0 && limbs.length === 0) return false;
+  if (!due(reserve) && handed.length === 0 && limbs.length === 0) return false;
   // Paused by its pillar's setting (#7668): the planner stays on the crew.
   if (repo.plannerSlots === 0) return notPlanned(repo, "the planner is paused");
   if (repo.autonomyDirection.trim() === "")
@@ -833,7 +833,7 @@ async function planIfThin(
   // A limb a person handed over is owed one pass, whatever the map and
   // whatever the planner said of the direction before (#761).
   const limbsOwed = limbs.filter((r) => !given(app.db, repo, r.at));
-  if (!short(reserve) && owed.length === 0 && limbsOwed.length === 0) return false;
+  if (!due(reserve) && owed.length === 0 && limbsOwed.length === 0) return false;
   // Nothing startable for issues held since its last pass that re-planning
   // lifts: owed one pass like a hand-over, once (#2244).
   const unstuck = stuck === null ? [] : replannable(stuck).filter((issue) => heldSince(app, issue, seen));
