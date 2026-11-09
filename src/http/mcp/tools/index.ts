@@ -22,6 +22,7 @@ export { tool as asks_proposal } from "./asks_proposal.ts";
 export { tool as asks_undecide } from "./asks_undecide.ts";
 export { tool as assign } from "./assign.ts";
 export { tool as assigned } from "./assigned.ts";
+export { tool as atlas } from "./atlas.ts";
 export { tool as attach_look } from "./attach_look.ts";
 export { tool as audit } from "./audit.ts";
 export { tool as backups } from "./backups.ts";

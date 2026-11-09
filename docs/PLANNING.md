@@ -656,3 +656,10 @@ then store one proposal — title, why, the ordered issues with their
 Off, the plan opens its linked issues all or none. A person's nod opens a
 stored proposal: `approve` in `src/actions/proposals.ts`, from the inbox card
 or the MCP `asks_proposal`.
+
+## A business, as a map (#439)
+
+Atlas turns a business described in words into apps, adapters and what
+waits for what, dry-run first and opened through `openPlan` once: the API
+(`POST …/atlas`) and the terminal's **Atlas plan**. How to use it:
+[docs/features/atlas-plan.md](features/atlas-plan.md).

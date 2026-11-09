@@ -350,6 +350,7 @@ import { displayRoutes } from "./api/displays.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
 import { visionRoutes } from "./api/vision.ts";
+import { businessPlanRoutes } from "./api/business_plan.ts";
 import { tokenRoutes } from "./api/tokens.ts";
 import { accountAdmin, adminRoutes } from "./api/admin.ts";
 import { maintenanceRoutes } from "./api/maintenance.ts";
@@ -2085,6 +2086,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   labelsRoutes(router);
   visionRoutes(router);
+  businessPlanRoutes(router);
   router.add(
     "PUT",
     "/api/v1/repos/:owner/:name/pulls/:number/labels",
