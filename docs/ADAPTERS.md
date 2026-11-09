@@ -29,7 +29,9 @@ default 20). Each says when (`at`), how long (`durationMs`), `ok` or `failed`
 `written`, `skipped` and `failed`, the `cursor` after it (null after a failed
 pull) and whether it was a `repeat`. Whoever may read the repository may read
 them; anyone else gets 404. The rows come through `pullRunLines` in
-`src/apps/pull.ts`, so a page or MCP can read them the same way.
+`src/apps/pull.ts`, so a page or MCP can read them the same way. MCP `apps` with
+`{ repo, pulls: true, limit? }` answers the same `{ items, next_cursor }` through
+the same function; a stranger, or a repository with no app, gets `not_found`.
 
 The rest of the forge's app rules apply to an adapter as they apply to any
 other app: see [`docs/APPS.md`](APPS.md).
