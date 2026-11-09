@@ -30,4 +30,4 @@ reader sees on first view at 390 px and 1280 px: **words**, **text blocks** and 
 | pulls list | 31 / 7 / 1 | 31 / 7 / 1 |
 | runs | 46 / 8 / 1 | 46 / 8 / 1 |
 | run | 34 / 11 / 3 | 34 / 11 / 3 |
-| settings | 274 / 37 / 1 | 274 / 37 / 1 |
+| settings | 137 / 32 / 1 | 137 / 32 / 1 |

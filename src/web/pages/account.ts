@@ -85,6 +85,18 @@ const block = (title: string, body: Html, intro?: string): Html =>
     ${body}
   </section>`;
 
+/**
+ * The one help toggle of a settings page: what each field means, kept out of the
+ * form so a field is its label and its current value. Closed until asked for.
+ */
+const help = (notes: readonly (readonly [string, string | Html])[]): Html =>
+  html`<details class="disclosure mb" data-page-help>
+    <summary>Help with these fields</summary>
+    <dl class="status-rows">
+      ${notes.map(([name, text]) => html`<div class="status-row"><dt>${name}</dt><dd>${text}</dd></div>`)}
+    </dl>
+  </details>`;
+
 type Section = "profile" | "password" | "tokens" | "keys" | "passkeys";
 
 // The section list lives beside the newest page that joins it, so adding one
@@ -154,10 +166,7 @@ function notifyView(ctx: Ctx, error?: string): Html {
         type: "url",
         autocomplete: "off",
         placeholder: host === undefined ? "https://ntfy.sh/your-topic" : "••••••••",
-        hint:
-          host === undefined
-            ? "When something newly needs you, one line and a link is posted here. https: only; leave it empty to turn it off."
-            : `Sending to ${host}. The rest of the address stays hidden; paste a new one to replace it, or save it empty to turn it off.`,
+        hint: host === undefined ? "https: only." : `Sending to ${host}. https: only.`,
       })}
       <div class="form-actions">
         ${btn("Save notify URL", { variant: "primary" })}
@@ -293,24 +302,46 @@ export async function resendVerifyLink(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, "/settings", { message });
 }
 
-/** The signed-in account's role and its row of the roles table. */
+/** What the signed-in account's role allows: one row of the page's Help. */
+function roleHelp(ctx: Ctx): readonly [string, Html] {
+  const row = rowOf(roleOf(ctx.app.db, ctx.auth.user!));
+  return [
+    "What your role allows",
+    html`<ul class="role-can">
+      ${(Object.keys(ABILITIES) as Ability[]).map(
+        (a) => html`<li>${ABILITIES[a]}: <strong>${row[a] ? "yes" : "no"}</strong></li>`,
+      )}
+    </ul>`,
+  ];
+}
+
+/** The signed-in account's role, in one line. */
 function roleView(ctx: Ctx): Html {
-  const role = roleOf(ctx.app.db, ctx.auth.user!);
-  const row = rowOf(role);
-  return block(
-    "What you can do here",
-    html`<p>You are ${badge(role)} here.</p>
-      <ul class="role-can">
-        ${(Object.keys(ABILITIES) as Ability[]).map(
-          (a) => html`<li>${ABILITIES[a]}: <strong>${row[a] ? "yes" : "no"}</strong></li>`,
-        )}
-      </ul>`,
-  );
+  return block("What you can do here", html`<p>You are ${badge(roleOf(ctx.app.db, ctx.auth.user!))} here.</p>`);
 }
 
 function profileView(ctx: Ctx, values: ProfileForm): Html {
   const user = ctx.auth.user!;
-  return html`${unverifiedNotice(ctx)}${roleView(ctx)}${block(
+  return html`${unverifiedNotice(ctx)}${help([
+    [
+      "Username",
+      "Your handle, your URL, and your git author identity. Renaming an account is not supported yet.",
+    ],
+    ["Display name", "Shown beside your username. Commits you make through the web use it."],
+    [
+      "Email",
+      "Where the forge reaches you. Never shown to other people, and never in a commit unless you choose it below.",
+    ],
+    [
+      "Commit email",
+      "The address on commits the forge makes for you: merges, reverts, web edits. A commit in a public repository cannot be taken back, so the default reaches nobody.",
+    ],
+    [
+      "Notify URL",
+      "When something newly needs you, one line and a link is posted here. The rest of a saved address stays hidden; paste a new one to replace it, or save it empty to turn it off.",
+    ],
+    roleHelp(ctx),
+  ])}${roleView(ctx)}${block(
     "Public profile",
     html`<form method="post" action="/settings">
       <div class="field">
@@ -319,19 +350,13 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
           class="input"
           id="f-username"
           value="${user.username}"
-          aria-describedby="f-username-hint"
           readonly
         />
-        <span class="hint" id="f-username-hint"
-          >Your handle, your URL, and your git author identity. Renaming an
-          account is not supported yet.</span
-        >
       </div>
       ${uiField({
         label: "Display name",
         name: "displayName",
         value: values.displayName,
-        hint: "Shown beside your username. Commits you make through the web use it.",
         ...(values.errors?.displayName
           ? { error: values.errors.displayName }
           : {}),
@@ -342,7 +367,6 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
         type: "email",
         value: values.email,
         autocomplete: "email",
-        hint: "Where the forge reaches you. Never shown to other people, and never in a commit unless you choose it below.",
         ...(values.errors?.email ? { error: values.errors.email } : {}),
       })}
       ${selectField({
@@ -360,7 +384,6 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
             selected: values.commitEmail === "account",
           },
         ],
-        hint: "The address on commits the forge makes for you: merges, reverts, web edits. A commit in a public repository cannot be taken back, so the default reaches nobody.",
       })}
       <div class="form-actions">
         ${btn("Save profile", { variant: "primary" })}
@@ -467,7 +490,7 @@ function passwordView(error?: {
   field: "current" | "next";
   text: string;
 }): Html {
-  return block(
+  return html`${help([["New password", "A passphrase beats a puzzle: a few unrelated words are long and easy to remember."]])}${block(
     "Change password",
     html`<form method="post" action="/settings/password">
       ${uiField({
@@ -485,7 +508,7 @@ function passwordView(error?: {
         autocomplete: "new-password",
         minlength: 10,
         required: true,
-        hint: "At least 10 characters. A passphrase beats a puzzle.",
+        hint: "At least 10 characters.",
         ...(error?.field === "next" ? { error: error.text } : {}),
       })}
       ${uiField({
@@ -499,7 +522,7 @@ function passwordView(error?: {
         ${btn("Change password", { variant: "primary" })}
       </div>
     </form>`,
-  );
+  )}`;
 }
 
 // GET /settings/password
@@ -632,12 +655,14 @@ function tokensView(ctx: Ctx): Html {
           }),
         )}
       </ul>`;
-  return html`<p class="muted small mb">
-      Use a token as the password when pushing over HTTPS, or as a
-      <span class="mono">Bearer</span> token for the API. Your account password
-      works for git too — tokens are for scoped or automated access.
-    </p>
-    ${connectCard(ctx, readFlash(ctx.request)?.code)}
+  return html`${help([
+      [
+        "Tokens",
+        "Use a token as the password when pushing over HTTPS, or as a Bearer token for the API. Your account password works for git too — tokens are for scoped or automated access.",
+      ],
+      ["Token name", "Name it after where it lives — laptop, CI, deploy box."],
+      ["Scope", "A token can never mint another token, whatever its scope."],
+    ])}${connectCard(ctx, readFlash(ctx.request)?.code)}
     ${block("Tokens", list)}
     ${block(
       "New token",
@@ -646,7 +671,6 @@ function tokensView(ctx: Ctx): Html {
           label: "Token name",
           name: "name",
           required: true,
-          hint: "Name it after where it lives — laptop, CI, deploy box.",
         })}
         ${selectField({
           label: "Scope",
@@ -658,7 +682,6 @@ function tokensView(ctx: Ctx): Html {
               ? [{ value: "admin", label: "admin — everything, including settings" }]
               : []),
           ],
-          hint: "A token can never mint another token, whatever its scope.",
         })}
         ${ctx.auth.user?.isAdmin
           ? html`<div class="field" id="ai-admin">
