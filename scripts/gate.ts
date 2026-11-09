@@ -255,25 +255,6 @@ export async function pinRefusal(cwd: string = process.cwd()): Promise<string[]>
   return [...edits, ...landed, ...missing];
 }
 
-/**
- * A pull that adds a feature must say, in a commit message, why it goes
- * ahead of the pipeline (#8839). Same base as `pinRefusal`; with no base to
- * compare to it passes, since that function already says so.
- */
-export async function whyNowRefusal(cwd: string = process.cwd()): Promise<string[]> {
-  const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
-  const { whyNowProblems } = await import("../src/kernel/why_now.ts");
-  const base =
-    process.env.FORGE_CHECK_BASE ||
-    git(["merge-base", "origin/main", "HEAD"], cwd).out ||
-    git(["merge-base", "main", "HEAD"], cwd).out;
-  if (!base) return [];
-  const diff = git(["diff", "--name-status", "-M", `${base}..HEAD`], cwd);
-  const log = git(["log", "--format=%B%x00", `${base}..HEAD`], cwd);
-  if (!diff.ok || !log.ok) return [];
-  return whyNowProblems(parseNameStatus(diff.out), log.out.split("\0").map((m) => m.trim()).filter(Boolean));
-}
-
 /** Review findings that repeated (#8888): see `src/kernel/review_rules.ts`. */
 export function reviewRefusal(root = "."): string[] {
   // Loaded by `require` so `treeGate`, which loads this file alone, never needs it.
@@ -288,7 +269,7 @@ export function reviewRefusal(root = "."): string[] {
 
 /**
  * A pull that changes a reachable surface must say how to try it on its
- * preview (#8889). Same base and same pass-when-unknown as `whyNowRefusal`.
+ * preview (#8889). Same base and same pass-when-unknown as `pinRefusal`.
  */
 export async function tryItRefusal(cwd: string = process.cwd()): Promise<string[]> {
   const { parseNameStatus } = await import("../src/kernel/pin_edits.ts");
@@ -307,7 +288,7 @@ export async function tryItRefusal(cwd: string = process.cwd()): Promise<string[
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
 // a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
-  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await whyNowRefusal()), ...(await tryItRefusal()), ...reviewRefusal()];
+  const refusal = [...gateRefusal(presentTests()), ...(await pinRefusal()), ...(await tryItRefusal()), ...reviewRefusal()];
   for (const line of refusal) console.error(`gate: ${line}`);
   process.exit(refusal.length === 0 ? 0 : 2);
 }

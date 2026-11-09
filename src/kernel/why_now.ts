@@ -1,6 +1,12 @@
 /**
- * The direction issue puts the pipeline first (#8839), so a new feature
- * says why it goes ahead of it. A feature is a file a pull adds, at any
+ * Retired 2026-11-09: the direction no longer puts the pipeline first —
+ * order is set by the pillars and the captain's ranking — so the gate no
+ * longer asks (`scripts/gate.ts`). A finished, approved pull closed unmerged
+ * on this rule (#10317); nothing reads it now. Kept with its test until the
+ * next sweep of unused modules.
+ *
+ * The direction issue put the pipeline first (#8839), so a new feature
+ * said why it went ahead of it. A feature is a file a pull adds, at any
  * depth, under an action, a page, an API route, an MCP tool or a terminal
  * screen; the pull's commits must then say either `Pipeline: #N` (it is
  * pipeline work) or `Why now: <reason>` (it goes ahead, and why). The check
