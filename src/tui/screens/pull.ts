@@ -26,6 +26,7 @@
  *   `n`/`p` walk the unsettled ones while the cursor is inside a thread.
  */
 
+import { teamHoldRefusal } from "../../core/teams_words.ts";
 import { crewFilters, guardedRefusal, isStrangerPull, strangerGuard, strangerNext } from "../../crew/stranger.ts";
 import { RED_ALONE_WAIT, redAloneAt, redMark } from "../../checks/queue.ts";
 import {
@@ -73,7 +74,7 @@ import { resolveOid } from "../../git/merge.ts";
 import { nextOfPull, type Next } from "../../flow/next_actor.ts";
 import { stepLine, stepOfPull, type PathStep } from "../../flow/path.ts";
 import { fromKeptFork } from "../../core/landing_kind.ts";
-import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
+import { getPull, pullDir, variantSiblings, type MergePullError, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
 import { wallOf, wallPlain, type Wall } from "../../contract/policy.ts";
@@ -218,6 +219,18 @@ export function teamLine(v: TeamVerdict): string {
   if (v.state === undefined) return `${v.name}: awaited`;
   const words = VERDICT_WORDS[v.state] ?? v.state;
   return `${v.name}: ${words} by ${v.by ?? ""}${v.stale ? " (on an older head)" : ""}`;
+}
+
+/**
+ * Why `m` did not land, in the toast's words: a structured refusal says its
+ * own sentence — the same as the page's merge box (#10080) — and any other
+ * code is worded by `errorText`.
+ */
+export function mergeRefusal(why: string | MergePullError): string {
+  if (typeof why === "string") return errorText(why);
+  if (why.kind === "guarded") return guardedRefusal(why.paths);
+  if (why.kind === "team_review_required") return teamHoldRefusal(why.teams);
+  return errorText(why.kind);
 }
 
 /** How often a pull's screen re-reads while its check is queued or running. */
@@ -772,7 +785,7 @@ export function pullScreen(
       const landed = await mergePull(f.app, f.user, target, row, strategy);
       if (!landed.ok) {
         const why = landed.error;
-        ctx.toast(typeof why !== "string" && why.kind === "guarded" ? guardedRefusal(why.paths) : errorText(String(why)), "danger");
+        ctx.toast(mergeRefusal(why), "danger");
         return;
       }
       await reload();

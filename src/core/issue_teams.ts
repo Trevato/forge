@@ -103,7 +103,7 @@ export const teamsAnswered = (verdicts: readonly TeamVerdict[]): boolean =>
  * pull's repository and no current approval on its head. A stale approval,
  * or a newer verdict that is not an approval, holds; a team with nobody to
  * ask does not, matching the review's lapse rule (docs/OPERATING.md).
- * Nothing gates on it yet (#9930).
+ * `mergePull` refuses `team_review_required` while it is non-empty (#10080).
  */
 export function teamsHolding(
   db: Database,

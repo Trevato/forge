@@ -29,6 +29,7 @@ import { moveLimb, parseSeat, type Seating } from "../core/limb_seats.ts";
 import { getHold } from "../core/holds.ts";
 import { recordInteraction, removeDismissals, removeMutes } from "../core/interactions.ts";
 import { getPull } from "../core/pulls.ts";
+import { teamHoldRefusal } from "../core/teams_words.ts";
 import { askItemsOf } from "../web/studio/asks.ts";
 import type { FleetValue } from "../core/fleet_ops.ts";
 import { findPillar, isStructural, type Pillars } from "../core/pillars.ts";
@@ -438,6 +439,8 @@ export const VERBS: Record<string, Verb> = {
         bringUpToDate(app, t.repo, pull, merged.error.files);
         return `it conflicts with main (${merged.error.files.join(", ")}); its agent brings it up to date`;
       }
+      if (typeof merged.error !== "string" && merged.error.kind === "team_review_required")
+        return teamHoldRefusal(merged.error.teams);
       return typeof merged.error === "string" ? words(merged.error) : merged.error.kind;
     },
   },

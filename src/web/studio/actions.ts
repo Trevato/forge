@@ -25,6 +25,7 @@ import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";
+import { teamHoldRefusal } from "../../core/teams_words.ts";
 import { guardedRefusal } from "../../crew/stranger.ts";
 import type { Guarded } from "../../core/pulls.ts";
 import { backTo, field, readForm, type Form } from "../form.ts";
@@ -40,6 +41,8 @@ function mergeWords(error: unknown): string {
     const e = error as { kind: string; message?: string };
     if (e.kind === "git") return `git said ${e.message ?? "no"}`;
     if (e.kind === "guarded") return guardedRefusal((error as unknown as { paths: readonly Guarded[] }).paths);
+    if (e.kind === "team_review_required")
+      return teamHoldRefusal((error as unknown as { teams: readonly string[] }).teams);
     return e.kind.replace(/_/g, " ");
   }
   return String(error);

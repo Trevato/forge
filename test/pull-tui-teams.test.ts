@@ -152,3 +152,58 @@ test("a two-team issue shows one team approved and one awaited; no team shows no
     tui.stop();
   }
 }, 60_000);
+
+test("m on a pull a team holds toasts the team's sentence, not an object (#10080)", async () => {
+  const alice = getUserByName(app.db, "alice")!;
+  const r = await createRepo(app, alice, { name: "held", visibility: "public" });
+  if (!r.ok) throw new Error(String(r.error));
+  const repo = r.value;
+  const quill = getUserByName(app.db, "quill")!;
+  addToCrew(app, alice, repo, "quill");
+  seatAs(app.db, repo.id, quill.id, "reviewer");
+  const seed = await commitToBranch(app, alice, repo, {
+    branch: "main",
+    message: "main",
+    files: [{ path: "code.txt", content: "main" }],
+  });
+  if (!seed.ok) throw new Error(JSON.stringify(seed.error));
+  const issue = openIssue(app, alice, repo, { title: "Chart" });
+  if (!issue.ok) throw new Error(issue.error);
+  const set = nameTeams(app, alice, repo, issue.value, ["design"]);
+  if (!set.ok) throw new Error(set.error);
+  const c = await commitToBranch(app, alice, repo, {
+    branch: "feat",
+    base: "main",
+    message: "feat",
+    files: [{ path: "feat.md", content: "x\n" }],
+  });
+  if (!c.ok) throw new Error(JSON.stringify(c.error));
+  const o = await openPull(app, alice, repo, {
+    title: "Pull feat",
+    body: `Closes #${issue.value.number}`,
+    baseBranch: "main",
+    headBranch: "feat",
+  });
+  if (!o.ok) throw new Error(String(o.error));
+
+  const { app: tui, session } = createForgeApp(
+    app,
+    { sshUsername: "alice", remoteAddress: "127.0.0.1", fingerprint: "SHA256:alice", user: alice },
+    { terminal: headlessTerminal(160, 44), exitHooks: false },
+  );
+  tui.start();
+  try {
+    tui.ctx.push(pullScreen(session, tui.ctx, local(session, repo), o.value.number));
+    await settleApp(tui);
+    for (const key of ["m", "enter"]) {
+      tui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+      await settleApp(tui);
+    }
+    const text = tui.screen.toText();
+    expect(text).toContain("Waiting on Design's review. Nothing was merged.");
+    expect(text).not.toContain("[object Object]");
+    expect(getPull(app.db, repo.id, o.value.number)!.mergedAt).toBeNull();
+  } finally {
+    tui.stop();
+  }
+});

@@ -85,6 +85,7 @@ import {
   type ThreadView,
 } from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
+import { teamHoldRefusal } from "../../core/teams_words.ts";
 import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, fragment, page } from "../layout.ts";
@@ -1230,6 +1231,8 @@ export function mergeFailure(error: AccessError | MergePullError): string {
       return "The base branch moved while merging. Try again.";
     if (error.kind === "unsafe") return "That merge was refused as unsafe.";
     if (error.kind === "guarded") return guardedRefusal(error.paths);
+    if (error.kind === "team_review_required")
+      return teamHoldRefusal(error.teams);
     return "Git refused the merge.";
   }
   const fromOrigin = originError(error);

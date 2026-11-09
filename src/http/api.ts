@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { teamHoldRefusal } from "../core/teams_words.ts";
 import { guardedRefusal } from "../crew/stranger.ts";
 import { MAX_PASS, passOf } from "../actions/box_pass.ts";
 import { homeTruth } from "../system/home_truth.ts";
@@ -2777,7 +2778,9 @@ export function apiRoutes(router: Router<Handler>): void {
         if (typeof merged.error !== "string")
           return merged.error.kind === "guarded"
             ? json({ error: "guarded", message: guardedRefusal(merged.error.paths), paths: merged.error.paths }, 409)
-            : json({ error: merged.error.kind }, 409);
+            : merged.error.kind === "team_review_required"
+              ? json({ error: merged.error.kind, message: teamHoldRefusal(merged.error.teams), teams: merged.error.teams }, 409)
+              : json({ error: merged.error.kind }, 409);
         return originAware(merged.error, 409);
       }
       return json({ merged: true, ...merged.value });

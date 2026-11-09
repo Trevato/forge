@@ -4,6 +4,7 @@
  * issues — a pull is an issue with a diff.
  */
 
+import { teamsHolding } from "../core/issue_teams.ts";
 import { isContributionFork, type GuestRefusal } from "../core/contribute.ts";
 import { takeGuestPull } from "./guests.ts";
 import { requireAbility } from "./roles.ts";
@@ -476,7 +477,7 @@ export async function mergePull(
   requested: MergeStrategy,
   /** The merge queue's guard: land only onto this base, as this tree (#2036). */
   expect?: LandingExpect,
-  /** `pastGate`: the owner's break-glass (`checks/bypass.ts`) skips the checks requirement. */
+  /** `pastGate`: the owner's break-glass (`checks/bypass.ts`) skips the checks and team requirements. */
   opts: { readonly pastGate?: boolean } = {},
 ): Promise<
   Result<{ mergeOid: string; carried: boolean }, AccessError | MergePullError>
@@ -550,6 +551,13 @@ export async function mergePull(
         db: app.db,
         requireReview: repo.requireReview,
         requireChecks: repo.requireChecks && opts.pastGate !== true,
+        // A named team with a reviewer here reads this head first (#10080).
+        ...(opts.pastGate === true
+          ? {}
+          : {
+              teamsHolding: (headOid: string) =>
+                teamsHolding(app.db, { ...judged, headOid }).map((v) => v.name),
+            }),
       },
       strategy,
       ...(expect === undefined ? {} : { expect }),

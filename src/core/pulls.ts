@@ -796,6 +796,12 @@ export interface ReviewGate {
    * Read live inside the merge like the review verdict. @default false
    */
   readonly requireChecks?: boolean;
+  /**
+   * The names of the crew teams that still hold this head (#9930,
+   * `teamsHolding`), asked with the live head inside the merge. Absent
+   * means no team gate: the owner's break-glass passes it.
+   */
+  readonly teamsHolding?: (headOid: string) => readonly string[];
 }
 
 export interface PullStatus {
@@ -1079,7 +1085,9 @@ export type MergePullError =
   /** The repo requires an approval of this head, or a change was requested. */
   | "review_required"
   /** The repo requires a passing deploy of this head, and there is none yet. */
-  | "checks_required";
+  | "checks_required"
+  /** A team the pull's issue names has a reviewer here and has not approved this head (#10080). */
+  | { readonly kind: "team_review_required"; readonly teams: readonly string[] };
 
 /** The base a landing must find, and the tree it must write (#2036). */
 export interface LandingExpect {
@@ -1175,6 +1183,8 @@ export async function mergePull(
   }
   if (status.reviews !== null && !status.reviews.mergeable)
     return err("review_required");
+  const teams = input.gate?.teamsHolding?.(status.headOid) ?? [];
+  if (teams.length > 0) return err({ kind: "team_review_required", teams });
   // The check is the latest deploy run of *this* head. Read here, not
   // handed in, for the same reason as the review verdict above. A landing
   // the merge queue gated (`expect`) is not held for a green on an older
