@@ -6,6 +6,7 @@
 
 import type { Html } from "../html.ts";
 import type { Blob } from "../../view/source.ts";
+import { archive } from "./archive-view.ts";
 import { audio } from "./audio.ts";
 import { config } from "./config.ts";
 import { isFormConfig } from "./config-format.ts";
@@ -54,6 +55,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   audio,
   video,
   config,
+  archive,
 };
 
 /**

@@ -20,6 +20,7 @@ export type FileKind =
   | "video"
   | "csv"
   | "model3d"
+  | "archive"
   | "config"
   | "markdown"
   | "text"
@@ -40,6 +41,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   video: 4_000 * MB,
   csv: 10 * MB,
   model3d: 100 * MB,
+  archive: 50 * MB,
   config: 1 * MB,
   markdown: 1 * MB,
   text: 1 * MB,
@@ -134,6 +136,24 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   mdx: "markdown",
 };
 
+/**
+ * Archives: the extension names the kind and the bytes confirm it. Their
+ * media type is never an archive type; the media route sends octet-stream.
+ * `gz` counts only as the end of `.tar.gz`.
+ */
+const ARCHIVES: Readonly<Record<string, Magic>> = {
+  zip: bytes(0x50, 0x4b, 0x03, 0x04),
+  tar: ascii("ustar", 257),
+  tgz: bytes(0x1f, 0x8b),
+  gz: bytes(0x1f, 0x8b),
+};
+
+const isArchive = (path: string, head: Uint8Array): boolean => {
+  const ext = extension(path);
+  if (ext === "gz" && !/\.tar\.gz$/i.test(path)) return false;
+  return ARCHIVES[ext]?.(head) === true;
+};
+
 /** For a caller that has only a name: the kind its extension gives. */
 export const NO_BYTES: Uint8Array = new Uint8Array(0);
 
@@ -165,6 +185,7 @@ function confirmed(path: string, head: Uint8Array): Media | undefined {
 export function fileKind(path: string, head: Uint8Array): FileKind {
   const media = confirmed(path, head);
   if (media !== undefined) return media.kind;
+  if (isArchive(path, head)) return "archive";
   if (looksBinary(head)) return "binary";
   return TEXTUAL[extension(path)] ?? "text";
 }
@@ -193,4 +214,7 @@ export function mediaType(path: string, head: Uint8Array): string {
 export const KNOWN_EXTENSIONS: readonly string[] = [
   ...Object.keys(MEDIA),
   ...Object.keys(TEXTUAL),
+  "zip",
+  "tar",
+  "tgz",
 ];

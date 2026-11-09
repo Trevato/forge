@@ -84,8 +84,9 @@ import { type CodeRows, rowsMarkup } from "../code_rows.ts";
 import { rowsOffThread } from "../code_rows_pool.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
+import { overSize } from "../render/archive.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
-import { HEAD_BYTES } from "../render/kinds.ts";
+import { fileKind, HEAD_BYTES, RENDER_CAP } from "../render/kinds.ts";
 import { RENDERERS, rendererFor } from "../render/renderers.ts";
 import { mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
@@ -699,6 +700,7 @@ export function blobBody(
   highlighted?: (ms: number) => void,
   all = false,
   ready?: CodeRows,
+  why?: string,
 ): { content: Html; lines: number } {
   const encoded = encodeURIComponent(ref);
   if (blob.kind === "binary") {
@@ -706,8 +708,8 @@ export function blobBody(
       lines: 0,
       content: empty({
         icon: "file",
-        title: "Binary file",
-        note: `${fileSize(blob.size)} — not shown, but you can download it.`,
+        title: why !== undefined ? "Archive" : "Binary file",
+        note: why !== undefined ? `${fileSize(blob.size)} · ${why}` : `${fileSize(blob.size)} — not shown, but you can download it.`,
         action: btn("Download", {
           href: downloadHref(base, ref, path),
           variant: "primary",
@@ -1095,6 +1097,12 @@ function blobRenderer(scope: RepoScope, path: string, blob: Blob): ReturnType<ty
   return found?.render === RENDERERS.pdf && scope.kind !== "local" ? undefined : found;
 }
 
+/** Why an archive too big to list is not listed, as one sentence. */
+function overCap(path: string, blob: Blob): string | undefined {
+  if (blob.kind !== "binary" || fileKind(path, blob.body.subarray(0, HEAD_BYTES)) !== "archive") return undefined;
+  return blob.size > RENDER_CAP.archive ? overSize(RENDER_CAP.archive) : undefined;
+}
+
 /** Whether the blob page of this file draws a PDF, and so needs `object-src`. */
 export function drawsPdf(scope: RepoScope, path: string, blob: Blob, view: BlobView): boolean {
   return (
@@ -1145,7 +1153,10 @@ export function renderBlob(
   const { content, lines, summary } =
     drawn !== undefined && fellBack === undefined
       ? drawn
-      : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all, o.rows), summary: undefined };
+      : {
+          ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all, o.rows, fellBack ?? overCap(o.path, blob)),
+          summary: undefined,
+        };
   const sizeText =
     blob.kind === "too_large" ? "" : sizeWithTokens(blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;

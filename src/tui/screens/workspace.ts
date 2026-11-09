@@ -79,6 +79,7 @@ import {
 } from "../ui/image.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { renderMarkdown, type Line } from "../ui/markdown.ts";
+import { archiveNote } from "../ui/archive-note.ts";
 import { mediaNote } from "../ui/media-note.ts";
 import { tokColor, type Tokens } from "../ui/theme.ts";
 import { card, emptyState, input, scrollbar } from "../ui/widgets.ts";
@@ -740,7 +741,10 @@ export function workspaceScreen(
           // something with. Everything else keeps the honest note: showing
           // bytes as text is how a terminal ends up beeping at you.
           if (looksLikeImage(t.path)) picture = read.value.body;
-          else note = `Binary file, ${formatSize(read.value.size)}.`;
+          else
+            note =
+              archiveNote(t.path, read.value.body, read.value.size, formatSize) ??
+              `Binary file, ${formatSize(read.value.size)}.`;
         } else raw = read.value.body;
       }
       entry = { note, raw, picture };
