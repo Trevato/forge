@@ -102,6 +102,8 @@ const DRILL_HOUR_UTC = 9;
 const CATCH_UP_MS = 5 * 60_000;
 /** A snapshot due on boot is taken this long after it, once the forge is serving. */
 const SNAPSHOT_CATCH_UP_MS = 2 * 60_000;
+/** A snapshot still owed is looked for again this often; one boot's look is not the last (#10167). */
+const SNAPSHOT_CHECK_MS = 30 * 60_000;
 
 export function untilDrill(now = Date.now()): number {
   const next = new Date(now);
@@ -141,6 +143,7 @@ export function startSnapshots(
     readonly bootRedFloorMs?: number | undefined;
     /** Test seams: how soon after boot a due snapshot is taken, and how often the bucket is read. */
     readonly snapshotCatchUpMs?: number | undefined;
+    readonly snapshotCheckMs?: number | undefined;
     readonly bucketEveryMs?: number | undefined;
     readonly bucketFirstMs?: number | undefined;
     /** Test seam: the clock `takeIfDue` judges by. */
@@ -438,8 +441,18 @@ export function startSnapshots(
   };
   scheduleMirror(true);
 
-  const catchUpSnapshot =
-    options.nightly === false ? undefined : setTimeout(() => void takeIfDue(), options.snapshotCatchUpMs ?? SNAPSHOT_CATCH_UP_MS);
+  // Not once: a store unreadable at the boot's look, or a snapshot cut short
+  // again, left the night's snapshot owed until the next night (#10167).
+  let catchUpSnapshot: ReturnType<typeof setTimeout> | undefined;
+  const scheduleCatchUp = (ms: number): void => {
+    if (options.nightly === false || stopped) return;
+    catchUpSnapshot = setTimeout(() => {
+      takeIfDue()
+        .catch(() => {})
+        .finally(() => scheduleCatchUp(options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS));
+    }, ms);
+  };
+  scheduleCatchUp(options.snapshotCatchUpMs ?? SNAPSHOT_CATCH_UP_MS);
 
   // The bucket is read by this process, on its own clock, whatever any job says.
   const bucket = watchBucket(

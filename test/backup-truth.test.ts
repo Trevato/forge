@@ -203,6 +203,25 @@ test("a restart with a snapshot lost mid-run takes one shortly after boot", asyn
   }
 }, 30_000);
 
+test("a store unreadable at the boot's look is looked at again, and the owed snapshot taken", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "forge-again-"));
+  const real = dirStore(dir);
+  let broken = true;
+  const store = { ...real, names: (p: string) => (broken ? Promise.reject(new Error("down")) : real.names(p)) };
+  const svc = startSnapshots(app, store, { version: "t", snapshotCatchUpMs: 20, snapshotCheckMs: 50, bucketEveryMs: 3_600_000, bucketFirstMs: 3_600_000 });
+  try {
+    await Bun.sleep(300);
+    expect((await listSnapshots(real)).length).toBe(0);
+    broken = false;
+    const until = Date.now() + 20_000;
+    while ((await listSnapshots(real)).length === 0 && Date.now() < until) await Bun.sleep(50);
+    expect((await listSnapshots(real)).length).toBe(1);
+  } finally {
+    await svc.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 30_000);
+
 test("a boot with the night's snapshot in the store takes none; a day later it takes one", async () => {
   const dir = await mkdtemp(join(tmpdir(), "forge-kept-"));
   const store = dirStore(dir);
