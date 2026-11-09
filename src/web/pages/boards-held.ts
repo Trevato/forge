@@ -8,7 +8,7 @@
 import { HOLDS } from "../../crew/held.ts";
 import type { HeldRow } from "../../flow/held.ts";
 import { html, type Html } from "../html.ts";
-import { card, meter } from "../ui.ts";
+import { meter } from "../ui.ts";
 
 function heldCount(kind: string, n: number): Html {
   return html`<span data-held="${kind}"><span class="mono">${kind}=${String(n)}</span></span>`;
@@ -27,8 +27,8 @@ function startableMeter(row: HeldRow): Html {
 
 /** Why ready issues cannot start, per autonomous repository (#2244). */
 export function heldCard(rows: readonly HeldRow[]): Html {
-  return card(
-    html`<h2>Ready, and why it waits</h2>
+  return html`<section class="settings-block" id="held">
+      <h2>Ready, and why it waits</h2>
       <p class="muted small">
         Each ready issue a builder could start, or the first filter that holds
         it: a run on it, an open pull, the planner, stalled, its run cap,
@@ -71,7 +71,6 @@ export function heldCard(rows: readonly HeldRow[]): Html {
                 )}
               </tbody>
             </table>
-          </div>`}`,
-    { id: "held" },
-  );
+          </div>`}
+    </section>`;
 }
