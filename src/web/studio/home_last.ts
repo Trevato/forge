@@ -16,6 +16,7 @@ import { notePhase } from "../../core/route_timing.ts";
 import { forgetAll, recall, remember } from "../../core/region_memory.ts";
 import { writeStamp } from "../../core/write_clock.ts";
 import { parseCursor } from "../../feed/feed.ts";
+import { parseBefore } from "../../feed/timeline.ts";
 import { escapeHtml, raw, type Html } from "../html.ts";
 import { HOME_MAX_AGE_MS } from "./home_cache.ts";
 
@@ -37,6 +38,8 @@ export function homeVariant(url: URL): string {
     const day = url.searchParams.get("day") ?? "";
     if (/^\d{4}-\d{2}-\d{2}(T[\d:.]{1,16}Z?)?$/.test(day)) q.set("day", day);
   }
+  const before = url.searchParams.get("before") ?? "";
+  if (before.length <= 26 && parseBefore(before) !== undefined) q.set("before", before);
   const text = q.toString();
   return text === "" ? "" : `?${text}`;
 }

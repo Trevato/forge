@@ -17,6 +17,7 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
 import { parseCursor, readFeedPage } from "../../feed/feed.ts";
+import { parseBefore, readTimeline, TIMELINE_START } from "../../feed/timeline.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import { replyPath, replyRepo, threadOf } from "../../feed/reply.ts";
 import { getAppByRepo } from "../../core/apps.ts";
@@ -338,15 +339,29 @@ function readRegion(user: User, ctx: Ctx) {
   // ask is never a second time a post below it; the feed API keeps them.
   // `?cursor=` is a page the line below the last post pointed at; one not issued here is the first page.
   const cursor = parseCursor(ctx.url.searchParams.get("cursor") ?? "");
-  const page = readFeedPage(ctx.app.db, user, {
-    limit: FEED_FIRST_PAGE,
-    withoutAsks: true,
-    phase: (name, ms) => notePhase(ctx.request, name, ms),
-    ...(cursor === undefined ? {} : { cursor }),
-  });
+  // `?before=` is the timeline, newest first, deeper than the ranked page reaches (`feed/timeline.ts`).
+  const before = parseBefore(ctx.url.searchParams.get("before") ?? "");
+  const page =
+    before === undefined
+      ? readFeedPage(ctx.app.db, user, {
+          limit: FEED_FIRST_PAGE,
+          withoutAsks: true,
+          phase: (name, ms) => notePhase(ctx.request, name, ms),
+          ...(cursor === undefined ? {} : { cursor }),
+        })
+      : {
+          ...readTimeline(ctx.app.db, user, {
+            limit: FEED_FIRST_PAGE,
+            phase: (name, ms) => notePhase(ctx.request, name, ms),
+            ...(before.id === undefined ? {} : { before: before.id }),
+          }),
+          quiet: { count: 0, repoId: null },
+        };
+  const timeline = before !== undefined;
+  const asked = ctx.url.searchParams.get("before") ?? "";
   const items = page.items;
   // The day the page before ended on, so a continuing page draws no divider twice (`day_divider.ts`).
-  const day = cursor === undefined ? "" : (ctx.url.searchParams.get("day") ?? "");
+  const day = cursor === undefined && !timeline ? "" : (ctx.url.searchParams.get("day") ?? "");
   const lastDayOnPage = Number.isFinite(Date.parse(day)) ? new Date(day).toISOString() : undefined;
   const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
   const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
@@ -358,7 +373,7 @@ function readRegion(user: User, ctx: Ctx) {
   const quiet = page.quiet;
   const quietRepo = quiet.repoId === null ? undefined : getRepoById(ctx.app.db, quiet.repoId);
   const quietLink = quietRepo === undefined ? "/explore" : `/${quietRepo.ownerName}/${quietRepo.name}/runs?kind=agent`;
-  return { items, next: page.next_cursor, cursor, lastDayOnPage, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
+  return { items, next: page.next_cursor, cursor, timeline, asked, lastDayOnPage, thoughts, placed, marks, pictures: picturesFor(ctx, items), quiet: quiet.count, quietLink };
 }
 
 /** The region: cards, or one line saying there is nothing to do. */
@@ -370,23 +385,29 @@ export function feedRegion(user: User, ctx: Ctx): Html {
  * The line under the last post: how far back the page reaches and the way
  * to older ones, or that there is nothing older.
  */
-export function caughtUp(items: readonly FeedItem[], next: string | null, cursor?: unknown): Html | null {
+export function caughtUp(items: readonly FeedItem[], next: string | null, cursor?: unknown, timeline = false): Html | null {
   // Ranked by score, not time: the last card is not always the oldest.
   const oldest = items.reduce<string | undefined>((min, item) => (min === undefined || item.at < min ? item.at : min), undefined);
-  if (oldest === undefined) return null;
-  const newest = cursor === undefined ? html`` : html`<a href="/feed">Newest</a>`;
+  // A page the filters emptied can still have older posts behind it: keep the way on.
+  if (oldest === undefined && next === null) return null;
+  const newest = cursor === undefined && !timeline ? html`` : html`<a href="/feed">Newest</a>`;
+  // The ranked page ends where its window does; the log goes on, newest first.
+  const deeper = timeline ? html`` : html`<a href="/feed?before=${TIMELINE_START}">Everything, newest first</a>`;
+  const older = (n: string) => timeline
+    ? html`<a href="/feed?before=${encodeURIComponent(n)}">Older posts</a>`
+    : html`<a href="/feed?cursor=${encodeURIComponent(n)}&day=${encodeURIComponent(items[items.length - 1]?.at ?? "")}">Older posts</a>`;
   return next === null
-    ? html`<p class="bar muted small" data-caught-up="end"><span>That's everything</span><span class="spacer"></span>${newest}</p>`
+    ? html`<p class="bar muted small" data-caught-up="end"><span>${timeline ? html`That's every post` : html`That's everything`}</span><span class="spacer"></span>${newest}${deeper}</p>`
     : html`<p class="bar muted small" data-caught-up="more">
-        <span>You're caught up to ${time(oldest)}</span>
+        <span>${oldest === undefined ? "Nothing to show on this page" : html`You're caught up to ${time(oldest)}`}</span>
         <span class="spacer"></span>
         ${newest}
-        <a href="/feed?cursor=${encodeURIComponent(next)}&day=${encodeURIComponent(items[items.length - 1]!.at)}">Older posts</a>
+        ${older(next)}
       </p>`;
 }
 
 function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): Html {
-  const { items, next, cursor, lastDayOnPage, thoughts, placed, marks, pictures, quiet, quietLink } = read;
+  const { items, next, cursor, timeline, asked, lastDayOnPage, thoughts, placed, marks, pictures, quiet, quietLink } = read;
   const now = new Date();
   // One divider per change of day between neighbours, in the order the feed already has.
   const posts: Html[] = [];
@@ -405,6 +426,7 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
     before = item.at;
   }
   const liveQuery = [
+    timeline ? `before=${encodeURIComponent(asked)}` : "",
     cursor === undefined ? "" : `cursor=${encodeURIComponent(`${cursor.score}|${cursor.id}`)}`,
     cursor === undefined || lastDayOnPage === undefined ? "" : `day=${encodeURIComponent(lastDayOnPage)}`,
   ].filter(Boolean).join("&");
@@ -427,7 +449,7 @@ function drawRegion(user: User, ctx: Ctx, read: ReturnType<typeof readRegion>): 
     ${quiet === 0
       ? ""
       : html`<p class="small muted"><a href="${quietLink}">${quiet} quiet ${quiet === 1 ? "run" : "runs"} in the last 24 h</a></p>`}
-    ${caughtUp(items, next, cursor)}
+    ${caughtUp(items, next, cursor, timeline)}
   </section>`;
 }
 

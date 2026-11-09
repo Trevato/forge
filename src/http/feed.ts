@@ -47,6 +47,7 @@ import type { FleetError } from "../actions/fleet.ts";
 import { notePhase, takeSessionTime, timePhase } from "../core/route_timing.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
+import { parseBefore, readTimeline } from "../feed/timeline.ts";
 import { HIDDEN_WORDS } from "../core/arg_words.ts";
 import {
   apiError,
@@ -78,6 +79,11 @@ export function feedRoutes(router: Router<Handler>): void {
     const cursor = rawCursor === null ? undefined : parseCursor(rawCursor);
     if (rawCursor !== null && cursor === undefined)
       return apiError("invalid_cursor", 422, CURSOR_NOT_ISSUED);
+    // `before=` is the timeline: newest first, paged by an event id (`feed/timeline.ts`).
+    const rawBefore = q.get("before");
+    const before = rawBefore === null ? undefined : parseBefore(rawBefore);
+    if (rawBefore !== null && (before === undefined || rawCursor !== null))
+      return apiError("invalid_cursor", 422, CURSOR_NOT_ISSUED);
     // A 304 only when nothing the viewer would read has changed (`feedTag`).
     // The queue drains first, as `readFeed` would; shares still waiting
     // depend on the clock, so they always get a page.
@@ -85,7 +91,7 @@ export function feedRoutes(router: Router<Handler>): void {
     drainQueue(ctx.app.db, viewer.id, now);
     const tag = feedTag(ctx.app.db, viewer, {
       chips: chipsOf(ctx.app.db, viewer.id),
-      cursor: rawCursor,
+      cursor: rawBefore === null ? rawCursor : `before:${rawBefore}`,
       limit: limit ?? null,
       now,
       visit: rawCursor === null ? lastVisit(ctx.app.db, viewer.id) : undefined,
@@ -101,6 +107,19 @@ export function feedRoutes(router: Router<Handler>): void {
       !hasQueuedShares(ctx.app.db, viewer.id)
     )
       return new Response(null, { status: 304, headers });
+    if (before !== undefined)
+      return json(
+        timePhase(ctx.request, "feed", () =>
+          readTimeline(ctx.app.db, viewer, {
+            chips: chipsOf(ctx.app.db, viewer.id),
+            phase: (name, ms) => notePhase(ctx.request, name, ms),
+            ...(limit === undefined ? {} : { limit }),
+            ...(before.id === undefined ? {} : { before: before.id }),
+          }),
+        ),
+        200,
+        headers,
+      );
     const page = timePhase(ctx.request, "feed", () =>
       readFeed(ctx.app.db, viewer, {
         phase: (name, ms) => notePhase(ctx.request, name, ms),

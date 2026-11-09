@@ -7,12 +7,13 @@
  * posts to the same people as the page's Reply (`feed/reply.ts`). `l` likes
  * the post under the cursor and a second press takes it back: the page's
  * Like, behind the same `readInteraction` check (`feed/likes.ts`). Twenty
- * posts at a time; `n` reads the next page from the cursor the last returned.
+ * posts at a time; `t` switches to every post, newest first (`readTimeline`); `n` reads the next page from the cursor the last returned.
  */
 
 import { addCommentThrough } from "../../actions/issues.ts";
 import { getIssue } from "../../core/issues.ts";
 import { parseCursor, readFeed } from "../../feed/feed.ts";
+import { parseBefore, readTimeline, TIMELINE_START } from "../../feed/timeline.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import { readInteraction } from "../../feed/interact.ts";
 import { toggleLike } from "../../feed/likes.ts";
@@ -40,9 +41,22 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
   const composer = new Composer();
   const items: FeedItem[] = [];
   let next: string | null = null;
+  // `t`: the log newest first, deeper than the ranked page reaches (the page's `?before=now`).
+  let timeline = false;
 
   const read = (cursor?: string): void => {
     if (f.user === undefined) return;
+    if (timeline) {
+      const from = parseBefore(cursor ?? TIMELINE_START);
+      const page = readTimeline(f.db, f.user, {
+        limit: PAGE,
+        ...(from?.id === undefined ? {} : { before: from.id }),
+      });
+      items.push(...page.items);
+      next = page.next_cursor;
+      ctx.invalidate();
+      return;
+    }
     const parsed = cursor === undefined ? undefined : parseCursor(cursor);
     const page = readFeed(f.db, f.user, { limit: PAGE, ...(parsed ? { cursor: parsed } : {}) });
     items.push(...page.items);
@@ -97,6 +111,7 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
         ...(selected() === undefined ? [] : [binding(["r"], "reply")]),
         ...(items.length === 0 ? [] : [binding(["l"], "like")]),
         ...(next === null ? [] : [binding(["n"], "next page")]),
+        binding(["t"], timeline ? "ranked" : "newest first"),
         binding(["esc", "q"], "back"),
       ];
     },
@@ -129,7 +144,13 @@ export function feedScreen(f: Session, ctx: Ctx): Screen {
         const at = selected();
         if (at !== undefined) composer.start(`Reply on ${at.thread.owner}/${at.thread.name} #${at.thread.number}`);
       } else if (e.key === "l") like();
-      else if (e.key === "n") {
+      else if (e.key === "t") {
+        timeline = !timeline;
+        items.length = 0;
+        state.index = 0;
+        state.offset = 0;
+        read();
+      } else if (e.key === "n") {
         if (next !== null) read(next);
       } else state.key(e, items.length);
       return true;

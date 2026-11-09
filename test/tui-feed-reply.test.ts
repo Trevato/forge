@@ -173,3 +173,15 @@ test("l on a post the person cannot read likes nothing", async () => {
   expect(forge.db.query("SELECT 1 FROM feed_like WHERE repo_id = ?1").get(secret)).toBeNull();
   t.stop();
 });
+
+test("t switches the feed to every post, newest first, and back", async () => {
+  const t = boot("alice");
+  await t.open();
+  expect(t.text()).toContain("newest first");
+  await t.press("t");
+  expect(t.text()).toContain("ranked");
+  expect(t.text()).toContain("Hidden question");
+  await t.press("t");
+  expect(t.text()).toContain("newest first");
+  t.stop();
+});

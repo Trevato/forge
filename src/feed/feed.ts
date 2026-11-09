@@ -144,6 +144,31 @@ type FeedOptions = {
     phase?: (name: string, ms: number) => void;
 };
 
+/** A page with what it settled into, where it stands on the path, and who likes it. */
+export function decorate(
+  db: Database,
+  viewer: User,
+  page: readonly FeedItem[],
+  phase?: (name: string, ms: number) => void,
+): FeedItem[] {
+  const started = performance.now();
+  const settled = settledOf(db, page);
+  phase?.("settled", performance.now() - started);
+  const steps = stepsOf(db, page);
+  const likes = likesOf(db, viewer.id, page.map((i) => i.id));
+  return page.map((i) => {
+    const state = settled.get(i.id);
+    const step = steps.get(i.id);
+    const liked = likes.get(i.id)!;
+    return {
+      ...i,
+      ...(state === undefined ? {} : { settled: state }),
+      ...(step === undefined ? {} : { step }),
+      ...(liked.likes === 0 ? {} : liked),
+    };
+  });
+}
+
 /** The page, with the quiet runs it left out and where most of them are. */
 export function readFeedPage(
   db: Database,
@@ -203,22 +228,7 @@ export function readFeedPage(
         : ranked.filter((i) => i.score < cursor.score);
   }
   const page = ranked.slice(0, limit);
-  const started = performance.now();
-  const settled = settledOf(db, page);
-  options.phase?.("settled", performance.now() - started);
-  const steps = stepsOf(db, page);
-  const likes = likesOf(db, viewer.id, page.map((i) => i.id));
-  const items = page.map((i) => {
-    const state = settled.get(i.id);
-    const step = steps.get(i.id);
-    const liked = likes.get(i.id)!;
-    return {
-      ...i,
-      ...(state === undefined ? {} : { settled: state }),
-      ...(step === undefined ? {} : { step }),
-      ...(liked.likes === 0 ? {} : liked),
-    };
-  });
+  const items = decorate(db, viewer, page, options.phase);
   const last = items[items.length - 1];
   return {
     items,
