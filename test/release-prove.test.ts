@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GIVE_UP_MS, isNewer, lastProof, proofDue, proofNeed, proveRelease, proveRunning, QUICK_RETRIES, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
+import { GIVE_UP_MS, isNewer, lastProof, proofDue, proofNeed, proveRelease, proveRunning, QUICK_RETRIES, retryAfter, RETRY_MS, startProving, type Proof, type ProveOptions } from "../src/release/prove.ts";
 import { owned } from "../src/crew/incidents.ts";
 
 const CSS = '<html><link rel="stylesheet" href="/a.css"></html>';
@@ -321,13 +321,62 @@ describe("proving a release", () => {
     expect(queued).toEqual([]);
   });
 
+  test("startProving aborts a hung proof, logs it, and never runs two proofs at once (#10313)", async () => {
+    const queued: { fn: () => void; ms: number }[] = [];
+    const schedule = (fn: () => void, ms: number) => {
+      queued.push({ fn, ms });
+      return () => {};
+    };
+    const warned: string[] = [];
+    const log = { warn: (m: string) => void warned.push(m) };
+    let calls = 0, live = 0, most = 0;
+    let release: (() => void) | undefined;
+    const signals: AbortSignal[] = [];
+    const prove = (o: ProveOptions) => {
+      calls++;
+      signals.push(o.signal!);
+      live++;
+      most = Math.max(most, live);
+      if (calls === 1) return new Promise<Proof | undefined>((resolve) => (release = () => ((live--), resolve(undefined)))); // ignores the abort
+      live--;
+      return Promise.reject(new Error("boom"));
+    };
+    const stop = startProving({ dataDir: dir, version: "4.2.0", url: "https://forge.test" }, () => {}, 60_000, schedule, prove, 20, log);
+    await Bun.sleep(60);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(warned).toEqual(["release proof hung"]);
+    expect(queued.map((q) => q.ms)).toEqual([60_000]);
+    queued.shift()!.fn(); // the hung one has not settled: no second proof
+    await Bun.sleep(5);
+    expect(calls).toBe(1);
+    expect(warned).toEqual(["release proof hung", "release proof still running"]);
+    release!();
+    await Bun.sleep(5);
+    queued.shift()!.fn();
+    await Bun.sleep(10);
+    expect(calls).toBe(2);
+    expect(warned.at(-1)).toBe("release proof failed");
+    expect(most).toBe(1);
+    stop();
+  });
+
+  test("proveRelease aborted mid-wait stops asking and keeps no verdict (#10313)", async () => {
+    const abort = new AbortController();
+    const fetcher = ((_u: unknown, init?: RequestInit) =>
+      new Promise((_r, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))))) as unknown as typeof fetch;
+    setTimeout(() => abort.abort(), 20);
+    const run = proveRelease({ dataDir: dir, version: "9.9.9", url: "https://forge.test", fetch: fetcher, signal: abort.signal });
+    await expect(run).rejects.toThrow("aborted");
+    expect(lastProof(dir)).toBeUndefined();
+  });
+
   test("proveRunning, what main.ts boots, logs each verdict that ran as one release proof line", async () => {
     const lines: [string, unknown][] = [];
     const queued: (() => void)[] = [];
     const results: (Proof | undefined)[] = [{ version: "4.6.0", at: "a", ok: false, failure: "slow" }, undefined, { version: "4.6.0", at: "b", ok: true }];
     const stop = proveRunning(
       { dataDir: dir, version: "4.6.0", url: "https://forge.test" },
-      { info: (msg, fields) => void lines.push([msg, fields]) },
+      { info: (msg, fields) => void lines.push([msg, fields]), warn: () => {} },
       60_000,
       (fn) => (queued.push(fn), () => {}),
       async () => results.shift(),
