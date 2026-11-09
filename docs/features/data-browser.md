@@ -14,6 +14,10 @@ Limits on work: `query` runs at most 2 workers at once (a third is told it is bu
 
 Terminal: `src/tui/screens/data.ts` (files → tables → rows, `n`/`p` for pages, `s` sort, `f` filter, `c` clear, `x` read-only SQL), offered by `maySeeData`; the forge's own database is among an admin's files. SQL on either door is 20 runs a minute per person (`src/data/sql_window.ts`); beyond that it says when to retry.
 
+API and MCP by repository (`data/repo_scope.ts`, `http/api/data.ts`): `GET /api/v1/repos/:o/:n/data` (databases as `{ env, file }`), `…/data/:env/:file/tables`, `…/rows?table=&page=`, `POST …/query {sql}`; MCP `data` with `{ repo, env?, file?, table?, sql? }` answers the same. Only writers of the repository (and admins) see anything; everyone else gets a 404 (an error from the tool). Same masking, read-only SQL and 1,000-row cap as the web; SQL shares the per-person 20 a minute (`sql_window.ts`), and past it the API answers 429 with `retry-after`, the tool an error. `page` is a whole number from 0 to 1000.
+
+Not done: SQL in the terminal (SQL is on the web page and MCP).
+
 ## On the web (#7580)
 
 Three doors, one body (`src/web/pages/data_view.ts`): `/data` (every file you may see), `/admin/data` (the forge's own database, admins; the Forge data button on `/data`) and `/:owner/:name/data` (an app's Data tab for its writers: environments → files → tables → rows; a reader gets the 404). Rows sort by header (`sort`, `dir`), filter by text on one column or all (`q`, `col`), JSON cells are pretty-printed, and a copy button per row puts it on the clipboard as JSON. Sealed columns show `••••••` and cannot be sorted or searched. The SQL box is a GET form (`sql`, capped at 4,000 characters), so a query is an address to share; it shows the rows and the elapsed ms. The sorted column carries `aria-sort` and a muted arrow from CSS; a wide grid scrolls sideways only. Not done: saved queries, export, editing rows.

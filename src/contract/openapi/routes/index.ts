@@ -121,6 +121,9 @@ export { route as getApiV1ReposOwnerNameCommitsOidCheck } from "./getApiV1ReposO
 export { route as getApiV1ReposOwnerNameContents } from "./getApiV1ReposOwnerNameContents.ts";
 export { route as getApiV1ReposOwnerNameContentsPath } from "./getApiV1ReposOwnerNameContentsPath.ts";
 export { route as getApiV1ReposOwnerNameCrew } from "./getApiV1ReposOwnerNameCrew.ts";
+export { route as getApiV1ReposOwnerNameData } from "./getApiV1ReposOwnerNameData.ts";
+export { route as getApiV1ReposOwnerNameDataEnvFileRows } from "./getApiV1ReposOwnerNameDataEnvFileRows.ts";
+export { route as getApiV1ReposOwnerNameDataEnvFileTables } from "./getApiV1ReposOwnerNameDataEnvFileTables.ts";
 export { route as getApiV1ReposOwnerNameDecisions } from "./getApiV1ReposOwnerNameDecisions.ts";
 export { route as getApiV1ReposOwnerNameEgressGrants } from "./getApiV1ReposOwnerNameEgressGrants.ts";
 export { route as getApiV1ReposOwnerNameEvents } from "./getApiV1ReposOwnerNameEvents.ts";
@@ -284,6 +287,7 @@ export { route as postApiV1ReposOwnerNameBuildsPreview } from "./postApiV1ReposO
 export { route as postApiV1ReposOwnerNameChecksRecheck } from "./postApiV1ReposOwnerNameChecksRecheck.ts";
 export { route as postApiV1ReposOwnerNameContents } from "./postApiV1ReposOwnerNameContents.ts";
 export { route as postApiV1ReposOwnerNameContribute } from "./postApiV1ReposOwnerNameContribute.ts";
+export { route as postApiV1ReposOwnerNameDataEnvFileQuery } from "./postApiV1ReposOwnerNameDataEnvFileQuery.ts";
 export { route as postApiV1ReposOwnerNameEdits } from "./postApiV1ReposOwnerNameEdits.ts";
 export { route as postApiV1ReposOwnerNameEgressGrants } from "./postApiV1ReposOwnerNameEgressGrants.ts";
 export { route as postApiV1ReposOwnerNameFollowingConverge } from "./postApiV1ReposOwnerNameFollowingConverge.ts";

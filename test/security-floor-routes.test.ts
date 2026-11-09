@@ -9,6 +9,9 @@
  * miss answers carry the floor too — and the list is checked both ways.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { envDataDir } from "../src/apps/data.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -155,6 +158,11 @@ beforeAll(async () => {
   const run = createRun(app.db, { repoId: repo.id, kind: "check", issueId: pull.value.id, commitOid: pull.value.headOid });
   const inserted = insertApp(app.db, { repoId: repo.id, slug: "notes", access: "public" });
   if (!inserted.ok) throw new Error(inserted.error);
+  // An app database for the data routes: data routes name the production env.
+  mkdirSync(envDataDir(dataDir, inserted.value.id, "production"), { recursive: true });
+  const appDb = new Database(join(envDataDir(dataDir, inserted.value.id, "production"), "app.db"));
+  appDb.exec("CREATE TABLE t (n INTEGER); INSERT INTO t VALUES (1)");
+  appDb.close();
   Object.assign(fill, {
     owner: "ada", name: "notes", username: "ada", ref: "main", oid: pull.value.headOid,
     path: "a.txt", env: "prod", slug: "notes", spec: "192", machine: "standard",
@@ -182,12 +190,16 @@ function pathFor(pattern: string): string {
     .replace(/[:*]([a-z_]+)/g, (_, key: string) => {
       if (key === "number") return number!;
       if (key === "id") return runId!;
+      if (key === "env" && pattern.includes("/data/:env/")) return "production";
+      if (key === "file" && pattern.includes("/data/:env/:file/")) return "app.db";
       return SEEDED.has(key) ? fill[key]! : "x";
     });
 }
 
 const unseeded = (pattern: string): boolean =>
-  paramsOf(pattern).some((key) => !SEEDED.has(key) && !(key === "id" && pattern.includes("/runs/:id")));
+  paramsOf(pattern).some(
+    (key) => !SEEDED.has(key) && !(key === "id" && pattern.includes("/runs/:id")) && !(key === "file" && pattern.includes("/data/:env/:file/")),
+  );
 
 /**
  * `accept-encoding: identity` skips gzip, which only costs time here: the floor
