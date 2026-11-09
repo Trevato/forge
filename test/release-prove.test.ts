@@ -103,6 +103,20 @@ describe("proving a release", () => {
     expect(proofNeed(dir)).toBeUndefined();
   });
 
+  test("each ask of the public URL is uncacheable (#10184)", async () => {
+    const seen: { url: string; cc: string | null }[] = [];
+    const { fake } = site("1.0.0");
+    const spy = (async (input: string | URL, init?: RequestInit) => {
+      if (new URL(String(input)).pathname === "/healthz") seen.push({ url: String(input), cc: new Headers(init?.headers).get("cache-control") });
+      return fake(input, init);
+    }) as unknown as typeof fetch;
+    await run("1.0.0", spy);
+    expect(seen.length).toBeGreaterThan(0);
+    const polls = seen.filter((h) => h.url.includes("?proof="));
+    expect(polls.length).toBeGreaterThan(0);
+    expect(polls.every((h) => h.cc === "no-cache")).toBe(true);
+  });
+
   test("it gives up after 10 minutes as unproven", async () => {
     let t = 0;
     const old = site("0.9.0"); // the old version keeps answering

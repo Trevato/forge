@@ -172,7 +172,8 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
     let seen = "";
     for (;;) {
       try {
-        const res = await doFetch(health, { redirect: "manual", headers: ownProbeHeaders(o.dataDir), signal: AbortSignal.timeout(5_000) });
+        // Each ask is a fresh URL and says no-cache, so a proxy or edge holding an older /healthz answer cannot stand for the public URL (#10184).
+        const res = await doFetch(`${health}?proof=${now()}`, { redirect: "manual", cache: "no-store", headers: { ...ownProbeHeaders(o.dataDir), "cache-control": "no-cache" }, signal: AbortSignal.timeout(5_000) });
         await res.body?.cancel();
         seen = res.headers.get("x-forge-version") ?? "";
         if (seen === o.version) break;
