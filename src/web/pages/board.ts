@@ -102,6 +102,7 @@ import {
   time,
   tokenCount,
 } from "../ui.ts";
+import { noteLine } from "../studio/note.ts";
 import { tellWord } from "../studio/tell.ts";
 import { voiceFor } from "../studio/voice.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -931,7 +932,7 @@ async function decided(ctx: Ctx, scope: BoardScope): Promise<Html> {
       title: answer,
       meta: [
         `${KIND_WORDS[d.kind]} · ${issue?.title ?? repo.name} · ${d.by === "rule" ? "by the rule" : `by ${d.by}`}`,
-        hand === null ? null : html`<span title="${hand}">${hand}</span>`,
+        hand === null ? null : noteLine(hand),
       ],
       under: meter(sure, `${sure}% sure`),
       trail: html`${

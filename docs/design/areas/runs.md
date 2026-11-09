@@ -1,5 +1,6 @@
 # Runs
 
+- `.row-note` — free text an agent wrote (a run's summary, or a word's note taken from one) inside a §5 row's meta: one line clamped by CSS with an ellipsis, whitespace collapsed, escaped, never rendered as markdown, its whole text in `title`, and narrower than the meta so the who and when after it stay visible (#73). Written by `noteLine()` in `src/web/studio/note.ts` (the runs list, *Now*, a tell's runs, a planner's decline quoted on an ask's line and a decider's why in the board's decision ledger; #10199). Styled in `src/web/style/components.ts` (list rows).
 - `.check-words` — the run page's live tests line under the step list: reserves one line of height (1.4em) so the pin slot and log never move as the words arrive.
 
 ## A run's page at 390 px (#9347)

@@ -43,6 +43,7 @@ import {
   ownerFactRepoIds,
 } from "../../core/repos.ts";
 import { html, type Html } from "../html.ts";
+import { noteLine } from "./note.ts";
 import { page, redirect } from "../layout.ts";
 import { btn, card, icon, row } from "../ui.ts";
 import {
@@ -161,7 +162,7 @@ const clause = (
   which?: string,
 ): Html =>
   html`<p>
-    ${weight(c, which)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. `}<span class="muted"
+    ${weight(c, which)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}${d.note === undefined ? null : html`: \u201c${noteLine(d.note)}\u201d`}. `}<span class="muted"
       >If nobody acts, ${ASK_WORDS[kind].ifNothing}.</span
     >
   </p>`;

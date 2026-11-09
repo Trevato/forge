@@ -24,6 +24,7 @@ import { readRunLogTail } from "../../runs/log.ts";
 import { mayReadRunLog } from "../../actions/runs.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
+import { flatten, noteLine } from "./note.ts";
 import { fragment, missingFragment } from "../layout.ts";
 import { avatar, badge, btn, card, icon, listCard, row, time } from "../ui.ts";
 import { changeHref, tellHref } from "./nouns.ts";
@@ -206,9 +207,9 @@ export async function nowCard(
         ...(stop ? {} : { href: `${base}/runs/${r.id}`, nav: true }),
         lead: avatar(who),
         title: stop
-          ? html`<a href="${base}/runs/${r.id}">${about?.title ?? note}</a>`
-          : (about?.title ?? note),
-        meta: html`${who} · ${word === "working" ? "working now" : note}
+          ? html`<a href="${base}/runs/${r.id}">${about?.title ?? flatten(note)}</a>`
+          : (about?.title ?? flatten(note)),
+        meta: html`${who} · ${word === "working" ? "working now" : noteLine(note)}
         ${word === "working"
           ? null
           : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
@@ -251,7 +252,7 @@ export async function nowCard(
       nav: true,
       lead: avatar(who),
       title: i.title,
-      meta: html`${who} · ${note} · ${time(i.createdAt)}`,
+      meta: html`${who} · ${noteLine(note)} · ${time(i.createdAt)}`,
       trail: wordBadge(word),
     });
   });
@@ -270,7 +271,7 @@ export async function nowCard(
           nav: true,
           lead: avatar(who),
           title: p.title,
-          meta: html`${who} · ${note} · ${time(p.createdAt)}`,
+          meta: html`${who} · ${noteLine(note)} · ${time(p.createdAt)}`,
           trail: wordBadge(word),
         });
       }),

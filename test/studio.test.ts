@@ -614,6 +614,49 @@ describe("the studio", () => {
     expect(studio).toContain(`href="/alice/notes/runs/${run.id}"`);
   });
 
+  test("a run's summary is one clamped line in its row: whole text in the title, markdown characters literal, the time after it", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scout.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    const report = Array.from(
+      { length: 12 },
+      (_, i) =>
+        `line ${i}: **bold** \`main\` [link](http://x.test) <b>tag</b> done`,
+    ).join("\n");
+    expect(report.length).toBeGreaterThan(600);
+    finishRun(app.db, run.id, { state: "failed", summary: report });
+    // The run table keeps the first 500 characters; the row carries all of those.
+    const flat = report.slice(0, 500).replace(/\s+/g, " ").trim();
+
+    const page = await (await get("/alice/notes/runs?state=failed")).text();
+    const at = page.indexOf(`href="/alice/notes/runs/${run.id}"`);
+    expect(at).toBeGreaterThan(-1);
+    const mine = page.slice(at, page.indexOf("</li>", at));
+    // One line: the note is its own clamped span, no newline survives in it.
+    const span = /<span class="row-note" title="([^"]*)">([^<]*)<\/span>/.exec(mine);
+    expect(span).not.toBeNull();
+    const unescape = (s: string) =>
+      s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    expect(unescape(span![1]!)).toBe(flat);
+    expect(unescape(span![2]!)).toBe(flat);
+    // Text, not source: markdown characters literal, markup escaped.
+    expect(mine).toContain("**bold**");
+    expect(mine).toContain("`main`");
+    expect(mine).toContain("&lt;b&gt;tag&lt;/b&gt;");
+    expect(mine).not.toContain("<b>tag</b>");
+    expect(mine).not.toContain("<strong>");
+    expect(mine).not.toContain('href="http://x.test"');
+    // The when comes after the note, outside its clamp.
+    expect(mine.slice(mine.indexOf("</span>", mine.indexOf("row-note")))).toContain("<time");
+    const css = await (await fetch(`${base}${stylesheetAsset().path}`)).text();
+    expect(css).toMatch(/\.row-note \{[^}]*text-overflow: ellipsis[^}]*white-space: nowrap/);
+  });
+
   test("a change that no longer merges into its base says so, and offers no Ship — a mergeable green pull is unchanged", async () => {
     const scout = getUserByName(app.db, "scout")!;
     const base1 = await commitToBranch(app, alice, repo, {

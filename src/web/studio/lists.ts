@@ -41,6 +41,7 @@ import {
   signInHref,
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
+import { noteLine } from "./note.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -877,7 +878,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                   ? html`${run.commitOid.slice(0, 7)} · ${checkState(run)}
                     ${when(durationText(run), (d) => html` · took ${d}`)} ·
                     ${time(run.finishedAt ?? run.createdAt)}`
-                  : html`${run.kind === "agent" ? html`${who} · ` : null}${run.state === "queued" ? whatRunWaitsOn(run) : info.note}
+                  : html`${run.kind === "agent" ? html`${who} · ` : null}${run.state === "queued" ? whatRunWaitsOn(run) : noteLine(info.note)}
               · ${time(run.finishedAt ?? run.createdAt)}`,
               trail: wordBadge(info.word),
             });

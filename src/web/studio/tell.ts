@@ -49,6 +49,7 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
+import { noteLine } from "./note.ts";
 import { threadLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -353,8 +354,7 @@ async function tellRuns(
         nav: true,
         lead: avatar(who),
         title: html`${who} <span class="muted">${reasonWords(r.reason)}</span>`,
-        meta: html`${duration ? html`${duration} · ` : null}${r.summary ||
-        "no summary yet"}`,
+        meta: html`${duration ? html`${duration} · ` : null}${noteLine(r.summary || "no summary yet")}`,
         trail: html`${wordBadge(word)}${when(
           r.costUsd > 0,
           () =>

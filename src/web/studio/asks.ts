@@ -127,6 +127,10 @@ export interface Decision {
   readonly says: string;
   /** The same in one clause, for a row. */
   readonly short: string;
+  /** Free text a crew member wrote that the row quotes after `short` — a
+   * planner's decline, from its run's summary. A row shows it through
+   * `noteLine` (`./note.ts`): one escaped, clamped line (#10199). */
+  readonly note?: string | undefined;
   /** The option the decider thinks is right, and how sure; none for a rule. */
   readonly likely?: { readonly option: string; readonly p: number } | undefined;
   /** The preview pictured on a phone, when the forge has taken one. */

@@ -466,6 +466,12 @@ a.row:hover .row-title { color: var(--accent); }
   font-variant-numeric: tabular-nums;
 }
 .row-meta .byline { display: inline; }
+/* A note an agent wrote (#73): its own clamped line inside the meta, leaving
+   room for the who and when after it; the whole text is the title. */
+.row-note {
+  display: inline-block; max-width: min(60ch, calc(100% - 14ch)); vertical-align: bottom;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .row-facts { display: flex; flex-wrap: wrap; gap: 0 16px; margin: 0; font-size: 12.5px; color: var(--muted-fg); line-height: 1.5; }
 .row-facts > div { display: flex; gap: 6px; min-width: 0; }
 .row-facts dt { font-weight: 550; }
