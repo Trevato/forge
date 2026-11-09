@@ -60,7 +60,7 @@ describe("making a token in the terminal", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-token-make-"));
-    forge = createApp({ dataDir, port: 0 });
+    forge = createApp({ dataDir, port: 0, forgeRepo: "trevato/forge" });
     for (const [username, adminIfFirst] of [["boss", true], ["carol", false], ["bot1", false]] as const) {
       const made = await createUser(forge.db, {
         origin: "seed",
@@ -235,5 +235,81 @@ describe("making a token in the terminal", () => {
     expect(secret.length).toBeGreaterThan(40);
     expect(joined).toContain("y copies it whole");
     app.stop();
+  });
+
+  test("the secret screen shows the marketplace lines only while the plugin repository is public", async () => {
+    const mint = async () => {
+      const h = boot("carol");
+      await h.open();
+      await h.press("m", "enter");
+      await h.press("backspace", "backspace");
+      await h.type("rw");
+      await h.press("enter");
+      const text = h.text();
+      h.stop();
+      return text;
+    };
+    expect(await mint()).not.toContain("/plugin marketplace add");
+    const { createRepo } = await import("../src/core/repos.ts");
+    const owner = await createUser(forge.db, { origin: "seed", trusted: true, username: "trevato", email: "t@forge.local", password: "a-good-passphrase", adminIfFirst: false });
+    if (!owner.ok) throw new Error(owner.error);
+    const made = await createRepo(forge.db, forge.reposRoot, { ownerId: owner.value.id, name: "forge", visibility: "private", description: "" });
+    expect(made.ok).toBe(true);
+    expect(await mint()).not.toContain("/plugin marketplace add");
+    forge.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'forge'").run();
+    const shown = await mint();
+    expect(shown).toContain("/plugin marketplace add");
+    expect(shown).toContain("/trevato/forge.git");
+    expect(shown).toContain("/plugin install forge@forge");
+  });
+
+  test("a narrow terminal wraps the marketplace lines whole, a and i copy them, and a short one skips them", async () => {
+    const { createRepo, getRepo } = await import("../src/core/repos.ts");
+    if (getUserByName(forge.db, "trevato") === undefined) {
+      const owner = await createUser(forge.db, { origin: "seed", trusted: true, username: "trevato", email: "t@forge.local", password: "a-good-passphrase", adminIfFirst: false });
+      if (!owner.ok) throw new Error(owner.error);
+    }
+    if (getRepo(forge.db, "trevato", "forge") === undefined)
+      await createRepo(forge.db, forge.reposRoot, { ownerId: getUserByName(forge.db, "trevato")!.id, name: "forge", visibility: "public", description: "" });
+    forge.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'forge'").run();
+    const mintOn = async (w: number, h: number) => {
+      const terminal = headlessTerminal(w, h);
+      const user = getUserByName(forge.db, "carol")!;
+      const { app } = createForgeApp(forge, { sshUsername: "t", remoteAddress: "127.0.0.1", user }, { terminal, exitHooks: false });
+      app.start();
+      const key = async (k: string, ctrl = false) => {
+        app.dispatch({ type: "key", key: k, ctrl, alt: false, shift: false });
+        await settleApp(app);
+      };
+      await key("k", true);
+      for (const ch of "Signed in") await key(ch);
+      for (const k of ["enter", "m", "enter", "enter"]) await key(k);
+      return { app, terminal, key, rows: () => app.screen.toText().split("\n").map((l) => l.trimEnd()) };
+    };
+    const add = "/plugin marketplace add http://localhost:0/trevato/forge.git";
+    const narrow = await mintOn(40, 30);
+    const rows = narrow.rows();
+    expect(rows.every((r) => r.length <= 40)).toBe(true);
+    expect(rows.join("\n")).not.toContain("copy):…");
+    expect(rows.join("\n")).toContain("Claude Code plugin (a, i copy):");
+    const at = rows.findIndex((r) => r.trim().startsWith("/plugin marketplace"));
+    expect(at).toBeGreaterThan(0);
+    expect(rows.slice(at, at + 2).map((r) => r.trim()).join("")).toBe(add);
+    narrow.terminal.takeOutput();
+    await narrow.key("a");
+    expect(narrow.terminal.takeOutput()).toContain(`]52;c;${Buffer.from(add).toString("base64")}`);
+    expect(narrow.rows().join("\n")).toContain("Copied the marketplace line.");
+    await narrow.key("i");
+    expect(narrow.terminal.takeOutput()).toContain(`]52;c;${Buffer.from("/plugin install forge@forge").toString("base64")}`);
+    narrow.app.stop();
+
+    const short = await mintOn(40, 12);
+    const text = short.rows().join("\n");
+    expect(text).toContain("Plugin lines: a and i copy them.");
+    expect(text).not.toContain("/plugin marketplace");
+    short.terminal.takeOutput();
+    await short.key("a");
+    expect(short.terminal.takeOutput()).toContain(`]52;c;${Buffer.from(add).toString("base64")}`);
+    short.app.stop();
   });
 });

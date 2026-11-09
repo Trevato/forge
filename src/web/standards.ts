@@ -39,7 +39,7 @@ import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
-import { HARNESS_PLUGINS, mcpCard, mcpPointers, pluginSource, pluginsOffered } from "../core/mcp_card.ts";
+import { HARNESS_PLUGINS, mcpCard, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { shippedReleases, type Shipped } from "../release/shipped.ts";
@@ -106,7 +106,7 @@ export function securityTxt(ctx: Ctx): Response {
 
 /** GET /.well-known/mcp.json — the MCP server card (a draft format; see docs/MCP.md). */
 export function mcpJson(ctx: Ctx): Response {
-  const res = text(JSON.stringify(mcpCard(ctx.url.origin, pluginsOffered(ctx.app.db)), null, 2), "application/json");
+  const res = text(JSON.stringify(mcpCard(ctx.url.origin, offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo)), null, 2), "application/json");
   res.headers.set("access-control-allow-origin", "*");
   return res;
 }
@@ -345,7 +345,7 @@ function runningSentence(): string {
 }
 
 /** llms.txt and its ETag per origin, valid while the listing read, the build, the tell command and the plugin source being public are the same. */
-const llmsBodies = new Map<string, { signedIn: boolean; repos: LlmsListing; running: string; tell: string | undefined; plugins: boolean; body: string; etag: string }>();
+const llmsBodies = new Map<string, { signedIn: boolean; repos: LlmsListing; running: string; tell: string | undefined; plugins: string | undefined; body: string; etag: string }>();
 
 /**
  * GET /llms.txt — the forge as an agent should meet it (llmstxt.org): what
@@ -372,7 +372,7 @@ export function llmsBody(ctx: Ctx): { body: string; etag: string } {
   const o = ctx.url.origin;
   const tell = sshTellCommand(ctx.app);
   const running = runningSentence();
-  const plugins = pluginsOffered(ctx.app.db);
+  const plugins = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo);
   const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
   // The tools section depends on who asks, so the signed-in and the anonymous body are kept apart.
   const signedIn = ctx.auth.user !== undefined;
@@ -390,7 +390,7 @@ export function llmsBody(ctx: Ctx): { body: string; etag: string } {
 }
 
 /** The llms.txt document for one origin. */
-function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing, signedIn: boolean, plugins: boolean): string {
+function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing, signedIn: boolean, plugins: string | undefined): string {
   const mcp = mcpPointers(o);
   return (
     [
@@ -423,11 +423,11 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "## Use it from your harness",
       "",
       `- MCP endpoint: ${mcp.url} (streamable HTTP; OAuth metadata at ${mcp.oauth}). Or send a token as Authorization: Bearer.`,
-      ...(plugins
+      ...(plugins !== undefined
         ? HARNESS_PLUGINS.map(
-            (p) => `- ${p.label} plugin (source ${pluginSource(o)}, path ${p.path}; ${p.setup}): \`${p.install(o)}\``,
+            (p) => `- ${p.label} plugin (source ${pluginSource(o, plugins)}, path ${p.path}; ${p.setup}): \`${p.install(o, plugins)}\``,
           )
-        : ["- Harness plugins: not offered on this forge (their source is private)"]),
+        : ["- Harness plugins: not offered here (no public source)"]),
       "",
       "## What you can do on any page",
       "",

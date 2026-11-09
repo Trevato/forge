@@ -233,6 +233,9 @@ const SELECT = `
   FROM repo JOIN user ON user.id = repo.owner_id
   LEFT JOIN origin ON origin.id = repo.origin_id`;
 
+/** The by-name match `getRepo` and `repoVisibility` share, so the two cannot drift. */
+const BY_NAME = "user.username = ?1 COLLATE NOCASE AND repo.name = ?2 COLLATE NOCASE";
+
 function toRepo(row: RepoRow): Repo {
   return {
     id: row.id,
@@ -761,9 +764,20 @@ export function getRepo(
     .query<
       RepoRow,
       [string, string]
-    >(`${SELECT} WHERE user.username = ?1 COLLATE NOCASE AND repo.name = ?2 COLLATE NOCASE`)
+    >(`${SELECT} WHERE ${BY_NAME}`)
     .get(ownerName, name);
   return row ? toRepo(row) : undefined;
+}
+
+/** Only a repository's visibility, by owner and name: for a page that needs the answer, not the row. */
+export function repoVisibility(db: Database, ownerName: string, name: string): string | undefined {
+  return (
+    db
+      .query<{ visibility: string }, [string, string]>(
+        `SELECT repo.visibility FROM repo JOIN user ON user.id = repo.owner_id WHERE ${BY_NAME}`,
+      )
+      .get(ownerName, name)?.visibility ?? undefined
+  );
 }
 
 export function getRepoById(db: Database, repoId: string): Repo | undefined {

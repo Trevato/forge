@@ -49,7 +49,7 @@ afterAll(() => {
 /** The most statements a request may run: today's count with room for a read or two. */
 const MAX_STATEMENTS: Record<string, number> = {
   "/settings/keys": 12,
-  "/settings/tokens": 13,
+  "/settings/tokens": 14, // one more read: whether the plugin repository is public
   "/settings/password": 10,
 };
 

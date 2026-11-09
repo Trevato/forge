@@ -48,6 +48,8 @@ import type { CommitEmail, User } from "../../core/users.ts";
 import { isStandInEmail } from "../../core/users.ts";
 import { cookieValue, isAccountItself, type Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { marketplaceLines, offeredPluginRepo } from "../../core/mcp_card.ts";
+import { publicOrigin } from "../../core/public_origin.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
   settingsLayout,
@@ -581,8 +583,12 @@ export function sessionsCard(
  * and the token just minted when there is one (else a placeholder).
  */
 export function connectCard(ctx: Ctx, token: string | undefined): Html {
-  const url = (ctx.app.config.url ?? ctx.url.origin).replace(/\/+$/, "");
+  const url = publicOrigin(ctx.app.config.url, ctx.url.origin);
   const env = `FORGE_URL=${url} FORGE_TOKEN=${token ?? "<token>"}`;
+  // The plugin marketplace is the forge's configured source, offered only while anyone can clone it.
+  const repo = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo);
+  const market = repo === undefined ? null : marketplaceLines(url, repo);
+  const clone = copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command");
   return block(
     "Connect your harness",
     html`<p class="muted small mb">
@@ -591,7 +597,12 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
       </p>
       <p class="small">Claude Code</p>
       <p class="muted small mb">Start it with only FORGE_URL and sign in through /mcp (the forge server): nothing to copy. For scripts, use this command and the forge-token server, which sends the token.</p>
-      ${copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command")}
+      ${market
+        ? html`${copyField("connect-claude-add", market.add, "Add the marketplace", "Copy command")}
+          ${copyField("connect-claude-install", market.install, "Install the plugin", "Copy command")}
+          <p class="muted small mb">From a clone</p>`
+        : null}
+      ${clone}
       <p class="small">OpenCode</p>
       ${copyField(
         "connect-opencode",

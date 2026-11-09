@@ -68,8 +68,8 @@ describe("the MCP server card", () => {
 
   test("carries the commit it runs, or null when nothing says", () => {
     const sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
-    expect(mcpCard("https://x", true, running({ FORGE_APP_COMMIT: sha })).commit).toBe(sha);
-    expect(mcpCard("https://x", true, running({})).commit).toBeNull();
+    expect(mcpCard("https://x", "trevato/forge", running({ FORGE_APP_COMMIT: sha })).commit).toBe(sha);
+    expect(mcpCard("https://x", "trevato/forge", running({})).commit).toBeNull();
   });
 
   test("the live card's commit is what running() says", async () => {
