@@ -8,6 +8,7 @@ import { teamsHolding } from "../core/issue_teams.ts";
 import { isContributionFork, type GuestRefusal } from "../core/contribute.ts";
 import { takeGuestPull } from "./guests.ts";
 import { requireAbility } from "./roles.ts";
+import { announceTeamWaits } from "./team_waits.ts";
 import { addComment as addIssueComment } from "../core/issues.ts";
 import { landedNote, leftNote, unticked } from "../core/done_on_main.ts";
 import { resolveOpen } from "../core/decisions.ts";
@@ -356,6 +357,7 @@ async function createThePull(
       ...(assigned ? { assignee: user.username } : {}),
     },
   });
+  announceTeamWaits(app, baseRepo, created.value, user.id);
   return assigned ? ok({ ...created.value, ...assigneeOf(assigned) }) : created;
 }
 
@@ -813,6 +815,7 @@ export async function submitReview(
       reviewId: recorded.value.id,
     },
   });
+  announceTeamWaits(app, repo, { ...pull, headOid: status.headOid }, user.id);
   // The boxes the reviewer read at this head: only a crew reviewer's approval
   // counts. A pull yet to land holds them for its landing, which applies them
   // only if the head is still this one; one that landed takes them now.

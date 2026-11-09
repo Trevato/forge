@@ -164,6 +164,8 @@ const WORDS: Record<string, string> = {
   "pull.guest_approved": "approved a guest pull request",
   "pull.labeled": "labelled a pull request",
   "pull.held": "held a pull request",
+  "pull.team_waiting": "waits on a team's review",
+  "pull.team_answered": "was answered by a team's review",
   "pull.released": "released a pull request",
   "pull.thread_resolved": "resolved a review thread",
   "repo.created": "created a repository",

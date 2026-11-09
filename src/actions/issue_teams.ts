@@ -15,6 +15,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
 import { requireWriter, type AccessError } from "./access.ts";
 import { MIRRORED_DO_IT_THERE } from "./mirror_words.ts";
+import { announceIssueTeamWaits } from "./team_waits.ts";
 
 /** One sentence per refusal, said the same by the page, API, MCP tool and terminal. */
 export const ISSUE_TEAMS_SAY: Record<string, string> = {
@@ -44,6 +45,7 @@ export function nameTeams(
     actorId: who.value.id,
     payload: { number: issue.number, teams: set.value },
   });
+  announceIssueTeamWaits(app, repo, issue.number, who.value.id);
   return set;
 }
 

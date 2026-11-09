@@ -27,10 +27,11 @@ import type { Database } from "bun:sqlite";
 import type { ForgeEvent } from "./events.ts";
 import { getAppByRepo } from "./apps.ts";
 import { personOwners } from "./orgs.ts";
+import { getTeam } from "./teams.ts";
 import { canAdmin, canEnterApp, canWrite, canSeeOwnerFacts, getRepoById } from "./repos.ts";
 import type { User } from "./users.ts";
 
-export type EventAudience = "readers" | "admins" | "actor" | "app" | "writers";
+export type EventAudience = "readers" | "admins" | "actor" | "app" | "writers" | "team";
 
 /**
  * Whether this viewer answers for a deleted repository: the forge's admin, who
@@ -261,6 +262,9 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
   // (#620, #599).
   if (kind.startsWith("run.") || kind.startsWith("app.") || kind.startsWith("look."))
     return "app";
+  // A pull waiting on a named team's review is that team's news alone
+  // (`actions/team_waits.ts`, #10164): its members, among those who may read.
+  if (kind === "pull.team_waiting" || kind === "pull.team_answered") return "team";
   if (READER_KINDS.has(kind)) return "readers";
   return undefined;
 }
@@ -337,6 +341,15 @@ export function audienceFilter(
       subjects.set(key, rows.get(key) ?? null);
     }
   }
+  const teams = new Map<string, boolean>();
+  const onTeam = (slug: unknown): boolean => {
+    if (typeof slug !== "string" || viewer === undefined || !isActive(viewer)) return false;
+    const known = teams.get(slug);
+    if (known !== undefined) return known;
+    const yes = getTeam(db, slug)?.members.includes(viewer.id) ?? false;
+    teams.set(slug, yes);
+    return yes;
+  };
   const hidden = (event: ForgeEvent): boolean => {
     const subject = eventSubject(event);
     if (subject === undefined) return false;
@@ -363,6 +376,8 @@ export function audienceFilter(
         return event.repoId !== null && mayWrite(event.repoId);
       case "actor":
         return viewer !== undefined && event.actorId === viewer.id;
+      case "team":
+        return onTeam(event.payload.team);
       case "admins":
         return event.repoId === null
           ? viewer?.isAdmin === true && isActive(viewer)

@@ -11,7 +11,7 @@ import { isEnvName, type EnvName } from "../apps/data.ts";
 import type { Chips } from "../core/feed_chips.ts";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
-import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
+import { listEventsVisibleTo, listTeamEventsFor, type ForgeEvent } from "../core/events.ts";
 import { getReview } from "../core/reviews.ts";
 import { commentAnchor, getIssuesByIds, getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
 import {
@@ -21,6 +21,7 @@ import {
 } from "../core/origins.ts";
 import { joinMany, toldBy, type Pull } from "../core/pulls.ts";
 import {
+  canRead,
   canSeeOwnerFacts,
   onCrew,
   getReposByIds,
@@ -126,6 +127,23 @@ const heardCache = new WeakMap<Database, Stamped<Heard>>();
  * count (both read it under the same write stamp). A quiet run older than the
  * window stays a post, so none vanishes uncounted.
  */
+/**
+ * The team waits told to this viewer (#10164) from repositories they read
+ * that the feed's window leaves out — a private repository whose crew they
+ * are on — by the same `canRead` the pull's page asks, then the audience.
+ */
+function teamWaitsHeard(db: Database, viewer: User, heard: readonly ForgeEvent[]): ForgeEvent[] {
+  const seen = new Set(heard.map((e) => e.id));
+  const fresh = listTeamEventsFor(db, viewer.id, "pull.team_waiting").filter((e) => !seen.has(e.id));
+  if (fresh.length === 0) return [];
+  const repos = getReposByIds(db, fresh.map((e) => e.repoId!));
+  const meant = audienceFilter(db, viewer, fresh);
+  return fresh.filter((e) => {
+    const repo = repos.get(e.repoId!);
+    return repo !== undefined && canRead(db, repo, viewer) && meant(e);
+  });
+}
+
 function heardBy(db: Database, viewer: User, now: number): Heard {
   const work = (): Heard => {
     const recent = listEventsVisibleTo(db, viewer, { limit: EVENT_WINDOW });
@@ -326,7 +344,7 @@ export function candidatesFor(
 ): Candidate[] {
   // A quiet run is counted at the end of the first page, not posted.
   const { heard, quiet } = heardBy(db, viewer, now);
-  const events = heard.filter((e) => !quiet.has(e.id));
+  const events = [...heard.filter((e) => !quiet.has(e.id)), ...teamWaitsHeard(db, viewer, heard)];
   const writable = listReposWritableTo(db, viewer, { limit: 200 });
   const asks = withAsks ? askLinesFor(db, viewer, chips) : [];
   const decided = listDecidedIn(
@@ -713,6 +731,12 @@ function fromEvent(
             : change) + anchor,
         what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
       };
+    }
+    case "pull.team_waiting": {
+      const name = typeof p["name"] === "string" ? p["name"] : "";
+      if (number === undefined || name === "") return undefined;
+      const what = `${slug(repo)}#${number} waits on ${clip(name, 60)}'s review`;
+      return { ...common, kind: "pull", link: change, what, said: what };
     }
     case "clog.cleared": {
       const note = typeof p["note"] === "string" ? p["note"] : "";
