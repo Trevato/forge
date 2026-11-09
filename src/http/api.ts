@@ -1666,7 +1666,11 @@ export function apiRoutes(router: Router<Handler>): void {
       const shown = showProvenance(ctx.app, ctx.auth.user, repo, input.showProvenance);
       if (!shown.ok) return respondAccess(shown.error, 422);
     }
-    return json(repoJson(ctx, updated.value));
+    // The line about who can see it moves with the setting, in this answer.
+    return json({
+      ...repoJson(ctx, updated.value),
+      audience: audienceFor(ctx.app.db, updated.value, ctx.auth.user),
+    });
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name", async (ctx) => {

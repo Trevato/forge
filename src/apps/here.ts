@@ -4,7 +4,8 @@
  * render from, as plain data. Anyone the door would turn away is refused.
  */
 
-import { getRepoById, canEnterApp } from "../core/repos.ts";
+import { audienceFor } from "../core/audience.ts";
+import { getRepoById, canEnterApp, canRead } from "../core/repos.ts";
 import { mayView } from "../core/sealed.ts";
 import { getIssue } from "../core/issues.ts";
 import type { User } from "../core/users.ts";
@@ -15,6 +16,12 @@ import { isHostPort, pillWhere, reportUrl, resolveAppHostname } from "./proxy.ts
 export type Here = {
   app: string;
   repo: string | null;
+  /**
+   * Who can see the repository, as its page says it (`core/audience.ts`).
+   * Only for someone who may read the repository: a public app can sit on a
+   * private one, and its visitors are not told so, nor its counts.
+   */
+  audience?: ReturnType<typeof audienceFor>;
   environment: string;
   pull: { number: number; title: string } | null;
   working: string[];
@@ -49,6 +56,7 @@ export function hereOf(runtime: AppsRuntime, link: string, user: User): Here | u
   return {
     app: where.app,
     repo: where.repo ?? null,
+    ...(canRead(app.db, repo, user) ? { audience: audienceFor(app.db, repo, user) } : {}),
     environment: target.env,
     pull:
       where.pull !== undefined && where.title !== undefined

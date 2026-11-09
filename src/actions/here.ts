@@ -12,6 +12,7 @@
  * An action that needs an account is listed for someone without one,
  * saying so, because that is the next thing they need to know.
  */
+import { audienceFor } from "../core/audience.ts";
 import { lacks } from "../core/roles.ts";
 import { activeEdgeToken } from "../http/edge.ts";
 import { sshTellCommand } from "../ssh/command.ts";
@@ -65,6 +66,8 @@ export interface Manifest {
         readonly kind: "repository";
         readonly name: string;
         readonly visibility: "public" | "private";
+        /** Who can see it, in the words its page and `GET` say (`core/audience.ts`). */
+        readonly audience: ReturnType<typeof audienceFor>;
         readonly app?: {
           readonly access: "public" | "private";
           readonly state?: string;
@@ -242,6 +245,7 @@ function repoHere(
     kind: "repository" as const,
     name: `${repo.ownerName}/${repo.name}`,
     visibility: repo.visibility,
+    audience: audienceFor(app.db, repo, viewer),
   };
   // A private app the viewer may not enter is not there, to them.
   if (record === undefined || !canEnterApp(app.db, repo, record, viewer))
