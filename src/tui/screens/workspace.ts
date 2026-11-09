@@ -141,6 +141,7 @@ import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
 import { autonomyCommands } from "./autonomy.ts";
 import { trafficCommands } from "./trafficview.ts";
+import { adapterCommands } from "./adapter.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
 import { issuesScreen } from "./issues.ts";
@@ -1462,6 +1463,7 @@ export function workspaceScreen(
       ...appEnvCommands(f, ctx, repo),
       ...autonomyCommands(f, ctx, repo),
       ...trafficCommands(f, ctx, repo),
+      ...adapterCommands(f, ctx, repo),
     ],
     get title() {
       return sourceName(src);

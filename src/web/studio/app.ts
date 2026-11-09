@@ -57,6 +57,7 @@ import { answersRegion } from "./answers.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
 import { notesCard } from "./notes.ts";
+import { adapterCard } from "./adapter.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, pausedWords, servingHistory, type WordCtx } from "./words.ts";
 import { crewKeyNote } from "./crew.ts";
@@ -491,6 +492,9 @@ export async function studioApp(
   const policy = await timePhaseAsync(req, "policy", () =>
     policyLine(ctx, repo, record),
   );
+  const adapter = ownerFacts
+    ? await timePhaseAsync(req, "adapter", () => adapterCard(ctx.app, record))
+    : null;
   const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "app", {
       compact: true,
@@ -521,7 +525,7 @@ export async function studioApp(
         ${notesCard(ctx, repo, record)}
       </div>
       <aside class="stack">
-        ${crewCard} ${weekCard} ${ownCard} ${more}
+        ${adapter} ${crewCard} ${weekCard} ${ownCard} ${more}
       </aside>
     </div>
     ${liveMount({ repo: base, app: true })}`;

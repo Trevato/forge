@@ -129,7 +129,7 @@ export async function postPull(
 const declaredByTip = new Map<string, AdapterSpec | undefined>();
 const DECLARED_MAX = 256;
 
-async function declaredAdapter(app: App, record: AppRecord): Promise<AdapterSpec | undefined> {
+export async function declaredAdapter(app: App, record: AppRecord): Promise<AdapterSpec | undefined> {
   const repo = getRepoById(app.db, record.repoId);
   if (repo === undefined) return undefined;
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
