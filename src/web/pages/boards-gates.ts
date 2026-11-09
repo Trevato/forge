@@ -10,7 +10,7 @@ import type { Database } from "bun:sqlite";
 import { recentGates, type KeptResult } from "../../checks/gate_result.ts";
 import { span } from "../../flow/pipeline.ts";
 import { html, type Html } from "../html.ts";
-import { badge, card, row } from "../ui.ts";
+import { badge, row } from "../ui.ts";
 
 /** The most gates the card lists. */
 export const GATES_LISTED = 10;
@@ -68,8 +68,8 @@ function gateRow(l: Listed, now: number): Html {
   });
 }
 
-/** The "Last gates" card. */
-export function gatesCard(db: Database, owner: boolean, now: number): Html {
+/** The "Last gates" section: a heading and rows, no card. */
+export function gatesSection(db: Database, owner: boolean, now: number): Html {
   const all: Listed[] = [];
   for (const r of repos(db, owner)) {
     for (const gate of recentGates(db, r.id, GATES_LISTED)) {
@@ -78,11 +78,9 @@ export function gatesCard(db: Database, owner: boolean, now: number): Html {
   }
   all.sort((a, b) => (a.gate.finishedAt < b.gate.finishedAt ? 1 : a.gate.finishedAt > b.gate.finishedAt ? -1 : 0));
   const top = all.slice(0, GATES_LISTED);
-  return card(
-    html`<h2>Last gates</h2>
-      ${top.length === 0
-        ? html`<p class="muted">No gate has run yet.</p>`
-        : html`<ul class="list">${top.map((l) => gateRow(l, now))}</ul>`}`,
-    { id: "gates" },
-  );
+  return html`<section class="settings-block" id="gates"><h2>Last gates</h2>${
+    top.length === 0
+      ? html`<p class="muted">No gate has run yet.</p>`
+      : html`<ul class="list">${top.map((l) => gateRow(l, now))}</ul>`
+  }</section>`;
 }

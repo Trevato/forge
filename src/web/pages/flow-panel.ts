@@ -48,7 +48,7 @@ import { readVerified, verifiedSays, type VerifiedRow } from "../../flow/verifie
 import type { App } from "../../app.ts";
 import { html, type Html } from "../html.ts";
 import { keeperRow } from "../studio/keeper_row.ts";
-import { gatesCard } from "./boards-gates.ts";
+import { gatesSection } from "./boards-gates.ts";
 import { heldCard } from "./boards-held.ts";
 import { badge, card, meter } from "../ui.ts";
 
@@ -219,7 +219,7 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
     ${hotFilesCard(app, reader)}
     ${heldCard(readHeld(app, reader.kind === "owner", now))}
     ${queueCard(queuesFor(app, reader, new Date(now), { batches: true }))}
-    ${gatesCard(app.db, reader.kind === "owner", now)}
+    ${gatesSection(app.db, reader.kind === "owner", now)}
     ${url.searchParams.get("idle") === "all" && idle.length > 0 ? idleList(idle) : null}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
 }
