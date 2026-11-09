@@ -535,6 +535,8 @@ the dialect details, including the one that bites — GitHub takes the verb
 
 `docs/APPS.md` is the contract; this is why it is shaped as it is.
 
+An adapter, an app that pulls records from an external system on a schedule, answers the contract in [`docs/ADAPTERS.md`](ADAPTERS.md).
+
 An **app** is a repository that runs, on the forge's own port, by `Host`:
 `<slug>.<domain>` is production (the default branch), `<slug>--<n>.<domain>`
 the preview of pull `n`. The runtime (`apps/runtime.ts`) holds every

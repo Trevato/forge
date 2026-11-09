@@ -517,6 +517,7 @@ This page is the front door. Everything else is a file of its own under
 **Apps and the crew**
 
 - [`docs/APPS.md`](APPS.md) — the contract for apps, previews and runs: making an app, the vocabulary, and the rules that are mechanical rather than advisory.
+- [`docs/ADAPTERS.md`](ADAPTERS.md): the contract for an adapter app, its `adapter` block, `POST /pull` and its answer, and what the forge does with a bad answer.
 - [`docs/CONTRACT.md`](CONTRACT.md) — who may do what, as a table: an app's `contract.json`, the one evaluator every app decides with, the audit that reads it from git, the probe that knocks on the running app, and the wall a person alone crosses.
 - [`docs/WEBSPEC-PREVIEWS.md`](WEBSPEC-PREVIEWS.md) — the website specification run over every preview, report-only.
 - [`docs/CREW.md`](CREW.md) — the crew: agents, how a run works, review, live triage, the merge queue, spend, roles and invites, the sandbox, passports, and the direction a vision pull will write.
