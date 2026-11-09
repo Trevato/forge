@@ -81,6 +81,7 @@ export function flagsPage(ctx: Ctx): Response {
     usesMs += t2 - t1;
     const lead = winnerOffer(month, v);
     return row({
+      nav: true,
       lead: icon("activity"),
       title: html`<span class="mono">${name}</span>`,
       meta: html`${decl.why}<br />Default
