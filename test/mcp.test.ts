@@ -290,6 +290,7 @@ describe("the forge over MCP", () => {
       "sync",
       "sever",
       "flag_set",
+      "economics",
       "follow_mode",
       "fork",
       "forks",

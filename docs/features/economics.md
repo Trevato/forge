@@ -29,4 +29,9 @@ runtime's constants (`SLEEP_AFTER_MS`, `IDLE_PULL_DAYS` in
 `src/apps/runtime.ts`), so a forge that never moves the slider behaves as
 before.
 
+- **MCP**: the `economics` tool answers the same as `GET`; with `position`
+  and/or `marginPct` an admin token plans the change (`dryRun` is true unless
+  `false`) and then sets it, through the same action and validation.
+  Anyone else is told `not_found`, as the API does.
+
 An agent can never move the slider, whatever it was granted.

@@ -122,7 +122,7 @@ describe("the one list of what asks first", () => {
   const NOT_ASKED = new Set([
     "access", "account_verify", "app_members", "app_notes", "asks_act", "asks_decide", "asks_proposal", "asks_undecide", "atlas",
     "assign", "attach_look", "bet", "board_pins", "board_write", "branches", "capacity", "valves", "cloud_accounts", "close", "confirm_wait",
-    "crew", "decisions_by", "detach", "edit", "email_verify", "feed_chips", "feed_dismiss", "flag_set", "flag_winner",
+    "crew", "decisions_by", "detach", "economics", "edit", "email_verify", "feed_chips", "feed_dismiss", "flag_set", "flag_winner",
     "follow_mode", "fork", "front_page", "hold", "issue_teams", "keep_plan", "labels", "lift", "limb", "maintenance", "make_it_yours", "map", "merge", "new_app",
     "next_up", "week", "notify", "open_pull", "org_create", "origin_apps", "pins", "plan", "profile", "propose_to_parent_forge", "repo_labels", "reports",
     "restore_drill", "review", "say", "signup", "snapshot_now", "spend", "steer", "sync", "take_back", "take_updates",

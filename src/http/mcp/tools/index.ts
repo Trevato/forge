@@ -49,6 +49,7 @@ export { tool as crew } from "./crew.ts";
 export { tool as decisions_by } from "./decisions_by.ts";
 export { tool as detach } from "./detach.ts";
 export { tool as drills } from "./drills.ts";
+export { tool as economics } from "./economics.ts";
 export { tool as edit } from "./edit.ts";
 export { tool as egress_grants } from "./egress_grants.ts";
 export { tool as email_verify } from "./email_verify.ts";

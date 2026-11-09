@@ -13,7 +13,7 @@ import type { Router } from "../router.ts";
 import { accountAdmin } from "./admin.ts";
 
 /** The wire shape: milliseconds and shares as numbers, `null` for never. */
-function wire(e: EconomicsView) {
+export function wire(e: EconomicsView) {
   return {
     position: e.position,
     marginPct: e.marginPct,
