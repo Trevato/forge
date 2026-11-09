@@ -17,7 +17,7 @@ import {
 import type { Ctx } from "../../http/context.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { badge, btn, card, empty, listCard, row, time } from "../ui.ts";
+import { badge, btn, empty, listCard, row, time } from "../ui.ts";
 import { accountOnly, hostLabel, notFoundNote, shell } from "./origins.ts";
 
 const selectAllJs = /* js */ `
@@ -127,23 +127,18 @@ async function render(
       Restoring a repository makes it writable again. Apps the platform spun
       down when it was archived may need starting there.
     </p>
-    ${when(!canWrite, () =>
-      card(
-        html`<p role="alert">
-            This token cannot restore anything: it is missing
-            <strong>${scopeWords(missingWrite)}</strong>
-            (<code>${missingWrite.join(", ")}</code>). Replace it on the origins
-            page, and this page will offer Restore.
-          </p>
-          <div class="bar mt">
-            ${btn("Replace the token", {
-              href: "/settings/origins",
-              size: "sm",
-              variant: "primary",
-            })}
-          </div>`,
-        { tone: "attn", extra: "mb" },
-      ),
+    ${when(
+      !canWrite,
+      () => html`<p class="small mb">
+        This token cannot restore anything: it is missing
+        <strong>${scopeWords(missingWrite)}</strong>
+        (<code>${missingWrite.join(", ")}</code>).
+        ${btn("Replace the token", {
+          href: "/settings/origins",
+          size: "sm",
+          variant: "ghost",
+        })}
+      </p>`,
     )}
     ${when(
       options.notice !== undefined,

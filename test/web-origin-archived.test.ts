@@ -225,6 +225,16 @@ describe("restoring archived repositories", () => {
     const { text } = await get(adaCookie);
     expect(text).toContain("Repository: Read and write");
     expect(text).toContain("write:repository");
+    expect(text).toContain("This token cannot restore anything");
+    expect(text).toContain("Replace the token");
+    expect(text).not.toContain('role="alert"');
+    // Everything in <main> above the list's form: no card, so no alert box.
+    const above = text.slice(
+      text.indexOf("<main"),
+      text.indexOf('<form method="post" action="' + path),
+    );
+    expect(above).toContain("This token cannot restore anything");
+    expect(above).not.toContain('class="card');
     expect(text).not.toContain(`name="one"`);
     expect(patches()).toBe(0);
     expect(fake.state.repos[0]!.archived).toBe(true);
