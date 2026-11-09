@@ -684,6 +684,8 @@ describe("the next check honours a concurrency the admin lowered, and gets the s
     }
     expect(done.map((r) => r.state)).toEqual(["ok", "ok", "ok"]);
     expect(most).toBe(1);
+    // The scheduler resized the gate itself (not only the admission reads): booted at three, it now holds one.
+    expect(checks.lane.limit).toBe(1);
     for (const run of done)
       expect(readRunLog(dataDir, run.id).lines).toContain("shards=2");
   }, 90_000);
