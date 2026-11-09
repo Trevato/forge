@@ -986,5 +986,10 @@ export function ownAppLines(own: OwnApp | undefined): string[] {
         ? "; no pull has a preview yet."
         : `, and the previews of the open pulls: ${previews.join(", ")}.`) +
       " Use them for checks that need the running app (end-to-end, screenshots, the public launch check).",
+    ...(own.access === "private"
+      ? [
+          '- This app is private: signed out, its door answers 404 by design, so a 404 from a plain `curl` is the door, not a fault in the app. Probe it as its owner does, with `-H "authorization: Bearer $FORGE_TOKEN"`, and judge what that answers.',
+        ]
+      : []),
   ];
 }

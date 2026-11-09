@@ -100,6 +100,7 @@ describe("a crew run's own app hosts", () => {
 
   test("lists production and each open pull's preview of the run's own repository", () => {
     expect(ownApp(app, arm)).toEqual({
+      access: "public",
       production: `https://arm${DOMAIN}`,
       previews: [{ number: pullNumber, url: `https://arm--${pullNumber}${DOMAIN}` }],
     });
@@ -142,8 +143,13 @@ describe("a crew run's own app hosts", () => {
     expect(line).not.toContain("armory");
     expect(ownAppLines(undefined)).toEqual([]);
     expect(
-      ownAppLines({ production: "https://x.example", previews: [] })[0],
+      ownAppLines({ access: "public", production: "https://x.example", previews: [] })[0],
     ).toContain("no pull has a preview yet");
+    expect(ownAppLines({ access: "public", production: "https://x.example", previews: [] })).toHaveLength(1);
+    const [, door] = ownAppLines({ access: "private", production: "https://x.example", previews: [] });
+    expect(door).toContain("This app is private");
+    expect(door).toContain("404 by design");
+    expect(door).toContain("Bearer $FORGE_TOKEN");
   });
 
   describe("a writer's shell (#9934)", () => {
