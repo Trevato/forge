@@ -10,7 +10,9 @@ import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { PULL_BODY_MAX } from "../src/apps/pull.ts";
 import {
+  isPaused,
   isPullDue,
+  pullAppNow,
   postPull,
   pullApp,
   pullIdentity,
@@ -228,4 +230,43 @@ describe("a scheduled pull of the adapter template (#10082)", () => {
 
 test("the timer does not start under the test harness", () => {
   expect(startPullSchedule({} as never)).toBeUndefined();
+});
+
+const failedAgo = (n: number): void => {
+  for (let i = 0; i < n; i++)
+    db.run(
+      `INSERT INTO pull_run (id, app_id, state, reason, created_at) VALUES (?1, 'a1', 'failed', 'boom', ?2)`,
+      [`0000000000000000000000000${i}`, new Date(Date.now() - (n - i + 1000) * EVERY * 1000).toISOString()],
+    );
+};
+
+describe("paused after five failures (#10160)", () => {
+  test("isPaused: five failed newest-first pause; four, or a good one among the five, do not", () => {
+    const f = { state: "failed" };
+    const ok = { state: "ok" };
+    expect(isPaused([f, f, f, f, f, ok])).toBe(true);
+    expect(isPaused([f, f, f, f])).toBe(false);
+    expect(isPaused([f, f, ok, f, f])).toBe(false);
+    expect(isPaused([])).toBe(false);
+  });
+
+  test("the schedule skips a paused app, though it is due; four failures still pull", async () => {
+    failedAgo(4);
+    expect(await pullApp(db, "a1", reach())).toBe(true);
+    db.run("DELETE FROM pull_run");
+    failedAgo(5);
+    posts = 0;
+    expect(await pullApp(db, "a1", reach())).toBe(false);
+    expect(posts).toBe(0);
+  });
+
+  test("a good pull by hand resumes the schedule; a failed one leaves it paused", async () => {
+    failedAgo(5);
+    reply = async () => ({ status: 500, body: "no" });
+    expect((await pullAppNow(db, "a1", reach())).ok).toBe(true);
+    expect(await pullApp(db, "a1", reach(), () => Date.now() + EVERY * 2000)).toBe(false);
+    reply = async () => ({ status: 200, body: good });
+    expect((await pullAppNow(db, "a1", reach())).ok).toBe(true);
+    expect(await pullApp(db, "a1", reach(), () => Date.now() + EVERY * 2000)).toBe(true);
+  });
 });

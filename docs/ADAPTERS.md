@@ -160,3 +160,11 @@ branch has an `adapter` block, and whose last pull, good or failed, is at least
 pulled on the first minute it is running and due. The request goes over
 loopback, waits at most 10 seconds and reads at most 64 KB. Two pulls of the
 same app never overlap.
+
+An adapter whose last five recorded runs all failed is paused: the schedule
+skips it (`isPaused` in `src/apps/pull_schedule.ts`) instead of failing every
+`schedule.every` forever. Its app page and terminal screen say so in one line,
+"Paused after 5 failed pulls" with the last reason. A writer resumes it with
+`POST …/app/pull` (or `app_deploy` `pull`); the pull is made whatever the
+schedule says, and when it is good the streak is broken and the schedule runs
+again. A failed pull leaves it paused.

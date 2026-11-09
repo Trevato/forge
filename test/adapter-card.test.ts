@@ -67,3 +67,11 @@ test("with no runs the same heading carries one muted line", () => {
     expect(out).not.toContain("<li");
   }
 });
+
+test("a paused schedule is one line with the last reason (#10160)", () => {
+  const rows = Object.fromEntries(
+    adapterRows({ spec, last: run({}), cursor: undefined, pausedFor: "status 500 is not 2xx" }, now),
+  );
+  expect(rows["Schedule"]).toBe("Paused after 5 failed pulls · status 500 is not 2xx");
+  expect(Object.fromEntries(adapterRows({ spec, last: run({}), cursor: undefined }, now))["Schedule"]).toBeUndefined();
+});

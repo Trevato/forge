@@ -14,7 +14,7 @@ import type { AppRecord } from "../core/apps.ts";
 import { lastPullCursor, listPullRuns, type PullRun } from "../core/runs.ts";
 import { pullRunLines, type PullRunLine } from "./pull.ts";
 import type { AdapterSpec } from "./adapter.ts";
-import { declaredAdapter } from "./pull_schedule.ts";
+import { PAUSE_AFTER, declaredAdapter, isPaused } from "./pull_schedule.ts";
 
 /** The facts: pure data, so a test renders them without a database. */
 export interface AdapterFacts {
@@ -23,6 +23,8 @@ export interface AdapterFacts {
   readonly cursor: string | undefined;
   /** The last `PULL_RUNS_SHOWN` runs, newest first; absent reads as none. */
   readonly runs?: readonly PullRunLine[];
+  /** The last failure's reason when the schedule is paused (#10160); absent otherwise. */
+  readonly pausedFor?: string;
 }
 
 /** How many runs the page and the terminal list. */
@@ -56,7 +58,14 @@ export function everyWords(seconds: number): string {
 export async function adapterFactsOf(app: App, record: AppRecord): Promise<AdapterFacts | undefined> {
   const spec = await declaredAdapter(app, record);
   if (spec === undefined) return undefined;
-  return { spec, last: listPullRuns(app.db, record.id, 1)[0], cursor: lastPullCursor(app.db, record.id), runs: shownRuns(app.db, record.id) };
+  const recent = listPullRuns(app.db, record.id, PAUSE_AFTER);
+  return {
+    spec,
+    last: recent[0],
+    cursor: lastPullCursor(app.db, record.id),
+    runs: shownRuns(app.db, record.id),
+    ...(isPaused(recent) ? { pausedFor: recent[0]!.reason } : {}),
+  };
 }
 
 /** When the next pull is due, in epoch ms; undefined before the first pull or when the stamp is unreadable. */
@@ -111,12 +120,17 @@ function nextPullParts(facts: AdapterFacts, now: number): FactPart[] {
 /** The facts as labelled rows of wording: the one source both doors render. */
 export function adapterFactRows(facts: AdapterFacts, now: number = Date.now()): FactRow[] {
   const { spec, cursor } = facts;
+  const paused: FactRow[] =
+    facts.pausedFor === undefined
+      ? []
+      : [{ label: "Schedule", parts: [text(`Paused after ${PAUSE_AFTER} failed pulls · ${facts.pausedFor}`)] }];
   return [
     { label: "Source", parts: [text(spec.source?.name ?? "Not named")] },
     { label: "Every", parts: [text(everyWords(spec.schedule.every))] },
     { label: "Last pull", parts: lastPullParts(facts.last) },
     { label: "Next pull", parts: nextPullParts(facts, now) },
     { label: "Cursor", parts: [cursor === undefined || cursor === "" ? muted("None yet") : { kind: "code", text: cursor }] },
+    ...paused,
   ];
 }
 

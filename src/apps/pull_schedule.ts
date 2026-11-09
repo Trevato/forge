@@ -6,7 +6,9 @@
  * seconds old. The answer is judged by `parsePullAnswer` and kept by
  * `recordPull` (`apps/pull.ts`). The request goes over the same loopback reach
  * the scheduled tools use (`feature_tools.ts`): 64 KB, 10 s. An app that is
- * not running is skipped, never woken; two pulls of one app never overlap.
+ * not running is skipped, never woken; one whose last five runs all failed is
+ * paused until a good pull (by hand, `pullAppNow`) ends the streak; two pulls
+ * of one app never overlap.
  * The call is signed as an `admin` the way the proxy signs a person
  * (`identityHeaders`, `apps/proxy.ts`), under the app's identity key, so an
  * adapter that admits only admins to `/pull` (examples/adapter-template)
@@ -18,7 +20,7 @@ import type { App } from "../app.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
 import type { EventBus } from "../core/events.ts";
 import { getRepoById } from "../core/repos.ts";
-import { lastPullAt, type PullRun } from "../core/runs.ts";
+import { lastPullAt, listPullRuns, type PullRun } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { parseAdapter, type AdapterSpec } from "./adapter.ts";
@@ -33,6 +35,14 @@ export const PULL_WAIT_MS = 10_000;
 /** Whether a pull is due: never pulled, or at least `everySeconds` since the last one (ms clock). */
 export function isPullDue(lastAt: number | undefined, everySeconds: number, now: number): boolean {
   return lastAt === undefined || now - lastAt >= everySeconds * 1000;
+}
+
+/** After this many failed scheduled pulls in a row the schedule stops (#10160). */
+export const PAUSE_AFTER = 5;
+
+/** Whether the schedule is paused: the last `PAUSE_AFTER` runs (newest first) all failed. A good run, however old in the list, ends it. */
+export function isPaused(runs: readonly { readonly state: string }[]): boolean {
+  return runs.length >= PAUSE_AFTER && runs.slice(0, PAUSE_AFTER).every((r) => r.state === "failed");
 }
 
 /** What the forge heard from `POST /pull`: a status and the body as text, or why there was none. */
@@ -104,8 +114,10 @@ export async function pullApp(
   now: () => number = Date.now,
   bus?: Pick<EventBus, "append">,
 ): Promise<boolean> {
-  const notDue = (adapter: AdapterSpec) =>
-    isPullDue(lastPullAt(db, appId), adapter.schedule.every, now()) ? undefined : ("not_due" as const);
+  const notDue = (adapter: AdapterSpec) => {
+    if (isPaused(listPullRuns(db, appId, PAUSE_AFTER))) return "paused" as const;
+    return isPullDue(lastPullAt(db, appId), adapter.schedule.every, now()) ? undefined : ("not_due" as const);
+  };
   return (await pullOnce(db, appId, reach, now, notDue, bus)).ok;
 }
 

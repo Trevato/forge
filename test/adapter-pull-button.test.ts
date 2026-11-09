@@ -11,6 +11,8 @@ import { repoDir } from "../src/git/repos.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { listPullRuns } from "../src/core/runs.ts";
+import { adapterFactsOf } from "../src/apps/adapter_facts.ts";
+import { getAppById } from "../src/core/apps.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
@@ -107,4 +109,27 @@ test("a refusal shows its sentence in one muted line, and an unknown code shows 
   expect(await section("?pull=%3Cb%3E")).not.toContain("muted small");
   expect(await section("?pull=constructor")).not.toContain("muted small");
   awake = true;
+});
+
+test("five failed runs pause the schedule; the page says so with the reason escaped; a good run clears it (#10160)", async () => {
+  const insert = (n: number, state: "ok" | "failed", reason: string) =>
+    app.db.run(`INSERT INTO pull_run (id, app_id, state, reason, cursor) VALUES (?1, ?2, ?3, ?4, ?5)`, [
+      `ZZZZZZZZZZZZZZZZZZZZZZZZZ${n}`,
+      appId,
+      state,
+      reason,
+      state === "ok" ? "r9" : "",
+    ]);
+  for (let i = 1; i <= 4; i++) insert(i, "failed", "older");
+  const record = getAppById(app.db, appId)!;
+  expect((await adapterFactsOf(app, record))?.pausedFor).toBeUndefined();
+  insert(5, "failed", "<b>x</b>");
+  expect((await adapterFactsOf(app, record))?.pausedFor).toBe("<b>x</b>");
+  const html = await page(aliceRw);
+  expect(html).toContain("Paused after 5 failed pulls · &lt;b&gt;x&lt;/b&gt;");
+  expect(html).not.toContain("<b>x</b>");
+  insert(6, "ok", "");
+  expect((await adapterFactsOf(app, record))?.pausedFor).toBeUndefined();
+  expect(await page(aliceRw)).not.toContain("Paused after");
+  app.db.run(`DELETE FROM pull_run WHERE id LIKE 'ZZZZZZZZZZZZZZZZZZZZZZZZZ%'`);
 });
