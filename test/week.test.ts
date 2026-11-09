@@ -33,7 +33,7 @@ describe("weekDecision", () => {
   });
 
   test("settings are plain values", () => {
-    expect(WEEK).toEqual({ tolerance: 0.25, reserve: 0.1, unknownSlots: 2, burnHours: 1 });
+    expect(WEEK).toEqual({ tolerance: 0.25, reserve: 0.1, unknownSlots: 2, burnHours: 6 });
   });
 
   test("on pace: a burn near allowed keeps the ceiling", () => {

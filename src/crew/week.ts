@@ -33,8 +33,8 @@ export const WEEK = {
   reserve: 0.1,
   /** Slots the crew holds at while the week's capacity is unknown. */
   unknownSlots: 2,
-  /** How many hours back the burn is read over. */
-  burnHours: 1,
+  /** How many hours back the burn is read over: long enough that a meter moving in whole points resolves a pace of half a point an hour. */
+  burnHours: 6,
 } as const;
 
 export type Status = "on pace" | "ahead" | "behind" | "unknown";
@@ -132,7 +132,7 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   const release = status === "behind" && input.idleSlots > 0 && input.startable === 0 && input.gated > 0;
   const gone = Math.round((1 - left / WINDOW_MS.week) * 100);
   const timeGone = `${gone}% of its time gone, reset ${utc(meter.resetsAt)}`;
-  const burnWords = burn === null ? "unread (too few readings)" : `${pct(burn)} an hour`;
+  const burnWords = burn === null ? "unread (too few readings)" : `${pct(burn)} an hour over the last ${WEEK.burnHours} h`;
   // `full`: the free percent and run-out time are said here; otherwise the crew line above says them.
   const say = (full: boolean): string => {
     const weekLeft = full ? `${Math.round(meter.freePct)}% of the week left with ${timeGone}` : `the week has ${timeGone}`;
