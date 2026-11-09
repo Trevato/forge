@@ -115,6 +115,28 @@ describe("proving a release", () => {
     expect(old.hits.every((h) => h === "/healthz")).toBe(true);
   });
 
+  test("only a first give-up is retried after one tick; a repeat backs off (#10168)", () => {
+    expect(retryAfter(1, true, true)).toBe(60_000);
+    expect(retryAfter(2, true, true)).toBe(RETRY_MS * 2);
+    expect(retryAfter(9, true, true)).toBe(60 * 60_000);
+    expect(retryAfter(4, true)).toBe(4 * 60_000);
+  });
+
+  test("a silent public URL keeps gaveUp, and due and the card both wait one tick (#10168)", async () => {
+    let t = 0;
+    const p = await run("1.0.0", site("0.9.0").fake, { now: () => t, sleep: async (ms: number) => void (t += ms) });
+    expect(p?.gaveUp).toBe(true);
+    expect(lastProof(dir)?.gaveUp).toBe(true);
+    const at = Date.parse(p!.at);
+    expect(proofDue(p, "1.0.0", at + 59_000)).toBe(false);
+    expect(proofDue(p, "1.0.0", at + 60_000)).toBe(true);
+    const when = new Date(at + 60_000).toISOString().slice(11, 16);
+    expect(proofNeed(dir)?.sentence).toEndWith(`It is proven again at ${when} UTC.`);
+    // a smoke failure is not a give-up
+    const smoke = await run("1.0.1", site("1.0.1", { "/": () => new Response("x", { status: 500 }) }).fake);
+    expect(smoke?.gaveUp).toBeUndefined();
+  });
+
   test("it keeps no failure when a newer release answers instead (#10138)", async () => {
     let t = 0;
     const p = await run("1.0.0", site("1.0.1").fake, { now: () => t, sleep: async (ms: number) => void (t += ms) });

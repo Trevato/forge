@@ -11,8 +11,10 @@
  * failure up to an hour), so one slow answer in the watch no longer stands
  * for the version's whole life (#7622) and a version that stays broken
  * costs its public URL a few loads an hour, not one every 5 minutes. It
- * gives up after ten minutes. A give-up is retried as a slow answer is,
- * since the swap may only be late (#9942). When a newer release answers
+ * gives up after ten minutes. A first give-up is retried after one tick,
+ * since the swap may only be late (#9942, #10168); a repeated one backs off
+ * by the plain doubling, so a version that never answers is not polled
+ * without pause. When a newer release answers
  * instead, this process is being replaced: it keeps nothing and never polls
  * again (#10138).
  */
@@ -46,6 +48,8 @@ export interface Proof {
   readonly failures?: number;
   /** The first failing check was only a slow, empty or hung answer (`Failure.slow`, `.empty`, `.hung`); retried sooner (#9358, #9482). */
   readonly slow?: boolean;
+  /** The failure was the give-up: ten minutes already spent polling; only its first retry skips the backoff (#10168). */
+  readonly gaveUp?: boolean;
 }
 
 /**
@@ -53,9 +57,13 @@ export interface Proof {
  * doubled per failure, capped at `MAX_RETRY_MS`. A proof that failed only
  * because an answer was slow (`slow`) is a moment's load, not a broken
  * release, so it waits `min(that, TICK_MS * failures)`: 1, 2, 3, 4 minutes,
- * then the doubling takes over (#9238).
+ * then the doubling takes over (#9238). A first give-up (`gaveUp`)
+ * already polled ten minutes, so it waits one tick; a repeated give-up is
+ * not a slow answer and backs off by the plain doubling (#10168).
  */
-export function retryAfter(failures: number, slow = false): number {
+export function retryAfter(failures: number, slow = false, gaveUp = false): number {
+  // The first give-up already polled ten minutes, so it is asked again after one tick; a repeat backs off by the plain doubling.
+  if (gaveUp) return failures <= 1 ? TICK_MS : Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** (Math.min(failures, 20) - 1));
   const backoff = Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** Math.max(0, Math.min(failures, 20) - 1));
   return slow ? Math.min(backoff, TICK_MS * Math.max(1, failures)) : backoff;
 }
@@ -99,7 +107,7 @@ function keep(dataDir: string, proof: Proof): Proof {
 export function proofNeed(dataDir: string): { sentence: string; since: string } | undefined {
   const p = lastProof(dataDir);
   if (p === undefined || p.ok) return undefined;
-  const next = Date.parse(p.at) + retryAfter(p.failures ?? 1, p.slow === true);
+  const next = Date.parse(p.at) + retryAfter(p.failures ?? 1, p.slow === true, p.gaveUp === true);
   // When it is tried again, so a person reading the card knows it is not stuck.
   const again = Number.isFinite(next) ? ` It is proven again at ${new Date(next).toISOString().slice(11, 16)} UTC.` : "";
   return { sentence: `Release ${p.version} is unproven: ${p.failure ?? "a smoke check failed"}.${again}`, since: p.since ?? p.at };
@@ -133,7 +141,7 @@ export function proofDue(last: Proof | undefined, version: string, now: number):
   if (last?.version !== version) return true;
   if (last.ok) return false;
   const at = Date.parse(last.at);
-  return !Number.isFinite(at) || now - at >= retryAfter(last.failures ?? 1, last.slow === true);
+  return !Number.isFinite(at) || now - at >= retryAfter(last.failures ?? 1, last.slow === true, last.gaveUp === true);
 }
 
 /**
@@ -147,7 +155,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
   const sleep = o.sleep ?? Bun.sleep;
   const doFetch = o.fetch ?? fetch;
   const failedBefore = last?.version === o.version && !last.ok ? last : undefined;
-  const finish = (failure?: string, slow = false): Proof => {
+  const finish = (failure?: string, slow = false, gaveUp = false): Proof => {
     const at = new Date(now()).toISOString();
     return keep(o.dataDir, {
       version: o.version,
@@ -155,7 +163,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       ok: failure === undefined,
       ...(failure === undefined
         ? {}
-        : { failure, since: failedBefore ? (failedBefore.since ?? failedBefore.at) : at, failures: (failedBefore?.failures ?? (failedBefore ? 1 : 0)) + 1, ...(slow ? { slow } : {}) }),
+        : { failure, since: failedBefore ? (failedBefore.since ?? failedBefore.at) : at, failures: (failedBefore?.failures ?? (failedBefore ? 1 : 0)) + 1, ...(slow ? { slow } : {}), ...(gaveUp ? { gaveUp } : {}) }),
     });
   };
   try {
@@ -177,7 +185,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
           superseded.add(o.version);
           return undefined;
         }
-        return finish(`the public URL never answered as ${o.version}`, true);
+        return finish(`the public URL never answered as ${o.version}`, true, true);
       }
       await sleep(POLL_MS);
     }
