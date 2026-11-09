@@ -879,10 +879,10 @@ export function nameMark(mark: Mark | undefined): Html | null {
 /** An author: avatar plus a link to their profile, and their mark. Never bare text. */
 export function userLink(
   username: string,
-  o: { avatar?: boolean; display?: string; mark?: Mark | undefined } = {},
+  o: { avatar?: boolean; display?: string; mark?: Mark | undefined; nav?: boolean } = {},
 ): Html {
   return html`<span class="byline"
-    >${o.avatar === false ? null : avatar(username)}<a href="/${username}"
+    >${o.avatar === false ? null : avatar(username)}<a href="/${username}"${o.nav ? raw(" data-nav") : null}
       >${o.display || username}</a
     >${nameMark(o.mark)}</span
   >`;
