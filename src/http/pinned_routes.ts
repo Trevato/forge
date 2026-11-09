@@ -5,7 +5,7 @@
  * `deployPinned` the API, MCP and terminal call, admin only and same-origin.
  */
 
-import { deployPinned, pinnedForges } from "../actions/pinned.ts";
+import { checkPinned, deployPinned, pinnedForges, rollbackPinned, updatePinned } from "../actions/pinned.ts";
 import { listCloudAccounts } from "../core/cloud_account.ts";
 import { lastCheckOf } from "../core/pinned.ts";
 import { getUsersByIds } from "../core/users.ts";
@@ -71,8 +71,34 @@ function listPage(ctx: Ctx): Response {
   return page({ ctx, title: "Pinned forges", body: pinnedListPage(forges.value, { names, checks }) });
 }
 
+/** Update, Roll back and Check: the same actions the terminal's `u`, `r` and `c` call; admin only, same-origin, each refusal shown as its sentence. */
+async function pinnedAct(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const name = ctx.params.name ?? "";
+  const act = ctx.params.act ?? "";
+  const user = ctx.auth.user;
+  let done;
+  if (act === "update") done = await updatePinned(ctx.app, user, name, { version: field(form, "version").trim().slice(0, 40) });
+  else if (act === "rollback") done = await rollbackPinned(ctx.app, user, name);
+  else if (act === "check") done = await checkPinned(ctx.app, user, name);
+  else return notFoundPage(ctx);
+  if (!done.ok) return flashTo(ctx, "/pinned", { tone: "danger", message: done.error });
+  const at = done.value.version.slice(0, 12);
+  const message =
+    act === "check"
+      ? `${name} ${"healthy" in done.value && done.value.healthy ? "answers" : "did not answer"}; it is ${done.value.state}.`
+      : act === "update"
+        ? `Updated ${name} to ${at}.`
+        : `Rolled ${name} back to ${at}.`;
+  return flashTo(ctx, "/pinned", { tone: "success", message });
+}
+
 export function pinnedRoutes(router: Router<Handler>): void {
   router.add("GET", "/pinned", listPage);
+  router.add("POST", "/pinned/:name/:act", pinnedAct);
   router.add("GET", "/deploy-to", deployToPage);
   router.add("POST", "/deploy-to", deployToSubmit);
 }

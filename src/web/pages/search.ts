@@ -867,6 +867,33 @@ const DESTRUCTIVE: {
     },
   },
   {
+    pattern: /^\/pinned\/([a-z][a-z0-9-]*)\/(update|rollback|check)$/,
+    describe: (m) => {
+      const name = m[1]!;
+      if (m[2] === "update")
+        return {
+          verb: "Update",
+          title: `Update ${name}?`,
+          detail: "The forge is replaced with the version you named. It changes only when you press this, and the change is recorded with your name.",
+          phrase: "",
+          carries: "version",
+        };
+      if (m[2] === "rollback")
+        return {
+          verb: "Roll back",
+          title: `Roll ${name} back?`,
+          detail: "The forge is replaced with the version the latest change replaced. The change is recorded with your name.",
+          phrase: "",
+        };
+      return {
+        verb: "Check",
+        title: `Check ${name}?`,
+        detail: "The forge reads its droplet's address back and asks the forge there for its front page. Nothing is changed but what it says about itself.",
+        phrase: "",
+      };
+    },
+  },
+  {
     pattern: /^\/admin\/invites\/([^/]+)\/revoke$/,
     describe: (m) => ({
       verb: "Revoke",

@@ -6,7 +6,7 @@
 
 import type { PinnedView } from "../../actions/pinned.ts";
 import { html, type Html } from "../html.ts";
-import { badge, time, type Tone } from "../ui.ts";
+import { badge, btn, time, type Tone } from "../ui.ts";
 
 const TONE: Record<string, Tone> = { running: "success", failed: "danger" };
 
@@ -18,6 +18,26 @@ export interface PinnedFacts {
 
 const fact = (label: string, value: Html): Html => html`<div class="status-row"><dt>${label}</dt><dd>${value}</dd></div>`;
 const none = (text: string): Html => html`<span class="muted">${text}</span>`;
+
+/** Update asks for the version, Roll back and Check for nothing; each goes through the confirm page, which posts to `/pinned/<name>/<act>`. */
+function actions(p: PinnedView): Html {
+  const to = (act: string): string => `/pinned/${p.name}/${act}`;
+  return html`<div class="form-actions">
+    <form method="get" action="/-/confirm">
+      <input type="hidden" name="to" value="${to("update")}" />
+      <input class="mono" name="version" value="${p.version}" maxlength="40" required spellcheck="false" autocomplete="off" aria-label="Version for ${p.name}" />
+      ${btn("Update", { variant: "secondary" })}
+    </form>
+    <form method="get" action="/-/confirm">
+      <input type="hidden" name="to" value="${to("rollback")}" />
+      ${btn("Roll back", { variant: "secondary", label: `Roll back ${p.name}` })}
+    </form>
+    <form method="get" action="/-/confirm">
+      <input type="hidden" name="to" value="${to("check")}" />
+      ${btn("Check", { variant: "ghost", label: `Check ${p.name}` })}
+    </form>
+  </div>`;
+}
 
 function forge(p: PinnedView, f: PinnedFacts): Html {
   const last = p.changes[0];
@@ -33,6 +53,7 @@ function forge(p: PinnedView, f: PinnedFacts): Html {
       ${fact("Last change", last ? html`${last.kind} to <span class="mono">${last.toVersion.slice(0, 12)}</span>` : none("none"))}
       ${last ? fact("Changed by", html`${f.names.get(last.by) ?? last.by} ${time(last.at)}`) : null}
     </dl>
+    ${actions(p)}
   </section>`;
 }
 
