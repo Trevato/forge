@@ -1,14 +1,16 @@
 /**
- * The profit slider in the terminal, a forge admin's: the position and the
- * margin on crew spend, with the policy the position means as the head line,
+ * The profit slider in the terminal, a forge admin's: the position, the
+ * margin on crew spend and the label that selects owned nodes, with the
+ * policy the position means as the head line and where bursts go under it,
  * as /settings/economics and /api/v1/forge/economics have them. `e` asks for
- * a whole number, shows the plan, and changes it only after a confirm,
+ * the value, shows the plan, and changes it only after a confirm,
  * through `changeEconomics`. The gate is the action's: an admin who is not
  * an agent; anyone else sees nothing and changes nothing.
  */
 
 import { ECONOMICS_WORDS, changeEconomics, readEconomics, type EconomicsView } from "../../actions/economics.ts";
 import { MARGIN_MAX, POSITION_MAX, POSITION_MIN, parseMarginPct, parsePosition } from "../../core/slider.ts";
+import { OWNED_NODE_LABEL_DEFAULT, labelInput } from "../../core/placement_policy.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -19,9 +21,12 @@ import { ListState, confirmScreen, drawList, promptScreen, type ListRow } from "
 import type { PaletteEntry } from "./entries.ts";
 
 interface Lever {
-  readonly key: "position" | "marginPct";
-  readonly parse: (raw: string) => number | undefined;
+  readonly key: "position" | "marginPct" | "ownedNodeLabel";
+  readonly parse: (raw: string) => number | string | undefined;
+  readonly now: (e: EconomicsView) => number | string;
   readonly words: string;
+  /** What the prompt asks for. */
+  readonly asks: string;
   readonly unit: string;
   readonly range: string;
 }
@@ -30,16 +35,29 @@ const LEVERS: readonly Lever[] = [
   {
     key: "position",
     parse: parsePosition,
+    now: (e) => e.position,
     words: ECONOMICS_WORDS.bad_position,
+    asks: `a whole number, ${POSITION_MIN}–${POSITION_MAX}`,
     unit: "0 cheapest, 100 most responsive",
     range: `${POSITION_MIN}–${POSITION_MAX}`,
   },
   {
     key: "marginPct",
     parse: parseMarginPct,
+    now: (e) => e.marginPct,
     words: ECONOMICS_WORDS.bad_margin,
+    asks: `a whole number, 0–${MARGIN_MAX}`,
     unit: "% on crew spend",
     range: `0–${MARGIN_MAX}`,
+  },
+  {
+    key: "ownedNodeLabel",
+    parse: labelInput,
+    now: (e) => e.placement.ownedNodeLabel,
+    words: ECONOMICS_WORDS.bad_label,
+    asks: "a node label, key=value",
+    unit: "selects owned metal",
+    range: `blank: ${OWNED_NODE_LABEL_DEFAULT}`,
   },
 ];
 
@@ -48,7 +66,7 @@ export function economicsScreen(f: Session, ctx: Ctx): Screen {
   let note = "";
   const read = () => readEconomics(f.app, f.user);
 
-  const apply = (lever: Lever, to: number): void => {
+  const apply = (lever: Lever, to: number | string): void => {
     const made = changeEconomics(f.app, f.user, { [lever.key]: to });
     note = made.ok ? `${lever.key} is ${to}: ${made.value.words}.` : "You cannot change the economics.";
     ctx.invalidate();
@@ -58,8 +76,8 @@ export function economicsScreen(f: Session, ctx: Ctx): Screen {
     ctx.push(
       promptScreen(ctx, screen, {
         title: lever.key,
-        label: `a whole number, ${lever.range}`,
-        value: String(now[lever.key]),
+        label: lever.asks,
+        value: String(lever.now(now)),
         hint: lever.unit,
         onSubmit: (raw) => {
           const to = lever.parse(raw);
@@ -68,7 +86,7 @@ export function economicsScreen(f: Session, ctx: Ctx): Screen {
             ctx.push(
               confirmScreen(ctx, screen, {
                 title: "Change the economics",
-                body: [`${lever.key}: ${now[lever.key]} → ${to}`],
+                body: [`${lever.key}: ${lever.now(now)} → ${to}`],
                 actions: [{ label: "Keep", variant: "ghost" }, { label: "Change" }],
                 onChoose: (i) => {
                   if (i === 1) apply(lever, to);
@@ -82,17 +100,21 @@ export function economicsScreen(f: Session, ctx: Ctx): Screen {
   };
 
   const rows = (e: EconomicsView): ListRow[] =>
-    LEVERS.map((l) => ({ title: l.key, secondary: `${e[l.key]} · ${l.unit}`, meta: l.range }));
+    LEVERS.map((l) => ({ title: l.key, secondary: `${l.now(e)} · ${l.unit}`, meta: l.range }));
 
   const screen: Screen = {
     title: "Economics",
     keys: [binding(["j", "k"], "move cursor"), binding(["e"], "change")],
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, list] = split(area, "v", [len(1), fill(1)]);
+      const [head, where, list] = split(area, "v", [len(1), len(1), fill(1)]);
       const r = read();
       const text = note !== "" ? note : r.ok ? `At ${r.value.position}: ${r.value.words}.` : "The economics are set by a forge admin.";
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
+      if (r.ok) {
+        const placed = `Placement: ${r.value.placement.words}.`;
+        s.text(where!.x, where!.y, truncate(placed, where!.w), style(c.mutedFg, c.bg), where!.x + where!.w);
+      }
       drawList(s, list!, c, state, r.ok ? rows(r.value) : []);
     },
     key(e) {

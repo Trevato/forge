@@ -17,6 +17,7 @@ import {
   POSITION_MAX,
   POSITION_MIN,
 } from "../core/slider.ts";
+import { OWNED_NODE_LABEL_DEFAULT, parseNodeLabel } from "../core/placement_policy.ts";
 import { writeSetting } from "./limits.ts";
 
 export interface Economics {
@@ -60,29 +61,60 @@ export function setEconomics(db: Database, next: Economics, actorId: string): vo
   }
 }
 
+const LABEL_KEY = "placement.owned_node_label";
+
+/**
+ * The label that selects owned nodes (#509): placement passes it to the body
+ * that runs on owned metal (`spawn/placement.ts`). A setting, not a
+ * constant; a stored label that does not parse reads as the default.
+ */
+export function getOwnedNodeLabel(db: Database): string {
+  const row = db
+    .query<{ value: string }, [string]>("SELECT value FROM forge_setting WHERE key = ?1")
+    .get(LABEL_KEY);
+  return (row === null ? undefined : parseNodeLabel(row.value)) ?? OWNED_NODE_LABEL_DEFAULT;
+}
+
+/**
+ * Write the label if it differs, its change kept. The caller has parsed it
+ * (`labelInput`). The default is stored as no row, so a forge set back to it
+ * follows the default if that ever moves.
+ */
+export function setOwnedNodeLabel(db: Database, label: string, actorId: string): void {
+  const before = getOwnedNodeLabel(db);
+  if (label === before) return;
+  writeSetting(db, LABEL_KEY, label === OWNED_NODE_LABEL_DEFAULT ? null : label, before, label, actorId);
+}
+
 export interface EconomicsChange {
-  readonly key: EconomicsKey;
+  readonly key: EconomicsKey | "ownedNodeLabel";
   readonly from: string;
   readonly to: string;
   readonly actorName: string;
   readonly at: string;
 }
 
-/** The most recent changes to either number, newest first. */
+const KEY_OF: Record<string, EconomicsChange["key"]> = {
+  [STORE.position.key]: "position",
+  [STORE.marginPct.key]: "marginPct",
+  [LABEL_KEY]: "ownedNodeLabel",
+};
+
+/** The most recent changes to either number or the owned-node label, newest first. */
 export function economicsChanges(db: Database, limit = 20): EconomicsChange[] {
   const rows = db
     .query<
       { key: string; from_value: string; to_value: string; actor_name: string | null; at: string },
-      [string, string, number]
+      [string, string, string, number]
     >(
       `SELECT c.key, c.from_value, c.to_value, u.username AS actor_name, c.at
          FROM forge_setting_change c LEFT JOIN user u ON u.id = c.actor_id
-        WHERE c.key IN (?1, ?2)
-        ORDER BY c.at DESC, c.rowid DESC LIMIT ?3`,
+        WHERE c.key IN (?1, ?2, ?3)
+        ORDER BY c.at DESC, c.rowid DESC LIMIT ?4`,
     )
-    .all(STORE.position.key, STORE.marginPct.key, limit);
+    .all(STORE.position.key, STORE.marginPct.key, LABEL_KEY, limit);
   return rows.map((r) => ({
-    key: r.key === STORE.position.key ? "position" : "marginPct",
+    key: KEY_OF[r.key] ?? "marginPct",
     from: r.from_value,
     to: r.to_value,
     actorName: r.actor_name ?? "",

@@ -17,6 +17,8 @@
  */
 
 import { usd } from "../../core/money.ts";
+import { NO_CLOUD_BODY } from "../../core/placement_policy.ts";
+import { CLOUD_BODY_CONFIGURED } from "../../spawn/placement.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
@@ -152,6 +154,7 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   hand: "hand-over",
   // Never listed (`listDecisionsForRepos` leaves guards out); named for the type.
   guard: "not started",
+  place: "where it runs",
 };
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
@@ -401,9 +404,10 @@ export function bigRedirect(ctx: Ctx): Response {
 
 /**
  * The forge's health as notes, for a site admin only: each thing that needs
- * them, and the lane when checks are queued. Nobody else pays for the reads.
+ * them, the lane when checks are queued, and that bursts queue while no
+ * cloud body is configured. Nobody else pays for the reads.
  */
-function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean } | null {
+function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean; placement: Html | null } | null {
   if (!ctx.auth.user?.isAdmin) return null;
   const v = forgeVitals(ctx.app);
   const fh = forgeHealth();
@@ -435,7 +439,12 @@ function forgeNotes(ctx: Ctx): { notes: Note[]; ok: boolean } | null {
     ...(lane === null ? [] : [{ key: "lane", need: false, line: html`<span>Lane: ${lane}</span>` }]),
     ...(flaky === null ? [] : [{ key: "flakes", need: false, line: html`<span data-flakes>Flaky this week: ${flaky}</span>` }]),
   ];
-  return { notes, ok };
+  // Where a burst waits (#509): with no cloud body it queues for owned metal,
+  // said on the board, never silently — beside "All fine", or among the notes.
+  const placement = (CLOUD_BODY_CONFIGURED as boolean)
+    ? null
+    : html`<a data-placement href="/settings/economics">Placement: ${NO_CLOUD_BODY}</a>`;
+  return { notes, ok, placement };
 }
 
 // ---- agent pulls that wait for a person's review ----
@@ -562,9 +571,16 @@ function boardNotes(
   declined: readonly Note[],
   review: readonly Note[],
 ): Html {
-  const notes = distinct([...(forge?.notes ?? []), ...declined, ...review]);
+  const others = distinct([...(forge?.notes ?? []), ...declined, ...review]);
+  const placement = forge?.placement ?? null;
+  const fine = forge !== null && forge.ok;
+  // Beside "All fine" when nothing else is noted; one more note when something is.
+  const aside = fine && others.length === 0 ? placement : null;
+  const notes =
+    placement === null || aside !== null ? others : [...others, { key: "placement", need: false, line: placement }];
   return notesRegion(notes, {
-    fine: forge !== null && forge.ok,
+    fine,
+    ...(aside === null ? {} : { aside }),
     live: "run.queued,run.started,run.finished,issue.*,pull.*,app.*",
     ok: forge === null ? null : forge.ok,
   });

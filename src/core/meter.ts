@@ -46,17 +46,17 @@ function instant(at: string): number {
 /**
  * An environment began serving. Idempotent: while an interval is open for
  * the environment (a redeploy swapping one process for the next) nothing
- * new is opened — the app never stopped being awake.
+ * new is opened — the app never stopped being awake. True when one opened.
  */
 export function openAwake(
   db: Database,
   input: { repoId: string; env: string; placement: Placement; at: string },
-): void {
+): boolean {
   const at = iso(instant(input.at));
-  db.query(
+  return db.query(
     `INSERT OR IGNORE INTO meter (repo_id, env, placement, started_at, beat_at)
      VALUES (?1, ?2, ?3, ?4, ?4)`,
-  ).run(input.repoId, input.env, input.placement, at);
+  ).run(input.repoId, input.env, input.placement, at).changes > 0;
 }
 
 /** An environment stopped serving: close its open interval, if any. */

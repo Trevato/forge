@@ -35,3 +35,40 @@ before.
   Anyone else is told `not_found`, as the API does.
 
 An agent can never move the slider, whatever it was granted.
+
+## Placement (#509)
+
+Where an environment runs is decided by `placeFor`
+(`src/core/placement_policy.ts`), a pure function of how full owned metal
+is, the slider's `spillAtOwnedUse`, whether the environment is production
+or `always_on`, the app's `placement: metal|cloud` preference and whether a
+cloud body is configured:
+
+- owned metal first; a preview spills to cloud once owned use reaches the
+  threshold, production and `always_on` apps only when owned is full;
+- `placement: cloud` is honoured; `placement: metal` is honoured unless
+  owned is full;
+- with no cloud body configured (`CLOUD_BODY_CONFIGURED` in
+  `src/spawn/placement.ts`, false until a cloud body exists — spike #339)
+  every answer is `owned` and its reason says "no cloud body: bursts queue".
+
+The runtime asks as each meter interval opens: the answer is the interval's
+`placement` (so cost knows which price applies) and a `place` row in the
+decision ledger (`recordPlacement`, `src/core/decisions.ts`) with the
+inputs, the one-sentence reason and the body target. `place` rows are
+counted, not listed among the crew's decisions on the board; the API's
+decisions list returns them with `kind=place`.
+
+The label that selects owned nodes, `ownedNodeLabel` (default
+`plat.sh/site=vxrail`), is a setting, at every door: a field on Settings →
+Economics, the third row of the terminal's Economics screen (`e`, then a
+confirm), `PUT /api/v1/forge/economics` and the MCP `economics` tool
+(planned first, like the numbers) take `ownedNodeLabel: "key=value"`.
+Blank is the default again; anything else is refused (`bad_label`). `GET`
+and the tool answer `placement: { cloudBody, ownedNodeLabel, words }`; an
+owned decision passes the label to the body as its `nodeLabel`.
+
+Where a burst would wait is said, never silently: the site admin's strip on
+the board reads "All fine · Placement: no cloud body: bursts queue" (or
+carries that line among its notes), as do Settings → Economics and the
+terminal screen's second line.

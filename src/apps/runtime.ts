@@ -41,6 +41,9 @@ import { pullMayRun } from "../core/pull_trust.ts";
 import { guestWaits } from "../origins/guest.ts";
 import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
 import { runningLimitSentence } from "../settings/quotas.ts";
+import { placeFor } from "../core/placement_policy.ts";
+import { recordPlacement } from "../core/decisions.ts";
+import { bodyTarget, CLOUD_BODY_CONFIGURED } from "../spawn/placement.ts";
 import type { User } from "../core/users.ts";
 import {
   cancelRun,
@@ -73,7 +76,6 @@ import {
   openAwake,
   recordStorage,
   SAMPLE_SPAN_MS,
-  type Placement,
 } from "../core/meter.ts";
 import { dirBytes } from "./bytes.ts";
 import { BUSY_WORDS, busyReason, type BusyReason } from "./busy.ts";
@@ -102,7 +104,7 @@ import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
 import { egressSetting } from "../core/capacity.ts";
 import { policyAt } from "../core/slider.ts";
-import { getEconomics } from "../settings/economics.ts";
+import { getEconomics, getOwnedNodeLabel } from "../settings/economics.ts";
 import { asleepWords, sleepWindow, type WindowSource } from "./sleep_window.ts";
 import { noteProtection } from "../kernel/protection.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
@@ -162,8 +164,17 @@ export interface RuntimeOptions {
    * its own, so proving `app.example.com` needs no network in a test.
    */
   readonly dns?: DomainResolver | undefined;
-  /** Where this forge's processes run, as the meter records it. @default "owned" */
-  readonly placement?: Placement | undefined;
+  /**
+   * Whether a cloud body can take a burst (`spawn/placement.ts`). Without
+   * one every environment is placed on owned metal and a burst queues.
+   * @default CLOUD_BODY_CONFIGURED (none yet)
+   */
+  readonly cloudBody?: boolean | undefined;
+  /**
+   * How many environments owned metal holds, read at each placement.
+   * @default unbounded — no limit is known, so owned is never full
+   */
+  readonly ownedCapacity?: (() => number) | undefined;
   /** How often storage is sampled for the meter. @default one hour */
   readonly storageEveryMs?: number | undefined;
   /**
@@ -2169,16 +2180,43 @@ export class AppsRuntime {
     }
   }
 
-  /** The environment began serving: its awake interval opens, if not open. */
+  /**
+   * The environment began serving: its awake interval opens, if not open,
+   * placed by the policy (`core/placement_policy.ts`) and with that decision
+   * kept in the ledger, so cost knows which price applies and why.
+   */
   private awake(state: Environment, at: string): void {
-    this.metered(() =>
-      openAwake(this.app.db, {
+    this.metered(() => {
+      const db = this.app.db;
+      const service = state.live?.manifest.service ?? null;
+      const seen = {
+        ownedUsed: this.ownedUsed(state),
+        ownedCapacity: this.options.ownedCapacity?.() ?? Infinity,
+        spillAtOwnedUse: policyAt(getEconomics(db).position).spillAtOwnedUse,
+        alwaysOn: state.env === "production" || service?.alwaysOn === true,
+        preference: service?.placement ?? null,
+        cloudBody: this.options.cloudBody ?? CLOUD_BODY_CONFIGURED,
+      };
+      const placed = placeFor(seen);
+      const opened = openAwake(db, { repoId: state.app.repoId, env: state.env, placement: placed.where, at });
+      if (!opened) return;
+      recordPlacement(db, {
         repoId: state.app.repoId,
         env: state.env,
-        placement: this.options.placement ?? "owned",
-        at,
-      }),
-    );
+        where: placed.where,
+        reason: placed.reason,
+        // JSON has no Infinity: an unbounded capacity is kept as null.
+        seen: { ...seen, ownedCapacity: Number.isFinite(seen.ownedCapacity) ? seen.ownedCapacity : null },
+        target: bodyTarget(placed.where, getOwnedNodeLabel(db)),
+      });
+    });
+  }
+
+  /** Environments up on this forge now, `except` aside: what owned metal holds. */
+  private ownedUsed(except: Environment): number {
+    let n = 0;
+    for (const other of this.envs.values()) if (other !== except && other.live !== undefined) n++;
+    return n;
   }
 
   /** The environment stopped serving: its awake interval closes. */

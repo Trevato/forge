@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { ECONOMICS_WORDS } from "../src/actions/economics.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
-import { getEconomics } from "../src/settings/economics.ts";
+import { getEconomics, getOwnedNodeLabel } from "../src/settings/economics.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { economicsScreen } from "../src/tui/screens/economics.ts";
 import { Session, type TuiIdentity } from "../src/tui/session.ts";
@@ -132,6 +132,37 @@ describe("economics in the terminal", () => {
     expect(h.text()).toContain("position: 75 → 10");
     await h.press("enter"); // the first button is Keep
     expect(getEconomics(forge.db).position).toBe(75);
+    h.stop();
+  });
+
+  test("the owned-node label is a lever too: placement said under the head, set after a confirm, blank is the default (#509)", async () => {
+    const h = boot("alice");
+    await open(h);
+    expect(h.text()).toContain("Placement: no cloud body: bursts queue.");
+    expect(h.text()).toContain("plat.sh/site=vxrail · selects owned metal");
+    const clearAll = async () => {
+      for (let i = 0; i < 40; i++) await h.press("backspace");
+    };
+    await h.press("j", "j", "e");
+    await clearAll();
+    await h.type("vxrail");
+    await h.press("enter");
+    expect(h.text()).toContain("ownedNodeLabel is a node label as key=value"); // the dialog cuts the rest
+    await h.press("esc");
+    await h.press("e");
+    await clearAll();
+    await h.type("site=home");
+    await h.press("enter");
+    expect(h.text()).toContain("ownedNodeLabel: plat.sh/site=vxrail → site=home");
+    expect(getOwnedNodeLabel(forge.db)).toBe("plat.sh/site=vxrail");
+    await h.press("right", "enter");
+    expect(getOwnedNodeLabel(forge.db)).toBe("site=home");
+    await h.press("e");
+    await clearAll();
+    await h.press("enter");
+    expect(h.text()).toContain("ownedNodeLabel: site=home → plat.sh/site=vxrail");
+    await h.press("right", "enter");
+    expect(getOwnedNodeLabel(forge.db)).toBe("plat.sh/site=vxrail");
     h.stop();
   });
 

@@ -12,6 +12,27 @@
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { SpawnPlan } from "./plan.ts";
 
+/**
+ * Whether a body that runs on a cloud is configured behind this seam. None
+ * is yet (spike #339), so the placement policy (`core/placement_policy.ts`)
+ * answers `owned` every time and a burst queues — the board says so.
+ */
+export const CLOUD_BODY_CONFIGURED = false;
+
+/**
+ * What the policy's choice hands the body that carries it out: owned metal
+ * names the node label that selects owned nodes (a setting,
+ * `getOwnedNodeLabel`, `plat.sh/site=vxrail` by default), which a body that
+ * schedules onto nodes uses as its selector; cloud names nothing more.
+ */
+export type BodyTarget =
+  | { readonly where: "owned"; readonly nodeLabel: string }
+  | { readonly where: "cloud" };
+
+export function bodyTarget(where: "owned" | "cloud", ownedNodeLabel: string): BodyTarget {
+  return where === "owned" ? { where, nodeLabel: ownedNodeLabel } : { where };
+}
+
 /** Where a child runs: inside the parent's process, or as a process in its own cell. */
 export type PlacementKind = "hosted" | "cell";
 

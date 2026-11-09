@@ -2,13 +2,17 @@
  * Settings → Economics, for a forge admin who is a person: the profit
  * slider's position (0 cheapest, 100 most responsive) with the policy it
  * means in words beside it, and the margin on crew spend (docs/PROFIT.md).
- * Server-rendered; the form is a same-origin POST (`readForm`). Nothing acts
- * on the numbers yet; 50 is today's behaviour.
+ * Beside them, where work runs: owned metal first, selected by the owned-node
+ * label set here, and whether a cloud body takes bursts — without one the
+ * page says "no cloud body: bursts queue" (#509).
+ * Server-rendered; the form is a same-origin POST (`readForm`). 50 is today's
+ * behaviour.
  * Anyone else gets the not-found page.
  */
 
 import { ECONOMICS_WORDS, changeEconomics, readEconomics } from "../../actions/economics.ts";
 import { MARGIN_MAX, POSITION_MAX, POSITION_MIN } from "../../core/slider.ts";
+import { OWNED_NODE_LABEL_DEFAULT } from "../../core/placement_policy.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
@@ -64,9 +68,24 @@ export function economicsPage(ctx: Ctx): Response {
             step="1"
             value="${String(e.marginPct)}"
         /></label>
+        <label class="small"
+          >Owned-node label
+          <input
+            class="input mono"
+            type="text"
+            name="ownedNodeLabel"
+            maxlength="400"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="${OWNED_NODE_LABEL_DEFAULT}"
+            aria-describedby="owned-label-hint"
+            value="${e.placement.ownedNodeLabel}"
+        /></label>
         ${btn("Save", { size: "sm", variant: "primary", label: "Save economics" })}
       </form>
+      <p class="muted small" id="owned-label-hint">The owned-node label selects owned metal; blank is the default, ${OWNED_NODE_LABEL_DEFAULT}.</p>
       <p data-policy>${e.words}.</p>
+      <p data-placement>${e.placement.words}.</p>
     </section>
     <section class="settings-block">
       <h2>Changes</h2>
@@ -95,6 +114,8 @@ export async function economicsSet(ctx: Ctx): Promise<Response> {
   const changed = changeEconomics(ctx.app, ctx.auth.user, {
     position: field(form, "position"),
     marginPct: field(form, "marginPct"),
+    // A form without the field keeps the label; the field left blank is the default again.
+    ownedNodeLabel: form.get("ownedNodeLabel") === null ? undefined : field(form, "ownedNodeLabel"),
   });
   if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
   return flashTo(

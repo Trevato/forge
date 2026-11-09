@@ -19,6 +19,7 @@ export function wire(e: EconomicsView) {
     marginPct: e.marginPct,
     policy: e.policy,
     words: e.words,
+    placement: e.placement,
     changes: e.changes,
   };
 }
@@ -39,6 +40,7 @@ export function economicsRoutes(router: Router<Handler>): void {
     const changed = changeEconomics(ctx.app, ctx.auth.user, {
       position: input.position,
       marginPct: input.marginPct,
+      ownedNodeLabel: input.ownedNodeLabel,
     });
     if (changed.ok) return json(wire(changed.value));
     if (changed.error === "not_found") return notFound();

@@ -15,7 +15,7 @@ import { createAgent } from "../src/actions/crew.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { economicsChanges, getEconomics } from "../src/settings/economics.ts";
+import { economicsChanges, getEconomics, getOwnedNodeLabel } from "../src/settings/economics.ts";
 
 describe("economics", () => {
   let dataDir: string;
@@ -173,6 +173,48 @@ describe("economics", () => {
     const ro = createToken(app.db, alice.id, "r", "ro").token;
     expect((await api(ro, "PUT", { position: 50 })).status).toBe(403);
     expect(getEconomics(app.db).position).toBe(0);
+  });
+
+  test("the owned-node label is a setting: shown with the queue line, set by API and form, validated (#509)", async () => {
+    const token = createToken(app.db, alice.id, "t", "admin").token;
+    const got = (await (await api(token, "GET")).json()) as { placement: Record<string, unknown> };
+    expect(got.placement).toEqual({
+      cloudBody: false,
+      ownedNodeLabel: "plat.sh/site=vxrail",
+      words: "no cloud body: bursts queue",
+    });
+    for (const bad of ["vxrail", "a b=c", "=x", 7, "plat.sh/site=has space"]) {
+      const res = await api(token, "PUT", { ownedNodeLabel: bad });
+      expect(res.status).toBe(422);
+      expect(((await res.json()) as { error: string }).error).toBe("bad_label");
+    }
+    expect(getOwnedNodeLabel(app.db)).toBe("plat.sh/site=vxrail");
+    const set = await api(token, "PUT", { ownedNodeLabel: "plat.sh/site=metal-2" });
+    expect(set.status).toBe(200);
+    expect(((await set.json()) as { placement: { ownedNodeLabel: string } }).placement.ownedNodeLabel).toBe("plat.sh/site=metal-2");
+
+    const cookie = await login("alice");
+    const before = getEconomics(app.db);
+    await post(cookie, { position: String(before.position), marginPct: String(before.marginPct), ownedNodeLabel: "site=home" });
+    expect(getOwnedNodeLabel(app.db)).toBe("site=home");
+    // A form without the field keeps the label that stands.
+    await post(cookie, { position: String(before.position), marginPct: String(before.marginPct) });
+    expect(getOwnedNodeLabel(app.db)).toBe("site=home");
+    const page = await (await fetch(`${servers.url}/settings/economics`, { headers: { cookie } })).text();
+    // The placement is said once, and the label is the field's value.
+    expect(page).toContain("<p data-placement>no cloud body: bursts queue.</p>");
+    expect(page).toContain('value="site=home"');
+    // Left blank, the field is the default again: no row stands for it.
+    await post(cookie, { position: String(before.position), marginPct: String(before.marginPct), ownedNodeLabel: "  " });
+    expect(getOwnedNodeLabel(app.db)).toBe("plat.sh/site=vxrail");
+    expect(app.db.query("SELECT 1 FROM forge_setting WHERE key = 'placement.owned_node_label'").get()).toBeNull();
+    expect(economicsChanges(app.db).filter((c) => c.key === "ownedNodeLabel").map((c) => c.to)).toEqual([
+      "plat.sh/site=vxrail",
+      "site=home",
+      "plat.sh/site=metal-2",
+    ]);
+    app.db.query("UPDATE forge_setting SET value = 'not a label' WHERE key = 'placement.owned_node_label'").run();
+    expect(getOwnedNodeLabel(app.db)).toBe("plat.sh/site=vxrail");
   });
 
   test("a hand-edited stored value reads as the default, never as itself", () => {

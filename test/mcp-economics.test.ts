@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createAgent } from "../src/actions/crew.ts";
-import { getEconomics } from "../src/settings/economics.ts";
+import { getEconomics, getOwnedNodeLabel } from "../src/settings/economics.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -92,6 +92,27 @@ describe("MCP economics", () => {
     expect(JSON.parse(r.text).position).toBe(70);
     expect(getEconomics(app.db)).toMatchObject({ position: 70, marginPct: 15 });
     expect(JSON.parse((await call(admin, {})).text).position).toBe(70);
+  });
+
+  test("the owned-node label is planned, refused when not key=value, set, and reset by a blank (#509)", async () => {
+    const read = JSON.parse((await call(admin, {})).text);
+    expect(read.placement).toEqual({ cloudBody: false, ownedNodeLabel: "plat.sh/site=vxrail", words: "no cloud body: bursts queue" });
+    const plan = await call(admin, { ownedNodeLabel: "site=home" });
+    expect(plan.error).toBe(false);
+    expect(JSON.parse(plan.text).to.ownedNodeLabel).toBe("site=home");
+    expect(getOwnedNodeLabel(app.db)).toBe("plat.sh/site=vxrail");
+    const badPlan = await call(admin, { ownedNodeLabel: "vxrail" });
+    expect(badPlan.error).toBe(true);
+    expect(badPlan.text).toContain("key=value");
+    const badSet = await call(admin, { ownedNodeLabel: "a b=c", dryRun: false });
+    expect(badSet.error).toBe(true);
+    expect(getOwnedNodeLabel(app.db)).toBe("plat.sh/site=vxrail");
+    const set = await call(admin, { ownedNodeLabel: "site=home", dryRun: false });
+    expect(set.error).toBe(false);
+    expect(JSON.parse(set.text).placement.ownedNodeLabel).toBe("site=home");
+    expect(getOwnedNodeLabel(app.db)).toBe("site=home");
+    await call(admin, { ownedNodeLabel: "", dryRun: false });
+    expect(getOwnedNodeLabel(app.db)).toBe("plat.sh/site=vxrail");
   });
 
   test("a read-only token cannot set it", async () => {

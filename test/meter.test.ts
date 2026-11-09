@@ -21,6 +21,7 @@ import {
   usageBetween,
 } from "../src/core/meter.ts";
 import { getRepoById } from "../src/core/repos.ts";
+import { listDecisions, recordDecision } from "../src/core/decisions.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -220,6 +221,22 @@ describe("the runtime meters what it runs", () => {
     let ledger = rows(app, record.repoId);
     expect(ledger.length).toBe(1);
     expect(ledger[0]!.placement).toBe("owned");
+    // The policy placed it (#509): one `place` decision per opened interval.
+    const placed = listDecisions(app.db, record.repoId, { kind: "place" });
+    expect(placed.length).toBe(1);
+    expect(placed[0]!.answer).toBe("owned");
+    expect(placed[0]!.state).toMatchObject({
+      env: "production",
+      reason: "Runs on owned metal; no cloud body: bursts queue.",
+      target: { where: "owned", nodeLabel: "plat.sh/site=vxrail" },
+      seen: { alwaysOn: true, cloudBody: false, ownedCapacity: null, spillAtOwnedUse: 0.85 },
+    });
+    // The decisions API filters to them with `kind=place`, a crew decision left out.
+    recordDecision(app.db, { kind: "next", repoId: record.repoId, state: {}, answer: "x", p: 1, by: "rule", ms: 0 });
+    const res = await fetch(`${servers.url}/api/v1/repos/alice/metered/decisions?kind=place`);
+    expect(res.status).toBe(200);
+    const listed = (await res.json()) as { decisions: { kind: string; answer: string }[] };
+    expect(listed.decisions.map((d) => [d.kind, d.answer])).toEqual([["place", "owned"]]);
     expect(ledger[0]!.started_at).toBe(run.servingAt!);
     expect(ledger[0]!.ended_at).toBe(asleep.since!);
 

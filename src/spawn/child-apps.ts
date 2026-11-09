@@ -51,7 +51,8 @@ export async function startChildApps(parent: App, child: App, name: string): Pro
     sleepAfterMs: own.options.sleepAfterMs,
     sweepEveryMs: own.options.sweepEveryMs,
     dns: own.options.dns,
-    placement: own.options.placement,
+    cloudBody: own.options.cloudBody,
+    ownedCapacity: own.options.ownedCapacity,
   });
   // Claimed before the first await: a second request cannot start it twice.
   const parentChecks = checksFor(parent);

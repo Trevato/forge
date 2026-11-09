@@ -2420,7 +2420,8 @@ export function apiRoutes(router: Router<Handler>): void {
           kind === "next" ||
           kind === "land" ||
           kind === "retry" ||
-          kind === "guard"
+          kind === "guard" ||
+          kind === "place"
             ? kind
             : undefined,
         limit,
