@@ -466,7 +466,8 @@ describe("the look", () => {
   });
 
   test("a pull's preview is pictured at its own host, and what the page recorded reaches a check made afterwards", async () => {
-    // Invariant: a green preview gets its three looks at `hello--<n>`, and the phone's LCP and desktop's CLS reach the vitals of a check created after the look.
+    // Invariant: a green preview gets its three looks at `hello--<n>`, and the phone's LCP and desktop's CLS reach the vitals of a check
+    // created after the look.
     pull = greeting.pull;
     first = greeting.commitOid;
     const env = previewEnv(pull.number);

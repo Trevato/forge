@@ -196,7 +196,8 @@ describe("a repository whose owner is not a forge admin", () => {
 
 describe("a crew run on the platform's token", () => {
   test("is counted under platform (env), moving while it runs", async () => {
-    // Invariant: a crew run on the platform token is a running ledger line and a usage.delta mid-run, replaced by its result, read the same over the API without the work token.
+    // Invariant: a crew run on the platform token is a running ledger line and a usage.delta mid-run, replaced by its result,
+    // read the same over the API without the work token.
     writeFileSync(join(gateDir, "hold"), "");
     const issue = openIssue(app, alice, repo, { title: "Plant tulips", body: "" });
     if (!issue.ok) throw new Error(String(issue.error));

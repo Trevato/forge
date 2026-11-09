@@ -154,7 +154,8 @@ sleep 60
   };
 
   test("the run is cancelled, and its clone goes after it, not before", async () => {
-    // Invariant: closing a pull under its author's running run cancels the run ("the pull closed"), removes its clone only after the run ends, and queues nothing after it.
+    // Invariant: closing a pull under its author's running run cancels the run ("the pull closed"), removes its clone only after the run ends,
+    // and queues nothing after it.
     // A word on the pull sends its author back to it.
     expect(
       addComment(app, alice, repo, asIssue, "also the daffodils").ok,
