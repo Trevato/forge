@@ -13,7 +13,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getPull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
-import { coAuthorLines, COAUTHORS_MAX, authorLinesBetween, creditsOf } from "../src/git/coauthors.ts";
+import { coAuthorLines, COAUTHORS_MAX, authorLinesBetween, buildersOf, creditsOf, CREDITED_MAX } from "../src/git/coauthors.ts";
 import { runGitCapture } from "../src/git/env.ts";
 import { serve } from "../src/http/server.ts";
 import { forgetLive, readLandings } from "../src/release/landings.ts";
@@ -56,6 +56,54 @@ describe("authorLinesBetween", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe("buildersOf", () => {
+  test("reads the builder and the models from a squash commit whose trailers sit only in it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-builders-"));
+    try {
+      const git = (args: string[], msg?: string) => {
+        const env = { ...process.env, GIT_AUTHOR_NAME: "Scout", GIT_AUTHOR_EMAIL: "scout@agents.invalid", GIT_COMMITTER_NAME: "trevato", GIT_COMMITTER_EMAIL: "trevato@users.noreply.x" };
+        return Bun.spawnSync(["git", ...args], { cwd: dir, env, stdin: msg === undefined ? undefined : new TextEncoder().encode(msg) }).stdout.toString().trim();
+      };
+      git(["init", "-q", "-b", "main"]);
+      git(["commit", "-q", "--allow-empty", "-F", "-"], "Add it (#1)\n\nCo-authored-by: trevato <trevato@users.noreply.x>\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>\nCo-authored-by: Scout <scout@agents.invalid>\n");
+      const oid = git(["rev-parse", "HEAD"]);
+      git(["commit", "-q", "--allow-empty", "-m", "bare"]);
+      const bare = git(["rev-parse", "HEAD"]);
+      const got = await buildersOf(dir, [oid, bare]);
+      expect(got.get(oid)).toEqual({ by: "Scout", with: ["Claude Sonnet 5.5"] });
+      expect(got.get(bare)).toEqual({ by: "Scout", with: [] });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("buildersOf bounds", () => {
+  test("remembers at most CREDITED_MAX commits, and drops an author-named trailer in any case", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-builders-max-"));
+    try {
+      const env = { ...process.env, GIT_AUTHOR_NAME: "Scout", GIT_AUTHOR_EMAIL: "s@agents.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@x.invalid" };
+      const git = (args: string[]) => Bun.spawnSync(["git", ...args], { cwd: dir, env }).stdout.toString().trim();
+      git(["init", "-q", "-b", "main"]);
+      git(["commit", "-q", "--allow-empty", "-m", "named\n\nCo-authored-by: SCOUT <other@x.invalid>\nCo-authored-by: Claude <noreply@anthropic.com>"]);
+      const first = git(["rev-parse", "HEAD"]);
+      expect((await buildersOf(dir, [first])).get(first)).toEqual({ by: "Scout", with: ["Claude"] });
+      const oids = [first];
+      for (let i = 0; i < CREDITED_MAX + 5; i++) {
+        git(["commit", "-q", "--allow-empty", "-m", `c${i}`]);
+        oids.push(git(["rev-parse", "HEAD"]));
+      }
+      const got = await buildersOf(dir, oids);
+      expect(got.size).toBe(oids.length);
+      expect(got.get(oids.at(-1)!)).toEqual({ by: "Scout", with: [] });
+      // The newest are still remembered after the oldest were dropped: a repeat read still answers.
+      expect((await buildersOf(dir, oids.slice(-3))).size).toBe(3);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 describe("a squash landing", () => {
@@ -149,17 +197,19 @@ describe("a squash landing", () => {
     const byTitle = (t: string) => [...read.live, ...read.onItsWay].find((l) => l.title === t)!;
     expect(byTitle("Do credited").with).toEqual(["Jay Moran"]);
     expect(byTitle("Do uncredited").with).toBeUndefined();
+    expect(byTitle("Do uncredited").by).toBe("scout");
+    expect(byTitle("Do credited").by).toBe("scout");
     const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
     const oid = (await runGitCapture(["rev-parse", "main"], { cwd: dir })).stdout.trim();
     expect((await creditsOf(dir, [oid])).get(oid)).toEqual([]);
     const server = await serve(app);
     try {
       const html = await (await fetch(`${server.url}/changelog`)).text();
-      expect(html).toContain("with Jay Moran");
+      expect(html).toContain("<dt>With</dt><dd>Jay Moran</dd>");
       // Three landed pulls carry Jay's credit (a trailer twice, an authorship once); the rest say nothing of it.
-      expect(html.match(/with Jay Moran/g)?.length).toBe(3);
+      expect(html.match(/<dt>With<\/dt><dd>Jay Moran/g)?.length).toBe(3);
       const row = html.slice(html.indexOf("Do uncredited"));
-      expect(row.slice(0, row.indexOf("</li>"))).not.toContain(" with ");
+      expect(row.slice(0, row.indexOf("</li>"))).not.toContain("<dt>With</dt>");
     } finally {
       server.stop();
       if (was === undefined) delete process.env["FORGE_COMMIT"];
