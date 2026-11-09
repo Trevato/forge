@@ -33,10 +33,10 @@ One row per (app, tool) in `feature_fire` (`src/core/feature_fires.ts`), replace
 
 ## Read it
 
-- **Page:** Settings › Features › the app, under **Scheduled** (a site admin's page, as the rest of it).
+- **Page:** Settings › Features › the app, under **Scheduled** (a site admin's page, as the rest of it). Each row has **Run now**: the same call, recorded as the tool's fire. A stopped or asleep app is refused with a sentence, never woken; a call already running is refused, never doubled.
 - **API:** `GET /api/v1/features/:slug` returns `fires`: a list of `{ tool, at, ok, error, durationMs }` (`at` in ms since the epoch). It is empty until something has fired. Readable by whoever may read the feature.
-- **Terminal:** Feature feeds › the app: a `Scheduled:` line above the feed items, tool, outcome and age.
+- **Terminal:** Feature feeds › the app: a `Scheduled:` line above the feed items, tool, outcome and age. An admin presses `r` there to run those tools now: the same call, record and refusal sentences as Run now on the page.
 
 ## Not done
 
-No arguments per entry, no history beyond the last fire, no "run now" button, and no wake-on-schedule for a stopped app.
+No arguments per entry, no history beyond the last fire, and no wake-on-schedule for a stopped app.

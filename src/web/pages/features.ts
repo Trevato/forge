@@ -18,6 +18,9 @@ import {
   type SettingView,
   provenanceFacts,
 } from "../../actions/features.ts";
+import { runNow } from "../../apps/feature_run.ts";
+import { runtimeReach, type Reach } from "../../apps/feature_schedule.ts";
+import { getAppBySlug, type AppRecord } from "../../core/apps.ts";
 import { DAYS } from "../../apps/feature.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -226,6 +229,7 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused, items: readonl
       <ul class="list">${f.fires.map((x) => row({
         title: html`<span class="mono">${x.tool}</span>`,
         meta: html`${x.ok ? "ok" : html`<span class="danger">${x.error ?? "failed"}</span>`} · ${time(new Date(x.at).toISOString())} · ${x.durationMs} ms`,
+        trail: html`<form method="post" action="${base}/run/${encodeURIComponent(x.tool)}">${btn("Run now", { label: `Run ${x.tool} now` })}</form>`,
       }))}</ul>
     </section>`)}
     <p class="muted small">
@@ -268,6 +272,23 @@ export async function featureSave(ctx: Ctx): Promise<Response> {
   if (changed.error.error === "invalid_setting")
     return featureView(ctx, found.value, { typed, key: changed.error.key, message: changed.error.message });
   return flashTo(ctx, back, { tone: "danger", message: changed.error.message });
+}
+
+/** POST /settings/features/:slug/run/:tool, with `reachOf` the seam a test replaces. */
+export function featureRun(reachOf: (app: Ctx["app"], record: AppRecord) => Reach = runtimeReach) {
+  return async (ctx: Ctx): Promise<Response> => {
+    const no = requireAdmin(ctx);
+    if (no) return no;
+    const form = await readForm(ctx, "admin");
+    if (form instanceof Response) return form;
+    const slug = ctx.params["slug"] ?? "";
+    const tool = ctx.params["tool"] ?? "";
+    const record = getAppBySlug(ctx.app.db, slug);
+    if (record === undefined) return notFoundPage(ctx);
+    const back = `/settings/features/${encodeURIComponent(slug)}`;
+    const said = await runNow(ctx.app.db, record.id, tool, reachOf(ctx.app, record));
+    return flashTo(ctx, back, said.ok ? { message: said.message } : { tone: "danger", message: said.message });
+  };
 }
 
 // POST /settings/features/:slug/absorb and /unabsorb

@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RUN_REFUSALS } from "../src/apps/feature_run.ts";
 import { absorbApp } from "../src/actions/features.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
@@ -163,6 +164,25 @@ describe("features in the terminal", () => {
     expect(t.text()).toContain("Scheduled: scan the app answered 500");
     clearFires(forge.db, appId);
     t.stop();
+  });
+
+  test("an admin presses r on the feed screen to run the scheduled tool; the refusal is the page's sentence", async () => {
+    recordFire(forge.db, appId, { tool: "scan", at: Date.now() - 120_000, ok: true, error: null, durationMs: 3 });
+    const t = boot(ada);
+    await t.palette("Feature feeds");
+    await t.press("enter");
+    await t.press("enter");
+    await t.press("r");
+    expect(t.text()).toContain(RUN_REFUSALS.asleep);
+    t.stop();
+    const other = boot(eve);
+    await other.palette("Feature feeds");
+    await other.press("enter");
+    await other.press("enter");
+    await other.press("r");
+    expect(other.text()).not.toContain(RUN_REFUSALS.asleep);
+    other.stop();
+    clearFires(forge.db, appId);
   });
 
   test("any signed-in reader is offered it, for the apps they may read", async () => {

@@ -67,6 +67,46 @@ export async function fireApp(db: Database, appId: string, reach: Reach, now: ()
   return called;
 }
 
+/** Why a run now was not made. */
+export type FireOneRefusal = "not_absorbed" | "not_scheduled" | "asleep" | "in_flight";
+
+/**
+ * Call one scheduled tool now, the way the schedule does, and record it as its
+ * fire. A stopped or asleep app is refused, never woken; a call already running
+ * for the same (app, tool) is refused, never doubled.
+ */
+export async function fireOne(
+  db: Database,
+  appId: string,
+  tool: string,
+  reach: Reach,
+  now: () => number = Date.now,
+): Promise<{ ok: true } | { ok: false; why: FireOneRefusal }> {
+  if (getAbsorbed(db, appId) === undefined) return { ok: false, why: "not_absorbed" };
+  const key = `${appId}:${tool}`;
+  if (inFlight.has(key)) return { ok: false, why: "in_flight" };
+  const port = reach.port();
+  if (port === undefined) return { ok: false, why: "asleep" };
+  inFlight.add(key);
+  try {
+    const declared = await reach.declared().catch(() => undefined);
+    if (declared === undefined || !declared.tools.includes(tool) || !declared.schedule.some((e) => e.tool === tool)) return { ok: false, why: "not_scheduled" };
+    const started = now();
+    // callTool is bounded (WAIT_MS) and answers an error rather than throwing; a throw is still a recorded failure.
+    const answer = await callTool(port, tool, {}).catch((): { ok: false; error: string } => ({ ok: false, error: "the app did not answer" }));
+    recordFire(db, appId, {
+      tool,
+      at: started,
+      ok: answer.ok,
+      error: answer.ok ? null : answer.error,
+      durationMs: Math.max(0, now() - started),
+    });
+    return { ok: true };
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
 /** What `fireApp` reaches for one app in the real runtime: only a production that is running, never woken. */
 export function runtimeReach(app: App, record: AppRecord): Reach {
   return {

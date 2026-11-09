@@ -6,6 +6,9 @@
  * do: the viewer's own feed items about that repository, muted or not.
  */
 
+import { runNow } from "../../apps/feature_run.ts";
+import { runtimeReach } from "../../apps/feature_schedule.ts";
+import { getAppBySlug } from "../../core/apps.ts";
 import { absorbedForNav, feedOf, getFeature, type NavFeature } from "../../actions/features.ts";
 import type { Fired } from "../../core/feature_fires.ts";
 import type { FeedItem } from "../../feed/rank.ts";
@@ -31,9 +34,28 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
     fires = found.ok ? found.value.fires : [];
     ctx.invalidate();
   });
+  const mayRun = (): boolean => f.user?.isAdmin === true && f.user.kind !== "agent" && fires.length > 0;
+  let running = false;
+  /** Run every tool on the Scheduled line now, saying the page's sentences. */
+  async function runAll(): Promise<void> {
+    const record = getAppBySlug(f.app.db, feature.slug);
+    if (record === undefined || running) return;
+    running = true;
+    try {
+      for (const tool of fires.map((x) => x.tool)) {
+        const said = await runNow(f.app.db, record.id, tool, runtimeReach(f.app, record));
+        ctx.toast(said.message, said.ok ? "success" : "danger");
+      }
+      const found = await getFeature(f.app, f.user, feature.slug);
+      fires = found.ok ? found.value.fires : fires;
+    } finally {
+      running = false;
+      ctx.invalidate();
+    }
+  }
   return {
     title: `In the feed: ${feature.name}`,
-    keys: [binding(["j", "k"], "move"), binding(["esc", "q"], "back")],
+    keys: [binding(["j", "k"], "move"), ...(mayRun() ? [binding(["r"], "run scheduled now")] : []), binding(["esc", "q"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
       const [head, body] = fires.length === 0 ? [undefined, area] : split(area, "v", [len(1), fill(1)]);
@@ -50,6 +72,7 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
     },
     key(e) {
       if (e.key === "esc" || e.key === "q") ctx.pop();
+      else if (e.key === "r" && mayRun()) void runAll();
       else state.key(e, items.length);
       return true;
     },
