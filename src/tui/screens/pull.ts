@@ -26,7 +26,7 @@
  *   `n`/`p` walk the unsettled ones while the cursor is inside a thread.
  */
 
-import { teamHoldRefusal } from "../../core/teams_words.ts";
+import { teamHoldRefusal, waitingOnTeams } from "../../core/teams_words.ts";
 import { crewFilters, guardedRefusal, isStrangerPull, strangerGuard, strangerNext } from "../../crew/stranger.ts";
 import { RED_ALONE_WAIT, redAloneAt, redMark } from "../../checks/queue.ts";
 import {
@@ -60,7 +60,7 @@ import {
   type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { proposedByText } from "../../core/proposal_token.ts";
 import { getAppByRepo } from "../../core/apps.ts";
-import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
+import { teamsHolding, teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
 import { guestWaits, mayApproveGuest } from "../../origins/guest.ts";
@@ -259,6 +259,8 @@ export function pullScreen(
   let step: PathStep | null = null;
   /** Where each team the issue names stands; empty when it names none. */
   let teams: TeamVerdict[] = [];
+  /** The named teams `mergePull` would refuse for (`team_review_required`), by name. */
+  let holding: string[] = [];
   /** Settled threads the reader has opened back up, for this visit only. */
   const expanded = new Set<string>();
   let lines: Span[][] = [];
@@ -433,6 +435,13 @@ export function pullScreen(
             ...row,
             headOid: row.headOid || (facts?.headOid ?? ""),
           });
+    holding =
+      row === undefined
+        ? []
+        : teamsHolding(f.db, {
+            ...row,
+            headOid: row.headOid || (facts?.headOid ?? ""),
+          }).map((v) => v.name);
     checkOld =
       repo !== undefined &&
       row !== undefined &&
@@ -1061,7 +1070,7 @@ export function pullScreen(
 
   const mirrored = (): boolean => repo === undefined || repo.origin !== null;
   const state = (): MergeState =>
-    mergeState(detail?.issue, facts, mirrored(), gated(), checksGated());
+    mergeState(detail?.issue, facts, mirrored(), gated(), checksGated(), holding.length > 0);
 
   const screen: Screen = {
     title: `#${number}`,
@@ -1213,6 +1222,7 @@ export function pullScreen(
       drawMergeBox(s, boxRow!, c, issue, facts, view.summary(), mirrored(), {
         gated: gated(),
         checksGated: checksGated(),
+        holding,
         checkOld,
         check,
         checksLine,
@@ -1521,6 +1531,11 @@ export function pullScreen(
         });
         return true;
       }
+      // A named team holds it (#10081): the merge's own sentence, and no merge.
+      if (e.key === "m" && mayWrite() && state() === "team_required") {
+        ctx.toast(teamHoldRefusal(holding), "attn");
+        return true;
+      }
       if (e.key === "m" && mayWrite() && state() === "checks_required") {
         ctx.toast(checksRefusal(check, checkOld), "attn");
         return true;
@@ -1630,6 +1645,8 @@ export type MergeState =
   | "empty"
   /** The verdicts do not let this land yet — `mergePull` refuses it too. */
   | "review_required"
+  /** A team the closed issue names has not approved this head — `mergePull` refuses it too. */
+  | "team_required"
   /** The head's deploy is not green yet — `mergePull` refuses it too. */
   | "checks_required"
   | "ready"
@@ -1818,6 +1835,7 @@ export function mergeState(
   mirrored = false,
   gated = false,
   checksGated = false,
+  teamsHeld = false,
 ): MergeState {
   if (issue === undefined || pull === null || pull === undefined)
     return "unknown";
@@ -1833,7 +1851,11 @@ export function mergeState(
   // because a conflict is the more urgent of the two and only one line fits.
   // The checks come after the reviewers for the same reason: a person's
   // objection outranks a machine's.
-  return gated ? "review_required" : checksGated ? "checks_required" : "ready";
+  // A named team's review is a person's objection too, so it comes before
+  // the machine's, in the order `mergePull` asks them.
+  if (gated) return "review_required";
+  if (teamsHeld) return "team_required";
+  return checksGated ? "checks_required" : "ready";
 }
 
 function drawMergeBox(
@@ -1847,6 +1869,8 @@ function drawMergeBox(
   o: {
     gated: boolean;
     checksGated: boolean;
+    /** The named teams holding the merge, by name; empty when none does. */
+    holding: readonly string[];
     /** The green was checked against an older base. */
     checkOld: boolean;
     check: CheckSummary;
@@ -1859,7 +1883,7 @@ function drawMergeBox(
     teams: readonly TeamVerdict[];
   },
 ): void {
-  const state = mergeState(issue, pull, mirrored, o.gated, o.checksGated);
+  const state = mergeState(issue, pull, mirrored, o.gated, o.checksGated, o.holding.length > 0);
   const tone =
     state === "merged"
       ? "merged"
@@ -1869,6 +1893,7 @@ function drawMergeBox(
           ? "danger"
           : state === "mirrored" ||
               state === "review_required" ||
+              state === "team_required" ||
               state === "checks_required"
             ? "attn"
             : "default";
@@ -1900,6 +1925,8 @@ function drawMergeBox(
                 ? o.standing.blocking.length > 0
                   ? `Changes requested by ${o.standing.blocking.join(", ")}`
                   : "Needs an approval of this head before it can merge"
+                : state === "team_required"
+                  ? `${waitingOnTeams(o.holding)}; it cannot merge until ${o.holding.length === 1 ? "it approves" : "each approves"} this head`
                 : state === "checks_required"
                   ? o.check.state === "ok"
                     ? "Waiting on checks: checked against an older base; press C to check again"
@@ -1913,6 +1940,8 @@ function drawMergeBox(
     text:
       state === "review_required"
         ? "review"
+        : state === "team_required"
+          ? "team"
         : state === "checks_required"
           ? "checks"
           : state,

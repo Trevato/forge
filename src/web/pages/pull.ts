@@ -85,8 +85,8 @@ import {
   type ThreadView,
 } from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
-import { teamHoldRefusal } from "../../core/teams_words.ts";
-import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
+import { teamHoldRefusal, waitingOnTeams } from "../../core/teams_words.ts";
+import { teamsHolding, teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, fragment, page } from "../layout.ts";
 import { liveRegionsJs } from "../client.ts";
@@ -476,6 +476,7 @@ function mergeBox(
   isApp: boolean,
   tier = "",
   stale = false,
+  holding: readonly string[] = [],
 ): Html {
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
   // A reader's head runs nothing until a writer approves it; say so rather
@@ -588,6 +589,30 @@ function mergeBox(
           icon: "merge",
           disabled: true,
           title: "An approving review of this head is required first",
+        }),
+      ),
+    );
+  }
+
+  // The team gate, `mergePull`'s `team_review_required` (#10080): a team the
+  // closed issue names, with a reviewer here, has not approved this head.
+  // Asked here with the same `teamsHolding` so the button is honest.
+  if (holding.length > 0) {
+    return box(
+      "attn",
+      icon("users"),
+      html`${waitingOnTeams(holding)}.`,
+      html`The issue this pull closes names
+        ${holding.length === 1 ? "a team" : "teams"} whose reviewer has not
+        approved the commit that is head right now. Nothing merges until
+        ${holding.length === 1 ? "it does" : "each does"}.
+        ${reviewsChip(status.reviews, by)} ${checks}`,
+      when(mayMerge, () =>
+        btn("Merge pull request", {
+          variant: "primary",
+          icon: "merge",
+          disabled: true,
+          title: waitingOnTeams(holding),
         }),
       ),
     );
@@ -1054,7 +1079,8 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${when(wall, (w) => wallCard(w, mayMerge ? thread : undefined))}
     ${holdCard(ctx, repo, pull, { act: false })}
     ${teamsCard(teamVerdicts(ctx.app.db, { ...pull, headOid: status.headOid }))}
-    ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}
+    ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale,
+      teamsHolding(ctx.app.db, { ...pull, headOid: status.headOid }).map((v) => v.name))}
     ${slicesCard(base, thread, slices, ends.length > 0 ? ends.length : status.ahead, ends, pull.state === "open" && pull.mergedAt === null, mayLand)}
     ${await combinedCard(dir, pull, status.headOid, status.baseOid)}
     <div class="split">
