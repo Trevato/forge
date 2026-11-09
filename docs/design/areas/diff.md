@@ -13,6 +13,7 @@ file.
 - `.diff-note` — a centred muted line in place of rows: a binary file or no content changes. Files past the cap are not a `.diff-note`: the cut is a plain `p.muted.small` line under the last file, with its own 12px top margin.
 - `.diff-stub` — a `.diff-note` for a file too large or generated to draw: why, its real counts and a View file button.
 - `.dn-comment` — a line number in the gutter that links to commenting on that line, when the diff is reviewable.
+- `.dc-thread` — an open line-comment thread under its row: each comment is a muted author·time·"outdated" line (`.comment-head`) over its prose, with no card; the Resolve button follows. A resolved thread stays a card with its disclosure.
 - `.nonl` — the `↵` mark after a line that has no newline at the end of the file.
 - `.diff` — the wrapper around one whole diff: its summary and every file.
 - `.dl` — one line of a hunk, a table row; its `data-k` says whether it is context, added or deleted.

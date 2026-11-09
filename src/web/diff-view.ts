@@ -313,8 +313,8 @@ function reviewRows(
   const currentHash = hashLine(currentText);
   const thread = comments.map((c) => {
     const outdated = c.lineHash !== currentHash;
-    return html`<div class="card comment">
-      <div class="card-head">
+    return html`<div class="comment-row">
+      <div class="comment-head muted small">
         ${userLink(c.authorName, { mark: opts.marks?.get(c.authorName) })}
         ${time(c.createdAt)}
         ${when(
@@ -328,7 +328,7 @@ function reviewRows(
 
   const form = isActive
     ? html`<form
-        class="card comment-form"
+        class="comment-form"
         data-submit-key
         method="post"
         action="${opts.reviewBase}/review"
@@ -395,7 +395,7 @@ function reviewRows(
           )}`,
         toggle ? { foot: toggle } : {},
       )
-    : card(html`${thread}`, toggle ? { foot: toggle } : {});
+    : html`<div class="dc-thread">${thread}${toggle}</div>`;
 
   return html`<tr>
     <td class="dn"></td>

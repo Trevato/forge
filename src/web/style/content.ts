@@ -621,8 +621,11 @@ form.inline { display: inline; margin-left: auto; }
   padding: 8px 12px; background: var(--muted);
   border-left: 3px solid var(--accent); white-space: normal; font-family: var(--font);
 }
-.dc-review .card + .card, .dc-review .comment { margin-bottom: 8px; }
-.dc-review .comment-form { margin-top: 0; }
+.dc-review .comment-form { margin: 0; padding: 0; }
+/* An open thread is prose under its line, not a card: head and body start at the code column,
+   since .dc-review pads 12px past the 3px edge exactly as .dc does. */
+.dc-thread { display: grid; gap: 10px; min-width: 0; }
+.dc-thread .comment-body { overflow-wrap: anywhere; }
 /* A settled thread is one line plus a disclosure: the point of resolving is
    to get an answered question out of the way of the unanswered ones. */
 .dc-review .card-body > .muted .ico { width: 14px; height: 14px; color: var(--success); }
