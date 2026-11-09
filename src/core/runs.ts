@@ -94,6 +94,8 @@ export interface Run {
   readonly checkDetail: CheckDetail | null;
   /** The base tip a pull's check merged the head with; empty when it merged nothing. */
   readonly baseOid: string;
+  /** The combined commit a kept fork's pull check tested; empty when it tested another tree. */
+  readonly combinedOid: string;
   /** The variant group this run belongs to; null for an ordinary run. */
   readonly variantGroup: string | null;
   readonly createdAt: string;
@@ -125,6 +127,7 @@ interface RunRow {
   sandbox_note: string;
   check_detail: string;
   base_oid: string;
+  combined_oid: string;
   placement: string;
   node: string;
   variant_group: string | null;
@@ -159,6 +162,7 @@ const toRun = (r: RunRow): Run => ({
   node: r.node,
   checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
   baseOid: r.base_oid,
+  combinedOid: r.combined_oid,
   variantGroup: r.variant_group,
   createdAt: r.created_at,
   startedAt: r.started_at,
@@ -346,6 +350,11 @@ export function answerCancelled(
 /** Record the base tip a pull's check merged with. */
 export function setRunBase(db: Database, runId: string, baseOid: string): void {
   db.query(`UPDATE run SET base_oid = ?2 WHERE id = ?1`).run(runId, baseOid);
+}
+
+/** Record the combined commit a kept fork's pull check tests (#9932). */
+export function setRunCombined(db: Database, runId: string, combinedOid: string): void {
+  db.query(`UPDATE run SET combined_oid = ?2 WHERE id = ?1`).run(runId, combinedOid);
 }
 
 /** Cancel a run that has not finished. Returns the row, or undefined if it had. */

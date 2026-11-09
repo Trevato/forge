@@ -139,7 +139,7 @@ describe("a conflicting fork pull is combined on our side (#9012)", () => {
 
     expect(body).toContain("your side was dropped from the landed tree");
     expect(body).toContain("To get your side back");
-    expect(body).toContain("Checks run on the pull&#39;s head, not on this combined commit.");
+    expect(body).toContain("The checks line says which commit the check ran on.");
     expect(body).not.toContain("Stale: main has moved");
 
     // The terminal's pull screen says the same (#9012).

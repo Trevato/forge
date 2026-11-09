@@ -38,6 +38,7 @@ import {
   noteRunProgress,
   overranBefore,
   setRunBase,
+  setRunCombined,
   vanishedBefore,
   VANISHED_SUMMARY,
   infraBefore,
@@ -50,6 +51,7 @@ import {
 import { Gate, runGit } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
+import { readCombined } from "../git/combined.ts";
 import { approvedOnce } from "./approved_first.ts";
 import { checkOnApproval } from "./approval.ts";
 import { checkKey, provenBy, recordProven } from "./proven.ts";
@@ -996,11 +998,26 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       tip = await resolveOid(bare, `refs/heads/${x.pull.baseBranch}`);
       if (tip === undefined)
         return { ok: false, error: `the base ${x.pull.baseBranch} could not be found` };
-      const merged = await mergeForCheck(bare, x.pull.baseBranch, tip, x.commitOid);
-      if (!merged.ok) return { ok: false, error: merged.error };
-      source = merged.commit;
-      if (x.runId !== undefined) setRunBase(app.db, x.runId, tip);
-      mergeLine = merged.line;
+      // A kept fork's pull is checked on its combined commit (#9932): the
+      // tree that lands, built on the base tip it names (`combined/N`).
+      const combined = x.pull.crossRepo
+        ? await readCombined(bare, x.pull.number, x.commitOid)
+        : undefined;
+      if (combined !== undefined && combined.oid !== x.commitOid) {
+        source = combined.oid;
+        const builtOn = combined.baseOid === "" ? tip : combined.baseOid;
+        if (x.runId !== undefined) {
+          setRunBase(app.db, x.runId, builtOn);
+          setRunCombined(app.db, x.runId, combined.oid);
+        }
+        mergeLine = `checked as combined with ${x.pull.baseBranch} at ${builtOn.slice(0, 7)} (${combined.oid.slice(0, 7)})`;
+      } else {
+        const merged = await mergeForCheck(bare, x.pull.baseBranch, tip, x.commitOid);
+        if (!merged.ok) return { ok: false, error: merged.error };
+        source = merged.commit;
+        if (x.runId !== undefined) setRunBase(app.db, x.runId, tip);
+        mergeLine = merged.line;
+      }
     }
     const run = { id: x.id, commitOid: source };
     const [forgeJson, packageJson] = await Promise.all([

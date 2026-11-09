@@ -2,7 +2,7 @@
  * What a fork's pull shows of its combined branch (#9012), the same on the
  * page and in the terminal: the branch and commit the preview builds, the
  * base it was built on and whether main has moved since, what each conflict
- * kept, and that the checks ran on the head, not on this commit.
+ * kept.
  */
 
 import type { Pull } from "./pulls.ts";
@@ -48,7 +48,7 @@ export function combinedWords(
     notes.push(
       `Stale: main has moved since ${view.builtOn.slice(0, 10)}, which this was built on. It recombines on the next push to the fork, and merging recombines before it lands, so what lands may differ from the preview.`,
     );
-  notes.push("Checks run on the pull's head, not on this combined commit.");
+  notes.push("The checks line says which commit the check ran on.");
   if (view.files.some((f) => f.kept === "main")) notes.push(TAKE_BACK);
   return {
     lead: `The preview is built from ${view.branch} (${view.oid.slice(0, 10)}): main merged into this pull's head. Merging lands that branch.`,

@@ -268,7 +268,7 @@ export function checksLine(
     run !== null && run.baseOid !== "" && baseBranch !== ""
       ? html`<span class="sep" aria-hidden="true">·</span
           ><span class="checked-against"
-            >checked against ${baseBranch} at ${run.baseOid.slice(0, 7)}</span
+            >checked ${run.combinedOid !== "" ? "as combined with" : "against"} ${baseBranch} at ${run.baseOid.slice(0, 7)}</span
           >`
       : html``;
   const body =
