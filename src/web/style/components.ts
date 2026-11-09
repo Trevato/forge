@@ -906,6 +906,8 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .comment-row .comment-body { padding: 4px 0 0; }
 .comment-form { margin-top: 16px; padding: 12px; overflow: visible; }
 .comment-form textarea { margin-bottom: 10px; }
+/* The thread's composer is plain lines under the timeline, like the home one. */
+.comment-form:not(.card) { padding: 0; margin-top: 16px; }
 
 /* ---- empty state ---- */
 .empty {

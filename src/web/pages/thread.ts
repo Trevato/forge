@@ -521,6 +521,9 @@ export interface ComposerOptions {
    * said on (`actions/tell.ts`). `rows` sizes it; one is a single line. */
   /** The page already has its one primary action; Comment steps down. */
   plainSend?: boolean;
+  /** Draw the box as a `card`: only the floating tell box (`tell_here.ts`), which
+   * sits over the page and needs its own ground. A thread's box is plain lines. */
+  boxed?: boolean;
   tell?: { from: string | null; rows?: number; page?: string; pull?: number; text?: string; ask?: boolean };
 }
 
@@ -593,7 +596,7 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
   const tell = o.tell;
   return html`${stateForm}
     <form
-      class="card comment-form"
+      class="${o.boxed ? "card comment-form" : "comment-form"}"
       method="post"
       action="${o.action}"
       data-box="${tell ? "Tell the crew" : "Write a comment"}"

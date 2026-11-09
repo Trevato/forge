@@ -844,7 +844,7 @@ describe("web ui", () => {
   test("the tell composer is the thread's comment box, on the page and in place", async () => {
     const as = async (path: string) =>
       (await fetch(`${base}${path}`, { headers: { cookie: owner } })).text();
-    const keys = /<form[^>]*class="card comment-form"[^>]*data-box="[^"]+"[^>]*data-submit-key/;
+    const keys = /<form[^>]*class="(?:card )?comment-form"[^>]*data-box="[^"]+"[^>]*data-submit-key/;
     // Two kinds of page: the issue's comment box, and the tell composer.
     const issue = await as("/mel/proj/issues/1");
     const page = await as("/mel/proj/tell?from=/mel/proj/issues/1");
@@ -1008,7 +1008,7 @@ describe("web ui", () => {
     // Cmd/Ctrl+Enter sends it. Signed out there is no box, so no key is promised.
     const issue = await as("/mel/proj/issues/1", owner);
     expect(issue).toMatch(
-      /<form[^>]*class="card comment-form"[^>]*data-box="Write a comment"[^>]*data-submit-key/,
+      /<form[^>]*class="comment-form"[^>]*data-box="Write a comment"[^>]*data-submit-key/,
     );
     expect(await as("/mel/proj/issues/1")).not.toContain("data-box=");
     // The close form is drawn from the design system's input, not page classes.
