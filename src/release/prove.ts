@@ -16,7 +16,8 @@
  * #10168, #10222). After that the plain doubling takes over, so a version
  * that never answers costs its public URL a few loads an hour. When a newer
  * release answers instead, this process is being replaced: it keeps nothing
- * and never polls again (#10138).
+ * and does not poll again for `GIVE_UP_MS` (#10138); still running after
+ * that, it was not replaced and proves its version again (#10248).
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -82,8 +83,14 @@ export function isNewer(a: string, b: string): boolean {
   return false;
 }
 
-/** Versions this process saw replaced by a newer one; never polled again. */
-const superseded = new Set<string>();
+/**
+ * Versions this process saw a newer release answer for, and until when it
+ * does not poll for them again. A replaced process is gone well within
+ * `GIVE_UP_MS`; one still running after it was not replaced (a roll the
+ * launcher undid), so it proves its version again rather than leave the last
+ * kept failure, and its past retry time, standing for hours (#10248).
+ */
+const superseded = new Map<string, number>();
 
 const proofFile = (dataDir: string): string => join(dataDir, "release", "proof.json");
 
@@ -107,9 +114,12 @@ function keep(dataDir: string, proof: Proof): Proof {
 }
 
 /** The card an unproven release is, saying when it is tried again; undefined while the last verdict is a pass. */
-export function proofNeed(dataDir: string): { sentence: string; since: string } | undefined {
+export function proofNeed(dataDir: string, running?: string): { sentence: string; since: string } | undefined {
   const p = lastProof(dataDir);
   if (p === undefined || p.ok) return undefined;
+  // Only the process running a version proves it: a failure kept for another version is not
+  // this process's to report, and stood for hours after a roll or a newer boot (#10248).
+  if (running !== undefined && running !== UNSTAMPED && p.version !== running) return undefined;
   const next = Date.parse(p.at) + retryAfter(p.failures ?? 1, p.slow === true, p.gaveUp === true);
   // When it is tried again, so a person reading the card knows it is not stuck.
   const again = Number.isFinite(next) ? ` It is proven again at ${new Date(next).toISOString().slice(11, 16)} UTC.` : "";
@@ -154,7 +164,7 @@ export function proofDue(last: Proof | undefined, version: string, now: number):
 export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> {
   const now = o.now ?? Date.now;
   const last = lastProof(o.dataDir);
-  if (superseded.has(o.version) || !proofDue(last, o.version, now())) return undefined;
+  if (now() < (superseded.get(o.version) ?? -Infinity) || !proofDue(last, o.version, now())) return undefined;
   const sleep = o.sleep ?? Bun.sleep;
   const doFetch = o.fetch ?? fetch;
   const failedBefore = last?.version === o.version && !last.ok ? last : undefined;
@@ -186,7 +196,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       if (now() + POLL_MS > deadline) {
         // A newer release answers: this process is being replaced, and a failure kept now would stand over the newer version's own proof.
         if (isNewer(seen, o.version)) {
-          superseded.add(o.version);
+          superseded.set(o.version, now() + GIVE_UP_MS);
           return undefined;
         }
         return finish(`the public URL never answered as ${o.version}`, true, true);

@@ -256,6 +256,10 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
       concurrency: 0,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      // No tick inside the suite: the first one runs the autonomy pass, whose
+      // `moveRequested` queues its own follow-up on a standing verdict, and on
+      // a loaded shard it landed mid-test and moved the counts these assert.
+      tickMs: 3_600_000,
     });
   });
 

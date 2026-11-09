@@ -96,6 +96,8 @@ test("this tree, shipped as the image ships it (src/ alone), boots", async () =>
   const repo = join(import.meta.dir, "..");
   cpSync(join(repo, "src"), join(image, "src"), { recursive: true });
   for (const file of ["package.json", "tsconfig.json"]) cpSync(join(repo, file), join(image, file));
+  // The Dockerfile copies the OpenCode plugin too: src/http/plugin_routes.ts reads it at boot (#10274).
+  cpSync(join(repo, "plugins", "opencode"), join(image, "plugins", "opencode"), { recursive: true });
   expect(existsSync(join(image, "scripts"))).toBe(false);
   const result = await proveBoot({ tree: image, version: "9.9.9", budgetMs: 60_000 });
   expect(result).toMatchObject({ ok: true });

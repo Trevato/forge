@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isNewer, lastProof, proofDue, proofNeed, proveRelease, proveRunning, QUICK_RETRIES, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
+import { GIVE_UP_MS, isNewer, lastProof, proofDue, proofNeed, proveRelease, proveRunning, QUICK_RETRIES, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
 import { owned } from "../src/crew/incidents.ts";
 
 const CSS = '<html><link rel="stylesheet" href="/a.css"></html>';
@@ -177,6 +177,34 @@ describe("proving a release", () => {
     const again = site("1.0.1");
     expect(await run("1.0.0", again.fake, { now: () => t, sleep: async (ms: number) => void (t += ms) })).toBeUndefined();
     expect(again.hits).toEqual([]); // a replaced process does not poll again
+  });
+
+  test("a process still running after a newer release answered proves its version again (#10248)", async () => {
+    let t = 0;
+    const clock = { now: () => t, sleep: async (ms: number) => void (t += ms) };
+    // 1.4.0 failed once, then a newer release answered for a moment and was undone.
+    expect((await run("1.4.0", site("1.3.0").fake, clock))?.ok).toBe(false);
+    t += 60_000;
+    expect(await run("1.4.0", site("1.4.1").fake, clock)).toBeUndefined();
+    expect(proofNeed(dir, "1.4.0")).toBeDefined();
+    const soon = site("1.4.0");
+    t += GIVE_UP_MS - 60_000;
+    expect(await run("1.4.0", soon.fake, clock)).toBeUndefined();
+    expect(soon.hits).toEqual([]);
+    t += 60_000;
+    const later = site("1.4.0");
+    expect((await run("1.4.0", later.fake, clock))?.ok).toBe(true);
+    expect(later.hits.length).toBeGreaterThan(0);
+    expect(proofNeed(dir, "1.4.0")).toBeUndefined();
+  });
+
+  test("a failure kept for another version than the running one is no card (#10248)", async () => {
+    let t = 0;
+    await run("1.0.2", site("1.0.0").fake, { now: () => t, sleep: async (ms: number) => void (t += ms) });
+    expect(proofNeed(dir)).toBeDefined();
+    expect(proofNeed(dir, "1.0.2")).toBeDefined();
+    expect(proofNeed(dir, "1.0.3")).toBeUndefined();
+    expect(proofNeed(dir, "dev")).toBeDefined();
   });
 
   test("an older or non-numeric answer is still a kept failure (#10138)", async () => {

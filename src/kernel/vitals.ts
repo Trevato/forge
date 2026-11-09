@@ -32,6 +32,7 @@ import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { proofNeed } from "../release/prove.ts";
+import { running as runningVersion } from "./version.ts";
 import { rollbackNeed } from "../release/launch.ts";
 import { behindStanding } from "../release/behind.ts";
 import { newestDrills } from "../core/domain_drills.ts";
@@ -515,7 +516,7 @@ export function vitals(input: VitalsInput): Vitals {
   if (behind !== undefined) need("mirror", behind.sentence, behind.since, "/settings/backups");
 
   // A release the forge could not prove against its own public URL is a card until a release does.
-  const unproven = proofNeed(input.dataDir);
+  const unproven = proofNeed(input.dataDir, runningVersion().version);
   if (unproven !== undefined) need("release", unproven.sentence, unproven.since, "/board");
 
   // A roll the image's launcher undid is a card until a later version reads ready.
