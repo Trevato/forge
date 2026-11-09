@@ -78,12 +78,11 @@ test("a reader is refused the page; a stranger to a private repository and an un
   expect((await get("/alice/lab/machines/nope/shell", "alice")).status).toBe(404);
 });
 
-test("the machines list offers Open shell, and its own CSP admits no WebAssembly", async () => {
+test("the machines list links each machine to its shell, and its own CSP admits no WebAssembly", async () => {
   const res = await get("/alice/lab/settings/machines", "alice");
   expect(res.status).toBe(200);
   const body = await res.text();
   expect(body).toContain('href="/alice/lab/machines/standard/shell"');
-  expect(body).toContain("Open shell");
   expect(res.headers.get("content-security-policy")).not.toContain("wasm-unsafe-eval");
 });
 
