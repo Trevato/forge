@@ -1,0 +1,12 @@
+{
+  "egress": ["api.example.com"],
+  "app": {
+    "run": "bun run src/server.ts",
+    "install": "",
+    "health": "/healthz",
+    "test": "bun test"
+  },
+  "adapter": {
+    "schedule": { "every": 3600 }
+  }
+}

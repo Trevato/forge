@@ -17,6 +17,28 @@ checks and the pull run record exist (`src/apps/pull.ts`: `parsePullAnswer`,
 adapter written to this page is an ordinary app until that work lands. The rest of the forge's app rules apply to it now: see
 [`docs/APPS.md`](APPS.md).
 
+## The template
+
+[`examples/adapter-template/`](../examples/adapter-template/) is a working
+adapter to copy. It has no dependencies, answers `POST /pull`, keeps its
+records and cursor in bun:sqlite under `FORGE_APP_DATA`, and refuses any host
+outside its source. Its README says what to change. Its tests prove that a
+replay writes nothing new and that another host is refused. The forge's check
+runs them through `test/adapter-template.test.ts`, which also parses the
+template's `forge.json` and checks that each source host is in `egress`.
+
+The template accepts `POST /pull` only from an `admin` the forge signed for:
+`x-forge-identity` and `x-forge-signature`, checked against
+`FORGE_APP_IDENTITY_KEY` (see "Who is there" in [`docs/APPS.md`](APPS.md)).
+Anyone else gets 401 or 403, and the source is not read, so a public app or
+a preview cannot be made to pull by whoever reaches it. When the forge
+schedules pulls, its call has to carry that signed identity.
+
+The manifest parser (`src/apps/adapter.ts`) reads only `adapter.schedule`
+today. So the template names its source hosts in `src/source.ts` and opens
+them with `egress`, and its `adapter` block holds only `schedule` until the
+parser accepts `source`.
+
 ## The `adapter` block in forge.json
 
 An app declares itself an adapter with an optional top-level `adapter` block:
