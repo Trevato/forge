@@ -6,9 +6,11 @@ test("a header line over the width is named, a wrapped one is not", () => {
   const long = `/**\n * ${"word ".repeat(40)}\n */\nconst x = 1;\n`;
   expect(longHeaderLines("a.ts", long)).toEqual(["a.ts:2"]);
   expect(longHeaderLines("a.ts", "/**\n * short\n */\n")).toEqual([]);
-  // only the leading comment counts; code after it does not
-  expect(longHeaderLines("a.ts", `/**\n * ok\n */\n// ${"x".repeat(200)}\n`)).toEqual([]);
-  expect(longHeaderLines("a.ts", `// ${"x".repeat(200)}\n`)).toEqual([]);
+  // later comment-only lines count (#8957, #9222, #9627, #9943); code and URLs do not
+  expect(longHeaderLines("a.ts", `/**\n * ok\n */\n// ${"x ".repeat(100)}\n`)).toEqual(["a.ts:4"]);
+  expect(longHeaderLines("a.ts", `x();\n  /* ${"x ".repeat(100)}\n  ${"y ".repeat(100)}*/\n`)).toEqual(["a.ts:2", "a.ts:3"]);
+  expect(longHeaderLines("a.ts", `const s = "${"x".repeat(200)}";\n`)).toEqual([]);
+  expect(longHeaderLines("a.ts", `// see https://e.com/${"x".repeat(200)}\n`)).toEqual([]);
 });
 
 test("rule header-width: wrap a file's header comment to the width; the allow list only shrinks", async () => {
