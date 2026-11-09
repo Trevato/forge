@@ -17,7 +17,7 @@ import {
 } from "../../actions/explore.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
-import { edgeLoginUrl } from "../../http/edge.ts";
+import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
 import { offersSignup, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -124,7 +124,7 @@ function emptyState(ctx: Ctx, query: ExploreQuery): Html {
         : offersSignup(ctx)
           ? html`${btn("Create an account", { href: "/signup?next=/apps/new", variant: "primary" })}
             ${btn("Sign in", { href: "/signin?next=/apps/new" })}`
-          : btn("Sign in", { href: edgeLoginUrl("/apps/new"), variant: "primary" }),
+          : btn("Sign in", { href: activeEdgeToken(ctx.app) === undefined ? "/signin?next=/apps/new" : edgeLoginUrl("/apps/new"), variant: "primary" }),
   });
 }
 

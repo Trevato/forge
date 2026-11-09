@@ -27,7 +27,7 @@ import { LOOK_SIZES } from "../../core/looks.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { edgeLoginUrl } from "../../http/edge.ts";
+import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { repoBase, offersSignup, signInFirst, NOT_ADMIN_HERE, forbiddenPage } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
@@ -883,7 +883,7 @@ bun run src/main.ts</code></pre>
               ? html`<a class="small" href="/signin${nextQuery}">Sign in</a>
                 ${btn("Create an account", { href: `/signup${nextQuery}` })}`
               : html`${when(mode !== "closed", () => html`<a class="small door-wide" href="/signup">Create an account</a>`)}
-                ${btn("Sign in", { href: edgeLoginUrl(back) })}`}`,
+                ${btn("Sign in", { href: activeEdgeToken(ctx.app) === undefined ? `/signin${nextQuery}` : edgeLoginUrl(back) })}`}`,
           foot: html`<span class="mark"></span>
             <span>Open Platform: two open source projects, AGPL-3.0</span>
             <span class="spacer"></span>
