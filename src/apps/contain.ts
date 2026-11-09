@@ -36,7 +36,7 @@ import {
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { portInsteadOfSocket } from "../git/hook-address.ts";
-import { relay, startEgress, type Egress } from "./egress.ts";
+import { relay, startEgress, upstreamProxy, type Egress } from "./egress.ts";
 import { BACKGROUND_CPU_WEIGHT } from "./background.ts";
 import { cgroupHost, enterArgv, openCellCgroup } from "./cgroup.ts";
 
@@ -443,6 +443,10 @@ export function openCell(
         granted: spec.granted,
         label: spec.label,
         origins,
+        // A cell a child forge opens (its check, app or step) has no way out
+        // but the proxy of the cell the child runs in. A child in a cell is
+        // the forge told its parent's door; a check that boots a forge is not.
+        upstream: process.env["FORGE_PARENT_LOCAL"] === undefined ? undefined : upstreamProxy(),
         report:
           (spec.egressMode ?? egressMode()) === "report"
             ? (host, port) => spec.onUndeclared?.(host, port)

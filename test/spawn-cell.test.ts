@@ -94,6 +94,16 @@ describe("a child forge's checks reaching the package registry", () => {
       expect(hostAllowed(spec.egress, "registry.npmjs.org", 80)).toBe(false);
       expect(hostAllowed(spec.egress, "evil.registry.npmjs.org", 443)).toBe(false);
       expect(hostAllowed(spec.egress, "openrouter.ai", 443)).toBe(false);
+      setCapacity(app.db, "children.registryEgress", "build", "system");
+      const build = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid", registryHosts: childRegistryHosts(app.db) });
+      expect(build.egressMode).toBe("enforce");
+      for (const host of ["registry.npmjs.org", "registry.yarnpkg.com", "pypi.org", "files.pythonhosted.org", "github.com", "codeload.github.com", "objects.githubusercontent.com", "crates.io", "static.crates.io", "proxy.golang.org", "sum.golang.org"]) {
+        expect(hostAllowed(build.egress, host, 443)).toBe(true);
+        expect(hostAllowed(build.egress, host, 80)).toBe(false);
+      }
+      for (const host of ["api.github.com", "raw.githubusercontent.com", "gist.github.com", "evil.github.com", "example.com", "openrouter.ai"])
+        expect(hostAllowed(build.egress, host, 443)).toBe(false);
+      expect(build.egress.every((h) => !h.includes("*"))).toBe(true);
       setCapacity(app.db, "children.registryEgress", "off", "system");
       expect(childRegistryHosts(app.db)).toEqual([]);
     } finally {

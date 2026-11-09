@@ -109,9 +109,9 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
   "children.registryEgress": {
     label: "Package registry a child forge cell may reach",
     env: "FORGE_CHILDREN_REGISTRY_EGRESS",
-    kind: { type: "choice", values: ["off", "npm"] },
+    kind: { type: "choice", values: ["off", "npm", "build"] },
     fallback: "off",
-    help: "off keeps a child forge's cell from the package registry, so its checks cannot fill their install cache; npm also lets it reach registry.npmjs.org on 443. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
+    help: "off keeps a child forge's cell from the package registries, so its checks cannot fill their install cache; npm also lets it reach registry.npmjs.org on 443; build opens the hosts ordinary app builds fetch from, on 443 alone: npm and yarn, PyPI, GitHub (git dependencies and release tarballs), crates.io and the Go module proxy. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
   },
   "guard_new_accounts": {
     label: "New-account repository guard",
@@ -387,8 +387,24 @@ export function childModelHosts(db: Database): readonly string[] {
 
 /** The package registry a child forge cell may reach (`children.registryEgress`); none by default. */
 export function childRegistryHosts(db: Database): readonly string[] {
-  return capacityValue(db, "children.registryEgress") === "npm" ? ["registry.npmjs.org:443"] : [];
+  const value = capacityValue(db, "children.registryEgress");
+  return value === "build" ? BUILD_HOSTS : value === "npm" ? ["registry.npmjs.org:443"] : [];
 }
+
+/** `build`: where an ordinary app's build fetches its packages from, each named exactly, on 443. */
+export const BUILD_HOSTS: readonly string[] = [
+  "registry.npmjs.org",
+  "registry.yarnpkg.com",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "github.com",
+  "codeload.github.com",
+  "objects.githubusercontent.com",
+  "crates.io",
+  "static.crates.io",
+  "proxy.golang.org",
+  "sum.golang.org",
+].map((host) => `${host}:443`);
 
 /** How many merge-queue candidates of one repository gate at once (#4053). */
 export function queueDepth(db: Database): number {
