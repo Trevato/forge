@@ -29,6 +29,7 @@ import { page, signInHref } from "../web/layout.ts";
 import { html } from "../web/html.ts";
 import type { Router } from "./router.ts";
 import { clientBucket } from "./peer.ts";
+import { TOKEN_FREE_TOOLS } from "../core/mcp_card.ts";
 import { proofOf } from "./report_filer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { REPORT_RECEIVED } from "../actions/report_words.ts";
@@ -276,7 +277,13 @@ export const REPORT_TOOL = {
   },
 } as const;
 
-/** The JSON-RPC answer to a `report` call, or undefined for any other message. */
+/** What a token-free tool does with its call: the JSON-RPC answer. One entry per name in TOKEN_FREE_TOOLS. */
+type FreeHandler = (ctx: Ctx, id: unknown, args: Args) => unknown;
+
+/** The gate picks its handler here, so a name listed in TOKEN_FREE_TOOLS without one is caught by a test. */
+export const TOKEN_FREE_HANDLERS: Readonly<Record<string, FreeHandler>> = { report: reportAnswer };
+
+/** The JSON-RPC answer to a token-free tool call, or undefined for any other message. */
 function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
   const m =
     typeof message === "object" && message !== null
@@ -286,10 +293,15 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
     typeof m["params"] === "object" && m["params"] !== null
       ? (m["params"] as Record<string, unknown>)
       : {};
+  const name = typeof params["name"] === "string" ? params["name"] : "";
+  const handler =
+    TOKEN_FREE_TOOLS.includes(name) && Object.hasOwn(TOKEN_FREE_HANDLERS, name)
+      ? TOKEN_FREE_HANDLERS[name]
+      : undefined;
   if (
     m["jsonrpc"] !== "2.0" ||
     m["method"] !== "tools/call" ||
-    params["name"] !== REPORT_TOOL.name ||
+    handler === undefined ||
     m["id"] === undefined
   )
     return undefined;
@@ -297,9 +309,13 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
     typeof params["arguments"] === "object" && params["arguments"] !== null
       ? (params["arguments"] as Args)
       : {};
+  return handler(ctx, m["id"], args);
+}
+
+function reportAnswer(ctx: Ctx, id: unknown, args: Args): unknown {
   const text = (t: string, isError = false) => ({
     jsonrpc: "2.0",
-    id: m["id"],
+    id,
     result: { content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) },
   });
   const [owner, name, ...rest] = str(args["repo"]).split("/");

@@ -47,7 +47,7 @@ describe("/llms.txt MCP tools", () => {
     const listed = lines.slice(start + 1, end).filter((l) => l.startsWith("- "));
     const expected = [...TOOLS, REPORT_TOOL].map((t: Listed) => {
       const admin = t.adminOnly === true || t.needsAdminScope === true ? " (admin)" : "";
-      return `- ${t.name}: ${(t.doc ?? t.description).replace(/\s+/g, " ").trim()}${admin}${t.writes ? " (writes)" : ""}`;
+      return `- ${t.name}: ${(t.doc ?? t.description).replace(/\s+/g, " ").trim()}${admin}${t.writes ? " (writes)" : ""}${t.name === "report" ? " (no account)" : ""}`;
     });
     expect(listed).toEqual(expected);
     expect(TOOLS.some((t) => t.writes)).toBe(true);

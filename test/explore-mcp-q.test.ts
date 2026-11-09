@@ -75,6 +75,6 @@ test("tools/list shows q first", async () => {
 
 test("llms.txt names every filter explore reads", async () => {
   const txt = await (await fetch(`${servers.url}/llms.txt`)).text();
-  const line = txt.split("\n").find((l) => l.includes('the tool "explore"')) ?? "";
+  const line = txt.split("\n").find((l) => l.includes('MCP "explore"')) ?? "";
   for (const k of ["kind:", "sort:", "updated:", "owner:", "archived:", "1d, 7d or 30d", "yes or no"]) expect(line).toContain(k);
 });

@@ -245,6 +245,31 @@ describe("what the open web expects", () => {
     expect(await fetch(`${base}/llms.txt`).then((r) => r.text())).toContain(`${base}/api/v1 (the root`);
   });
 
+  test("every MCP tool llms.txt offers without an account answers non-401 to an anonymous call, and the no-account section names only HTTP routes for finding things", async () => {
+    const body = await fetch(`${base}/llms.txt`).then((r) => r.text());
+    const tools = body.split("## MCP tools")[1]!.split("\n## ")[0]!;
+    const open = [...tools.matchAll(/^- (\w+):.*\(no account\)/gm)].map((m) => m[1]!);
+    expect(open).toContain("report");
+    for (const name of open) {
+      const res = await fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { repo: "nobody/none", title: "x" } } }),
+      });
+      expect(res.status).not.toBe(401);
+    }
+    const find = body.split("## Find things (no account)")[1]!.split("\n## ")[0]!;
+    expect(find).toContain("with an account");
+    expect(find).not.toContain("MCP: the tool");
+    expect(find).toContain('MCP "search": with an account');
+    const probe = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "explore", arguments: { q: "" } } }),
+    });
+    expect(probe.status).toBe(401);
+  });
+
   test("llms.txt says how to use the forge from a harness, with the endpoint built from the URL", async () => {
     const body = await fetch(`${base}/llms.txt`).then((r) => r.text());
     const section = body.slice(body.indexOf("## Use it from your harness"));

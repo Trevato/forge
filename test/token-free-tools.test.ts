@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { TOKEN_FREE_TOOLS } from "../src/core/mcp_card.ts";
-import { REPORT_TOOL, toolNames } from "../src/http/mcp.ts";
+import { REPORT_TOOL, TOKEN_FREE_HANDLERS, toolNames } from "../src/http/mcp.ts";
 
 describe("token-free MCP tools", () => {
   let dataDir: string;
@@ -56,4 +56,8 @@ describe("token-free MCP tools", () => {
       .map((a: any) => a.mcp);
     expect(open.sort()).toEqual([...TOKEN_FREE_TOOLS].sort());
   });
+});
+
+test("the gate's handlers and the token-free list have the same names", () => {
+  expect(Object.keys(TOKEN_FREE_HANDLERS).sort()).toEqual([...TOKEN_FREE_TOOLS].sort());
 });

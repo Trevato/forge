@@ -15,8 +15,8 @@ test("llms.txt names explore and search, and an empty forge says None yet.", asy
     expect(body).toContain("## Find things (no account)");
     expect(body).toContain("/api/v1/explore?q=kind:app+sort:forks+garden");
     expect(body).toContain("/api/v1/search?q=");
-    expect(body).toContain('the tool "explore"');
-    expect(body).toContain('the tool "search"');
+    expect(body).toContain('MCP "explore": with an account');
+    expect(body).toContain('MCP "search": with an account');
     expect(body).toMatch(/## Public repositories\n\nNone yet\.\n/);
   } finally {
     servers.stop();
