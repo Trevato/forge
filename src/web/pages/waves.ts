@@ -47,6 +47,7 @@ export function waveRow(w: Wave, href: string, visible: number) {
   const why = w.highlights[0]?.why;
   return row({
     href,
+    nav: true,
     title: w.headline,
     ...(why === undefined || why === "" ? {} : { meta: html`${why}` }),
     trail: html`<span class="muted small">${w.version} · ${w.date} · ${visible} ${visible === 1 ? "pull" : "pulls"}</span>`,
@@ -79,6 +80,7 @@ export async function wavesPage(ctx: Ctx): Promise<Response> {
         )
       : row({
           href: fileHref(e.file),
+          nav: true,
           title: e.file,
           meta: html`Not a wave: ${e.reason}`,
         }),
