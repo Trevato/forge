@@ -75,6 +75,10 @@ import {
   type PillarView,
 } from "../../core/pillars.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
+import { roadmapOf } from "../roadmap.ts";
+import { roadmapBody, roadmapCss } from "./roadmap.ts";
+import { cookieValue } from "../../http/context.ts";
+import { secureFor } from "../../http/cookie_secure.ts";
 
 /** Where a card's own link goes: dev's issue page, by default. */
 const devIssueHref = (base: string, number: number): string =>
@@ -1378,11 +1382,83 @@ function openOnly(graph: Graph): Graph {
   };
 }
 
-/** GET /:owner/:name/map (`?done=1` draws the closed issues too) */
+/** A visit older than this is a new visit: what moved since is marked. */
+const VISIT_MS = 30 * 60_000;
+
+/**
+ * When the reader last looked, from their cookie `prev~cur`: `cur` is this
+ * visit's start, `prev` the one before it. A live swap (a fetch, not a
+ * navigation) never moves them, so what is marked stays marked.
+ */
+export function lastLooked(
+  header: string | undefined,
+  now: Date,
+  navigating: boolean,
+): { since: string | undefined; cookie: string | undefined } {
+  const [prev, cur] = (header ?? "").split("~");
+  const valid = (t: string | undefined): string | undefined =>
+    t !== undefined && /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(t) ? t : undefined;
+  let p = valid(prev);
+  let c = valid(cur);
+  if (!navigating) return { since: p ?? c, cookie: undefined };
+  if (c === undefined) c = now.toISOString();
+  else if (now.getTime() - Date.parse(c) > VISIT_MS) {
+    p = c;
+    c = now.toISOString();
+  }
+  return { since: p, cookie: `${p ?? ""}~${c}` };
+}
+
+/** GET /:owner/:name/map (`?done=1` draws the closed issues too; `?view=graph` is the drawing) */
 export async function mapPage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  if (
+    ctx.url.searchParams.get("view") !== "graph" &&
+    ctx.url.searchParams.get("done") !== "1"
+  ) {
+    const name = `rm_${repo.ownerName}_${repo.name}`.replace(/[^A-Za-z0-9_]/g, "_");
+    const mode = ctx.request.headers.get("sec-fetch-mode");
+    const seen = lastLooked(
+      cookieValue(ctx.request, name),
+      new Date(),
+      mode === null || mode === "navigate",
+    );
+    const road = roadmapOf(ctx.app.db, repo, ctx.auth.user, {
+      ...(seen.since === undefined ? {} : { since: seen.since }),
+    });
+    if (road !== undefined) {
+      const base = repoBase(repo);
+      const response = page({
+        ctx,
+        title: `Roadmap · ${repo.name}`,
+        crumbs: crumbsFor(repo),
+        palette: repoPalette(ctx, repo),
+        body: html`${repoHeader(ctx, repo, "map")}
+          <div class="page-head mt">
+            <h1>Roadmap</h1>
+            <p class="muted small"><a href="${base}/map?view=graph">The graph</a></p>
+          </div>
+          <div
+            class="rm"
+            id="roadmap-live"
+            data-live="${LIVE_KINDS}"
+            data-live-repo="${repo.ownerName}/${repo.name}"
+          >
+            ${roadmapBody(base, road)}
+          </div>`,
+        styleCss: roadmapCss,
+        scriptJs: liveRegionsJs,
+      });
+      if (seen.cookie !== undefined)
+        response.headers.append(
+          "set-cookie",
+          `${name}=${seen.cookie}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly${secureFor(ctx.url, ctx.app.config.url) ? "; Secure" : ""}`,
+        );
+      return response;
+    }
+  }
   const db = ctx.app.db;
   const studio = studioRecord(ctx, repo) !== undefined;
   const showDone = ctx.url.searchParams.get("done") === "1";

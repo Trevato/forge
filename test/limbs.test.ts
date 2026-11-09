@@ -449,7 +449,7 @@ describe("limb actions", () => {
       word: "deferred",
       deferredBecause: through,
     });
-    const mapPage = await (await get("alice", "/alice/engine/map")).text();
+    const mapPage = await (await get("alice", "/alice/engine/map?view=graph")).text();
     expect(mapPage).toContain(
       `aria-label="#${extra.number} One home: the footer — deferred: ${through}"`,
     );

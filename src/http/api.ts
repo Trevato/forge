@@ -242,6 +242,7 @@ import {
 import { forReader } from "../crew/handover.ts";
 import { globalMapJson } from "../web/pages/global-map.ts";
 import { mapJson, marksFor, withoutDone } from "../web/pages/map.ts";
+import { roadmapOf } from "../web/roadmap.ts";
 import { cachedMap } from "../web/map_snapshot.ts";
 import { scopeKey } from "../web/map_cache.ts";
 import {
@@ -2363,6 +2364,25 @@ export function apiRoutes(router: Router<Handler>): void {
       return new Response(null, { status: 304, headers });
     }
     return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+  });
+  // The roadmap (#10303): the pillars in order, what is building, what landed,
+  // what is next and when each finishes. The page's own model; 404 where the
+  // repository names no pillars.
+  router.add("GET", "/api/v1/repos/:owner/:name/roadmap", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const road = timePhase(ctx.request, "render", () =>
+      roadmapOf(ctx.app.db, repo, ctx.auth.user),
+    );
+    if (road === undefined) return notFound();
+    return new Response(JSON.stringify(road), {
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "private, no-cache",
+        vary: "authorization, cookie",
+      },
+    });
   });
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).

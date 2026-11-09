@@ -416,7 +416,7 @@ describe("milestones", () => {
   });
 
   test("one tap from the map, the board and the issue itself", async () => {
-    const map = await (await get("alice", "/alice/engine/map")).text();
+    const map = await (await get("alice", "/alice/engine/map?view=graph")).text();
     expect(map).toContain('href="/alice/engine/milestones"');
     expect(map).toContain(`href="/alice/engine/milestones/${trust.number}"`);
     const board = await (await get("alice", "/board")).text();
