@@ -44,7 +44,7 @@ export function config(input: RenderInput): Rendered {
   if (countFields(parsed.value) > MAX_FIELDS)
     return {
       lines,
-      content: html`<div class="card"><p class="muted">This file has more than ${MAX_FIELDS.toLocaleString()} values, too many for a form. Source shows it whole.</p></div>`,
+      content: html`<p class="muted">This file has more than ${MAX_FIELDS.toLocaleString()} values, too many for a form. Source shows it whole.</p>`,
     };
   const edit = editHref(input);
   return {
