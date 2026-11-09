@@ -49,6 +49,7 @@ import {
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
 import { firstAt } from "../core/first.ts";
+import { fromAppIssues } from "../core/from_app.ts";
 import { pickOrder } from "../core/next_up.ts";
 import { ranksInRepo } from "../core/rank.ts";
 import { ensurePlanner } from "./planner.ts";
@@ -444,7 +445,7 @@ export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slot
   const { allowed } = pickFilter(app, repo, ready, now);
   // The order is the one Next up shows (#8826): ranked by place, then the ready order.
   return slotOrder(
-    pickOrder(allowed, ranked, (r) => r.issue.id),
+    pickOrder(allowed, ranked, (r) => r.issue.id, [], fromAppIssues(app.db, allowed.map((r) => r.issue.id))),
     (r) => ({
       ranked: ranked.has(r.issue.id),
       small: small.has(r.issue.id) && !first.has(r.issue.id),

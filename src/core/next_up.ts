@@ -8,6 +8,7 @@
 
 import type { Database } from "bun:sqlite";
 import { type Graph, type Ranked, reachOf, readyNow, repoGraph } from "./dependencies.ts";
+import { fromAppIssues } from "./from_app.ts";
 import type { Issue } from "./issues.ts";
 import { pillarsOf, servedBy } from "./pillars.ts";
 import type { Repo } from "./repos.ts";
@@ -86,21 +87,25 @@ export function roleOf(
 }
 
 /**
- * The whole order, once (#8826): the ranked issues by place, then the ready
- * ones nobody ranked, in the ready order. Next up shows it and the picker
- * takes from it; neither keeps an order of its own. `blocked` is the open
- * ranked issues that are not ready: the page shows them in their place, and
- * the picker, which can only start what is ready, passes none.
+ * The whole order, once (#8826): what a person sent from an app first
+ * (`first`, the `from-app` issues, #10365), then the ranked issues by place,
+ * then the ready ones nobody ranked, in the ready order. Next up shows it and
+ * the picker takes from it; neither keeps an order of its own. `blocked` is
+ * the open ranked issues that are not ready: the page shows them in their
+ * place, and the picker, which can only start what is ready, passes none.
  */
 export function pickOrder<T>(
   ready: readonly T[],
   ranks: ReadonlyMap<string, number>,
   idOf: (t: T) => string,
   blocked: readonly T[] = [],
+  first: ReadonlySet<string> = new Set(),
 ): T[] {
   const place = (t: T) => ranks.get(idOf(t));
-  const ranked = [...ready, ...blocked].filter((t) => place(t) !== undefined).sort((a, b) => place(a)! - place(b)!);
-  return [...ranked, ...ready.filter((t) => place(t) === undefined)];
+  const ahead = ready.filter((t) => first.has(idOf(t)));
+  const rest = (t: T) => !first.has(idOf(t));
+  const ranked = [...ready, ...blocked].filter((t) => rest(t) && place(t) !== undefined).sort((a, b) => place(a)! - place(b)!);
+  return [...ahead, ...ranked, ...ready.filter((t) => rest(t) && place(t) === undefined)];
 }
 
 /** The list for one repository; `scope` is what `sealedScope` says the viewer may see. */
@@ -133,7 +138,7 @@ export function nextUp(
     why: readyIds.has(issue.id) ? unstartable.get(issue.id) ?? null : whyNot(graph, issue),
   });
   const blocked = graph.issues.filter((i) => i.state === "open" && ranks.has(i.id) && !readyIds.has(i.id));
-  const rows = pickOrder(ready, ranks, (i) => i.id, blocked).map(rowOf);
+  const rows = pickOrder(ready, ranks, (i) => i.id, blocked, fromAppIssues(db, ready.map((i) => i.id))).map(rowOf);
   const listed = new Set(rows.map((r) => r.issue.id));
   const away = graph.issues.filter(
     (i) => i.state === "open" && graph.deferred.has(i.id) && !listed.has(i.id) && !graph.structural.has(i.id),
