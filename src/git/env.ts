@@ -302,6 +302,57 @@ export interface GitCapture {
   readonly stderr: string;
   /** The timeout killed the process. */
   readonly timedOut?: boolean;
+  /** `stopAfterLines` was reached: stdout holds that many lines and the process was killed for it. */
+  readonly stopped?: boolean;
+}
+
+export interface CaptureOptions extends RunOptions {
+  /**
+   * Keep only the first this-many newline-ended lines of stdout and kill the
+   * process once they are read. For a caller that wants the first few
+   * answers of a command whose whole output can be megabytes (`git grep a`).
+   */
+  stopAfterLines?: number;
+}
+
+/**
+ * The first `max` lines of `stream`, read as they come; `stop` is called
+ * once they are in, and nothing past them is kept. Without `max`, all of it.
+ */
+async function readLines(
+  stream: ReadableStream<Uint8Array>,
+  max: number | undefined,
+  stop: () => void,
+): Promise<{ text: string; stopped: boolean }> {
+  if (max === undefined) return { text: await new Response(stream).text(), stopped: false };
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let lines = 0;
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let cut = -1;
+      for (let i = 0; i < value.length; i++) {
+        if (value[i] === 10 && ++lines >= max) {
+          cut = i + 1;
+          break;
+        }
+      }
+      if (cut < 0) {
+        parts.push(decoder.decode(value, { stream: true }));
+        continue;
+      }
+      parts.push(decoder.decode(value.subarray(0, cut)));
+      stop();
+      return { text: parts.join(""), stopped: true };
+    }
+    parts.push(decoder.decode());
+    return { text: parts.join(""), stopped: false };
+  } finally {
+    reader.cancel().catch(() => {});
+  }
 }
 
 /**
@@ -311,7 +362,7 @@ export interface GitCapture {
  */
 export async function runGitCapture(
   args: readonly string[],
-  options: RunOptions = {},
+  options: CaptureOptions = {},
 ): Promise<GitCapture> {
   const start = performance.now();
   return gitGate.run(async () => {
@@ -331,12 +382,18 @@ export async function runGitCapture(
       options.timeoutMs ?? 30_000,
     );
     try {
-      const [stdout, stderr, code] = await Promise.all([
-        new Response(proc.stdout).text(),
+      const [out, stderr, code] = await Promise.all([
+        readLines(proc.stdout, options.stopAfterLines, () => proc.kill("SIGKILL")),
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
-      return { code, stdout, stderr, ...(timedOut ? { timedOut } : {}) };
+      return {
+        code,
+        stdout: out.text,
+        stderr,
+        ...(timedOut && !out.stopped ? { timedOut } : {}),
+        ...(out.stopped ? { stopped: true } : {}),
+      };
     } finally {
       clearTimeout(timer);
       noteGit(gitRecord, args, start);
