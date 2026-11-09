@@ -105,6 +105,7 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
           ${listed.value.map(({ slug, board }) =>
             row({
               href: `/boards/${slug}`,
+              nav: true,
               title: board.title,
               meta: html`${String(board.panels.length)} panel${board.panels.length === 1 ? "" : "s"} · ${board.range} · refresh ${board.refresh}`,
             }),
