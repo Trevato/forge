@@ -6,6 +6,7 @@ import { askUntilBelieved, cellsAvailable, openCell } from "../src/apps/contain.
 import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/spawn/host.ts";
 import { createApp } from "../src/app.ts";
 import { childEnv } from "../src/apps/process.ts";
+import { watchedLimits } from "../src/apps/contain.ts";
 import { cellChildren, crewAtWork, stopCellChildren, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
@@ -109,6 +110,19 @@ describe("a child forge's checks reaching the package registry", () => {
     } finally {
       app.close();
     }
+  });
+});
+
+describe("a busy child forge is slowed, not stopped", () => {
+  test("its cell asks the kernel to hold its cores, and the watch then never stops it for CPU", () => {
+    const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "large", port: 4100, label: "forge:kid" });
+    expect(spec.cpuQuota).toBe(true);
+    expect(spec.limits.cpus).toBe(4);
+    expect(watchedLimits(spec.limits, { cpuCapped: true }).cpus).toBe(Number.POSITIVE_INFINITY);
+    expect(watchedLimits(spec.limits, { cpuCapped: true }).memoryMiB).toBe(spec.limits.memoryMiB);
+    // Where the kernel cannot hold it, the watch still does.
+    expect(watchedLimits(spec.limits, { cpuCapped: false }).cpus).toBe(4);
+    expect(watchedLimits(spec.limits, undefined).cpus).toBe(4);
   });
 });
 

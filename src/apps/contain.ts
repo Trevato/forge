@@ -215,6 +215,21 @@ export interface CellSpec {
    * (`apps/background.ts`). The step runner sets it.
    */
   readonly background?: boolean | undefined;
+  /**
+   * Held to `limits.cpus` by the kernel (`cpu.max`) at an app's weight: a
+   * whole child forge, whose checks and crew run inside it, is slowed when
+   * it is busy rather than stopped.
+   */
+  readonly cpuQuota?: boolean | undefined;
+}
+
+/**
+ * The limits the watch stops a cell for: the cores only where the kernel
+ * does not already hold them. A cell under `cpu.max` cannot run over its
+ * cores, and a sampled 4.1 of 4 is the sampling, not the cell.
+ */
+export function watchedLimits(limits: Limits, cgroup: { readonly cpuCapped: boolean } | undefined): Limits {
+  return cgroup?.cpuCapped === true ? { ...limits, cpus: Number.POSITIVE_INFINITY } : limits;
 }
 
 /**
@@ -474,7 +489,11 @@ export function openCell(
   const cgroup = openCellCgroup(
     spec.limits.memoryMiB,
     cgroupHost(),
-    spec.background === true ? { weight: BACKGROUND_CPU_WEIGHT, cpus: spec.limits.cpus } : undefined,
+    spec.background === true
+      ? { weight: BACKGROUND_CPU_WEIGHT, cpus: spec.limits.cpus }
+      : spec.cpuQuota === true
+        ? { weight: 100, cpus: spec.limits.cpus }
+        : undefined,
   );
   const argv = (command: string): string[] => {
     const inner = bwrapArgv(command);
@@ -539,7 +558,7 @@ export function openCell(
       cgroup === undefined
         ? { bytes: Math.floor(spec.limits.memoryMiB * 1024 * 1024), by: "watch" }
         : { bytes: cgroup.maxBytes, by: "kernel" };
-    unwatch = watchTree(pid, spec.limits, cap, writable, spec.label, (why) => {
+    unwatch = watchTree(pid, watchedLimits(spec.limits, cgroup), cap, writable, spec.label, (why) => {
       if (breach !== undefined) return;
       breach = why;
       log(`stopped: ${why}`);

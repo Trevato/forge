@@ -114,9 +114,11 @@ describe("the layout, on a directory shaped like cgroupfs", () => {
     expect(readFileSync(join(step.dir, "io.weight"), "utf8")).toBe("default 10");
     // 16 cores: 16 × 100 000 µs of CPU in each 100 000 µs period.
     expect(readFileSync(join(step.dir, "cpu.max"), "utf8")).toBe("1600000 100000");
+    expect(step.cpuCapped).toBe(true);
     const app = openCellCgroup(64, host)!;
     expect(existsSync(join(app.dir, "cpu.weight"))).toBe(false);
     expect(existsSync(join(app.dir, "cpu.max"))).toBe(false);
+    expect(app.cpuCapped).toBe(false);
   });
 
   test("a crew run's cell has no memory cap, weighs 10 and is held to its cores", () => {

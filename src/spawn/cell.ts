@@ -88,6 +88,9 @@ export function cellSpecFor(input: {
     egressMode: "enforce",
     reach: input.parentPort === undefined ? [input.parentUrl] : [input.parentUrl, parentLocal(input.parentPort)],
     limits: cellLimits(input.size),
+    // A forge is busy in bursts (a check's shards, an install): the kernel
+    // holds it to its cores; the watch stopping it killed the check with it.
+    cpuQuota: true,
     listen: input.port,
     label: input.label,
   };

@@ -57,6 +57,8 @@ export interface CellCgroup {
   readonly maxBytes: number;
   /** How many times the kernel OOM-killed in it (`memory.events` `oom_kill`). */
   readonly oomKills: () => number;
+  /** Whether the kernel holds its cores (`cpu.max` written): then a busy cell is throttled, never stopped. */
+  readonly cpuCapped: boolean;
   /** Kill whatever is left and remove the cgroup, retrying while it empties. */
   readonly remove: () => void;
 }
@@ -252,6 +254,7 @@ export function openCellCgroup(
         // an older kernel: the cap still holds
       }
     }
+  let cpuCapped = false;
   // cgroupfs makes no file it does not have: a controller not delegated is a write refused.
   if (share !== undefined) {
     const files: [string, string][] = [
@@ -263,6 +266,7 @@ export function openCellCgroup(
     for (const [file, value] of files) {
       try {
         writeFileSync(join(dir, file), value);
+        if (file === "cpu.max") cpuCapped = true;
       } catch {
         // no cpu or io controller here: nice and SCHED_BATCH still hold
       }
@@ -272,6 +276,7 @@ export function openCellCgroup(
     dir,
     maxBytes,
     oomKills: () => oomKills(read(join(dir, "memory.events"))),
+    cpuCapped,
     remove: () => removeDir(dir),
   };
 }
