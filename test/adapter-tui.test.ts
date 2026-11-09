@@ -14,6 +14,10 @@ import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { recordPull } from "../src/apps/pull.ts";
 import { shownRuns, type AdapterFacts } from "../src/apps/adapter_facts.ts";
+import { PULL_NOW_REFUSALS } from "../src/actions/app_pull.ts";
+import type { Ctx } from "../src/tui/app/app.ts";
+import type { Session } from "../src/tui/session.ts";
+import { theme } from "../src/tui/ui/theme.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { adapterCommands, adapterScreen } from "../src/tui/screens/adapter.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -123,4 +127,48 @@ test("a guest gets no entry, and the screen reads nothing", async () => {
   expect(seen.read).toBe(0);
   expect(seen.text).not.toContain("c-secret-9");
   expect(seen.text).not.toContain("upstream said no");
+});
+
+// Pull now (#10126): one key for a writer, none for anyone else.
+function press(user: User, pull: Parameters<typeof adapterScreen>[4], reads: { n: number }) {
+  const toasts: string[] = [];
+  const ctx = {
+    theme: theme("dark"),
+    invalidate() {},
+    toast: (t: string) => toasts.push(t),
+  } as unknown as Ctx;
+  const f = { app, db: app.db, user } as unknown as Session;
+  const screen = adapterScreen(f, ctx, repo, async () => (reads.n++, facts), pull);
+  return { screen, toasts, send: (k: string) => screen.key({ key: k } as never) };
+}
+const settle = () => new Promise((r) => setTimeout(r, 10));
+
+test("a writer sees the p key, pulls now, and the rows are read again", async () => {
+  const reads = { n: 0 };
+  const calls: string[] = [];
+  const run = { state: "ok" } as never;
+  const t = press(olive, async (_a, actor) => (calls.push(actor!.username), { ok: true, value: run }), reads);
+  expect(t.screen.keys.map((b) => b.keys[0])).toEqual(["p"]);
+  expect(t.send("p")).toBe(true);
+  await settle();
+  expect(calls).toEqual(["olive"]);
+  expect(reads.n).toBe(2);
+  expect(t.toasts).toEqual(["pulled: ok"]);
+});
+
+test("a refusal shows its sentence", async () => {
+  const t = press(olive, async () => ({ ok: false, error: "asleep" }), { n: 0 });
+  t.send("p");
+  await settle();
+  expect(t.toasts).toEqual([PULL_NOW_REFUSALS.asleep]);
+});
+
+test("a reader is shown no key and p does nothing", async () => {
+  const calls: number[] = [];
+  const t = press(otto, async () => (calls.push(1), { ok: false, error: "forbidden" }), { n: 0 });
+  expect(t.screen.keys).toEqual([]);
+  expect(t.send("p")).toBe(false);
+  await settle();
+  expect(calls).toEqual([]);
+  expect(t.toasts).toEqual([]);
 });

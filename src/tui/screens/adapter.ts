@@ -3,12 +3,17 @@
  * (`web/studio/adapter.ts`), read from the same `adapterFactsOf` and
  * gated the same way — owner facts (`canSeeOwnerFacts`) only. The palette
  * offers it while a repository with an app is open; anyone else is offered
- * nothing and, were the screen reached, sees no rows. Read-only.
+ * nothing and, were the screen reached, sees no rows. A writer presses `p`
+ * to run a pull now (`pullNow`, #10126): the rows are read again, a refusal
+ * is told in `PULL_NOW_REFUSALS`' words. Anyone else is shown no key and
+ * `p` does nothing.
  */
 
+import { pullNow, PULL_NOW_REFUSALS } from "../../actions/app_pull.ts";
+import { binding } from "../app/keys.ts";
 import { NO_RUNS_WORDS, adapterFactsOf, adapterRows, adapterRunRows, type AdapterFacts } from "../../apps/adapter_facts.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
-import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canSeeOwnerFacts, canWrite, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
@@ -37,7 +42,10 @@ export function adapterScreen(
   ctx: Ctx,
   repo: Repo,
   facts: (record: AppRecord) => Promise<AdapterFacts | undefined> = (record) => adapterFactsOf(f.app, record),
+  pull: typeof pullNow = pullNow,
 ): Screen {
+  const mayPull = (): boolean => f.user !== undefined && canWrite(f.db, repo, f.user);
+  let pulling = false;
   let rows: Array<[string, string]> | undefined;
   let loaded = false;
   const load = (): void => {
@@ -68,7 +76,9 @@ export function adapterScreen(
   load();
   return {
     title: `${repo.ownerName}/${repo.name} — Adapter`,
-    keys: [],
+    get keys() {
+      return mayPull() ? [binding(["p"], "pull now")] : [];
+    },
     render(area, s) {
       const c = ctx.theme.c;
       if (rows === undefined) {
@@ -78,6 +88,24 @@ export function adapterScreen(
       }
       drawFacts(s, area, c, rows);
     },
-    key: () => false,
+    key(e) {
+      if (e.key !== "p" || !mayPull()) return false;
+      if (pulling) return true;
+      pulling = true;
+      void pull(f.app, f.user, repo).then(
+        (done) => {
+          pulling = false;
+          if (done.ok) {
+            ctx.toast(`pulled: ${done.value.state}`, "success");
+            load();
+          } else ctx.toast(PULL_NOW_REFUSALS[done.error], "danger");
+        },
+        () => {
+          pulling = false;
+          ctx.toast("The pull could not be run.", "danger");
+        },
+      );
+      return true;
+    },
   };
 }

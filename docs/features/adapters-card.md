@@ -9,7 +9,9 @@ when), the **next pull** and the **cursor** of the last good pull.
   (`canSeeOwnerFacts`) get it.
 - **Terminal:** open the repository, press the palette key and choose
   "<owner>/<repo> — Adapter" (`src/tui/screens/adapter.ts`). Same gate, same
-  rows.
+  rows. A writer presses `p` there to pull now (`pullNow`): the rows are
+  read again, and a refusal shows its `PULL_NOW_REFUSALS` sentence in the
+  status line. Anyone else is shown no key and `p` does nothing.
 - Both list the **last ten pull runs** under the facts (`pullRunLines`,
   limit 10): when, ok or failed, written/skipped/failed and, for a failed
   run, its error sentence. With no runs, one muted line says "No pull runs
