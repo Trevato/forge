@@ -19,6 +19,7 @@ import type { Graph } from "../src/core/dependencies.ts";
 import { seedFixture, type Fixture, type Shape } from "../bench/map-home.ts";
 import { countStatements } from "../bench/run.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 // `seedFixture` raises the log floor and never lowers it: borrowed for
 // this file, and given back to whichever file runs next (#7419).
@@ -275,7 +276,7 @@ describe("/map's Server-Timing names its phases", () => {
       const cookie = who === "owner" ? f.ownerCookie : f.strangerCookie;
       for (const pass of ["cold", "warm"]) {
         const res = await fetch(`${servers.url}/map`, { headers: { cookie } });
-        const header = res.headers.get("server-timing") ?? "";
+        const header = requestTiming(res);
         const dur = new Map(
           [...header.matchAll(/([a-z-]+);dur=(\d+\.\d)/g)].map((m) => [m[1]!, Number(m[2])]),
         );

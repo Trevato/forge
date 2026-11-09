@@ -87,8 +87,13 @@ export function startDraining(log: Log, why: string, fields: Record<string, numb
  * Liveness: `ping` runs one trivial query against the database. However
  * long it takes, an answer is 200; only a throw is 503, logged when it
  * starts and when it ends.
+ *
+ * Given `loopLagMs` (the caller asked for JSON), the 200 is
+ * `{"ok":true,"loopLagMs":n}`: the worst event-loop lag of the last 10 s
+ * (`perf/loop_worst.ts`, #10288). Otherwise it stays the plain `ok` a
+ * probe and a stranger hear (#2917).
  */
-export function liveResponse(ping: () => unknown, log: Log): Response {
+export function liveResponse(ping: () => unknown, log: Log, loopLagMs?: number): Response {
   try {
     ping();
   } catch (error) {
@@ -101,6 +106,8 @@ export function liveResponse(ping: () => unknown, log: Log): Response {
   }
   if (databaseDown) log.info("forge alive again: the database answers");
   databaseDown = false;
+  if (loopLagMs !== undefined && Number.isFinite(loopLagMs))
+    return Response.json({ ok: true, loopLagMs: Math.round(loopLagMs * 10) / 10 }, { status: 200 });
   return new Response("ok", { status: 200 });
 }
 

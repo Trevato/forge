@@ -5,6 +5,7 @@ import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { expectWork } from "./helpers/work.ts";
 import { statements } from "./helpers/statements.ts";
 import { snappyFixture, type SnappyFixture } from "../bench/snappy.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let f: SnappyFixture;
 
@@ -25,7 +26,7 @@ afterAll(async () => {
 async function look(): Promise<{ phases: { name: string; ms: number }[] }> {
   const res = await fetch(`${f.base}/`, { headers: { cookie: f.ownerCookie } });
   await res.arrayBuffer();
-  const phases = (res.headers.get("server-timing") ?? "")
+  const phases = requestTiming(res)
     .split(", ")
     .map((p) => ({ name: p.split(";")[0]!, ms: Number(/dur=([\d.]+)/.exec(p)?.[1] ?? 0) }));
   return { phases };

@@ -23,6 +23,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { PULL_PAGE_PHASES } from "./helpers/pull-phases.ts";
 import { PNG } from "./helpers/studio.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -101,7 +102,7 @@ async function timed(): Promise<{ names: string[]; ms: (n: string) => number; bo
   const res = await fetch(`${servers.url}/alice/r/pulls/${number}`, { headers: { cookie } });
   expect(res.status).toBe(200);
   const body = await res.text();
-  const parts = (res.headers.get("server-timing") ?? "").split(", ");
+  const parts = requestTiming(res).split(", ");
   const all = parts.map((p) => p.split(";")[0]!);
   const ms = (n: string) => Number(parts[all.indexOf(n)]!.match(/dur=([\d.]+)/)![1]);
   return { names: all.slice(all.indexOf("app") + 1), ms, body };

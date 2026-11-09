@@ -210,6 +210,16 @@ export function serverTiming(
   ].join(", ");
 }
 
+/**
+ * `header` with the worst event-loop lag of the last 10 s appended as
+ * `lag;dur=<ms>` (#10288): a request that waited on a loop someone else
+ * blocked shows it here, though its own `app` was fast.
+ */
+export function withLag(header: string, lagMs: number): string {
+  if (!Number.isFinite(lagMs) || lagMs < 0) return header;
+  return `${header}, lag;dur=${lagMs.toFixed(1)}`;
+}
+
 /** One named stretch of a request, in milliseconds. */
 export interface Phase {
   readonly name: string;

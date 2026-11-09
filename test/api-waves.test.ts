@@ -12,6 +12,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { mergedPull, waveNaming } from "./helpers/wave-pulls.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -113,7 +114,7 @@ async function get(path: string, withCookie: boolean | string = true) {
     headers: withCookie === false ? {} : { cookie: withCookie === true ? cookie : withCookie },
   });
   const body = await res.text();
-  const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
+  const names = requestTiming(res).split(", ").map((p) => p.split(";")[0]!);
   return { status: res.status, names: names.slice(names.indexOf("app") + 1), body };
 }
 

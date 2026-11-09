@@ -480,6 +480,7 @@ import {
   noteStart,
   takePhases,
   serverTiming,
+  withLag,
   takeDbTime,
   type RouteTiming,
 } from "../core/route_timing.ts";
@@ -493,6 +494,7 @@ import { appSourcesPage } from "../web/pages/sources.ts";
 import { createViewWriter } from "../perf/views_store.ts";
 import { createReadWriter, readOf } from "../perf/reads.ts";
 import { parseServerTiming } from "../perf/record.ts";
+import { currentLoopLag, startLoopWorst } from "../perf/loop_worst.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
@@ -2357,6 +2359,8 @@ export async function serve(app: App): Promise<Servers> {
   const featureSchedule = startFeatureSchedule(app);
   const pullSchedule = startPullSchedule(app);
   const readWriter = createReadWriter(app.db, readLedger, app.log);
+  // The worst event-loop lag of the last 10 s, on every response (#10288).
+  startLoopWorst();
   const counted = (
     owner: App,
     request: Request,
@@ -2368,7 +2372,8 @@ export async function serve(app: App): Promise<Servers> {
     finishedStrangerDeep(owner, request);
     try {
       const header = serverTiming(ms, takeDbTime(request), takePhases(request));
-      response.headers.set("server-timing", header);
+      // `lag` is the loop's, not this request's: kept out of the record's phases.
+      response.headers.set("server-timing", withLag(header, currentLoopLag()));
       const end = performance.now();
       const family = familyOf(request.headers.get("user-agent") ?? "");
       perfRecord.add(
@@ -2730,7 +2735,13 @@ async function answerGet(
   if (url.pathname === "/healthz") {
     noteUsage(request, { pattern: "/healthz", role: "anon" });
     const dbStart = performance.now();
-    const live = liveResponse(() => app.db.query("select 1").get(), app.log);
+    // `Accept: application/json` adds the loop's worst lag of the last 10 s (#10288).
+    const wantsJson = (request.headers.get("accept") ?? "").includes("application/json");
+    const live = liveResponse(
+      () => app.db.query("select 1").get(),
+      app.log,
+      wantsJson ? currentLoopLag() : undefined,
+    );
     noteDbTime(request, performance.now() - dbStart);
     // The release proof learns which release answered, old pod or new; a
     // stranger is told only that one did (#2917).

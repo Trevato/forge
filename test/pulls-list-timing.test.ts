@@ -7,6 +7,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers, bearer = "";
@@ -34,7 +35,7 @@ afterAll(async () => {
 });
 
 function names(res: Response): string[] {
-  return (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
+  return requestTiming(res).split(", ").map((p) => p.split(";")[0]!);
 }
 
 test("a repository's pulls list names session, repo, pulls, words, tells, labels, steps and render in order", async () => {
