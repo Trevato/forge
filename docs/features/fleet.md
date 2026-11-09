@@ -1,6 +1,6 @@
 # Fleet rows
 
-Before a fleet operation acts, see the rows its query line selects. There are two doors, and both show the same rows.
+Before a fleet operation acts, see the rows its query line selects. There are four doors, and all show the same rows.
 
 **On the web:** `GET /fleet?q=<query line>&sort=<column>` (`src/web/pages/fleet.ts`), linked from the fleet graph as "Rows".
 
@@ -27,6 +27,8 @@ Before a fleet operation acts, see the rows its query line selects. There are tw
 
 - `sort` is a column key, `-` leading to reverse; an unknown one is `invalid_sort` (422).
 - A line that does not parse, an empty `q`, or a `q` over 500 characters is `invalid_query` (422) with the reason.
+
+**In MCP:** the `flow` tool with `{ q, sort? }` answers `{ kind, columns, items }`, the same rows `/fleet` shows, for the caller (public repositories only when the token's user cannot read more). A bad line, a bad `sort` or an empty `q` is an error with the reason, so an agent previews a line without applying anything.
 
 **The query line:** a kind, then `field:value` terms that must all hold. Both doors show the same grammar under the line: one sentence, then each kind with its fields (`GRAMMAR` and `fieldsOf` in `src/fleet/selection.ts`).
 

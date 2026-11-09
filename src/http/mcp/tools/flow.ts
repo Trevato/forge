@@ -5,6 +5,8 @@ import { canWrite } from "../../../core/repos.ts";
 import { mayView } from "../../../core/sealed.ts";
 import { whyIssue, whyPull, liveHead, whyRepo, type Why } from "../../../flow/why.ts";
 import { countRead } from "../../../system/telemetry_reads.ts";
+import { COLUMNS, readSort, sortRows } from "../../../fleet/columns.ts";
+import { viewFleet } from "../../../fleet/rows.ts";
 import { openBugs } from "../../../flow/bugs.ts";
 import { flowCached } from "../../../system/flow_cache.ts";
 import { good, bad, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
@@ -23,13 +25,15 @@ const said = (subject: string, why: Why) =>
 
 export const tool: Tool = {
   name: "flow",
-  doc: "with no arguments, the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing`; with `{ kind: bugs }`, `{ open, overdue, bugs: [{ repo, number, priority, dueAt }] }` soonest due first, at most 100 (an admin sees all, anyone else public repositories); with `{ repo, issue? or pull? }` (a writer of the repository), why it is not moving: `{ subject, moving, state?, cause, says, clears, next? }`, the first of wall (a person decides new access), ceiling, hot_file, blocked_by, later_gate, no_builder, no_headroom, red_check, waiting_review that holds it (`flow/why.ts`); `repo` alone asks about the repository's builders",
+  doc: "with no arguments, the forge's pipeline (a forge admin's, or an agent the owner granted `telemetry:read`; private repositories cut out): per stage counts, `oldestWaiting`, `capacity`, the bottleneck, the merge `queue` and what each reviewer has `reviewing`; with `{ q, sort? }`, the rows a fleet query line selects, as `/fleet` shows them: `{ kind, columns, items }`, only rows you may read, `sort` a column key led by `-` to reverse, a bad line answers its reason; with `{ kind: bugs }`, `{ open, overdue, bugs: [{ repo, number, priority, dueAt }] }` soonest due first, at most 100 (an admin sees all, anyone else public repositories); with `{ repo, issue? or pull? }` (a writer of the repository), why it is not moving: `{ subject, moving, state?, cause, says, clears, next? }`, the first of wall (a person decides new access), ceiling, hot_file, blocked_by, later_gate, no_builder, no_headroom, red_check, waiting_review that holds it (`flow/why.ts`); `repo` alone asks about the repository's builders",
   description:
-    "Pipeline (admin); `kind: \"bugs\"`: open bugs on their clocks; with `repo` and `issue` or `pull`: why it is not moving.",
+    "Pipeline (admin); `q`: `/fleet` rows; `kind:bugs`: bugs; `repo`+`issue`/`pull`: why stuck.",
   inputSchema: {
     type: "object",
     properties: {
       kind: { type: "string", enum: ["bugs"] },
+      q: { type: "string", maxLength: 500 },
+      sort: { type: "string" },
       repo: REPO_ARG,
       issue: { type: "integer", minimum: 1 },
       pull: { type: "integer", minimum: 1 },
@@ -37,6 +41,20 @@ export const tool: Tool = {
   },
   writes: false,
   async run(ctx, user, args) {
+    if (args["q"] !== undefined) {
+      const q = args["q"];
+      if (typeof q !== "string" || q.trim() === "" || q.length > 500)
+        return bad("invalid", "q is a fleet query line of at most 500 characters, like: repo autonomy:autonomous");
+      if (args["sort"] !== undefined && typeof args["sort"] !== "string") return bad("invalid", "sort is a column key");
+      // As `/fleet`: the same `viewFleet`, so the same rows for the same viewer.
+      const view = viewFleet(ctx.app.db, user, q);
+      if (!view.ok) return bad("invalid_query", view.error);
+      const asked = args["sort"];
+      const sort = asked === undefined || asked === "" ? undefined : readSort(view.kind, asked);
+      if (asked !== undefined && asked !== "" && sort === undefined)
+        return bad("invalid_sort", "sort is a column of the kind, optionally led by -");
+      return good({ kind: view.kind, columns: COLUMNS[view.kind], items: sortRows(view.rows, sort) });
+    }
     if (args["kind"] !== undefined) {
       if (args["kind"] !== "bugs") return bad("invalid", "kind is bugs");
       // As the terminal's bugs screen: an admin sees every repository, anyone else public ones.
