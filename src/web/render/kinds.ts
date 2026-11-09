@@ -22,6 +22,7 @@ export type FileKind =
   | "sqlite"
   | "model3d"
   | "archive"
+  | "font"
   | "config"
   | "markdown"
   | "patch"
@@ -48,6 +49,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   sqlite: 5 * MB,
   model3d: 100 * MB,
   archive: 50 * MB,
+  font: 20 * MB,
   config: 1 * MB,
   markdown: 1 * MB,
   patch: 1 * MB,
@@ -128,6 +130,10 @@ const MEDIA: Readonly<Record<string, Media>> = {
   sqlite: { kind: "sqlite", name: "SQLite", type: "application/vnd.sqlite3", magic: ascii("SQLite format 3\0") },
   sqlite3: { kind: "sqlite", name: "SQLite", type: "application/vnd.sqlite3", magic: ascii("SQLite format 3\0") },
   stl: { kind: "model3d", name: "STL", type: "model/stl" },
+  ttf: { kind: "font", name: "TrueType", type: "font/ttf", magic: bytes(0x00, 0x01, 0x00, 0x00) },
+  otf: { kind: "font", name: "OpenType", type: "font/otf", magic: ascii("OTTO") },
+  woff: { kind: "font", name: "WOFF", type: "font/woff", magic: ascii("wOFF") },
+  woff2: { kind: "font", name: "WOFF2", type: "font/woff2", magic: ascii("wOF2") },
   glb: { kind: "model3d", name: "glTF binary", type: "model/gltf-binary", magic: ascii("glTF") },
 };
 

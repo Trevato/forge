@@ -86,6 +86,7 @@ import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { overSize } from "../render/archive.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
+import { fontJs } from "../render/font.ts";
 import { hasTable } from "../render/sqlite.ts";
 import { fileKind, HEAD_BYTES, RENDER_CAP } from "../render/kinds.ts";
 import { RENDERERS, rendererFor } from "../render/renderers.ts";
@@ -1113,6 +1114,15 @@ export function drawsPdf(scope: RepoScope, path: string, blob: Blob, view: BlobV
   );
 }
 
+/** Whether the blob page of this file sets a font in itself, and so needs `font-src`. */
+export function drawsFont(scope: RepoScope, path: string, blob: Blob, view: BlobView): boolean {
+  return (
+    view !== "source" &&
+    RENDERERS.font !== undefined &&
+    blobRenderer(scope, path, blob)?.render === RENDERERS.font
+  );
+}
+
 /**
  * One file, framed by the same path header the tree uses. The header is
  * sticky and the whole pane is one element, because a script swapping a
@@ -1499,6 +1509,8 @@ export function codePage(
     before?: Html;
     /** The page draws a PDF in an `<object>` (`PageOptions.objectSrc`). */
     objectSrc?: boolean;
+    /** The page sets a font in itself (`PageOptions.fontSrc`). */
+    fontSrc?: boolean;
     /** Script only some files need (the CSV table's sort and filter). */
     extraJs?: string;
   },
@@ -1507,6 +1519,7 @@ export function codePage(
     ctx,
     title: o.title,
     ...(o.objectSrc ? { objectSrc: true } : {}),
+    ...(o.fontSrc ? { fontSrc: true } : {}),
     crumbs: scope.crumbs,
     palette: scope.palette,
     body: html`${o.header ?? scopeHeader(ctx, scope, "code", { compact: true })}
@@ -1669,7 +1682,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
           explorer: hit.explorer,
           content: hit.content,
           objectSrc: hit.objectSrc,
-          ...(hit.csv ? { extraJs: csvJs } : {}),
+          ...(hit.font ? { fontSrc: true, extraJs: fontJs } : hit.csv ? { extraJs: csvJs } : {}),
         })),
       );
     }
@@ -1727,12 +1740,14 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ),
   });
   const objectSrc = drawsPdf(scope, path, shown, view);
+  const font = drawsFont(scope, path, shown, view);
   if (kept && keepable)
     keepBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}`, all, {
       title: `${filename} · ${repo.name}`,
       explorer: explorerHtml,
       content: pane,
       objectSrc,
+      font,
       csv: isCsvPath(path),
     });
   const response = await keepFinished(codePage(ctx, scope, {
@@ -1741,7 +1756,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     explorer: explorerHtml,
     content: pane,
     objectSrc,
-    ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
+    ...(font ? { fontSrc: true, extraJs: fontJs } : isCsvPath(path) ? { extraJs: csvJs } : {}),
   }));
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
   return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, ref, response);

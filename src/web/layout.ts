@@ -151,6 +151,12 @@ export interface PageOptions {
    */
   objectSrc?: boolean;
   /**
+   * The page sets a font file in the font itself (`render/font.ts`): the
+   * browser may load a font from this origin (`font-src 'self'`). Only the
+   * blob page of a font asks; no other page's policy changes.
+   */
+  fontSrc?: boolean;
+  /**
    * The page carries a Cloudflare Turnstile widget (`/signup`): its script,
    * frame and verification call may come from challenges.cloudflare.com, and
    * nothing else on this page is relaxed.
@@ -882,7 +888,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The hashed stylesheet and scripts are 'self'; the two inline <style>s
     // are named by hash. connect-src 'self' lets the live event stream
     // (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.wasm ? " 'wasm-unsafe-eval'" : ""}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${frameSources(options)}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.wasm ? " 'wasm-unsafe-eval'" : ""}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${frameSources(options)}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}${options.fontSrc ? "font-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are

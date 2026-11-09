@@ -475,6 +475,14 @@ form.inline { display: inline; margin-left: auto; }
 /* A phone: a shorter frame, so a thumb can scroll the page past it. */
 @media (max-width: 600px) { .pdf-frame { height: 60vh; min-height: 360px; } }
 
+/* A font specimen: set in the font itself once the script has loaded it from
+   the media route; until then (or without script) in the page's own face. */
+.font-view { padding: 16px 20px; }
+.font-name { margin: 0 0 12px; font-size: 1.75rem; line-height: 1.3; overflow-wrap: anywhere; }
+.font-line { margin: 0 0 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.font-s { font-size: 14px; } .font-m { font-size: 1.5rem; } .font-l { font-size: 3rem; line-height: 1.2; }
+.font-view.font-ready .font-name, .font-view.font-ready .font-line { font-family: "ForgeSpecimen", sans-serif; }
+
 /* ---- image view ---- */
 .imgview-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 16px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
 .imgview-dim { min-width: 9ch; }
