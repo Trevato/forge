@@ -20,6 +20,7 @@ crew, as before.
   `action: "remove_member", team, user, role?` (the same as the DELETE above:
   with `role` only that role comes off), and `action: "members"` to list
   members with their roles.
+- **MCP, waiting:** see docs/features/team-waiting.md (`org_teams { org, team, waiting: true }`).
 - **Terminal:** the "Organization teams" command, Enter on a team, then `r` on
   a member to pick a role (org admins only).
 

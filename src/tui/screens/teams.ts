@@ -7,6 +7,7 @@
  * nothing and sets nothing.
  */
 
+import { pullsWaitingOn } from "../../actions/issue_teams.ts";
 import { changeTeam, readTeams, teamChanges, TEAM_SAYS } from "../../actions/teams.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -16,6 +17,36 @@ import type { Session } from "../session.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { ListState, drawList, promptScreen, type ListRow } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
+
+/** The open pulls a team's review holds, oldest first: `pullsWaitingOn`, as the MCP tool lists them. */
+function waitingScreen(f: Session, ctx: Ctx, slug: string, name: string): Screen {
+  const state = new ListState();
+  const read = () => {
+    const w = pullsWaitingOn(f.app, f.user, slug);
+    return w.ok ? w.value : [];
+  };
+  return {
+    title: `${name} is holding`,
+    keys: [binding(["j", "k"], "move cursor"), binding(["esc"], "back")],
+    render(area, s) {
+      const rows: ListRow[] = read().map((p) => ({
+        title: `${p.repo}#${p.number} ${p.title}`,
+        secondary: "",
+        meta: `since ${p.since.slice(0, 10)}`,
+      }));
+      if (rows.length === 0)
+        s.text(area.x + 1, area.y, `${name} is holding no pull.`, style(ctx.theme.c.mutedFg, ctx.theme.c.bg), area.x + area.w);
+      else drawList(s, area, ctx.theme.c, state, rows);
+    },
+    key(e) {
+      if (e.key === "esc" || e.key === "q") {
+        ctx.pop();
+        return true;
+      }
+      return state.key(e, read().length);
+    },
+  };
+}
 
 export function teamsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
@@ -48,6 +79,7 @@ export function teamsScreen(f: Session, ctx: Ctx): Screen {
       binding(["enter"], "dial"),
       binding(["c"], "charter"),
       binding(["m"], "members"),
+      binding(["w"], "pulls it holds"),
     ],
     render(area, s) {
       const c = ctx.theme.c;
@@ -77,6 +109,7 @@ export function teamsScreen(f: Session, ctx: Ctx): Screen {
         ask("a whole number from 0 to 100", String(team.dial), (v) => save(team.slug, { dial: v }));
       else if (e.key === "c")
         ask("what it owns, what it reviews", team.charter, (v) => save(team.slug, { charter: v.trim() }));
+      else if (e.key === "w") ctx.push(waitingScreen(f, ctx, team.slug, team.name));
       else if (e.key === "m") {
         const byName = new Map(r.value.agents.map((a) => [a.user.username, a.user.id]));
         const names = new Map(r.value.agents.map((a) => [a.user.id, a.user.username]));

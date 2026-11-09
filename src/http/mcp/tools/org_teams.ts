@@ -1,4 +1,5 @@
 import { addTeamMember, createTeam, deleteTeam, removeTeamMember } from "../../../actions/orgs.ts";
+import { pullsWaitingOn } from "../../../actions/issue_teams.ts";
 import { requireOrgAdmin } from "../../../actions/access.ts";
 import { isTeamRole, TEAM_ROLES } from "../../../core/agents.ts";
 import { getOrg, listTeamMemberRoles, listTeamMembers, listTeams, type Permission } from "../../../core/orgs.ts";
@@ -6,7 +7,7 @@ import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "org_teams",
-  doc: "`{ org, action, team, user?, permission?, role? }` (admin-scope token, an org owner): `create` a team (`permission` read, write or admin; read by default), `add_member` a `user` with an optional `role` (planner, builder, reviewer or member; setting it on someone already there changes their role), list its `members` with their roles, `remove_member` a `user` (with `role`, only that role comes off and they stay a member; without it they leave the team), or `remove` the team; the same as `/api/v1/orgs/:org/teams` and its `members`",
+  doc: "`{ org, action, team, user?, permission?, role? }` (admin-scope token, an org owner): `create` a team (`permission` read, write or admin; read by default), `add_member` a `user` with an optional `role` (planner, builder, reviewer or member; setting it on someone already there changes their role), list its `members` with their roles, `remove_member` a `user` (with `role`, only that role comes off and they stay a member; without it they leave the team), or `remove` the team; with `waiting: true` (and no action) the open pulls the crew team (slug or name) still holds, `{ items: [{ repo, number, title, since }] }` oldest first, at most 50, only repositories you may read — the same list as the terminal's crew-teams screen (`w`); crew teams are forge-wide, so `org` only has to exist; the same as `/api/v1/orgs/:org/teams` and its `members`",
   description: "An org's teams: create, add member with a role, list members, remove.",
   inputSchema: {
     type: "object",
@@ -16,9 +17,10 @@ export const tool: Tool = {
       team: { type: "string", maxLength: 64 },
       user: { type: "string", maxLength: 64 },
       permission: { type: "string", enum: ["read", "write", "admin"], description: "create" },
+      waiting: { type: "boolean", description: "list the open pulls the team's review holds" },
       role: { type: "string", enum: [...TEAM_ROLES], description: "add_member, remove_member: the seat on the crew" },
     },
-    required: ["org", "action", "team"],
+    required: ["org", "team"],
   },
   writes: true,
   needsAdminScope: true,
@@ -26,6 +28,10 @@ export const tool: Tool = {
     const org = getOrg(ctx.app.db, typeof args["org"] === "string" ? args["org"] : "");
     if (!org) return bad("not_found", "no such organization");
     const name = typeof args["team"] === "string" ? args["team"] : "";
+    if (args["waiting"] === true) {
+      const w = pullsWaitingOn(ctx.app, user, name);
+      return w.ok ? good({ items: w.value }) : bad("not_found", "no such team");
+    }
     const action = args["action"];
     if (action === "create") {
       const p = args["permission"];
