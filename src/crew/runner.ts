@@ -1460,7 +1460,14 @@ async function work(
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
     const deadline = Date.now() + options.runTimeoutMs;
-    // The agent's own model, unless the work asks for Opus (#7570).
+    // The agent's own model, unless the work asks for Opus (#7570). A
+    // planner's plain pass runs on Sonnet; one handed work the crew could
+    // not finish runs on Opus (`model_choice.ts`).
+    const handed =
+      brief.role === "planner" &&
+      (parkedTwice(app.db, [repo]).length > 0 ||
+        handedOverPulls(app.db, repo).length > 0 ||
+        handedLimbs(app, repo).length > 0);
     const facts = modelFacts(
       app.db,
       repo,
@@ -1468,6 +1475,7 @@ async function work(
       agent.model,
       brief.role,
       reviewing,
+      handed,
     );
     const chosen = chooseModel(facts);
     const invoke = async (
