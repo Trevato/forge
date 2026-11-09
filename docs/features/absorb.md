@@ -57,7 +57,7 @@ What the feed holds about an app's repository (runs, pulls, issues, looks) shows
 
 ## Without the crew
 
-Absorbing, settings, the menu entry and the page use no model and start no agent run. They work with the crew off and no model credential on the forge. `test/apps-features.test.ts` runs the whole flow that way. The forge never hands an app the crew's credential. A feature's schedule is the app's own: the app reads `FORGE_SETTING_*` and runs its own timer. An app that wants a model's judgment on top, such as an issue written from what it found, must do its work without one and treat the model as optional.
+Absorbing, settings, the menu entry and the page use no model and start no agent run. They work with the crew off and no model credential on the forge. `test/apps-features.test.ts` runs the whole flow that way. The forge never hands an app the crew's credential. An app that wants a model's judgment on top, such as an issue written from what it found, must do its work without one and treat the model as optional.
 
 ## Settings are not secrets, except `secret`
 
@@ -79,6 +79,10 @@ See `docs/features/absorb-review.md` for the findings of #9441.
 A pack's app may carry `"absorb": true` (a boolean, nothing else). `pack deploy` then absorbs it as the deploying admin's act, with the `app.absorbed` event, after the app is made and followed. The app must declare a `feature` in its `forge.json`: if it does not, the step is reported as failed and the app stays made. A pack still carries no setting values.
 
 Settings stay behind on a fork. A fork of another forge's app carries its `feature` block, which declares and does nothing; the new forge has its own settings (the declared defaults until an admin changes them) and its own admin decides on the absorb.
+
+## Schedule
+
+A feature may declare `"schedule": [{ "tool": "scan", "every": "1h" }]`: at most 4 entries, each naming one of the feature's own `tools` and an `every` of `15m`, `1h`, `6h` or `1d`. Anything else is refused with the field and the entry named. The forge keeps it as `schedule` (`tool`, `everyMs`) on the parsed feature. Firing is not done yet: nothing calls the tool on that interval (#9883).
 
 ## Not done yet
 
