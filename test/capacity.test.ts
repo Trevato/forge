@@ -8,7 +8,7 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -637,6 +637,7 @@ describe("the next check honours a concurrency the admin lowered, and gets the s
   });
 
   test("lowered to one, three repositories' checks run one at a time; each sees FORGE_CHECK_SHARDS", async () => {
+    // Invariant: a checks.concurrency lowered below the boot's three admits one check at a time, and checks.shards reaches each check's env.
     expect(changeCapacity(app, alice, "checks.concurrency", "1").ok).toBe(true);
     expect(changeCapacity(app, alice, "checks.shards", "2").ok).toBe(true);
     const repos: Repo[] = [];
@@ -645,53 +646,62 @@ describe("the next check honours a concurrency the admin lowered, and gets the s
       if (!made.ok) throw new Error(String(made.error));
       repos.push(made.value);
     }
+    // Each check holds until the test writes `release` into its home, the one
+    // place a contained check and the test both see: a check ends when the
+    // test says, so a second one let in beside it is still running when sampled.
+    const hold = 'echo "shards=$FORGE_CHECK_SHARDS"; while [ ! -e "${FORGE_CHECK_SCRATCH:-$PWD.home}/release" ]; do sleep 0.01; done';
+    await Promise.all(
+      repos.map((repo) =>
+        commitToBranch(app, alice, repo, {
+          message: "A held check",
+          files: [{ path: "forge.json", content: JSON.stringify({ check: { run: hold } }) }],
+        }),
+      ),
+    );
+    // A running check is released once it has been seen on three samples:
+    // time for the gate to start a second beside it, were the lowered limit
+    // not honoured.
     let most = 0;
-    const watch = setInterval(() => {
-      const running = repos
-        .flatMap((r) => listRuns(app.db, r.id, { kind: "check", limit: 10 }))
-        .filter((r) => r.state === "running").length;
-      most = Math.max(most, running);
-    }, 20);
-    try {
-      await Promise.all(
-        repos.map((repo) =>
-          commitToBranch(app, alice, repo, {
-            message: "A slow check",
-            files: [
-              {
-                path: "forge.json",
-                content: JSON.stringify({
-                  check: { run: 'echo "shards=$FORGE_CHECK_SHARDS"; sleep 1' },
-                }),
-              },
-            ],
-          }),
-        ),
-      );
-      const deadline = Date.now() + 60_000;
-      let done: Run[] = [];
-      while (Date.now() < deadline) {
-        done = repos
-          .flatMap((r) => listRuns(app.db, r.id, { kind: "check", limit: 10 }))
-          .filter((r) => r.state === "ok" || r.state === "failed");
-        if (done.length === 3) break;
-        await Bun.sleep(50);
+    const seenRunning = new Map<string, number>();
+    const deadline = Date.now() + 60_000;
+    let done: Run[] = [];
+    while (Date.now() < deadline) {
+      const runs = repos.flatMap((r) => listRuns(app.db, r.id, { kind: "check", limit: 10 }));
+      const running = runs.filter((r) => r.state === "running");
+      most = Math.max(most, running.length);
+      done = runs.filter((r) => r.state === "ok" || r.state === "failed");
+      if (done.length === 3) break;
+      for (const run of running) {
+        const seen = (seenRunning.get(run.id) ?? 0) + 1;
+        seenRunning.set(run.id, seen);
+        if (seen === 3) {
+          const home = join(dataDir, "checks", `${run.id}.home`);
+          mkdirSync(home, { recursive: true });
+          writeFileSync(join(home, "release"), "");
+        }
       }
-      expect(done.map((r) => r.state)).toEqual(["ok", "ok", "ok"]);
-      expect(most).toBe(1);
-      for (const run of done)
-        expect(readRunLog(dataDir, run.id).lines).toContain("shards=2");
-    } finally {
-      clearInterval(watch);
+      await Bun.sleep(20);
     }
+    expect(done.map((r) => r.state)).toEqual(["ok", "ok", "ok"]);
+    expect(most).toBe(1);
+    for (const run of done)
+      expect(readRunLog(dataDir, run.id).lines).toContain("shards=2");
   }, 90_000);
 });
 
 describe("the crew's concurrency and shard count reach the next pick", () => {
-  test("raised from one to two at boot's one, two agents run at once; each shell is told the shards", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "forge-capacity-crew-"));
-    const app = createApp({ dataDir, port: 0 });
-    const servers = await serve(app);
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let crew: Awaited<ReturnType<typeof startCrew>>;
+  let alice: User;
+  let repo: Repo;
+  const agents: User[] = [];
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-capacity-crew-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
     const fake = join(dataDir, "fake-claude");
     writeFileSync(
       fake,
@@ -700,82 +710,91 @@ if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
 IFS= read -r first
 echo '{"type":"system","subtype":"init","session_id":"s","model":"fake"}'
 echo "{\\"type\\":\\"assistant\\",\\"message\\":{\\"content\\":[{\\"type\\":\\"text\\",\\"text\\":\\"shards=$FORGE_CHECK_SHARDS\\"}]}}"
-sleep 2
+while [ ! -e "${join(dataDir, "release")}" ]; do sleep 0.01; done
 echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","total_cost_usd":0.01,"num_turns":1}'
 `,
     );
     chmodSync(fake, 0o755);
-    const crew = await startCrew(app, {
+    crew = await startCrew(app, {
       forgeUrl: servers.url,
       localUrl: servers.url,
       binary: fake,
       concurrency: 1,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      // The pump picks queued runs on a tick; 5 s by default, 20 ms here.
+      tickMs: 20,
     });
-    try {
-      const a = await createUser(app.db, {
-        origin: "seed",
-        trusted: true,
-        username: "alice",
-        email: "alice@forge.local",
-        password: "a-good-passphrase",
-        adminIfFirst: true,
+    const a = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const created = await createRepo(app, alice, {
+      name: "garden",
+      visibility: "private",
+    });
+    if (!created.ok) throw new Error(String(created.error));
+    repo = created.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# garden\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    for (const name of ["bot", "bee"]) {
+      const made = await createAgent(app, alice, {
+        username: name,
+        brief: "Be brief.",
       });
-      if (!a.ok) throw new Error(a.error);
-      const alice = a.value;
-      expect(changeCapacity(app, alice, "crew.concurrency", "2").ok).toBe(true);
-      expect(changeCapacity(app, alice, "checks.shards", "4").ok).toBe(true);
-      const created = await createRepo(app, alice, {
-        name: "garden",
-        visibility: "private",
-      });
-      if (!created.ok) throw new Error(String(created.error));
-      const repo = created.value;
-      const seeded = await commitToBranch(app, alice, repo, {
-        message: "Start",
-        files: [{ path: "README.md", content: "# garden\n" }],
-      });
-      if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-      for (const name of ["bot", "bee"]) {
-        const made = await createAgent(app, alice, {
-          username: name,
-          brief: "Be brief.",
-        });
-        if (!made.ok) throw new Error(String(made.error));
-        expect(addToCrew(app, alice, repo, name).ok).toBe(true);
-        const issue = openIssue(app, alice, repo, {
-          title: `Plant ${name}`,
-          body: "Along the fence.",
-        });
-        if (!issue.ok) throw new Error(String(issue.error));
-        expect(
-          assignIssue(app, alice, repo, issue.value, made.value.user).ok,
-        ).toBe(true);
-      }
-      let most = 0;
-      const deadline = Date.now() + 30_000;
-      while (Date.now() < deadline) {
-        const runs = listRuns(app.db, repo.id, { kind: "agent" });
-        most = Math.max(most, runs.filter((r) => r.state === "running").length);
-        if (
-          runs.length === 2 &&
-          runs.every((r) => r.state !== "running" && r.state !== "queued")
-        )
-          break;
-        await Bun.sleep(25);
-      }
-      expect(most).toBe(2);
-      for (const run of listRuns(app.db, repo.id, { kind: "agent" }))
-        expect(readRunLog(dataDir, run.id).lines.join("\n")).toContain(
-          "shards=4",
-        );
-    } finally {
-      await crew.stop();
-      servers.stop();
-      app.close();
-      await rm(dataDir, { recursive: true, force: true });
+      if (!made.ok) throw new Error(String(made.error));
+      if (!addToCrew(app, alice, repo, name).ok) throw new Error(`${name} not added to the crew`);
+      agents.push(made.value.user);
     }
+  });
+
+  afterAll(async () => {
+    await crew.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("raised from one to two at boot's one, two agents run at once; each shell is told the shards", async () => {
+    // Invariant: crew.concurrency raised above the boot's one lets the next pick run two agents at once, and checks.shards reaches each agent's env.
+    expect(changeCapacity(app, alice, "crew.concurrency", "2").ok).toBe(true);
+    expect(changeCapacity(app, alice, "checks.shards", "4").ok).toBe(true);
+    for (const agent of agents) {
+      const issue = openIssue(app, alice, repo, {
+        title: `Plant ${agent.username}`,
+        body: "Along the fence.",
+      });
+      if (!issue.ok) throw new Error(String(issue.error));
+      expect(assignIssue(app, alice, repo, issue.value, agent).ok).toBe(true);
+    }
+    // Each fake agent holds until `release` exists: released the moment two
+    // run at once, so the overlap is seen, not raced. Were the raise not
+    // honoured, one runs alone; it is released after three samples alone
+    // with the other waiting, and the test fails on most = 1.
+    let most = 0;
+    let alone = 0;
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const runs = listRuns(app.db, repo.id, { kind: "agent" });
+      const running = runs.filter((r) => r.state === "running").length;
+      most = Math.max(most, running);
+      if (running === 1) alone += 1;
+      if (most === 2 || alone >= 3) writeFileSync(join(dataDir, "release"), "");
+      if (runs.length === 2 && runs.every((r) => r.state !== "running" && r.state !== "queued")) break;
+      await Bun.sleep(20);
+    }
+    expect(most).toBe(2);
+    for (const run of listRuns(app.db, repo.id, { kind: "agent" }))
+      expect(readRunLog(dataDir, run.id).lines.join("\n")).toContain("shards=4");
   }, 60_000);
 });
 
