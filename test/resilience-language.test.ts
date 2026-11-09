@@ -1,6 +1,6 @@
 /** /resilience speaks the home page's language (#9877): one heading, the protections a plain section, no card. */
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Row } from "../src/checks/resilience.ts";
@@ -51,4 +51,19 @@ test("a cited file the last gate did not run reads untested, never green", () =>
   expect(out).toContain(">untested<");
   expect(out).not.toContain("success");
   expect(out).not.toContain('class="card');
+});
+
+test("a night's output on /resilience/nightly/:job is plain lines, no card, scrolling inside itself (#9974)", async () => {
+  await mkdir(join(dir, "nightly"), { recursive: true });
+  await writeFile(join(dir, "nightly", "flake-hunt.log"), `a very long line ${"x".repeat(400)}\n`);
+  const res = await fetch(`${servers.url}/resilience/nightly/flake-hunt`, { headers: { cookie } });
+  expect(res.status).toBe(200);
+  const body = await res.text();
+  const page = main(body);
+  expect(page).not.toContain('class="card');
+  const pre = page.match(/<pre id="nightly-output"[^>]*>/)?.[0] ?? "";
+  expect(pre).toContain('tabindex="0"');
+  expect(pre).toContain('aria-label="Output"');
+  expect(pre).not.toContain("card");
+  expect(body).toMatch(/pre#nightly-output \{[^}]*overflow-x: auto/);
 });
