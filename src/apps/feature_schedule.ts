@@ -10,11 +10,11 @@ import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { declaredFeature } from "../actions/features.ts";
 import { getAbsorbed } from "../core/features.ts";
-import { lastFires, recordFire } from "../core/feature_fires.ts";
+import { lastFires, recordFire, type Fired } from "../core/feature_fires.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
 import { getRepoById } from "../core/repos.ts";
 import { callTool } from "./feature_tools.ts";
-import type { ScheduleEntry } from "./feature.ts";
+import { SCHEDULE_EVERY, type ScheduleEntry } from "./feature.ts";
 import { appsRuntime } from "./runtime.ts";
 
 /** The entries whose interval has passed since they last fired (never fired: due). `lastFired` is ms by tool. */
@@ -152,4 +152,64 @@ export function startFeatureSchedule(app: App, tickMs: number = TICK_MS): { stop
   }, tickMs);
   tick.unref();
   return { stop: () => clearInterval(tick) };
+}
+
+/** One scheduled tool as plain data: how often, how its last fire went, when the next is due. Times are ms since the epoch. */
+export interface ScheduleStatus {
+  readonly tool: string;
+  readonly every: string;
+  readonly lastAt: number | null;
+  readonly ok: boolean | null;
+  /** The failure's sentence; null when the last fire went fine or there is none. */
+  readonly error: string | null;
+  /** How long the last fire took; null before the first. */
+  readonly durationMs: number | null;
+  /** When it is next due: its last fire plus the interval, or null when it has never fired (due soon). */
+  readonly nextAt: number | null;
+  /** The whole line as `scheduleLine` words it, for the tool's readers and the terminal. */
+  readonly line: string;
+}
+
+/** The interval as the app declared it (`15m`, `1h`, `6h`, `1d`). */
+function everyWord(everyMs: number): string {
+  return Object.entries(SCHEDULE_EVERY).find(([, ms]) => ms === everyMs)?.[0] ?? `${Math.round(everyMs / 60_000)}m`;
+}
+
+/** One status per schedule entry, in the app's order, joined to the last fire of its tool. */
+export function scheduleStatus(schedule: readonly ScheduleEntry[], fires: readonly Fired[]): ScheduleStatus[] {
+  return schedule.map((e) => {
+    const fire = fires.find((f) => f.tool === e.tool);
+    const status: Omit<ScheduleStatus, "line"> = {
+      tool: e.tool,
+      every: everyWord(e.everyMs),
+      lastAt: fire?.at ?? null,
+      ok: fire?.ok ?? null,
+      durationMs: fire?.durationMs ?? null,
+      error: fire === undefined || fire.ok ? null : (fire.error ?? "failed"),
+      nextAt: fire === undefined ? null : fire.at + e.everyMs,
+    };
+    return { ...status, line: scheduleLine(status) };
+  });
+}
+
+/** `10:02`: the plain-text clock (UTC) of the line the tool and the terminal print. */
+export const scheduleClock = (ms: number): string => new Date(ms).toISOString().slice(11, 16);
+
+/** A piece of the line after the head: words, the last or next moment (ms) the reader formats, or the sentence of a failure. */
+export type SchedulePiece = string | { readonly last: number } | { readonly next: number } | { readonly error: string };
+
+/** The wording of the line after `scan every 1h`, once, for every door: the page formats the moments and styles the error, the rest print it with `scheduleLine`. */
+export function scheduleMeta(s: Omit<ScheduleStatus, "line">): SchedulePiece[] {
+  if (s.lastAt === null) return ["never run · next soon"];
+  return [
+    "last ", { last: s.lastAt }, ", ", s.error === null ? "ok" : { error: s.error },
+    ...(s.durationMs === null ? [] : [` · ${s.durationMs} ms`]),
+    " · next ", { next: s.nextAt ?? s.lastAt },
+  ];
+}
+
+/** The line for one entry: `scan every 1h · last 10:02, ok · 42 ms · next 11:02` (UTC), the error's sentence when it failed, `never run · next soon` before the first fire. */
+export function scheduleLine(s: Omit<ScheduleStatus, "line">): string {
+  const word = (p: SchedulePiece): string => (typeof p === "string" ? p : "error" in p ? p.error : scheduleClock("last" in p ? p.last : p.next));
+  return `${s.tool} every ${s.every} · ${scheduleMeta(s).map(word).join("")}`;
 }

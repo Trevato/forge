@@ -29,9 +29,11 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
   const state = new ListState();
   let items: readonly FeedItem[] = [];
   let fires: readonly Fired[] = [];
+  let lines: readonly string[] = [];
   void getFeature(f.app, f.user, feature.slug).then((found) => {
     items = found.ok ? feedOf(f.app, f.user, found.value) : [];
     fires = found.ok ? found.value.fires : [];
+    lines = found.ok ? found.value.schedule.map((x) => x.line) : [];
     ctx.invalidate();
   });
   const mayRun = (): boolean => f.user?.isAdmin === true && f.user.kind !== "agent" && fires.length > 0;
@@ -48,6 +50,7 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
       }
       const found = await getFeature(f.app, f.user, feature.slug);
       fires = found.ok ? found.value.fires : fires;
+      lines = found.ok ? found.value.schedule.map((x) => x.line) : lines;
     } finally {
       running = false;
       ctx.invalidate();
@@ -58,9 +61,9 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
     keys: [binding(["j", "k"], "move"), ...(mayRun() ? [binding(["r"], "run scheduled now")] : []), binding(["esc", "q"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body] = fires.length === 0 ? [undefined, area] : split(area, "v", [len(1), fill(1)]);
+      const [head, body] = lines.length === 0 ? [undefined, area] : split(area, "v", [len(1), fill(1)]);
       if (head !== undefined) {
-        const line = `Scheduled: ${fires.map((x) => `${x.tool} ${x.ok ? "ok" : oneLine(x.error ?? "failed")} ${ago(new Date(x.at).toISOString())}`).join("; ")}`;
+        const line = `Scheduled: ${lines.map(oneLine).join("; ")}`;
         s.text(head.x, head.y, truncate(line, head.w), style(c.mutedFg, c.bg), head.x + head.w);
       }
       if (items.length === 0) {

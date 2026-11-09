@@ -82,11 +82,9 @@ Settings stay behind on a fork. A fork of another forge's app carries its `featu
 
 ## Schedule
 
-A feature may declare `"schedule": [{ "tool": "scan", "every": "1h" }]`: at most 4 entries, each naming one of the feature's own `tools` and an `every` of `15m`, `1h`, `6h` or `1d`. Anything else is refused with the field and the entry named. The forge keeps it as `schedule` (`tool`, `everyMs`) on the parsed feature. The forge calls it on that interval while the app is absorbed and running, and remembers how it went: see [feature-schedule.md](feature-schedule.md).
+A feature may declare `"schedule": [{ "tool": "scan", "every": "1h" }]`: at most 4 entries, each naming one of the feature's own `tools` and an `every` of `15m`, `1h`, `6h` or `1d`. Anything else is refused with the field and the entry named. The forge keeps it as `schedule` (`tool`, `everyMs`) on the parsed feature. The forge calls it on that interval while the app is absorbed and running, and remembers how it went.
 
-## Not done yet
-
-An absorbed app is a menu link with kept settings (Settings › Features says so).
+Settings › Features › the app, the `features` tool and the terminal's feed screen each show one line per entry: when it last ran, how it went and when it runs next. What each door shows, and the data behind it, is in [feature-schedule.md](feature-schedule.md).
 
 ## MCP tools
 

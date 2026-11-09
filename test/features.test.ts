@@ -54,6 +54,7 @@ const FEATURE = {
     scout: { type: "bool", default: true, label: "Search the web for ideas" },
   },
   tools: { scan: { description: "Run a scan now" }, latest: { description: "The last findings", writes: false } },
+  schedule: [{ tool: "scan", every: "1h" }],
 };
 const FORGE_JSON = JSON.stringify({ app: { run: "bun run src/server.ts" }, feature: FEATURE });
 
@@ -351,9 +352,14 @@ describe("absorbing an app", () => {
     expect(page).toContain("<h3>Scheduled</h3>");
     expect(page).toContain("&lt;b&gt;the app answered 500&lt;/b&gt;");
     expect(page).not.toContain("<b>the app answered 500");
+    expect(page).toMatch(/every 1h<\/span\s*>[\s\S]*?last <time datetime="[^"]+"[^>]*>[^<]+<\/time\s*>, <span class="danger">&lt;b&gt;the app answered 500&lt;\/b&gt;<\/span> · 42 ms · next <time datetime="[^"]+"[^>]*>\d{4}-\d\d-\d\d<\/time\s*>/);
+    expect(view.ok && view.value.schedule[0]!.line).toMatch(/^scan every 1h · last \d\d:\d\d, <b>the app answered 500<\/b> · 42 ms · next \d\d:\d\d$/);
     expect(((await (await api("GET", adaToken, "/radar")).json()) as { fires: unknown[] }).fires).toHaveLength(1);
     clearFires(app.db, appId);
-    expect(await (await web(adaCookie, "/settings/features/radar")).text()).not.toContain("<h3>Scheduled</h3>");
+    const never = await (await web(adaCookie, "/settings/features/radar")).text();
+    expect(never).toContain("never run · next soon");
+    const idle = await getFeature(app, ada, "radar");
+    expect(idle.ok && idle.value.schedule[0]!.line).toBe("scan every 1h · never run · next soon");
   });
 
   test("the facts are plain and escaped", () => {

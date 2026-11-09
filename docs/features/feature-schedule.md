@@ -33,9 +33,11 @@ One row per (app, tool) in `feature_fire` (`src/core/feature_fires.ts`), replace
 
 ## Read it
 
-- **Page:** Settings › Features › the app, under **Scheduled** (a site admin's page, as the rest of it). Each row has **Run now**: the same call, recorded as the tool's fire. A stopped or asleep app is refused with a sentence, never woken; a call already running is refused, never doubled.
-- **API:** `GET /api/v1/features/:slug` returns `fires`: a list of `{ tool, at, ok, error, durationMs }` (`at` in ms since the epoch). It is empty until something has fired. Readable by whoever may read the feature.
-- **Terminal:** Feature feeds › the app: a `Scheduled:` line above the feed items, tool, outcome and age. An admin presses `r` there to run those tools now: the same call, record and refusal sentences as Run now on the page.
+Every door shows one line per schedule entry, worded once by `scheduleMeta` in `src/apps/feature_schedule.ts`: `scan every 1h · last 10:02, ok · 42 ms · next 11:02`. When the last call failed, its error sentence stands in for `ok`. Before the first call the line reads `scan every 1h · never run · next soon`.
+
+- **Page:** Settings › Features › the app, under **Scheduled** (a site admin's page, as the rest of it). The last run reads as the page's relative clock (`2m ago`) and the next as its day; both carry the exact instant in their tooltip. A failure is in the danger colour. Each row has **Run now**: the same call, recorded as the tool's fire. A stopped or asleep app is refused with a sentence, never woken; a call already running is refused, never doubled.
+- **API and the `features` tool:** `GET /api/v1/features/:slug` returns `fires`, a list of `{ tool, at, ok, error, durationMs }` (`at` in ms since the epoch), empty until something has fired. It also returns `schedule`, one `{ tool, every, lastAt, ok, error, durationMs, nextAt, line }` per entry while the app is absorbed. `line` is the plain-text sentence above, with clocks in UTC. Readable by whoever may read the feature.
+- **Terminal:** Feature feeds › the app: a `Scheduled:` line above the feed items, the entries' `line`s joined by `; `. An admin presses `r` there to run those tools now: the same call, record and refusal sentences as Run now on the page.
 
 ## Not done
 

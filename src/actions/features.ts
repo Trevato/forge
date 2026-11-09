@@ -17,6 +17,7 @@
  *   `FORGE_SETTING_*` in a new process, the same way an env var does.
  */
 
+import { scheduleStatus, type ScheduleStatus } from "../apps/feature_schedule.ts";
 import { lastFires, type Fired } from "../core/feature_fires.ts";
 import type { App } from "../app.ts";
 import { readFileAt } from "../apps/checkout.ts";
@@ -91,6 +92,8 @@ export interface FeatureView {
   readonly tools: readonly ToolSpec[];
   /** How the forge's last call of each scheduled tool went; empty when none has fired. */
   readonly fires: readonly Fired[];
+  /** Each scheduled tool with its last fire and next run; empty when not absorbed. */
+  readonly schedule: readonly ScheduleStatus[];
   /** Where the app comes from: the upstream only when the reader may read it. */
   readonly provenance: Provenance;
 }
@@ -223,6 +226,7 @@ function viewOf(
   const kept = spec === undefined ? featureSettings(app.db, record.id) : openSettings(app.db, app.config.dataDir, record.id, spec);
   const absorbed = getAbsorbed(app.db, record.id);
   const env = spec === undefined ? {} : featureEnv(spec, kept);
+  const fires = absorbed === undefined ? [] : lastFires(app.db, record.id);
   return {
     slug: record.slug,
     repo: `${repo.ownerName}/${repo.name}`,
@@ -241,7 +245,8 @@ function viewOf(
     problem,
     provenance,
     tools: spec?.tools ?? [],
-    fires: absorbed === undefined ? [] : lastFires(app.db, record.id),
+    fires,
+    schedule: absorbed === undefined ? [] : scheduleStatus(spec?.schedule ?? [], fires),
     settings: (spec?.settings ?? []).map((s) => {
       const name = settingEnvName(s.key);
       return {

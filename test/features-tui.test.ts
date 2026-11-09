@@ -26,7 +26,7 @@ quietLogs();
 
 const FORGE_JSON = JSON.stringify({
   app: { run: "bun run src/server.ts" },
-  feature: { name: "Radar", page: "/", settings: { runHourUtc: { type: "int", default: 13, min: 0, max: 23, label: "Hour (UTC)" }, apiToken: { type: "secret", label: "API token" } } },
+  feature: { name: "Radar", page: "/", settings: { runHourUtc: { type: "int", default: 13, min: 0, max: 23, label: "Hour (UTC)" }, apiToken: { type: "secret", label: "API token" } }, tools: { scan: { description: "Run a scan now" } }, schedule: [{ tool: "scan", every: "1h" }] },
 });
 
 describe("features in the terminal", () => {
@@ -161,7 +161,7 @@ describe("features in the terminal", () => {
     await t.palette("Feature feeds");
     await t.press("enter");
     await t.press("enter");
-    expect(t.text()).toContain("Scheduled: scan the app answered 500");
+    expect(t.text()).toMatch(/Scheduled: scan every 1h · last \d\d:\d\d, the app answered 500 · 3 ms · next \d\d:\d\d/);
     clearFires(forge.db, appId);
     t.stop();
   });

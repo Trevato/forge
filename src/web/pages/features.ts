@@ -19,7 +19,7 @@ import {
   provenanceFacts,
 } from "../../actions/features.ts";
 import { runNow } from "../../apps/feature_run.ts";
-import { runtimeReach, type Reach } from "../../apps/feature_schedule.ts";
+import { runtimeReach, scheduleMeta, type Reach } from "../../apps/feature_schedule.ts";
 import { getAppBySlug, type AppRecord } from "../../core/apps.ts";
 import { DAYS } from "../../apps/feature.ts";
 import type { FeedItem } from "../../feed/rank.ts";
@@ -224,11 +224,11 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused, items: readonl
             meta: html`${i.actor ?? i.app} · ${time(i.at)}`,
           }))}</ul>`}
     </section>
-    ${when(f.fires.length > 0, () => html`<section class="settings-block">
+    ${when(f.schedule.length > 0, () => html`<section class="settings-block">
       <h3>Scheduled</h3>
-      <ul class="list">${f.fires.map((x) => row({
-        title: html`<span class="mono">${x.tool}</span>`,
-        meta: html`${x.ok ? "ok" : html`<span class="danger">${x.error ?? "failed"}</span>`} · ${time(new Date(x.at).toISOString())} · ${x.durationMs} ms`,
+      <ul class="list">${f.schedule.map((x) => row({
+        title: html`<span class="mono">${x.tool}</span> every ${x.every}`,
+        meta: html`${scheduleMeta(x).map((p) => typeof p === "string" ? p : "error" in p ? html`<span class="danger">${p.error}</span>` : "last" in p ? time(new Date(p.last).toISOString()) : time(new Date(p.next).toISOString(), { date: true }))}`,
         trail: html`<form method="post" action="${base}/run/${encodeURIComponent(x.tool)}">${btn("Run now", { label: `Run ${x.tool} now` })}</form>`,
       }))}</ul>
     </section>`)}
