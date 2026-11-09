@@ -21,7 +21,7 @@ import {
 import { composeLine } from "./code.ts";
 import type { Token } from "./highlight.ts";
 import { escapeHtml, html, raw, when, type Html } from "./html.ts";
-import { btn, card, disclosure, icon, time, userLink } from "./ui.ts";
+import { btn, card, disclosure, empty, icon, time, userLink } from "./ui.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { wordDiff, type Segment } from "./worddiff.ts";
 
@@ -571,7 +571,7 @@ export function renderDiff(
   const opts: DiffViewOptions =
     options instanceof Map ? { syntax: options } : (options ?? {});
   if (diff.files.length === 0) {
-    return html`<div class="empty">No changes.</div>`;
+    return empty({ title: "No changes." });
   }
   const shown = diff.files.slice(0, MAX_DIFF_FILES);
   const hidden = diff.files.length - shown.length;

@@ -334,3 +334,16 @@ describe("renderDiff stub budget (the view, not the engine)", () => {
     expect(out).not.toContain("View file");
   });
 });
+
+describe("renderDiff with no files", () => {
+  test("says No changes. in a plain empty block, not a card", () => {
+    const out = renderDiff({
+      files: [],
+      additions: 0,
+      deletions: 0,
+    } as Diff).toString();
+    expect(out).toContain("No changes.");
+    expect(out).toContain('<p class="empty-title">No changes.</p>');
+    expect(out).not.toMatch(/class="[^"]*\bcard\b/);
+  });
+});
