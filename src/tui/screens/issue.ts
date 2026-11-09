@@ -35,7 +35,8 @@ import { THREAD_SAYS } from "../../actions/thread_words.ts";
 import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
 import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
 import { listTeams } from "../../core/teams.ts";
-import { listRepoRuns } from "../../actions/runs.ts";
+import { costLine, issueCostFor, type IssueCost } from "../../core/issue_cost.ts";
+import { listRepoRuns, mayReadRuns } from "../../actions/runs.ts";
 import { readPlan } from "../../actions/run_plan.ts";
 import type { IssuePlan } from "../../core/issue_plans.ts";
 import { shownStates } from "../../runs/state.ts";
@@ -167,6 +168,8 @@ export function issueScreen(
   /** Closed-as-dropped-or-split blockers nobody has said may be passed. */
   let held: Issue[] = [];
   let plan: IssuePlan | undefined;
+  /** What the issue and its closing pulls cost, when this viewer may see it. */
+  let cost: IssueCost | null = null;
   let shown: ReturnType<typeof headline>;
   /** Which issues this one waits for and holds up; a line when any. */
   let waits: Waits = { blockedBy: [], blocks: [] };
@@ -216,6 +219,10 @@ export function issueScreen(
       blockedBy: deps?.blockedBy.map((i) => i.number) ?? [],
       blocks: deps?.blocks.map((i) => i.number) ?? [],
     };
+    cost =
+      repo === undefined || issueRow === undefined || !mayReadRuns(f.app, f.user, repo)
+        ? null
+        : issueCostFor(f.db, repo, issueRow, f.user);
     crew.set(runs !== undefined && runs.ok ? runs.value : []);
     plan =
       repo === undefined || issueRow === undefined ? undefined : readPlan(f.app, repo, f.user, issueRow);
@@ -590,14 +597,16 @@ export function issueScreen(
       const planH = planRows.length === 0 ? 0 : Math.min(planRows.length, CREW_ROWS + 2) + 2;
       const waitsLine = waitsParts(waits);
       const headH = waitsLine.length === 0 ? 3 : 4;
-      const [strip, head, waitRow, crewRow, planRow, body, box] = split(area, "v", [
+      const costH = cost === null ? 0 : 1;
+      const [strip, head, waitRow, crewRow, costRow, planRow, body, box] = split(area, "v", [
         len(whereRows(src)),
         len(headH),
         len(held.length === 0 ? 0 : 1),
         len(crewH),
+        len(costH),
         len(planH),
         fill(1),
-        len(Math.min(foot, Math.max(0, area.h - 4 - headH - crewH - planH - whereRows(src) - (held.length === 0 ? 0 : 1)))),
+        len(Math.min(foot, Math.max(0, area.h - 4 - headH - crewH - costH - planH - whereRows(src) - (held.length === 0 ? 0 : 1)))),
       ]);
       whereStrip(s, strip!, c, f, src);
       const right = head!.x + head!.w;
@@ -688,6 +697,9 @@ export function issueScreen(
           if (repo !== undefined) openRunLog(f, ctx, repo, run);
         });
       }
+
+      if (cost !== null && costRow!.h > 0)
+        s.text(costRow!.x, costRow!.y, truncate(costLine(cost), costRow!.w), style(c.fg, c.bg), costRow!.x + costRow!.w);
 
       if (planH > 0 && plan !== undefined) {
         const inner = card(s, planRow!, c, { title: planTitle(plan, shown) });

@@ -8,6 +8,7 @@
  * one closed Details section.
  */
 
+import { costRows, issueCostFor, type IssueCost } from "../../core/issue_cost.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { cardPath } from "../og/path.ts";
 import { mayEditIssue } from "../../actions/issues.ts";
@@ -337,7 +338,8 @@ async function tellRuns(
     issueId: issue.id,
     limit: 10,
   });
-  if (runs.length === 0) return null;
+  const cost = issueCostFor(wordCtx.db, repo, issue, wordCtx.viewer);
+  if (runs.length === 0 && cost === null) return null;
   const base = repoBase(repo);
   const actors = getUsersByIds(
     wordCtx.db,
@@ -363,10 +365,22 @@ async function tellRuns(
       });
     }),
   );
-  return listCard(rows, {
-    head: html`${icon("bot")}
-      <h2>Runs</h2>`,
-  });
+  return html`${runs.length === 0
+    ? null
+    : listCard(rows, {
+        head: html`${icon("bot")}
+          <h2>Runs</h2>`,
+      })}${costBlock(cost, base)}`;
+}
+
+/** What the issue and its closing pulls cost, as `dl` rows; nothing when there is no cost to show. */
+function costBlock(cost: IssueCost | null, base: string): Html | null {
+  if (cost === null) return null;
+  return html`<dl class="status-rows" data-issue-cost>${costRows(cost).map(
+    (r) => html`<div class="status-row"><dt>${r.label}</dt><dd class="num">${
+      r.pull === undefined ? null : html`<a href="${base}/pulls/${r.pull}">#${r.pull}</a> `
+    }${costText(r.usd)}</dd></div>`,
+  )}</dl>`;
 }
 
 /** The pull that closes this tell, with its check and a way into its
