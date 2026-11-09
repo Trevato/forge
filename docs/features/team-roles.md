@@ -16,8 +16,10 @@ crew, as before.
   `422 bad_role`. `DELETE …/members/:username?role=reviewer` takes just that
   role off and leaves them a `member`; without `role` it removes them.
   `GET …/members` lists each member's `role`.
-- **MCP:** `org_teams { org, action: "add_member", team, user, role }`, and
-  `action: "members"` to list members with their roles.
+- **MCP:** `org_teams { org, action: "add_member", team, user, role }`, 
+  `action: "remove_member", team, user, role?` (the same as the DELETE above:
+  with `role` only that role comes off), and `action: "members"` to list
+  members with their roles.
 - **Terminal:** the "Organization teams" command, Enter on a team, then `r` on
   a member to pick a role (org admins only).
 
