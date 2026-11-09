@@ -16,13 +16,20 @@ import { isSafeName } from "../git/guard.ts";
 const API = "/api/v1/repos/";
 
 /** The owner/name a path names, its prefix and the rest; undefined when it names none. */
-function repoPath(pathname: string): { prefix: string; owner: string; name: string; rest: string } | undefined {
+function repoPath(pathname: string): { prefix: string; owner: string; name: string; git: boolean; rest: string } | undefined {
   const prefix = pathname.startsWith(API) ? API : "/";
   const parts = pathname.slice(prefix.length).split("/");
   if (parts.length < 2) return undefined;
-  const [owner, name] = parts as [string, string];
+  const [owner, raw] = parts as [string, string];
+  const git = prefix === "/" && raw.endsWith(".git");
+  const name = git ? raw.slice(0, -4) : raw;
   if (!isSafeName(owner) || !isSafeName(name)) return undefined;
-  return { prefix, owner, name, rest: parts.slice(2).join("/") };
+  return { prefix, owner, name, git, rest: parts.slice(2).join("/") };
+}
+
+/** A push: the receive-pack advertisement or its POST. A push is refused, never carried over. */
+function isPush(url: URL, rest: string): boolean {
+  return rest === "git-receive-pack" || (rest === "info/refs" && url.searchParams.get("service") === "git-receive-pack");
 }
 
 export function movedResponse(db: Database, url: URL, user: User | undefined): Response | undefined {
@@ -30,7 +37,16 @@ export function movedResponse(db: Database, url: URL, user: User | undefined): R
   if (at === undefined) return undefined;
   const repo = redirectFor(db, at.owner, at.name);
   if (repo === undefined || !canRead(db, repo, user)) return undefined;
+  // Git's smart HTTP names the repository `name.git`; the new path keeps it.
+  const suffix = at.git ? ".git" : "";
+  if (at.git && isPush(url, at.rest)) {
+    const path = `${repo.ownerName}/${repo.name}`;
+    return new Response(
+      `This repository moved to ${path}. Nothing was pushed: set the remote with git remote set-url origin ${url.origin}/${path}.git and push again.\n`,
+      { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } },
+    );
+  }
   const rest = at.rest === "" && !url.pathname.endsWith("/") ? "" : `/${at.rest}`;
-  const location = `${at.prefix}${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}${rest}${url.search}`;
+  const location = `${at.prefix}${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}${suffix}${rest}${url.search}`;
   return new Response(null, { status: 308, headers: { location } });
 }

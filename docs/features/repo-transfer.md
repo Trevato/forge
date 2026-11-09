@@ -35,8 +35,16 @@ alike (a write is never applied silently; the client re-sends it). Someone
 who cannot read the repository still gets `404`. Making a new repository at
 the old path takes the path back.
 
-Not yet: git remotes under the old path, runs and previews follow in the next
-step.
+Git over HTTPS follows too: `GET /<old-owner>/<name>.git/info/refs?service=git-upload-pack`
+answers `308` to the new owner for someone who may read the repository, so
+`git clone` and `git fetch` on an old remote reach the new one (git follows the
+redirect on its first request). A push to the old URL is never applied: it is
+refused with `403` and a sentence naming the new path and the `git remote
+set-url` to run. Someone who cannot read it gets what a missing path answers.
+Over SSH the old path is not redirected (SSH has no redirect): the remote must
+be updated to the new path.
+
+Not yet: runs and previews follow in the next step.
 
 For 30 days after a move, the repository's page says where it came from: one
 muted line, "Moved from alice/demo on 2026-11-09", under the head, for someone
