@@ -43,10 +43,14 @@ function suggestedName(ctx: Ctx, admin: User): string {
   return getUserByName(ctx.app.db, name) === undefined ? name : "";
 }
 
-/** The card, for an admin with no everyday account and no recorded choice. */
+/** The home section, for an admin with no everyday account and no recorded choice. */
 export function everydayCard(ctx: Ctx, user: User): Html | null {
   if (!askForEveryday(ctx.app.db, user)) return null;
-  return html`<div class="mb">${everydayForm(ctx, user, true)}</div>`;
+  return html`<section class="settings-block" id="everyday">
+    <h2>Make your everyday account</h2>
+    <p>${EVERYDAY_WHY}</p>
+    ${everydayFields(ctx, user, true)}
+  </section>`;
 }
 
 /**
