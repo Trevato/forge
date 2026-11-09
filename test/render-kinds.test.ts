@@ -68,6 +68,7 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   ansi: [enc("\x1b[31mok\n"), "log", "application/octet-stream"],
   srt: [enc("1\n00:00:01,000 --> 00:00:02,000\nHi\n"), "subtitles", "application/octet-stream"],
   vtt: [enc("WEBVTT\n"), "subtitles", "application/octet-stream"],
+  ics: [enc("BEGIN:VCALENDAR\nEND:VCALENDAR\n"), "calendar", "application/octet-stream"],
 };
 
 describe("the registry of file kinds", () => {

@@ -12,6 +12,7 @@ import { config } from "./config.ts";
 import { isFormConfig } from "./config-format.ts";
 import { csv } from "./csv.ts";
 import { font } from "./font.ts";
+import { ics } from "./ics.ts";
 import { image } from "./image.ts";
 import { claimedMedia, fileKind, HEAD_BYTES, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
 import { log, hasEscape } from "./log.ts";
@@ -66,6 +67,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   patch,
   log,
   subtitles,
+  calendar: ics,
   archive,
   font,
 };

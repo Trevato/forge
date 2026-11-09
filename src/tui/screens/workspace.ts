@@ -53,6 +53,7 @@ import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
+import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
 import { layoutTable, type Grid } from "../ui/grid.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -314,6 +315,25 @@ function subtitleTable(source: string): { table: Table; unread: number } {
   };
 }
 
+/** `.ics`: a calendar, drawn as a table of its events. */
+function isIcsPath(path: string): boolean {
+  return /\.ics$/i.test(path);
+}
+
+/** The events of a calendar as a table; null when the file is not a calendar. Shares the web's parser. */
+function icsTable(source: string): Table | null {
+  const cal = parseIcs(source);
+  if ("error" in cal) return null;
+  const shown = cal.events.slice(0, EVENT_CAP);
+  return {
+    header: ["Start", "End", "Summary", "Location"],
+    rows: shown.map((e) => [e.start, e.end, e.summary, e.location]),
+    more: cal.events.length - shown.length,
+    delimiter: ",",
+    columns: 4,
+  };
+}
+
 /** `README.md`, `NOTES.markdown`, `readme` — the prose a repo opens on. */
 function isMarkdownPath(path: string): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1);
@@ -468,6 +488,9 @@ class Tab {
       this.table = subs.table;
       this.unread = subs.unread;
       this.grid = layoutTable(this.table);
+    } else if (isIcsPath(this.path)) {
+      this.table = icsTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isTablePath(this.path)) {
       // The decoded source, not `plain`: `expandTabs` has eaten every tab there.
       const delimiter = /\.tsv$/i.test(this.path) ? "\t" : undefined;
@@ -2521,7 +2544,7 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path))
+                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -2855,9 +2878,9 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table, unread = 0, subs = false): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, subs ? "cue" : "row")}${
+  return `${plural(rows, subs ? "cue" : events ? "event" : "row")}${
     unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
   }${
     table.more > 0 ? `, first ${table.rows.length} shown` : ""

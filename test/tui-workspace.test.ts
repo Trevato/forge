@@ -383,6 +383,39 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .ics opens as a table of its events sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "calendars",
+      visibility: "public",
+      description: "events",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "team.ics",
+          content:
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20260301T090000Z\r\nSUMMARY:Planning\r\nLOCATION:Room 1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "calendars");
+      await openFile(h, "team.ics");
+      expect(h.text()).toContain("Summary");
+      expect(h.text()).toContain("2026-03-01 09:00 UTC");
+      expect(h.text()).toContain("Planning");
+      expect(h.text()).toContain("1 event");
+      await h.press("s");
+      expect(h.text()).toContain("SUMMARY:Planning");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("tables: search, edit, the caps in the status line, a ; file, and s on a broken one", async () => {
     const made = await createRepo(forge, alice, {
       name: "sheets",
