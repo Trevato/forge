@@ -725,6 +725,14 @@ function fromEvent(
         link: `${base(repo)}/map`,
         what: clip(typeof p["why"] === "string" ? p["why"] : "the crew's slots changed"),
       };
+    // A move is news to the repository's readers; the link is the new path.
+    case "repo.transferred": {
+      const from = typeof p["from"] === "string" ? p["from"] : "";
+      const to = typeof p["to"] === "string" ? p["to"] : "";
+      if (from === "" || to === "") return undefined;
+      const what = `moved from ${clip(from, 60)} to ${clip(to, 60)}`;
+      return { ...common, kind: "map", link: base(repo), what, said: what };
+    }
     default:
       return undefined;
   }

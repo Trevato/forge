@@ -21,6 +21,10 @@ Who moved what from where to where is kept twice: an audit row in
 `repo_transfer`, written in the move's own transaction and never rewritten,
 and a `repo.transferred` event for the repository's readers.
 
+The event appears in their feed (and the dashboard, which shares it) as one
+line, "moved from alice/demo to acme/demo", linking to the new path. Someone
+who cannot read the repository never sees it.
+
 Old paths keep working: a web or API request under the old `owner/name`
 answers `308` to the same path under the new owner, for reads and writes
 alike (a write is never applied silently; the client re-sends it). Someone
