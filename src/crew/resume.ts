@@ -19,11 +19,15 @@ export const WARM_MS = 4 * 60_000;
 export const SHORT_TURNS = 6;
 /** A short session that cost more than this replayed a long one itself: its transcript is long. */
 export const SHORT_USD = 0.15;
+/** A session that ended holding this much context or less is cheap to replay at any age. */
+export const SHORT_CONTEXT_TOKENS = 40_000;
 
 export interface LastSession {
   readonly sessionId: string;
   readonly turns: number;
   readonly costUsd: number;
+  /** The context the session held at its end, in tokens; 0 when the run did not record it. */
+  readonly contextTokens: number;
   readonly finishedAt: string | null;
 }
 
@@ -45,10 +49,22 @@ export function warm(
   return Number.isFinite(ended) && now - ended < WARM_MS;
 }
 
-/** Whether `last` is short enough to replay cheaply whatever its age. */
-export function short(last: Pick<LastSession, "turns" | "costUsd">): boolean {
+/**
+ * Whether `last` is short enough to replay cheaply whatever its age: by the
+ * context it held when the run recorded it, else by turns and cost.
+ */
+export function short(
+  last: Pick<LastSession, "turns" | "costUsd" | "contextTokens">,
+): boolean {
+  if (last.contextTokens > 0) return last.contextTokens <= SHORT_CONTEXT_TOKENS;
   return last.turns <= SHORT_TURNS && last.costUsd <= SHORT_USD;
 }
+
+/** `62k tokens of context, ` when the run recorded it; "" otherwise. */
+const contextWords = (last: Pick<LastSession, "contextTokens">): string =>
+  last.contextTokens > 0
+    ? `${Math.round(last.contextTokens / 1000)}k tokens of context, `
+    : "";
 
 const ago = (last: LastSession, now: number): string => {
   if (last.finishedAt === null) return "ended at an unknown time";
@@ -70,6 +86,6 @@ export function resumeDecision(
   if (short(last) || warm(last, now)) return { resume: true, why: "" };
   return {
     resume: false,
-    why: `session ${last.sessionId} not resumed: ${last.turns} turns, $${last.costUsd.toFixed(2)}, ${ago(last, now)}; replaying it would cost about what it cost to write, so this run starts fresh`,
+    why: `session ${last.sessionId} not resumed: ${contextWords(last)}${last.turns} turns, $${last.costUsd.toFixed(2)}, ${ago(last, now)}; replaying it would cost about what it cost to write, so this run starts fresh`,
   };
 }

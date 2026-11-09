@@ -540,6 +540,8 @@ async function runClaimed(
     sessionId: outcome.sessionId,
     costUsd: outcome.costUsd,
     turns: outcome.turns,
+    contextTokens: outcome.contextTokens,
+    pushed: outcome.pushed,
     commitOid: left,
   });
   if (done) announceRun(app, done);
@@ -718,6 +720,10 @@ type Outcome =
       readonly sessionId?: string | undefined;
       readonly costUsd?: number | undefined;
       readonly turns?: number | undefined;
+      /** The context the session held at its end, in tokens (`resume.ts` reads it). */
+      readonly contextTokens?: number | undefined;
+      /** Whether the run moved its branch; undefined when it cannot say. */
+      readonly pushed?: boolean | undefined;
     }
   | {
       /** The provider turned the run away; it goes on again at `resumeAt`. */
@@ -1576,6 +1582,7 @@ async function work(
           sessionId: again.sessionId || current.sessionId,
           costUsd: current.costUsd + again.costUsd,
           turns: current.turns + again.turns,
+          contextTokens: again.contextTokens || current.contextTokens,
         };
       }
       return current;
@@ -1713,6 +1720,7 @@ async function work(
         sessionId: wrapped.sessionId || result.sessionId,
         costUsd: result.costUsd + wrapped.costUsd,
         turns: result.turns + wrapped.turns,
+        contextTokens: wrapped.contextTokens || result.contextTokens,
       };
       noteRunProgress(app.db, run.id, { costUsd: result.costUsd });
       watch.lap("wrap-up");
@@ -1727,6 +1735,7 @@ async function work(
         sessionId: result.sessionId,
         costUsd: result.costUsd,
         turns: result.turns,
+        contextTokens: result.contextTokens,
       };
 
     // The decline contract: an agent that should not do the task says so
@@ -1750,6 +1759,8 @@ async function work(
           sessionId: result.sessionId,
           costUsd: result.costUsd,
           turns: result.turns,
+          contextTokens: result.contextTokens,
+          pushed: false,
         };
       // The reason lives on the run record (its summary) and the ledger
       // line, never as a comment: a comment on an assigned issue is the
@@ -1760,6 +1771,8 @@ async function work(
         sessionId: result.sessionId,
         costUsd: result.costUsd,
         turns: result.turns,
+        contextTokens: result.contextTokens,
+        pushed: false,
       };
     }
 
@@ -1779,6 +1792,8 @@ async function work(
         sessionId: result.sessionId,
         costUsd: result.costUsd,
         turns: result.turns,
+        contextTokens: result.contextTokens,
+        pushed: false,
       };
     }
 
@@ -1821,6 +1836,8 @@ async function work(
       sessionId: result.sessionId,
       costUsd: result.costUsd,
       turns: result.turns,
+      contextTokens: result.contextTokens,
+      pushed: landed.pushed,
     };
   } finally {
     await early?.stop();
