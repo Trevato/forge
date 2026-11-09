@@ -101,6 +101,9 @@ import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
 import { egressSetting } from "../core/capacity.ts";
+import { policyAt } from "../core/slider.ts";
+import { getEconomics } from "../settings/economics.ts";
+import { asleepWords, sleepWindow, type WindowSource } from "./sleep_window.ts";
 import { noteProtection } from "../kernel/protection.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
@@ -126,18 +129,26 @@ export interface RuntimeOptions {
   readonly concurrency?: number | undefined;
   /**
    * How long an environment serves nobody before its process is stopped
-   * and it sleeps, to be woken by the next request. A preview is looked at
-   * and forgotten; production is left alone for a day before it rests.
+   * and it sleeps, to be woken by the next request. Unset (the forge's
+   * own runtime) reads the profit slider's position on every sweep
+   * (`apps/sleep_window.ts`); set, it is fixed — tests and nothing else.
    */
   readonly sleepAfterMs?:
     | { readonly production: number; readonly preview: number }
     | undefined;
+  /**
+   * The sweep's clock; a test hands in one that runs ahead to prove a
+   * window of minutes without waiting minutes. @default Date.now
+   */
+  readonly clock?: (() => number) | undefined;
   /** How often the runtime looks for environments to put to sleep. */
   readonly sweepEveryMs?: number | undefined;
   /**
    * How long a pull may go without a push or a comment before its preview
    * is stopped (not removed: its row, data and pictures stay) and reads as
-   * asleep until someone asks for it. Unset or 0 keeps every preview warm.
+   * asleep until someone asks for it. Unset follows the profit slider
+   * (`policyAt(position).idlePullMs`, read each sweep; `null` is never);
+   * 0 keeps every preview warm.
    */
   readonly idlePullMs?: number | undefined;
   /**
@@ -246,6 +257,8 @@ export interface EnvStatus {
    * person's words (`BUSY_WORDS`) — set only while the sweep is sparing it.
    */
   readonly busy?: string | undefined;
+  /** Production whose `forge.json` sets `app.always_on: true`: it never sleeps. */
+  readonly alwaysOn?: true | undefined;
   /**
    * Set while a preview is stopped because its pull went quiet: when it was
    * stopped, and the last touch (push, comment, wake) it was measured from.
@@ -593,6 +606,9 @@ export class AppsRuntime {
         looks: state.live.manifest.looks,
         looksAsOwner: state.live.manifest.looksAsOwner,
         toolbar: state.live.manifest.toolbar,
+        ...(state.env === "production" && state.live.manifest.alwaysOn === true
+          ? { alwaysOn: true as const }
+          : {}),
         ...(state.live.deployStartedAt === null
           ? {}
           : { deployStartedAt: state.live.deployStartedAt }),
@@ -1916,8 +1932,8 @@ export class AppsRuntime {
    * or someone is deciding it right now (a queued or running run on it).
    */
   private idleSince(repo: Repo, pull: Pull, env: EnvName): string | undefined {
-    const age = this.options.idlePullMs ?? 0;
-    if (age <= 0 || pull.state !== "open") return undefined;
+    const age = this.idlePullAge();
+    if (age === null || pull.state !== "open") return undefined;
     const now = Date.now();
     let last = Date.parse(pull.updatedAt);
     if (now - last < age) return undefined;
@@ -1968,7 +1984,7 @@ export class AppsRuntime {
 
   /** Stop the previews whose pulls have gone quiet; keep everything else. */
   private async hibernate(): Promise<void> {
-    if ((this.options.idlePullMs ?? 0) <= 0) return;
+    if (this.idlePullAge() === null) return;
     for (const state of [...this.envs.values()]) {
       const number = envPull(state.env);
       if (
@@ -2007,13 +2023,32 @@ export class AppsRuntime {
     }
   }
 
+  /**
+   * How long a pull may sit untouched before its preview stops; `null` is
+   * never. A fixed option wins (0 is off); unset follows the slider, read
+   * now — so moving it changes the next sweep, with no restart.
+   */
+  idlePullAge(): number | null {
+    const fixed = this.options.idlePullMs;
+    if (fixed !== undefined) return fixed > 0 ? fixed : null;
+    return policyAt(getEconomics(this.app.db).position).idlePullMs;
+  }
+
+  /** Where this sweep's idle windows come from: a fixed option, else the slider as it stands. */
+  private windowSource(): WindowSource {
+    const fixed = this.options.sleepAfterMs;
+    return fixed !== undefined
+      ? { kind: "fixed", sleepAfterMs: fixed }
+      : { kind: "slider", position: getEconomics(this.app.db).position };
+  }
+
   /** Stop what nobody has asked for lately, and keep it ready to wake. */
   private async sweep(): Promise<void> {
     if (this.stopped) return;
     await this.hibernate();
-    const after = this.options.sleepAfterMs ?? SLEEP_AFTER_MS;
+    const source = this.windowSource();
     const grace = this.options.busyGraceMs ?? BUSY_GRACE_MS;
-    const now = Date.now();
+    const now = this.options.clock?.() ?? Date.now();
     this.metered(() => beatAwake(this.app.db, new Date(now).toISOString()));
     for (const state of this.envs.values()) {
       const live = state.live;
@@ -2029,8 +2064,13 @@ export class AppsRuntime {
         state.waking !== undefined
       )
         continue;
-      const limit =
-        state.env === "production" ? after.production : after.preview;
+      const window = sleepWindow(
+        source,
+        state.env === "production",
+        live.manifest.alwaysOn === true,
+      );
+      const limit = window.ms;
+      if (limit === null) continue;
       const last = state.lastRequestAt ?? Date.parse(live.since);
       if (now - last < limit) continue;
       // Idle by the clock; asked whether it is mid-work, and spared while
@@ -2065,7 +2105,7 @@ export class AppsRuntime {
           this.app.config.dataDir,
           live.runId,
           busy === undefined
-            ? `asleep: nothing asked for it in ${Math.round(limit / 60_000)} minutes; the next request wakes it`
+            ? asleepWords({ ms: limit, why: window.why })
             : `asleep: still busy ${Math.round(grace / 60_000)} minutes past its idle window, which is as long as busy keeps an app awake; the next request wakes it`,
         );
       log.info("asleep", { app: state.app.slug, env: state.env });

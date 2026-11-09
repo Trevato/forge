@@ -534,6 +534,10 @@ that before the deploy fails; `tty` is the app's terminal interface (below);
 file is read from the commit being deployed, never from the database — a
 pull that changes how the app runs is previewed the way it will run.
 
+`app.always_on: true` keeps production awake whatever the profit slider
+says — the one per-app exception to it, shown on the app page. Previews
+still sleep as the forge says.
+
 `toolbar`, at the top level, is `true` unless you set it to `false`. The
 forge adds one `<script>` tag to the HTML pages your app serves (before
 `</body>`, or at the end): a small pill in the bottom-right corner, collapsed
@@ -1431,17 +1435,21 @@ works the crew page says so, in words, before anyone assigns anything.
 
 ### Asleep
 
-A preview whose pull has had no push and no comment for three days is
-stopped and shown as _asleep_ with when and why — its row, data and pictures
+A preview whose pull has had no push and no comment for as long as the
+profit slider says (three days at its default of 50, one at 0, never at
+100; `docs/PROFIT.md`) is stopped and shown as _asleep_ with when and why — its row, data and pictures
 stay. It is not failed, and a restart leaves it stopped. Asking for it (a
 request to its host, or **Wake it** on the change's page) deploys it again
 on the ordinary deploy path. Production, and a pull with a run queued or
 running on it, are never put to sleep this way. `FORGE_PREVIEW_IDLE_DAYS`
-sets the age; `0` keeps every preview warm.
+pins the age instead of the slider; `0` keeps every preview warm.
 
 An environment nobody asks for does not keep a process. A preview that has
-served no request for thirty minutes, or production for a day, is stopped
-and marked _asleep_, its checkout kept whole; the next request through the
+served no request for thirty minutes, or production for a day — the profit
+slider's 50; the sweep reads the slider's position on every pass, so moving
+it changes when environments sleep within a minute, with no restart — is
+stopped and marked _asleep_ (its log names the window and the position:
+"asleep: nothing asked for it in 10 min (economy 0)"), its checkout kept whole; the next request through the
 proxy starts it again — warm, without install or test, in about the time a
 page takes — and waits for it rather than showing a closed door. The forge
 coming back does the same: production starts warm from the checkout it kept,
@@ -1604,7 +1612,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_APPS`              | `1`                             | `0` runs no apps and no crew                      |
 | `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | what app hostnames attach to (`example` or `--x`) |
 | `FORGE_APPS_CONCURRENCY`  | `2`                             | deploys running their heavy steps at once         |
-| `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
+| `FORGE_PREVIEW_IDLE_DAYS` | the profit slider               | days a pull may sit untouched before its preview sleeps; `0` = never; unset follows the slider (3 at 50) |
 | `FORGE_CREW_CONCURRENCY`  | 1 per 3 GiB above 2 GiB, 2–16   | agent runs at once (live: Settings → Capacity)    |
 | `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
 | `FORGE_CHECKS_PLACEMENT`  | `process`                       | `job` runs a check's commands as a cluster Job (see Placement above) |

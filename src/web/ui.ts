@@ -517,6 +517,13 @@ export function envFacts(
     ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
     ${when(dormantNote(env), (note) => html`<p class="muted small" data-dormant>${note}</p>`)}
     ${when(
+      env.alwaysOn === true,
+      () =>
+        html`<dl class="row-facts" data-always-on>
+          <div><dt>Sleeps</dt><dd>never (app.always_on)</dd></div>
+        </dl>`,
+    )}
+    ${when(
       env.busy,
       (busy) =>
         html`<p class="muted small" data-busy>

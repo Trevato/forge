@@ -14,3 +14,13 @@ Code: `src/spawn/sleep.ts` (limits, waking page), `src/spawn/host.ts` (`wakeGate
 - Terminal: the "Forges you sent" screen lists awake/asleep and size, `s` stops one, `x` removes one (confirmed); both call `spawn/manage.ts`, which writes `forge.stopped` / `forge.removed` to the event outbox, so web viewers see the change. Create: the New forge screen (`src/tui/screens/newforge.ts`). MCP: `spawn`.
 - A stranger's request wakes a sleeping forge only within an address rate (`takeDoor`) and the awake ceiling, and never refreshes its idleness. A request does only when the child itself vouches for it: its session cookie or token (Bearer, `token`, or a `forge_` token as the Basic password) is looked up read-only in the child's own database (`src/spawn/vouch.ts`), so a made-up `authorization` header or `forge_session` cookie is a stranger's. A Basic password is not checked there and counts as a stranger's. A forge with a request in flight or crew work queued or running is not put to sleep. Not covered: an open websocket, and a response body still streaming from a cell forge after its headers.
 - The wake path for a cell forge, and the hold around cell forwards, are not exercised by tests in this sandbox (cells are skipped).
+
+## Apps sleep on the profit slider
+
+The apps a forge runs sleep too, and the profit slider on the economics page says when. The next request wakes a sleeping app.
+
+- **Move the slider.** Each sweep, once a minute, reads the slider's position. No restart is needed. Production sleeps after 10 min with no requests at position 0, after 1 day at 50 (the default) and never at 100. A quiet pull's preview stops after 1 day at 0, 3 days at 50 and never at 100. When an app goes to sleep, its deploy log names the window and the position, e.g. `asleep: nothing asked for it in 10 min (economy 0); the next request wakes it`.
+- **Keep one app awake.** Put `"always_on": true` under `app` in its `forge.json` and push. Its production never sleeps, whatever the position. Its previews still follow the slider. Any value other than `true` or `false` fails the deploy and says why. The app page shows the row "Sleeps: never (app.always_on)". The terminal's deploys screen adds "never sleeps (app.always_on)" to production's line.
+- **Pin the preview age.** Setting `FORGE_PREVIEW_IDLE_DAYS` on the forge fixes a quiet pull's preview age, whatever the position. `0` keeps every preview warm. Leave it unset to follow the slider.
+
+Code: `src/apps/sleep_window.ts` (windows, `previewIdleMs`), `src/apps/runtime.ts` (the sweep). Tests: `test/sleep-window.test.ts`, `test/apps-sleep-slider.test.ts`, `test/preview-idle-slider.test.ts`.

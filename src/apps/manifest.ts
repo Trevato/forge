@@ -53,6 +53,12 @@ export interface AppManifest {
   /** `app.launch`: how this repository's demos open unless a pin says otherwise. */
   readonly launch?: Launch | undefined;
   /**
+   * `app.always_on: true`: production never sleeps, whatever the profit
+   * slider says (docs/PROFIT.md) — the one per-app exception. Previews
+   * still follow the forge. Unset or false follows the slider.
+   */
+  readonly alwaysOn?: true | undefined;
+  /**
    * Set when `app.kind` is `"service"`: declared TCP ports, always on,
    * a placement preference and synced volumes. `null` for an ordinary
    * HTTP app.
@@ -167,6 +173,9 @@ export function parseManifest(
   const launch = app["launch"];
   if (launch !== undefined && !isLaunch(launch))
     return invalid(`forge.json: app.launch must be one of ${LAUNCHES.map((l) => `"${l}"`).join(", ")}`);
+  const alwaysOn = app["always_on"];
+  if (alwaysOn !== undefined && typeof alwaysOn !== "boolean")
+    return invalid("forge.json: app.always_on must be true or false");
   const egress = egressField(parsed.value);
   if (!egress.ok) return egress;
   const limits = limitsField(app, "app");
@@ -211,6 +220,7 @@ export function parseManifest(
     looksAsOwner: looksAsOwner.value,
     pages: pages.value,
     ...(launch === undefined ? {} : { launch }),
+    ...(alwaysOn === true ? { alwaysOn: true as const } : {}),
     service,
     egress: egress.value,
     limits: limits.value,

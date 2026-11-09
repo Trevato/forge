@@ -44,6 +44,7 @@ import { runAheadReads } from "./origins/ahead.ts";
 import { runGuardSweep } from "./origins/credential.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime, IDLE_PULL_DAYS } from "./apps/runtime.ts";
+import { previewIdleMs } from "./apps/sleep_window.ts";
 import { listApps } from "./core/apps.ts";
 import { holdAppHosts, releaseAppHosts } from "./apps/holding.ts";
 import { resolveAppDomain } from "./apps/host.ts";
@@ -410,8 +411,8 @@ const apps = appDomain?.ok
       concurrency: positive(process.env.FORGE_APPS_CONCURRENCY, 2),
       busyGraceMs: crewRunMs,
       // Days a pull may sit untouched before its preview sleeps; 0 keeps
-      // every preview warm.
-      idlePullMs: nonNegative(process.env.FORGE_PREVIEW_IDLE_DAYS, IDLE_PULL_DAYS) * 86_400_000,
+      // every preview warm. Unset follows the profit slider, live.
+      idlePullMs: previewIdleMs(process.env.FORGE_PREVIEW_IDLE_DAYS, IDLE_PULL_DAYS),
     })
   : undefined;
 // Which other forge serves this data's apps, read before this one starts its own.
@@ -590,11 +591,6 @@ const deliveryTimer = setInterval(() => {
 runDelivery(app.db, app.log, app.bus); // sweep anything queued while we were down
 pruneSessions(app.db);
 pruneTokens(app.db);
-
-function nonNegative(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
 
 function positive(value: string | undefined, fallback: number): number {
   const parsed = Number(value);

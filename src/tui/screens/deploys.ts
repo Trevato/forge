@@ -143,6 +143,8 @@ interface Production {
   readonly state: string;
   readonly redeploy: boolean;
   readonly stop: boolean;
+  /** Its forge.json sets `app.always_on`: production never sleeps. */
+  readonly alwaysOn: boolean;
 }
 
 /**
@@ -152,10 +154,16 @@ interface Production {
  */
 function readProduction(f: Session, repo: Repo): Production {
   const view = appView(f.app, f.user, repo);
-  if (!view.ok) return { state: "", redeploy: false, stop: false };
-  const state = view.value.environments.find((e) => e.env === "production")?.state ?? "";
+  if (!view.ok) return { state: "", redeploy: false, stop: false, alwaysOn: false };
+  const env = view.value.environments.find((e) => e.env === "production");
+  const state = env?.state ?? "";
   const writer = view.value.serving && f.user !== undefined && canWrite(f.db, repo, f.user);
-  return { state, redeploy: writer, stop: writer && state !== "" && state !== "stopped" };
+  return {
+    state,
+    redeploy: writer,
+    stop: writer && state !== "" && state !== "stopped",
+    alwaysOn: env?.alwaysOn === true,
+  };
 }
 
 /** `#N title · check <word> · <preview address or none>` */
@@ -210,7 +218,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const previewState = new ListState();
   /** Which list the cursor is in: production's deploys, or the previews under them. */
   let inPreviews = false;
-  let production: Production = { state: "", redeploy: false, stop: false };
+  let production: Production = { state: "", redeploy: false, stop: false, alwaysOn: false };
   let members = false;
   let prompts = false;
   let stoppable = false;
@@ -438,7 +446,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         head!.x,
         head!.y,
         truncate(
-          `${repo.ownerName}/${repo.name} · production deploys${production.state === "" ? "" : ` · ${production.state}`}`,
+          `${repo.ownerName}/${repo.name} · production deploys${production.state === "" ? "" : ` · ${production.state}`}${production.alwaysOn ? " · never sleeps (app.always_on)" : ""}`,
           head!.w,
         ),
         style(c.mutedFg, c.bg),
