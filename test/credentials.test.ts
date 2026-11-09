@@ -56,7 +56,7 @@ async function until<T>(read: () => T | undefined): Promise<T> {
   while (Date.now() < deadline) {
     const value = read();
     if (value !== undefined) return value;
-    await Bun.sleep(50);
+    await Bun.sleep(10);
   }
   throw new Error("did not happen in time");
 }
@@ -80,7 +80,7 @@ if [ "$CLAUDE_CODE_OAUTH_TOKEN" = "${WORK}" ]; then echo "work token used" >&2; 
 echo '{"type":"system","subtype":"init","session_id":"fake-1","model":"fake"}'
 echo '{"type":"assistant","session_id":"fake-1","message":{"id":"msg_1","content":[{"type":"text","text":"working"}],"usage":{"input_tokens":100,"cache_read_input_tokens":900,"output_tokens":50}}}'
 if [ -f "${gateDir}/hold" ]; then
-  while [ ! -f "${gateDir}/open" ]; do sleep 0.1; done
+  while [ ! -f "${gateDir}/open" ]; do sleep 0.02; done
 fi
 echo "work by the crew" >> CREW.md
 git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
@@ -95,6 +95,9 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     concurrency: 1,
     budgetUsd: 2,
     runTimeoutMs: 60_000,
+    // The pump picks queued runs on a tick; 5 s by default, 20 ms here, so
+    // the assigned issue's run starts at once rather than on the next tick.
+    tickMs: 20,
   });
   const a = await createUser(app.db, { origin: "seed", trusted: true,
     username: "alice",
@@ -130,6 +133,7 @@ afterAll(async () => {
 
 describe("the platform credential", () => {
   test("is a row of its own: listed first, never in the grantable pool, never removed", () => {
+    // Invariant: platform (env) is listed first, is not in the grantable pool, cannot be deleted, and granting it records nothing.
     expect(listCredentials(app.db).map((c) => c.name)).toEqual([
       "platform (env)",
       "trevato-espo",
@@ -145,6 +149,7 @@ describe("the platform credential", () => {
 
 describe("a subscription's scope", () => {
   test("one granted nowhere is never picked; one granted elsewhere is not picked here", () => {
+    // Invariant: a subscription is picked for a repository only when granted there; elsewhere the pick falls back to env.
     const espo = listSubscriptions(app.db)[0]!;
     const scope = { repoId: repo.id, ownerId: alice.id, agentId: bot.id };
     expect(pickSubscription(app.db, dataDir, scope, new Date()).kind).toBe("env");
@@ -168,6 +173,7 @@ describe("a subscription's scope", () => {
 
 describe("a repository whose owner is not a forge admin", () => {
   test("gets none without a grant and the subscription once granted; an admin's still gets env", async () => {
+    // Invariant: a non-admin owner's repository gets no credential without a grant, the subscription with one; an admin's gets env.
     const b = await createUser(app.db, {
       origin: "seed",
       trusted: true,
@@ -190,6 +196,7 @@ describe("a repository whose owner is not a forge admin", () => {
 
 describe("a crew run on the platform's token", () => {
   test("is counted under platform (env), moving while it runs", async () => {
+    // Invariant: a crew run on the platform token is a running ledger line and a usage.delta mid-run, replaced by its result, read the same over the API without the work token.
     writeFileSync(join(gateDir, "hold"), "");
     const issue = openIssue(app, alice, repo, { title: "Plant tulips", body: "" });
     if (!issue.ok) throw new Error(String(issue.error));
@@ -260,6 +267,7 @@ describe("a crew run on the platform's token", () => {
 
 describe("the breakdown", () => {
   test("sums by kind and span as a hand would, the costliest runs first", () => {
+    // Invariant: spend sums by span and kind as a hand would, and the top runs are ordered costliest first.
     const now = new Date("2026-06-02T12:00:00.000Z");
     const line = (runId: string, at: string, costUsd: number, kind: "plan" | "review") =>
       recordUsage(app.db, {
@@ -307,6 +315,7 @@ describe("the breakdown", () => {
 
 describe("the board", () => {
   test("puts the crew's credentials first and the unscoped account apart, with the spend", async () => {
+    // Invariant: the board and settings pages show the crew's credentials apart from the unscoped account, with the spend views.
     const cookie = (
       (
         await fetch(`${servers.url}/signin`, {
