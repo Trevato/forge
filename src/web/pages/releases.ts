@@ -63,6 +63,7 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
     const repo = r.pullNumber === null ? undefined : repos.get(r.repoId);
     rows.push(
       row({
+        nav: true,
         ...(repo === undefined || r.pullNumber === null ? {} : { href: `/${repo.ownerName}/${repo.name}/pulls/${r.pullNumber}` }),
         title: html`${sha(r.sha)} ${when(isLive, () => badge("live", { tone: "success" }))}
           ${when(!r.ok, () => badge("preflight failed", { tone: "danger" }))}`,
