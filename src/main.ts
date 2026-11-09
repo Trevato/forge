@@ -25,7 +25,7 @@ import { flushFlagUses, loadFlags } from "./core/flags.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { offerStartingBoards } from "./actions/boards.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
-import { bootHostedChildren } from "./spawn/host.ts";
+import { bootHostedChildren, childAwake } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { previewIdentityKey } from "./spawn/preview-owner.ts";
 import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
@@ -569,7 +569,7 @@ const heartbeatTimer = startHeartbeat(app);
 // ...and looks upstream once an hour (spawn/upstream.ts).
 const upstreamTimer = startUpstreamWatch(app);
 // ...and this forge asks every child's public addresses what a visitor would get, every few minutes (spawn/reach.ts).
-const reachTimer = startReachWatch(app);
+const reachTimer = startReachWatch(app, undefined, (name) => !childAwake(app, name));
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.

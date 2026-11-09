@@ -120,6 +120,16 @@ describe("a forge watches its children's addresses", () => {
     expect(row!.attention).not.toBe("down");
   });
 
+  test("a sleeping child is not asked, so the sweep never wakes it, and keeps its last proof", async () => {
+    const before = asked.length;
+    const kept = reachOf(parent, "kid");
+    await sweepReach(parent, (name) => name === "kid");
+    expect(asked.length).toBe(before);
+    expect(reachOf(parent, "kid")).toEqual(kept);
+    await sweepReach(parent, () => false);
+    expect(asked.length).toBeGreaterThan(before);
+  });
+
   test("one dropped request pages nobody: a failure is confirmed before it is believed", async () => {
     const before = events("forge.child_unreachable").length;
     let calls = 0;

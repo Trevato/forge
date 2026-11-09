@@ -250,11 +250,15 @@ export async function settleChild(app: App, name: string): Promise<void> {
   }
 }
 
-/** One pass over every finished child: prove, confirm a failure once, keep, alarm on a change. */
-export async function sweepReach(app: App): Promise<void> {
+/**
+ * One pass over every finished child: prove, confirm a failure once, keep, alarm on a change.
+ * A child `asleep` is passed over and keeps its last proof: asking its address wakes it, and
+ * a probe every five minutes woke every sleeping child, booting each anew every quarter hour.
+ */
+export async function sweepReach(app: App, asleep: (name: string) => boolean = () => false): Promise<void> {
   if (off(app)) return;
   const confirmMs = optionsOf(app).confirmMs ?? CONFIRM_MS;
-  const children = (await listChildren(app)).filter((c) => c.done);
+  const children = (await listChildren(app)).filter((c) => c.done && !asleep(c.name));
   for (let i = 0; i < children.length; i += BATCH) {
     await Promise.all(
       children.slice(i, i + BATCH).map(async (child) => {
@@ -274,9 +278,13 @@ export async function sweepReach(app: App): Promise<void> {
 }
 
 /** Re-prove every child on a schedule, the first pass soon after boot. Returns the timer to clear. */
-export function startReachWatch(app: App, everyMs = REACH_EVERY_MS): ReturnType<typeof setInterval> {
-  const first = setTimeout(() => void sweepReach(app), 30_000);
-  const timer = setInterval(() => void sweepReach(app), everyMs);
+export function startReachWatch(
+  app: App,
+  everyMs = REACH_EVERY_MS,
+  asleep: (name: string) => boolean = () => false,
+): ReturnType<typeof setInterval> {
+  const first = setTimeout(() => void sweepReach(app, asleep), 30_000);
+  const timer = setInterval(() => void sweepReach(app, asleep), everyMs);
   app.closing.signal.addEventListener("abort", () => clearTimeout(first), { once: true });
   return timer;
 }
