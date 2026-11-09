@@ -31,15 +31,31 @@ function cell(column: Column, row: FleetRow): Html | string {
   return to === undefined ? text : html`<a href="${to}">${text}</a>`;
 }
 
+/** The act form a row's box belongs to (`form="…"`): forms do not nest. */
+export const ACT_FORM = "fleet-act";
+
+/** A row's box: ticked rows narrow what the act form acts on. */
+const pickBox = (row: FleetRow, picked: ReadonlySet<string>): Html =>
+  html`<td><label class="check"><input
+    type="checkbox"
+    name="pick"
+    value="${String(row.id)}"
+    form="${ACT_FORM}"
+    ${picked.has(String(row.id)) ? html`checked` : null}
+    aria-label="Pick ${String(row.repo)}${row.number === undefined ? "" : ` #${row.number}`}"
+  /></label></td>`;
+
 /**
  * The table for `rows` of `kind`, its headers linking to `?q=…&sort=…`.
- * The sorted column's link flips its direction.
+ * The sorted column's link flips its direction. With `picked`, each row
+ * leads with a box that belongs to the act form.
  */
 export function fleetTable(
   kind: FleetKind,
   query: string,
   rows: readonly FleetRow[],
   sort: Sort | undefined,
+  picked?: ReadonlySet<string>,
 ): Html {
   const columns = COLUMNS[kind];
   const sorted = sortRows(rows, sort);
@@ -54,11 +70,11 @@ export function fleetTable(
   return html`<div class="table-scroll">
     <table class="table" data-dense>
       <caption class="sr-only">The ${kind} rows the query selects</caption>
-      <thead><tr>${columns.map(head)}</tr></thead>
+      <thead><tr>${picked === undefined ? null : html`<th scope="col"><span class="sr-only">Pick</span></th>`}${columns.map(head)}</tr></thead>
       <tbody>
         ${sorted.map(
           (row) =>
-            html`<tr>${columns.map(
+            html`<tr>${picked === undefined ? null : pickBox(row, picked)}${columns.map(
               (c) => html`<td${c.num ? html` class="num"` : ""}>${cell(c, row)}</td>`,
             )}</tr>`,
         )}

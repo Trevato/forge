@@ -6,12 +6,14 @@
  * (`fleet/columns.ts`). Keys: `/` a new query line, `s` sort by the next
  * column, `r` reverse it, `j`/`k` scroll, `esc` back. A signed-in person (not
  * an agent, as on the page) also has `v`: a verb and its value, the preview
- * of each row's change, Apply, and `u` to undo the last result. The writes
- * are `actions/fleet.ts`'s, as the page's are.
+ * of each row's change, Apply, and `u` to undo the last result. `x` (or
+ * space) marks the top row in view, as a ticked box does on the page: with
+ * rows marked, `v` acts on them alone, else on every row the line selects.
+ * The writes are `actions/fleet.ts`'s, as the page's are.
  */
 
 import type { Operation } from "../../core/fleet_ops.ts";
-import { applyPreviewed, previewFleetOp, undoFleetOp, type Plan } from "../../actions/fleet.ts";
+import { applyPreviewed, pickedWords, previewFleetOp, undoFleetOp, type Plan } from "../../actions/fleet.ts";
 import { digestOf } from "../../fleet/digest.ts";
 import { actionOf } from "../../fleet/reading.ts";
 
@@ -29,11 +31,16 @@ import { confirmScreen, later, promptScreen, Scroll } from "./common.ts";
 /** No column is padded past this, so a long title does not push the rest away. */
 const CELL_MAX = 40;
 
-/** The table as text lines: a header naming the sorted column, then one line a row. */
+/**
+ * The table as text lines: a header naming the sorted column, then one line
+ * a row. With `marked`, each line leads with `*` for a marked row and `>`
+ * for the row at `at` (the one `x` marks).
+ */
 export function fleetLines(
   kind: FleetKind,
   rows: readonly FleetRow[],
   sort: Sort | undefined,
+  marked?: { ids: ReadonlySet<string>; at: number },
 ): string[] {
   const columns = COLUMNS[kind];
   const sorted = sortRows(rows, sort);
@@ -47,10 +54,20 @@ export function fleetLines(
   );
   const line = (cells: string[]) =>
     cells.map((t, i) => pad(truncate(t, widths[i]!), widths[i]!)).join("  ").trimEnd();
+  const lead = (r: FleetRow | undefined, i: number): string =>
+    marked === undefined
+      ? ""
+      : `${i === marked.at ? ">" : " "}${r !== undefined && marked.ids.has(String(r.id)) ? "*" : " "} `;
   return [
-    line(columns.map((c) => label(c.key, c.label))),
-    ...sorted.map((r) => line(columns.map((c) => cellText(c, r) || "-"))),
+    lead(undefined, -1) + line(columns.map((c) => label(c.key, c.label))),
+    ...sorted.map((r, i) => lead(r, i) + line(columns.map((c) => cellText(c, r) || "-"))),
   ];
+}
+
+/** The id of the row at `at` in `rows` as the table sorts them. */
+export function rowAt(rows: readonly FleetRow[], sort: Sort | undefined, at: number): string | undefined {
+  const row = sortRows(rows, sort)[at];
+  return row === undefined ? undefined : String(row.id);
 }
 
 /**
@@ -102,11 +119,15 @@ export function fleetScreen(
   let lines: string[] = [];
   let note = "";
   let last: Operation | undefined;
+  /** Marked row ids; cleared with each new query line. */
+  const marked = new Set<string>();
   const screen: Screen = {
     title: "Fleet",
     keys: [
       binding(["/"], "query"),
-      ...(mayAct(session.user) ? [binding(["v"], "verb"), binding(["u"], "undo")] : []),
+      ...(mayAct(session.user)
+        ? [binding(["x"], "mark"), binding(["v"], "verb"), binding(["u"], "undo")]
+        : []),
       binding(["s"], "sort"),
       binding(["r"], "reverse"),
       binding(["j", "k"], "scroll"),
@@ -118,7 +139,7 @@ export function fleetScreen(
         view === undefined
           ? "/ to write a query line: repo autonomy:autonomous"
           : view.ok
-            ? `${query}  ${view.rows.length} ${view.rows.length === 1 ? "row" : "rows"}`
+            ? `${query}  ${view.rows.length} ${view.rows.length === 1 ? "row" : "rows"}${marked.size === 0 ? "" : `, ${marked.size} marked`}`
             : `${query}  ${view.error}`;
       const shown = note === "" ? head : `${head}  ${note}`;
       s.text(area.x + 1, area.y, truncate(shown, area.w - 2), style(view?.ok === false ? c.danger : c.mutedFg, c.bg), area.x + area.w);
@@ -129,7 +150,9 @@ export function fleetScreen(
             s.text(area.x + 1, area.y + 2 + i, truncate(text, area.w - 2), style(c.mutedFg, c.bg), area.x + area.w);
         });
       }
-      lines = view?.ok ? fleetLines(view.kind, view.rows, sort) : [];
+      lines = view?.ok
+        ? fleetLines(view.kind, view.rows, sort, mayAct(session.user) ? { ids: marked, at: scroll.top } : undefined)
+        : [];
       const [header, ...body] = lines;
       if (header !== undefined && area.h > 2)
         s.text(area.x + 1, area.y + 2, truncate(header, area.w - 2), style(c.mutedFg, c.bg), area.x + area.w);
@@ -145,6 +168,7 @@ export function fleetScreen(
       if (e.ctrl || e.alt) return scroll.key(e, Math.max(0, lines.length - 1));
       if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "/") ask();
+      else if ((e.key === "x" || e.key === " ") && view?.ok && mayAct(session.user)) mark(view.rows);
       else if (e.key === "v" && view?.ok && mayAct(session.user)) verb();
       else if (e.key === "u" && last !== undefined && mayAct(session.user)) undo();
       else if (e.key === "s" && view?.ok) sort = nextSort(view.kind, sort);
@@ -152,6 +176,12 @@ export function fleetScreen(
       else return scroll.key(e, Math.max(0, lines.length - 1));
       return true;
     },
+  };
+  const mark = (rows: readonly FleetRow[]) => {
+    const id = rowAt(rows, sort, scroll.top);
+    if (id === undefined) return;
+    if (marked.has(id)) marked.delete(id);
+    else marked.add(id);
   };
   const refresh = () => {
     if (query !== "") view = viewFleet(session.db, session.user, query);
@@ -187,19 +217,25 @@ export function fleetScreen(
           const value = rest.join(" ");
           if (name === "") return "name a verb";
           const action = actionOf(session.app, name, value);
-          const plan = previewFleetOp(session.app, session.user, query, action);
+          const picked = [...marked];
+          const plan = previewFleetOp(session.app, session.user, query, action, picked);
           if (!plan.ok) return plan.error.message;
           const p = plan.value;
           const n = p.counts.change;
+          const total = view?.ok ? view.rows.length : p.rows.length;
           return later(ctx, () =>
             confirmScreen(ctx, screen, {
               title: `Preview: ${p.verb}`,
-              body: [...planLines(p, 70), "", n === 0 ? "Nothing to apply." : "Nothing is written until you apply."],
+              body: [
+                ...planLines(p, 70),
+                "",
+                `${pickedWords(total, picked.length === 0 ? 0 : p.rows.length)}. ${n === 0 ? "Nothing to apply." : "Nothing is written until you apply."}`,
+              ],
               actions: n === 0 ? [{ label: "Close" }] : [{ label: `Apply to ${n} ${n === 1 ? "row" : "rows"}` }, { label: "Cancel", variant: "outline" }],
               width: 76,
               onChoose: (i) => {
                 if (i !== 0 || n === 0) return;
-                void applyPreviewed(session.app, session.user, query, action, digestOf(p.rows)).then((r) => {
+                void applyPreviewed(session.app, session.user, query, action, digestOf(p.rows), picked).then((r) => {
                   note = r.ok ? "Applied. u undoes." : r.error.message;
                   if (r.ok) last = r.value;
                   refresh();
@@ -224,6 +260,7 @@ export function fleetScreen(
           if (!next.ok) return next.error;
           query = text;
           view = next;
+          marked.clear();
           sort = undefined;
           scroll.to(0, 0);
           return undefined;

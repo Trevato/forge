@@ -10,6 +10,7 @@ Before a fleet operation acts, see the rows its query line selects. There are fo
 
 **Acting on the rows (web):** under the table, a signed-in person picks a verb for the kind and a value, and chooses Preview (`src/web/pages/fleet-ops.ts`, `src/web/fleet-act.ts`).
 
+- Each row leads with a box (`name="pick"`, belonging to the act form by `form="fleet-act"`, no script). With no box ticked the verb acts on all N matching rows, and the line above the form says so; with some ticked it acts on those alone. On a phone (`pointer: coarse`) each box is a 44px target centred in its cell (`.check` in `src/web/style/components.ts`). Picks only narrow: `pickWithin` in `src/actions/fleet.ts` keeps the ticked ids that the query selects for the viewer and drops the rest, and the preview says "n picked of N". The picks ride along to apply, and the digest binds them.
 - Preview is a same-origin `POST /fleet` with `step=preview`. It shows each row's change, and which rows are unchanged or refused, each with its sentence in a muted line. Nothing is written.
 - Apply is `POST /fleet` with `step=apply`. It carries a digest of the rows the preview showed (`src/fleet/digest.ts`) and runs `applyPreviewed`: if the rows now plan differently, nothing is written and a muted line asks for a new preview. Otherwise it lands on `GET /fleet/ops/:id`, the result.
 - The result has Undo, `POST /fleet/ops/:id/undo`, which runs `undoFleetOp` while the operation is within `UNDO_WINDOW_MS` (a day) and not yet undone.
@@ -21,7 +22,7 @@ Before a fleet operation acts, see the rows its query line selects. There are fo
 - It asks for the query line and shows the same table.
 - `/` writes a new line. `s` sorts by the next column and `r` reverses the sort. `j` and `k` scroll, and `esc` goes back.
 - A line that does not parse keeps the prompt open with its reason.
-- Signed in as a person (a guest or an agent is not offered these): `v` asks for a verb and its value (`label urgent`), then shows each row's change in a dialog. Apply writes through `applyPreviewed` with the digest of what the dialog showed. `u` undoes the last result. Same operations and refusals as the page (`src/tui/screens/fleet.ts`).
+- Signed in as a person (a guest or an agent is not offered these): `v` asks for a verb and its value (`label urgent`), then shows each row's change in a dialog. Apply writes through `applyPreviewed` with the digest of what the dialog showed. `u` undoes the last result. `x` (or space) marks the top row in view, as a ticked box does on the page: the row in reach shows `>`, a marked one `*`, the head counts them, and `v` then acts on the marked rows alone with "n picked of N" in the dialog. A new query line clears the marks. Same operations and refusals as the page (`src/tui/screens/fleet.ts`).
 
 **In the API:** `GET /api/v1/fleet/rows?q=<query line>&sort=<column>` answers `{ kind, columns, items }`: the same rows `/fleet` shows, for the caller, public repositories only when signed out.
 

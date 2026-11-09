@@ -27,13 +27,14 @@ export function fleetPage(ctx: Ctx): Response {
 export function renderFleet(
   ctx: Ctx,
   q: string,
-  below?: { html: Html; verb?: string; value?: string },
+  below?: { html: Html; verb?: string; value?: string; picked?: readonly string[] },
 ): Response {
   const view: FleetView | undefined =
     q.trim() === "" ? undefined : viewFleet(ctx.app.db, ctx.auth.user, q);
   const rendering = performance.now();
   const shown = view?.ok ? view : undefined;
   const sort = shown && readSort(shown.kind, ctx.url.searchParams.get("sort"));
+  const acting = shown !== undefined && shown.rows.length > 0 && canAct(ctx);
   const response = page({
     ctx,
     title: "Fleet",
@@ -75,10 +76,10 @@ export function renderFleet(
         : html`<p class="muted" data-count="${shown.rows.length}">
               ${shown.rows.length} ${shown.rows.length === 1 ? "row" : "rows"}
             </p>
-            ${shown.rows.length === 0 ? null : fleetTable(shown.kind, q, shown.rows, sort)}
-            ${shown.rows.length === 0 || !canAct(ctx)
+            ${shown.rows.length === 0
               ? null
-              : actForm(shown.kind, q, below?.verb, below?.value)}`}
+              : fleetTable(shown.kind, q, shown.rows, sort, acting ? new Set(below?.picked ?? []) : undefined)}
+            ${acting ? actForm(shown.kind, q, below?.verb, below?.value, shown.rows.length) : null}`}
       ${below?.html ?? null}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);

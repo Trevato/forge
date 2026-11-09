@@ -18,6 +18,8 @@ import { labelsFor } from "../src/core/issues.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { MAX_ROWS } from "../src/fleet/selection.ts";
+import { components } from "../src/web/style/components.ts";
 
 describe("fleet verbs on the web", () => {
   let dataDir: string;
@@ -201,5 +203,95 @@ describe("fleet verbs on the web", () => {
     const ok = await post("/fleet", { ...body, step: "apply", digest: again });
     expect(ok.status).toBe(303);
     expect(labelsFor(app.db, second.value.id).map((l) => l.name)).toEqual(["urgent"]);
+  });
+
+  /** Each `<input name="pick">` on a page, as its attributes. */
+  const pickBoxes = (page: string) =>
+    [...page.matchAll(/<input\b([^>]*\bname="pick"[^>]*)>/g)].map((m) => {
+      const attrs: Record<string, string | true> = {};
+      for (const a of m[1]!.matchAll(/([a-z-]+)(?:="([^"]*)")?/g)) attrs[a[1]!] = a[2] ?? true;
+      return attrs;
+    });
+  const send = (b: URLSearchParams) =>
+    fetch(`${servers.url}/fleet`, {
+      method: "POST", redirect: "manual",
+      headers: { cookie, origin: servers.url, "content-type": "application/x-www-form-urlencoded" },
+      body: b,
+    });
+  const pickRepo = async (name: string, count: number) => {
+    const alice = getUserByName(app.db, "alice")!;
+    const repo = await createRepo(app, alice, { name, visibility: "public" });
+    if (!repo.ok) throw new Error(String(repo.error));
+    createLabel(app, alice, repo.value, "urgent", "ff0000");
+    return Array.from({ length: count }, (_, n) => {
+      const one = openIssue(app, alice, repo.value, { title: `Pick ${n}` });
+      if (!one.ok) throw new Error(String(one.error));
+      return one.value.id;
+    });
+  };
+
+  test("ticked rows narrow the act to themselves; a pick outside the selection never widens it", async () => {
+    const made = await pickRepo("picks", 3);
+    const bob = getUserByName(app.db, "bob")!;
+    const outside = openIssue(app, bob, getRepo(app.db, "bob", "other")!, { title: "Not selected" });
+    if (!outside.ok) throw new Error(String(outside.error));
+    const pq = "issue repo:alice/picks";
+
+    const page = await (await fetch(`${servers.url}/fleet?${new URLSearchParams({ q: pq })}`, { headers: { cookie } })).text();
+    const boxes = pickBoxes(page).filter((b) => b.type === "checkbox");
+    expect(boxes.map((b) => b.value).sort()).toEqual([...made].sort());
+    expect(boxes.every((b) => b.form === "fleet-act" && b.checked === undefined)).toBe(true);
+    expect(page).toContain('id="fleet-act"');
+    expect(page).toContain("Acts on all 3 matching rows");
+    const reader = await (await fetch(`${servers.url}/fleet?${new URLSearchParams({ q: pq })}`)).text();
+    expect(pickBoxes(reader)).toEqual([]);
+
+    const junk = "<script>x</script>";
+    const body = new URLSearchParams({ q: pq, verb: "label", value: "urgent", step: "preview" });
+    for (const id of [made[1]!, outside.value.id, junk]) body.append("pick", id);
+    const preview = await (await send(body)).text();
+    expect(preview).toContain("Apply to 1 row");
+    expect(preview).toContain("1 picked of 3");
+    expect(preview).not.toContain("script>x");
+    const shown = pickBoxes(preview);
+    expect(shown.find((b) => b.type === "checkbox" && b.value === made[1])?.checked).toBe(true);
+    expect(shown.filter((b) => b.type === "checkbox" && b.checked === true).length).toBe(1);
+    expect(shown.filter((b) => b.type === "hidden").map((b) => b.value)).toEqual([made[1]!, outside.value.id]);
+    const digest = /name="digest" value="([0-9a-f]+)"/.exec(preview)![1]!;
+    body.set("step", "apply");
+    body.set("digest", digest);
+    const applied = await send(body);
+    expect(applied.status).toBe(303);
+    expect(made.map((id) => labelsFor(app.db, id).map((l) => l.name))).toEqual([[], ["urgent"], []]);
+    expect(labelsFor(app.db, outside.value.id)).toEqual([]);
+
+    const none = new URLSearchParams({ q: pq, verb: "label", value: "urgent", step: "preview", pick: outside.value.id });
+    expect(await (await send(none)).text()).toContain("None of the picked rows is in the selection");
+  });
+
+  test("apply with picks other than the previewed ones is refused as expired, and writes nothing", async () => {
+    const made = await pickRepo("swap", 2);
+    const pq = "issue repo:alice/swap";
+    const body = new URLSearchParams({ q: pq, verb: "label", value: "urgent", step: "preview", pick: made[0]! });
+    const digest = /name="digest" value="([0-9a-f]+)"/.exec(await (await send(body)).text())![1]!;
+    const swapped = new URLSearchParams({ q: pq, verb: "label", value: "urgent", step: "apply", digest, pick: made[1]! });
+    const res = await send(swapped);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("rows changed since the preview");
+    expect(made.map((id) => labelsFor(app.db, id))).toEqual([[], []]);
+  });
+
+  test("more picks than a selection can hold are refused before anything is read", async () => {
+    const body = new URLSearchParams({ q, verb: "label", value: "urgent", step: "preview" });
+    for (let i = 0; i <= MAX_ROWS; i++) body.append("pick", `id${i}`);
+    const page = await (await send(body)).text();
+    expect(page).toContain(`Pick at most ${MAX_ROWS} rows.`);
+    expect(page).not.toContain("data-preview");
+  });
+
+  test("on a phone the row's box is a 44px target, centred in its cell", () => {
+    const coarse = [...components.matchAll(/@media \(pointer: coarse\) \{([\s\S]*?)\n\}/g)].map((m) => m[1]).join("\n");
+    expect(coarse).toMatch(/\.check \{[^}]*min-height: 44px;[^}]*min-width: 44px;/);
+    expect(coarse).toMatch(/\.table \.check \{[^}]*justify-content: center;/);
   });
 });

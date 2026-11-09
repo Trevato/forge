@@ -175,3 +175,55 @@ test("v previews a verb, Apply writes it, u undoes it; a guest is offered none o
   expect(guest.text()).not.toContain("Verb");
   expect(names()).toEqual([]);
 });
+
+test("x marks the top row in view; v then acts on the marked rows alone, and says so", async () => {
+  const alice = getUserByName(forge.db, "alice")!;
+  const repo = await createRepo(forge, alice, { name: "marks", visibility: "public" });
+  if (!repo.ok) throw new Error(String(repo.error));
+  createLabel(forge, alice, repo.value, "urgent", "ff0000");
+  const ids = ["One", "Two", "Three"].map((title) => {
+    const made = openIssue(forge, alice, repo.value, { title });
+    if (!made.ok) throw new Error(String(made.error));
+    return made.value.id;
+  });
+  const labelled = () => ids.map((id) => labelsFor(forge.db, id).map((l) => l.name));
+
+  const t = boot(alice);
+  await t.select("issue repo:alice/marks");
+  await t.key("j");
+  await t.key("x");
+  expect(t.text()).toContain("3 rows, 1 marked");
+  expect(t.text()).toMatch(/>\* alice\/marks\s+2\s+Two/);
+  await t.key("v");
+  for (const ch of "label urgent") await t.key(ch);
+  await t.key("enter");
+  expect(t.text()).toContain("1 picked of 3");
+  expect(t.text()).toContain("Apply to 1 row");
+  await t.key("enter");
+  await Bun.sleep(20);
+  await t.key("k");
+  expect(labelled()).toEqual([[], ["urgent"], []]);
+
+  // x again on the same row unmarks it.
+  await t.key("j");
+  await t.key("x");
+  expect(t.text()).toContain("3 rows  ");
+  expect(t.text()).not.toContain("marked");
+
+  const guest = boot(undefined);
+  await guest.select("issue repo:alice/marks");
+  await guest.key("x");
+  expect(guest.text()).not.toContain("marked");
+});
+
+test("fleetLines leads each row with its mark and the row x would mark", () => {
+  const rows = [
+    { id: "a", repo: "o/r", number: 1, title: "A", state: "open", assignee: "" },
+    { id: "b", repo: "o/r", number: 2, title: "B", state: "open", assignee: "" },
+  ];
+  const [head, first, second] = fleetLines("issue", rows, undefined, { ids: new Set(["b"]), at: 0 });
+  expect(head!.startsWith("   ")).toBe(true);
+  expect(first!.startsWith(">  o/r")).toBe(true);
+  expect(second!.startsWith(" * o/r")).toBe(true);
+  expect(fleetLines("issue", rows, undefined)[1]!.startsWith("o/r")).toBe(true);
+});

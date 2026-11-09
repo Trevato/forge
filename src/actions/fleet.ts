@@ -353,6 +353,7 @@ function makePlan(
   actor: User | undefined,
   query: string,
   action: unknown,
+  picked: readonly string[] = [],
 ): Result<Plan & { verbOf: Verb; targets: Map<string, Target> }, FleetError> {
   if (!actor) return fail("unauthorized", "sign in to act on the fleet");
   const parsed = parseQuery(query);
@@ -361,7 +362,26 @@ function makePlan(
   if (!act.ok) return act;
   const ids = selectRows(app.db, actor, parsed.value);
   if (!ids.ok) return err(ids.error);
-  return ok(planOver(app, actor, parsed.value.kind, ids.value, query.trim(), act.value));
+  const rows = pickWithin(ids.value, picked);
+  if (picked.length > 0 && rows.length === 0) return fail("bad_query", "None of the picked rows is in the selection any more.");
+  return ok(planOver(app, actor, parsed.value.kind, rows, query.trim(), act.value));
+}
+
+/** How many rows an act reaches, in words: every matching row, or the picked ones of them. */
+export const pickedWords = (total: number, picked: number): string =>
+  picked === 0
+    ? `All ${total} matching ${total === 1 ? "row" : "rows"}`
+    : `${picked} picked of ${total}`;
+
+/**
+ * The selected ids narrowed to those picked, in the selection's order; no
+ * picks means every selected row. A pick outside the selection is dropped:
+ * picking narrows, it never widens what the query (and the viewer) can reach.
+ */
+export function pickWithin(selected: readonly string[], picked: readonly string[]): string[] {
+  if (picked.length === 0) return [...selected];
+  const want = new Set(picked);
+  return selected.filter((id) => want.has(id));
 }
 
 /** The plan for these rows: the one place a row's before, after and refusal are decided. */
@@ -484,8 +504,9 @@ export function previewFleetOp(
   actor: User | undefined,
   query: string,
   action: unknown,
+  picked: readonly string[] = [],
 ): Result<Plan, FleetError> {
-  const plan = makePlan(app, actor, query, action);
+  const plan = makePlan(app, actor, query, action, picked);
   if (!plan.ok) return plan;
   const { verbOf: _verb, targets: _targets, ...shape } = plan.value;
   return ok(shape);
@@ -566,10 +587,11 @@ export async function applyPreviewed(
   query: string,
   action: unknown,
   digest: string,
+  picked: readonly string[] = [],
 ): Promise<Result<Operation, FleetError>> {
   const person = requirePerson(actor);
   if (!person.ok) return person;
-  const plan = makePlan(app, person.value, query, action);
+  const plan = makePlan(app, person.value, query, action, picked);
   if (!plan.ok) return plan;
   if (digestOf(plan.value.rows) !== digest)
     return fail("expired", "The rows changed since the preview. Preview again to see them.");
