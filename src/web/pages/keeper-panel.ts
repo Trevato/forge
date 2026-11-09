@@ -2,6 +2,7 @@
  * The release keeper on /releases (#7557): what stops the next cut, and
  * each release it cut with its stage, the known-good version it rolls back
  * to, and what the probes counted. Nothing when it has done nothing.
+ * A plain section under an h2, no card (#9998).
  */
 
 import type { Database } from "bun:sqlite";
@@ -10,7 +11,7 @@ import { secondsWords, withLandedToLive } from "../../keeper/landed.ts";
 import { listKeeperReleases, type Stage } from "../../keeper/record.ts";
 import { stallWords } from "../../perf/boot_stall.ts";
 import { html, when, type Html } from "../html.ts";
-import { badge, btn, card, time, type Tone } from "../ui.ts";
+import { badge, btn, time, type Tone } from "../ui.ts";
 
 const STAGE: Record<Stage, { label: string; tone: Tone }> = {
   rolling: { label: "rolling", tone: "attn" },
@@ -19,7 +20,7 @@ const STAGE: Record<Stage, { label: string; tone: Tone }> = {
   rolled_back: { label: "rolled back", tone: "danger" },
 };
 
-/** `mayHold` is `mayRollBack`: the card then offers the owner's hold and its lift. */
+/** `mayHold` is `mayRollBack`: the section then offers the owner's hold and its lift. */
 export function keeperPanel(db: Database, mayHold = false): Html | undefined {
   const releases = withLandedToLive(db, listKeeperReleases(db));
   const holds = standingHolds(db);
@@ -39,7 +40,8 @@ export function keeperPanel(db: Database, mayHold = false): Html | undefined {
       <td>${r.secondsDark} s</td>
     </tr>${when(r.reason !== "", () => html`<tr><td colspan="9" class="small muted">${r.reason}</td></tr>`)}`;
   });
-  return card(html`<h2>Release keeper</h2>
+  return html`<section class="settings-block" id="keeper">
+    <h2>Release keeper</h2>
     <p class="small ${blocked === undefined ? "muted" : ""}" id="keeper-blocked">${blocked ?? "Nothing holds the next cut."}</p>
     ${when(rows.length > 0, () => html`<div class="table-scroll" role="region" tabindex="0" aria-label="Keeper releases"><table class="table" data-sticky-lead>
       <thead><tr><th>Version</th><th>Cut</th><th>Landed to live</th><th>Known good</th><th>Roll non-200</th><th>Probes / pages</th><th>Worst</th><th>Stall, first 5 min</th><th>Dark</th></tr></thead>
@@ -50,5 +52,6 @@ export function keeperPanel(db: Database, mayHold = false): Html | undefined {
     )}
     <form method="post" action="/releases/hold" class="small">
       <label>Hold releases <input name="reason" maxlength="${MAX_REASON}" required placeholder="why"></label> ${btn("Hold", { type: "submit" })}
-    </form>`)}`);
+    </form>`)}
+  </section>`;
 }
