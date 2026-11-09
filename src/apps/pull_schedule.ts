@@ -7,6 +7,10 @@
  * `recordPull` (`apps/pull.ts`). The request goes over the same loopback reach
  * the scheduled tools use (`feature_tools.ts`): 64 KB, 10 s. An app that is
  * not running is skipped, never woken; two pulls of one app never overlap.
+ * The call is signed as an `admin` the way the proxy signs a person
+ * (`identityHeaders`, `apps/proxy.ts`), under the app's identity key, so an
+ * adapter that admits only admins to `/pull` (examples/adapter-template)
+ * admits the forge. Only the signature travels; the key never does.
  */
 
 import type { Database } from "bun:sqlite";
@@ -18,6 +22,7 @@ import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { parseAdapter, type AdapterSpec } from "./adapter.ts";
 import { readFileAt } from "./checkout.ts";
+import { identityHeaders, type GrantWho } from "./proxy.ts";
 import { parsePullAnswer, PULL_BODY_MAX, recordPull, type PullAnswer } from "./pull.ts";
 import { appsRuntime } from "./runtime.ts";
 
@@ -73,12 +78,30 @@ export async function pullApp(db: Database, appId: string, reach: PullReach, now
   }
 }
 
-/** POST `/pull` on loopback: at most 64 KB read (one byte over, so the judge says so), 10 s. */
-export async function postPull(port: number, waitMs: number = PULL_WAIT_MS): Promise<PullReply> {
+/** Who the forge says it is when it pulls: an admin of the app, named for itself. */
+export const PULL_CALLER: GrantWho = { id: "forge", name: "forge", role: "admin" };
+
+/**
+ * The signed identity one scheduled pull carries: `PULL_CALLER`, good only
+ * for as long as the forge waits for the answer.
+ */
+export function pullIdentity(dataDir: string, appId: string, now: number = Date.now()): Record<string, string> {
+  return identityHeaders(dataDir, appId, { who: PULL_CALLER, expiresMs: now + PULL_WAIT_MS });
+}
+
+/**
+ * POST `/pull` on loopback with `identity` (the signed headers, never a key):
+ * at most 64 KB read (one byte over, so the judge says so), 10 s.
+ */
+export async function postPull(
+  port: number,
+  identity: Record<string, string> = {},
+  waitMs: number = PULL_WAIT_MS,
+): Promise<PullReply> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/pull`, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
+      headers: { ...identity, "content-type": "application/json", accept: "application/json" },
       body: "{}",
       redirect: "manual",
       signal: AbortSignal.timeout(waitMs),
@@ -139,7 +162,7 @@ export function runtimePullReach(app: App, record: AppRecord): PullReach {
       return status?.state === "running" ? status.port : undefined;
     },
     adapter: () => declaredAdapter(app, record),
-    post: (port) => postPull(port),
+    post: (port) => postPull(port, pullIdentity(app.config.dataDir, record.id)),
   };
 }
 

@@ -32,8 +32,11 @@ The template accepts `POST /pull` only from an `admin` the forge signed for:
 `x-forge-identity` and `x-forge-signature`, checked against
 `FORGE_APP_IDENTITY_KEY` (see "Who is there" in [`docs/APPS.md`](APPS.md)).
 Anyone else gets 401 or 403, and the source is not read, so a public app or
-a preview cannot be made to pull by whoever reaches it. When the forge
-schedules pulls, its call has to carry that signed identity.
+a preview cannot be made to pull by whoever reaches it. The forge's scheduled
+call carries that signed identity: `src/apps/pull_schedule.ts` signs it as an
+`admin` named `forge`, under the app's identity key, the same way the proxy
+signs a person, and good only for the 10 s it waits. The key itself is never
+sent.
 
 The template names its source hosts in `src/source.ts` and opens them with
 `egress`. Its `adapter` block may also name them under `source`, which the

@@ -13,14 +13,21 @@ import {
   isPullDue,
   postPull,
   pullApp,
+  pullIdentity,
   pullDue,
   startPullSchedule,
   type PullReach,
   type PullReply,
 } from "../src/apps/pull_schedule.ts";
+import { identityKey } from "../src/apps/proxy.ts";
 import { listPullRuns } from "../src/core/runs.ts";
 import { migrationFiles } from "../src/core/schema.ts";
 import { migrate } from "../src/kernel/migrate.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { makeHandler } from "../examples/adapter-template/src/server.ts";
+import { openStore } from "../examples/adapter-template/src/store.ts";
 
 const EVERY = 900; // seconds
 const good = JSON.stringify({ pulled: 4, skipped: 1, cursor: "c1", errors: 0 });
@@ -171,7 +178,51 @@ describe("postPull", () => {
 
   test("an app that answers too slowly did not answer", async () => {
     answer = () => new Response(new ReadableStream({ start() {} }));
-    expect(await postPull(port, 50)).toEqual({ error: "the app did not answer" });
+    expect(await postPull(port, {}, 50)).toEqual({ error: "the app did not answer" });
+  });
+});
+
+describe("a scheduled pull of the adapter template (#10082)", () => {
+  const APP = "01TEMPLATEAPP0000000000000";
+  const dir = mkdtempSync(join(tmpdir(), "pull-template-"));
+  const key = identityKey(dir, APP);
+  const heard: Record<string, string>[] = [];
+  const handle = makeHandler(openStore(join(dir, "app")), {
+    key,
+    read: async (cursor) =>
+      cursor === "c1" ? { records: [], cursor } : { records: [{ id: "a", body: "Ada" }], cursor: "c1" },
+  });
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: (req) => {
+      heard.push(Object.fromEntries(req.headers));
+      return handle(req);
+    },
+  });
+  const port = server.port ?? 0;
+  afterAll(() => {
+    server.stop(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const templateReach = (signed: boolean): PullReach =>
+    reach({ port: () => port, post: (p) => postPull(p, signed ? pullIdentity(dir, APP) : {}) });
+
+  test("signed as an admin, the template pulls and the run is recorded ok; the key is never sent", async () => {
+    expect(await pullApp(db, APP, templateReach(true))).toBe(true);
+    const [run] = listPullRuns(db, APP);
+    expect(run).toMatchObject({ state: "ok" });
+    expect(run?.cursor).toBe("c1");
+    const sent = heard.at(-1) ?? {};
+    expect(sent["x-forge-identity"]).toMatch(/^forge\|forge\|admin\|\d+$/);
+    expect(Object.values(sent).join("\n")).not.toContain(key);
+  });
+
+  test("with the signature removed, the template refuses and the run is recorded failed", async () => {
+    expect(await pullApp(db, APP, templateReach(false))).toBe(true);
+    const [run] = listPullRuns(db, APP);
+    expect(run).toMatchObject({ state: "failed", written: 0, reason: "status 401 is not 2xx" });
+    expect(heard.at(-1)?.["x-forge-identity"]).toBeUndefined();
   });
 });
 
