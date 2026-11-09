@@ -1,0 +1,12 @@
+[
+  "scripts/cold-read.ts",
+  "src/boards/starting.ts",
+  "test/ask-to-live-batched.test.ts",
+  "test/hot-reads-indexed.test.ts",
+  "test/metrics-cells.test.ts",
+  "test/pull-actions.test.ts",
+  "test/pull-quiet.test.ts",
+  "test/shelf-forty.test.ts",
+  "test/thread-render-timing.test.ts",
+  "test/traffic-truth.test.ts"
+]
