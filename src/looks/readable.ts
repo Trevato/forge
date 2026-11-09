@@ -95,3 +95,53 @@ export function pullPairsLine(
   const head = mine(previewEnv(pull.number)).filter((l) => l.theme === "light");
   return pairsLine(pairCounts(head, mine("production")));
 }
+
+/** One page at one width: how it sat in the window it was pictured in. */
+export interface PullFit {
+  readonly page: string;
+  readonly width: string;
+  readonly scrollWidth: number;
+  readonly innerWidth: number;
+  readonly screens: number;
+  readonly sideways: boolean;
+}
+
+/**
+ * Which pages scroll sideways, from the sizes stored on a pull's looks of its
+ * latest commit: numbers only, never a url or a picture, so the owner's own
+ * looks count too. A sealed pull's is the writers'. Looks without a size are
+ * left out. One query; no browser.
+ */
+export function pullFit(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  user: User | undefined,
+): PullFit[] {
+  const record = getAppByRepo(app.db, repo.id);
+  if (!record) return [];
+  const env = previewEnv(pull.number);
+  if (sealedPreview(app.db, repo.id, env) && !canSeeOwnerFacts(app.db, repo, user))
+    return [];
+  const looks = looksForEnv(app.db, record.id, env).filter((l) => l.error === null);
+  const latest = looks[0]?.commitOid;
+  const out: PullFit[] = [];
+  // Newest first: the first look with a size per page and width is the one kept.
+  const seen = new Set<string>();
+  for (const l of looks) {
+    const s = l.size;
+    if (l.commitOid !== latest || !s || s.innerHeight <= 0) continue;
+    const key = `${l.page} ${l.kind}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      page: l.page,
+      width: l.kind,
+      scrollWidth: s.scrollWidth,
+      innerWidth: s.innerWidth,
+      screens: Math.round((s.scrollHeight / s.innerHeight) * 10) / 10,
+      sideways: s.scrollWidth > s.innerWidth,
+    });
+  }
+  return out;
+}
