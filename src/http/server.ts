@@ -27,7 +27,7 @@ import { prerenderComments } from "../web/prerender.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { pipelinePage } from "../web/pages/pipeline.ts";
-import { dataPage } from "../web/pages/data.ts";
+import { adminDataPage, appDataPage, dataPage } from "../web/pages/data.ts";
 import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
 import { maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
@@ -997,6 +997,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/boards/:slug", boardShow);
   router.add("GET", "/boards/:slug/live", boardLive);
   router.add("POST", "/boards/:slug/:op", boardPost);
+  router.add("GET", "/admin/data", adminDataPage);
   router.add("GET", "/admin/limits", limitsPage);
   router.add("GET", "/admin/flows", allFlowsPage);
   router.add("POST", "/admin/limits", limitsSet);
@@ -1305,6 +1306,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
   router.add("GET", "/:owner/:name/events", eventsList);
+  router.add("GET", "/:owner/:name/data", appDataPage);
   router.add("GET", "/:owner/:name/runs", runsList);
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);

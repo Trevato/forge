@@ -12,6 +12,8 @@ Views are masked whole when their text mentions a masked column (an alias cannot
 
 Limits on work: `query` runs at most 2 workers at once (a third is told it is busy), each with a 128 MB heap cap (`hard_heap_limit`), a 5 s timer, 1,000 rows and about 250 KB of result; every cell is cut to 1,000 characters inside SQLite and a blob shows as its size. `rows()` cuts cells the same way.
 
-Terminal: `src/tui/screens/data.ts` (files → tables → rows, `n`/`p` for pages), offered by `maySeeData`.
+Terminal: `src/tui/screens/data.ts` (files → tables → rows, `n`/`p` for pages, `s` sort, `f` filter, `c` clear, `x` read-only SQL), offered by `maySeeData`; the forge's own database is among an admin's files. SQL on either door is 20 runs a minute per person (`src/data/sql_window.ts`); beyond that it says when to retry.
 
-Not done: a SQL editor on the page or in the terminal (SQL is MCP only).
+## On the web (#7580)
+
+Three doors, one body (`src/web/pages/data_view.ts`): `/data` (every file you may see), `/admin/data` (the forge's own database, admins; the Forge data button on `/data`) and `/:owner/:name/data` (an app's Data tab for its writers: environments → files → tables → rows; a reader gets the 404). Rows sort by header (`sort`, `dir`), filter by text on one column or all (`q`, `col`), JSON cells are pretty-printed, and a copy button per row puts it on the clipboard as JSON. Sealed columns show `••••••` and cannot be sorted or searched. The SQL box is a GET form (`sql`, capped at 4,000 characters), so a query is an address to share; it shows the rows and the elapsed ms. The sorted column carries `aria-sort` and a muted arrow from CSS; a wide grid scrolls sideways only. Not done: saved queries, export, editing rows.

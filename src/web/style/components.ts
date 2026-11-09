@@ -583,6 +583,11 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .table[data-dense] td, .table[data-dense] th { padding: 5px 10px; }
 .table .num { text-align: right; }
 .table-scroll { overflow-x: auto; scrollbar-width: thin; }
+/* The data browser: a cell's JSON keeps its shape, and the sorted column is marked by its aria-sort. */
+.table td pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: inherit; }
+.table[data-sortable] th[aria-sort] a { color: var(--fg); }
+.table[data-sortable] th[aria-sort="ascending"] a::after { content: " \\2191"; color: var(--muted-fg); }
+.table[data-sortable] th[aria-sort="descending"] a::after { content: " \\2193"; color: var(--muted-fg); }
 /* The row's name stays in view while a narrow screen scrolls the figures. */
 .table[data-sticky-lead] th:first-child,
 .table[data-sticky-lead] td:first-child {

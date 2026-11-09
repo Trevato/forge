@@ -12,6 +12,8 @@ import { createRepo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { forgeCommands } from "../src/tui/forge.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
+import { query } from "../src/data/query.ts";
+import { listSources } from "../src/data/sources.ts";
 import { dataScreen } from "../src/tui/screens/data.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -21,6 +23,8 @@ quietLogs();
 
 let dir: string;
 let app: App;
+let appRecordId = "";
+const appIdOf = () => appRecordId;
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-tui-data-"));
@@ -35,6 +39,7 @@ beforeAll(async () => {
   if (!repo.ok) throw new Error(repo.error);
   const rec = createAppRecord(app.db, { repoId: repo.value.id, slug: "notes", access: "public" });
   if (!rec.ok) throw new Error(rec.error);
+  appRecordId = rec.value.id;
   const where = envDataDir(dir, rec.value.id, "production");
   mkdirSync(where, { recursive: true });
   const d = new Database(join(where, "app.db"));
@@ -91,4 +96,62 @@ test("an admin sees forge.db among the files", async () => {
   await settleApp(tui);
   expect(tui.screen.toText()).toContain("forge");
   tui.stop?.();
+});
+
+const press = async (tui: ReturnType<typeof open>["app"], ...keys: string[]) => {
+  for (const key of keys) {
+    tui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+    await settleApp(tui);
+  }
+};
+const type = (tui: ReturnType<typeof open>["app"], text: string) => press(tui, ...text.split(""));
+
+test("a writer sorts and filters a table, and runs read-only SQL with secrets masked", async () => {
+  const d = new Database(join(envDataDir(dir, appIdOf(), "production"), "app.db"));
+  d.exec("INSERT INTO users VALUES (2, 'zed-visible', 'tok-secret-2')");
+  d.close();
+  const { app: tui, session } = open("alice");
+  tui.start();
+  tui.ctx.push(dataScreen(session, tui.ctx));
+  await settleApp(tui);
+  await press(tui, "enter");
+  await press(tui, "x");
+  await type(tui, "SELECT api_token, name FROM users");
+  await press(tui, "enter");
+  await new Promise((r) => setTimeout(r, 300));
+  await settleApp(tui);
+  let text = tui.screen.toText();
+  expect(text).toContain("zed-visible");
+  expect(text).not.toContain("tok-secret");
+  await press(tui, "esc", "enter");
+  await press(tui, "s");
+  await type(tui, "-name");
+  await press(tui, "enter");
+  text = tui.screen.toText();
+  expect(text.indexOf("zed-visible")).toBeLessThan(text.indexOf("ann-visible"));
+  await press(tui, "f");
+  await type(tui, "name=ann");
+  await press(tui, "enter");
+  text = tui.screen.toText();
+  expect(text).toContain("ann-visible");
+  expect(text).not.toContain("zed-visible");
+  tui.stop?.();
+});
+
+test("a reader and a guest get no files, so no SQL either", () => {
+  for (const who of ["bob", undefined]) {
+    const { app: tui, session } = open(who);
+    expect(listSources(app.db, dir, session.user)).toEqual([]);
+    tui.stop?.();
+  }
+});
+
+test("the forge database is among an admin's files, and SQL on it is masked", async () => {
+  const forge = listSources(app.db, dir, getUserByName(app.db, "owner1")!).find((s) => s.kind === "forge")!;
+  const r = await query(forge, "SELECT password_hash FROM user");
+  expect(r.ok).toBe(true);
+  const hash = app.db.query<{ h: string }, []>("SELECT password_hash AS h FROM user LIMIT 1").get()!.h;
+  expect(hash.length).toBeGreaterThan(10);
+  expect(JSON.stringify(r)).not.toContain(hash);
+  expect(JSON.stringify(r)).toContain("••••••");
 });
