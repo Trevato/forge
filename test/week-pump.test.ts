@@ -15,8 +15,13 @@ import { startStandInCrew, stopStandInCrew, type StandInCrew } from "./helpers/c
 
 const DAY = 86_400_000;
 
+/** Each test's own timeout; every wait in it fits inside, with room to spare. */
+const TEST_MS = 30_000;
+/** One wait's deadline: a test waits at most three times, so a slow tick fails as this test, by name, before TEST_MS (#9977). */
+const WAIT_MS = 8_000;
+
 /** Wait until `done` holds, or fail at the deadline: the pump's tick is what we wait on, not a guessed pause. */
-async function until(done: () => boolean, what: string, ms = 20_000): Promise<void> {
+async function until(done: () => boolean, what: string, ms = WAIT_MS): Promise<void> {
   const deadline = Date.now() + ms;
   while (!done()) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
@@ -27,8 +32,8 @@ let standIn: StandInCrew;
 
 beforeAll(async () => {
   standIn = await startStandInCrew({ tickMs: 50 });
-}, 30_000);
-afterAll(() => stopStandInCrew(standIn));
+}, TEST_MS);
+afterAll(() => stopStandInCrew(standIn), TEST_MS);
 
 test("past the week's reserve an assigned run stays queued, with the reason in its log", async () => {
   const { app, alice, bot } = standIn;
@@ -60,7 +65,7 @@ test("past the week's reserve an assigned run stays queued, with the reason in i
   forgetWeek();
   await until(() => mine()?.state !== "queued", "the run to start");
   expect(mine()?.state).not.toBe("queued");
-}, 30_000);
+}, TEST_MS);
 
 test("builds fill the pace slots, yet a review or assigned run still starts; a third of them waits (#8910)", async () => {
   const { app, alice, bot } = standIn;
@@ -110,4 +115,4 @@ test("builds fill the pace slots, yet a review or assigned run still starts; a t
   app.db.query("UPDATE run SET state = 'ok' WHERE id = ?1").run(gone);
   await until(() => stateOf(review) !== "queued", "the review to start");
   expect(stateOf(build)).toBe("queued");
-}, 30_000);
+}, TEST_MS);

@@ -812,6 +812,10 @@ describe("absorbing an app", () => {
     } finally {
       app.db.run("UPDATE repo SET visibility = 'private' WHERE id = ?1", [repo.id]);
       stub.stop(true);
+      // The constructor makes it this forge's runtime: a deploy it was asked
+      // for must settle before afterAll closes the database, or its
+      // finishRun is an unhandled error in whichever file runs next.
+      await runtime.stop();
     }
   });
 

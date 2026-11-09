@@ -184,6 +184,9 @@ export interface CrewHandle {
  */
 const DRAIN_MS = 3 * 60_000;
 
+/** How long `stop()` waits for the tick's own sweeps (converge, autonomy) to settle. */
+const SWEEPS_STOP_MS = 10_000;
+
 const handles = new WeakMap<App, CrewHandle>();
 
 /** The crew serving this forge, if one was started. */
@@ -257,20 +260,33 @@ export async function startCrew(
   // Repositories that run on their own take a turn once a minute, on the
   // same clock as the pump, so a pick becomes a run on the next tick.
   let lastAutonomy = 0;
+  // The sweeps a tick started and has not seen settle: `stop()` waits for
+  // them, so none reads `app.db` after its caller closed it (#9977).
+  const sweeps = new Set<Promise<unknown>>();
+  const track = (sweep: Promise<unknown>): void => {
+    sweeps.add(sweep);
+    void sweep.finally(() => sweeps.delete(sweep));
+  };
   const timer = setInterval(() => {
     if (stopped) return;
-    requeueInterrupted(app);
-    recheckForDisk(app);
-    if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
-      lastAutonomy = Date.now();
-      settleAll(app).catch((error) =>
-        log.error("converge sweep failed", { error: String(error) }),
-      );
-      autonomyTick(app).catch((error) =>
-        log.error("autonomy tick failed", { error: String(error) }),
-      );
+    // A tick that throws is logged and the next one tries again: thrown
+    // from a timer it is an uncaught error that takes the process down.
+    try {
+      requeueInterrupted(app);
+      recheckForDisk(app);
+      if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
+        lastAutonomy = Date.now();
+        track(settleAll(app).catch((error) =>
+          log.error("converge sweep failed", { error: String(error) }),
+        ));
+        track(autonomyTick(app).catch((error) =>
+          log.error("autonomy tick failed", { error: String(error) }),
+        ));
+      }
+      pump(app, ready, inFlight);
+    } catch (error) {
+      log.error("crew tick failed", { error: String(error) });
     }
-    pump(app, ready, inFlight);
   }, options.tickMs ?? TICK_MS);
   // Clones no open issue, pull or run claims fill the volume (#5697).
   const sweepClones = (): void => {
@@ -299,6 +315,16 @@ export async function startCrew(
       unsubscribe();
       unfollow();
       unsettle();
+      // A sweep still going would read the database its caller closes next;
+      // bounded, for one stuck on the network must not hold a restart.
+      if (sweeps.size > 0) {
+        let bound: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          Promise.all(sweeps),
+          new Promise((resolve) => (bound = setTimeout(resolve, SWEEPS_STOP_MS))),
+        ]);
+        clearTimeout(bound);
+      }
       if (options.drain === true && inFlight.size > 0) {
         // Let what is in flight finish: a run cut short is a person's
         // money spent twice. The new forge takes new work meanwhile.
