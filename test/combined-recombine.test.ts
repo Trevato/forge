@@ -209,3 +209,34 @@ test("a failed rebuild is worded on the pull's combined card, and any good rebui
   expect(fixed).not.toContain(sentence);
   expect(fixed).not.toContain("stale");
 });
+
+test("a main git cannot merge puts its sentence on the combined card, and a fixed main clears it", async () => {
+  const card = async (): Promise<string> =>
+    (await (await call(`/alice/app/pulls/${first}`, alice)).text()).replace(/&#39;/g, "'");
+  const sentence = "The rebuild failed: git could not merge main into the pull's head.";
+  const good = await git(["rev-parse", "refs/heads/main"], bare);
+  const head = await git(["rev-parse", "refs/pull/" + first + "/head"], bare);
+  // Start from a combined branch that is current, so the card has nothing to say yet.
+  expect(await recombine(forge(), repoId)).toBeGreaterThan(0);
+  expect(await card()).not.toContain(sentence);
+  // Main becomes a history unrelated to the pull's: merge-tree refuses it.
+  const empty = await git(["hash-object", "-t", "tree", "-w", "/dev/null"], bare);
+  const stranger = await git(["commit-tree", empty, "-m", "unrelated root"], bare);
+  await git(["update-ref", "refs/heads/main", stranger], bare);
+  await recombine(forge(), repoId);
+  const failed = await card();
+  expect(failed).toContain("Combined with main");
+  expect(failed).toContain("stale");
+  expect(failed).toContain(sentence);
+  expect(await readFailure(bare, first)).toContain("git could not merge");
+  // Main is fixed: a commit on the old main, pushed back as the tip. The next pass rebuilds.
+  const fixed = await git(["commit-tree", `${good}^{tree}`, "-p", good, "-m", "main fixed"], bare);
+  await git(["update-ref", "refs/heads/main", fixed], bare);
+  await recombine(forge(), repoId);
+  const after = await card();
+  expect(after).not.toContain(sentence);
+  expect(after).not.toContain("stale");
+  expect(await readFailure(bare, first)).toBeUndefined();
+  expect((await parents(`refs/heads/combined/${first}`))[1]).toBe(fixed);
+  expect(head).toBe(await git(["rev-parse", "refs/pull/" + first + "/head"], bare));
+});
