@@ -5,7 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +57,7 @@ const checkJson = (run: string, extra = ""): string =>
 
 describe("cancelRunsForPull: a landed or closed pull leaves nothing in the lane", () => {
   test("queued and running checks and queued deploys of that pull are cancelled, building deploys and other pulls kept", async () => {
+    // Invariant: cancelRunsForPull cancels that pull's queued and running checks and queued deploys, and nothing else.
     const dir = await mkdtemp(join(tmpdir(), "forge-cancel-"));
     const db = createApp({ dataDir: dir, port: 0 });
     try {
@@ -398,7 +399,7 @@ describe("checks", () => {
 
   async function settled(
     where: (run: Run) => boolean,
-    timeoutMs = 30_000,
+    timeoutMs = 4_000,
   ): Promise<Run> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -406,10 +407,44 @@ describe("checks", () => {
         where,
       );
       if (run && (run.state === "ok" || run.state === "failed")) return run;
-      await Bun.sleep(50);
+      await Bun.sleep(10);
     }
     throw new Error("check did not settle");
   }
+
+  /** Waits until `done` holds, polling the database; a check's own pace, not a timer's. */
+  async function until(done: () => boolean, what: string): Promise<void> {
+    const deadline = Date.now() + 4_000;
+    while (!done()) {
+      if (Date.now() > deadline) throw new Error(`never came: ${what}`);
+      await Bun.sleep(10);
+    }
+  }
+
+  /**
+   * A check command that holds its slot until the test lets it go
+   * (`release`), then runs `then`: the test is the clock, so no wait is
+   * guessed at. Never released, it runs until it is cut off.
+   */
+  const held = (name: string, then = "test -f OK.md"): string =>
+    `while [ ! -f '${dataDir}/go-${name}' ]; do sleep 0.01; done; ${then}`;
+  const release = (name: string): void =>
+    writeFileSync(join(dataDir, `go-${name}`), "");
+
+  /** Waits until a fork pull's new head is announced on the bus as `pull.pushed`. */
+  const headAnnounced = (pull: Pull, headOid: string): Promise<void> =>
+    until(
+      () =>
+        listEvents(app.db, { repoId: repo.id, kind: "pull.pushed" }).some(
+          (e) => e.payload["number"] === pull.number && e.payload["headOid"] === headOid,
+        ),
+      "the pull's new head announced",
+    );
+
+  const checksOf = (commitOid: string): Run[] =>
+    listRuns(app.db, repo.id, { kind: "check", limit: 50 }).filter(
+      (r) => r.commitOid === commitOid,
+    );
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-checks-"));
@@ -452,16 +487,25 @@ describe("checks", () => {
   });
 
   test("a commit that declares no check is not checked", async () => {
+    // Invariant: a push whose commit declares no check queues no run; the next push that declares one is the only run.
     const seeded = await commitToBranch(app, alice, repo, {
       message: "Start",
       files: [{ path: "README.md", content: "# lib\n" }],
     });
     expect(seeded.ok).toBe(true);
-    await Bun.sleep(300);
-    expect(listRuns(app.db, repo.id, { kind: "check" })).toHaveLength(0);
+    // The push after it declares a check: once that one settles, the
+    // first push's handler (begun earlier, doing no more) has answered too.
+    const declared = await commitToBranch(app, alice, repo, {
+      message: "Declare a passing check",
+      files: [{ path: "forge.json", content: checkJson("true # first") }],
+    });
+    if (!declared.ok) throw new Error(JSON.stringify(declared.error));
+    const run = await settled((r) => r.commitOid === declared.value.commitOid);
+    expect(listRuns(app.db, repo.id, { kind: "check" }).map((r) => r.id)).toEqual([run.id]);
   });
 
   test("the default branch is checked on push, with the log kept", async () => {
+    // Invariant: a push to the default branch that declares a check runs it, env main, reason push, its commands in the log.
     const declared = await commitToBranch(app, alice, repo, {
       message: "Declare a check",
       files: [
@@ -480,6 +524,7 @@ describe("checks", () => {
   });
 
   test("a check's children hold no cells of their own: the check's cell is the boundary", async () => {
+    // Invariant: a check's command sees FORGE_CELLS=off.
     // A forge the tests boot inside a check cell must not wrap its apps in
     // nested cells (they never answer in time); it is told so in its env.
     const declared = await commitToBranch(app, alice, repo, {
@@ -502,6 +547,7 @@ describe("checks", () => {
   });
 
   test("a pull is checked when it opens and each time its branch moves; a failure names the exit", async () => {
+    // Invariant: a branch heading no pull is not checked; opening a pull checks its head with the base's check, and each push to it again.
     // A pull is checked by the base's check, not its own.
     const gate = await commitToBranch(app, alice, repo, {
       message: "The base's check",
@@ -514,13 +560,6 @@ describe("checks", () => {
       files: [{ path: "a.txt", content: "a\n" }],
     });
     if (!branched.ok) throw new Error(JSON.stringify(branched.error));
-    // A branch that heads no pull is nobody's to check yet.
-    await Bun.sleep(300);
-    expect(
-      listRuns(app.db, repo.id, { kind: "check" }).some(
-        (r) => r.commitOid === branched.value.commitOid,
-      ),
-    ).toBe(false);
     const opened = await openPull(app, alice, repo, {
       title: "Feature",
       baseBranch: "main",
@@ -534,6 +573,9 @@ describe("checks", () => {
     expect(failed.state).toBe("failed");
     expect(failed.env).toBe(`pull-${pull.number}`);
     expect(failed.reason).toBe("pull");
+    // A branch that heads no pull is nobody's to check: its push, handled
+    // before the pull opened, left no run beside the pull's own.
+    expect(checksOf(branched.value.commitOid).map((r) => r.id)).toEqual([failed.id]);
     expect(failed.summary).toBe("check failed: check exited with code 1");
     // `test -f` is not `bun test`: its output is not this shape, so nothing
     // is guessed at it.
@@ -584,9 +626,10 @@ describe("checks", () => {
     );
     expect(passed.state).toBe("ok");
     expect(passed.reason).toBe("push");
-  }, 60_000);
+  });
 
   test("a bun test failure in the check step is summarised: how many passed, how many failed, and their names", async () => {
+    // Invariant: a red `bun test` check's summary and detail carry the counts and the failing names.
     const gate = await commitToBranch(app, alice, repo, {
       message: "The base's check runs bun test",
       files: [
@@ -630,9 +673,10 @@ describe("checks", () => {
     expect(failed.summary).toBe(
       'check failed: 2 of 3 tests — "first failing test" and "second failing test"',
     );
-  }, 30_000);
+  });
 
   test("a reader's fork pull is checked at the base's snapshot once a writer approves each head", async () => {
+    // Invariant: a reader's fork pull runs nothing until a writer approves, and each new head waits for its own approval.
     const gate = await commitToBranch(app, alice, repo, {
       message: "The base's check passes",
       files: [{ path: "forge.json", content: checkJson("true") }],
@@ -672,13 +716,10 @@ describe("checks", () => {
       files: [{ path: "FORK.md", content: "hi again\n" }],
     });
     if (!again.ok) throw new Error(JSON.stringify(again.error));
-    // A new head waits for its own approval.
-    await Bun.sleep(300);
-    expect(
-      listRuns(app.db, repo.id, { kind: "check" }).some(
-        (r) => r.issueId === pull.id && r.commitOid === again.value.commitOid,
-      ),
-    ).toBe(false);
+    // The pull follows the fork's branch on its own clock: approve the new
+    // head only once its move was announced and answered (the bus delivers
+    // in step, so the push's handler has met the approval guard by then).
+    await headAnnounced(pull, again.value.commitOid);
     const reapproved = await submitReview(app, alice, repo, pull, {
       state: "approved",
     });
@@ -687,9 +728,14 @@ describe("checks", () => {
       (r) => r.issueId === pull.id && r.commitOid === again.value.commitOid,
     );
     expect(second.state).toBe("ok");
-  }, 60_000);
+    // A new head waits for its own approval: the push, handled before the
+    // approval was given, ran nothing; the one check is the approval's.
+    expect(second.reason).toBe("approved");
+    expect(checksOf(again.value.commitOid).map((r) => r.id)).toEqual([second.id]);
+  });
 
   test("approving a head whose check is already green queues no second check (#4391)", async () => {
+    // Invariant: a second approval of a head already green on the same base queues nothing.
     const based = await commitToBranch(app, alice, repo, {
       message: "The base's check passes",
       files: [{ path: "forge.json", content: checkJson("true") }],
@@ -729,11 +775,24 @@ describe("checks", () => {
       body: "Still good.",
     });
     if (!again.ok) throw new Error(String(again.error));
-    await Bun.sleep(300);
+    // The fork moves on and its new head is approved: once that check
+    // settles, the second approval's handler (begun earlier, doing no
+    // more) has answered too.
+    const next = await commitToBranch(app, bob, fork, {
+      branch: "green-then-approved",
+      message: "After the second look",
+      files: [{ path: "GREEN.md", content: "y\n" }],
+    });
+    if (!next.ok) throw new Error(JSON.stringify(next.error));
+    await headAnnounced(pull, next.value.commitOid);
+    const third = await submitReview(app, alice, repo, pull, { state: "approved" });
+    if (!third.ok) throw new Error(String(third.error));
+    await settled((r) => r.issueId === pull.id && r.commitOid === next.value.commitOid);
     expect(mine().map((r) => r.id)).toEqual([first.id]);
-  }, 60_000);
+  });
 
   test("a commit already proven green is not run again; the re-request answers with the earlier verdict (#1795)", async () => {
+    // Invariant: a re-requested check of a commit already green answers with that verdict without running the command.
     const made = await commitToBranch(app, alice, repo, {
       message: "Proven once",
       files: [
@@ -750,14 +809,13 @@ describe("checks", () => {
     expect(second.state).toBe("ok");
     expect(second.summary).toBe(`already proven green by ${first.id}`);
     expect(readRunLog(dataDir, second.id).lines.join("\n")).not.toContain("ran-once");
-  }, 60_000);
+  });
 
   test("a newer commit supersedes a check still waiting for the same environment", async () => {
+    // Invariant: a queued check is cancelled as superseded when a newer commit asks for the same environment.
     const slow = await commitToBranch(app, alice, repo, {
       message: "A slow check",
-      files: [
-        { path: "forge.json", content: checkJson("sleep 0.5 && test -f OK.md") },
-      ],
+      files: [{ path: "forge.json", content: checkJson(held("supersede")) }],
     });
     if (!slow.ok) throw new Error(JSON.stringify(slow.error));
     // While that one holds the only slot, two more arrive: the first of
@@ -774,26 +832,28 @@ describe("checks", () => {
       files: [{ path: "TWO.md", content: "2\n" }],
     });
     if (!two.ok) throw new Error(JSON.stringify(two.error));
+    await until(() => checksOf(two.value.commitOid).length > 0, "two queued");
     const three = await commitToBranch(app, alice, repo, {
       message: "Three",
       files: [{ path: "THREE.md", content: "3\n" }],
     });
     if (!three.ok) throw new Error(JSON.stringify(three.error));
+    await until(() => checksOf(three.value.commitOid).length > 0, "three queued");
+    release("supersede");
     const last = await settled((r) => r.commitOid === three.value.commitOid);
     expect(last.state).toBe("ok");
-    const middle = listRuns(app.db, repo.id, { kind: "check" }).find(
-      (r) => r.commitOid === two.value.commitOid,
-    );
+    const middle = checksOf(two.value.commitOid)[0];
     expect(middle?.state).toBe("cancelled");
     expect(middle?.summary).toContain("superseded by");
-  }, 60_000);
+  });
 
   test("a new head on a pull stops its running check for the old head, superseded not failed", async () => {
+    // Invariant: a pull's new head cuts off the running check of its old head, which ends cancelled as superseded.
     const slow = await commitToBranch(app, alice, repo, {
       branch: "supersede",
-      message: "A very slow check",
+      message: "A check that never ends on its own",
       files: [
-        { path: "forge.json", content: checkJson("sleep 30") },
+        { path: "forge.json", content: checkJson(held("never")) },
         { path: "S.md", content: "s\n" },
       ],
     });
@@ -813,11 +873,7 @@ describe("checks", () => {
       opened.value.id,
     );
     if (!old) throw new Error("no run");
-    const began = Date.now();
-    while (getRun(app.db, old.id)?.state !== "running") {
-      if (Date.now() - began > 20_000) throw new Error("never started");
-      await Bun.sleep(50);
-    }
+    await until(() => getRun(app.db, old.id)?.state === "running", "old head running");
     const next = await commitToBranch(app, alice, repo, {
       branch: "supersede",
       message: "Fast",
@@ -831,20 +887,20 @@ describe("checks", () => {
     const stopped = getRun(app.db, old.id);
     expect(stopped?.state).toBe("cancelled");
     expect(stopped?.summary).toContain("superseded by");
-    // Well short of the 30 s the old check would have taken.
-    expect(Date.now() - began).toBeLessThan(25_000);
-  }, 60_000);
+    // Stopped, not only marked: the old check, which never ends on its own,
+    // was cut off and wrote its end.
+    await until(
+      () => readRunLog(dataDir, old.id).lines.join("\n").includes("superseded"),
+      "the old head's check cut off",
+    );
+  });
 
   for (const ending of ["merge", "close"] as const)
     test(`${ending === "merge" ? "merging" : "closing"} a pull leaves no queued or running run for it`, async () => {
+      // Invariant: a pull merged or closed has its queued checks cancelled with that reason.
       const blocker = await commitToBranch(app, alice, repo, {
         message: "Hold the lane",
-        files: [
-          {
-            path: "forge.json",
-            content: checkJson(`sleep 0.5 && test -f OK.md # ${ending}`),
-          },
-        ],
+        files: [{ path: "forge.json", content: checkJson(held(`lane-${ending}`)) }],
       });
       if (!blocker.ok) throw new Error(JSON.stringify(blocker.error));
       await checks.request(repo, "lane", blocker.value.commitOid, "push");
@@ -865,12 +921,7 @@ describe("checks", () => {
         listRuns(app.db, repo.id, { kind: "check" }).filter(
           (r) => r.issueId === pull.id,
         );
-      const until = async (done: () => boolean): Promise<void> => {
-        const deadline = Date.now() + 10_000;
-        while (!done() && Date.now() < deadline) await Bun.sleep(25);
-        if (!done()) throw new Error(`never came: still waiting while !done()`);
-      };
-      await until(() => mine().length > 0);
+      await until(() => mine().length > 0, "the pull's check queued");
       expect(mine().some((r) => r.state === "queued")).toBe(true);
       if (ending === "merge") {
         const landed = await mergePull(app, alice, repo, pull, "merge");
@@ -879,7 +930,7 @@ describe("checks", () => {
         const closed = setIssueState(app, alice, repo, pull, "closed");
         if (!closed.ok) throw new Error(String(closed.error));
       }
-      await until(() => mine().every((r) => r.state !== "queued"));
+      await until(() => mine().every((r) => r.state !== "queued"), "the pull's check gone");
       expect(mine().filter((r) => r.state === "queued")).toEqual([]);
       expect(
         mine().some(
@@ -887,7 +938,13 @@ describe("checks", () => {
             r.summary === (ending === "merge" ? "pull landed" : "pull closed"),
         ),
       ).toBe(true);
-    }, 60_000);
+      // The lane is let go, and left empty for the next test.
+      release(`lane-${ending}`);
+      await until(
+        () => checksOf(blocker.value.commitOid).every((r) => r.state !== "queued" && r.state !== "running"),
+        "the lane's holder done",
+      );
+    });
 
   test("a queued gate keeps the last free slot from pull checks", () => {
     // One slot free, a gate queued: the pull check passes, the gate starts.
@@ -947,6 +1004,7 @@ describe("checks", () => {
   });
 
   test("when a slot frees, the newest of several queued checks runs first", async () => {
+    // Invariant: of several checks queued behind a held slot, the newest starts first.
     // Three checks, on three environments so none supersedes another. Their
     // commits are written before the slot is taken: written after, on a
     // loaded machine they can outlast the holder, and the oldest then finds
@@ -972,18 +1030,18 @@ describe("checks", () => {
 
     // A slow check on its own environment holds the only slot, and the
     // three queue behind it — oldest requested first.
-    const held = await commitToBranch(app, alice, repo, {
+    const holding = await commitToBranch(app, alice, repo, {
       branch: "order-hold",
       message: "Hold the slot",
       files: [
-        { path: "forge.json", content: checkJson("sleep 0.5 && test -f OK.md") },
+        { path: "forge.json", content: checkJson(held("order")) },
       ],
     });
-    if (!held.ok) throw new Error(JSON.stringify(held.error));
+    if (!holding.ok) throw new Error(JSON.stringify(holding.error));
     const holder = await checks.request(
       repo,
       "order-hold",
-      held.value.commitOid,
+      holding.value.commitOid,
       "push",
     );
     expect(holder).toBeDefined();
@@ -1011,6 +1069,7 @@ describe("checks", () => {
     expect(middleRun?.state).toBe("queued");
     expect(newestRun?.state).toBe("queued");
 
+    release("order");
     await settled((r) => r.id === newestRun!.id);
     await settled((r) => r.id === middleRun!.id);
     await settled((r) => r.id === oldestRun!.id);
@@ -1020,32 +1079,19 @@ describe("checks", () => {
       Date.parse(runs.find((r) => r.id === id)!.startedAt!);
     expect(startedAt(newestRun!.id)).toBeLessThan(startedAt(middleRun!.id));
     expect(startedAt(middleRun!.id)).toBeLessThan(startedAt(oldestRun!.id));
-  }, 30_000);
+  });
 
   test("a check in flight when the forge stops is queued again, and the next forge runs it", async () => {
-    const slow = await commitToBranch(app, alice, repo, {
-      message: "A slower check",
-      files: [
-        {
-          path: "forge.json",
-          // Hangs the first time it runs, passes the second: no wait to tune.
-          content: checkJson(
-            `if [ -f '${dataDir}/ran-once' ]; then test -f OK.md; else touch '${dataDir}/ran-once'; sleep 60; fi`,
-          ),
-        },
-      ],
-    });
-    if (!slow.ok) throw new Error(JSON.stringify(slow.error));
-    const oid = slow.value.commitOid;
-    const deadline = Date.now() + 20_000;
-    let cut: Run | undefined;
-    while (Date.now() < deadline && cut?.state !== "running") {
-      cut = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
-        (r) => r.commitOid === oid,
-      );
-      await Bun.sleep(50);
-    }
-    expect(cut?.state).toBe("running");
+    // Invariant: stopping the service cancels a running check as queued again, attempt + 1, and the next service runs it to the end.
+    // Hangs the first time it runs, passes the second: no wait to tune.
+    const id = await slowCheck(
+      `if [ -f '${dataDir}/ran-once' ]; then test -f OK.md; else touch '${dataDir}/ran-once'; ${held("never")}; fi`,
+      "A slower check",
+    );
+    // Running is said before the command begins: stop only once it has.
+    await until(() => existsSync(join(dataDir, "ran-once")), "the command begun");
+    const oid = getRun(app.db, id)!.commitOid;
+    const cut = getRun(app.db, id);
 
     // This forge stops — a release — with the check under way.
     await checks.stop();
@@ -1060,7 +1106,7 @@ describe("checks", () => {
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
     const done = await settled((r) => r.id === again!.id);
     expect(done.state).toBe("ok");
-  }, 60_000);
+  });
 
   async function slowCheck(command: string, message: string): Promise<string> {
     const made = await commitToBranch(app, alice, repo, {
@@ -1069,27 +1115,24 @@ describe("checks", () => {
     });
     if (!made.ok) throw new Error(JSON.stringify(made.error));
     const oid = made.value.commitOid;
-    const deadline = Date.now() + 20_000;
-    let found: Run | undefined;
-    while (Date.now() < deadline && found?.state !== "running") {
-      found = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
-        (r) => r.commitOid === oid,
-      );
-      await Bun.sleep(50);
-    }
-    expect(found?.state).toBe("running");
-    return found!.id;
+    await until(() => checksOf(oid)[0]?.state === "running", `${message} running`);
+    return checksOf(oid)[0]!.id;
   }
 
   test("a roll waits for a running check to finish, within its budget, instead of throwing it away", async () => {
+    // Invariant: stop with a drain budget lets a running check finish to its verdict, leaving nothing queued.
     await checks.stop();
     checks = startChecks(app, {
       forgeUrl: servers.url,
       concurrency: 1,
       drainMs: 30_000,
     });
-    const id = await slowCheck("sleep 0.5 && test -f OK.md # drained", "A drained check");
-    await checks.stop();
+    const id = await slowCheck(held("drained"), "A drained check");
+    // Let go only once the stop is under way: a stop that did not wait
+    // would have cut it off already.
+    const stopping = checks.stop();
+    release("drained");
+    await stopping;
     const run = getRun(app.db, id);
     expect(run?.state).toBe("ok");
     expect(
@@ -1098,16 +1141,17 @@ describe("checks", () => {
       ),
     ).toBe(false);
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
-  }, 60_000);
+  });
 
   test("a person's stop cuts a running check off at once, and queues it again", async () => {
+    // Invariant: stop without drain cancels a running check at once as queued again, and the next service runs it.
     await checks.stop();
     checks = startChecks(app, {
       forgeUrl: servers.url,
       concurrency: 1,
       drainMs: 30_000,
     });
-    const id = await slowCheck("sleep 0.5 && test -f OK.md # cut off", "A cut-off check");
+    const id = await slowCheck(held("cut"), "A cut-off check");
     await checks.stop({ drain: false });
     const run = getRun(app.db, id);
     expect(run?.state).toBe("cancelled");
@@ -1116,26 +1160,27 @@ describe("checks", () => {
       (r) => r.commitOid === run?.commitOid && r.state === "queued",
     );
     expect(again).toBeDefined();
+    release("cut");
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
     const done = await settled((r) => r.id === again?.id);
     expect(done.state).toBe("ok");
-  }, 60_000);
+  });
 
   test("a check whose pull lands while it runs ends as superseded, not failed", async () => {
-    const id = await slowCheck("sleep 0.5 && false", "A check overtaken");
+    // Invariant: a running check whose row is cancelled under it logs superseded with the reason, never failed, even when its command fails.
+    const id = await slowCheck(held("overtaken", "false"), "A check overtaken");
     cancelRun(app.db, id, "pull landed");
-    const deadline = Date.now() + 20_000;
-    let lines = "";
-    while (Date.now() < deadline && !lines.includes("superseded")) {
-      await Bun.sleep(100);
-      lines = readRunLog(dataDir, id).lines.join("\n");
-    }
+    release("overtaken");
+    const log = (): string => readRunLog(dataDir, id).lines.join("\n");
+    await until(() => log().includes("superseded"), "superseded in the log");
+    const lines = log();
     expect(lines).toContain("superseded: pull landed");
     expect(lines).not.toContain("failed:");
     expect(getRun(app.db, id)?.state).toBe("cancelled");
-  }, 60_000);
+  });
 
   test("a check that is declared wrong fails with the reason", async () => {
+    // Invariant: a malformed check declaration fails the run with the parse reason.
     const wrong = await commitToBranch(app, alice, repo, {
       message: "A wrong check",
       files: [{ path: "forge.json", content: '{"check": "bun test"}\n' }],
@@ -1147,7 +1192,9 @@ describe("checks", () => {
       "check failed: forge.json: check must be an object",
     );
   });
+
   test("an open pull whose head was never checked is checked when the service boots", async () => {
+    // Invariant: a booting service checks the head of an open pull that has no check, with reason boot.
     await checks.stop();
     // The pull is checked by the base's check, so the base must ask for it.
     const gate = await commitToBranch(app, alice, repo, {
@@ -1184,7 +1231,7 @@ describe("checks", () => {
     const done = await settled((r) => r.commitOid === opened.value.headOid);
     expect(done.reason).toBe("boot");
     expect(done.state).toBe("ok");
-  }, 60_000);
+  });
 });
 
 describe("a check its forge died under", () => {
@@ -1335,6 +1382,7 @@ describe("a check its forge died under", () => {
 
 describe("startChecks: a booting forge removes only checkouts nobody is running (#1884)", () => {
   test("a live run's checkout survives, a lapsed run's and a stranger's go", async () => {
+    // Invariant: the boot sweep removes checkouts of lapsed or unknown runs and keeps a live run's.
     const dir = await mkdtemp(join(tmpdir(), "forge-sweep-"));
     const db = createApp({ dataDir: dir, port: 0 });
     try {
@@ -1377,6 +1425,7 @@ describe("startChecks: a booting forge removes only checkouts nobody is running 
 
 describe("checks: a finished shard is announced as the runner writes it (#2889)", () => {
   test("each shard-done line the check prints puts one run.shard on the bus, and nothing else does", async () => {
+    // Invariant: each `shard N/M done` line a check prints emits one run.shard event for that run.
     const dir = await mkdtemp(join(tmpdir(), "forge-shards-"));
     const shardApp = createApp({ dataDir: dir, port: 0 });
     const shardServers = await serve(shardApp);
@@ -1412,7 +1461,7 @@ describe("checks: a finished shard is announced as the runner writes it (#2889)"
       while (Date.now() < deadline) {
         run = listRuns(shardApp.db, made.value.id, { kind: "check", limit: 5 })[0];
         if (run && (run.state === "ok" || run.state === "failed")) break;
-        await Bun.sleep(50);
+        await Bun.sleep(10);
       }
       expect(run?.state).toBe("ok");
       const shards = listEvents(shardApp.db, { repoId: made.value.id, kind: "run.shard" });
