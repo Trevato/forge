@@ -117,6 +117,7 @@ import {
   resolveOwner,
   updateRepoSettings,
 } from "../actions/repos.ts";
+import { TRANSFER_SAID, TRANSFER_STATUS, transferRepository } from "../actions/transfer.ts";
 import {
   createToken,
   HUMAN_CHECK_MESSAGE,
@@ -1670,6 +1671,24 @@ export function apiRoutes(router: Router<Handler>): void {
       return apiError("has_pulls", 409, "a pull request was sent from this repository, and that pull request needs it");
     if (!deleted.ok) return respondAccess(deleted.error, 500);
     return json({}, 200);
+  });
+
+  // Move a repository to another owner (#569): its old paths answer 308.
+  router.add("POST", "/api/v1/repos/:owner/:name/transfer", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const newOwner = input.newOwner;
+    if (typeof newOwner !== "string" || newOwner.length === 0 || newOwner.length > 64)
+      return apiError("bad_new_owner", 422, "newOwner is an account or organisation name");
+    const moved = await transferRepository(ctx.app, ctx.auth.user, repo, newOwner);
+    if (!moved.ok) {
+      if (moved.error === "not_found") return notFound();
+      return apiError(moved.error, TRANSFER_STATUS[moved.error], TRANSFER_SAID[moved.error]);
+    }
+    return json(repoJson(ctx, moved.value));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/events", (ctx) => {

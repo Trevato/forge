@@ -144,6 +144,8 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "repo.links_probed",
   "repo.detached",
   "repo.deleted",
+  // Who moved a repository from where to where (#569): its readers knew both paths.
+  "repo.transferred",
   "label.updated",
   "label.deleted",
   "telemetry.granted",

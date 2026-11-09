@@ -444,6 +444,7 @@ import { pageParamRefused } from "./cursor_lists.ts";
 import { inNamespace } from "../core/proposal_token.ts";
 import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
 import { adminGate } from "./admin_gate.ts";
+import { movedResponse } from "./moved.ts";
 import { originGate } from "./origin_gate.ts";
 import { proposalGate } from "./proposal_gate.ts";
 import { runGate } from "./run_gate.ts";
@@ -2817,6 +2818,10 @@ async function answerGet(
   // Admin settings and releases are an admin's; a member is told so.
   const adminRefusal = adminGate(app, request, url, auth);
   if (adminRefusal !== undefined) return adminRefusal;
+
+  // A transferred repository's old path answers 308 to its new one (#569).
+  const moved = movedResponse(app.db, url, auth.user);
+  if (moved !== undefined) return moved;
 
   // The two things standing between one runaway agent and everybody
   // else's latency, applied before a handler runs and after auth is

@@ -21,6 +21,7 @@ import {
 import { createApp, type App } from "../src/app.ts";
 import { listTeams, OWNERS_TEAM, type Team } from "../src/core/orgs.ts";
 import { migrations } from "../src/core/schema.ts";
+import { idFloor } from "../src/kernel/id.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -217,11 +218,18 @@ describe("an organization always keeps a person who owns it", () => {
     ]);
     const ddl = migrations.find((m) => m.includes("an agent never owns"));
     expect(ddl).toBeString();
-    const before = (
+    const last = (
       app.db.query("SELECT id FROM event ORDER BY id DESC LIMIT 1").get() as {
         id: string;
       }
     ).id;
+    // The migration stamps its id from SQLite's wall clock; `id()` is
+    // monotonic per process, so a suite earlier in the same process that
+    // moved `Date.now` ahead (`api-forge-view.test.ts`) leaves it ahead of
+    // the wall. The bound is the last event or the wall clock, whichever is
+    // older: with an honest clock that is the last event, as before.
+    const wall = idFloor(Date.now());
+    const before = last < wall ? last : wall;
     app.db.exec(ddl!);
     expect(members(owners)).not.toContain(bot.id);
     expect(members(owners)).toContain(alice.id);

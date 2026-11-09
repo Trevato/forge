@@ -320,6 +320,7 @@ export { route as postApiV1ReposOwnerNameRunsIdCancel } from "./postApiV1ReposOw
 export { route as postApiV1ReposOwnerNameRunsIdSteer } from "./postApiV1ReposOwnerNameRunsIdSteer.ts";
 export { route as postApiV1ReposOwnerNameSpend } from "./postApiV1ReposOwnerNameSpend.ts";
 export { route as postApiV1ReposOwnerNameSync } from "./postApiV1ReposOwnerNameSync.ts";
+export { route as postApiV1ReposOwnerNameTransfer } from "./postApiV1ReposOwnerNameTransfer.ts";
 export { route as postApiV1ReposOwnerNameUpstreamCheck } from "./postApiV1ReposOwnerNameUpstreamCheck.ts";
 export { route as postApiV1Sessions } from "./postApiV1Sessions.ts";
 export { route as postApiV1Share } from "./postApiV1Share.ts";
