@@ -106,6 +106,7 @@ export { route as getApiV1ReposOwnerNameAppEnvOpen } from "./getApiV1ReposOwnerN
 export { route as getApiV1ReposOwnerNameAppMembers } from "./getApiV1ReposOwnerNameAppMembers.ts";
 export { route as getApiV1ReposOwnerNameAppNotes } from "./getApiV1ReposOwnerNameAppNotes.ts";
 export { route as getApiV1ReposOwnerNameAppProductionOpen } from "./getApiV1ReposOwnerNameAppProductionOpen.ts";
+export { route as getApiV1ReposOwnerNameAppPulls } from "./getApiV1ReposOwnerNameAppPulls.ts";
 export { route as getApiV1ReposOwnerNameBranches } from "./getApiV1ReposOwnerNameBranches.ts";
 export { route as getApiV1ReposOwnerNameBuilds } from "./getApiV1ReposOwnerNameBuilds.ts";
 export { route as getApiV1ReposOwnerNameBuildsLabelCart } from "./getApiV1ReposOwnerNameBuildsLabelCart.ts";

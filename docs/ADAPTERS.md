@@ -22,9 +22,14 @@ pull run in the `pull_run` table (`src/apps/pull.ts`: `parsePullAnswer`,
 The call is signed as an `admin` the forge vouches for (see "The template"
 below), so an adapter that admits only a signed `admin` answers it.
 
-One thing is still missing: no page or API shows the recorded runs yet. They
-are kept, and they decide when the next pull is due, but no page or API reads
-them.
+The API reads the recorded runs: `GET /api/v1/repos/:owner/:name/app/pulls`
+answers `{ items }`, the app's last pull runs newest first (`?limit=` 1–100,
+default 20). Each says when (`at`), how long (`durationMs`), `ok` or `failed`
+(`state`), the sentence saying why when it failed (`error`), the records
+`written`, `skipped` and `failed`, the `cursor` after it (null after a failed
+pull) and whether it was a `repeat`. Whoever may read the repository may read
+them; anyone else gets 404. The rows come through `pullRunLines` in
+`src/apps/pull.ts`, so a page or MCP can read them the same way.
 
 The rest of the forge's app rules apply to an adapter as they apply to any
 other app: see [`docs/APPS.md`](APPS.md).

@@ -357,6 +357,7 @@ import { FORGE_NOT_CARRIED } from "../origins/words.ts";
 import { forgeOriginRoutes } from "./api/forge_origin.ts";
 import { userRoutes } from "./api/user.ts";
 import { appRoutes } from "./api/app.ts";
+import { appPullsRoutes } from "./api/app_pulls.ts";
 import { buildRoutes } from "./api/builds.ts";
 import { buildShotRoutes } from "./api/build_shots.ts";
 import { buildCartRoutes } from "./api/build_cart.ts";
@@ -3684,6 +3685,7 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   appRoutes(router);
+  appPullsRoutes(router);
   buildRoutes(router);
   buildShotRoutes(router);
   buildCartRoutes(router);

@@ -3,12 +3,13 @@
  * #10042). `parsePullAnswer` is the boundary: pure, given the status and the
  * raw body, it answers four checked fields or a failed pull with a short
  * reason naming what was wrong. `recordPull` writes the outcome as a run of
- * kind `pull` through `core/runs.ts`. Nothing here reaches the network: the
+ * kind `pull` through `core/runs.ts`; `pullRunLines` reads them back for the
+ * API (#10101), a page or MCP. Nothing here reaches the network: the
  * caller that sends the request and times it is `pull_schedule.ts` (#10043).
  */
 
 import type { Database } from "bun:sqlite";
-import { createPullRun, lastPullCursor, type PullRun } from "../core/runs.ts";
+import { createPullRun, lastPullCursor, listPullRuns, type PullRun } from "../core/runs.ts";
 
 /** A body over this many bytes is a failed pull, never parsed. */
 export const PULL_BODY_MAX = 64 * 1024;
@@ -141,4 +142,47 @@ export function recordPull(db: Database, appId: string, outcome: PullOutcome): P
       repeat,
     });
   }).immediate();
+}
+
+/** How many runs `pullRunLines` answers when asked for none in particular, and at most. */
+export const PULL_RUNS_DEFAULT = 20;
+export const PULL_RUNS_MAX = 100;
+
+/** One recorded pull, as a reader sees it: plain data, the same for the API, a page and MCP. */
+export interface PullRunLine {
+  readonly id: string;
+  /** When it was recorded, ISO 8601. */
+  readonly at: string;
+  readonly durationMs: number;
+  readonly state: "ok" | "failed";
+  /** The sentence saying why it failed; null when it did not. */
+  readonly error: string | null;
+  /** Records written, skipped and failed by the adapter. */
+  readonly written: number;
+  readonly skipped: number;
+  readonly failed: number;
+  /** Where the next pull starts after this one; null after a failed pull. */
+  readonly cursor: string | null;
+  /** A good pull whose cursor matched the last one, so nothing counted as written. */
+  readonly repeat: boolean;
+}
+
+/**
+ * An app's last pull runs, newest first: `limit` is clamped to 1–100. Whoever
+ * calls this has already decided the reader may see the app.
+ */
+export function pullRunLines(db: Database, appId: string, limit = PULL_RUNS_DEFAULT): PullRunLine[] {
+  const n = Number.isFinite(limit) ? Math.max(1, Math.min(PULL_RUNS_MAX, Math.trunc(limit))) : PULL_RUNS_DEFAULT;
+  return listPullRuns(db, appId, n).map((run) => ({
+    id: run.id,
+    at: run.createdAt,
+    durationMs: run.durationMs,
+    state: run.state,
+    error: run.state === "failed" ? run.reason : null,
+    written: run.written,
+    skipped: run.skipped,
+    failed: run.failed,
+    cursor: run.state === "failed" ? null : run.cursor,
+    repeat: run.repeat,
+  }));
 }
