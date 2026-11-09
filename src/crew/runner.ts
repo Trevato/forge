@@ -150,6 +150,7 @@ import {
 import { clearStaleLocks, lockedOut } from "./locks.ts";
 import { interruptedSummary } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
+import { MERGES_CLEAN_NOW, mergesCleanNow } from "./clean_now.ts";
 import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
 import { boxesOf, landedBoxes } from "./box_pass.ts";
@@ -998,6 +999,23 @@ async function work(
   const continuing =
     pull !== undefined && (pull.mergedAt !== null || foreign !== undefined);
   const pullStands = pull !== undefined && !continuing;
+  // A bring-up-to-date run whose pull merges clean by now — main moved
+  // again, or the clash was settled — has nothing for an agent (`clean_now.ts`).
+  if (
+    reason === "conflict" &&
+    pull !== undefined &&
+    pullStands &&
+    (await mergesCleanNow(app, repo, pull))
+  ) {
+    write(MERGES_CLEAN_NOW);
+    return {
+      state: "ok",
+      summary: MERGES_CLEAN_NOW,
+      costUsd: 0,
+      turns: 0,
+      pushed: false,
+    };
+  }
   const branch =
     pull !== undefined && !continuing && !reviewing
       ? pull.headBranch
