@@ -307,6 +307,15 @@ describe("efficiency and standing, grouped", () => {
     expect(page).toContain("account 1");
     expect(page).toContain("5-hour window");
     expect(page).toContain("weekly window");
+    // A plain row per subscription, never a boxed card, inside the strip.
+    const strip = page.slice(page.indexOf('id="windows"'), page.indexOf('id="spend-detail"'));
+    expect(strip).not.toContain('class="card');
+    expect(strip).toContain('data-group="crew"');
+    // A credential no app is scoped to sits in its own group.
+    expect(strip).toContain('data-group="apart"');
+    expect(strip).toContain('data-key="sub:');
+    expect(strip).toContain('data-window="5h"');
+    expect(strip).toContain('data-window="week"');
     expect(page).toMatch(/data-variant="outline"\s*>inferred</);
     expect(page).toContain(">full<");
     // ($3.00 + $1.50 + $0.50) ÷ 2 merged this week = $2.50.

@@ -608,46 +608,44 @@ function windowsStrip(ctx: Ctx): Html | null {
     id === PLATFORM
       ? "every app no subscription is granted to"
       : (scopes.get(id) ?? []).join(", ");
-  const card = (s: Subscription): Html | null => {
+  const row = (s: Subscription): Html | null => {
     const st = all.get(s.id);
     if (st === undefined) return null;
     return html`<a
-      class="card"
+      class="bar small muted"
       href="/settings/subscriptions"
       data-key="sub:${s.id}"
     >
-      <span class="card-body bar small muted">
-        <b>${s.name}</b>
-        ${st.windows.map((w) => {
-          const words = windowWords(w);
-          return html`<span class="bar" data-window="${w.window}"
-            >${words.name}
-            ${
-              words.usedPct === null
-                ? null
-                : meter(
-                    words.usedPct,
-                    `${words.name} used`,
-                    words.usedPct >= 100 ? "attn" : undefined,
-                  )
-            }
-            <span class="num"
-              >${figures([words.used, words.remaining, words.resets])}${when(
-                w.tokensIn + w.tokensOut > 0,
-                () => html` · ${tokenCount(w.tokensIn + w.tokensOut, "counted")}`,
-              )}</span
-            ></span
-          >`;
-        })}
-        ${when(scopeWords(s.id) !== "", () => html`<span>for ${scopeWords(s.id)}</span>`)}
-      </span>
+      <b>${s.name}</b>
+      ${st.windows.map((w) => {
+        const words = windowWords(w);
+        return html`<span class="bar" data-window="${w.window}"
+          >${words.name}
+          ${
+            words.usedPct === null
+              ? null
+              : meter(
+                  words.usedPct,
+                  `${words.name} used`,
+                  words.usedPct >= 100 ? "attn" : undefined,
+                )
+          }
+          <span class="num"
+            >${figures([words.used, words.remaining, words.resets])}${when(
+              w.tokensIn + w.tokensOut > 0,
+              () => html` · ${tokenCount(w.tokensIn + w.tokensOut, "counted")}`,
+            )}</span
+          ></span
+        >`;
+      })}
+      ${when(scopeWords(s.id) !== "", () => html`<span>for ${scopeWords(s.id)}</span>`)}
     </a>`;
   };
   const crew = pool.filter((s) => s.id === PLATFORM || scopes.has(s.id));
   const apart = pool.filter((s) => s.id !== PLATFORM && !scopes.has(s.id));
   const group = (name: string, key: string, subs: readonly Subscription[]): Html =>
     html`<div class="stack stack-tight" data-group="${key}">
-      <span class="muted small">${name}</span>${subs.map(card)}
+      <span class="muted small">${name}</span>${subs.map(row)}
     </div>`;
   return html`<div
     class="stack"
