@@ -475,6 +475,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           kind,
           path,
           takenAs: asNobody(kind, page) ? "nobody" : "owner",
+          ...(shot.ok && shot.value.size !== undefined ? { size: shot.value.size } : {}),
         });
       } else {
         rmSync(staged, { force: true });
