@@ -15,6 +15,7 @@ import { image } from "./image.ts";
 import { claimedMedia, fileKind, HEAD_BYTES, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
 import { log, hasEscape } from "./log.ts";
 import { markdown } from "./markdown.ts";
+import { patch } from "./patch.ts";
 import { pdf } from "./pdf.ts";
 import { sqlite } from "./sqlite.ts";
 import { subtitles } from "./subtitles.ts";
@@ -61,8 +62,8 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   audio,
   video,
   config,
+  patch,
   log,
-
   subtitles,
   archive,
 };

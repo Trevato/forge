@@ -65,7 +65,7 @@ media type, for `<img>`, `<video>`, `<audio>`, `<object>` and `fetch()`.
 ## The kind registry
 
 `fileKind(path, firstBytes)` answers `image | svg | pdf | audio | video |
-csv | model3d | config | markdown | text | binary`. `RENDER_CAP` is the
+csv | model3d | config | markdown | patch | text | binary`. `RENDER_CAP` is the
 largest file each kind draws inline; over it, the page offers Download.
 
 `kinds.ts` is plain data with no web dependency: the editor and the
@@ -108,7 +108,13 @@ QuickTime files are inside, for browsers that refuse `video/quicktime`.
   mirrored origin), the extension decides (`claimedMedia`) and the media
   route confirms the bytes, serving a contradicted file as
   `application/octet-stream`, and the player shows the note.
-- **Text kinds** (markdown, csv, config, text) and binary keep the page's
+- **Patch** (`.patch`, `.diff`; `render/patch.ts`): text drawn with the pull
+  page's own diff (`parseUnifiedDiff` into `renderDiff`). A `git format-patch`
+  mail header (From, Subject, Date) shows above it as a plain list of rows.
+  Text with no `diff --git` file in it (a plain `diff -u`, notes) is not
+  parsed and falls back to the text view. The terminal's file view draws the
+  same parse with its pull diff (`tui/ui/diff.ts`); `v` shows the source.
+- **Text kinds** (markdown, csv, config, patch, text) and binary keep the page's
   1 MB ceiling: over it the page says "over the render cap" and offers
   Download.
 - Over `RENDER_CAP` (500 MB audio, 4 GB video) the page offers Download.

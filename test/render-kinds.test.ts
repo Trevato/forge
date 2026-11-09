@@ -58,6 +58,8 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   md: [enc("# a\n"), "markdown", "application/octet-stream"],
   markdown: [enc("# a\n"), "markdown", "application/octet-stream"],
   mdx: [enc("# a\n"), "markdown", "application/octet-stream"],
+  patch: [enc("diff --git a/a b/a\n"), "patch", "application/octet-stream"],
+  diff: [enc("diff --git a/a b/a\n"), "patch", "application/octet-stream"],
   log: [enc("ok\n"), "log", "application/octet-stream"],
   ansi: [enc("\x1b[31mok\n"), "log", "application/octet-stream"],
   srt: [enc("1\n00:00:01,000 --> 00:00:02,000\nHi\n"), "subtitles", "application/octet-stream"],

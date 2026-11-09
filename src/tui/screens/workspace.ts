@@ -47,6 +47,8 @@ import { stopMirroring } from "../../actions/mirror_target.ts";
 import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
 import { canAdmin, canWrite, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
 import type { TreeEntry } from "../../git/read.ts";
+import { parseUnifiedDiff, type Diff } from "../../git/diff.ts";
+import { renderDiff as renderPatch } from "../ui/diff.ts";
 import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
@@ -284,7 +286,7 @@ export function buildLines(
 type TabMode = "view" | "edit";
 type FindMode = "off" | "find" | "replace";
 /** What a path is, as far as the file pane is concerned. */
-type TabKind = "image" | "markdown" | "code";
+type TabKind = "image" | "markdown" | "patch" | "code";
 
 /** `.csv` and `.tsv`: files that read as a table. */
 function isTablePath(path: string): boolean {
@@ -316,6 +318,11 @@ function subtitleTable(source: string): { table: Table; unread: number } {
 function isMarkdownPath(path: string): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1);
   return fileKind(name, NO_BYTES) === "markdown" || /^readme(\.|$)/i.test(name);
+}
+
+/** `.patch` and `.diff`: a file the pull page's diff draws. */
+function isPatchPath(path: string): boolean {
+  return fileKind(path.slice(path.lastIndexOf("/") + 1), NO_BYTES) === "patch";
 }
 
 class Tab {
@@ -357,6 +364,8 @@ class Tab {
   /** The rendered document, and the width it was wrapped for. */
   doc: Line[] = [];
   docPlain: string[] = [];
+  /** The parsed diff of a patch file; null when the text is not a git diff. */
+  patch: Diff | null = null;
   docWidth = 0;
   /** `s` on a CSV/TSV: the aligned table, or the source behind it. */
   asTable = true;
@@ -374,12 +383,14 @@ class Tab {
 
   get kind(): TabKind {
     if (this.image !== null) return "image";
+    if (isPatchPath(this.path)) return "patch";
     return isMarkdownPath(this.path) ? "markdown" : "code";
   }
 
   /** True when the pane is showing prose rather than the bytes behind it. */
   get reading(): boolean {
-    return this.kind === "markdown" && this.rendered && this.mode === "view";
+    if (!this.rendered || this.mode !== "view") return false;
+    return this.kind === "markdown" || (this.kind === "patch" && this.patch !== null);
   }
 
   /** True when the pane is showing a CSV/TSV as columns. */
@@ -403,7 +414,10 @@ class Tab {
   document(width: number, c: Tokens): void {
     if (this.docWidth === width && this.doc.length > 0) return;
     this.docWidth = width;
-    this.doc = renderMarkdown(this.plain.join("\n"), Math.max(8, width), c);
+    this.doc =
+      this.patch !== null
+        ? renderPatch(this.patch, Math.max(8, width), c)
+        : renderMarkdown(this.plain.join("\n"), Math.max(8, width), c);
     this.docPlain = this.doc.map((line) =>
       line.map((span) => span.text).join(""),
     );
@@ -440,7 +454,12 @@ class Tab {
       this.lines = [];
       return;
     }
-    const built = buildLines(new TextDecoder().decode(source), this.path, c);
+    const text = new TextDecoder().decode(source);
+    const built = buildLines(text, this.path, c);
+    if (isPatchPath(this.path)) {
+      const parsed = parseUnifiedDiff(text);
+      this.patch = parsed.files.length > 0 ? parsed : null;
+    } else this.patch = null;
     this.plain = built.plain;
     this.lines = built.lines;
     this.unread = 0;
@@ -1457,7 +1476,8 @@ export function workspaceScreen(
         binding(["ctrl+c", "ctrl+x", "ctrl+v"], "copy / cut / paste"),
       ];
     const two =
-      t !== undefined && (t.image !== null || isMarkdownPath(t.path));
+      t !== undefined &&
+      (t.image !== null || isMarkdownPath(t.path) || t.patch !== null);
     return [
       ...(t?.table == null
         ? []
@@ -2257,7 +2277,7 @@ export function workspaceScreen(
       t.showImage = !t.showImage;
       return;
     }
-    if (t.kind !== "markdown" || t.mode === "edit") {
+    if ((t.kind !== "markdown" && t.kind !== "patch") || t.mode === "edit") {
       ctx.toast("nothing else to show for this file", "attn");
       return;
     }

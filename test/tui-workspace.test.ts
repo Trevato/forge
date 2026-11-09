@@ -309,6 +309,47 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .patch opens as the diff a pull shows, v flips to the source, a non-diff stays text", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "patches",
+      visibility: "public",
+      description: "diffs",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    const patch = [
+      "diff --git a/one.txt b/one.txt",
+      "--- a/one.txt",
+      "+++ b/one.txt",
+      "@@ -1,2 +1,2 @@",
+      " keep",
+      "-old line",
+      "+new line",
+      "",
+    ].join("\n");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        { path: "fix.patch", content: patch },
+        { path: "notes.diff", content: "just some notes\n" },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "patches");
+      await openFile(h, "fix.patch");
+      expect(h.text()).toContain("one.txt");
+      expect(h.text()).toContain("new line");
+      expect(h.text()).not.toContain("diff --git");
+      await h.press("v");
+      expect(h.text()).toContain("diff --git a/one.txt b/one.txt");
+      await openFile(h, "notes.diff");
+      expect(h.text()).toContain("just some notes");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .srt opens as a Start/Text table sharing the web parser, and s flips to the source", async () => {
     const made = await createRepo(forge, alice, {
       name: "captions",
