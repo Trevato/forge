@@ -27,6 +27,9 @@ export const PREVIEW_PULL = 3;
 export const PREVIEW_REPO_HOME = `/${PREVIEW_ADMIN}/${PREVIEW_REPO}`;
 export const PREVIEW_PULL_PAGE = `${PREVIEW_REPO_HOME}/pulls/${String(PREVIEW_PULL)}`;
 
+/** The pull's Files tab, whose diff holds a line comment that must not scroll sideways (#10073). */
+export const PREVIEW_PULL_FILES = `${PREVIEW_PULL_PAGE}/files`;
+
 /**
  * The seeded app: a second repository whose only app fact is its record, so
  * its home is the app page (#9782). Nothing runs: the page says so. The seed
@@ -126,6 +129,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_REPO_HOME,
   PREVIEW_APP_PAGE,
   PREVIEW_PULL_PAGE,
+  PREVIEW_PULL_FILES,
   PREVIEW_ITERATIONS_PAGE,
   PREVIEW_HELD_PAGE,
   PREVIEW_BETS_PAGE,

@@ -23,7 +23,7 @@ import { writeBoard } from "../actions/boards.ts";
 import { backBet } from "../actions/bets.ts";
 import { openIssue, setIssueState } from "../actions/issues.ts";
 import { pinBuild } from "../actions/builds.ts";
-import { mergePull, openPull } from "../actions/pulls.ts";
+import { addReview, mergePull, openPull } from "../actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../actions/repos.ts";
 import { reviewGate } from "../actions/gate_review.ts";
 import { linkIssue } from "../actions/dependencies.ts";
@@ -253,6 +253,15 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   });
   if (!pull.ok) return err(`the pull: ${String(pull.error)}`);
   if (pull.value.number !== PREVIEW_PULL) return err(`the pull is #${String(pull.value.number)}, not #${String(PREVIEW_PULL)}`);
+
+  // A review comment on a line of the pull's diff, so its Files tab draws one (#10073).
+  const reviewed = await addReview(app, admin, repo.value, pull.value, {
+    body: `Say hello to the whole forge, not only to the one who reads this line. ${"A long unbroken word follows: " + "x".repeat(80)}`,
+    path: "GREETING.md",
+    line: 1,
+    side: "new",
+  });
+  if (!reviewed.ok) return err(`the line comment: ${String(reviewed.error)}`);
 
   // Issues and pulls share one numbering, so the pull above keeps PREVIEW_PULL
   // and the ones /next lists and the bets hold come after it.

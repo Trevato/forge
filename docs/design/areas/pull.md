@@ -1,6 +1,6 @@
 # Pull
 
-Every forge pull's preview carries desk and phone looks of this page as the owner, over the preview seed's `/preview-admin/sample/pulls/3` (#8865).
+Every forge pull's preview carries desk and phone looks of this page as the owner, over the preview seed's `/preview-admin/sample/pulls/3` (#8865). Its Files tab (`/files`) is pictured too, over a seeded line comment on `GREETING.md` (#10073); the comment is `.prose`, which wraps anywhere, and the diff table scrolls inside its own wrapper, so the page does not scroll sideways at 390 px or desk. No new class.
 
 A pull is one change waiting on a person: read it, see its check, ship it or say what is off (#8773).
 
