@@ -341,8 +341,11 @@ test("the terminal's home carries the crew line for the admin, the same words as
   week(70, 6);
   const words = crewLineWords(app, NOW)!;
   expect(words).toContain("30% of the week left, runs out");
+  // The terminal reads the clock when it draws, not NOW: the run-out minute may tick over in between.
+  const before = crewLineWords(app, new Date())!;
   const admin = await terminalFor(alice);
-  expect(admin).toContain(words);
+  const after = crewLineWords(app, new Date())!;
+  expect(admin.includes(before) || admin.includes(after)).toBe(true);
   expect(admin.split("30% of the week left").length - 1).toBe(1);
   const made = await createUser(app.db, { origin: "seed", trusted: true, username: "carol", email: "c@forge.test", password: "a-long-passphrase" });
   if (!made.ok) throw new Error(made.error);

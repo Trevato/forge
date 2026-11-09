@@ -43,7 +43,7 @@ import { runSync } from "./origins/sync.ts";
 import { runAheadReads } from "./origins/ahead.ts";
 import { runGuardSweep } from "./origins/credential.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
-import { AppsRuntime } from "./apps/runtime.ts";
+import { AppsRuntime, IDLE_PULL_DAYS } from "./apps/runtime.ts";
 import { listApps } from "./core/apps.ts";
 import { holdAppHosts, releaseAppHosts } from "./apps/holding.ts";
 import { resolveAppDomain } from "./apps/host.ts";
@@ -411,7 +411,7 @@ const apps = appDomain?.ok
       busyGraceMs: crewRunMs,
       // Days a pull may sit untouched before its preview sleeps; 0 keeps
       // every preview warm.
-      idlePullMs: nonNegative(process.env.FORGE_PREVIEW_IDLE_DAYS, 3) * 86_400_000,
+      idlePullMs: nonNegative(process.env.FORGE_PREVIEW_IDLE_DAYS, IDLE_PULL_DAYS) * 86_400_000,
     })
   : undefined;
 // Which other forge serves this data's apps, read before this one starts its own.

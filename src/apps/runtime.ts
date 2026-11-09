@@ -170,7 +170,10 @@ export type EnvState =
   | "asleep"
   | "failed";
 
-const SLEEP_AFTER_MS = { production: 24 * 3_600_000, preview: 30 * 60_000 };
+/** Idle windows before an environment sleeps: the profit slider's 50 (`core/slider.ts`). */
+export const SLEEP_AFTER_MS = { production: 24 * 3_600_000, preview: 30 * 60_000 };
+/** Days a quiet pull keeps its preview by default: the slider's 50 too. */
+export const IDLE_PULL_DAYS = 3;
 const SWEEP_EVERY_MS = 60_000;
 const BUSY_GRACE_MS = 45 * 60_000;
 

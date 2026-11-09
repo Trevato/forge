@@ -15,6 +15,7 @@ import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
+import { economicsPage, economicsSet } from "../web/pages/economics.ts";
 import { trustedAdd, trustedPage, trustedRemove, trustedRevert, trustedStop } from "../web/pages/trusted.ts";
 import { usagePage } from "../web/pages/usage.ts";
 import { spendPage } from "../web/pages/spend-tab.ts";
@@ -180,6 +181,8 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/resilience", domainsMoved);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
+  router.add("GET", "/settings/economics", economicsPage);
+  router.add("POST", "/settings/economics", economicsSet);
   router.add("GET", "/settings/flags", flagsPage);
   // Apps absorbed as the forge's own features, and their settings.
   router.add("GET", "/settings/features", featuresPage);

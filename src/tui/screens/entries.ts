@@ -36,6 +36,7 @@ import { entry as forges } from "./forges.ts";
 import { entry as homePins } from "./home_pins.ts";
 import { entry as invites } from "./invites.ts";
 import { entry as limits } from "./limits.ts";
+import { entry as economics } from "./economics.ts";
 import { entry as loopStalls } from "./loopstalls.ts";
 import { entry as maintenance } from "./maintenance.ts";
 import { modelCeilingEntry, modelGrantEntry } from "./model.ts";
@@ -103,6 +104,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   people,
   quotas,
   limits,
+  economics,
   flowsAll,
   scrapes,
   trafficScreenEntry,
