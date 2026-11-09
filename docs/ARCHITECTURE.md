@@ -14,7 +14,12 @@ keeps its own SQLite file. Forgejo is the reference for how a forge should behav
 1. **The repository holds truth for code.** Git is the durable log. The database
    indexes git, and it is the only record of what git does not hold: issues,
    comments, accounts. Boot reconciliation (`src/core/reconcile.ts`) refreshes
-   hook stubs today. It does not yet repair index rows from git.
+   hook stubs, then moves every open same-repository pull whose recorded head
+   differs from its branch's ref to that ref, through the call a push makes
+   (`trackPullHead`) and with a `push` event, so a forge that stopped between
+   a push and its index write comes back right. A missing branch leaves the
+   row and logs a line. Pulls from forks, and merged branches whose pull says
+   open, are not repaired yet.
 2. **One process, one file of state.** A single Bun process serves git, web,
    and API. SQLite is the only database. Everything a forge instance _is_ lives
    in one data directory you can tar up and move.
@@ -195,8 +200,9 @@ each name, #783) — they only add, so it serves as it did.
 
 State transitions use compare-and-swap (`UPDATE … WHERE state = ?`), and every
 transition writes its event row in the same transaction. On boot, a
-reconciliation sweep repairs the index from git (a merged branch whose pull row
-says "open" gets healed from the ref state, not trusted).
+reconciliation sweep repairs the index from git: an open pull's recorded head
+is healed from its branch's ref, not trusted (principle 1 says what is not
+healed yet).
 
 **The one exception to "the database is derived."** A connected origin's
 access token is third-party state: it cannot be rebuilt from the bare repos,
