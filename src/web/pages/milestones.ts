@@ -189,6 +189,7 @@ export const progress = (done: number, total: number, label: string): Html =>
 function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
   const w = limb.weight;
   return row({
+    nav: true,
     title: html`<a href="${milestoneHref(base, limb.issue.number)}"
       >${limb.name}</a
     >`,
