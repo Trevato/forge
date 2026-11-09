@@ -627,7 +627,8 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   lap("labels");
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
-    .filter((r) => shown(r.info.word, f));
+    // An open pull is always listed, whatever its word: the tab counts them all.
+    .filter((r) => f.word === undefined || shown(r.info.word, f));
   const steps = stepsOfStored(db, repo, rows.map((r) => r.pull));
   lap("steps");
 
