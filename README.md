@@ -39,6 +39,7 @@ The crew needs the `claude` CLI and a model credential. On Linux, install
 - [How apps, previews and runs work](docs/APPS.md)
 - [Connecting forges](docs/ORIGINS.md)
 - [Developing the forge](docs/DEVELOP.md)
+- [Attention budgets: words, blocks and colours per page, and the baseline](docs/features/attention.md)
 - [If something goes wrong](docs/SECURITY-RUNBOOK.md)
 - [All documentation](docs/README.md)
 
