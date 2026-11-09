@@ -176,6 +176,13 @@ export function parseManifest(
     return invalid("forge.json: toolbar must be true or false");
   const adapter = parseAdapter(parsed.value["adapter"]);
   if (!adapter.ok) return invalid(adapter.error);
+  // Only `egress` opens a host (docs/ADAPTERS.md): a source host it does
+  // not list would be refused by the proxy, so the block is invalid.
+  const unopened = adapter.value?.source?.hosts.find(
+    (h) => !(egress.value ?? []).some((e) => e.toLowerCase() === h),
+  );
+  if (unopened !== undefined)
+    return invalid(`forge.json: adapter.source.hosts names ${unopened}, which egress does not list`);
   const kind = app["kind"];
   if (kind !== undefined && kind !== "web" && kind !== "service")
     return invalid('forge.json: app.kind must be "web" or "service"');

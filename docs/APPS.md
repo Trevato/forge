@@ -546,9 +546,11 @@ Only `text/html` responses the app sends uncompressed with a `Content-Length`
 
 `adapter`, at the top level, says the app is an adapter the forge pulls
 from on a schedule (#437): `{ "adapter": { "schedule": { "every": 900 } } }`.
-`every` is whole seconds, 60 to 86400; any other key, at either level, fails
+`every` is whole seconds, 60 to 86400. `source` (the system's name and the
+hosts it reads, each also in `egress`) and `config` (the settings it reads,
+by environment variable) are optional; any other key, at any level, fails
 the manifest with the field named (`src/apps/adapter.ts`). Absent, the app is
-not an adapter.
+not an adapter. The contract is [`docs/ADAPTERS.md`](ADAPTERS.md).
 
 Two more fields say what the app's code may use (rule 9):
 

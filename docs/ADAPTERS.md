@@ -10,8 +10,9 @@ answer and records each pull as a run.
 
 ## Status
 
-This is the contract, not a description of running code. Today the forge does
-not read the `adapter` block and does not call `POST /pull`. The answer's
+This is the contract, not a description of running code. Today the forge
+reads the `adapter` block (`src/apps/adapter.ts`) and does not call
+`POST /pull`. The answer's
 checks and the pull run record exist (`src/apps/pull.ts`: `parsePullAnswer`,
 `recordPull`, kept in the `pull_run` table), but nothing calls them yet. An
 adapter written to this page is an ordinary app until that work lands. The rest of the forge's app rules apply to it now: see
@@ -34,10 +35,9 @@ Anyone else gets 401 or 403, and the source is not read, so a public app or
 a preview cannot be made to pull by whoever reaches it. When the forge
 schedules pulls, its call has to carry that signed identity.
 
-The manifest parser (`src/apps/adapter.ts`) reads only `adapter.schedule`
-today. So the template names its source hosts in `src/source.ts` and opens
-them with `egress`, and its `adapter` block holds only `schedule` until the
-parser accepts `source`.
+The template names its source hosts in `src/source.ts` and opens them with
+`egress`. Its `adapter` block may also name them under `source`, which the
+parser reads; each must then be in `egress` as well.
 
 ## The `adapter` block in forge.json
 
@@ -56,11 +56,17 @@ An app declares itself an adapter with an optional top-level `adapter` block:
 
 - `schedule.every` is the interval between pulls, in seconds. It is an
   integer from 60 to 86400, which is one minute to one day.
-- `source.name` is the external system's name, as people read it.
-- `source.hosts` lists the hosts the adapter reads from.
+- `source` is optional: `source.name` is the external system's name, as
+  people read it, and `source.hosts` lists the 1 to 8 hosts the adapter reads
+  from, each a bare lowercase host name.
+- `config` is optional: the settings the adapter reads, each named by the
+  environment variable it comes from, with a `type` of `string`, `number`,
+  `boolean` or `secret`, and `required` or a `default`. A `secret` names a
+  variable and never holds a value. A field may not name a variable the
+  forge sets itself.
 
-A block that breaks any of these rules is invalid, and the forge does not
-schedule the app.
+Any other key, at any level, is refused. A block that breaks any of these
+rules is invalid, and the forge does not schedule the app.
 
 ## Source hosts and egress
 
