@@ -755,6 +755,25 @@ function fromEvent(
             ? `#${String(number)} now waits for #${String(p["blockedBy"])}`
             : `#${String(number)} no longer waits for #${String(p["blockedBy"])}`,
       };
+    // A hook that failed three deliveries in a row: writers only (`webhook_streak.ts`).
+    case "webhook.failing": {
+      const host = typeof p["host"] === "string" ? p["host"] : "a webhook";
+      const reason = typeof p["reason"] === "string" ? p["reason"] : "";
+      const failures = typeof p["failures"] === "number" ? p["failures"] : 3;
+      const what = clip(
+        `Webhook to ${host} failed ${failures} times${reason === "" ? "" : `: ${reason}`}`,
+        300,
+      );
+      // Settings › Webhooks is for admins, and a writer need not be one: the
+      // line links to the repository and says who can redeliver or pause.
+      return {
+        ...common,
+        kind: "map",
+        link: base(repo),
+        what: `${what} (a repository admin can redeliver or pause it in Settings › Webhooks)`,
+        urgency: 3,
+      };
+    }
     case "crew.governed":
       return {
         ...common,

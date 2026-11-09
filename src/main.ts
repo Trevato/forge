@@ -583,11 +583,11 @@ const notifier = startNotifier(app, { forgeUrl });
 // Expired sessions and run tokens ride the same tick: cheap DELETEs, never
 // worth a worker.
 const deliveryTimer = setInterval(() => {
-  runDelivery(app.db, app.log);
+  runDelivery(app.db, app.log, app.bus);
   pruneSessions(app.db);
   pruneTokens(app.db);
 }, 5_000);
-runDelivery(app.db, app.log); // sweep anything queued while we were down
+runDelivery(app.db, app.log, app.bus); // sweep anything queued while we were down
 pruneSessions(app.db);
 pruneTokens(app.db);
 

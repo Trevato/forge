@@ -182,6 +182,9 @@ const READER_KINDS: ReadonlySet<string> = new Set([
  * `test/event-audience-coverage.test.ts` fails on an emitted kind that is.
  */
 export function classifiedAudience(kind: string): EventAudience | undefined {
+  // A hook that keeps failing is for those who can act on it: the host and
+  // the reason, never the address (`webhook_streak.ts`).
+  if (kind === "webhook.failing") return "writers";
   if (
     kind.startsWith("webhook.") ||
     kind.startsWith("app.env_") ||
@@ -302,7 +305,11 @@ export function audienceFilter(
     const known = writers.get(repoId);
     if (known !== undefined) return known;
     const repo = getRepoById(db, repoId);
-    const yes = repo !== undefined && canWrite(db, repo, viewer);
+    const yes =
+      repo !== undefined &&
+      viewer !== undefined &&
+      isActive(viewer) &&
+      canWrite(db, repo, viewer);
     writers.set(repoId, yes);
     return yes;
   };
