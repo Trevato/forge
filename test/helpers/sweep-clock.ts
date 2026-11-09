@@ -1,19 +1,10 @@
 /**
- * The clock and the pool the route sweeps share (#10401): the security-floor
- * sweeps run on every push, so their request loops are held under
- * `SWEEP_CEILING_MS`. Only the loops are timed — never server boot or the
- * seed — so a loaded runner's slow start does not flake the bound.
+ * The pool the route sweeps share (#10401). The sweeps run on every push,
+ * so their cost is bounded by the route table — one request per (verb,
+ * route) and pass — never by a clock: wall-clock is a coin flip in a loaded
+ * check cell and is never judged in a pull (`test/helpers/work.ts`, #7824);
+ * a 5 s bound here reddened pulls that had not touched a route (2026-11-09).
  */
-
-/** What the request loops of one sweep file may take together. */
-export const SWEEP_CEILING_MS = 5_000;
-
-/** Run `loop`, and say how long it took in milliseconds. */
-export async function timed<T>(loop: () => Promise<T>): Promise<{ value: T; ms: number }> {
-  const start = performance.now();
-  const value = await loop();
-  return { value, ms: performance.now() - start };
-}
 
 /**
  * Run every job, `width` at a time, answers in the items' order. The server

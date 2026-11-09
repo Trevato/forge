@@ -26,11 +26,9 @@
  * the floor as much as a hit. `test/security-floor-routes.test.ts` fills
  * deeper (issues, pulls, runs, apps) for GET, signed in and out.
  *
- * About 1 800 requests, 32 in flight against the one server. The three
- * passes' request loops are timed together and held under 5 s
- * (`SWEEP_CEILING_MS`, #10401); server boot and the seed are not counted.
- * The work is bounded by the route table, one request per (verb, route)
- * and pass.
+ * About 1 800 requests, 32 in flight against the one server. The work is
+ * bounded by the route table, one request per (verb, route) and pass, never
+ * by a clock (#10401, #7824).
  *
  * Side effects stay in the scratch FORGE_APP_DATA: the bodies sent are empty
  * or the seed's own credentials, and the cross-origin cookie pass is refused
@@ -48,7 +46,7 @@ import { createSession, sessionOf } from "../src/core/sessions.ts";
 import { buildApiRouter, buildRouter, serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { pool, SWEEP_CEILING_MS, timed } from "./helpers/sweep-clock.ts";
+import { pool } from "./helpers/sweep-clock.ts";
 
 quietLogs();
 
@@ -175,15 +173,6 @@ const notHttpOnly = (seen: Seen[]): string[] =>
 
 const anonymous: Seen[] = [];
 const wrongMethod: Seen[] = [];
-/** Milliseconds the three passes' request loops took, summed; boot and seed are not counted. */
-let loopMs = 0;
-
-/** Time one pass's request loop and add it to `loopMs`. */
-async function lap<T>(loop: () => Promise<T>): Promise<T> {
-  const { value, ms } = await timed(loop);
-  loopMs += ms;
-  return value;
-}
 
 test("every registered route and verb, asked anonymously, answers with the floor and hands out no session", async () => {
   // A mutation is sent from another origin with the seed's real username
@@ -193,7 +182,7 @@ test("every registered route and verb, asked anonymously, answers with the floor
   const json = JSON.stringify({ username: USERNAME, password: PASSWORD });
   const all = routes();
   anonymous.push(
-    ...(await lap(async () => [
+    ...(await (async () => [
       ...(await pool(all, (r) => {
         const path = pathFor(r.pattern);
         if (!MUTATING.has(r.method)) return send(r.method, path, {});
@@ -203,7 +192,7 @@ test("every registered route and verb, asked anonymously, answers with the floor
       })),
       // Plus what answers before any route (the probes) and a path no route claims, studio and API.
       ...(await pool(["/healthz", "/readyz", "/no/such/path/at/all", "/api/v1/no-such-route"], (path) => send("GET", path, {}))),
-    ])),
+    ])()),
   );
   expect(floorGaps(anonymous)).toEqual([]);
   expect(notHttpOnly(anonymous)).toEqual([]);
@@ -228,11 +217,11 @@ test("an API path asked with a verb it does not take answers 405, naming the one
     return wrong === undefined ? [] : [{ path, wrong }];
   });
   wrongMethod.push(
-    ...(await lap(async () => [
+    ...(await (async () => [
       ...(await pool(asks, (a) => send(a.wrong, a.path, {}))),
       // A studio path's wrong verb is the same not-found page as any unknown path.
       await send("PATCH", "/", {}),
-    ])),
+    ])()),
   );
   expect(floorGaps(wrongMethod)).toEqual([]);
   const wrongAnswers = asks
@@ -247,10 +236,8 @@ test("an API path asked with a verb it does not take answers 405, naming the one
 
 test("a cross-origin mutation with a session cookie is refused before any handler, and the session lives on", async () => {
   const mutations = routes().filter((r) => MUTATING.has(r.method));
-  const seen = await lap(() =>
-    pool(mutations, (r) =>
-      send(r.method, pathFor(r.pattern), { origin: EVIL, cookie: session, "content-type": "application/x-www-form-urlencoded" }, ""),
-    ),
+  const seen = await pool(mutations, (r) =>
+    send(r.method, pathFor(r.pattern), { origin: EVIL, cookie: session, "content-type": "application/x-www-form-urlencoded" }, ""),
   );
   expect(floorGaps(seen)).toEqual([]);
   expect(seen.filter((s) => s.status !== 403).map((s) => s.label)).toEqual([]);
@@ -276,11 +263,6 @@ test("signing in from the forge's own page sets the session cookie HttpOnly, wit
     expect(s.missing).toEqual([]);
   }
 }, 1_000);
-
-test("the three passes' request loops together take under 5 s, so the sweep stays cheap enough for every push", () => {
-  expect(loopMs).toBeGreaterThan(0);
-  expect(loopMs).toBeLessThan(SWEEP_CEILING_MS);
-});
 
 test("every named exception is still an exception, each with its reason", () => {
   const all = [...anonymous, ...wrongMethod];
