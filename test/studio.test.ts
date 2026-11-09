@@ -272,7 +272,7 @@ describe("the studio", () => {
     }
     const studio = await (await get("/alice/notes")).text();
     expect(studio).toMatch(/<div class="page-head">\s*<div class="stack stack-tight">\s*<h1 class="bar">/);
-    expect(studio).toContain('class="card comment-form"');
+    expect(studio).toContain('class="bar tell-box"');
   });
 
   test("the home and an app's page lay main and rail with .split's wide rail; no dash class is left (#4748)", async () => {

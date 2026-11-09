@@ -51,7 +51,6 @@ import {
   icon,
   listCard,
   row,
-  userTag,
 } from "../ui.ts";
 import { changesHref, tellsHref } from "./nouns.ts";
 import { answersRegion } from "./answers.ts";
@@ -328,36 +327,25 @@ export async function studioApp(
   // stranger sees the app, not who is behind it.
   const tell = !ownerFacts
     ? null
-    : html`<form
-        class="card comment-form"
-        method="post"
-        action="${base}/tell"
-      >
+    : html`<form class="bar tell-box" method="post" action="${base}/tell">
         <label class="sr-only" for="tell">Tell the crew</label>
-        <textarea
+        <input
           class="input"
           id="tell"
           name="text"
-          rows="3"
           required
           maxlength="${MAX_BODY}"
-          placeholder="${builders.length === 0
-            ? "Add a crew member under Settings → Crew, then tell them what you want."
-            : "What should change? One thing at a time works best."}"
-        ></textarea>
-        <div class="bar">
-          <span class="muted small">
-            ${builders.length === 0
-              ? html`Nobody on the crew yet.`
-              : html`${builders
-                  .map((b) => userTag(b.user.username))
-                  .reduce((a, b) => html`${a} ${b}`)}
-                ${builders.length === 1 ? "takes it" : "share the work"}`}
-          </span>
-          <span class="spacer"></span>
-          ${btn("Tell the crew", { variant: "primary", type: "submit" })}
-        </div>
-      </form>`;
+          placeholder="Tell the crew…"
+        />
+        ${btn("Tell", { variant: "primary", type: "submit" })}
+      </form>
+      ${builders.length === 0
+        ? html`<p class="muted small">
+            Nobody on the crew yet.
+            <a href="${base}/settings#crew">Add a crew member under Settings → Crew</a>,
+            then tell them what you want.
+          </p>`
+        : null}`;
 
   // ---- now: one row per thing, in the five words (studio/now.ts) ----
   const { card: now } = await timePhaseAsync(req, "now", () =>

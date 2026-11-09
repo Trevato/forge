@@ -19,3 +19,8 @@ A muted line on a client's app row, `Finished <time>: <title>`, for the app's
 newest merged pull. It sits with `client-app-about`, `client-app-agents` and
 `client-app-doing`; it uses `muted` and adds no colour or size. The
 terminal says the same words.
+
+## App page: the tell line
+
+The owner's tell on an app's page is one `.bar.tell-box` line, a field and a Tell button, as on home. It adds no
+class and no `card`; a stranger gets no form.
