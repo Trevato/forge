@@ -49,8 +49,11 @@ import type { User } from "../core/users.ts";
 import {
   createWebhook as insertWebhook,
   deleteWebhook as removeWebhook,
+  getWebhook,
+  redeliver,
   setWebhookActive,
   type CreateWebhookError,
+  type RedeliverError,
   type Webhook,
 } from "../core/webhooks.ts";
 import { resolveOid } from "../git/merge.ts";
@@ -716,6 +719,25 @@ export function pauseWebhook(
     payload: { webhookId },
   });
   return ok();
+}
+
+/**
+ * Send a failed delivery of this repository's hook again (admins). The one
+ * action behind the Settings form, the API and MCP; `redeliver` does the
+ * checks (only `failed` moves, a sealed report stays refused).
+ */
+export function redeliverWebhook(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  webhookId: string,
+  deliveryId: string,
+): Result<void, RedeliverError | "no_admin"> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return err("no_admin");
+  if (!getWebhook(app.db, repo.id, webhookId)) return err("not_found");
+  const done = redeliver(app.db, deliveryId, webhookId);
+  return done.ok ? ok() : done;
 }
 
 export type CommitToBranchError =

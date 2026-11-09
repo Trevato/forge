@@ -6,7 +6,7 @@
  * since a webhook exfiltrates repo events.
  */
 
-import { createWebhook, deleteWebhook } from "../../actions/repos.ts";
+import { createWebhook, deleteWebhook, redeliverWebhook } from "../../actions/repos.ts";
 import { canAdmin } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../core/webhooks.ts";
@@ -69,6 +69,20 @@ export function hookRoutes(router: Router<Handler>): void {
         { "retry-after": String(pinged.error.retryAfter) },
       );
     return json({ id: pinged.value.id }, 202);
+  });
+
+  router.add("POST", "/api/v1/repos/:owner/:name/hooks/:id/deliveries/:delivery/redeliver", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied.status === 403 ? notFound() : denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const done = redeliverWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id!, ctx.params.delivery!);
+    if (done.ok) return json({ id: ctx.params.delivery!, state: "pending" });
+    if (done.error === "not_failed")
+      return json({ error: "conflict", message: "only a failed delivery can be sent again" }, 409);
+    if (done.error === "sealed")
+      return json({ error: "conflict", message: "this delivery belongs to a sealed report and stays refused" }, 409);
+    return notFound();
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/hooks", async (ctx) => {

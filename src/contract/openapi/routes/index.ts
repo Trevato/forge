@@ -289,6 +289,7 @@ export { route as postApiV1ReposOwnerNameFollowingSever } from "./postApiV1Repos
 export { route as postApiV1ReposOwnerNameFollowingTake } from "./postApiV1ReposOwnerNameFollowingTake.ts";
 export { route as postApiV1ReposOwnerNameForks } from "./postApiV1ReposOwnerNameForks.ts";
 export { route as postApiV1ReposOwnerNameHooks } from "./postApiV1ReposOwnerNameHooks.ts";
+export { route as postApiV1ReposOwnerNameHooksIdDeliveriesDeliveryRedeliver } from "./postApiV1ReposOwnerNameHooksIdDeliveriesDeliveryRedeliver.ts";
 export { route as postApiV1ReposOwnerNameHooksIdPing } from "./postApiV1ReposOwnerNameHooksIdPing.ts";
 export { route as postApiV1ReposOwnerNameIssues } from "./postApiV1ReposOwnerNameIssues.ts";
 export { route as postApiV1ReposOwnerNameIssuesNumberComments } from "./postApiV1ReposOwnerNameIssuesNumberComments.ts";

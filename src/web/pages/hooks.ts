@@ -7,9 +7,9 @@
  * place of its last delivery.
  */
 
-import { createWebhook, deleteWebhook, pauseWebhook } from "../../actions/repos.ts";
+import { createWebhook, deleteWebhook, pauseWebhook, redeliverWebhook } from "../../actions/repos.ts";
 import { notePhase, timePhase } from "../../core/route_timing.ts";
-import { getWebhook, listWebhooks, pingWebhook, recentDeliveries, redeliver } from "../../core/webhooks.ts";
+import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../core/webhooks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, repoNotFound } from "../chrome.ts";
 import { field } from "../form.ts";
@@ -168,14 +168,11 @@ export async function webhookRedeliver(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
   if (gate instanceof Response) return gate;
   const { repo } = gate;
-  const hook = getWebhook(ctx.app.db, repo.id, ctx.params.id ?? "");
-  const done = hook
-    ? redeliver(ctx.app.db, ctx.params.delivery ?? "", hook.id)
-    : undefined;
+  const done = redeliverWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "", ctx.params.delivery ?? "");
   return flashTo(
     ctx,
     `${repoBase(repo)}/settings/hooks`,
-    done?.ok
+    done.ok
       ? { message: "Delivery queued again." }
       : { tone: "danger", message: "That delivery cannot be sent again." },
   );
