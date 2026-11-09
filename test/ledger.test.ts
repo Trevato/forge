@@ -29,7 +29,10 @@ import {
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { submitReview } from "../src/core/reviews.ts";
-import { provideChecksForTest, type ChecksHandle } from "../src/checks/service.ts";
+import {
+  provideChecksForTest,
+  type ChecksHandle,
+} from "../src/checks/service.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import {} from "../src/core/agents.ts";
@@ -81,7 +84,9 @@ describe("the decision ledger", () => {
     app = createApp({ dataDir, port: 0, decider });
     quietWeek(app.db);
     servers = await serve(app);
-    const a = await createUser(app.db, { origin: "seed", trusted: true,
+    const a = await createUser(app.db, {
+      origin: "seed",
+      trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -257,12 +262,28 @@ describe("the decision ledger", () => {
     claimRun(app.db, full.id);
     // The real parse of a log, not a summary written by hand.
     const said = summariseCheckFailure(
-      ["SQLiteError: database or disk is full", "(fail) migrate > pins [3ms]", "(fail) test/a.test.ts > (unnamed) [1ms]", " 9 pass", " 2 fail"],
+      [
+        "SQLiteError: database or disk is full",
+        "(fail) migrate > pins [3ms]",
+        "(fail) test/a.test.ts > (unnamed) [1ms]",
+        " 9 pass",
+        " 2 fail",
+      ],
       "exit 1",
     );
-    finishRun(app.db, full.id, { state: "failed", summary: said.summary, checkDetail: said.detail });
+    finishRun(app.db, full.id, {
+      state: "failed",
+      summary: said.summary,
+      checkDetail: said.detail,
+    });
     script["retry"] = "stop";
-    const judged = await judgeFailedCheck(app, fresh(), pull, full.id, pull.createdAt);
+    const judged = await judgeFailedCheck(
+      app,
+      fresh(),
+      pull,
+      full.id,
+      pull.createdAt,
+    );
     expect(judged.cause).toBe("environment");
     expect(judged.retry).toBe("again");
     expect(
@@ -296,8 +317,21 @@ describe("the decision ledger", () => {
     // A stand-in lane: the retry is queued as the real one queues it, but no
     // check runs, so the verdict does not wait on this machine's load.
     provideChecksForTest(app, {
-      request: async (r: Repo, env: string, commitOid: string, reason: string, issueId?: string) =>
-        createRun(app.db, { repoId: r.id, kind: "check", issueId, env, commitOid, reason }),
+      request: async (
+        r: Repo,
+        env: string,
+        commitOid: string,
+        reason: string,
+        issueId?: string,
+      ) =>
+        createRun(app.db, {
+          repoId: r.id,
+          kind: "check",
+          issueId,
+          env,
+          commitOid,
+          reason,
+        }),
     } as unknown as ChecksHandle);
     try {
       const branch = await commitToBranch(app, alice, repo, {
@@ -388,7 +422,10 @@ describe("the decision ledger", () => {
         base: "main",
         message: "Full",
         files: [
-          { path: "forge.json", content: `{"check": {"run": "test -f OK.md", "install": ""}}\n` },
+          {
+            path: "forge.json",
+            content: `{"check": {"run": "test -f OK.md", "install": ""}}\n`,
+          },
           { path: "OK.md", content: "ok\n" },
         ],
       });
@@ -412,14 +449,31 @@ describe("the decision ledger", () => {
           reason: "pull",
         });
         claimRun(app.db, run.id);
-        const said = summariseCheckFailure(["Error: database or disk is full", "(fail) a [1ms]", " 1 fail"], "exit 1");
-        finishRun(app.db, run.id, { state: "failed", summary: said.summary, checkDetail: said.detail });
+        const said = summariseCheckFailure(
+          ["Error: database or disk is full", "(fail) a [1ms]", " 1 fail"],
+          "exit 1",
+        );
+        finishRun(app.db, run.id, {
+          state: "failed",
+          summary: said.summary,
+          checkDetail: said.detail,
+        });
         return run.id;
       };
-      const again = { kind: "check", commitOid: filled.headOid, env: `pull-${filled.number}`, since: filled.createdAt };
+      const again = {
+        kind: "check",
+        commitOid: filled.headOid,
+        env: `pull-${filled.number}`,
+        since: filled.createdAt,
+      };
       const answers: string[] = [];
       for (let i = 0; i < 3; i++)
-        answers.push(await answerFailedCheck(app, fresh(), filled, scoutAgent, { runId: fullRed(), ...again }));
+        answers.push(
+          await answerFailedCheck(app, fresh(), filled, scoutAgent, {
+            runId: fullRed(),
+            ...again,
+          }),
+        );
       expect(answers).toEqual(["reran", "reworked", "reworked"]);
     } finally {
       delete script["cause"];
@@ -528,7 +582,7 @@ describe("the decision ledger", () => {
       parkedTwice(app.db, [fresh()]).find((i) => i.number === work.value.number)
         ?.reasons,
     ).toEqual([
-      `the check stayed red through 2 automatic tries (pull #${opened.value.number} closed)`,
+      `the check stayed red through 2 automatic tries (pull #${opened.value.number} closed; its branch \`feature/gift\` at ${opened.value.headOid.slice(0, 12)} keeps the work so far)`,
       "main moved under it twice",
     ]);
     // Not a question for a person, in either case.
