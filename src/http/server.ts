@@ -26,6 +26,7 @@ import { prerenderComments } from "../web/prerender.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { pipelinePage } from "../web/pages/pipeline.ts";
+import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
 import { maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
@@ -925,6 +926,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/resilience/nightly/:job", nightlyOutputPage);
   // A selection's spend and runs over time; literal, above /:owner.
   router.add("GET", "/fleet", fleetPage);
+  router.add("POST", "/fleet", fleetAct);
+  router.add("GET", "/fleet/ops/:id", fleetReceipt);
+  router.add("POST", "/fleet/ops/:id/undo", fleetUndo);
   router.add("GET", "/fleet/graph", fleetGraphPage);
   router.add("GET", "/fleet/graph/live", fleetGraphLive);
   router.add("GET", "/fleet/graph.csv", fleetGraphCsv);

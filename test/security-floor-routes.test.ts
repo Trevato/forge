@@ -55,6 +55,7 @@ const UNSEEDED: Record<string, string> = {
   "/:owner/-/teams/:team": ORG,
   "/talk/:id": TALK,
   "/bring/:id/:job": "needs a bring job of the signed-in person; the seed brings nothing",
+  "/fleet/ops/:id": FLEET,
   "/:owner/:name/bets/:id": BET,
   "/:owner/:name/builds/:label/cart": CART,
   "/:owner/:name/builds/:label/cart.png": CART,

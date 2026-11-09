@@ -56,6 +56,7 @@ import {
   selectRows,
   type FleetKind,
 } from "../fleet/selection.ts";
+import { digestOf } from "../fleet/digest.ts";
 import { VERBS, type Target, type Verb } from "../fleet/verbs.ts";
 import { NO_SUCH_OPERATION } from "./asks_words.ts";
 
@@ -552,6 +553,26 @@ export async function applyFleetOp(
   if (!person.ok) return person;
   const plan = makePlan(app, person.value, query, action);
   if (!plan.ok) return plan;
+  return ok(await carryOutAndRecord(app, person.value, plan.value));
+}
+
+/**
+ * Apply only what was previewed: plan again, and if the rows now plan
+ * differently from the `digest` the preview carried, write nothing.
+ */
+export async function applyPreviewed(
+  app: App,
+  actor: User | undefined,
+  query: string,
+  action: unknown,
+  digest: string,
+): Promise<Result<Operation, FleetError>> {
+  const person = requirePerson(actor);
+  if (!person.ok) return person;
+  const plan = makePlan(app, person.value, query, action);
+  if (!plan.ok) return plan;
+  if (digestOf(plan.value.rows) !== digest)
+    return fail("expired", "The rows changed since the preview. Preview again to see them.");
   return ok(await carryOutAndRecord(app, person.value, plan.value));
 }
 

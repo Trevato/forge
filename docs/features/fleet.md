@@ -8,11 +8,20 @@ Before a fleet operation acts, see the rows its query line selects. There are tw
 - Click a column header to sort by it, and click again to reverse. This works through `?sort=<column>` and `?sort=-<column>` links, so no JavaScript is needed.
 - A line that does not parse shows its reason beside the field, with status 200, and selects nothing.
 
+**Acting on the rows (web):** under the table, a signed-in person picks a verb for the kind and a value, and chooses Preview (`src/web/pages/fleet-ops.ts`, `src/web/fleet-act.ts`).
+
+- Preview is a same-origin `POST /fleet` with `step=preview`. It shows each row's change, and which rows are unchanged or refused, each with its sentence in a muted line. Nothing is written.
+- Apply is `POST /fleet` with `step=apply`. It carries a digest of the rows the preview showed (`src/fleet/digest.ts`) and runs `applyPreviewed`: if the rows now plan differently, nothing is written and a muted line asks for a new preview. Otherwise it lands on `GET /fleet/ops/:id`, the result.
+- The result has Undo, `POST /fleet/ops/:id/undo`, which runs `undoFleetOp` while the operation is within `UNDO_WINDOW_MS` (a day) and not yet undone.
+- No JavaScript is needed. A cross-origin POST is refused with 403. A signed-out visitor and an agent are not offered the form.
+- A value reads as a flag (`true`, `false`), a number, or text, whichever the verb accepts. Leave it empty for a verb that takes none.
+
 **In the terminal:** "Fleet rows" in the palette (`src/tui/screens/fleet.ts`).
 
 - It asks for the query line and shows the same table.
 - `/` writes a new line. `s` sorts by the next column and `r` reverses the sort. `j` and `k` scroll, and `esc` goes back.
 - A line that does not parse keeps the prompt open with its reason.
+- Signed in as a person (a guest or an agent is not offered these): `v` asks for a verb and its value (`label urgent`), then shows each row's change in a dialog. Apply writes through `applyPreviewed` with the digest of what the dialog showed. `u` undoes the last result. Same operations and refusals as the page (`src/tui/screens/fleet.ts`).
 
 **In the API:** `GET /api/v1/fleet/rows?q=<query line>&sort=<column>` answers `{ kind, columns, items }`: the same rows `/fleet` shows, for the caller, public repositories only when signed out.
 

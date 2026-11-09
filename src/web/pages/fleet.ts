@@ -12,14 +12,23 @@ import { viewFleet, type FleetView } from "../../fleet/rows.ts";
 import { fieldsOf, GRAMMAR, GRAMMAR_EXAMPLES, FLEET_KINDS, MAX_ROWS } from "../../fleet/selection.ts";
 import type { Ctx } from "../../http/context.ts";
 import { fleetTable } from "../fleet-table.ts";
-import { html } from "../html.ts";
+import { actForm } from "../fleet-act.ts";
+import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, field } from "../ui.ts";
 
 /** GET /fleet */
 export function fleetPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const q = (ctx.url.searchParams.get("q") ?? "").slice(0, 2000);
+  return renderFleet(ctx, (ctx.url.searchParams.get("q") ?? "").slice(0, 2000));
+}
+
+/** The page for a query line; `below` is a preview or a receipt, drawn under the form. */
+export function renderFleet(
+  ctx: Ctx,
+  q: string,
+  below?: { html: Html; verb?: string; value?: string },
+): Response {
   const view: FleetView | undefined =
     q.trim() === "" ? undefined : viewFleet(ctx.app.db, ctx.auth.user, q);
   const rendering = performance.now();
@@ -66,8 +75,16 @@ export function fleetPage(ctx: Ctx): Response {
         : html`<p class="muted" data-count="${shown.rows.length}">
               ${shown.rows.length} ${shown.rows.length === 1 ? "row" : "rows"}
             </p>
-            ${shown.rows.length === 0 ? null : fleetTable(shown.kind, q, shown.rows, sort)}`}`,
+            ${shown.rows.length === 0 ? null : fleetTable(shown.kind, q, shown.rows, sort)}
+            ${shown.rows.length === 0 || !canAct(ctx)
+              ? null
+              : actForm(shown.kind, q, below?.verb, below?.value)}`}
+      ${below?.html ?? null}`,
   });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }
+
+/** A signed-in person may act; a signed-out visitor, and an agent, only read. */
+export const canAct = (ctx: Ctx): boolean =>
+  ctx.auth.user !== undefined && ctx.auth.user.kind !== "agent";

@@ -9,8 +9,10 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRepo } from "../src/actions/repos.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { createLabel, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
+import { labelsFor } from "../src/core/issues.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { fleetLines, nextSort } from "../src/tui/screens/fleet.ts";
@@ -136,4 +138,40 @@ test("fleetLines draws a header and one line a row, in the shared columns", () =
   expect(lines[2]).toMatch(/second\s+open\s+-$/);
   expect(nextSort("issue", undefined)).toEqual({ key: "repo", descending: false });
   expect(nextSort("issue", { key: "assignee", descending: true })).toEqual({ key: "repo", descending: false });
+});
+
+test("v previews a verb, Apply writes it, u undoes it; a guest is offered none of it", async () => {
+  const alice = getUserByName(forge.db, "alice")!;
+  const repo = await createRepo(forge, alice, { name: "board", visibility: "public" });
+  if (!repo.ok) throw new Error(String(repo.error));
+  createLabel(forge, alice, repo.value, "urgent", "ff0000");
+  const issue = openIssue(forge, alice, repo.value, { title: "Fix it" });
+  if (!issue.ok) throw new Error(String(issue.error));
+  const names = () => labelsFor(forge.db, issue.value.id).map((l) => l.name);
+
+  const t = boot(alice);
+  await t.select("issue repo:alice/board");
+  await t.key("v");
+  for (const ch of "label urgent") await t.key(ch);
+  await t.key("enter");
+  expect(t.text()).toContain("Preview: label");
+  expect(t.text()).toContain("none -> urgent");
+  expect(names()).toEqual([]);
+  await t.key("enter");
+  await Bun.sleep(20);
+  await t.key("j");
+  expect(names()).toEqual(["urgent"]);
+  expect(t.text()).toContain("Applied");
+  await t.key("u");
+  await t.key("enter");
+  await Bun.sleep(20);
+  await t.key("j");
+  expect(names()).toEqual([]);
+  expect(t.text()).toContain("Undone.");
+
+  const guest = boot(undefined);
+  await guest.select("issue repo:alice/board");
+  await guest.key("v");
+  expect(guest.text()).not.toContain("Verb");
+  expect(names()).toEqual([]);
 });

@@ -4,8 +4,16 @@
  * (`fleet/rows.ts` `viewFleet`), so the grammar and who sees which row are
  * `fleet/selection.ts`'s, never this screen's; the same columns and sort
  * (`fleet/columns.ts`). Keys: `/` a new query line, `s` sort by the next
- * column, `r` reverse it, `j`/`k` scroll, `esc` back.
+ * column, `r` reverse it, `j`/`k` scroll, `esc` back. A signed-in person (not
+ * an agent, as on the page) also has `v`: a verb and its value, the preview
+ * of each row's change, Apply, and `u` to undo the last result. The writes
+ * are `actions/fleet.ts`'s, as the page's are.
  */
+
+import type { Operation } from "../../core/fleet_ops.ts";
+import { applyPreviewed, previewFleetOp, undoFleetOp, type Plan } from "../../actions/fleet.ts";
+import { digestOf } from "../../fleet/digest.ts";
+import { actionOf } from "../../fleet/reading.ts";
 
 import { cellText, COLUMNS, sortRows, type Sort } from "../../fleet/columns.ts";
 import { viewFleet, type FleetView } from "../../fleet/rows.ts";
@@ -16,7 +24,7 @@ import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
 import { style } from "../term/style.ts";
 import { pad, truncate, wrap } from "../term/width.ts";
-import { promptScreen, Scroll } from "./common.ts";
+import { confirmScreen, later, promptScreen, Scroll } from "./common.ts";
 
 /** No column is padded past this, so a long title does not push the rest away. */
 const CELL_MAX = 40;
@@ -66,6 +74,21 @@ export function nextSort(kind: FleetKind, sort: Sort | undefined): Sort {
   return { key: keys[(at + 1) % keys.length]!, descending: false };
 }
 
+/** A row's change in one line: label, before → after, and what becomes of it. */
+export function planLines(plan: Plan, width: number, most = 12): string[] {
+  const word = (v: unknown) => (v === null ? "nothing" : Array.isArray(v) ? v.join(", ") || "none" : String(v));
+  const rows = plan.rows.slice(0, most).map((r) =>
+    truncate(
+      `${r.label}: ${word(r.before)} -> ${word(r.after)}  ${r.outcome === "change" ? "" : r.outcome}${r.reason === "" ? "" : ` - ${r.reason}`}`.trimEnd(),
+      width,
+    ),
+  );
+  return plan.rows.length > most ? [...rows, `and ${plan.rows.length - most} more`] : rows;
+}
+
+/** A person (not a guest, not an agent) may act, as on the page. */
+export const mayAct = (user: Session["user"]): boolean => user !== undefined && user.kind !== "agent";
+
 /** The screen, and the prompt that writes its query line. */
 export function fleetScreen(
   session: Session,
@@ -77,10 +100,13 @@ export function fleetScreen(
   let view: FleetView | undefined = line === "" ? undefined : viewFleet(session.db, session.user, line);
   let sort: Sort | undefined;
   let lines: string[] = [];
+  let note = "";
+  let last: Operation | undefined;
   const screen: Screen = {
     title: "Fleet",
     keys: [
       binding(["/"], "query"),
+      ...(mayAct(session.user) ? [binding(["v"], "verb"), binding(["u"], "undo")] : []),
       binding(["s"], "sort"),
       binding(["r"], "reverse"),
       binding(["j", "k"], "scroll"),
@@ -94,7 +120,8 @@ export function fleetScreen(
           : view.ok
             ? `${query}  ${view.rows.length} ${view.rows.length === 1 ? "row" : "rows"}`
             : `${query}  ${view.error}`;
-      s.text(area.x + 1, area.y, truncate(head, area.w - 2), style(view?.ok === false ? c.danger : c.mutedFg, c.bg), area.x + area.w);
+      const shown = note === "" ? head : `${head}  ${note}`;
+      s.text(area.x + 1, area.y, truncate(shown, area.w - 2), style(view?.ok === false ? c.danger : c.mutedFg, c.bg), area.x + area.w);
       if (view?.ok !== true) {
         // No rows to show: the grammar fills the space, as it sits under the web form.
         grammarLines(Math.max(20, area.w - 2)).forEach((text, i) => {
@@ -118,12 +145,71 @@ export function fleetScreen(
       if (e.ctrl || e.alt) return scroll.key(e, Math.max(0, lines.length - 1));
       if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "/") ask();
+      else if (e.key === "v" && view?.ok && mayAct(session.user)) verb();
+      else if (e.key === "u" && last !== undefined && mayAct(session.user)) undo();
       else if (e.key === "s" && view?.ok) sort = nextSort(view.kind, sort);
       else if (e.key === "r" && view?.ok && sort !== undefined) sort = { ...sort, descending: !sort.descending };
       else return scroll.key(e, Math.max(0, lines.length - 1));
       return true;
     },
   };
+  const refresh = () => {
+    if (query !== "") view = viewFleet(session.db, session.user, query);
+  };
+  const undo = () => {
+    const op = last;
+    if (op === undefined) return;
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: "Undo",
+        body: [`Put back what ${op.verb} changed.`],
+        actions: [{ label: "Undo" }, { label: "Cancel", variant: "outline" }],
+        onChoose: (i) => {
+          if (i !== 0) return;
+          void undoFleetOp(session.app, session.user, op.id).then((r) => {
+            note = r.ok ? "Undone." : r.error.message;
+            if (r.ok) last = undefined;
+            refresh();
+          });
+        },
+      }),
+    );
+  };
+  const verb = () =>
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: "Verb",
+        label: "a verb, then its value (some take none)",
+        placeholder: "label urgent",
+        hint: "Nothing is written until you apply.",
+        onSubmit: (text) => {
+          const [name = "", ...rest] = text.trim().split(/\s+/);
+          const value = rest.join(" ");
+          if (name === "") return "name a verb";
+          const action = actionOf(session.app, name, value);
+          const plan = previewFleetOp(session.app, session.user, query, action);
+          if (!plan.ok) return plan.error.message;
+          const p = plan.value;
+          const n = p.counts.change;
+          return later(ctx, () =>
+            confirmScreen(ctx, screen, {
+              title: `Preview: ${p.verb}`,
+              body: [...planLines(p, 70), "", n === 0 ? "Nothing to apply." : "Nothing is written until you apply."],
+              actions: n === 0 ? [{ label: "Close" }] : [{ label: `Apply to ${n} ${n === 1 ? "row" : "rows"}` }, { label: "Cancel", variant: "outline" }],
+              width: 76,
+              onChoose: (i) => {
+                if (i !== 0 || n === 0) return;
+                void applyPreviewed(session.app, session.user, query, action, digestOf(p.rows)).then((r) => {
+                  note = r.ok ? "Applied. u undoes." : r.error.message;
+                  if (r.ok) last = r.value;
+                  refresh();
+                });
+              },
+            }),
+          );
+        },
+      }),
+    );
   const ask = () =>
     ctx.push(
       promptScreen(ctx, screen, {
