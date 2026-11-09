@@ -11,7 +11,10 @@
  * failure up to an hour), so one slow answer in the watch no longer stands
  * for the version's whole life (#7622) and a version that stays broken
  * costs its public URL a few loads an hour, not one every 5 minutes. It
- * gives up after ten minutes; a give-up is retried as a slow answer is, since the swap may only be late (#9942).
+ * gives up after ten minutes. A give-up is retried as a slow answer is,
+ * since the swap may only be late (#9942). When a newer release answers
+ * instead, this process is being replaced: it keeps nothing and never polls
+ * again (#10138).
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -56,6 +59,20 @@ export function retryAfter(failures: number, slow = false): number {
   const backoff = Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** Math.max(0, Math.min(failures, 20) - 1));
   return slow ? Math.min(backoff, TICK_MS * Math.max(1, failures)) : backoff;
 }
+
+/** Is dotted version `a` later than `b`; false when either is not numeric dotted. */
+export function isNewer(a: string, b: string): boolean {
+  const x = a.split("."), y = b.split(".");
+  if (![...x, ...y].every((n) => /^\d+$/.test(n))) return false;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = Number(x[i] ?? 0) - Number(y[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+}
+
+/** Versions this process saw replaced by a newer one; never polled again. */
+const superseded = new Set<string>();
 
 const proofFile = (dataDir: string): string => join(dataDir, "release", "proof.json");
 
@@ -126,7 +143,7 @@ export function proofDue(last: Proof | undefined, version: string, now: number):
 export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> {
   const now = o.now ?? Date.now;
   const last = lastProof(o.dataDir);
-  if (!proofDue(last, o.version, now())) return undefined;
+  if (superseded.has(o.version) || !proofDue(last, o.version, now())) return undefined;
   const sleep = o.sleep ?? Bun.sleep;
   const doFetch = o.fetch ?? fetch;
   const failedBefore = last?.version === o.version && !last.ok ? last : undefined;
@@ -144,15 +161,24 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
   try {
     const health = new URL("/healthz", o.url).href;
     const deadline = now() + (o.giveUpMs ?? GIVE_UP_MS);
+    let seen = "";
     for (;;) {
       try {
         const res = await doFetch(health, { redirect: "manual", headers: ownProbeHeaders(o.dataDir), signal: AbortSignal.timeout(5_000) });
         await res.body?.cancel();
-        if (res.headers.get("x-forge-version") === o.version) break;
+        seen = res.headers.get("x-forge-version") ?? "";
+        if (seen === o.version) break;
       } catch {
         // not up yet at its public address
       }
-      if (now() + POLL_MS > deadline) return finish(`the public URL never answered as ${o.version}`, true);
+      if (now() + POLL_MS > deadline) {
+        // A newer release answers: this process is being replaced, and a failure kept now would stand over the newer version's own proof.
+        if (isNewer(seen, o.version)) {
+          superseded.add(o.version);
+          return undefined;
+        }
+        return finish(`the public URL never answered as ${o.version}`, true);
+      }
       await sleep(POLL_MS);
     }
     const failures = await smoke(o.url, o.token ?? "", {

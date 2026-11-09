@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { lastProof, proofDue, proofNeed, proveRelease, proveRunning, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
+import { isNewer, lastProof, proofDue, proofNeed, proveRelease, proveRunning, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
 import { owned } from "../src/crew/incidents.ts";
 
 const CSS = '<html><link rel="stylesheet" href="/a.css"></html>';
@@ -113,6 +113,36 @@ describe("proving a release", () => {
     expect(p?.slow).toBe(true); // a version not yet answering is retried in minutes, not backed off (#9942)
     expect(proofNeed(dir)?.sentence).toStartWith("Release 1.0.0 is unproven: the public URL never answered as 1.0.0. It is proven again at ");
     expect(old.hits.every((h) => h === "/healthz")).toBe(true);
+  });
+
+  test("it keeps no failure when a newer release answers instead (#10138)", async () => {
+    let t = 0;
+    const p = await run("1.0.0", site("1.0.1").fake, { now: () => t, sleep: async (ms: number) => void (t += ms) });
+    expect(p).toBeUndefined();
+    expect(proofNeed(dir)).toBeUndefined();
+    const again = site("1.0.1");
+    expect(await run("1.0.0", again.fake, { now: () => t, sleep: async (ms: number) => void (t += ms) })).toBeUndefined();
+    expect(again.hits).toEqual([]); // a replaced process does not poll again
+  });
+
+  test("an older or non-numeric answer is still a kept failure (#10138)", async () => {
+    for (const [mine, answered] of [["1.0.1", "1.0.0"], ["1.0.2", "dev"]] as const) {
+      let t = 0;
+      const p = await run(mine, site(answered).fake, { now: () => t, sleep: async (ms: number) => void (t += ms) });
+      expect(p?.ok).toBe(false);
+      expect(proofNeed(dir)?.sentence).toContain(`never answered as ${mine}`);
+    }
+  });
+
+  test("isNewer compares dotted numbers", () => {
+    expect(isNewer("1.0.1", "1.0.0")).toBe(true);
+    expect(isNewer("1.0.0", "1.0.0")).toBe(false);
+    expect(isNewer("1.0.0", "1.0.1")).toBe(false);
+    expect(isNewer("1.0.1", "1.0")).toBe(true);
+    expect(isNewer("1.0", "1.0.0")).toBe(false);
+    expect(isNewer("0.7.472", "0.7.471")).toBe(true);
+    expect(isNewer("dev", "1.0.0")).toBe(false);
+    expect(isNewer("", "1.0.0")).toBe(false);
   });
 
   test("a failed version is proven again after RETRY_MS, and a pass clears the card (#7622)", async () => {
