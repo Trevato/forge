@@ -298,7 +298,7 @@ function cardList(v: Extract<Json, { t: "array" }>, p: string, title: string, o:
   return html`${v.items.map((x, i) => {
     const at = pointer(p, i);
     const last = v.items.length - 1;
-    return html`<div class="card config-card">
+    return html`<div class="config-card">
       <div class="bar">
         <strong>${title} ${i + 1}</strong><span class="spacer"></span>
         ${when(o.readonly !== true, () => html`${i > 0 ? opBtn("Up", "up", at) : null}${i < last ? opBtn("Down", "down", at) : null}${opBtn("Remove", "remove", at, "trash")}`)}

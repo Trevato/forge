@@ -74,7 +74,7 @@ describe("fields inferred from the values", () => {
     expect(html).toMatch(/<fieldset class="field config-group"[^>]*>\s*<legend>db<\/legend>/);
     expect(html).toContain('class="config-chips"');
     expect(html).toContain('name="v/tags/1"');
-    expect(html.match(/class="card config-card"/g)?.length).toBe(2);
+    expect(html.match(/class="config-card"/g)?.length).toBe(2);
     expect(html).toContain('name="v/servers/1/host"');
   });
 
@@ -318,7 +318,7 @@ describe("the config form on the web", () => {
     const form = await (await get("/alice/lamp/config/main/deploy.yml", alice)).text();
     expect(form).toContain('name="v/replicas"');
     // A plain form post: nothing here needs a script.
-    expect(form).toContain('<form method="post" action="/alice/lamp/config" class="card config-form">');
+    expect(form).toContain('<form method="post" action="/alice/lamp/config" class="config-form">');
     const before = await commitCount("alice", "lamp");
     const res = await post("/alice/lamp/config", {
       ref: "main",

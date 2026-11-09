@@ -124,18 +124,21 @@ async function formPage(ctx: Ctx, scope: RepoScope, s: FormState): Promise<Respo
     crumbs: scope.crumbs,
     palette: scope.palette,
     body: html`${head(scope, s, proposing, "Editing settings")}
-      <form method="post" action="${scope.base}/config" class="card config-form">
-        <div class="bar mb">
-          <span class="muted small">Enter in a field reviews the change.</span><span class="spacer"></span>
-          ${review}
-        </div>
-        ${hidden(s, s.doc)}
-        <input type="hidden" name="from" value="form" />
-        ${configFields(s.doc, {
-          found: s.found,
-          ...(s.errors === undefined ? {} : { errors: s.errors }),
-          ...(s.typed === undefined ? {} : { typed: s.typed }),
-        })}
+      <form method="post" action="${scope.base}/config" class="config-form">
+        <section class="settings-block">
+          <div class="bar mb">
+            <h2>Settings</h2><span class="spacer"></span>
+            ${review}
+          </div>
+          <p class="muted small">Enter in a field reviews the change.</p>
+          ${hidden(s, s.doc)}
+          <input type="hidden" name="from" value="form" />
+          ${configFields(s.doc, {
+            found: s.found,
+            ...(s.errors === undefined ? {} : { errors: s.errors }),
+            ...(s.typed === undefined ? {} : { typed: s.typed }),
+          })}
+        </section>
         <div class="form-actions">
           ${review}
           ${btn("Source", { href: blobHref(scope, s.ref, s.path, "?view=source"), variant: "outline" })}
@@ -163,10 +166,15 @@ async function reviewPage(
     crumbs: scope.crumbs,
     palette: scope.palette,
     body: html`${head(scope, s, proposing, "Review")}
-      <pre class="card mono config-diff" aria-label="The change">${lines.map(
-        (l) => html`<span data-op="${l.op === " " ? "same" : l.op === "+" ? "add" : "del"}">${l.op} ${l.text}</span>\n`,
-      )}</pre>
-      <form method="post" action="${scope.base}/config" class="card">
+      <section class="settings-block">
+        <h2>The change</h2>
+        <pre class="mono config-diff" aria-label="The change">${lines.map(
+          (l) => html`<span data-op="${l.op === " " ? "same" : l.op === "+" ? "add" : "del"}">${l.op} ${l.text}</span>\n`,
+        )}</pre>
+      </section>
+      <form method="post" action="${scope.base}/config">
+       <section class="settings-block">
+        <h2>Commit message</h2>
         ${hidden(s, s.doc)}
         ${field({
           name: "message",
@@ -183,6 +191,7 @@ async function reviewPage(
               : html`You cannot push here, so this goes on a branch of your fork, with a pull request into <span class="mono">${s.ref}</span>.`
             : html`One commit on <span class="mono">${s.ref}</span>.`
         }</p>
+       </section>
         <div class="form-actions">
           ${btn(proposing ? "Propose change" : `Commit to ${s.ref}`, { name: "step", value: "save", variant: "primary", icon: proposing ? "fork" : "check" })}
           ${btn("Back to the form", { name: "step", value: "edit", variant: "outline", formnovalidate: true })}
