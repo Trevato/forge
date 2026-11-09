@@ -267,6 +267,7 @@ export { route as postApiV1ReposOwnerNameAppEnvStop } from "./postApiV1ReposOwne
 export { route as postApiV1ReposOwnerNameAppNotesIdBan } from "./postApiV1ReposOwnerNameAppNotesIdBan.ts";
 export { route as postApiV1ReposOwnerNameAppNotesIdHide } from "./postApiV1ReposOwnerNameAppNotesIdHide.ts";
 export { route as postApiV1ReposOwnerNameAppNotesIdUnban } from "./postApiV1ReposOwnerNameAppNotesIdUnban.ts";
+export { route as postApiV1ReposOwnerNameAppPull } from "./postApiV1ReposOwnerNameAppPull.ts";
 export { route as postApiV1ReposOwnerNameBranches } from "./postApiV1ReposOwnerNameBranches.ts";
 export { route as postApiV1ReposOwnerNameBuilds } from "./postApiV1ReposOwnerNameBuilds.ts";
 export { route as postApiV1ReposOwnerNameBuildsLabelCart } from "./postApiV1ReposOwnerNameBuildsLabelCart.ts";

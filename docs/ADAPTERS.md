@@ -82,6 +82,17 @@ An app declares itself an adapter with an optional top-level `adapter` block:
 Any other key, at any level, is refused. A block that breaks any of these
 rules is invalid, and the forge does not schedule the app.
 
+## Pull now
+
+A writer need not wait for `schedule.every` to see a pull:
+`POST /api/v1/repos/:owner/:name/app/pull`, or the MCP tool `app_deploy` with
+`{ repo, action: "pull" }`, runs one pull through the schedule's own path
+(`pullAppNow` in `src/apps/pull_schedule.ts`, `src/actions/app_pull.ts`) and
+answers `{ run }`, the recorded pull run. It is refused 404 when the default
+branch's `forge.json` has no valid `adapter` block, and 409 when a pull of
+the app is already in flight or its production is not running. A sleeping
+app is refused, never woken.
+
 ## Source hosts and egress
 
 Every host in `source.hosts` must also appear in the top-level `egress` list.

@@ -1,13 +1,14 @@
 /**
  * A repository's app over the API: `…/app` itself (read, enable, change,
  * disable), the people a private app names, its own domains, its
- * environment variables, and redeploying, stopping and opening one
+ * environment variables, pulling an adapter now, and redeploying, stopping and opening one
  * environment. The rules live in `actions/apps.ts`, `actions/app_members.ts`
  * and `actions/domains.ts`.
  */
 
 import { readAppMembers, setAppMembersThrough, type AppMembersError } from "../../actions/app_members.ts";
 import { appView, appVisitors, deleteAppEnvVar, disableApp, enableApp, listAppEnv, openEnvUrl, redeployEnv, setAppEnvVar, stopEnv, updateAppSettings, type AppSettingsInput } from "../../actions/apps.ts";
+import { pullNow, PULL_NOW_REFUSALS } from "../../actions/app_pull.ts";
 import { addAppDomain, checkAppDomain, listAppDomains, removeAppDomain } from "../../actions/domains.ts";
 import { previewBuild, previewBuildRefusalText } from "../../actions/build_preview.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
@@ -268,6 +269,21 @@ export function appRoutes(router: Router<Handler>): void {
       return json({}, 200);
     },
   );
+
+  // Pull now (#10084): one adapter pull through the schedule's own path,
+  // answered with the recorded run. A sleeping app is refused, never woken.
+  router.add("POST", "/api/v1/repos/:owner/:name/app/pull", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const pulled = await pullNow(ctx.app, ctx.auth.user, repo);
+    if (pulled.ok) return json({ run: pulled.value }, 200);
+    const error = pulled.error;
+    if (error === "no_adapter") return apiError(error, 404, PULL_NOW_REFUSALS[error]);
+    if (error === "asleep" || error === "in_flight") return apiError(error, 409, PULL_NOW_REFUSALS[error]);
+    return respondAccess(error, 422);
+  });
 
   router.add(
     "POST",

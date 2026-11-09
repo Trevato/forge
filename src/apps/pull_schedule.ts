@@ -17,7 +17,7 @@ import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
 import { getRepoById } from "../core/repos.ts";
-import { lastPullAt } from "../core/runs.ts";
+import { lastPullAt, type PullRun } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { parseAdapter, type AdapterSpec } from "./adapter.ts";
@@ -55,27 +55,55 @@ export function answerOf(reply: PullReply): PullAnswer {
   return parsePullAnswer(reply.status, reply.body);
 }
 
+/** Why one pull was not made: asleep (not running, never woken), one in flight, or no `adapter` block. */
+export type PullRefusal = "asleep" | "in_flight" | "no_adapter";
+
+/** One pull of one app: the recorded run, or why there was none (`Held` is the caller's own refusal). */
+export type PullOnce<Held extends string = never> =
+  | { readonly ok: true; readonly run: PullRun }
+  | { readonly ok: false; readonly why: PullRefusal | Held };
+
 /**
- * Pull one app if it is a running adapter and due: whether a pull was made.
- * The checks run cheapest first — running, then in flight, then declared,
- * then due — so a sleeping app costs no git read and is never reached.
+ * Pull one app if it is a running adapter and `hold` lets it: the recorded
+ * run or why not. The checks run cheapest first — running, then in flight,
+ * then declared, then `hold` (the schedule's "not due") — so a sleeping app
+ * costs no git read and is never reached. The schedule and "pull now" share
+ * this one path; only the schedule passes a `hold`.
  */
-export async function pullApp(db: Database, appId: string, reach: PullReach, now: () => number = Date.now): Promise<boolean> {
+async function pullOnce<Held extends string = never>(
+  db: Database,
+  appId: string,
+  reach: PullReach,
+  now: () => number,
+  hold: (adapter: AdapterSpec) => Held | undefined = () => undefined,
+): Promise<PullOnce<Held>> {
   const port = reach.port();
-  if (port === undefined) return false;
-  if (inFlight.has(appId)) return false;
+  if (port === undefined) return { ok: false, why: "asleep" };
+  if (inFlight.has(appId)) return { ok: false, why: "in_flight" };
   inFlight.add(appId);
   try {
     const adapter = await reach.adapter();
-    if (adapter === undefined) return false;
-    if (!isPullDue(lastPullAt(db, appId), adapter.schedule.every, now())) return false;
+    if (adapter === undefined) return { ok: false, why: "no_adapter" };
+    const held = hold(adapter);
+    if (held !== undefined) return { ok: false, why: held };
     const started = now();
     const answer = answerOf(await reach.post(port));
-    recordPull(db, appId, { ...answer, durationMs: Math.max(0, now() - started) });
-    return true;
+    return { ok: true, run: recordPull(db, appId, { ...answer, durationMs: Math.max(0, now() - started) }) };
   } finally {
     inFlight.delete(appId);
   }
+}
+
+/** Pull one app if it is a running adapter and due: whether a pull was made. */
+export async function pullApp(db: Database, appId: string, reach: PullReach, now: () => number = Date.now): Promise<boolean> {
+  const notDue = (adapter: AdapterSpec) =>
+    isPullDue(lastPullAt(db, appId), adapter.schedule.every, now()) ? undefined : ("not_due" as const);
+  return (await pullOnce(db, appId, reach, now, notDue)).ok;
+}
+
+/** Pull one app now, whatever its schedule (#10084): the recorded run, or why not. Never wakes it. */
+export function pullAppNow(db: Database, appId: string, reach: PullReach, now: () => number = Date.now): Promise<PullOnce> {
+  return pullOnce(db, appId, reach, now);
 }
 
 /** Who the forge says it is when it pulls: an admin of the app, named for itself. */
