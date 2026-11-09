@@ -173,6 +173,8 @@ describe("pin screenshots", () => {
     const text = await page.text();
     expect(text).toContain("/alice/karts/builds/v1/shots/01.png?v=");
     expect(text).toContain('data-live="build.shots');
+    expect(text).toContain("<h2>Screenshots · v1</h2>");
+    expect(text.slice(text.indexOf("<main"))).not.toContain('class="card');
     expect((await get("/alice/karts/builds/nope/shots")).status).toBe(404);
     expect((await get("/alice/secret/builds/v1/shots", "bob")).status).toBe(404);
     expect((await get("/alice/secret/builds/v1/shots")).status).toBe(404);

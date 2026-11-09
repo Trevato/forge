@@ -13,7 +13,6 @@ import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, loadRepo, notFoundPage, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { card } from "../ui.ts";
 
 export const SHOTS_LIVE = "build.shots,build.pinned";
 
@@ -39,7 +38,7 @@ export async function shotsPage(ctx: Ctx): Promise<Response> {
         )}</div>`;
   const body = html`${repoHeader(ctx, repo, "branches", { compact: true })}
     <div class="mt"><p class="small"><a href="${base}/builds">← Builds</a></p>
-    <div id="pin-shots" data-live="${SHOTS_LIVE}" data-live-repo="${repo.ownerName}/${repo.name}" aria-live="polite">${card(grid, { head: html`<h2>Screenshots · ${label}</h2>` })}</div></div>`;
+    <div id="pin-shots" data-live="${SHOTS_LIVE}" data-live-repo="${repo.ownerName}/${repo.name}" aria-live="polite"><h2>Screenshots · ${label}</h2>${grid}</div></div>`;
   return timePhase(ctx.request, "render", () =>
     page({ ctx, title: `Screenshots ${label} · ${repo.name}`, crumbs: crumbsFor(repo), palette: repoPalette(ctx, repo), body }),
   );
