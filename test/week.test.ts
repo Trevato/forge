@@ -36,6 +36,21 @@ describe("weekDecision", () => {
     expect(WEEK).toEqual({ tolerance: 0.25, reserve: 0.1, unknownSlots: 2, burnHours: 6 });
   });
 
+  test("a meter that has not moved while the crew ran is on pace, not behind: the ceiling, no release, and words that say so (#10440)", () => {
+    const flat = decide({ meter: meterOf({ burnPctPerHour: 0 }), crewRan: true });
+    expect(flat.status).toBe("on pace");
+    expect(flat.slots).toBe(4);
+    expect(flat.release).toBe(false);
+    expect(flat.sentence).toContain("under a point over the last 6 h");
+    expect(flat.sentence).not.toContain("speeding up");
+    // The same flat meter over a crew that did not run is a crew that is behind.
+    const idle = decide({ meter: meterOf({ burnPctPerHour: 0 }), crewRan: false });
+    expect(idle.status).toBe("behind");
+    expect(idle.release).toBe(true);
+    // A meter that moved is read as it moved, whatever the crew did.
+    expect(decide({ meter: meterOf({ burnPctPerHour: 0.05 }), crewRan: true }).status).toBe("behind");
+  });
+
   test("on pace: a burn near allowed keeps the ceiling", () => {
     // 50% used, 84 hours left, 10% reserve: 40 / 84 = 0.476 an hour allowed.
     const d = decide({ meter: meterOf({ burnPctPerHour: 0.45 }) });
