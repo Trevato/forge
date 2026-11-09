@@ -552,8 +552,22 @@ describe("working: a run's own page in the studio", () => {
     expect(page).toContain("newer below");
     expect(page).toMatch(/<button[^>]*class="btn"[^>]*id="run-jump"/);
     expect(page).toMatch(
-      /<form[^>]*class="card stack"[^>]*id="run-steer"[^>]*action="\/alice\/engine\/runs\/\w+\/steer"/s,
+      /<form[^>]*class="stack"[^>]*id="run-steer"[^>]*action="\/alice\/engine\/runs\/\w+\/steer"/s,
     );
+    // Plain like the home page's tell box, not a boxed card (#9973).
+    expect(page).not.toMatch(/<form[^>]*class="[^"]*\bcard\b[^"]*"[^>]*id="run-steer"/s);
+    expect(page).toMatch(/<form[^>]*id="run-steer"[^>]*data-api="[^"]+"[^>]*data-running="1"/s);
+    expect(page).toContain('for="steer-text"');
+    // Not shown without an issue to speak on.
+    const bare = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, bare.id);
+    const barePage = await (await get(`/alice/engine/runs/${bare.id}`, writerCookie)).text();
+    expect(barePage).not.toContain('id="run-steer"');
     expect(page).toContain('name="text"');
     expect(page).toContain('formaction="/alice/engine/runs/');
     expect(page).toContain('id="run-stop"');

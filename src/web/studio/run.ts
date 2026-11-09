@@ -382,7 +382,7 @@ export async function runView(
         writer && run.kind === "agent" && issue !== undefined,
         () =>
           html`<form
-            class="card stack"
+            class="stack"
             id="run-steer"
             method="post"
             action="${base}/runs/${run.id}/steer"
