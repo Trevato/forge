@@ -4,8 +4,10 @@ From the web: a repository's Settings page has a "Move to another owner" block
 (an admin's, beside Archive): type the new owner, confirm, and you land on
 Settings at the new path. A refusal comes back beside the field as its
 sentence, the field kept; anyone who does not administer the repository gets
-`404`. From the terminal: on a repository's screen, `:` then "Move this repository
-to another owner", and type the new owner. From the API:
+`404`. From the terminal: on a repository's screen, `:` then "Move this
+repository to another owner", and type the new owner. From MCP:
+`repo_settings` with `{ repo, newOwner }` (admin-scope token) answers the same
+codes and sentences as the API. From the API:
 `POST /api/v1/repos/:owner/:name/transfer` with `{"newOwner": "<account or org>"}`
 moves a repository (an `rw` token; the caller administers the repository and
 may create repositories under the new owner — themselves, or an org they can
