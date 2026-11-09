@@ -15,7 +15,7 @@ import { settingsLayout, signInFirst, forbiddenPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { btn, card, empty, icon, listCard, messageText, row, time } from "../ui.ts";
+import { btn, icon, messageText, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 const BACK = "/settings/confirms";
@@ -29,27 +29,25 @@ function confirmsPage(ctx: Ctx, shown?: Html): Response {
       ten minutes at most. A yes does it once, as you.
     </p>
     ${shown ?? null}
-    ${waiting.length === 0
-      ? empty({ icon: "check", title: "Nothing waiting", note: "When the agent asks before acting, it shows here." })
-      : listCard(
-          waiting.map((w) =>
-            row({
-              lead: icon("chevronRight"),
-              title: w.does,
-              meta: html`asked ${time(w.createdAt)} · until ${time(w.expiresAt)} · full arguments`,
-              // The row folds open on every argument as the call will run; the yes sits beside it.
-              fold: {
-                id: `confirm-${w.id}`,
-                open: false,
-                body: html`<div class="card-body">${messageText(w.arguments)}</div>`,
-              },
-              after: html`<form class="row-actions" method="post" action="${BACK}/${w.id}">
-                ${btn("Yes", { variant: "primary", size: "sm", icon: "check", label: `Yes: ${w.tool}` })}
-              </form>`,
-            }),
-          ),
-          { head: html`${icon("lock")}<h2>Waiting for your yes</h2>` },
-        )}`;
+    <section class="settings-block" id="waiting">
+      <h2>Waiting for your yes</h2>
+      ${waiting.length === 0
+        ? html`<p class="muted">Nothing waiting: when the agent asks before acting, it shows here.</p>`
+        : html`<ul class="list setting-list" id="confirms-list">
+            ${waiting.map((w) =>
+              row({
+                lead: icon("chevronRight"),
+                title: w.does,
+                meta: html`asked ${time(w.createdAt)} · until ${time(w.expiresAt)} · full arguments`,
+                // The row folds open on every argument as the call will run; the yes sits beside it.
+                fold: { id: `confirm-${w.id}`, open: false, body: html`<div class="confirm-args">${messageText(w.arguments)}</div>` },
+                after: html`<form class="row-actions" method="post" action="${BACK}/${w.id}">
+                  ${btn("Yes", { variant: "primary", size: "sm", icon: "check", label: `Yes: ${w.tool}` })}
+                </form>`,
+              }),
+            )}
+          </ul>`}
+    </section>`;
   return page({
     ctx,
     title: "Confirms",
@@ -82,10 +80,10 @@ export async function confirmYes(ctx: Ctx): Promise<Response> {
   if (ASKING[tool]?.once === undefined) return flashTo(ctx, BACK, { tone: "success", message: `Done: ${tool}.${undo}` });
   return confirmsPage(
     ctx,
-    card(
-      html`<p class="muted small">Shown this once; copy it now. It is not kept in the conversation.</p>
-        <pre class="mono">${JSON.stringify(yes.result, null, 2)}</pre>`,
-      { head: html`${icon("check")}<h2>Done: ${tool}</h2>` },
-    ),
+    html`<section class="settings-block" id="done">
+      <h2>Done: ${tool}</h2>
+      <p class="muted small">Shown this once; copy it now. It is not kept in the conversation.</p>
+      <pre class="mono">${JSON.stringify(yes.result, null, 2)}</pre>
+    </section>`,
   );
 }
