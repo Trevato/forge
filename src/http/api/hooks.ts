@@ -1,12 +1,13 @@
 /**
  * A repository's webhooks over the API: `GET` and `POST`
  * `/api/v1/repos/:owner/:name/hooks`, and `DELETE` `…/hooks/:id`;
- * `GET …/hooks/:id/deliveries` answers the last twenty. Moved out of
- * `api.ts` (#6333); the rules live in `actions/repos.ts`. Admin-scoped,
- * since a webhook exfiltrates repo events.
+ * `GET …/hooks/:id/deliveries` answers the last twenty; `POST
+ * …/hooks/:id/pause` and `…/resume` stop and restart deliveries (#10104).
+ * Moved out of `api.ts` (#6333); the rules live in `actions/repos.ts`.
+ * Admin-scoped, since a webhook exfiltrates repo events.
  */
 
-import { createWebhook, deleteWebhook, redeliverWebhook } from "../../actions/repos.ts";
+import { createWebhook, deleteWebhook, pauseWebhook, redeliverWebhook } from "../../actions/repos.ts";
 import { canAdmin } from "../../core/repos.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../core/webhooks.ts";
@@ -71,6 +72,18 @@ export function hookRoutes(router: Router<Handler>): void {
     return json({ id: pinged.value.id }, 202);
   });
 
+  const setActive = (pause: boolean): Handler => (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    // As for ping: a token short of admin learns nothing, the same 404.
+    if (denied) return denied.status === 403 ? notFound() : denied;
+    const repo = loadRepo(ctx);
+    if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const done = pauseWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id!, pause);
+    if (!done.ok) return notFound();
+    return json({ id: ctx.params.id!, active: !pause });
+  };
+  router.add("POST", "/api/v1/repos/:owner/:name/hooks/:id/pause", setActive(true));
+  router.add("POST", "/api/v1/repos/:owner/:name/hooks/:id/resume", setActive(false));
   router.add("POST", "/api/v1/repos/:owner/:name/hooks/:id/deliveries/:delivery/redeliver", (ctx) => {
     const denied = requireScope(ctx, "admin");
     if (denied) return denied.status === 403 ? notFound() : denied;

@@ -1,6 +1,6 @@
 import { canAdmin } from "../../../core/repos.ts";
 import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../../core/webhooks.ts";
-import { createWebhook, deleteWebhook, redeliverWebhook } from "../../../actions/repos.ts";
+import { createWebhook, deleteWebhook, pauseWebhook, redeliverWebhook } from "../../../actions/repos.ts";
 import { pageRows } from "../page.ts";
 import { good, bad, type Answer, type Args, type Tool, REPO_ARG, repoArg, isAnswer, str } from "../shared.ts";
 
@@ -20,13 +20,13 @@ const notAdmin = (): Answer => bad("not_found", "no such app or repository, or y
 
 export const tool: Tool = {
   name: "hooks",
-  doc: "`{ repo, action, url, secret, kinds, id }`: `list` (pages: `limit` 1–200, `cursor`; `{ items, next_cursor }`), `add` (`secret`, 16–200 characters, is required) or `remove` the repository's webhooks, as `…/hooks`; `deliveries` with `id` answers that hook's last 20, newest first (`{ items: [{ id, state, attempts, lastStatus, lastError, kind }] }`); `ping` with `id` queues one `ping` delivery (`{ id }`), at most 3 a minute per hook; `redeliver` with `id` and `delivery` queues a failed delivery again (`{ id, state }`; 409-like `conflict` if not failed or sealed); an admin-scope token on a repository you administer, and a secret is never shown",
+  doc: "`{ repo, action, url, secret, kinds, id }`: `list` (pages: `limit` 1–200, `cursor`; `{ items, next_cursor }`), `add` (`secret`, 16–200 characters, is required) or `remove` the repository's webhooks, as `…/hooks`; `deliveries` with `id` answers that hook's last 20, newest first (`{ items: [{ id, state, attempts, lastStatus, lastError, kind }] }`); `ping` with `id` queues one `ping` delivery (`{ id }`), at most 3 a minute per hook; `redeliver` with `id` and `delivery` queues a failed delivery again (`{ id, state }`; 409-like `conflict` if not failed or sealed); `pause` or `resume` with `id` stops or restarts a hook's deliveries (`{ id, active }`); an admin-scope token on a repository you administer, and a secret is never shown",
   description: "List, add (`url`, `secret`, `kinds`) or remove (`id`) webhooks; admins.",
   inputSchema: {
     type: "object",
     properties: {
       repo: REPO_ARG,
-      action: { type: "string", enum: ["list", "add", "remove", "deliveries", "ping", "redeliver"] },
+      action: { type: "string", enum: ["list", "add", "remove", "deliveries", "ping", "pause", "resume", "redeliver"] },
       url: { type: "string", maxLength: 2048 },
       kinds: { type: "string", maxLength: 200 },
       secret: { type: "string", maxLength: 200 },
@@ -64,6 +64,14 @@ export const tool: Tool = {
       const pinged = pingWebhook(ctx.app.db, `${repo.ownerName}/${repo.name}`, hook);
       return pinged.ok ? good({ id: pinged.value.id }) : bad("rate_limited", `too many pings: try again in ${pinged.error.retryAfter} s`);
     }
+    if (action === "pause" || action === "resume") {
+      const long = hookTooLong(args);
+      if (long !== undefined) return long;
+      if (!canAdmin(ctx.app.db, repo, user)) return notAdmin();
+      const id = str(args["id"]);
+      const done = pauseWebhook(ctx.app, user, repo, id, action === "pause");
+      return done.ok ? good({ id, active: action === "resume" }) : bad("not_found", "no such webhook here");
+    }
     if (action === "redeliver") {
       const long = hookTooLong(args);
       if (long !== undefined) return long;
@@ -97,6 +105,6 @@ export const tool: Tool = {
       const removed = deleteWebhook(ctx.app, user, repo, str(args["id"]));
       return removed.ok ? good({}) : bad("not_found", "no such webhook here");
     }
-    return bad("invalid", "action is list, add, remove, deliveries, ping or redeliver");
+    return bad("invalid", "action is list, add, remove, deliveries, ping, pause, resume or redeliver");
   },
 };
