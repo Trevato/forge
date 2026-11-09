@@ -15,7 +15,7 @@ const ok = (s: string) => {
   return t;
 };
 const draw = (text: string, all = false) =>
-  csv({ path: "d.csv", size: text.length, body: enc(text), media: "/m", pathHref: "/o/r/blob/main/d.csv", all });
+  csv({ path: "d.csv", size: text.length, body: enc(text), media: "/m", download: "/d", pathHref: "/o/r/blob/main/d.csv", all });
 
 describe("csv parser", () => {
   test("quotes, escaped quotes and newline inside a field", () => {
@@ -45,7 +45,7 @@ describe("csv parser", () => {
 describe("csv bounds", () => {
   test("one very wide row cannot multiply the page", () => {
     const text = "h\n" + "x\n".repeat(1_000) + ",".repeat(100_000) + "\n";
-    const r = csv({ path: "w.csv", size: text.length, body: enc(text), media: "/m", pathHref: "/p", all: false });
+    const r = csv({ path: "w.csv", size: text.length, body: enc(text), media: "/m", download: "/d", pathHref: "/p", all: false });
     const h = String(r.content);
     expect(h.length).toBeLessThan(2_000_000);
     expect(h).toContain(`Showing ${COLUMN_CAP} of 100,001 columns`);
@@ -152,7 +152,7 @@ describe("csv on the blob page", () => {
 
 describe("json lines as a table", () => {
   const lines = (text: string) =>
-    csv({ path: "d.jsonl", size: text.length, body: enc(text), media: "/m", pathHref: "/o/r/blob/main/d.jsonl" });
+    csv({ path: "d.jsonl", size: text.length, body: enc(text), media: "/m", download: "/d", pathHref: "/o/r/blob/main/d.jsonl" });
   const text =
     '{"a":1,"b":"x"}\n{"c":{"k":[1,2]},"a":"<script>alert(1)</script>"}\nnot json\n\n{"b":null}\n';
   test("kinds: jsonl and ndjson are csv, and carry the table script", () => {

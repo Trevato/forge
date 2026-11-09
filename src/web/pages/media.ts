@@ -50,6 +50,10 @@ const FULL_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const mediaHref = (base: string, ref: string, path: string): string =>
   `${base}/media/${encodeURIComponent(ref)}/${path}`;
 
+/** The file saved under its own name, streamed at any size. */
+export const downloadHref = (base: string, ref: string, path: string): string =>
+  `${mediaHref(base, ref, path)}?download=1`;
+
 export async function mediaBlob(ctx: Ctx): Promise<Response> {
   // Server-Timing: `session` as the router measured it, `git` the object
   // reads, `stream` the time to have a body to send (the stream opened). A phase

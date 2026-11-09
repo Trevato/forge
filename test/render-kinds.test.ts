@@ -45,6 +45,7 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   jsonl: [enc("{\"a\":1}\n"), "csv", "application/octet-stream"],
   ndjson: [enc("{\"a\":1}\n"), "csv", "application/octet-stream"],
   gltf: [enc('{"asset":{}}'), "model3d", "application/octet-stream"],
+  obj: [enc("v 0 0 0\n"), "model3d", "application/octet-stream"],
   json: [enc("{}"), "config", "application/octet-stream"],
   jsonc: [enc("{}"), "config", "application/octet-stream"],
   yaml: [enc("a: 1\n"), "config", "application/octet-stream"],

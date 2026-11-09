@@ -4,7 +4,7 @@ import { patch, VALUE_CAP } from "../src/web/render/patch.ts";
 import { rendererFor } from "../src/web/render/renderers.ts";
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
-const draw = (text: string) => patch({ path: "x.patch", size: text.length, body: enc(text), media: "/m" });
+const draw = (text: string) => patch({ path: "x.patch", size: text.length, body: enc(text), media: "/m", download: "/d" });
 
 const DIFF = `diff --git a/one.txt b/one.txt
 index 1111111..2222222 100644

@@ -146,6 +146,7 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   jsonl: "csv",
   ndjson: "csv",
   gltf: "model3d",
+  obj: "model3d",
   json: "config",
   jsonc: "config",
   yaml: "config",
@@ -217,6 +218,16 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (isArchive(path, head)) return "archive";
   if (looksBinary(head)) return "binary";
   return TEXTUAL[extension(path)] ?? "text";
+}
+
+/**
+ * What a file's name says it is, for a file too large to have been read:
+ * the bytes are not here to confirm it. Only a renderer that fetches the
+ * media route acts on this, and the media route confirms the type itself.
+ */
+export function kindByName(path: string): FileKind {
+  const ext = extension(path);
+  return MEDIA[ext]?.kind ?? TEXTUAL[ext] ?? "text";
 }
 
 /**

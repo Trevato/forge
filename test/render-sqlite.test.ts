@@ -22,7 +22,7 @@ const make = (): Uint8Array => {
 };
 const DB = make();
 const draw = (body: Uint8Array, table?: string) =>
-  sqlite({ path: "a.db", size: body.length, body, media: "/m", pathHref: "/o/r/blob/main/a.db", ...(table ? { table } : {}) });
+  sqlite({ path: "a.db", size: body.length, body, media: "/m", download: "/d", pathHref: "/o/r/blob/main/a.db", ...(table ? { table } : {}) });
 
 describe("sqlite kind", () => {
   test("the header confirms it; a .db without it is binary", () => {

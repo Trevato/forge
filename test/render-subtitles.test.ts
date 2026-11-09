@@ -6,7 +6,7 @@ import { RENDERERS } from "../src/web/render/renderers.ts";
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 const draw = (text: string, path = "a.srt") =>
-  subtitles({ path, size: text.length, body: enc(text), media: "/m" });
+  subtitles({ path, size: text.length, body: enc(text), media: "/m", download: "/d" });
 const html = (text: string, path?: string): string => String(draw(text, path).content);
 
 const SRT = "1\r\n00:00:01,500 --> 00:00:03,000\r\nHello <i>there</i>\r\n\r\n2\r\n01:02:03,004 --> 01:02:05,000\r\n{\\an8}Line one\r\nLine two\r\n";

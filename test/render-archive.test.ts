@@ -125,13 +125,13 @@ describe("archive limits", () => {
     expect(r.entries.length).toBe(ENTRY_CAP);
     expect(r.count).toBe(ENTRY_CAP + 25);
     expect(r.bytes).toBe(ENTRY_CAP + 25);
-    const page = archive({ path: "x.zip", size: 1, body: zip(files), media: "/m" });
+    const page = archive({ path: "x.zip", size: 1, body: zip(files), media: "/m", download: "/d" });
     expect(String(page.content)).toContain("25 more entries are not listed");
   });
 });
 
 describe("archive page", () => {
-  const draw = (path: string, body: Uint8Array) => archive({ path, size: body.length, body, media: "/m" });
+  const draw = (path: string, body: Uint8Array) => archive({ path, size: body.length, body, media: "/m", download: "/d" });
   test("a name that is markup is escaped", () => {
     const out = String(draw("x.zip", zip([{ name: "<script>alert(1)</script>", size: 1 }])).content);
     expect(out).not.toContain("<script>");

@@ -90,7 +90,7 @@ import { fontJs } from "../render/font.ts";
 import { hasTable } from "../render/sqlite.ts";
 import { fileKind, HEAD_BYTES, RENDER_CAP } from "../render/kinds.ts";
 import { RENDERERS, rendererFor } from "../render/renderers.ts";
-import { mediaHref } from "./media.ts";
+import { downloadHref, mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
 import { recentMove } from "../../core/transfer.ts";
@@ -685,10 +685,6 @@ export async function readmeFor(
  */
 export type BlobView = "source" | "rendered";
 
-/** The file saved under its own name, streamed at any size. */
-const downloadHref = (base: string, ref: string, path: string): string =>
-  `${mediaHref(base, ref, path)}?download=1`;
-
 export function blobView(value: string | null): BlobView {
   return value === "source" ? "source" : "rendered";
 }
@@ -1095,7 +1091,7 @@ export function editAction(scope: RepoScope, ref: string, path: string): Html {
  * a repository on this forge has.
  */
 function blobRenderer(scope: RepoScope, path: string, blob: Blob): ReturnType<typeof rendererFor> {
-  const found = rendererFor(path, blob);
+  const found = rendererFor(path, blob, RENDERERS, { media: scope.kind === "local" });
   return found?.render === RENDERERS.pdf && scope.kind !== "local" ? undefined : found;
 }
 
@@ -1158,6 +1154,7 @@ export function renderBlob(
           size: blob.size,
           body: renderer.body,
           media: mediaHref(base, o.ref, o.path),
+          download: downloadHref(base, o.ref, o.path),
           pathHref: `${base}/blob/${encoded}/${o.path}`,
           all: o.all === true,
           ...(o.table !== undefined ? { table: o.table } : {}),

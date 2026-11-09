@@ -50,6 +50,8 @@ import type { TreeEntry } from "../../git/read.ts";
 import { parseUnifiedDiff, type Diff } from "../../git/diff.ts";
 import { renderDiff as renderPatch } from "../ui/diff.ts";
 import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
+import { downloadHref } from "../../web/pages/media.ts";
+import { isModelPath, modelFacts } from "../../web/render/model-facts.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
@@ -349,6 +351,8 @@ class Tab {
   loading = true;
   /** Non-empty when there is a reason the bytes are not on screen. */
   note = "";
+  noteTitle = "Not shown";
+  noteDetail = "";
   raw: Uint8Array | null = null;
   plain: string[] = [];
   lines: Span[][] = [];
@@ -528,6 +532,10 @@ class Tab {
 /** One blob, as the workspace keeps it: text, a picture, or a reason. */
 interface CacheEntry {
   readonly note: string;
+  /** The note's heading; "Not shown" unless the file is something we name. */
+  readonly noteTitle: string;
+  /** A last line under the note: where to get the file. */
+  readonly noteDetail: string;
   readonly raw: Uint8Array | null;
   readonly picture: Uint8Array | null;
 }
@@ -606,6 +614,11 @@ export function workspaceScreen(
   // arriving from a search hit means "show me *that*", not "show me where I
   // was". Everything else is restored.
   let ref = o.ref ?? memory?.ref ?? knownDefaultRef(src) ?? "";
+  /** Where a file downloads from, said in words the terminal can print. */
+  const downloadAt = (path: string): string => {
+    const web = mediaWeb();
+    return web === undefined ? "Download it from its web page." : `Download: ${downloadHref(web, ref, path)}`;
+  };
   let facts: RepoFacts | undefined;
   let roots: Node[] = memory?.roots ?? [];
   let loadedTree = roots.length > 0;
@@ -800,6 +813,15 @@ export function workspaceScreen(
       const read = await src.blob(ref, t.path);
       if (stale(mine)) return;
       let note = "";
+      let noteTitle = "Not shown";
+      let noteDetail = "";
+      // A model is named and measured here, as the page draws it (#7335).
+      const model = (bytes: Uint8Array | null, size: number): void => {
+        const facts = modelFacts(t.path, bytes, size);
+        noteTitle = facts.title;
+        note = facts.facts;
+        noteDetail = downloadAt(t.path);
+      };
       let raw: Uint8Array | null = null;
       let picture: Uint8Array | null = null;
       if (!read.ok)
@@ -808,12 +830,15 @@ export function workspaceScreen(
             ? "No such file at this revision."
             : errorText(read.error);
       else {
-        // Audio and video are not played here; the note says where they are.
+        // Audio and video are not played here, and a model is not drawn
+        // here: each note says what the file is and where it is.
         const media =
           read.value.kind === "text"
             ? undefined
             : mediaNote(t.path, formatSize(read.value.size), mediaWeb(), ref);
-        if (media !== undefined) note = media;
+        if (read.value.kind !== "text" && isModelPath(t.path))
+          model(read.value.kind === "binary" ? read.value.body : null, read.value.size);
+        else if (media !== undefined) note = media;
         else if (read.value.kind === "too_large")
           note = `${formatSize(read.value.size)} — too large to display.`;
         else if (read.value.kind === "binary") {
@@ -827,12 +852,14 @@ export function workspaceScreen(
               `Binary file, ${formatSize(read.value.size)}.`;
         } else raw = read.value.body;
       }
-      entry = { note, raw, picture };
+      entry = { note, noteTitle, noteDetail, raw, picture };
       remember(key, entry);
     }
     if (stale(mine)) return;
     t.loading = false;
     t.note = entry.note;
+    t.noteTitle = entry.noteTitle;
+    t.noteDetail = entry.noteDetail;
     t.raw = entry.raw;
     t.image =
       entry.picture === null
@@ -2345,7 +2372,11 @@ export function workspaceScreen(
       return;
     }
     if (t.note !== "") {
-      emptyState(s, r, c, { title: "Not shown", body: t.note });
+      emptyState(s, r, c, {
+        title: t.noteTitle,
+        body: t.note,
+        ...(t.noteDetail === "" ? {} : { detail: t.noteDetail }),
+      });
       return;
     }
     if (t.mode === "edit") {

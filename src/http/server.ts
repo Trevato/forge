@@ -192,6 +192,7 @@ import {
   treePage,
 } from "../web/pages/repo.ts";
 import { mediaBlob } from "../web/pages/media.ts";
+import { model3dAsset } from "../web/render/model3d.ts";
 import {
   branchCreate,
   branchDelete,
@@ -769,6 +770,11 @@ export function buildRouter(): Router<Handler> {
     if (ctx.params.name!.startsWith("machine-term-")) {
       const term = await machineTermAsset();
       return term !== null && ctx.params.name === term.name ? assetResponse(ctx.request, term) : notFound();
+    }
+    if (ctx.params.name!.startsWith("model3d-")) {
+      const viewer = await model3dAsset();
+      if (viewer === null || ctx.params.name !== viewer.name) return notFound();
+      return assetResponse(ctx.request, viewer);
     }
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();

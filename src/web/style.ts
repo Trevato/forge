@@ -27,6 +27,7 @@ import { boardCss } from "./pages/board_style.ts";
 import { base, layers, reset, utilities } from "./style/base.ts";
 import { components } from "./style/components.ts";
 import { content } from "./style/content.ts";
+import { model3dCss } from "./render/model3d-css.ts";
 import { pickCss } from "./pick.ts";
 import { studioCss } from "./studio/style.ts";
 
@@ -39,6 +40,7 @@ export const css = [
   studioCss,
   boardCss,
   content,
+  model3dCss,
   utilities,
   swatchCss,
   pickCss,

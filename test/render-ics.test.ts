@@ -5,7 +5,7 @@ import { fileKind } from "../src/web/render/kinds.ts";
 import { RENDERERS } from "../src/web/render/renderers.ts";
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
-const draw = (text: string) => ics({ path: "a/cal.ics", size: text.length, body: enc(text), media: "/m" });
+const draw = (text: string) => ics({ path: "a/cal.ics", size: text.length, body: enc(text), media: "/m", download: "/d" });
 const wrap = (...events: string[]) =>
   `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${events.map((e) => `BEGIN:VEVENT\r\n${e}\r\nEND:VEVENT\r\n`).join("")}END:VCALENDAR\r\n`;
 
