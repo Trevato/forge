@@ -550,6 +550,8 @@ interface Destructive {
   detail: string;
   /** A phrase the visitor must type back before the button will work. */
   phrase: string;
+  /** A form value the settings page typed that the confirmed POST needs back. */
+  carries?: string;
 }
 
 /**
@@ -569,6 +571,17 @@ const DESTRUCTIVE: {
       detail:
         "Every issue, pull request, comment and webhook goes with it, and the git objects are removed from disk. Forks are detached first and keep working. This cannot be undone.",
       phrase: `${m[1]}/${m[2]}`,
+    }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/transfer$/,
+    describe: (m) => ({
+      verb: "Move",
+      title: `Move ${m[1]}/${m[2]} to another owner?`,
+      detail:
+        "The repository, its issues and pulls move to the new owner and its address changes; the old address redirects. You must be able to create repositories under the new owner.",
+      phrase: "",
+      carries: "owner",
     }),
   },
   {
@@ -912,7 +925,8 @@ function confirmBody(ctx: Ctx): Response {
   // link therefore cannot invent reassuring words for a dangerous button, and
   // cannot aim the form at an endpoint that was never meant for it.
   if (!known) return notFoundPage(ctx);
-  const { verb, title, detail, phrase } = known;
+  const { verb, title, detail, phrase, carries } = known;
+  const carried = carries === undefined ? "" : (params.get(carries) ?? "").slice(0, 200);
 
   const referer = ctx.request.headers.get("referer");
   let back = "/";
@@ -926,6 +940,7 @@ function confirmBody(ctx: Ctx): Response {
     ${pageHead(title)}
     <p>${detail}</p>
     <form method="post" action="${to}" class="mt">
+      ${carries === undefined ? null : html`<input type="hidden" name="${carries}" value="${carried}" />`}
       ${when(phrase !== "", () =>
         formField({
           label: `Type ${phrase} to continue`,

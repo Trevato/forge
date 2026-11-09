@@ -51,6 +51,7 @@ import {
   SCOPE_WORDS,
 } from "../../actions/app_env_words.ts";
 import { AUTONOMY_SAID, checkAutonomy, isDecisionsBy } from "../../core/repos.ts";
+import { TRANSFER_SAID, TRANSFER_STATUS, transferRepository } from "../../actions/transfer.ts";
 import { updateRepoSettings } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
@@ -227,7 +228,11 @@ export async function adminForm(
  * gates and the secrets, with the rest — the app, prompts, labels,
  * webhooks, the danger zone — one quiet section over in the same frame.
  */
-export async function settingsPage(ctx: Ctx): Promise<Response> {
+export async function settingsPage(
+  ctx: Ctx,
+  /** A refused move: the owner as typed and the sentence to show beside it. */
+  refused?: { owner: string; said: string; status: number },
+): Promise<Response> {
   nameFrame(ctx.request);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const [readable, repo] = timePhase(ctx.request, "repo", () => {
@@ -411,6 +416,28 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
       </div>
     </form>
   </section>`;
+  const move = html`<section class="settings-block">
+    <h2>Move to another owner</h2>
+    <form method="get" action="/-/confirm">
+      <input type="hidden" name="to" value="${base}/settings/transfer" />
+      <p class="muted">
+        Give the repository to an account or organisation you can create
+        repositories under.
+      </p>
+      ${formField({
+        label: "New owner",
+        name: "owner",
+        value: refused?.owner ?? "",
+        required: true,
+        maxlength: 64,
+        autocomplete: "off",
+        spellcheck: false,
+        mono: true,
+        ...(refused ? { error: refused.said } : {}),
+      })}
+      <div class="form-actions">${btn("Move", { variant: "danger" })}</div>
+    </form>
+  </section>`;
   renderMs += performance.now() - since;
   const held = timePhase(ctx.request, "mirror", () => getMirrorTarget(ctx.app.db, repo.id));
   since = performance.now();
@@ -437,11 +464,13 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     "Settings",
     html`${lead}${mirror ? html`<div class="mt">${mirror}</div>` : null}<div class="mt">${body}</div>${trail
       ? html`<div class="mt">${trail}</div>`
-      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}${sources ? html`<div class="mt">${sources}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
+      : null}${upstream ? html`<div class="mt">${upstream}</div>` : null}${sources ? html`<div class="mt">${sources}</div>` : null}<div class="mt">${wave}</div><div class="mt">${archive}</div><div class="mt">${move}</div>${proposals
       ? html`<div class="mt">${proposals}</div>`
       : null}${secrets
       ? html`<div class="mt">${secrets}</div>`
       : null}`,
+    undefined,
+    refused?.status,
   );
   notePhase(ctx.request, "render", renderMs + performance.now() - since);
   return response;
@@ -543,6 +572,30 @@ export async function archiveSubmit(ctx: Ctx): Promise<Response> {
       ? { message: archived ? "Archived." : "Awake again." }
       : { tone: "danger", message: NOT_CHANGED },
   );
+}
+
+/**
+ * POST /:owner/:name/settings/transfer — move the repository to another
+ * owner, through the action (never core). A refusal is the settings page
+ * again, with the sentence beside the field and the field as typed.
+ */
+export async function transferSubmit(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const owner = (field(form, "owner") ?? "").trim();
+  const refuse = (said: string, status: number) =>
+    settingsPage(ctx, { owner: owner.slice(0, 64), said, status });
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(owner))
+    return refuse(TRANSFER_SAID.unknown_owner, TRANSFER_STATUS.unknown_owner);
+  const moved = await transferRepository(ctx.app, ctx.auth.user, repo, owner);
+  if (!moved.ok) {
+    if (moved.error === "not_found") return repoNotFound(ctx);
+    return refuse(TRANSFER_SAID[moved.error], TRANSFER_STATUS[moved.error]);
+  }
+  return flashTo(ctx, `${repoBase(moved.value)}/settings`, {
+    message: `Moved to ${moved.value.ownerName}/${moved.value.name}.`,
+  });
 }
 
 /**
