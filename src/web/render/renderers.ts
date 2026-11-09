@@ -15,6 +15,7 @@ import { image } from "./image.ts";
 import { claimedMedia, fileKind, HEAD_BYTES, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
 import { markdown } from "./markdown.ts";
 import { pdf } from "./pdf.ts";
+import { subtitles } from "./subtitles.ts";
 import { video } from "./video.ts";
 
 /** What a renderer is handed: the file, and where its bytes can be fetched. */
@@ -55,6 +56,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   audio,
   video,
   config,
+  subtitles,
   archive,
 };
 

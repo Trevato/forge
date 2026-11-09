@@ -309,6 +309,39 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .srt opens as a Start/Text table sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "captions",
+      visibility: "public",
+      description: "subtitles",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "talk.srt",
+          content:
+            "1\n00:00:01,500 --> 00:00:03,000\nHello <i>there</i>\n\n2\n00:00:0x --> nope\nBroken\n",
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "captions");
+      await openFile(h, "talk.srt");
+      expect(h.text()).toContain("Start");
+      expect(h.text()).toContain("00:00:01.500 │ Hello there");
+      expect(h.text()).toContain("1 cue");
+      expect(h.text()).toContain("1 unreadable, check their arrow lines");
+      await h.press("s");
+      expect(h.text()).toContain("00:00:01,500 --> 00:00:03,000");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("tables: search, edit, the caps in the status line, a ; file, and s on a broken one", async () => {
     const made = await createRepo(forge, alice, {
       name: "sheets",

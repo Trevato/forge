@@ -51,6 +51,7 @@ import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
+import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
 import { layoutTable, type Grid } from "../ui/grid.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
@@ -282,6 +283,27 @@ function isTablePath(path: string): boolean {
   return /\.[ct]sv$/i.test(path);
 }
 
+/** `.srt` and `.vtt`: a transcript, drawn as the same two-column table. */
+function isSubtitlePath(path: string): boolean {
+  return /\.(srt|vtt)$/i.test(path);
+}
+
+/** The cues of a subtitle file as a table: start time, text. Shares the web's parser. */
+function subtitleTable(source: string): { table: Table; unread: number } {
+  const { cues, failures } = parseSubtitles(source);
+  const shown = cues.slice(0, CUE_CAP);
+  return {
+    unread: failures.length,
+    table: {
+      header: ["Start", "Text"],
+      rows: shown.map((c) => [c.start, c.text]),
+      more: cues.length - shown.length,
+      delimiter: ",",
+      columns: 2,
+    },
+  };
+}
+
 /** `README.md`, `NOTES.markdown`, `readme` — the prose a repo opens on. */
 function isMarkdownPath(path: string): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1);
@@ -333,6 +355,8 @@ class Tab {
   /** The parsed file, when its name says table. Parse errors ride along. */
   table: Table | null = null;
   grid: Grid = { header: "", rows: [] };
+  /** Cues of a subtitle file that could not be read. */
+  unread = 0;
 
   constructor(readonly path: string) {}
 
@@ -411,7 +435,13 @@ class Tab {
     const built = buildLines(new TextDecoder().decode(source), this.path, c);
     this.plain = built.plain;
     this.lines = built.lines;
-    if (isTablePath(this.path)) {
+    this.unread = 0;
+    if (isSubtitlePath(this.path)) {
+      const subs = subtitleTable(new TextDecoder().decode(source));
+      this.table = subs.table;
+      this.unread = subs.unread;
+      this.grid = layoutTable(this.table);
+    } else if (isTablePath(this.path)) {
       // The decoded source, not `plain`: `expandTabs` has eaten every tab there.
       const delimiter = /\.tsv$/i.test(this.path) ? "\t" : undefined;
       this.table = parseCsv(new TextDecoder().decode(source), { delimiter });
@@ -2463,7 +2493,7 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table)
+                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -2797,9 +2827,11 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table): string {
+function tableStatus(table: Table, unread = 0, subs = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, "row")}${
+  return `${plural(rows, subs ? "cue" : "row")}${
+    unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
+  }${
     table.more > 0 ? `, first ${table.rows.length} shown` : ""
   }${
     table.columns > MAX_COLUMNS
