@@ -120,3 +120,11 @@ For a bad answer the forge:
 
 A good answer is recorded as a run with its counts, its cursor and its
 duration.
+
+The schedule is kept by `src/apps/pull_schedule.ts`: once a minute the forge
+pulls each app whose production is running, whose `forge.json` on the default
+branch has an `adapter` block, and whose last pull, good or failed, is at least
+`schedule.every` seconds old. A sleeping app is never woken to be pulled; it is
+pulled on the first minute it is running and due. The request goes over
+loopback, waits at most 10 seconds and reads at most 64 KB. Two pulls of the
+same app never overlap.

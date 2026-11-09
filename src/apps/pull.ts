@@ -4,7 +4,7 @@
  * raw body, it answers four checked fields or a failed pull with a short
  * reason naming what was wrong. `recordPull` writes the outcome as a run of
  * kind `pull` through `core/runs.ts`. Nothing here reaches the network: the
- * caller that sends the request and times it comes later (#437).
+ * caller that sends the request and times it is `pull_schedule.ts` (#10043).
  */
 
 import type { Database } from "bun:sqlite";

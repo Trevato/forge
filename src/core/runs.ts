@@ -1587,3 +1587,15 @@ export function listPullRuns(db: Database, appId: string, limit = 50): PullRun[]
     .all(appId, Math.max(1, Math.min(500, Math.trunc(limit))))
     .map(toPullRun);
 }
+
+/** When an app's last pull, good or failed, was recorded, in ms since the epoch; undefined before the first. */
+export function lastPullAt(db: Database, appId: string): number | undefined {
+  const row = db
+    .query<{ created_at: string }, [string]>(
+      `SELECT created_at FROM pull_run WHERE app_id = ?1 ORDER BY id DESC LIMIT 1`,
+    )
+    .get(appId);
+  if (row === null) return undefined;
+  const at = Date.parse(row.created_at);
+  return Number.isFinite(at) ? at : undefined;
+}
