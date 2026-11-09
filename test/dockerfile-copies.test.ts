@@ -36,4 +36,10 @@ describe("what the Dockerfile copies reaches the build", () => {
       expect(existsSync(join(ROOT, path))).toBe(true);
       expect(ignored(lines(".dockerignore"), path)).toBe(false);
     });
+
+  // /packs rendered blank in production: the catalog reads packs/ beside src/, and the
+  // image carried only src/. Each folder a page reads from outside src/ is copied.
+  test("the packs /packs lists are in the image", () => {
+    expect(copied).toContain("packs");
+  });
 });

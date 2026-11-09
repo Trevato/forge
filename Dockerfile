@@ -23,6 +23,8 @@ COPY docs/PRINCIPLES.md ./docs/PRINCIPLES.md
 COPY docs/DESIGN.md ./docs/DESIGN.md
 # The OpenCode plugin the forge serves at /plugins/opencode/forge.ts (src/http/plugin_routes.ts).
 COPY plugins/opencode ./plugins/opencode
+# The forge packs /packs lists and deploys (src/packs/catalog.ts reads packs/ at the root).
+COPY packs ./packs
 # src/ alone: nothing under it imports scripts/ or test/ (test/src-imports.test.ts),
 # and the boot proof below fails the build if that ever stops being so (#2652).
 
