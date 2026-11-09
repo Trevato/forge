@@ -5,7 +5,8 @@
  * (the Origin must be the forge's). It runs tmux on a real pty
  * (`Bun.spawn({terminal})`), held in a cell (`apps/contain.ts`) — the same
  * bubblewrap the forge holds repository code in — with the machine's memory
- * and CPU ceilings and no reach beyond the forge. A forge that cannot hold a
+ * and CPU ceilings and no reach beyond the forge, save the repository's own
+ * production and previews when its machine says `apps` (`shellReach`). A forge that cannot hold a
  * cell refuses the shell rather than hand out one on the host.
  *
  * One session per person, repository and machine: a second connection (a
@@ -33,7 +34,8 @@ import { getUserById, isActive } from "../core/users.ts";
 import { isSafeName } from "../git/guard.ts";
 import type { User } from "../core/users.ts";
 import { repoMachines } from "../crew/machines_read.ts";
-import type { Machine } from "../crew/machines.ts";
+import { reachableApps, type Machine } from "../crew/machines.ts";
+import { ownApp, ownAppUrls } from "../crew/app_hosts.ts";
 import { id as newId } from "../kernel/id.ts";
 
 // ---- the route ----
@@ -333,8 +335,30 @@ export function workspace(app: App, repo: Repo, machine: Machine, userId: string
   return join(app.config.dataDir, "machines", repo.id, machine.name, userId);
 }
 
-/** The cell a shell runs in: its own directory, the forge's data hidden, the machine's ceilings. */
-export function shellCell(app: App, dir: string, machine: Machine, label: string): CellSpec {
+/**
+ * The origins a shell's cell may open (#9934): the forge always, and the
+ * repository's own production and previews only when the machine says
+ * `apps`. `appUrls` are made from this repository's slug and pulls
+ * (`crew/app_hosts.ts`), so another repository's app is never among them;
+ * each is an exact host and port, never a pattern.
+ */
+export function shellReach(forgeUrl: string | undefined, machine: Machine, appUrls: readonly string[]): string[] {
+  const forge = forgeUrl === undefined || forgeUrl === "" ? [] : [forgeUrl];
+  return [...forge, ...reachableApps(machine, appUrls)];
+}
+
+/**
+ * The cell a shell runs in: its own directory, the forge's data hidden, the
+ * machine's ceilings, and the reach `shellReach` decides. Nothing the machine
+ * says un-hides the forge's data.
+ */
+export function shellCell(
+  app: App,
+  dir: string,
+  machine: Machine,
+  label: string,
+  appUrls: readonly string[] = [],
+): CellSpec {
   const step = resolveLimits("step", undefined);
   return {
     dir,
@@ -342,7 +366,7 @@ export function shellCell(app: App, dir: string, machine: Machine, label: string
     home: join(dir, "home"),
     hide: [app.config.dataDir, process.env["HOME"] ?? "", tmpdir()],
     egress: [],
-    reach: [app.config.url ?? ""].filter((u) => u !== ""),
+    reach: shellReach(app.config.url, machine, appUrls),
     limits: {
       ...step,
       memoryMiB: machine.memoryMiB ?? step.memoryMiB,
@@ -393,7 +417,15 @@ function start(app: App, grant: ShellGrant, opts: ShellOptions, cols: number, ro
       },
     });
     if (opts.contain === "cell")
-      cell = openCell(shellCell(app, dir, grant.machine, `machine:${grant.repo.id}/${grant.machine.name}`));
+      cell = openCell(
+        shellCell(
+          app,
+          dir,
+          grant.machine,
+          `machine:${grant.repo.id}/${grant.machine.name}`,
+          ownAppUrls(ownApp(app, grant.repo)),
+        ),
+      );
     const env: Record<string, string> = {
       PATH: process.env["PATH"] ?? "/usr/bin:/bin",
       HOME: join(dir, "home"),

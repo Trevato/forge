@@ -78,8 +78,13 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const get = async (path: string, cookie?: string) =>
-  (await fetch(`${servers.url}${path}`, { headers: cookie ? { cookie } : {} })).text();
+/**
+ * Signed in as the owner unless `null` asks for a stranger: a stranger's deep
+ * pages are budgeted per address (`http/crawl.ts`), a quarter of it while a
+ * busy shard runs the loop late, and these tests are about markup, not that.
+ */
+const get = async (path: string, cookie: string | null = ownerCookie) =>
+  (await fetch(`${servers.url}${path}`, { headers: cookie !== null ? { cookie } : {} })).text();
 
 const rowOf = (page: string, subject: string): string =>
   (page.split("<li>").find((l) => l.includes(subject)) ?? "").split("</li>")[0]!;
@@ -118,7 +123,7 @@ test("every row of the list is reachable by keyboard, checked or not", async () 
 test("a private repository's verdict is the owner's alone", async () => {
   const list = "/alice/priv/commits";
   const one = `/alice/priv/commit/${oids["priv/red"]}`;
-  for (const cookie of [undefined, bobCookie]) {
+  for (const cookie of [null, bobCookie]) {
     expect(await get(list, cookie)).not.toContain(`/runs/${runs.priv}`);
     const seen = await get(one, cookie);
     expect(seen).not.toContain(`/runs/${runs.priv}`);
