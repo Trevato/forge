@@ -1567,8 +1567,14 @@ function pump(
     noted.add(shut.id);
     appendRunLog(app.config.dataDir, shut.id, "queued, not started: its repository's valve is shut (/flow)");
   }
-  for (const queued of gated.order) {
-    if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;
+  for (const [at, queued] of gated.order.entries()) {
+    // One run per issue at a time: this one waits for its sibling, not for a slot.
+    // A sibling that hangs is still caught: the running run goes stale on its
+    // heartbeat or past NO_PROGRESS_MS and vitals names it under `stuck:`.
+    if (queued.issueId !== null && runningIssues.has(queued.issueId)) {
+      held.set(queued.id, "issue");
+      continue;
+    }
     const fresh = getRun(app.db, queued.id);
     if (!fresh || fresh.state !== "queued") continue;
     // A fresh run queued before Archive is cancelled, not started, and
@@ -1583,7 +1589,13 @@ function pump(
       }
       continue;
     }
-    if (slots <= 0) break;
+    if (slots <= 0) {
+      // Out of slots: nothing more starts, but the runs behind this one that
+      // wait on a running sibling are still held by that, not by the slots.
+      for (const rest of gated.order.slice(at + 1))
+        if (rest.issueId !== null && runningIssues.has(rest.issueId)) held.set(rest.id, "issue");
+      break;
+    }
     // The week's pace holds every path that starts a run in an autonomous
     // repository: assigned, review, feedback and check runs as much as picks (#8873).
     if (home !== undefined && home.autonomy === "autonomous") {
