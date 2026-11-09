@@ -416,7 +416,7 @@ export async function settingsPage(
       </div>
     </form>
   </section>`;
-  const move = html`<section class="settings-block">
+  const move = html`<section class="settings-block" id="move">
     <h2>Move to another owner</h2>
     <form method="get" action="/-/confirm">
       <input type="hidden" name="to" value="${base}/settings/transfer" />

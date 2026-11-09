@@ -62,6 +62,7 @@ import {
   PREVIEW_MOVED,
   PREVIEW_MOVED_OWNER,
   PREVIEW_MOVED_PAGE,
+  PREVIEW_MOVE_PAGE,
   PREVIEW_REPO,
   PREVIEW_SETTINGS_PAGES,
 } from "./preview-looks.ts";
@@ -110,6 +111,33 @@ async function seedMoved(app: App, admin: User): Promise<Result<void, string>> {
     http.close();
   }
   return ok();
+}
+
+/**
+ * The sample's Settings, asked for as the admin through `ask`, must answer
+ * 200 and hold `id="move"`: the section its phone look scrolls to (#10194).
+ * `ask` is the forge's own handler; a test hands in one that answers otherwise.
+ */
+export async function checkMoveSection(
+  ask: (path: string) => Promise<{ readonly status: number; text(): Promise<string> }>,
+): Promise<Result<void, string>> {
+  const res = await ask(PREVIEW_MOVE_PAGE);
+  if (res.status !== 200) return err(`${PREVIEW_MOVE_PAGE} answers ${String(res.status)}, not 200`);
+  if (!(await res.text()).includes('id="move"')) return err(`${PREVIEW_MOVE_PAGE} holds no id="move"`);
+  return ok();
+}
+
+async function seedMoveSection(app: App, admin: User): Promise<Result<void, string>> {
+  const http = forgeHttp(app);
+  const session = createSession(app.db, admin.id);
+  try {
+    return await checkMoveSection((path) =>
+      http.handle(new Request(`http://localhost${path}`, { headers: { cookie: `forge_session=${session.token}` } })),
+    );
+  } finally {
+    destroySession(app.db, session.token);
+    http.close();
+  }
 }
 
 /** The seeded wave's version and headline, which the owner's /waves look shows. */
@@ -170,6 +198,8 @@ export async function seedPreview(
   if (getUserSetting(app.db, admin.id, SEEDED) !== undefined) {
     const settings = await seedSettingsPages(app, admin);
     if (!settings.ok) return settings;
+    const moveSection = await seedMoveSection(app, admin);
+    if (!moveSection.ok) return moveSection;
     const files = await seedConfigFiles(app, admin);
     return files.ok ? ok({ seeded: false }) : files;
   }
@@ -178,6 +208,8 @@ export async function seedPreview(
   setUserSetting(app.db, admin.id, SEEDED, new Date().toISOString());
   const settings = await seedSettingsPages(app, admin);
   if (!settings.ok) return settings;
+  const moveSection = await seedMoveSection(app, admin);
+  if (!moveSection.ok) return moveSection;
   const files = await seedConfigFiles(app, admin);
   return files.ok ? ok({ seeded: true }) : files;
 }

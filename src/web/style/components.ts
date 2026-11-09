@@ -127,8 +127,8 @@ select.input {
 .field > label {
   display: block; font-size: 13px; font-weight: 550; margin: 0 0 6px; color: var(--fg);
 }
-.field .hint { display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 6px; }
-.field .error { display: block; font-size: 12.5px; color: var(--danger); margin-top: 6px; font-weight: 500; }
+.field .hint { display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 6px; overflow-wrap: anywhere; }
+.field .error { display: block; font-size: 12.5px; color: var(--danger); margin-top: 6px; font-weight: 500; overflow-wrap: anywhere; }
 .field[data-invalid] > label { color: var(--danger); }
 /* A group of checks is one field: the legend reads as a label, no frame. */
 fieldset.field { border: 0; padding: 0; min-width: 0; }

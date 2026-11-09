@@ -724,6 +724,7 @@ describe("the look", () => {
     const dark = recordLook(app.db, { ...base, theme: "dark", path: "looks/x-dark.png" });
     expect(dark.id).not.toBe(old.id);
     expect(dark.theme).toBe("dark");
+    expect(lookSlot("/o/r/settings#move", "phone")).toBe("o-r-settings-move-phone");
     expect(lookSlot("/", "phone")).toBe("phone");
     expect(lookSlot("/", "phone", "dark")).toBe("phone-dark");
     expect(lookSlot("/board", "phone", "dark")).toBe("board-phone-dark");
