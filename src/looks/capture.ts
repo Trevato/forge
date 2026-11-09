@@ -381,6 +381,9 @@ async function shoot(
       // only network this browser needs is the forge's own port.
       "--disable-background-networking",
       "--disable-crash-reporter",
+      // The cell's proxy (childEnv carries it) is for the world; this
+      // browser only ever visits the forge's own listener, directly.
+      "--no-proxy-server",
       "--hide-scrollbars",
       "--no-first-run",
       `--user-data-dir=${profile}`,
