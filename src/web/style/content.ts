@@ -414,6 +414,17 @@ form.inline { display: inline; margin-left: auto; }
 .csv-view .num { text-align: right; }
 .csv-more { padding: 10px 12px; margin: 0; }
 
+/* A terminal log (render/log.ts): SGR colours as fixed classes, theme tokens only. */
+.ansi-red { color: var(--danger); }
+.ansi-green { color: var(--success); }
+.ansi-yellow { color: var(--attn); }
+.ansi-blue { color: var(--tok-number); }
+.ansi-magenta { color: var(--merged); }
+.ansi-cyan { color: var(--tok-property); }
+.ansi-gray { color: var(--tok-comment); }
+.ansi-b { font-weight: 700; }
+.ansi-u { text-decoration: underline; }
+
 /* ---- syntax tokens (colors come from the active theme) ----
    Two layers, exactly as the tokenizer emits them: a colour class every
    consumer understands, and — where the web can say something finer — a kind

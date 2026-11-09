@@ -13,6 +13,7 @@ import { isFormConfig } from "./config-format.ts";
 import { csv } from "./csv.ts";
 import { image } from "./image.ts";
 import { claimedMedia, fileKind, HEAD_BYTES, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
+import { log, hasEscape } from "./log.ts";
 import { markdown } from "./markdown.ts";
 import { pdf } from "./pdf.ts";
 import { subtitles } from "./subtitles.ts";
@@ -56,6 +57,8 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   audio,
   video,
   config,
+  log,
+
   subtitles,
   archive,
 };
@@ -92,7 +95,11 @@ export function rendererFor(
   if (blob.kind === "too_large" && !MEDIA_KINDS.has(kind)) return undefined;
   // A kind may draw only some of its files: `config` draws JSON, YAML and
   // TOML as a form, and leaves the rest (INI, .env …) their source.
-  const render = kind === "config" && !isFormConfig(path) ? undefined : renderers[kind];
+  // A log with no escape in it keeps the source view, exactly as plain text.
+  const render =
+    (kind === "config" && !isFormConfig(path)) || (kind === "log" && blob.kind !== "too_large" && !hasEscape(blob.body))
+      ? undefined
+      : renderers[kind];
   if (render === undefined) return undefined;
   return { render, body: blob.kind === "too_large" ? NO_BYTES : blob.body };
 }

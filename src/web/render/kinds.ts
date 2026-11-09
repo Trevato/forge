@@ -23,6 +23,7 @@ export type FileKind =
   | "archive"
   | "config"
   | "markdown"
+  | "log"
   | "subtitles"
   | "text"
   | "binary";
@@ -45,6 +46,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   archive: 50 * MB,
   config: 1 * MB,
   markdown: 1 * MB,
+  log: 1 * MB,
   subtitles: 5 * MB,
   text: 1 * MB,
   binary: 0,
@@ -138,6 +140,8 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   md: "markdown",
   markdown: "markdown",
   mdx: "markdown",
+  log: "log",
+  ansi: "log",
   srt: "subtitles",
   vtt: "subtitles",
 };

@@ -54,6 +54,7 @@ import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
 import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
 import { layoutTable, type Grid } from "../ui/grid.ts";
 import type { Ctx, Screen } from "../app/app.ts";
+import { stripAnsi } from "../term/ansi.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
 import {
@@ -252,12 +253,19 @@ function landing(nodes: readonly Node[]): Node | undefined {
  * spans: the pane draws line numbers itself, so they stay pinned while the
  * code scrolls sideways under them.
  */
-function buildLines(
+function isLogPath(path: string): boolean {
+  return /\.(log|ansi)$/i.test(path);
+}
+
+export function buildLines(
   text: string,
   path: string,
   c: Tokens,
 ): { plain: string[]; lines: Span[][] } {
-  const body = text.replace(/\n$/, "");
+  // A terminal log carries escapes; the viewer shows its text, never drives
+  // the terminal or prints "[31m" as if it were the log.
+  const clean = isLogPath(path) && text.includes("\x1b") ? stripAnsi(text) : text;
+  const body = clean.replace(/\n$/, "");
   const plain = body.split("\n").map((l) => expandTabs(l));
   // The first line is handed to the detector too: a `#!/usr/bin/env python3`
   // with no extension, a `.zshrc`, a vim modeline. The name is the strong
