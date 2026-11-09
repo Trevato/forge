@@ -896,7 +896,7 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .tl-earlier { margin: 0; padding-left: 36px; color: var(--muted-fg); font-size: 13px; }
 .tl-item[data-kind="comment"] { padding-bottom: 16px; }
 .tl-item[data-kind="event"] > .card { flex-basis: 100%; margin: 4px 0 0; color: var(--fg); font-size: 14px; }
-.tl-item[data-kind="event"] > .card .comment-body { padding: 8px 12px; }
+.tl-item[data-kind="event"] > .comment-body { flex-basis: 100%; min-width: 0; margin: 4px 0 0; padding: 0; color: var(--fg); font-size: 14px; }
 
 /* ---- comment card ---- */
 .comment .card-head { background: var(--muted); font-size: 13px; }
