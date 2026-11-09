@@ -1,7 +1,13 @@
 # forge for Claude Code
 
-Set `FORGE_URL` (the forge's address, no trailing slash), then add this directory as a plugin
-(`claude --plugin-dir plugins/claude-code`). It registers the forge's MCP
+Set `FORGE_URL` (the forge's address, no trailing slash), then install it without cloning anything:
+
+```
+/plugin marketplace add $FORGE_URL/trevato/forge.git
+/plugin install forge@forge
+```
+
+(Write the clone URL as the forge prints it, `<FORGE_URL>/trevato/forge.git`; the marketplace is named `forge`.) From a clone, `claude --plugin-dir plugins/claude-code` loads it locally instead. It registers the forge's MCP
 server and a `/forge` command: `new`, `tell`, `status`, `decide`, `plan`, `preview`,
 `pulls`, `runs`, `log`, `asked`.
 

@@ -211,3 +211,26 @@ describe("the two plugin commands offer the same verbs", () => {
     expect(verbDiff(missing, full)).toEqual({ onlyA: [], onlyB: ["plan"] });
   });
 });
+
+describe("the repository is a Claude Code marketplace", () => {
+  test("marketplace.json lists forge, whose directory holds a plugin.json with the same name and version", () => {
+    const market = JSON.parse(read(".claude-plugin/marketplace.json"));
+    expect(market.name).toBe("forge");
+    expect(market.plugins).toHaveLength(1);
+    const entry = market.plugins[0];
+    expect(entry.name).toBe("forge");
+    expect(entry.source).toBe("./plugins/claude-code");
+    const plugin = JSON.parse(read(`${entry.source.slice(2)}/.claude-plugin/plugin.json`));
+    expect(plugin.name).toBe(entry.name);
+    expect(plugin.version).toBe(entry.version);
+  });
+
+  test("both docs show the two commands and the install", () => {
+    for (const p of ["plugins/claude-code/README.md", "docs/MCP.md"]) {
+      const t = read(p);
+      expect(t).toContain("/plugin marketplace add");
+      expect(t).toContain("/plugin install forge@forge");
+      expect(t).toContain("--plugin-dir plugins/claude-code");
+    }
+  });
+});
