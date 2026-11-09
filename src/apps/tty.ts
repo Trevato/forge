@@ -18,6 +18,7 @@
  * one.
  */
 
+import { shellCommand } from "./run_command.ts";
 import { killTree, openCell, type Cell } from "./contain.ts";
 import type { App as Forge } from "../app.ts";
 import { getAppBySlug, type AppRecord } from "../core/apps.ts";
@@ -200,7 +201,7 @@ export async function runAppTty(
     user === undefined ? "" : canWrite(forge.db, repo, user) ? "admin" : "user";
   // The terminal is held exactly as the app is (`apps/contain.ts`).
   const cell = live.cell === undefined ? undefined : openCell(live.cell);
-  const program = startTerminal(`exec ${live.tty}`, {
+  const program = startTerminal(shellCommand(live.tty), {
     terminal,
     env,
     cwd: live.dir,
