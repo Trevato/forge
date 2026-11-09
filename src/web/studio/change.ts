@@ -62,7 +62,7 @@ import {
   verdictBadge,
   type Tone,
 } from "../ui.ts";
-import { previewCard } from "../pages/apps.ts";
+import { previewBlock } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
 import { approveHereCard, pullChecksLineFor, teamsCard } from "../pages/pull.ts";
 import { guestWalls, strangerCard } from "../pages/pull-guest.ts";
@@ -429,7 +429,7 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull, spent: Spent = newSp
   </p>`;
 
   const preview = tick(spent, "preview", () =>
-    when(record, () => previewCard(ctx, repo, pull)),
+    when(record, () => previewBlock(ctx, repo, pull)),
   );
   return {
     record,

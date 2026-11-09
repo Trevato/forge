@@ -31,7 +31,7 @@ import { html, raw, when, type Html } from "../html.ts";
 import { runLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { badge, btn, card, listCard, row as stepRow, sha, type Tone } from "../ui.ts";
-import { previewCard } from "../pages/apps.ts";
+import { previewBlock } from "../pages/apps.ts";
 import { costText, durationText, RUN_PAGE_CSS, runTitle, runTokens } from "../pages/runs.ts";
 import { placementLine, sandboxLine } from "./sandbox.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
@@ -254,7 +254,7 @@ export async function runView(
           </form>
         </div>`,
     )}
-    ${when(pull, (p) => previewCard(ctx, repo, p))}
+    ${when(pull, (p) => previewBlock(ctx, repo, p))}
     ${when(
       logHidden,
       () =>

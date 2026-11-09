@@ -77,7 +77,6 @@ import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
   btn,
-  card,
   envFacts,
   envStateBadge,
   icon,
@@ -661,53 +660,38 @@ export function appPage(ctx: Ctx): Response {
   return response;
 }
 
-// ---- the pull page's preview card ----
+// ---- the pull page's preview block ----
 
-/**
- * How the preview card looks: a quiet one is bare (heading over rows, no
- * box); a failed one or one that needs attention keeps its tone and box,
- * since a bare card draws no tone.
- */
-export function previewLook(env: EnvStatus): {
-  extra: string;
-  tone?: "danger" | "attn";
-} {
-  if (env.state === "failed" || env.error !== undefined)
-    return { extra: "env-card", tone: "danger" };
-  if (env.failedDeploy !== undefined) return { extra: "env-card", tone: "attn" };
-  return { extra: "bare env-card" };
-}
-
-/** Where this pull's preview stands, with the way in. */
-export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
-  return previewWith(ctx, repo, pull, card);
-}
-
-/** The same preview facts as a block under an h2, the home page's language. */
-export function previewBlock(ctx: Ctx, repo: Repo, pull: Pull): Html {
-  return previewWith(ctx, repo, pull, (body, o) =>
-    html`<section
-      class="settings-block"
-      data-preview-block
-      ${o.tone ? html`data-tone="${o.tone}"` : null}
-    >
-      <div class="bar">${o.head}</div>
-      ${o.tone === "danger"
-        ? html`<p class="small" role="status">This preview has failed.</p>`
-        : o.tone === "attn"
-          ? html`<p class="muted small" role="status">The last deploy of this preview failed.</p>`
-          : null}
-      ${body}
-    </section>`,
-  );
-}
-
-function previewWith(
-  ctx: Ctx,
-  repo: Repo,
-  pull: Pull,
-  card: (body: Html, o: { head: Html; extra?: string; tone?: "danger" | "attn" }) => Html,
+/** The block itself: a bar with the heading, a status line when it failed, then the body. */
+export function previewSection(
+  body: Html,
+  head: Html,
+  tone?: "danger" | "attn",
 ): Html {
+  return html`<section
+    class="settings-block"
+    data-preview-block
+    ${tone ? html`data-tone="${tone}"` : null}
+  >
+    <div class="bar">${head}</div>
+    ${tone === "danger"
+      ? html`<p class="small" role="status">This preview has failed. Push again to redeploy it.</p>`
+      : tone === "attn"
+        ? html`<p class="muted small" role="status">The last deploy of this preview failed. Push again to redeploy it.</p>`
+        : null}
+    ${body}
+  </section>`;
+}
+
+/** How loud a preview reads: danger when it failed or errs, attn when only its last deploy failed. */
+export function envTone(env: EnvStatus): "danger" | "attn" | undefined {
+  if (env.state === "failed" || env.error !== undefined) return "danger";
+  if (env.failedDeploy !== undefined) return "attn";
+  return undefined;
+}
+
+/** Where this pull's preview stands, with the way in: a plain block under an h2, the home page's language. */
+export function previewBlock(ctx: Ctx, repo: Repo, pull: Pull): Html {
   const view = appView(ctx.app, ctx.auth.user, repo);
   if (!view.ok) return html``;
   const base = repoBase(repo);
@@ -718,9 +702,9 @@ function previewWith(
     <h2>Preview</h2>
     ${env === undefined ? null : envStateBadge(env.state, env.dormant !== undefined)}`;
   if (!view.value.serving)
-    return card(
+    return previewSection(
       html`<p class="muted small">Nothing is serving apps on this forge.</p>`,
-      { head, extra: "bare" },
+      head,
     );
   if (env === undefined) {
     const why =
@@ -729,13 +713,13 @@ function previewWith(
         : pull.state === "closed"
           ? "The preview was removed when this closed. Reopen the pull request and it comes back."
           : "No preview yet — one starts when this pull request's head deploys.";
-    return card(html`<p class="muted small">${why}</p>`, { head, extra: "bare" });
+    return previewSection(html`<p class="muted small">${why}</p>`, head);
   }
   // A preview's terminal is a different login from production's — its own
   // command, shown only to a writer, same as the app page's.
   const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
   const dataNote = previewDataNote(view.value.app.previewData, pull.createdAt);
-  return card(
+  return previewSection(
     html`${envFacts(base, env)}
       ${dataNote === null ? null : html`<p class="muted small">${dataNote}</p>`}
       ${when(writer, () =>
@@ -756,10 +740,8 @@ function previewWith(
               icon: "external",
             })}
       </div>`,
-    {
-      head,
-      ...previewLook(env),
-    },
+    head,
+    envTone(env),
   );
 }
 

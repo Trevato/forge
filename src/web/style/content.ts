@@ -662,7 +662,6 @@ form.inline { display: inline; margin-left: auto; }
    line to be read on. The facts and the error read the same wherever they
    are shown — a pull's preview, the studio head — so they are not scoped to
    the card. */
-.env-card .card-head { gap: 10px; }
 .env-facts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted-fg); overflow-wrap: anywhere; }
 .env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
 /* The checks line inside the merge box, in the reviews chip's voice. */

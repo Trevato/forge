@@ -81,7 +81,7 @@ export const tool: Tool = {
     });
     // What the card needs and the text does not say: where the pull lives
     // and its preview, only when that environment exists — the pull page's
-    // door, `previewCard`, reads the same `appView`.
+    // door, `previewBlock`, reads the same `appView`.
     const view = appView(ctx.app, user, repo);
     const env = view.ok
       ? view.value.environments.find((e) => e.env === previewEnv(pull.number))

@@ -67,7 +67,7 @@ import {
   time,
   userLink,
 } from "../ui.ts";
-import { previewCard } from "../pages/apps.ts";
+import { previewBlock } from "../pages/apps.ts";
 import {
   costText,
   durationText,
@@ -370,7 +370,7 @@ async function tellRuns(
 }
 
 /** The pull that closes this tell, with its check and a way into its
- * preview — nothing here that the change page or `previewCard` do not
+ * preview — nothing here that the change page or `previewBlock` do not
  * already draw. */
 async function tellClosingPull(
   ctx: Ctx,
@@ -386,7 +386,7 @@ async function tellClosingPull(
       ${wordBadge(word)} <span class="muted small">${note}</span>
     </p>`,
     { head: html`${icon("pull")} <h2>Closes with</h2>` },
-  )}${previewCard(ctx, repo, pull)}`;
+  )}${previewBlock(ctx, repo, pull)}`;
 }
 
 /**
