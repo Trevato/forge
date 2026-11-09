@@ -7,6 +7,10 @@
  * A pattern that needs a parameter the seed cannot supply is named in
  * `UNSEEDED` with why — it is still requested, with a placeholder, so its
  * miss answers carry the floor too — and the list is checked both ways.
+ *
+ * The two passes' request loops are timed together and held under 5 s
+ * (`SWEEP_CEILING_MS`, #10401), 32 requests in flight against the one
+ * server; server boot and the seed are not counted.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -27,6 +31,7 @@ import { repoDir } from "../src/git/repos.ts";
 import { buildApiRouter, buildRouter, serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { pool, SWEEP_CEILING_MS, timed } from "./helpers/sweep-clock.ts";
 
 quietLogs();
 
@@ -218,10 +223,14 @@ async function floor(path: string, headers: Record<string, string>): Promise<str
 
 const allPaths = (): string[] => [...getPatterns().map(pathFor), "/no/such/path/at/all", "/api/v1/no-such-route"];
 
+/** Milliseconds the two passes' request loops took, summed; boot and seed are not counted. */
+let loopMs = 0;
+
 async function missingFloor(headers: Record<string, string>): Promise<string[]> {
-  const missing: string[] = [];
-  for (const path of allPaths()) missing.push(...(await floor(path, headers)));
-  return missing;
+  const paths = allPaths();
+  const { value, ms } = await timed(() => pool(paths, (path) => floor(path, headers)));
+  loopMs += ms;
+  return value.flat();
 }
 
 test("every GET route, and an unknown path, carries the floor signed out", async () => {
@@ -231,6 +240,11 @@ test("every GET route, and an unknown path, carries the floor signed out", async
 test("every GET route, and an unknown path, carries the floor signed in", async () => {
   expect(await missingFloor({ cookie })).toEqual([]);
 }, 9_000);
+
+test("the two passes' request loops together take under 5 s, so the sweep stays cheap enough for every push", () => {
+  expect(loopMs).toBeGreaterThan(0);
+  expect(loopMs).toBeLessThan(SWEEP_CEILING_MS);
+});
 
 test("the patterns the seed cannot fill are exactly the ones named, each with a reason", () => {
   const computed = getPatterns().filter(unseeded).sort();
