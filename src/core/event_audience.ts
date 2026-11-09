@@ -27,10 +27,10 @@ import type { Database } from "bun:sqlite";
 import type { ForgeEvent } from "./events.ts";
 import { getAppByRepo } from "./apps.ts";
 import { personOwners } from "./orgs.ts";
-import { canAdmin, canEnterApp, canSeeOwnerFacts, getRepoById } from "./repos.ts";
+import { canAdmin, canEnterApp, canWrite, canSeeOwnerFacts, getRepoById } from "./repos.ts";
 import type { User } from "./users.ts";
 
-export type EventAudience = "readers" | "admins" | "actor" | "app";
+export type EventAudience = "readers" | "admins" | "actor" | "app" | "writers";
 
 /**
  * Whether this viewer answers for a deleted repository: the forge's admin, who
@@ -243,6 +243,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind === "repo.file_released"
   )
     return "admins";
+  // A broken adapter sync is for those who may write the repository (`apps/pull.ts`).
+  if (kind === "adapter.sync_failed") return "writers";
   // A fleet operation spans repositories; its receipt is its actor's. So is
   // a thought: it belongs to no repository and to nobody but its author.
   if (
@@ -289,6 +291,15 @@ export function audienceFilter(
     const repo = getRepoById(db, repoId);
     const yes = repo !== undefined && canAdmin(db, repo, viewer);
     admins.set(repoId, yes);
+    return yes;
+  };
+  const writers = new Map<string, boolean>();
+  const mayWrite = (repoId: string): boolean => {
+    const known = writers.get(repoId);
+    if (known !== undefined) return known;
+    const repo = getRepoById(db, repoId);
+    const yes = repo !== undefined && canWrite(db, repo, viewer);
+    writers.set(repoId, yes);
     return yes;
   };
   const entrants = new Map<string, boolean>();
@@ -348,6 +359,8 @@ export function audienceFilter(
         return true;
       case "app":
         return event.repoId === null || mayEnter(event.repoId);
+      case "writers":
+        return event.repoId !== null && mayWrite(event.repoId);
       case "actor":
         return viewer !== undefined && event.actorId === viewer.id;
       case "admins":

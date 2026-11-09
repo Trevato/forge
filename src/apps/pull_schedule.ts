@@ -16,6 +16,7 @@
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
+import type { EventBus } from "../core/events.ts";
 import { getRepoById } from "../core/repos.ts";
 import { lastPullAt, type PullRun } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
@@ -76,6 +77,7 @@ async function pullOnce<Held extends string = never>(
   reach: PullReach,
   now: () => number,
   hold: (adapter: AdapterSpec) => Held | undefined = () => undefined,
+  bus?: Pick<EventBus, "append">,
 ): Promise<PullOnce<Held>> {
   const port = reach.port();
   if (port === undefined) return { ok: false, why: "asleep" };
@@ -88,22 +90,34 @@ async function pullOnce<Held extends string = never>(
     if (held !== undefined) return { ok: false, why: held };
     const started = now();
     const answer = answerOf(await reach.post(port));
-    return { ok: true, run: recordPull(db, appId, { ...answer, durationMs: Math.max(0, now() - started) }) };
+    return { ok: true, run: recordPull(db, appId, { ...answer, durationMs: Math.max(0, now() - started) }, bus) };
   } finally {
     inFlight.delete(appId);
   }
 }
 
 /** Pull one app if it is a running adapter and due: whether a pull was made. */
-export async function pullApp(db: Database, appId: string, reach: PullReach, now: () => number = Date.now): Promise<boolean> {
+export async function pullApp(
+  db: Database,
+  appId: string,
+  reach: PullReach,
+  now: () => number = Date.now,
+  bus?: Pick<EventBus, "append">,
+): Promise<boolean> {
   const notDue = (adapter: AdapterSpec) =>
     isPullDue(lastPullAt(db, appId), adapter.schedule.every, now()) ? undefined : ("not_due" as const);
-  return (await pullOnce(db, appId, reach, now, notDue)).ok;
+  return (await pullOnce(db, appId, reach, now, notDue, bus)).ok;
 }
 
 /** Pull one app now, whatever its schedule (#10084): the recorded run, or why not. Never wakes it. */
-export function pullAppNow(db: Database, appId: string, reach: PullReach, now: () => number = Date.now): Promise<PullOnce> {
-  return pullOnce(db, appId, reach, now);
+export function pullAppNow(
+  db: Database,
+  appId: string,
+  reach: PullReach,
+  now: () => number = Date.now,
+  bus?: Pick<EventBus, "append">,
+): Promise<PullOnce> {
+  return pullOnce(db, appId, reach, now, undefined, bus);
 }
 
 /** Who the forge says it is when it pulls: an admin of the app, named for itself. */
@@ -203,7 +217,7 @@ export async function pullDue(
   const pulled: string[] = [];
   for (const record of listApps(app.db)) {
     try {
-      if (await pullApp(app.db, record.id, reachOf(record), now)) pulled.push(record.slug);
+      if (await pullApp(app.db, record.id, reachOf(record), now, app.bus)) pulled.push(record.slug);
     } catch (error) {
       app.log.warn("could not pull an adapter", { app: record.slug, error: String(error) });
     }

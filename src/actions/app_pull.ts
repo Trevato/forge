@@ -38,6 +38,6 @@ export async function pullNow(
   if (!writer.ok) return writer;
   const record = getAppByRepo(app.db, repo.id);
   if (!record) return err("not_found");
-  const pulled = await pullAppNow(app.db, record.id, reachOf(record));
+  const pulled = await pullAppNow(app.db, record.id, reachOf(record), Date.now, app.bus);
   return pulled.ok ? ok(pulled.run) : err(pulled.why);
 }

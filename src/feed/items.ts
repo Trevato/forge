@@ -161,6 +161,8 @@ export function quietRunsFor(
     .filter((e) => quiet.has(e.id) && repos.get(e.repoId!)?.archivedAt == null)
     .map((e) => ({ repoId: e.repoId!, actorId: e.actorId, id: e.id }));
 }
+/** How much of a sync failure's stored reason (`PULL_REASON_MAX`, `apps/pull.ts`) a feed line shows. */
+const SYNC_REASON_SHOWN = 120;
 const clip = (s: string, n = 120): string =>
   s.length > n ? `${s.slice(0, n - 1)}…` : s;
 
@@ -628,6 +630,17 @@ function fromEvent(
         link: failLink,
         urgency: state === "failed" ? 4 : 0,
         what: `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} run${subject} ${state === "failed" ? "failed" : "finished"}${state === "failed" ? (failure ? `: ${failure}` : "") : summary ? `: ${summary}` : ""}`,
+      };
+    }
+    case "adapter.sync_failed": {
+      const reason = clip(typeof p["reason"] === "string" ? p["reason"] : "", SYNC_REASON_SHOWN);
+      return {
+        ...common,
+        kind: "run",
+        link: `${base(repo)}/app`,
+        urgency: 4,
+        said: `${slug(repo)} sync failed: ${reason}`,
+        what: `sync failed: ${reason}`,
       };
     }
     case "pull.opened":

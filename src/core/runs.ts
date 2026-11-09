@@ -1588,6 +1588,17 @@ export function listPullRuns(db: Database, appId: string, limit = 50): PullRun[]
     .map(toPullRun);
 }
 
+/** The state of an app's newest pull run; undefined before the first. */
+export function lastPullState(db: Database, appId: string): "ok" | "failed" | undefined {
+  return (
+    db
+      .query<{ state: "ok" | "failed" }, [string]>(
+        `SELECT state FROM pull_run WHERE app_id = ?1 ORDER BY id DESC LIMIT 1`,
+      )
+      .get(appId)?.state ?? undefined
+  );
+}
+
 /** When an app's last pull, good or failed, was recorded, in ms since the epoch; undefined before the first. */
 export function lastPullAt(db: Database, appId: string): number | undefined {
   const row = db

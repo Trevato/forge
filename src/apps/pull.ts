@@ -9,7 +9,9 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { createPullRun, lastPullCursor, listPullRuns, type PullRun } from "../core/runs.ts";
+import { getAppById } from "../core/apps.ts";
+import { EventBus } from "../core/events.ts";
+import { createPullRun, lastPullCursor, lastPullState, listPullRuns, type PullRun } from "../core/runs.ts";
 
 /** A body over this many bytes is a failed pull, never parsed. */
 export const PULL_BODY_MAX = 64 * 1024;
@@ -18,7 +20,7 @@ export const PULL_COUNT_MAX = 1_000_000;
 /** The cursor is at most this many characters (code points). */
 export const PULL_CURSOR_MAX = 200;
 /** A failed pull's reason is cut to this many characters. */
-const REASON_MAX = 200;
+export const PULL_REASON_MAX = 200;
 
 const FIELDS = ["pulled", "skipped", "cursor", "errors"] as const;
 const COUNTS = ["pulled", "skipped", "errors"] as const;
@@ -39,7 +41,7 @@ export type PullAnswer =
 /** An answer and how long the request took, as `recordPull` takes it. */
 export type PullOutcome = PullAnswer & { readonly durationMs: number };
 
-const fail = (reason: string): PullAnswer => ({ ok: false, reason: reason.slice(0, REASON_MAX) });
+const fail = (reason: string): PullAnswer => ({ ok: false, reason: reason.slice(0, PULL_REASON_MAX) });
 
 /**
  * Any control, format, private-use, unassigned or surrogate character, or a
@@ -110,13 +112,26 @@ const durationOf = (ms: number): number => (Number.isFinite(ms) && ms > 0 ? Math
  * the last good cursor stays where the next pull starts. A good answer whose
  * cursor equals the last good pull's is a repeat: it is recorded, with its
  * `pulled` counted as skipped and nothing written, so the same records never
- * count as written twice. The read and the write are one transaction, so two
- * recordings of the same answer cannot both see a fresh cursor.
+ * count as written twice. A failed pull after an ok one (or the first) also
+ * appends one `adapter.sync_failed` event, after the transaction commits, so
+ * a live viewer never hears of a run that rolled back; repeats and recoveries
+ * append none. The read and the write are one transaction, so two recordings
+ * of the same answer cannot both see a fresh cursor.
  */
-export function recordPull(db: Database, appId: string, outcome: PullOutcome): PullRun {
+export function recordPull(
+  db: Database,
+  appId: string,
+  outcome: PullOutcome,
+  bus: Pick<EventBus, "append"> = new EventBus(db),
+): PullRun {
   const durationMs = durationOf(outcome.durationMs);
-  return db.transaction((): PullRun => {
+  let speak: { repoId: string; reason: string } | undefined;
+  const run = db.transaction((): PullRun => {
     if (!outcome.ok) {
+      // Only the turn from ok (or from nothing) to failed speaks.
+      const record = lastPullState(db, appId) !== "failed" ? getAppById(db, appId) : undefined;
+      const reason = outcome.reason.slice(0, PULL_REASON_MAX);
+      if (record !== undefined) speak = { repoId: record.repoId, reason };
       return createPullRun(db, {
         appId,
         state: "failed",
@@ -125,7 +140,7 @@ export function recordPull(db: Database, appId: string, outcome: PullOutcome): P
         failed: 0,
         cursor: "",
         durationMs,
-        reason: outcome.reason.slice(0, REASON_MAX),
+        reason,
         repeat: false,
       });
     }
@@ -142,6 +157,17 @@ export function recordPull(db: Database, appId: string, outcome: PullOutcome): P
       repeat,
     });
   }).immediate();
+  if (speak !== undefined) {
+    bus.append({
+      // The literal stays a literal: the audience-coverage scan
+      // (`core/event_audience.ts`) reads event kinds from `append` calls, and
+      // a constant would hide this one from it.
+      kind: "adapter.sync_failed",
+      repoId: speak.repoId,
+      payload: { appId, reason: speak.reason },
+    });
+  }
+  return run;
 }
 
 /** How many runs `pullRunLines` answers when asked for none in particular, and at most. */
