@@ -49,7 +49,6 @@ import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import {
   btn,
-  card,
   field as formField,
   iconBtn,
   listCard,
@@ -197,14 +196,14 @@ export function orgsCard(ctx: Ctx, user: User): Html {
 export function terminalCard(ctx: Ctx): Html {
   const ssh = sshCommand(ctx.app);
   if (ssh === undefined) return html``;
-  return card(
-    terminalCommand(
+  return html`<section class="settings-block" id="terminal">
+    <h2>Terminal</h2>
+    ${terminalCommand(
       ssh,
       ctx.app.config.sshHostKey,
       html`<a class="small" href="/settings/keys">SSH keys</a>`,
-    ),
-    { head: html`<h2>Terminal</h2>` },
-  );
+    )}
+  </section>`;
 }
 
 // GET / — the one home: a stranger gets the door, and a signed-in person
