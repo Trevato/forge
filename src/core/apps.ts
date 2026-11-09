@@ -236,6 +236,7 @@ export function deleteApp(db: Database, appId: string): boolean {
     db.run("DELETE FROM app_feature WHERE app_id = ?1", [appId]);
     db.run("DELETE FROM app_feature_setting WHERE app_id = ?1", [appId]);
     db.run("DELETE FROM feature_fire WHERE app_id = ?1", [appId]);
+    db.run("DELETE FROM pull_run WHERE app_id = ?1", [appId]);
     return db.query("DELETE FROM app WHERE id = ?1").run(appId).changes > 0;
   })();
 }

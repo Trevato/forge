@@ -11,9 +11,10 @@ answer and records each pull as a run.
 ## Status
 
 This is the contract, not a description of running code. Today the forge does
-not read the `adapter` block, does not call `POST /pull` and does not record
-pull runs. An adapter written to this page is an ordinary app until that work
-lands. The rest of the forge's app rules apply to it now: see
+not read the `adapter` block and does not call `POST /pull`. The answer's
+checks and the pull run record exist (`src/apps/pull.ts`: `parsePullAnswer`,
+`recordPull`, kept in the `pull_run` table), but nothing calls them yet. An
+adapter written to this page is an ordinary app until that work lands. The rest of the forge's app rules apply to it now: see
 [`docs/APPS.md`](APPS.md).
 
 ## The `adapter` block in forge.json

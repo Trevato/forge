@@ -1474,3 +1474,116 @@ export function runningCount(db: Database, repoId: string): number {
       .get(repoId)?.n ?? 0
   );
 }
+
+/**
+ * A run of kind `pull`: one `POST /pull` the forge made to an adapter
+ * (docs/ADAPTERS.md), kept in `pull_run` because `run.kind`'s CHECK cannot
+ * widen without a rebuild (migration `20261109120000-pull-run`). Plain data:
+ * what the answer is worth is decided in `apps/pull.ts`, which writes here.
+ */
+export interface PullRun {
+  readonly id: string;
+  readonly appId: string;
+  readonly kind: "pull";
+  readonly state: "ok" | "failed";
+  /** Records the pull wrote — the answer's `pulled`; 0 on a repeat or a failure. */
+  readonly written: number;
+  /** Records read and not written — the answer's `skipped`. */
+  readonly skipped: number;
+  /** Records that failed — the answer's `errors`. */
+  readonly failed: number;
+  /** Where the next pull starts; empty on a failed pull. */
+  readonly cursor: string;
+  readonly durationMs: number;
+  /** Why a failed pull failed, or what a repeat was; empty otherwise. */
+  readonly reason: string;
+  /** The cursor matched the last good pull's, so nothing counted as written. */
+  readonly repeat: boolean;
+  readonly createdAt: string;
+}
+
+interface PullRunRow {
+  id: string;
+  app_id: string;
+  state: "ok" | "failed";
+  written: number;
+  skipped: number;
+  failed: number;
+  cursor: string;
+  duration_ms: number;
+  reason: string;
+  repeat: number;
+  created_at: string;
+}
+
+const toPullRun = (r: PullRunRow): PullRun => ({
+  id: r.id,
+  appId: r.app_id,
+  kind: "pull",
+  state: r.state,
+  written: r.written,
+  skipped: r.skipped,
+  failed: r.failed,
+  cursor: r.cursor,
+  durationMs: r.duration_ms,
+  reason: r.reason,
+  repeat: r.repeat !== 0,
+  createdAt: r.created_at,
+});
+
+export interface CreatePullRunInput {
+  appId: string;
+  state: "ok" | "failed";
+  written: number;
+  skipped: number;
+  failed: number;
+  cursor: string;
+  durationMs: number;
+  reason: string;
+  repeat: boolean;
+}
+
+/** Write one finished pull run. The table's CHECKs refuse what `apps/pull.ts` should already have. */
+export function createPullRun(db: Database, input: CreatePullRunInput): PullRun {
+  const runId = id();
+  db.query(
+    `INSERT INTO pull_run (id, app_id, state, written, skipped, failed, cursor, duration_ms, reason, repeat)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+  ).run(
+    runId,
+    input.appId,
+    input.state,
+    input.written,
+    input.skipped,
+    input.failed,
+    input.cursor,
+    input.durationMs,
+    input.reason.slice(0, 500),
+    input.repeat ? 1 : 0,
+  );
+  return toPullRun(
+    db.query<PullRunRow, [string]>("SELECT * FROM pull_run WHERE id = ?1").get(runId)!,
+  );
+}
+
+/** The cursor of an app's last good pull, from `pull_run_app_ok`; undefined before the first. */
+export function lastPullCursor(db: Database, appId: string): string | undefined {
+  return (
+    db
+      .query<{ cursor: string }, [string]>(
+        `SELECT cursor FROM pull_run
+          WHERE app_id = ?1 AND state = 'ok' ORDER BY id DESC LIMIT 1`,
+      )
+      .get(appId)?.cursor ?? undefined
+  );
+}
+
+/** An app's pull runs, newest first, from `pull_run_app`. */
+export function listPullRuns(db: Database, appId: string, limit = 50): PullRun[] {
+  return db
+    .query<PullRunRow, [string, number]>(
+      `SELECT * FROM pull_run WHERE app_id = ?1 ORDER BY id DESC LIMIT ?2`,
+    )
+    .all(appId, Math.max(1, Math.min(500, Math.trunc(limit))))
+    .map(toPullRun);
+}
