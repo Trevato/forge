@@ -10,3 +10,6 @@ instead of redirecting.
 The commit section of the editor and the delete page add no component class. As on the home page they are a heading, plain
 sentences, the fields and the one button, no box: each is a `<section class="settings-block">` with an `<h2>` (the commit
 section keeps `.editor-commit` for its spacing). Field names and the `data-preview`/`data-path` hooks are unchanged.
+
+The issue page's folded Edit form is the same: plain title and body fields and Save, no box (`.card` and `.comment-form`
+are gone from it), spaced like the home composer. It adds no component class.

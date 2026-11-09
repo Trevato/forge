@@ -309,7 +309,7 @@ export interface ConversationOptions {
 function editForm(issue: Issue, action: string): Html {
   return html`<details class="tl-edit" id="edit">
     <summary class="muted small">${icon("pencil")} Edit</summary>
-    <form class="card comment-form mt" method="post" action="${action}">
+    <form class="mt" method="post" action="${action}">
       <label class="sr-only" for="edit-title">Title</label>
       <input
         class="input"
