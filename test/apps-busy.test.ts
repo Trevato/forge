@@ -22,25 +22,45 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 
 /**
- * The app under test: `/work?s=N` starts a child that works for N seconds
- * and answers at once; `/stream` is an event stream that stays open until
- * the browser goes away.
+ * The app under test: `/work` starts a child that works until `/done` ends
+ * it; `/slow` answers only once `/answer` is asked (`/waiting` counts
+ * those held); `/stream` is an event
+ * stream that stays open until the browser goes away. Nothing in it waits
+ * on the wall clock, so the suite never does either.
  */
 const BUSY_SERVER = `const port = Number(process.env.PORT ?? "0");
+const children = new Set<ReturnType<typeof Bun.spawn>>();
+const waiting: Array<() => void> = [];
 export const server = Bun.serve({
   port,
-  fetch(request) {
+  async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/work") {
-      Bun.spawn(["sleep", String(Number(url.searchParams.get("s") ?? "1"))], {
+      const child = Bun.spawn(["sleep", "300"], {
         stdio: ["ignore", "ignore", "ignore"],
       });
+      children.add(child);
       return new Response("working");
+    }
+    if (url.pathname === "/done") {
+      for (const child of children) {
+        child.kill();
+        await child.exited;
+      }
+      children.clear();
+      return new Response("done");
     }
     if (url.pathname === "/slow") {
       return new Promise((resolve) =>
-        setTimeout(() => resolve(new Response("late")), 2000),
+        waiting.push(() => resolve(new Response("late"))),
       );
+    }
+    if (url.pathname === "/waiting") {
+      return new Response(String(waiting.length));
+    }
+    if (url.pathname === "/answer") {
+      for (const answer of waiting.splice(0)) answer();
+      return new Response("answered");
     }
     if (url.pathname === "/stream") {
       let timer: ReturnType<typeof setInterval> | undefined;
@@ -86,8 +106,14 @@ describe("apps that are busy", () => {
   let record: AppRecord;
   const DOMAIN = "apps.test";
   const HOST = `busy.${DOMAIN}`;
-  const WINDOW = 700;
-  const GRACE = 4_000;
+  // Windows of the sweep's own clock, which the suite runs ahead by hand:
+  // no real wait ever reaches them, so nothing sleeps unless a test says so.
+  const WINDOW = 60 * 60_000;
+  const GRACE = 10 * 60_000;
+  /** How far the sweep's clock runs ahead of the wall's. */
+  let ahead = 0;
+  /** How many sweeps have read the clock. */
+  let sweeps = 0;
 
   const viaHost = (path = "/", init: RequestInit = {}) =>
     fetch(`${servers.url}${path}`, {
@@ -104,7 +130,7 @@ describe("apps that are busy", () => {
     while (Date.now() < deadline) {
       const value = read();
       if (value !== undefined) return value;
-      await Bun.sleep(50);
+      await Bun.sleep(5);
     }
     throw new Error("did not happen in time");
   }
@@ -114,14 +140,32 @@ describe("apps that are busy", () => {
         (r) => where(r) && (r.state === "ok" || r.state === "failed"),
       ),
     );
+  /**
+   * Run the sweep's clock to `ms` past the wall and wait for two sweeps to
+   * read it: the first decides synchronously after its read, so by the
+   * second every environment has been judged at that hour.
+   */
+  async function sweepAt(ms: number): Promise<void> {
+    ahead = ms;
+    const from = sweeps;
+    await until(() => (sweeps >= from + 2 ? true : undefined), 10_000);
+  }
   const asleep = () =>
-    until(() => (production().state === "asleep" ? true : undefined), 20_000);
+    until(() => (production().state === "asleep" ? true : undefined), 10_000);
   const log = (): string =>
     readRunLog(dataDir, production().runId!, 64 * 1024).lines.join("\n");
+  /** What the run log gained after `before`. */
+  const since = (before: string): string => log().slice(before.length);
 
-  /** Wake production and wait for it to fall asleep, so each test starts rested. */
+  /** Put production to sleep and wake it, so each test starts rested. */
   async function freshlyAwake(): Promise<void> {
-    if (production().state !== "asleep") await asleep();
+    if (production().state !== "asleep") {
+      await viaHost("/done");
+      await viaHost("/answer");
+      await sweepAt(WINDOW + GRACE + 60_000);
+      await asleep();
+    }
+    ahead = 0;
     expect((await viaHost("/")).status).toBe(200);
     expect(production().state).toBe("running");
   }
@@ -135,9 +179,12 @@ describe("apps that are busy", () => {
       scheme: "http",
       publicPort: servers.port,
       forgeUrl: servers.url,
-      // Long enough for the scaffold and the busy app to deploy and settle.
-      sleepAfterMs: { production: 3_600_000, preview: 3_600_000 },
-      sweepEveryMs: 100,
+      sleepAfterMs: { production: WINDOW, preview: WINDOW },
+      clock: () => {
+        sweeps++;
+        return Date.now() + ahead;
+      },
+      sweepEveryMs: 10,
       busyGraceMs: GRACE,
     });
     await runtime.start();
@@ -176,18 +223,6 @@ describe("apps that are busy", () => {
         r.env === "production" && r.commitOid === committed.value.commitOid,
     );
     if (run.state !== "ok") throw new Error(`deploy failed: ${run.summary}`);
-    // The runtime the rest of the suite judges: the same data, a short window.
-    await runtime.stop();
-    runtime = new AppsRuntime(app, {
-      domain: DOMAIN,
-      scheme: "http",
-      publicPort: servers.port,
-      forgeUrl: servers.url,
-      sleepAfterMs: { production: WINDOW, preview: WINDOW },
-      sweepEveryMs: 100,
-      busyGraceMs: GRACE,
-    });
-    await runtime.start();
     await until(() => (production().state === "running" ? true : undefined));
   }, 180_000);
 
@@ -199,24 +234,29 @@ describe("apps that are busy", () => {
   });
 
   test("an idle app still sleeps, and says nothing about being busy", async () => {
+    // Invariant: idle past its window, an app with no work sleeps, and no busy is said.
     await freshlyAwake();
+    const before = log();
+    await sweepAt(WINDOW - 60_000);
+    expect(production().state).toBe("running");
+    await sweepAt(WINDOW);
     await asleep();
     expect(production().busy).toBeUndefined();
-    expect(log()).toContain("asleep: nothing asked for it");
-  }, 30_000);
+    expect(since(before)).toContain("asleep: nothing asked for it");
+  });
 
   test.skipIf(noProc)(
     "an app whose child is still working survives the sweep, then sleeps once it is done",
     async () => {
+      // Invariant: a working child keeps it awake past the window, the pages say so, and it sleeps once the child is gone.
       await freshlyAwake();
-      // Five seconds of work: long enough that a loaded machine still checks
-      // while the child is busy (two seconds raced the check under load).
-      expect(await (await viaHost("/work?s=5")).text()).toBe("working");
+      const before = log();
+      expect(await (await viaHost("/work")).text()).toBe("working");
       // Well past the idle window, and still up: it was asked, and it is busy.
-      await Bun.sleep(WINDOW + 700);
+      await sweepAt(WINDOW + 60_000);
       expect(production().state).toBe("running");
       expect(production().busy).toContain("child processes");
-      expect(log()).toContain("kept awake: busy");
+      expect(since(before)).toContain("kept awake: busy");
 
       // The app page and the Now card both say why it is up.
       const page = await (await fetch(`${servers.url}/alice/busy/app`)).text();
@@ -228,22 +268,30 @@ describe("apps that are busy", () => {
       expect(now).toContain("its child processes are still working");
 
       // The child finishes; the next sweep finds nothing to wait for.
+      expect(await (await viaHost("/done")).text()).toBe("done");
+      await sweepAt(WINDOW + 60_000);
       await asleep();
       expect(production().busy).toBeUndefined();
     },
-    30_000,
   );
 
   test("a request still waiting on its answer keeps the app awake", async () => {
+    // Invariant: a request in flight keeps it awake past the window; once answered it sleeps.
     await freshlyAwake();
-    // The answer takes three windows; the sweep must not stop the app first.
-    const response = await viaHost("/slow");
-    expect(await response.text()).toBe("late");
+    const response = viaHost("/slow");
+    // The app holds it, so the proxy is holding it too.
+    while ((await (await viaHost("/waiting")).text()) !== "1") await Bun.sleep(5);
+    await sweepAt(WINDOW + 60_000);
     expect(production().state).toBe("running");
+    expect(production().busy).toContain("a request is still waiting");
+    await viaHost("/answer");
+    expect(await (await response).text()).toBe("late");
+    await sweepAt(WINDOW + 60_000);
     await asleep();
-  }, 30_000);
+  });
 
   test("an open stream keeps the app awake until it closes", async () => {
+    // Invariant: an open stream keeps it awake past the window; once closed it sleeps.
     await freshlyAwake();
     const abort = new AbortController();
     const response = await viaHost("/stream", { signal: abort.signal });
@@ -251,29 +299,28 @@ describe("apps that are busy", () => {
     const reader = response.body!.getReader();
     const first = await reader.read();
     expect(new TextDecoder().decode(first.value)).toContain("data: hello");
-    await Bun.sleep(WINDOW + 700);
+    await sweepAt(WINDOW + 60_000);
     expect(production().state).toBe("running");
     expect(production().busy).toContain("a stream to it is still open");
 
     abort.abort();
     await reader.cancel().catch(() => {});
     await asleep();
-  }, 30_000);
+  });
 
   test.skipIf(noProc)(
     "an app that stays busy sleeps anyway once the grace is spent",
     async () => {
+      // Invariant: busy spares an app for one grace past its window, never longer.
       await freshlyAwake();
-      const started = Date.now();
-      // Works far longer than the window and the grace together.
-      await viaHost("/work?s=12");
-      await Bun.sleep(WINDOW + 700);
+      const before = log();
+      await viaHost("/work");
+      await sweepAt(WINDOW + GRACE - 60_000);
       expect(production().state).toBe("running");
+      expect(production().busy).toContain("child processes");
+      await sweepAt(WINDOW + GRACE);
       await asleep();
-      expect(Date.now() - started).toBeGreaterThanOrEqual(WINDOW + GRACE);
-      expect(Date.now() - started).toBeLessThan(10_000);
-      expect(log()).toContain("asleep: still busy");
+      expect(since(before)).toContain("asleep: still busy");
     },
-    30_000,
   );
 });
