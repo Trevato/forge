@@ -975,6 +975,7 @@ function rankedList(
                 href: issueHref(base, r.issue.number),
                 title: r.issue.title,
                 titleAttr: r.issue.title,
+                nav: true,
                 meta: html`#${r.issue.number} · ${say(r)}${first?.by.has(r.issue.id)
                   ? ` · first, by ${first.by.get(r.issue.id)}`
                   : ""}`,
