@@ -16,6 +16,12 @@ import {
   POSITION_DEFAULT,
   POSITION_MAX,
   POSITION_MIN,
+  PRICE_KEYS,
+  PRICE_MAX_CENTS,
+  PRICES_DEFAULT,
+  SLOTS_MAX,
+  type PriceKey,
+  type Prices,
 } from "../core/slider.ts";
 import { OWNED_NODE_LABEL_DEFAULT, parseNodeLabel } from "../core/placement_policy.ts";
 import { writeSetting } from "./limits.ts";
@@ -25,19 +31,29 @@ export interface Economics {
   readonly marginPct: number;
 }
 
-export type EconomicsKey = keyof Economics;
+export type EconomicsKey = keyof Economics | PriceKey;
 
+/**
+ * Prices are kept as whole cents (and slots as a count), so a stored value
+ * is always a whole number — no float ever goes through the database.
+ */
 const STORE: Record<EconomicsKey, { key: string; min: number; max: number; fallback: number }> = {
   position: { key: "economics.position", min: POSITION_MIN, max: POSITION_MAX, fallback: POSITION_DEFAULT },
   marginPct: { key: "economics.margin_pct", min: 0, max: MARGIN_MAX, fallback: MARGIN_DEFAULT },
+  ownedMonthCents: { key: "economics.owned_month_cents", min: 0, max: PRICE_MAX_CENTS, fallback: PRICES_DEFAULT.ownedMonthCents },
+  ownedSlots: { key: "economics.owned_slots", min: 0, max: SLOTS_MAX, fallback: PRICES_DEFAULT.ownedSlots },
+  cloudHourCents: { key: "economics.cloud_hour_cents", min: 0, max: PRICE_MAX_CENTS, fallback: PRICES_DEFAULT.cloudHourCents },
+  storageGbMonthCents: { key: "economics.storage_gb_month_cents", min: 0, max: PRICE_MAX_CENTS, fallback: PRICES_DEFAULT.storageGbMonthCents },
 };
+
+const KEYS = Object.keys(STORE) as EconomicsKey[];
 
 function stored(db: Database, name: EconomicsKey): number {
   const def = STORE[name];
   const row = db
     .query<{ value: string }, [string]>("SELECT value FROM forge_setting WHERE key = ?1")
     .get(def.key);
-  if (row === null || !/^\d{1,4}$/.test(row.value)) return def.fallback;
+  if (row === null || !/^\d{1,9}$/.test(row.value)) return def.fallback;
   const n = Number(row.value);
   return n >= def.min && n <= def.max ? n : def.fallback;
 }
@@ -56,6 +72,25 @@ export function getEconomics(db: Database): Economics {
 export function setEconomics(db: Database, next: Economics, actorId: string): void {
   const before = getEconomics(db);
   for (const name of ["position", "marginPct"] as const) {
+    if (next[name] === before[name]) continue;
+    writeSetting(db, STORE[name].key, String(next[name]), String(before[name]), String(next[name]), actorId);
+  }
+}
+
+/** The operator's prices as they stand now: four point reads. */
+export function getPrices(db: Database): Prices {
+  return {
+    ownedMonthCents: stored(db, "ownedMonthCents"),
+    ownedSlots: stored(db, "ownedSlots"),
+    cloudHourCents: stored(db, "cloudHourCents"),
+    storageGbMonthCents: stored(db, "storageGbMonthCents"),
+  };
+}
+
+/** Write the prices that differ, each change kept; validated by the caller. */
+export function setPrices(db: Database, next: Prices, actorId: string): void {
+  const before = getPrices(db);
+  for (const name of PRICE_KEYS) {
     if (next[name] === before[name]) continue;
     writeSetting(db, STORE[name].key, String(next[name]), String(before[name]), String(next[name]), actorId);
   }
@@ -95,26 +130,25 @@ export interface EconomicsChange {
 }
 
 const KEY_OF: Record<string, EconomicsChange["key"]> = {
-  [STORE.position.key]: "position",
-  [STORE.marginPct.key]: "marginPct",
+  ...Object.fromEntries(KEYS.map((k) => [STORE[k].key, k])),
   [LABEL_KEY]: "ownedNodeLabel",
 };
 
-/** The most recent changes to either number or the owned-node label, newest first. */
+/** The most recent changes to any of the numbers or the owned-node label, newest first. */
 export function economicsChanges(db: Database, limit = 20): EconomicsChange[] {
   const rows = db
     .query<
       { key: string; from_value: string; to_value: string; actor_name: string | null; at: string },
-      [string, string, string, number]
+      [number, ...string[]]
     >(
       `SELECT c.key, c.from_value, c.to_value, u.username AS actor_name, c.at
          FROM forge_setting_change c LEFT JOIN user u ON u.id = c.actor_id
-        WHERE c.key IN (?1, ?2, ?3)
-        ORDER BY c.at DESC, c.rowid DESC LIMIT ?4`,
+        WHERE c.key IN (${[...KEYS.map((_, i) => `?${i + 2}`), `?${KEYS.length + 2}`].join(", ")})
+        ORDER BY c.at DESC, c.rowid DESC LIMIT ?1`,
     )
-    .all(STORE.position.key, STORE.marginPct.key, LABEL_KEY, limit);
+    .all(limit, ...KEYS.map((k) => STORE[k].key), LABEL_KEY);
   return rows.map((r) => ({
-    key: KEY_OF[r.key] ?? "marginPct",
+    key: KEY_OF[r.key] ?? "position",
     from: r.from_value,
     to: r.to_value,
     actorName: r.actor_name ?? "",

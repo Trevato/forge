@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createAgent } from "../src/actions/crew.ts";
-import { getEconomics, getOwnedNodeLabel } from "../src/settings/economics.ts";
+import { getEconomics, getOwnedNodeLabel, getPrices } from "../src/settings/economics.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -92,6 +92,29 @@ describe("MCP economics", () => {
     expect(JSON.parse(r.text).position).toBe(70);
     expect(getEconomics(app.db)).toMatchObject({ position: 70, marginPct: 15 });
     expect(JSON.parse((await call(admin, {})).text).position).toBe(70);
+  });
+
+  test("prices are planned, refused past two decimals, then set in dollars; the read carries the month's cost", async () => {
+    const plan = await call(admin, { ownedMonthUsd: 300, cloudHourUsd: 0.05 });
+    expect(plan.error).toBe(false);
+    const p = JSON.parse(plan.text);
+    expect(p.from.ownedMonthUsd).toBe(0);
+    expect(p.to).toMatchObject({ ownedMonthUsd: 300, cloudHourUsd: 0.05, position: 70 });
+    expect(getPrices(app.db).ownedMonthCents).toBe(0);
+
+    const badPlan = await call(admin, { cloudHourUsd: 0.055 });
+    expect(badPlan.error).toBe(true);
+    expect(badPlan.text).toContain("at most two decimals");
+    const badSlots = await call(admin, { ownedSlots: -1, dryRun: false });
+    expect(badSlots.error).toBe(true);
+
+    const set = await call(admin, { ownedMonthUsd: 300, ownedSlots: 40, cloudHourUsd: 0.05, storageGbMonthUsd: 0.02, dryRun: false });
+    expect(set.error).toBe(false);
+    expect(getPrices(app.db)).toEqual({ ownedMonthCents: 30_000, ownedSlots: 40, cloudHourCents: 5, storageGbMonthCents: 2 });
+    const read = JSON.parse((await call(admin, {})).text);
+    expect(read.prices).toEqual({ ownedMonthUsd: 300, ownedSlots: 40, cloudHourUsd: 0.05, storageGbMonthUsd: 0.02 });
+    expect(read.month.cost.owned).toBeGreaterThan(0);
+    expect(read.month.cost.owned).toBeLessThanOrEqual(300);
   });
 
   test("the owned-node label is planned, refused when not key=value, set, and reset by a blank (#509)", async () => {

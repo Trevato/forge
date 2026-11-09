@@ -159,3 +159,69 @@ export function policyWords(policy: Policy): string {
       : `a quiet pull's preview stops after ${duration(policy.idlePullMs)}`,
   ].join(" · ");
 }
+
+// ---- prices (#507): what the operator pays, beside the position ----
+
+/**
+ * What the operator pays, as whole US cents so that two decimals stay exact
+ * (docs/PROFIT.md, "Units and formulas"). Units are in the names:
+ * - `ownedMonthCents`: the owned box, US cents per calendar month, a fixed
+ *   cost whatever runs on it;
+ * - `ownedSlots`: how many apps the box holds awake at once (app-slots);
+ * - `cloudHourCents`: US cents per awake-hour on a cloud;
+ * - `storageGbMonthCents`: US cents per GB-month (decimal GB) kept.
+ */
+export interface Prices {
+  readonly ownedMonthCents: number;
+  readonly ownedSlots: number;
+  readonly cloudHourCents: number;
+  readonly storageGbMonthCents: number;
+}
+
+export type PriceKey = keyof Prices;
+export const PRICE_KEYS: readonly PriceKey[] = [
+  "ownedMonthCents",
+  "ownedSlots",
+  "cloudHourCents",
+  "storageGbMonthCents",
+];
+
+/** Nothing priced until the operator says: an unpriced forge costs $0. */
+export const PRICES_DEFAULT: Prices = {
+  ownedMonthCents: 0,
+  ownedSlots: 0,
+  cloudHourCents: 0,
+  storageGbMonthCents: 0,
+};
+
+/** $1,000,000.00: far above any one box, low enough to stay a safe integer. */
+export const PRICE_MAX_CENTS = 100_000_000;
+export const SLOTS_MAX = 10_000;
+
+/**
+ * A price in dollars with at most two decimals, non-negative, up to
+ * `PRICE_MAX_CENTS`, as whole cents: "300" → 30000, "0.05" → 5, 0.5 → 50.
+ * Undefined for signs, exponents, a third decimal, blanks, booleans, null.
+ */
+export function parseUsdCents(input: unknown): number | undefined {
+  let cents: number;
+  if (typeof input === "number") {
+    if (!Number.isFinite(input) || input < 0) return undefined;
+    cents = Math.round(input * 100);
+    // 0.05 * 100 is 5.000000000000001: within a millionth of a cent is two decimals.
+    if (Math.abs(input * 100 - cents) > 1e-6) return undefined;
+  } else if (typeof input === "string") {
+    const m = /^(\d{1,7})(?:\.(\d{1,2}))?$/.exec(input.trim());
+    if (m === null) return undefined;
+    cents = Number(m[1]) * 100 + Number((m[2] ?? "").padEnd(2, "0"));
+  } else return undefined;
+  return cents <= PRICE_MAX_CENTS ? cents : undefined;
+}
+
+export const parseSlots = (input: unknown): number | undefined =>
+  wholeIn(input, 0, SLOTS_MAX);
+
+/** Whole cents as dollars with two decimals and no sign: 30000 → "300.00". */
+export function usdOfCents(cents: number): string {
+  return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, "0")}`;
+}

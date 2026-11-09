@@ -15,7 +15,7 @@ import { createAgent } from "../src/actions/crew.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { economicsChanges, getEconomics, getOwnedNodeLabel } from "../src/settings/economics.ts";
+import { economicsChanges, getEconomics, getOwnedNodeLabel, getPrices } from "../src/settings/economics.ts";
 
 describe("economics", () => {
   let dataDir: string;
@@ -173,6 +173,57 @@ describe("economics", () => {
     const ro = createToken(app.db, alice.id, "r", "ro").token;
     expect((await api(ro, "PUT", { position: 50 })).status).toBe(403);
     expect(getEconomics(app.db).position).toBe(0);
+  });
+
+  test("prices: the form and the API set them in dollars, refuse a third decimal or a sign, and the page costs the month", async () => {
+    const cookie = await login("alice");
+    expect(getPrices(app.db)).toEqual({ ownedMonthCents: 0, ownedSlots: 0, cloudHourCents: 0, storageGbMonthCents: 0 });
+    const prices = { ownedMonthUsd: "300", ownedSlots: "40", cloudHourUsd: "0.05", storageGbMonthUsd: "0.02" };
+    expect((await post(cookie, prices, "https://evil.example")).status).toBe(403);
+    expect(getPrices(app.db).ownedMonthCents).toBe(0);
+
+    // The prices form carries no position: it keeps what stands.
+    const before = getEconomics(app.db);
+    expect((await post(cookie, prices)).status).toBe(303);
+    expect(getPrices(app.db)).toEqual({ ownedMonthCents: 30_000, ownedSlots: 40, cloudHourCents: 5, storageGbMonthCents: 2 });
+    expect(getEconomics(app.db)).toEqual(before);
+    expect(economicsChanges(app.db).filter((c) => c.key === "ownedMonthCents").map((c) => [c.from, c.to])).toEqual([["0", "30000"]]);
+
+    for (const bad of [{ ownedMonthUsd: "-1" }, { cloudHourUsd: "0.001" }, { storageGbMonthUsd: "abc" }, { ownedSlots: "1.5" }]) {
+      await post(cookie, { ...prices, ...bad, ownedMonthUsd: bad.ownedMonthUsd ?? "999" });
+      expect(getPrices(app.db).ownedMonthCents).toBe(30_000);
+    }
+
+    // No awake time, storage or crew yet this month: the cost is the box
+    // amortised over the month so far, at most the whole box.
+    const page = await (await fetch(`${servers.url}/settings/economics`, { headers: { cookie } })).text();
+    expect(page).toContain('name="ownedMonthUsd"');
+    expect(page).toContain('value="300.00"');
+    expect(page).toContain("$/awake-hour");
+    expect(page).toContain("$/GB-month");
+    expect(page).toContain("Per app-slot ($/month)");
+    expect(page).toContain("$7.50");
+    // Said once: the form holds the prices; the formulas live in docs/features/economics.md.
+    expect(page).not.toContain("/awake-hour on cloud");
+    expect(page).not.toContain("GB-hours ÷");
+
+    const token = createToken(app.db, alice.id, "t2", "admin").token;
+    const got = (await (await api(token, "GET")).json()) as {
+      prices: Record<string, number>;
+      month: { from: string; to: string; cost: { owned: number; cloud: number; total: number } };
+    };
+    expect(got.prices).toEqual({ ownedMonthUsd: 300, ownedSlots: 40, cloudHourUsd: 0.05, storageGbMonthUsd: 0.02 });
+    expect(got.month.cost.cloud).toBe(0);
+    expect(got.month.cost.owned).toBeGreaterThan(0);
+    expect(got.month.cost.owned).toBeLessThanOrEqual(300);
+    expect(got.month.cost.total).toBe(got.month.cost.owned);
+
+    const bad = await api(token, "PUT", { cloudHourUsd: 0.055 });
+    expect(bad.status).toBe(422);
+    expect(((await bad.json()) as { error: string }).error).toBe("bad_price");
+    expect(((await (await api(token, "PUT", { ownedSlots: -1 })).json()) as { error: string }).error).toBe("bad_slots");
+    expect((await api(token, "PUT", { cloudHourUsd: 0.1 })).status).toBe(200);
+    expect(getPrices(app.db).cloudHourCents).toBe(10);
   });
 
   test("the owned-node label is a setting: shown with the queue line, set by API and form, validated (#509)", async () => {

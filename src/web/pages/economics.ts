@@ -5,13 +5,15 @@
  * Beside them, where work runs: owned metal first, selected by the owned-node
  * label set here, and whether a cloud body takes bursts — without one the
  * page says "no cloud body: bursts queue" (#509).
- * Server-rendered; the form is a same-origin POST (`readForm`). 50 is today's
- * behaviour.
+ * The operator's prices, each with its unit, and what this UTC month has
+ * cost so far at them, line by line (`core/cost.ts`).
+ * Server-rendered; the forms are same-origin POSTs (`readForm`); a field a
+ * form does not carry keeps its value. 50 is today's behaviour.
  * Anyone else gets the not-found page.
  */
 
 import { ECONOMICS_WORDS, changeEconomics, readEconomics } from "../../actions/economics.ts";
-import { MARGIN_MAX, POSITION_MAX, POSITION_MIN } from "../../core/slider.ts";
+import { MARGIN_MAX, POSITION_MAX, POSITION_MIN, PRICE_MAX_CENTS, SLOTS_MAX, usdOfCents } from "../../core/slider.ts";
 import { OWNED_NODE_LABEL_DEFAULT } from "../../core/placement_policy.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -40,6 +42,24 @@ export function economicsPage(ctx: Ctx): Response {
       meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
     }),
   );
+  const usd = (n: number) => `$${n.toFixed(2)}`;
+  const priceField = (name: string, label: string, cents: number) =>
+    html`<label class="small"
+      >${label}
+      <input
+        class="input mono"
+        type="number"
+        name="${name}"
+        min="0"
+        max="${usdOfCents(PRICE_MAX_CENTS)}"
+        step="0.01"
+        inputmode="decimal"
+        value="${usdOfCents(cents)}"
+    /></label>`;
+  const p = e.prices;
+  const perSlot = p.ownedSlots > 0 && p.ownedMonthCents > 0 ? p.ownedMonthCents / 100 / p.ownedSlots : undefined;
+  const c = e.month.cost;
+  const line = (label: string, n: number) => html`<div><dt>${label}</dt><dd class="mono">${usd(n)}</dd></div>`;
   const body = html`<section class="settings-block">
       <h2>Profit slider</h2>
       <p class="muted small">One number for the whole forge, from 0 (cheapest) to 100 (most responsive).</p>
@@ -88,6 +108,40 @@ export function economicsPage(ctx: Ctx): Response {
       <p data-placement>${e.placement.words}.</p>
     </section>
     <section class="settings-block">
+      <h2>Prices</h2>
+      <p class="muted small">What the forge costs you. The owned box costs the same each month whatever runs on it.</p>
+      <form class="row-fields" method="post" action="${PATH}">
+        ${priceField("ownedMonthUsd", "Owned box ($/month)", p.ownedMonthCents)}
+        <label class="small"
+          >Owned capacity (app-slots)
+          <input
+            class="input mono"
+            type="number"
+            name="ownedSlots"
+            min="0"
+            max="${String(SLOTS_MAX)}"
+            step="1"
+            value="${String(p.ownedSlots)}"
+        /></label>
+        ${priceField("cloudHourUsd", "Cloud ($/awake-hour)", p.cloudHourCents)}
+        ${priceField("storageGbMonthUsd", "Storage ($/GB-month)", p.storageGbMonthCents)}
+        ${btn("Save", { size: "sm", variant: "primary", label: "Save prices" })}
+      </form>
+      ${perSlot === undefined
+        ? null
+        : html`<dl class="stats" data-prices>
+            <div><dt>Per app-slot ($/month)</dt><dd class="mono">${usd(perSlot)}</dd></div>
+          </dl>`}
+    </section>
+    <section class="settings-block">
+      <h2>This month so far</h2>
+      <p class="muted small">From ${time(e.month.from)} to ${time(e.month.to)}, in US dollars.</p>
+      <dl class="stats" data-cost>
+        ${line("Owned metal", c.owned)} ${line("Cloud", c.cloud)} ${line("Storage", c.storage)}
+        ${line("Crew", c.crew)} ${line("Total", c.total)}
+      </dl>
+    </section>
+    <section class="settings-block">
       <h2>Changes</h2>
       ${history.length === 0
         ? html`<p class="muted">No change yet.</p>`
@@ -111,18 +165,26 @@ export async function economicsSet(ctx: Ctx): Promise<Response> {
   if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent") return notFoundPage(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
+  // A field the posted form does not carry is left undefined: kept as it stands.
+  const given = (name: string) => (form.has(name) ? field(form, name) : undefined);
   const changed = changeEconomics(ctx.app, ctx.auth.user, {
-    position: field(form, "position"),
-    marginPct: field(form, "marginPct"),
-    // A form without the field keeps the label; the field left blank is the default again.
-    ownedNodeLabel: form.get("ownedNodeLabel") === null ? undefined : field(form, "ownedNodeLabel"),
+    position: given("position"),
+    marginPct: given("marginPct"),
+    // The field left blank is the default label again.
+    ownedNodeLabel: given("ownedNodeLabel"),
+    ownedMonthUsd: given("ownedMonthUsd"),
+    ownedSlots: given("ownedSlots"),
+    cloudHourUsd: given("cloudHourUsd"),
+    storageGbMonthUsd: given("storageGbMonthUsd"),
   });
   if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
   return flashTo(
     ctx,
     PATH,
     changed.ok
-      ? { message: `Saved: position ${changed.value.position}, margin ${changed.value.marginPct}%.` }
+      ? {
+          message: `Saved: position ${changed.value.position}, margin ${changed.value.marginPct}%, owned box $${usdOfCents(changed.value.prices.ownedMonthCents)}/month.`,
+        }
       : { tone: "danger", message: `${ECONOMICS_WORDS[changed.error as keyof typeof ECONOMICS_WORDS]}.` },
   );
 }

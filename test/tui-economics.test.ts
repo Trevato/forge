@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { ECONOMICS_WORDS } from "../src/actions/economics.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
-import { getEconomics, getOwnedNodeLabel } from "../src/settings/economics.ts";
+import { getEconomics, getOwnedNodeLabel, getPrices } from "../src/settings/economics.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { economicsScreen } from "../src/tui/screens/economics.ts";
 import { Session, type TuiIdentity } from "../src/tui/session.ts";
@@ -171,7 +171,7 @@ describe("economics in the terminal", () => {
       const h = boot(who);
       await h.ctrl("k");
       await h.type("Economics");
-      expect(h.text()).not.toContain("the profit slider's position and the margin");
+      expect(h.text()).not.toContain("the profit slider's position, the margin, the owned-node label and the prices");
       h.stop();
       const user = getUserByName(forge.db, who)!;
       const session = new Session(forge, { sshUsername: "t", remoteAddress: "127.0.0.1", user });
@@ -182,5 +182,43 @@ describe("economics in the terminal", () => {
       expect(pushed).toEqual([]);
     }
     expect(getEconomics(forge.db).position).toBe(75);
+  });
+
+  test("the prices are levers in dollars, a third decimal is refused, and the foot costs the month", async () => {
+    const h = boot("alice");
+    await open(h);
+    expect(h.text()).toContain("ownedMonthUsd");
+    expect(h.text()).toContain("$/awake-hour on cloud");
+    expect(h.text()).toContain("This month so far: owned $0.00 · cloud $0.00 · storage $0.00 · crew $0.00 · total $0.00");
+
+    const wipe = async () => {
+      for (let i = 0; i < 12; i++) await h.press("backspace");
+    };
+    await h.press("j", "j", "j", "e"); // ownedMonthUsd
+    await wipe();
+    await h.type("0.001");
+    await h.press("enter");
+    expect(h.text()).toContain(ECONOMICS_WORDS.bad_price.slice(0, 40)); // the dialog truncates the rest
+    await h.press("esc");
+
+    await h.press("e");
+    await wipe();
+    await h.type("300");
+    await h.press("enter");
+    expect(h.text()).toContain("ownedMonthUsd: 0.00 → 300.00");
+    expect(getPrices(forge.db).ownedMonthCents).toBe(0);
+    await h.press("right", "enter");
+    expect(getPrices(forge.db).ownedMonthCents).toBe(30_000);
+    expect(h.text()).toContain("ownedMonthUsd is 300.00.");
+    expect(h.text()).not.toContain("owned $0.00");
+
+    await h.press("j", "j", "e"); // cloudHourUsd
+    await wipe();
+    await h.type("0.05");
+    await h.press("enter");
+    expect(h.text()).toContain("cloudHourUsd: 0.00 → 0.05");
+    await h.press("right", "enter");
+    expect(getPrices(forge.db).cloudHourCents).toBe(5);
+    h.stop();
   });
 });

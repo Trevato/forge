@@ -51,6 +51,15 @@ ledger already records (`src/core/usage.ts`).
   + crew `costUsd` × (1 + margin%)
 - gap = revenue − cost
 
+`src/core/cost.ts` (`costOf`) is the cost half. Owned metal is spread over
+each UTC calendar month, so a whole month (28 or 31 days) costs exactly one
+box, and a range pays each month's elapsed share. Storage turns GB-hours into
+GB-months at 730 h (8760 h / 12, the cloud-billing convention). Prices are
+kept as whole cents and set in Settings → Economics or through
+`PUT /api/v1/forge/economics` (`ownedMonthUsd`, `ownedSlots`,
+`cloudHourUsd`, `storageGbMonthUsd`). Each line and the total are rounded once,
+at the end, to the cent; the total is the unrounded sum, rounded.
+
 Rounding happens once, at the end, to the cent. Worked example: a $300 box,
 40 h of cloud at $0.05, 12 GB-months at $0.02 and $57.10 of crew spend
 cost $359.34.

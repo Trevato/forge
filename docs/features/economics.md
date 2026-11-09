@@ -1,4 +1,4 @@
-# Economics: the profit slider's position
+# Economics: the profit slider, its prices and what the month costs
 
 One number per forge, `position`, a whole number from 0 to 100, and beside
 it the margin on crew spend, `marginPct`, a whole number from 0 to 500. The
@@ -35,6 +35,51 @@ before.
   Anyone else is told `not_found`, as the API does.
 
 An agent can never move the slider, whatever it was granted.
+
+## Prices and what the month costs (#507)
+
+The operator sets four prices beside the slider. They are stored as whole
+cents, and every change is kept in the same history as the position.
+
+| field               | unit                                      | range              |
+| ------------------- | ----------------------------------------- | ------------------ |
+| `ownedMonthUsd`     | US dollars per calendar month, owned box  | 0–1,000,000.00     |
+| `ownedSlots`        | app-slots the owned box holds (a count)   | 0–10,000           |
+| `cloudHourUsd`      | US dollars per awake-hour on cloud        | 0–1,000,000.00     |
+| `storageGbMonthUsd` | US dollars per GB-month kept (decimal GB) | 0–1,000,000.00     |
+
+Prices take at most two decimals and cannot be negative. Anything else is
+refused as `bad_price` (or `bad_slots`) and nothing changes.
+
+- **Settings → Economics**: the Prices form, then **This month so far**,
+  with the owned, cloud, storage, crew and total lines in US dollars for the
+  UTC calendar month up to now. When the box and its slots are both set,
+  the page also shows the box's price per app-slot.
+- **Terminal**: the four prices are rows beside the position and the
+  margin. `e` asks for the value in dollars, shows from → to, and changes
+  it after a confirm. The bottom line shows this month's cost.
+- **API**: `GET` adds `prices` (dollars) and `month: { from, to, cost }`;
+  `PUT` takes any of the four fields, e.g. `{"ownedMonthUsd": 300,
+  "cloudHourUsd": 0.05}`.
+- **MCP**: `economics` takes the same four fields, planned first as for the
+  position.
+
+The cost is `costOf` in `src/core/cost.ts`, a pure function. Each line is
+in US dollars:
+
+- **owned** = box $/month × the share of each UTC calendar month the range
+  covers. It is a fixed cost: a whole month, of 28 or 31 days, is exactly
+  one box, whatever ran.
+- **cloud** = cloud awake-seconds ÷ 3600 × $/awake-hour.
+- **storage** = GB-hours ÷ 730 × $/GB-month. A month is 730 h (8760 h ÷
+  12), the usual cloud-billing month.
+- **crew** = the usage ledger's `costUsd` (list price).
+- **total** = the four lines summed.
+
+Everything is summed in unrounded cents. Each line and the total are
+rounded once, at the end, to the cent; the total is the unrounded sum,
+rounded. Worked example: a $300 box + 40 h of cloud at $0.05 + 12
+GB-months at $0.02 + $57.10 of crew = $359.34.
 
 ## Placement (#509)
 

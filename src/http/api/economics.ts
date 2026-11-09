@@ -1,6 +1,7 @@
 /**
  * GET/PUT /api/v1/forge/economics: the profit slider's position, the margin
- * on crew spend, and the policy the position means (`core/slider.ts`), for a
+ * on crew spend, the policy the position means (`core/slider.ts`), the
+ * operator's prices and this month's cost so far (`core/cost.ts`), for a
  * forge admin who is a person — the twin of Settings → Economics, with the
  * same validation (`actions/economics.ts`). Anyone else is told 404.
  */
@@ -21,6 +22,14 @@ export function wire(e: EconomicsView) {
     words: e.words,
     placement: e.placement,
     changes: e.changes,
+    // Dollars with two decimals; slots a count (docs/PROFIT.md).
+    prices: {
+      ownedMonthUsd: e.prices.ownedMonthCents / 100,
+      ownedSlots: e.prices.ownedSlots,
+      cloudHourUsd: e.prices.cloudHourCents / 100,
+      storageGbMonthUsd: e.prices.storageGbMonthCents / 100,
+    },
+    month: e.month,
   };
 }
 
@@ -41,6 +50,10 @@ export function economicsRoutes(router: Router<Handler>): void {
       position: input.position,
       marginPct: input.marginPct,
       ownedNodeLabel: input.ownedNodeLabel,
+      ownedMonthUsd: input.ownedMonthUsd,
+      ownedSlots: input.ownedSlots,
+      cloudHourUsd: input.cloudHourUsd,
+      storageGbMonthUsd: input.storageGbMonthUsd,
     });
     if (changed.ok) return json(wire(changed.value));
     if (changed.error === "not_found") return notFound();
