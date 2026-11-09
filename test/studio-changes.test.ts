@@ -170,6 +170,23 @@ describe("the studio, continued", () => {
     expect(studioCookie).toContain("<h2>Depends on</h2>");
   });
 
+  test("the three studio lists carry one header, and only the issue list offers Not started (#175)", async () => {
+    const issues = await (await get("/alice/notes/issues")).text();
+    const pulls = await (await get("/alice/notes/pulls")).text();
+    const runs = await (await get("/alice/notes/runs")).text();
+    // The same header on all three: the description, not the compact one.
+    for (const page of [issues, pulls, runs])
+      expect(page).toContain('<p class="muted small">a place for notes</p>');
+    // No pull and no run is ever told, so only the issue list links to it.
+    expect(issues).toContain('href="/alice/notes/issues?word=told"');
+    expect(pulls).not.toContain("word=told");
+    expect(runs).not.toContain("word=told");
+    for (const page of [pulls, runs]) expect(page).not.toContain("Not started");
+    // A URL somebody holds still answers, never an error.
+    expect((await get("/alice/notes/pulls?word=told")).status).toBe(200);
+    expect((await get("/alice/notes/runs?word=told")).status).toBe(200);
+  });
+
   test("everything told is the one issue list, in the studio's own words; the word filter narrows it, and ?mode=dev changes nothing", async () => {
     const told = openIssue(app, alice, repo, {
       title: "List test: not picked up yet",
@@ -299,7 +316,7 @@ describe("the studio, continued", () => {
     expect(page).toContain('href="/alice/notes/runs?kind=check"');
     const deploys = await (await get("/alice/notes/runs?kind=deploy")).text();
     expect(deploys).not.toContain(`href="/alice/notes/runs/${run.id}"`);
-    expect(deploys).toContain('href="/alice/notes/runs?kind=deploy&amp;word=told"');
+    expect(deploys).toContain('href="/alice/notes/runs?kind=deploy&amp;word=stopped"');
   });
 
   test("the runs list shows agent runs, checks and deploys together, and each kind link narrows it", async () => {

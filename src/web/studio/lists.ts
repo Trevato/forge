@@ -160,6 +160,15 @@ function wordFilterBar(
  * look — so those two are not offered as filters there. */
 const PLAIN_FILTERS: readonly WordFilter[] = ["working", "shipped", "stopped"];
 
+/** The words a pull or a run can carry, as a list links to them: every word
+ * but *told*. `pullWord` never hands that word back, and `runWord` reaches a
+ * pull's word only through `pullWord` — so on the changes and runs lists a
+ * *Not started* filter could only ever land on an empty page (#175). The
+ * tells list, built on `tellWord`, is the one that offers all five. */
+const PULL_FILTERS: readonly WordFilter[] = WORD_FILTERS.filter(
+  (w) => w !== "told",
+);
+
 const LIST_PAGE = 25;
 
 /**
@@ -661,7 +670,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
         f.word,
         f.word === undefined && f.state === "open",
         undefined,
-        record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
+        record === undefined ? PLAIN_FILTERS : PULL_FILTERS,
       )}
       ${facetChips(listBase, f, repoLabels)} ${list}
       ${pager(
@@ -790,7 +799,9 @@ const RUNS_KIND_WORDS: Record<RunsKind, string> = {
  * one row per run in its studio word — who ran it, when it last moved, and
  * the transcript as the row's own link. Agent runs, checks and deploys
  * together, newest first, by default; `?kind=agent|deploy|check` narrows to
- * one, from the three links under the list. `?word=` narrows any of them.
+ * one, from the three links under the list. `?word=` narrows any of them,
+ * from the changes list's words (`PULL_FILTERS`). The header is the full one
+ * the tells and changes lists carry, description included.
  */
 export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const db = ctx.app.db;
@@ -875,7 +886,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
         );
   const last = fetched[fetched.length - 1];
 
-  const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
+  const body = html`${repoHeader(ctx, repo, "runs")}
     <div class="mt">
       <nav aria-label="Run state">
         ${seg(
@@ -890,6 +901,8 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
         (word) => runsHref(base, kind, word, undefined, state),
         filter,
         filter === undefined,
+        undefined,
+        PULL_FILTERS,
       )}
       ${list}
       ${pager(
