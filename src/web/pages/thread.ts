@@ -123,12 +123,21 @@ export function threadContext(
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
   // A sealed report is not there for anyone who may not see it (`core/sealed.ts`).
-  if (
-    !issue ||
-    issue.kind !== kind ||
-    !mayView(ctx.app.db, repo, issue, ctx.auth.user)
-  )
+  if (!issue || !mayView(ctx.app.db, repo, issue, ctx.auth.user))
     return notFoundPage(ctx);
+  if (issue.kind !== kind) {
+    // Issues and pulls share one number space: a read of the other kind's URL
+    // lands on it; a write still refuses.
+    const method = ctx.request.method;
+    if (method !== "GET" && method !== "HEAD") return notFoundPage(ctx);
+    const from = kind === "issue" ? "/issues/" : "/pulls/";
+    const to = kind === "issue" ? "/pulls/" : "/issues/";
+    const path = ctx.url.pathname;
+    const at = path.lastIndexOf(from);
+    if (at < 0) return notFoundPage(ctx);
+    const target = path.slice(0, at) + to + path.slice(at + from.length) + ctx.url.search;
+    return new Response(null, { status: 302, headers: { location: target } });
+  }
   return { repo, issue };
 }
 

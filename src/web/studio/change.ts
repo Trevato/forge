@@ -76,6 +76,7 @@ import {
   conversation,
   originGlyph,
   parseNumber,
+  threadContext,
   type Entry,
 } from "../pages/thread.ts";
 import { KIND_TIER, type Decision } from "./asks.ts";
@@ -99,8 +100,12 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
   const number = parseNumber(ctx.params.number);
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
-    return notFoundPage(ctx);
+  // Not a pull: an issue of that number sends a read to its own page (`threadContext`).
+  if (!pull) {
+    const other = threadContext(ctx, "pull");
+    return other instanceof Response ? other : notFoundPage(ctx);
+  }
+  if (!mayView(ctx.app.db, repo, pull, ctx.auth.user)) return notFoundPage(ctx);
   return { repo, pull };
 }
 

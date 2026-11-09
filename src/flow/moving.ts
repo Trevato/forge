@@ -30,6 +30,8 @@ interface Raw {
   number: number;
   title: string;
   sealed: number;
+  /** The item's kind, when the read names it: a run may work a pull. */
+  kind?: "issue" | "pull";
   who: string | null;
   at: string;
 }
@@ -65,7 +67,7 @@ function visible(db: Database, viewer: User, raw: readonly Raw[], path: string, 
     out.push({
       who: r.who ?? "",
       title: r.title,
-      href: `/${repo.ownerName}/${repo.name}/${path}/${r.number}`,
+      href: `/${repo.ownerName}/${repo.name}/${r.kind === undefined ? path : r.kind === "pull" ? "pulls" : "issues"}/${r.number}`,
       at: r.at,
       repo: `${repo.ownerName}/${repo.name}`,
     });
@@ -74,11 +76,11 @@ function visible(db: Database, viewer: User, raw: readonly Raw[], path: string, 
   return out;
 }
 
-/** Agent builds running now (reviews are not building), newest first, each on the issue it works. */
+/** Agent builds running now (reviews are not building), newest first, each on the issue or pull it works. */
 export function readBuilding(db: Database, viewer: User, limit = MOVING_ROWS): MovingRow[] {
   const raw = scanned(db, "building", () => db
     .query<Raw, [number]>(
-      `SELECT r.repo_id, i.number, i.title, i.sealed, u.username AS who, COALESCE(r.started_at, r.created_at) AS at
+      `SELECT r.repo_id, i.number, i.title, i.sealed, i.kind, u.username AS who, COALESCE(r.started_at, r.created_at) AS at
          FROM run r JOIN issue i ON i.id = r.issue_id LEFT JOIN user u ON u.id = r.actor_id
         WHERE r.kind = 'agent' AND r.state = 'running' AND r.reason != 'review'
         ORDER BY at DESC LIMIT ?1`,
