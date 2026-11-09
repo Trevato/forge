@@ -120,6 +120,16 @@ export async function combine(
   dir: string,
   input: { readonly number: number; readonly baseOid: string; readonly headOid: string },
 ): Promise<{ oid: string; files: Kept[] | null } | undefined> {
+  const made = await build(dir, input);
+  // A rebuild that worked ends any earlier failure's sentence, whoever asked for it.
+  if (made !== undefined) await setFailure(dir, input.number, undefined);
+  return made;
+}
+
+async function build(
+  dir: string,
+  input: { readonly number: number; readonly baseOid: string; readonly headOid: string },
+): Promise<{ oid: string; files: Kept[] | null } | undefined> {
   const { number, baseOid, headOid } = input;
   if (!Number.isInteger(number) || number < 1 || !isSafeOid(baseOid) || !isSafeOid(headOid))
     return undefined;
@@ -226,4 +236,24 @@ export async function previewHead(
   if (head === undefined) return undefined;
   const combined = pull.crossRepo ? await combinedTip(dir, pull.number, head) : undefined;
   return { commit: combined ?? head, head };
+}
+
+const failureKey = (number: number): string => `recombine.failed${number}`;
+
+/** Remember (or, with undefined, forget) why the last rebuild of this pull failed: one line, in the repository's own config. */
+export async function setFailure(dir: string, number: number, sentence: string | undefined): Promise<void> {
+  if (!Number.isInteger(number) || number < 1) return;
+  if (sentence === undefined) await runGit(["config", "--local", "--unset-all", failureKey(number)], { cwd: dir });
+  else {
+    const one = sentence.replace(/\s+/g, " ").trim().slice(0, 300);
+    await runGit(["config", "--local", failureKey(number), one], { cwd: dir });
+  }
+}
+
+/** Why the last rebuild of this pull failed, when it did and nothing has rebuilt since. */
+export async function readFailure(dir: string, number: number): Promise<string | undefined> {
+  if (!Number.isInteger(number) || number < 1) return undefined;
+  const out = await runGit(["config", "--local", "--get", failureKey(number)], { cwd: dir });
+  const line = out.ok ? out.value.trim() : "";
+  return line === "" ? undefined : line;
 }

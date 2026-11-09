@@ -7,7 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { combine } from "../git/combined.ts";
+import { combine, setFailure } from "../git/combined.ts";
 import { repoDir } from "../git/repos.ts";
 import { resolveOid } from "../git/merge.ts";
 import type { Log } from "../kernel/log.ts";
@@ -35,6 +35,9 @@ export async function idle(repoId: string): Promise<void> {
   await running.get(repoId)?.done;
 }
 
+/** What the page says of an error nobody expected: the detail stays in the log. */
+const UNEXPECTED = "The rebuild failed unexpectedly; the forge's log has the detail. Push to the fork to rebuild.";
+
 /** One pass: the tip is read once, each pull combined against it. */
 async function pass(forge: RecombineForge, repoId: string): Promise<void> {
   const repo = getRepoById(forge.db, repoId);
@@ -50,14 +53,20 @@ async function pass(forge: RecombineForge, repoId: string): Promise<void> {
       const headOid = await resolveOid(dir, `refs/pull/${pull.number}/head`);
       const made =
         headOid === undefined ? undefined : await combine(dir, { number: pull.number, baseOid, headOid });
-      if (made === undefined)
+      if (made === undefined) {
         forge.log.warn("recombine skipped a pull", { repo: repoId, pull: pull.number });
+        await setFailure(
+          dir,
+          pull.number,
+          headOid === undefined
+            ? "The rebuild failed: the pull's head is missing from the repository. Push to the fork again to rebuild."
+            : "The rebuild failed: git could not merge main into the pull's head. Push to the fork to rebuild it.",
+        );
+      }
     } catch (e) {
-      forge.log.warn("recombine failed on a pull", {
-        repo: repoId,
-        pull: pull.number,
-        error: e instanceof Error ? e.message : String(e),
-      });
+      const error = e instanceof Error ? e.message : String(e);
+      forge.log.warn("recombine failed on a pull", { repo: repoId, pull: pull.number, error });
+      await setFailure(dir, pull.number, UNEXPECTED).catch(() => undefined);
     }
   }
 }

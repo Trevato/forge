@@ -8,6 +8,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { combine, readFailure } from "../src/git/combined.ts";
 import { idle, recombine, runsStarted } from "../src/core/recombine.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -178,4 +179,33 @@ test("a push to another branch, or a delete of the default branch, starts no pas
   await git(["push", "origin", "main"], a);
   await idle(repoId);
   expect(runsStarted(repoId)).toBe(runs + 1);
+});
+
+test("a failed rebuild is worded on the pull's combined card, and any good rebuild clears it", async () => {
+  const card = async (): Promise<string> =>
+    (await (await call(`/alice/app/pulls/${first}`, alice)).text()).replace(/&#39;/g, "'");
+  const sentence = "The rebuild failed: the pull's head is missing from the repository.";
+  const head = await git(["rev-parse", "refs/heads/one"], b);
+  // This test makes its own state: a combined branch built on one main, the head ref then gone.
+  await git(["update-ref", `refs/pull/${first}/head`, head], bare);
+  await settled(await moveMain("f1.txt"));
+  await git(["update-ref", "-d", `refs/pull/${first}/head`], bare);
+  await moveMain("m5.txt");
+  await idle(repoId);
+  const failed = await card();
+  expect(failed).toContain("Combined with main");
+  expect(failed).toContain("stale");
+  expect(failed).toContain(sentence);
+  expect(failed).toContain("Push to the fork again to rebuild.");
+  // A push to the fork rebuilds through combine() alone, not the recombine pass.
+  await git(["update-ref", `refs/pull/${first}/head`, head], bare);
+  const main = await git(["rev-parse", "refs/heads/main"], bare);
+  expect(await combine(bare, { number: first, baseOid: main, headOid: head })).toBeDefined();
+  expect(await readFailure(bare, first)).toBeUndefined();
+  // Main moves again: the old sentence does not come back.
+  await moveMain("m6.txt");
+  await idle(repoId);
+  const fixed = await card();
+  expect(fixed).not.toContain(sentence);
+  expect(fixed).not.toContain("stale");
 });
