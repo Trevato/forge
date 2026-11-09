@@ -2,10 +2,12 @@
  * Settings › Webhooks, admin-only: the hooks that carry this repository's
  * events out, the last deliveries of each, and the form that adds one. A
  * hook's signing secret is shown once, in the flash after it is created,
- * and never again.
+ * and never again. Pause quiets a failing hook where it is seen, as the
+ * terminal's `p` does (`pauseWebhook`); a paused row reads `paused` in
+ * place of its last delivery.
  */
 
-import { createWebhook, deleteWebhook } from "../../actions/repos.ts";
+import { createWebhook, deleteWebhook, pauseWebhook } from "../../actions/repos.ts";
 import { notePhase, timePhase } from "../../core/route_timing.ts";
 import { getWebhook, listWebhooks, pingWebhook, recentDeliveries, redeliver } from "../../core/webhooks.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -62,10 +64,13 @@ export function hooksPage(ctx: Ctx): Response {
               meta: html`<span class="mono">${hook.kinds}</span> · ${dot(hook.active ? "success" : "attn")}${hook.active
                 ? "active"
                 : "paused"} · added ${time(hook.createdAt)}${when(!hook.hasSecret, () => html` · unsigned`)}${when(
-                deliveries.length === 0,
+                hook.active && deliveries.length === 0,
                 () => html` · No deliveries yet.`,
               )}`,
-              trail: html`<form method="post" action="${base}/settings/hooks/${hook.id}/ping">
+              trail: html`<form method="post" action="${base}/settings/hooks/${hook.id}/${hook.active ? "pause" : "resume"}">
+                  ${btn(hook.active ? "Pause" : "Resume", { size: "sm" })}
+                </form>
+                <form method="post" action="${base}/settings/hooks/${hook.id}/ping">
                   ${btn("Send ping", { size: "sm" })}
                 </form>
                 ${confirmAction({
@@ -192,3 +197,26 @@ export async function webhookPing(ctx: Ctx): Promise<Response> {
       : { tone: "danger", message: `Too many pings: try again in ${pinged.error.retryAfter} s.` },
   );
 }
+
+/**
+ * POST …/settings/hooks/:id/pause and …/resume: one route each, so a
+ * repeated post leaves the hook as it asked, never toggled back.
+ */
+function webhookSetPaused(paused: boolean) {
+  return async (ctx: Ctx): Promise<Response> => {
+    const gate = await adminForm(ctx);
+    if (gate instanceof Response) return gate;
+    const { repo } = gate;
+    const done = pauseWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "", paused);
+    return flashTo(
+      ctx,
+      `${repoBase(repo)}/settings/hooks`,
+      done.ok
+        ? { message: paused ? "Webhook paused: it gets no deliveries until resumed." : "Webhook resumed." }
+        : { tone: "danger", message: "That webhook no longer exists." },
+    );
+  };
+}
+
+export const webhookPause = webhookSetPaused(true);
+export const webhookResume = webhookSetPaused(false);
