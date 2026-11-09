@@ -8,7 +8,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { canRead } from "../core/repos.ts";
+import { canRead, type Repo } from "../core/repos.ts";
 import { redirectFor } from "../core/transfer.ts";
 import type { User } from "../core/users.ts";
 import { isSafeName } from "../git/guard.ts";
@@ -30,6 +30,12 @@ function repoPath(pathname: string): { prefix: string; owner: string; name: stri
 /** A push: the receive-pack advertisement or its POST. A push is refused, never carried over. */
 function isPush(url: URL, rest: string): boolean {
   return rest === "git-receive-pack" || (rest === "info/refs" && url.searchParams.get("service") === "git-receive-pack");
+}
+
+/** The repository an old path names, when a move left that path behind; whoever asks. */
+export function movedTarget(db: Database, url: URL): Repo | undefined {
+  const at = repoPath(url.pathname);
+  return at === undefined ? undefined : redirectFor(db, at.owner, at.name);
 }
 
 export function movedResponse(db: Database, url: URL, user: User | undefined): Response | undefined {

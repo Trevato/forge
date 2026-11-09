@@ -298,6 +298,13 @@ interface Live {
  */
 const PUSH_REASONS: readonly string[] = ["push", "opened", "merge"];
 
+/**
+ * The deploy reasons that start the same commit again, even while it serves
+ * or is coming up: someone pressed redeploy, or the repository moved to
+ * another owner (#570) and what runs must start again as the new owner's.
+ */
+const AGAIN: ReadonlySet<string> = new Set(["redeploy", "moved"]);
+
 /** How long between two instants, in seconds to one decimal place: `3.4s`. */
 function elapsedSeconds(fromIso: string, toIso: string): string {
   return seconds(Date.parse(toIso) - Date.parse(fromIso));
@@ -985,6 +992,20 @@ export class AppsRuntime {
           );
         return;
       }
+      // A move (#570): a process started before it holds the old owner's
+      // token and limits, and a deploy in flight may have read the old
+      // place on disk. Each starts again at the commit it serves, under the
+      // new owner; an asleep one wakes as the new owner's anyway, and a
+      // queued one reads the repository when its turn comes.
+      case "repo.transferred": {
+        for (const state of this.envs.values()) {
+          if (state.app.id !== record.id) continue;
+          const commit = state.deploying?.run.commitOid ?? state.live?.commitOid;
+          if (commit === undefined || state.queued !== undefined) continue;
+          this.requestDeploy(record, repo, state.env, commit, "moved", event.actorId ?? undefined);
+        }
+        return;
+      }
       case "pull.closed":
       case "pull.merged": {
         const number = event.payload["number"];
@@ -1050,11 +1071,11 @@ export class AppsRuntime {
       state.queued === undefined &&
       reason !== "restart" &&
       reason !== "oom" &&
-      reason !== "redeploy"
+      !AGAIN.has(reason)
     ) {
       return undefined;
     }
-    if (state.deploying?.run.commitOid === commitOid && reason !== "redeploy") {
+    if (state.deploying?.run.commitOid === commitOid && !AGAIN.has(reason)) {
       return state.deploying.run;
     }
     const issue =
@@ -1166,9 +1187,13 @@ export class AppsRuntime {
 
   private async execute(
     state: Environment,
-    repo: Repo,
+    queued: Repo,
     run: Run,
   ): Promise<void> {
+    // The row as it is now, not as it was when the deploy was asked for: a
+    // move (#570) between the two gives the repository a new owner and a
+    // new place on disk, and a queued run follows it there.
+    let repo = getRepoById(this.app.db, queued.id) ?? queued;
     const claimed = claimRun(this.app.db, run.id);
     if (!claimed) return; // cancelled meanwhile
     const lease = holdLease(this.app.db, run.id);
@@ -1215,6 +1240,8 @@ export class AppsRuntime {
       .run(
         () => {
           clock.lap("turn");
+          // Read again after the wait for a permit: a move may land in it.
+          repo = getRepoById(this.app.db, repo.id) ?? repo;
           return this.bringUp(state, repo, run, write, abort.signal, clock);
         },
         { first: state.env === "production" },

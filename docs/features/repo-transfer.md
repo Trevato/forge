@@ -43,10 +43,23 @@ answers `308` to the new owner for someone who may read the repository, so
 redirect on its first request). A push to the old URL is never applied: it is
 refused with `403` and a sentence naming the new path and the `git remote
 set-url` to run. Someone who cannot read it gets what a missing path answers.
-Over SSH the old path is not redirected (SSH has no redirect): the remote must
-be updated to the new path.
+Over SSH, which has no redirect, a fetch or clone of the old path is served
+from the new place, with one line on stderr naming the new path and the `git
+remote set-url` to run. A push to the old path is refused with the same line
+and never applied — it does not make a new repository there either. Someone
+who cannot read it gets "repository not found", as for any missing path.
 
-Not yet: runs and previews follow in the next step.
+Runs and apps follow the move. A deploy reads the repository when its turn
+comes, not when it was asked for, so one queued or waiting for a permit at
+the move runs against the new place. Production and every running preview
+start again at the commit they serve (a run with reason `moved`), so the
+process holds the new owner's read token; an asleep preview wakes as the new
+owner's. Hostnames do not change: they hang off the app's slug, not its owner.
+A crew run already under way keeps working: its token is bound to the
+repository by id, and the run gate lets a request under the old path through
+to the `308` that names the new one. Forks keep their parent (it is held by
+id) and their link to its objects is rewritten; repository-scoped tokens are
+held by id too.
 
 For 30 days after a move, the repository's page says where it came from: one
 muted line, "Moved from alice/demo on 2026-11-09", under the head, for someone
