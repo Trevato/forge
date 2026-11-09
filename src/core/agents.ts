@@ -372,63 +372,126 @@ export function setCrewRole(
   );
 }
 
-/** The crew with each member's role, by name. */
+/** The crew with each member's role, by name: `crewSeats` for one repository. */
 export function listCrewRoles(
   db: Database,
   repoId: string,
 ): { agent: Agent; role: CrewRole }[] {
-  const roles = new Map(
-    db
-      .query<{ user_id: string; role: string }, [string]>(
-        "SELECT user_id, role FROM repo_crew WHERE repo_id = ?1",
-      )
-      .all(repoId)
-      .map((r) => [r.user_id, r.role] as const),
-  );
-  return listCrew(db, repoId).map((agent) => ({
-    agent,
-    role: seatOf(roles.get(agent.user.id) ?? "", agent.roles),
-  }));
+  return (crewSeats(db, [repoId]).get(repoId) ?? []).map(({ agent, role }) => ({ agent, role }));
+}
+
+/** One seat on a repository's crew. */
+export interface CrewSeat {
+  readonly agent: Agent;
+  readonly role: CrewRole;
+  /**
+   * Whether the seat is held as written: a team role, or a roster row
+   * whose role the agent still declares.
+   */
+  readonly held: boolean;
+}
+
+/** A role on an org team (#571): a crew seat, or `member`, the team's access and no seat. */
+export type TeamRole = CrewRole | "member";
+export const TEAM_ROLES: readonly TeamRole[] = [...CREW_ROLES, "member"];
+export const isTeamRole = (value: unknown): value is TeamRole =>
+  (TEAM_ROLES as readonly unknown[]).includes(value);
+
+/**
+ * The crew of each repository, by repo, by name — the one function the
+ * routing reads for planner, builder and reviewer (#571). An org-owned
+ * repository's crew is the agents the org's write and admin teams give a
+ * role, each in that seat (a role the agent does not declare sits in its
+ * first declared one; on many teams an agent takes its first by team
+ * name). A `member` holds no seat: it is the team's access, nothing more,
+ * so a membership from before roles changes no crew. When no such team
+ * seats an agent, the repository's own roster (`repo_crew`) is its crew,
+ * unchanged.
+ */
+export function crewSeats(
+  db: Database,
+  repoIds: readonly string[],
+): Map<string, CrewSeat[]> {
+  const unique = [...new Set(repoIds)];
+  type SeatRow = AgentRow & { repo_id: string; seat: string; source: "team" | "roster" };
+  const rows: SeatRow[] = [];
+  const CHUNK = 400;
+  // One read per chunk: the team seats and the roster together, told apart by `source`.
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const marks = batch.map((_, n) => `?${n + 1}`).join(",");
+    rows.push(
+      ...db
+        .query<SeatRow, string[]>(
+          `SELECT * FROM (
+             SELECT 'team' AS source, repo.id AS repo_id, team_member.role AS seat,
+                    team.name AS via, user.username AS uname, agent.*
+             FROM repo
+             JOIN team ON team.org_id = repo.owner_id AND team.permission IN ('write','admin')
+             JOIN team_member ON team_member.team_id = team.id AND team_member.role <> 'member'
+             JOIN agent ON agent.user_id = team_member.user_id
+             JOIN user ON user.id = agent.user_id
+             WHERE repo.id IN (${marks})
+             UNION ALL
+             SELECT 'roster' AS source, repo_crew.repo_id, repo_crew.role AS seat,
+                    '' AS via, user.username AS uname, agent.*
+             FROM repo_crew
+             JOIN agent ON agent.user_id = repo_crew.user_id
+             JOIN user ON user.id = agent.user_id
+             WHERE repo_crew.repo_id IN (${marks})
+           ) ORDER BY uname COLLATE NOCASE, via COLLATE NOCASE`,
+        )
+        .all(...batch),
+    );
+  }
+  const teamed = new Set(rows.filter((r) => r.source === "team").map((r) => r.repo_id));
+  const teamRows = rows.filter((r) => r.source === "team");
+  const rosterRows = rows.filter((r) => r.source === "roster" && !teamed.has(r.repo_id));
+  const users = getUsersByIds(db, [...teamRows, ...rosterRows].map((r) => r.user_id));
+  const out = new Map<string, CrewSeat[]>();
+  const put = (repoId: string, seat: CrewSeat) => {
+    const list = out.get(repoId);
+    if (list) list.push(seat);
+    else out.set(repoId, [seat]);
+  };
+  // Team rows: one seat per agent per repository, the first by team name.
+  const chosen = new Map<string, AgentRow & { repo_id: string; seat: string }>();
+  for (const row of teamRows) {
+    const key = `${row.repo_id}\u0000${row.user_id}`;
+    if (!chosen.has(key)) chosen.set(key, row);
+  }
+  for (const row of chosen.values()) {
+    const user = users.get(row.user_id);
+    if (!user) continue;
+    const agent = agentOf(user, row);
+    put(row.repo_id, { agent, role: seatOf(row.seat, agent.roles), held: true });
+  }
+  for (const row of rosterRows) {
+    const user = users.get(row.user_id);
+    if (!user) continue;
+    const agent = agentOf(user, row);
+    put(row.repo_id, {
+      agent,
+      role: seatOf(row.seat, agent.roles),
+      held: isCrewRole(row.seat) && agent.roles.includes(row.seat),
+    });
+  }
+  return out;
 }
 
 /**
  * The crew members holding `role` on each of these repositories, by repo,
- * in `listCrew`'s order — the agents and their accounts one query per chunk
- * each, never one per repository or per member.
+ * in name order — `crewSeats`, keeping the seats held as written.
  */
 export function crewWithRole(
   db: Database,
   repoIds: readonly string[],
   role: CrewRole,
 ): Map<string, Agent[]> {
-  const rows: (AgentRow & { repo_id: string })[] = [];
-  const unique = [...new Set(repoIds)];
-  const CHUNK = 400;
-  for (let i = 0; i < unique.length; i += CHUNK) {
-    const batch = unique.slice(i, i + CHUNK);
-    rows.push(
-      ...db
-        .query<AgentRow & { repo_id: string }, string[]>(
-          `SELECT repo_crew.repo_id, agent.* FROM repo_crew
-           JOIN agent ON agent.user_id = repo_crew.user_id
-           JOIN user ON user.id = agent.user_id
-           WHERE repo_crew.role = ?1
-             AND instr(',' || agent.roles || ',', ',' || ?1 || ',') > 0
-             AND repo_crew.repo_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
-           ORDER BY user.username COLLATE NOCASE`,
-        )
-        .all(role, ...batch),
-    );
-  }
-  const users = getUsersByIds(db, rows.map((r) => r.user_id));
   const out = new Map<string, Agent[]>();
-  for (const row of rows) {
-    const user = users.get(row.user_id);
-    if (!user) continue;
-    const agent = agentOf(user, row);
-    const list = out.get(row.repo_id);
-    if (list) list.push(agent);
-    else out.set(row.repo_id, [agent]);
+  for (const [repoId, seats] of crewSeats(db, repoIds)) {
+    const agents = seats.filter((s) => s.held && s.role === role).map((s) => s.agent);
+    if (agents.length > 0) out.set(repoId, agents);
   }
   return out;
 }
@@ -443,18 +506,5 @@ export function reposWithBuilder(
   db: Database,
   repoIds: readonly string[],
 ): Set<string> {
-  const out = new Set<string>();
-  const unique = [...new Set(repoIds)];
-  const CHUNK = 400;
-  for (let i = 0; i < unique.length; i += CHUNK) {
-    const batch = unique.slice(i, i + CHUNK);
-    const rows = db
-      .query<{ repo_id: string }, string[]>(
-        `SELECT DISTINCT repo_id FROM repo_crew JOIN agent ON agent.user_id = repo_crew.user_id
-         WHERE role = 'builder' AND instr(',' || agent.roles || ',', ',builder,') > 0 AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`,
-      )
-      .all(...batch);
-    for (const row of rows) out.add(row.repo_id);
-  }
-  return out;
+  return new Set(crewWithRole(db, repoIds, "builder").keys());
 }

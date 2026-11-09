@@ -32,6 +32,7 @@ import {
   accessAllows,
   getOrg,
   getTeam,
+  listTeamMemberRoles,
   listTeamMembers,
   listTeams,
   orgAccess,
@@ -40,6 +41,7 @@ import {
   type Team,
 } from "../../core/orgs.ts";
 import { appsForRepos } from "../../core/apps.ts";
+import { isTeamRole, TEAM_ROLES } from "../../core/agents.ts";
 import { LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
@@ -243,6 +245,14 @@ function orgMembers(ctx: Ctx, teams: Team[]): User[] {
   );
 }
 
+/** A team's members with the role each holds (#571), one fact each: name, then role. */
+function teamMemberFacts(ctx: Ctx, team: Team): { label: string; value: string }[] {
+  return listTeamMemberRoles(ctx.app.db, team.id).map(({ user, role }) => ({
+    label: user.username,
+    value: role,
+  }));
+}
+
 /** "1 member" / "4 members" — a sentence, not a number in a pill. */
 function memberCount(n: number): Html {
   return html`${n} member${n === 1 ? "" : "s"}`;
@@ -277,6 +287,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
             lead: icon("users"),
             title: t.name,
             meta: memberCount(listTeamMembers(ctx.app.db, t.id).length),
+            facts: teamMemberFacts(ctx, t),
             trail: html`${badge(t.permission)}${when(canManage, () =>
               btn("Manage", {
                 href: `/${org.username}/-/teams/${t.id}`,
@@ -534,7 +545,7 @@ export function teamPage(ctx: Ctx): Response {
   if (!team || team.orgId !== org.id) return notFoundPage(ctx);
 
   const members = timePhase(ctx.request, "members", () =>
-    listTeamMembers(ctx.app.db, team.id),
+    listTeamMemberRoles(ctx.app.db, team.id).map(({ user, role }) => ({ ...user, role })),
   );
   const rendering = performance.now();
   const teamBase = `/${org.username}/-/teams/${team.id}`;
@@ -556,7 +567,7 @@ export function teamPage(ctx: Ctx): Response {
               title: html`<a href="/${m.username}"
                 >${m.displayName || m.username}</a
               >`,
-              meta: html`@${m.username}`,
+              meta: html`@${m.username}${m.role === "member" ? "" : html` · ${m.role}`}`,
               trail: when(
                 !protectedTeam || members.length > 1,
                 () =>
@@ -579,6 +590,12 @@ export function teamPage(ctx: Ctx): Response {
         name: "user",
         required: true,
         hint: "Their username on this forge.",
+      })}
+      ${selectField({
+        label: "Role",
+        name: "role",
+        hint: "An agent's role is its seat on the org's repositories.",
+        options: TEAM_ROLES.map((r) => ({ value: r, label: r, selected: r === "member" })),
       })}
       <div class="form-actions">
         ${btn("Add member", { variant: "primary" })}
@@ -629,7 +646,11 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
   if (r instanceof Response) return r;
   const username = field(r.form, "user").trim();
   const dest = `/${r.org.username}/-/teams/${r.team.id}`;
-  const added = addTeamMember(ctx.app, ctx.auth.user, r.org, r.team, username);
+  const rawRole = field(r.form, "role");
+  if (rawRole !== "" && !isTeamRole(rawRole))
+    return flashTo(ctx, dest, { tone: "danger", message: `A role is one of ${TEAM_ROLES.join(", ")}.` });
+  const role = isTeamRole(rawRole) ? rawRole : undefined;
+  const added = addTeamMember(ctx.app, ctx.auth.user, r.org, r.team, username, role);
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",

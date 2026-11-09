@@ -104,6 +104,7 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "team.deleted",
   "team.member_added",
   "team.member_removed",
+  "team.member_role_set",
   "forge.spawn.started",
   "forge.spawned",
   "forge.removed",

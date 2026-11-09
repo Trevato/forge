@@ -6,7 +6,9 @@
  * rule, the page's: an org admin sees every team, a member only their own.
  * An admin of the organization (`orgAccess` allowing `admin`, the page's
  * `requireOrgAdmin`) adds a person with `a` and removes the member under the
- * cursor with `d` after a y/n (#8125), through the same actions
+ * cursor with `d` after a y/n (#8125), and sets the role of the member
+ * under the cursor with `r` (#571: planner, builder, reviewer or member, the
+ * seat a write team gives an agent on the org's crew), through the same actions
  * `POST /:owner/-/teams/:team/add` and `/remove` call, in the page's words.
  * On the list, an admin of the selected team's organization makes a team with
  * `n` (a name, then read, write or admin) and deletes the selected team with
@@ -27,8 +29,10 @@ import {
   removeRefusal,
   removedSays,
 } from "../../actions/team_words.ts";
+import { TEAM_ROLES, isTeamRole } from "../../core/agents.ts";
 import {
   listOrgsForUser,
+  listTeamMemberRoles,
   listTeamMembers,
   listTeamsVisibleTo,
   orgAccess,
@@ -66,10 +70,15 @@ export function orgTeamLines(f: Session): Line[] {
 function teamMembersScreen(ctx: Ctx, f: Session, org: User, team: Team, changed: () => void): Screen {
   const state = new ListState();
   const admin = orgAccess(f.app.db, org.id, f.user) === "admin";
-  const read = () => listTeamMembers(f.app.db, team.id).sort((a, b) => a.username.localeCompare(b.username));
+  const read = () =>
+    listTeamMemberRoles(f.app.db, team.id).map(({ user, role }) => ({ ...user, role }));
   let members = read();
   const rowsOf = (): ListRow[] =>
-    members.map((u) => ({ title: `@${u.username}`, ...(u.displayName === "" ? {} : { secondary: u.displayName }) }));
+    members.map((u) => ({
+      title: `@${u.username}`,
+      ...(u.displayName === "" ? {} : { secondary: u.displayName }),
+      meta: u.role,
+    }));
   let rows = rowsOf();
   const reload = () => {
     members = read();
@@ -81,7 +90,7 @@ function teamMembersScreen(ctx: Ctx, f: Session, org: User, team: Team, changed:
   const screen: Screen = {
     title: `${org.username} / ${team.name}`,
     keys: admin
-      ? [binding(["j", "k"], "move cursor"), binding(["a"], "add"), binding(["d"], "remove")]
+      ? [binding(["j", "k"], "move cursor"), binding(["a"], "add"), binding(["r"], "role"), binding(["d"], "remove")]
       : [binding(["j", "k"], "move cursor")],
     render(area, s) {
       drawList(s, area, ctx.theme.c, state, rows);
@@ -102,6 +111,24 @@ function teamMembersScreen(ctx: Ctx, f: Session, org: User, team: Team, changed:
               ctx.toast(addedSays(added.value.added, username, team.name));
               reload();
               return undefined;
+            },
+          }),
+        );
+        return true;
+      }
+      if (e.key === "r") {
+        const member = members[state.index];
+        if (member === undefined) return false;
+        ctx.push(
+          pickerScreen(ctx, screen, {
+            title: `@${member.username}: role`,
+            items: TEAM_ROLES.map((role) => ({ id: role, label: role })),
+            onPick: ([chosen]) => {
+              if (!isTeamRole(chosen)) return;
+              const set = addTeamMember(f.app, f.user, org, team, member.username, chosen);
+              if (!set.ok) ctx.toast(addRefusal(set.error, member.username), "danger");
+              else ctx.toast(`@${member.username} is ${set.value.role} on ${team.name}.`);
+              reload();
             },
           }),
         );

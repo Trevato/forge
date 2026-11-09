@@ -15,12 +15,15 @@ import {
   isLastOwner,
   OWNERS_TEAM,
   removeTeamMember as dropMember,
+  setTeamRole,
+  teamRoleOf,
   type CreateOrgError,
   type CreateTeamError,
   type Permission,
   type Team,
 } from "../core/orgs.ts";
 import { getUserByName, type User } from "../core/users.ts";
+import type { TeamRole } from "../core/agents.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireOrgAdmin, requireUser } from "./access.ts";
 
@@ -117,8 +120,9 @@ export function addTeamMember(
   org: User,
   team: Team,
   username: string,
+  role?: TeamRole,
 ): Result<
-  { added: boolean },
+  { added: boolean; role: TeamRole },
   "not_found" | "no_such_user" | "agent_cannot_own"
 > {
   const admin = requireOrgAdmin(app, actor, org);
@@ -130,14 +134,41 @@ export function addTeamMember(
   // any team that confers admin.
   if (user.kind === "agent" && team.permission === "admin")
     return err("agent_cannot_own");
-  const added = insertMember(app.db, team, user.id);
+  const added = insertMember(app.db, team, user.id, role);
   if (added)
     app.bus.append({
       kind: "team.member_added",
       actorId: admin.value.id,
       payload: { org: org.username, teamId: team.id, user: user.username },
     });
-  return ok({ added });
+  // Adding someone already on the team with a role sets it (#571).
+  else if (role !== undefined) changeRole(app, admin.value, org, team, user, role);
+  return ok({ added, role: teamRoleOf(app.db, team.id, user.id) ?? "member" });
+}
+
+/**
+ * Set a member's role and say so on the outbox (#571): a role re-seats the
+ * crew on every repository the org owns, so it never changes silently.
+ * False when they already hold it or are not on the team.
+ */
+function changeRole(
+  app: App,
+  admin: User,
+  org: User,
+  team: Team,
+  user: User,
+  role: TeamRole,
+): boolean {
+  const from = teamRoleOf(app.db, team.id, user.id);
+  if (from === undefined) return false;
+  const changed = setTeamRole(app.db, team.id, user.id, role);
+  if (!changed) return false;
+  app.bus.append({
+    kind: "team.member_role_set",
+    actorId: admin.id,
+    payload: { org: org.username, teamId: team.id, user: user.username, from, role },
+  });
+  return true;
 }
 
 /**
@@ -151,12 +182,21 @@ export function removeTeamMember(
   org: User,
   team: Team,
   username: string,
+  role?: TeamRole,
 ): Result<{ removed: boolean }, "not_found" | "no_such_user" | "last_owner"> {
   const admin = requireOrgAdmin(app, actor, org);
   if (!admin.ok) return admin;
   if (team.orgId !== org.id) return err("not_found");
   const user = getUserByName(app.db, username);
   if (!user) return err("no_such_user");
+  // With a role, only that role comes off: the member stays on the team as
+  // a plain `member` (#571). Nothing changes when they hold another.
+  if (role !== undefined) {
+    if (role === "member") return ok({ removed: false });
+    if (teamRoleOf(app.db, team.id, user.id) !== role) return ok({ removed: false });
+    const cleared = changeRole(app, admin.value, org, team, user, "member");
+    return ok({ removed: cleared });
+  }
   if (team.name === OWNERS_TEAM && isLastOwner(app.db, org.id, user))
     return err("last_owner");
   const removed = dropMember(app.db, team, user.id);

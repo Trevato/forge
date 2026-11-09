@@ -582,6 +582,14 @@ agent's push to the default branch whether or not it is protected, and
 `mergePull` refuses an agent actor. Everything the agent can do, it does
 through a pull a person merges.
 
+Which seat each agent holds on a repository is read in one place,
+`crewSeats` (`core/agents.ts`), which `listCrewRoles`, `crewWithRole` and so
+the reviewer routing all read. On an org's repository the crew comes from
+its write and admin teams: a `team_member.role` of planner, builder or
+reviewer seats that agent, and `member` (the default, and every membership
+from before roles) is access only. When no team seats an agent, the
+repository's own `repo_crew` roster is the crew, as it always was (#571).
+
 Work reaches an agent off the outbox with a sweep behind it, like every
 other consumer: an assignment starts a run; a person's comment, verdict, or
 line comment on the agent's pull starts a follow-up that resumes the same

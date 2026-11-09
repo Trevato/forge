@@ -256,7 +256,7 @@ describe("home's asks are read grouped, and once", () => {
     const rounds = sql.filter((s) => s.startsWith("SELECT r.issue_id AS issueId, r.id AS id"));
     const verdicts = sql.filter((s) => s.startsWith("SELECT review.issue_id, review.id"));
     const tries = sql.filter((s) => s.includes("run.reason = 'check_failed'"));
-    const reviewers = sql.filter((s) => s.includes("WHERE repo_crew.role = ?1"));
+    const reviewers = sql.filter((s) => s.includes("SELECT 'roster' AS source"));
     expect(active.length).toBe(1);
     expect(handovers.length).toBe(1);
     expect(rounds.length).toBe(1);
