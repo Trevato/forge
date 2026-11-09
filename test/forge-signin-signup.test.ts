@@ -27,18 +27,34 @@ const cookies: Record<string, string> = {};
 const cookieOf = (res: Response, name: string) =>
   res.headers.getSetCookie().map((c) => c.split(";")[0]!).find((c) => c.startsWith(`${name}=`));
 
+/**
+ * The redirect one hop answered with, or a throw that names the hop, its
+ * status and the start of its body: a red here says which step went wrong
+ * (#9978), never a bare "null is not a URL".
+ */
+async function hop(where: string, res: Response, to: string): Promise<URL> {
+  const location = res.headers.get("location");
+  if (res.status === 303 && location !== null && new URL(location, to).href.startsWith(to)) return new URL(location, to);
+  const text = await res.text();
+  const main = text.includes("<main") ? text.slice(text.indexOf("<main")) : text;
+  const body = main.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+  throw new Error(`${where}: ${res.status}, location ${location ?? "none"}, not a 303 to ${to}; body: ${body}`);
+}
+
 /** One full sign-in at the child as the parent's person with `cookie`; the callback's response. */
 async function through(cookie: string): Promise<Response> {
   const start = await fetch(`${cs.url}/signin/parent`, { redirect: "manual" });
-  const to = new URL(start.headers.get("location")!);
+  const to = await hop("the child's /signin/parent", start, `${ps.url}/oauth/authorize?`);
   const consent = await fetch(`${ps.url}/oauth/authorize`, {
     method: "POST",
     redirect: "manual",
     headers: { cookie, origin: ps.url },
     body: new URLSearchParams({ ...Object.fromEntries(to.searchParams), decision: "allow" }),
   });
-  const back = new URL(consent.headers.get("location")!);
-  return fetch(`${cs.url}${back.pathname}${back.search}`, { redirect: "manual", headers: { cookie: cookieOf(start, "forge_rp")! } });
+  const back = await hop("the parent's consent", consent, `${cs.url}/signin/parent/callback?`);
+  const state = cookieOf(start, "forge_rp");
+  if (state === undefined) throw new Error("the child's /signin/parent set no forge_rp cookie");
+  return fetch(`${cs.url}${back.pathname}${back.search}`, { redirect: "manual", headers: { cookie: state } });
 }
 
 const post = (path: string, body: unknown) =>
@@ -71,7 +87,8 @@ beforeAll(async () => {
   const actor = seeded.value.id;
   // Two sign-ups a minute from this source, shared by every door.
   setLimit(child.db, "signup.per_source", 2, actor);
-});
+  // Two forges boot here: on a loaded check host that outlasts bun's 5 s default.
+}, 30_000);
 
 afterAll(async () => {
   ps.stop();
