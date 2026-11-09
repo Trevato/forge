@@ -9,10 +9,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { createApp as createAppRecord } from "../src/core/apps.ts";
+import { createApp as createAppRecord, getAppByRepo } from "../src/core/apps.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import type { AdapterFacts } from "../src/apps/adapter_facts.ts";
+import { recordPull } from "../src/apps/pull.ts";
+import { shownRuns, type AdapterFacts } from "../src/apps/adapter_facts.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { adapterCommands, adapterScreen } from "../src/tui/screens/adapter.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -33,6 +34,9 @@ const facts: AdapterFacts = {
   spec: { schedule: { every: 900 }, source: { name: "Shop API", hosts: ["api.shop.example"] } },
   last: undefined,
   cursor: "c-secret-9",
+  runs: [
+    { id: "r1", at: "2026-11-09T10:00:00.000Z", durationMs: 5, state: "failed", error: "upstream said no", written: 0, skipped: 0, failed: 0, cursor: null, repeat: false },
+  ],
 };
 
 async function mk(username: string, first = false): Promise<User> {
@@ -91,6 +95,17 @@ test("the owner gets the palette entry and the rows", async () => {
   expect(seen.commands.map((c) => c.id)).toEqual(["adapter"]);
   expect(seen.text).toContain("Shop API");
   expect(seen.text).toContain("c-secret-9");
+  expect(seen.text).toContain("Pull runs");
+  expect(seen.text).toContain("failed 0 written, 0 skipped, 0 failed · upstream said no");
+});
+
+test("the runs are the last ten and no more", () => {
+  const record = getAppByRepo(app.db, repo.id);
+  if (record === undefined) throw new Error("no app");
+  for (let i = 0; i < 12; i++) recordPull(app.db, record.id, { ok: false, reason: `boom ${i}`, durationMs: 1 });
+  const shown = shownRuns(app.db, record.id);
+  expect(shown.length).toBe(10);
+  expect(shown[0]?.error).toBe("boom 11");
 });
 
 test("a signed-in outsider gets no entry, and the screen reads nothing", async () => {
@@ -99,6 +114,7 @@ test("a signed-in outsider gets no entry, and the screen reads nothing", async (
   expect(seen.read).toBe(0);
   expect(seen.text).not.toContain("Shop API");
   expect(seen.text).not.toContain("c-secret-9");
+  expect(seen.text).not.toContain("upstream said no");
 });
 
 test("a guest gets no entry, and the screen reads nothing", async () => {
@@ -106,4 +122,5 @@ test("a guest gets no entry, and the screen reads nothing", async () => {
   expect(seen.commands).toEqual([]);
   expect(seen.read).toBe(0);
   expect(seen.text).not.toContain("c-secret-9");
+  expect(seen.text).not.toContain("upstream said no");
 });

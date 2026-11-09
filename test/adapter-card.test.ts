@@ -46,3 +46,24 @@ test("the card is plain rows under an h2, not a boxed card", () => {
   expect(out).toContain("<h2>Adapter</h2>");
   expect(out).not.toContain("card");
 });
+
+const line = (over: object) => ({ id: "r", at: "2026-11-09T10:00:00.000Z", durationMs: 5, state: "ok" as const, error: null, written: 3, skipped: 2, failed: 1, cursor: "c", repeat: false, ...over });
+const bare = { spec, last: undefined, cursor: undefined };
+
+test("the card lists the runs, a failed one's error escaped, under one always-present heading", () => {
+  const out = String(adapterCardView({ ...bare, runs: [line({}), line({ state: "failed", error: "<script>x</script>" })] }, now));
+  expect(out).toContain("<h3>Pull runs</h3>");
+  expect(out.match(/<li /g)?.length).toBe(2);
+  expect(out).toContain("3 written, 2 skipped, 1 failed");
+  expect(out).toContain("&lt;script&gt;x");
+  expect(out).not.toContain("<script>");
+});
+
+test("with no runs the same heading carries one muted line", () => {
+  for (const facts of [bare, { ...bare, runs: [] }]) {
+    const out = String(adapterCardView(facts, now));
+    expect(out).toContain("<h3>Pull runs</h3>");
+    expect(out).toContain("No pull runs yet.");
+    expect(out).not.toContain("<li");
+  }
+});

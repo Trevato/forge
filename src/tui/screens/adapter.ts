@@ -6,7 +6,7 @@
  * nothing and, were the screen reached, sees no rows. Read-only.
  */
 
-import { adapterFactsOf, adapterRows, type AdapterFacts } from "../../apps/adapter_facts.ts";
+import { NO_RUNS_WORDS, adapterFactsOf, adapterRows, adapterRunRows, type AdapterFacts } from "../../apps/adapter_facts.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -48,7 +48,14 @@ export function adapterScreen(
     }
     void facts(record).then(
       (read) => {
-        rows = read === undefined ? undefined : adapterRows(read);
+        rows =
+          read === undefined
+            ? undefined
+            : [
+                ...adapterRows(read),
+                ["Pull runs", (read.runs ?? []).length === 0 ? NO_RUNS_WORDS : ""],
+                ...adapterRunRows(read),
+              ];
         loaded = true;
         ctx.invalidate();
       },

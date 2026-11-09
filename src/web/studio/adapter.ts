@@ -7,9 +7,10 @@
  * and goes through `html`, which escapes it. The wording is
  * `adapterFactRows`, shared with the terminal; this module adds only markup.
  */
+import type { PullRunLine } from "../../apps/pull.ts";
 import type { App } from "../../app.ts";
 import type { AppRecord } from "../../core/apps.ts";
-import { adapterFactRows, adapterFactsOf, everyWords, type AdapterFacts, type FactPart } from "../../apps/adapter_facts.ts";
+import { NO_RUNS_WORDS, adapterFactRows, pullRunWords, adapterFactsOf, everyWords, type AdapterFacts, type FactPart } from "../../apps/adapter_facts.ts";
 import { html, type Html } from "../html.ts";
 import { badge, time } from "../ui.ts";
 
@@ -38,7 +39,18 @@ export function adapterCardView(facts: AdapterFacts, now: number = Date.now()): 
       ${adapterFactRows(facts, now).map((row) => html`<dt>${row.label}</dt>
       <dd>${row.parts.map(part)}</dd>`)}
     </dl>
+    ${runsList(facts.runs ?? [])}
   </section>`;
+}
+
+/** Whether the sync is healthy over time: the heading is always there, the runs or one muted line under it. */
+function runsList(runs: readonly PullRunLine[]): Html {
+  return html`<h3>Pull runs</h3>
+    ${runs.length === 0
+      ? html`<p class="muted">${NO_RUNS_WORDS}</p>`
+      : html`<ul class="pull-runs">
+      ${runs.map((r) => html`<li class="break">${time(r.at)} ${badge(r.state, { variant: "outline" })} ${pullRunWords(r)}</li>`)}
+    </ul>`}`;
 }
 
 /** The section for an app that declares an adapter on its default branch; null for any other. */

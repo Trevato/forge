@@ -8,9 +8,11 @@
  * `declaredAdapter` reads git, but only to resolve the default branch's tip;
  * the parsed spec is cached by tip, so a page view costs one ref lookup.
  */
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import type { AppRecord } from "../core/apps.ts";
 import { lastPullCursor, listPullRuns, type PullRun } from "../core/runs.ts";
+import { pullRunLines, type PullRunLine } from "./pull.ts";
 import type { AdapterSpec } from "./adapter.ts";
 import { declaredAdapter } from "./pull_schedule.ts";
 
@@ -19,6 +21,28 @@ export interface AdapterFacts {
   readonly spec: AdapterSpec;
   readonly last: PullRun | undefined;
   readonly cursor: string | undefined;
+  /** The last `PULL_RUNS_SHOWN` runs, newest first; absent reads as none. */
+  readonly runs?: readonly PullRunLine[];
+}
+
+/** How many runs the page and the terminal list. */
+export const PULL_RUNS_SHOWN = 10;
+export const NO_RUNS_WORDS = "No pull runs yet.";
+
+/** The runs both doors list: one indexed read, newest first, at most `PULL_RUNS_SHOWN`. */
+export function shownRuns(db: Database, appId: string): PullRunLine[] {
+  return pullRunLines(db, appId, PULL_RUNS_SHOWN);
+}
+
+/** One run's wording after its time and state: the counts, then the error sentence of a failed run. */
+export function pullRunWords(r: PullRunLine): string {
+  const counts = `${r.written} written, ${r.skipped} skipped, ${r.failed} failed`;
+  return r.error === null || r.error === "" ? counts : `${counts} · ${r.error}`;
+}
+
+/** The runs as plain [when, words] rows for the terminal, under the facts. */
+export function adapterRunRows(facts: AdapterFacts): Array<[string, string]> {
+  return (facts.runs ?? []).map((r) => [r.at, `${r.state} ${pullRunWords(r)}`]);
 }
 
 /** Seconds as a phrase: `15 minutes`, `1 hour`. */
@@ -32,7 +56,7 @@ export function everyWords(seconds: number): string {
 export async function adapterFactsOf(app: App, record: AppRecord): Promise<AdapterFacts | undefined> {
   const spec = await declaredAdapter(app, record);
   if (spec === undefined) return undefined;
-  return { spec, last: listPullRuns(app.db, record.id, 1)[0], cursor: lastPullCursor(app.db, record.id) };
+  return { spec, last: listPullRuns(app.db, record.id, 1)[0], cursor: lastPullCursor(app.db, record.id), runs: shownRuns(app.db, record.id) };
 }
 
 /** When the next pull is due, in epoch ms; undefined before the first pull or when the stamp is unreadable. */
