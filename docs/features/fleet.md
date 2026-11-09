@@ -14,6 +14,11 @@ Before a fleet operation acts, see the rows its query line selects. There are tw
 - `/` writes a new line. `s` sorts by the next column and `r` reverses the sort. `j` and `k` scroll, and `esc` goes back.
 - A line that does not parse keeps the prompt open with its reason.
 
+**In the API:** `GET /api/v1/fleet/rows?q=<query line>&sort=<column>` answers `{ kind, columns, items }`: the same rows `/fleet` shows, for the caller, public repositories only when signed out.
+
+- `sort` is a column key, `-` leading to reverse; an unknown one is `invalid_sort` (422).
+- A line that does not parse, an empty `q`, or a `q` over 500 characters is `invalid_query` (422) with the reason.
+
 **The query line:** a kind, then `field:value` terms that must all hold. Both doors show the same grammar under the line: one sentence, then each kind with its fields (`GRAMMAR` and `fieldsOf` in `src/fleet/selection.ts`).
 
 - A value starting with `!` negates its term: `repo:!trevato/forge`.

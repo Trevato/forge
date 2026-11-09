@@ -79,6 +79,7 @@ export { route as getApiV1Flags } from "./getApiV1Flags.ts";
 export { route as getApiV1FleetGraph } from "./getApiV1FleetGraph.ts";
 export { route as getApiV1FleetOps } from "./getApiV1FleetOps.ts";
 export { route as getApiV1FleetOpsId } from "./getApiV1FleetOpsId.ts";
+export { route as getApiV1FleetRows } from "./getApiV1FleetRows.ts";
 export { route as getApiV1Forge } from "./getApiV1Forge.ts";
 export { route as getApiV1ForgeEconomics } from "./getApiV1ForgeEconomics.ts";
 export { route as getApiV1ForgeView } from "./getApiV1ForgeView.ts";

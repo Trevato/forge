@@ -276,6 +276,8 @@ import { checkStale } from "../checks/stale.ts";
 import { resolveOid } from "../git/merge.ts";
 import { readForgeUsage, readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
+import { COLUMNS, readSort, sortRows } from "../fleet/columns.ts";
+import { viewFleet } from "../fleet/rows.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { carriedBy } from "../core/carried.ts";
 import { readGateLog } from "../checks/gate_log.ts";
@@ -3282,6 +3284,23 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!ops.ok) return respondFleet(ops.error);
     return timePhase(ctx.request, "render", () => json(paged(ops.value, limit, (op) => op.id)));
+  });
+
+  // The rows a query line selects, as `/fleet` shows them (`fleet/rows.ts`).
+  router.add("GET", "/api/v1/fleet/rows", (ctx) => {
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const q = ctx.url.searchParams.get("q") ?? "";
+    if (q.length > 500) return apiError("invalid_query", 422, "q is over 500 characters");
+    if (q.trim() === "") return apiError("invalid_query", 422, "q is a fleet query line, like: repo autonomy:autonomous");
+    const view = timePhase(ctx.request, "rows", () => viewFleet(ctx.app.db, ctx.auth.user, q));
+    if (!view.ok) return apiError("invalid_query", 422, view.error);
+    const asked = ctx.url.searchParams.get("sort");
+    const sort = asked === null || asked === "" ? undefined : readSort(view.kind, asked);
+    if (asked !== null && asked !== "" && sort === undefined)
+      return apiError("invalid_sort", 422, "sort is a column of the kind, optionally led by -");
+    return timePhase(ctx.request, "render", () =>
+      json({ kind: view.kind, columns: COLUMNS[view.kind], items: sortRows(view.rows, sort) }),
+    );
   });
 
   router.add("GET", "/api/v1/fleet/ops/:id", (ctx) => {
