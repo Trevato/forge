@@ -211,6 +211,10 @@ describe("a limb handed to the planner", () => {
     for (const leaf of leaves) expect(html).toContain(leaf.title);
     expect(html).not.toContain("Unrelated work");
     expect(html).toContain("Hand to the planner");
+    const main = html.slice(html.indexOf("<main"), html.indexOf("</main>"));
+    expect(main).toContain('id="replan-issues"');
+    expect(main).toContain('class="list');
+    expect(main).not.toContain('class="card');
     expect(await (await page("alice", `/alice/engine/milestones/${limb.number}`)).text()).toContain("Re-plan");
     expect(pendingReplans(app.db, fresh())).toEqual([]);
   });
