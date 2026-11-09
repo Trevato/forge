@@ -680,6 +680,34 @@ export function previewLook(env: EnvStatus): {
 
 /** Where this pull's preview stands, with the way in. */
 export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
+  return previewWith(ctx, repo, pull, card);
+}
+
+/** The same preview facts as a block under an h2, the home page's language. */
+export function previewBlock(ctx: Ctx, repo: Repo, pull: Pull): Html {
+  return previewWith(ctx, repo, pull, (body, o) =>
+    html`<section
+      class="settings-block"
+      data-preview-block
+      ${o.tone ? html`data-tone="${o.tone}"` : null}
+    >
+      <div class="bar">${o.head}</div>
+      ${o.tone === "danger"
+        ? html`<p class="small" role="status">This preview has failed.</p>`
+        : o.tone === "attn"
+          ? html`<p class="muted small" role="status">The last deploy of this preview failed.</p>`
+          : null}
+      ${body}
+    </section>`,
+  );
+}
+
+function previewWith(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+  card: (body: Html, o: { head: Html; extra?: string; tone?: "danger" | "attn" }) => Html,
+): Html {
   const view = appView(ctx.app, ctx.auth.user, repo);
   if (!view.ok) return html``;
   const base = repoBase(repo);

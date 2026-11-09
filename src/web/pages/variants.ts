@@ -1,5 +1,5 @@
 /**
- * A deck chooses among sibling pulls: one card per open pull in a variant
+ * A deck chooses among sibling pulls: one section per open pull in a variant
  * group, with its look and its preview, and a like and a dislike that are
  * plain form posts. A swipe on touch is the same post, sent by a few lines
  * of script. A reader sees the cards and no buttons; their post is refused.
@@ -25,8 +25,8 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { changeHref } from "../studio/nouns.ts";
-import { btn, card } from "../ui.ts";
-import { previewCard } from "./apps.ts";
+import { btn } from "../ui.ts";
+import { previewBlock } from "./apps.ts";
 import { lookCard } from "./looks.ts";
 import { parseNumber } from "./thread.ts";
 
@@ -63,7 +63,7 @@ function deckCard(
   return html`<section class="variant-card" data-swipe>
     <h2><a href="${changeHref(base, pull.number)}">#${pull.number} ${pull.title}</a></h2>
     ${record === undefined ? null : lookCard(ctx, repo, record, pull, pull.headOid)}
-    ${previewCard(ctx, repo, pull)}
+    ${previewBlock(ctx, repo, pull)}
     ${when(writer, () =>
       html`<div class="bar mt">
         <form class="like" method="post" action="${vote}/like">
@@ -106,7 +106,7 @@ export function variantsPage(ctx: Ctx): Response {
     scriptJs: SWIPE_JS,
     body: html`<h1>Choose among ${pulls.length} variants</h1>
       ${open.length === 0
-        ? card(html`<p class="muted">Every variant is decided.</p>`)
+        ? html`<p class="muted">Every variant is decided.</p>`
         : open.map((p) =>
             deckCard(ctx, repo, p, group, writer, open.length === 1),
           )}`,
