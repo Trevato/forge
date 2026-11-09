@@ -27,6 +27,7 @@ import { prerenderComments } from "../web/prerender.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { pipelinePage } from "../web/pages/pipeline.ts";
+import { dataPage } from "../web/pages/data.ts";
 import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
 import { maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
@@ -926,6 +927,7 @@ export function buildRouter(): Router<Handler> {
   pinnedRoutes(router);
   // Each THREATS.md protection against the last gate; literal, above /:owner.
   router.add("GET", "/resilience", resiliencePage);
+  router.add("GET", "/data", dataPage);
   router.add("GET", "/maintenance", maintenancePage);
   router.add("POST", "/maintenance/prepare", maintenancePrepare);
   router.add("POST", "/maintenance/resume", maintenanceResume);

@@ -1099,15 +1099,17 @@ export function pager(o: {
   prev?: string;
   next?: string;
   note?: Html | string;
+  /** Words for the two buttons when the list is not in time order. */
+  words?: { prev: string; next: string };
 }): Html {
   if (!o.prev && !o.next && !o.note) return html``;
   return html`<nav class="pager" aria-label="Pagination">
     ${o.prev
-      ? btn("Newer", { href: o.prev, size: "sm", variant: "outline" })
+      ? btn(o.words?.prev ?? "Newer", { href: o.prev, size: "sm", variant: "outline" })
       : null}
     ${o.note ? html`<span>${o.note}</span>` : null}
     ${o.next
-      ? btn("Older", { href: o.next, size: "sm", variant: "outline" })
+      ? btn(o.words?.next ?? "Older", { href: o.next, size: "sm", variant: "outline" })
       : null}
   </nav>`;
 }

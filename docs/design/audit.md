@@ -58,6 +58,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/feed` — `studio/home.ts` · the composer and one timeline, what home was before it became the living pipeline (#8015) · `/` · none seen.
 - `/boards/data` — `pages/boards.ts` · the boards' query/data surface · `/board` · none seen.
 - `/asks` — `studio/asks_page.ts` · what the crew is waiting on me for · `/` "needs me" list · colours 2.
+- `/data` — `pages/data.ts` · the SQLite files I may see, their tables and rows, secrets masked · `/system` · none seen.
 - `/asked` — `studio/asked_page.ts` · what I answered, as a record · `/asks` · none seen.
 - `/review` — `studio/review_page.ts` · every ask waiting on me, one row each, newest first · `/asks` (same asks, with buttons) · none seen.
 - `/flow` — `pages/flow.ts` · the pipeline from ready issue to live deploy, and the bottleneck · `/system`, `/board`, `/` · none seen. A topbar button points here.

@@ -89,6 +89,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "mcp",
   "metrics",
   "contract",
+  "data",
   "migrate",
   "mode",
   "new",
