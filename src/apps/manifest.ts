@@ -16,6 +16,7 @@ import { parseService, type ServiceSpec } from "./service.ts";
 import type { DeclaredLimits } from "./contain.ts";
 import { isPublicAddress } from "./egress.ts";
 import { isLaunch, LAUNCHES, type Launch } from "../git/builds.ts";
+import { parseAdapter, type AdapterSpec } from "./adapter.ts";
 
 export interface AppManifest {
   /** The command that serves on `$PORT`. Run through `sh -c`, `exec`-ed. */
@@ -70,6 +71,11 @@ export interface AppManifest {
    * out of the app's HTML pages. Unset is on.
    */
   readonly toolbar?: boolean | undefined;
+  /**
+   * `adapter` (top level of `forge.json`): the app is pulled from on a
+   * schedule (`apps/adapter.ts`). Unset is not an adapter.
+   */
+  readonly adapter?: AdapterSpec | undefined;
 }
 
 export type ManifestError =
@@ -168,6 +174,8 @@ export function parseManifest(
   const toolbar = parsed.value["toolbar"];
   if (toolbar !== undefined && typeof toolbar !== "boolean")
     return invalid("forge.json: toolbar must be true or false");
+  const adapter = parseAdapter(parsed.value["adapter"]);
+  if (!adapter.ok) return invalid(adapter.error);
   const kind = app["kind"];
   if (kind !== undefined && kind !== "web" && kind !== "service")
     return invalid('forge.json: app.kind must be "web" or "service"');
@@ -200,6 +208,7 @@ export function parseManifest(
     egress: egress.value,
     limits: limits.value,
     toolbar: toolbar ?? true,
+    ...(adapter.value === undefined ? {} : { adapter: adapter.value }),
   });
 }
 

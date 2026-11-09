@@ -544,6 +544,12 @@ Only `text/html` responses the app sends uncompressed with a `Content-Length`
 (up to 4 MiB) are rewritten; JSON, images, compressed or chunked HTML and
 `HEAD` requests pass through byte for byte. `"toolbar": false` keeps it out.
 
+`adapter`, at the top level, says the app is an adapter the forge pulls
+from on a schedule (#437): `{ "adapter": { "schedule": { "every": 900 } } }`.
+`every` is whole seconds, 60 to 86400; any other key, at either level, fails
+the manifest with the field named (`src/apps/adapter.ts`). Absent, the app is
+not an adapter.
+
 Two more fields say what the app's code may use (rule 9):
 
 ```json
