@@ -166,3 +166,27 @@ export function transfersOf(db: Database, repoId: string): TransferRecord[] {
     .all(repoId)
     .map((r) => ({ from: r.from_path, to: r.to_path, actorId: r.actor_id, at: r.created_at }));
 }
+
+/** How long after a move the repository's page still says where it came from. */
+export const MOVED_NOTE_DAYS = 30;
+
+/**
+ * Where the repository was moved from, when its newest move is under
+ * {@link MOVED_NOTE_DAYS} days old; undefined for one never moved or moved
+ * longer ago. `now` is the clock, so a test can set it.
+ */
+export function recentMove(
+  db: Database,
+  repoId: string,
+  now: number = Date.now(),
+): { from: string; at: string } | undefined {
+  const row = db
+    .query<{ from_path: string; created_at: string }, [string]>(
+      "SELECT from_path, created_at FROM repo_transfer WHERE repo_id = ?1 ORDER BY id DESC LIMIT 1",
+    )
+    .get(repoId);
+  if (row === null) return undefined;
+  const age = now - Date.parse(row.created_at);
+  if (Number.isNaN(age) || age >= MOVED_NOTE_DAYS * 86_400_000) return undefined;
+  return { from: row.from_path, at: row.created_at };
+}

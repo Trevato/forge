@@ -90,6 +90,7 @@ import { RENDERERS, rendererFor } from "../render/renderers.ts";
 import { mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
+import { recentMove } from "../../core/transfer.ts";
 import {
   badge,
   btn,
@@ -1284,6 +1285,13 @@ export async function repoFiles(ctx: Ctx): Promise<Response> {
   return await codeHome(ctx, repo);
 }
 
+/** "Moved from <old path> on <date>" for 30 days after a move; one muted line. */
+function movedLine(ctx: Ctx, repo: Repo): Html | null {
+  const move = recentMove(ctx.app.db, repo.id);
+  if (move === undefined) return null;
+  return html`<p class="muted small moved-from">Moved from ${move.from} on ${time(move.at, { date: true })}</p>`;
+}
+
 /**
  * "Archived on <date>" with, for an admin, the Wake button. A repository put
  * away still clones, pushes and links as before; this only says so.
@@ -1318,7 +1326,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
 
   if (refs.branches.length === 0) {
     const emptyRendering = performance.now();
-    const body = html`${scopeHeader(ctx, scope, "code")}${archivedLine(ctx, repo)}${noApp}
+    const body = html`${scopeHeader(ctx, scope, "code")}${archivedLine(ctx, repo)}${movedLine(ctx, repo)}${noApp}
       <div class="mt">
         ${empty({
           icon: "repo",
@@ -1388,7 +1396,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${originAheadLine(ctx, repo)}${archivedLine(ctx, repo)}${noApp}
+  })}${timePhase(ctx.request, "behind", () => behindLine(ctx, repo))}${originAheadLine(ctx, repo)}${archivedLine(ctx, repo)}${movedLine(ctx, repo)}${noApp}
   ${offerUpstream(repo, parent, offer)}
   ${latest === null
     ? ""

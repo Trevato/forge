@@ -17,7 +17,8 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp as createAppRow, getAppByRepo } from "../src/core/apps.ts";
 import { migrationFiles } from "../src/core/schema.ts";
 import { createRepo as makeRepo, forkRepo, getRepo, getRepoById, type Repo } from "../src/core/repos.ts";
-import { transferRepo, transfersOf } from "../src/core/transfer.ts";
+import { movedFromRow } from "../src/tui/screens/about.ts";
+import { recentMove, transferRepo, transfersOf } from "../src/core/transfer.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { readFileSync } from "node:fs";
@@ -264,4 +265,72 @@ describe("transferring a repository", () => {
     const sql = migrationFiles.find((m) => m.name.includes("repo-redirect"))!.sql;
     expect(() => app.db.exec(sql)).not.toThrow();
   });
+});
+
+describe("the moved-from line", () => {
+  test("a moved repository says where from for 30 days, a never-moved or older move says nothing", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-moved-line-"));
+    const app = createApp({ dataDir, port: 0 });
+    const servers = await serve(app);
+    try {
+      const mk = async (username: string) => {
+        const u = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@forge.local`, password: PASSWORD, adminIfFirst: username === "alice" });
+        if (!u.ok) throw new Error(u.error);
+        return u.value;
+      };
+      const alice = await mk("alice");
+      const lab = await mk("lab");
+      const made = await makeRepo(app.db, app.reposRoot, { ownerId: alice.id, name: "demo", visibility: "public" });
+      if (!made.ok) throw new Error(made.error);
+      const page = async (path: string) => (await fetch(`${servers.url}${path}`)).text();
+      expect(recentMove(app.db, made.value.id)).toBeUndefined();
+      expect(await page("/alice/demo")).not.toContain("Moved from");
+      const moved = await transferRepo(app.db, app.reposRoot, made.value, lab, alice.id);
+      expect(moved.ok).toBe(true);
+      const html = await page("/lab/demo");
+      expect(html).toContain("Moved from alice/demo on");
+      const move = recentMove(app.db, made.value.id)!;
+      expect(move.from).toBe("alice/demo");
+      const at = Date.parse(move.at);
+      expect(recentMove(app.db, made.value.id, at + 29 * 86_400_000)).toBeDefined();
+      expect(recentMove(app.db, made.value.id, at + 31 * 86_400_000)).toBeUndefined();
+      app.db.query("UPDATE repo_transfer SET created_at = '2020-01-01T00:00:00.000Z'").run();
+      expect(await page("/lab/demo")).not.toContain("Moved from");
+      app.db.query("UPDATE repo_transfer SET from_path = '<b>x</b>/demo', created_at = ?1").run(new Date().toISOString());
+      const escaped = await page("/lab/demo");
+      expect(escaped).toContain("&lt;b&gt;x&lt;/b&gt;/demo");
+      expect(escaped).not.toContain("<b>x</b>");
+    } finally {
+      await servers.stop();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
+describe("the moved-from row on the terminal's About card", () => {
+  test("says where from for 30 days, through recentMove, and nothing otherwise", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-moved-row-"));
+    const app = createApp({ dataDir, port: 0 });
+    try {
+      const mk = async (username: string) => {
+        const u = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@forge.local`, password: PASSWORD, adminIfFirst: username === "alice" });
+        if (!u.ok) throw new Error(u.error);
+        return u.value;
+      };
+      const alice = await mk("alice");
+      const lab = await mk("lab");
+      const made = await makeRepo(app.db, app.reposRoot, { ownerId: alice.id, name: "demo", visibility: "public" });
+      if (!made.ok) throw new Error(made.error);
+      expect(movedFromRow(app.db, made.value)).toEqual([]);
+      const moved = await transferRepo(app.db, app.reposRoot, made.value, lab, alice.id);
+      expect(moved.ok).toBe(true);
+      const at = Date.parse(recentMove(app.db, made.value.id)!.at);
+      const row = movedFromRow(app.db, made.value, at + 86_400_000);
+      expect(row).toEqual([["moved from", `alice/demo on ${new Date(at).toISOString().slice(0, 10)}`]]);
+      expect(movedFromRow(app.db, made.value, at + 31 * 86_400_000)).toEqual([]);
+      expect(movedFromRow(app.db, undefined)).toEqual([]);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

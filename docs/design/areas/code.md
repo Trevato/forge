@@ -8,3 +8,5 @@
 - `.rail-facts`, `.rail-fact` — the facts in a repository's About rail (`aboutCard` in `src/web/pages/repo.ts`): a `dl` of label-over-value pairs, 12px apart, no rules between them, values wrapping anywhere. The rail is narrower than `.status-row`'s 168px label column, so it stacks instead.
 
 - `.card.bare` — a card with its frame taken off (`card({ extra: "bare" })`): no border, shadow, fill or padding, no rules between rows, head and foot as plain lines. The repository page's file listing, README, Following panel and fork line use it; the markup, and so every hook, stays the same.
+
+- `.moved-from` (#10109) — the one muted line "Moved from <old path> on <date>" under a repository head for 30 days after a move; the path wraps anywhere, so no sideways scroll at 390px.

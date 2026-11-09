@@ -16,7 +16,9 @@
  */
 
 import { sourcesScreen } from "./sources.ts";
+import type { Database } from "bun:sqlite";
 import { audienceFor } from "../../core/audience.ts";
+import { recentMove } from "../../core/transfer.ts";
 import { isPinned } from "../../core/pins.ts";
 import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
@@ -126,6 +128,7 @@ export function aboutScreen(
     repo !== undefined && followShown(f.app, repo, f.user)?.enabled === true;
   const factRows = (): [string, string][] => [
     ...archivedRow(repo),
+    ...movedFromRow(f.db, repo),
     ...movingRow(f, repo),
     ...outsidersRow(repo),
     ...seatRows(f, repo),
@@ -756,6 +759,12 @@ function descriptionRefusal(value: string): string | undefined {
   if (/[\u0000-\u001f\u007f-\u009f]/.test(value)) return "a description is one line of plain text";
   if ([...value].length > DESCRIPTION_MAX) return `a description is ${DESCRIPTION_MAX} characters at most`;
   return undefined;
+}
+
+/** "Moved from <old path> on <date>" for 30 days after a move: the web page's line, from the same function. */
+export function movedFromRow(db: Database, repo: Repo | undefined, now: number = Date.now()): [string, string][] {
+  const move = repo === undefined ? undefined : recentMove(db, repo.id, now);
+  return move === undefined ? [] : [["moved from", `${move.from} on ${move.at.slice(0, 10)}`]];
 }
 
 /** One line when an admin has put the repository away. */

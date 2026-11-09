@@ -33,3 +33,10 @@ the old path takes the path back.
 
 Not yet: git remotes under the old path, runs and previews follow in the next
 step.
+
+For 30 days after a move, the repository's page says where it came from: one
+muted line, "Moved from alice/demo on 2026-11-09", under the head, for someone
+arriving by an old link. The terminal says the same on the About card (`I` on
+the repository's screen) as a "moved from" row. Both read the newest
+`repo_transfer` row through `recentMove` in `src/core/transfer.ts`; after 30
+days, or for a repository never moved, neither shows anything.
