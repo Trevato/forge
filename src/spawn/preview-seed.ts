@@ -34,7 +34,7 @@ import { iterationsOf } from "../core/iterations.ts";
 import { turnValveFor } from "../actions/valves.ts";
 import { insertBet } from "../core/bets.ts";
 import { addDependency } from "../core/dependencies.ts";
-import { claimRun, createRun, finishRun } from "../core/runs.ts";
+import { claimRun, createPullRun, createRun, finishRun } from "../core/runs.ts";
 import { setMember } from "../core/roles.ts";
 import { noteLimit } from "../core/standing.ts";
 import { addSubscription, listSubscriptions } from "../core/subscriptions.ts";
@@ -574,11 +574,15 @@ async function seedApp(app: App, admin: User): Promise<Result<void, string>> {
   if (!repo.ok) return err(`the sample app's repository: ${String(repo.error)}`);
   const first = await commitToBranch(app, admin, repo.value, {
     message: "Start",
-    files: [{ path: "README.md", content: "# hello\n\nA preview's sample app.\n" }],
+    files: [
+      { path: "README.md", content: "# hello\n\nA preview's sample app.\n" },
+      { path: "forge.json", content: JSON.stringify({ app: { run: "bun run src/server.ts" }, adapter: { schedule: { every: 900 } } }) },
+    ],
   });
   if (!first.ok) return err(`the sample app's commit: ${JSON.stringify(first.error)}`);
   const record = createAppRecord(app.db, { repoId: repo.value.id, slug: PREVIEW_APP, access: "public" });
   if (!record.ok) return err(`the sample app's record: ${record.error}`);
+  seedPullRuns(app, record.value.id);
   const url = new URL(`https://preview.invalid${PREVIEW_APP_PAGE}`);
   const answer = await studioApp(
     { app, request: new Request(url.href), url, params: {}, auth: { user: admin }, theme: undefined } as Ctx,
@@ -586,4 +590,23 @@ async function seedApp(app: App, admin: User): Promise<Result<void, string>> {
     record.value,
   );
   return answer.status === 200 ? ok() : err(`${PREVIEW_APP_PAGE} would answer ${String(answer.status)}, not 200`);
+}
+
+/** Ten recorded pull runs for the app page's Adapter section (#10158): one failed with a reason of the longest allowed, an unbroken word in it. */
+export const PREVIEW_LONG_REASON = `upstream refused the pull: ${"x".repeat(60)} ${"https://api.example.invalid/v2/orders?cursor=".repeat(3)}`.slice(0, 200);
+function seedPullRuns(app: App, appId: string): void {
+  for (let i = 0; i < 10; i++) {
+    const failed = i === 4;
+    createPullRun(app.db, {
+      appId,
+      state: failed ? "failed" : "ok",
+      written: failed ? 0 : 12 + i,
+      skipped: failed ? 0 : 3,
+      failed: 0,
+      cursor: failed ? "" : `c${String(i)}`,
+      durationMs: 40 + i,
+      reason: failed ? PREVIEW_LONG_REASON : "",
+      repeat: false,
+    });
+  }
 }
