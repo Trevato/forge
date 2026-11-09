@@ -6,6 +6,7 @@
 
 import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { crewWithRole } from "./agents.ts";
 import { getIssue } from "./issues.ts";
 import { closesFromBody } from "./pulls.ts";
 import { listReviews, type Review, type ReviewState } from "./reviews.ts";
@@ -96,3 +97,25 @@ export function teamVerdicts(
 /** Whether every named team has a current verdict on the head (vacuously true with no teams). */
 export const teamsAnswered = (verdicts: readonly TeamVerdict[]): boolean =>
   verdicts.every((v) => v.state !== undefined && !v.stale);
+
+/**
+ * The named teams that still hold the pull: each has a crew reviewer on the
+ * pull's repository and no current approval on its head. A stale approval,
+ * or a newer verdict that is not an approval, holds; a team with nobody to
+ * ask does not, matching the review's lapse rule (docs/OPERATING.md).
+ * Nothing gates on it yet (#9930).
+ */
+export function teamsHolding(
+  db: Database,
+  pull: { id: string; repoId: string; body: string; headOid: string },
+): TeamVerdict[] {
+  const verdicts = teamVerdicts(db, pull);
+  if (verdicts.length === 0) return [];
+  const reviewers = new Set(
+    (crewWithRole(db, [pull.repoId], "reviewer").get(pull.repoId) ?? []).map((a) => a.user.id),
+  );
+  return verdicts.filter((v) => {
+    const askable = getTeam(db, v.team)!.members.some((m) => reviewers.has(m));
+    return askable && !(v.state === "approved" && !v.stale);
+  });
+}
