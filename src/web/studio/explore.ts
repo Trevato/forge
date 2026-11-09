@@ -218,7 +218,9 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     ${rows.length === 0
       ? emptyState(ctx, query)
       : card(html`<ul class="list">${rows.map(rowHtml)}</ul>`, { pad: false, extra: "bare" })}</div>`;
-  const response = page({ ctx, title: "Explore", body });
+  const drawn = page({ ctx, title: "Explore", body });
+  // An unknown filter is a 422 here as on the API and the MCP; the page still draws the note and the results.
+  const response = unknown.length === 0 ? drawn : new Response(drawn.body, { status: 422, headers: drawn.headers });
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
 }

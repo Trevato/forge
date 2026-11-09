@@ -12,7 +12,7 @@ export const tool: Tool = {
       q: {
         type: "string",
         maxLength: 200,
-        description: "Words; kind: sort: updated:7d owner: archived:",
+        description: "kind: sort: updated:7d owner: archived:. Unknown word: error",
       },
       query: {
         type: "string",
@@ -30,13 +30,12 @@ export const tool: Tool = {
     const line = q !== "" ? q : str(args["query"]);
     const { query, unknown } = readExploreLine(line);
     const suggest = exploreSuggestion(line);
+    if (unknown.length > 0) return bad("unknown_filter", exploreNote(unknown) + (suggest === undefined ? "" : `; did you mean "${suggest.line}"?`));
     const cursor = str(args["cursor"]);
     const page = await explorePage(ctx.app, user, query, cursor === "" ? null : cursor);
     if (page === null) return bad("invalid_cursor", "cursor is not the next_cursor of a page before");
     return good({
       query: exploreLine(query),
-      ...(unknown.length === 0 ? {} : { note: exploreNote(unknown) }),
-      ...(suggest === undefined ? {} : { suggest: suggest.line }),
       items: page.items,
       next_cursor: page.nextCursor,
     });

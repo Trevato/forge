@@ -265,7 +265,7 @@ describe("explore", () => {
     expect(names((await api("kind:app owner:bob")).items)).toEqual(["bob/busy"]);
     expect(names((await api("owner:bob")).items).sort()).toEqual(["bob", "bob/busy"]);
     const bad = await api("kind:app owner:..");
-    expect((bad as { note?: string }).note).toBe("owner:.. is not a name");
+    expect((bad as { message?: string }).message).toBe("owner:.. is not a name");
     const page = await (await fetch(`${base}/explore?q=kind:person`)).text();
     expect(page).toContain(`href="/explore?q=${encodeURIComponent("kind:app owner:bob")}">1 app</a>`);
   });
