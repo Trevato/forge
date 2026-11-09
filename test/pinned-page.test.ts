@@ -107,3 +107,54 @@ describe("deploy-to page", () => {
     expect(p.state).toBe("running");
   });
 });
+
+describe("pinned list page", () => {
+  test("renders none, then one forge; a non-admin gets 404", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-pinned-list-"));
+    const app = createApp({ dataDir, port: 0 });
+    const servers = await serve(app);
+    try {
+      for (const [username, adminIfFirst] of [["alice", true], ["bob", false]] as const) {
+        const made = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@f.test`, password: "a-good-passphrase", adminIfFirst });
+        if (!made.ok) throw new Error(made.error);
+      }
+      const adminTok = createToken(app.db, getUserByName(app.db, "alice")!.id, "admin", "admin").token;
+      const bobTok = createToken(app.db, getUserByName(app.db, "bob")!.id, "admin", "admin").token;
+      const get = (tok?: string) => fetch(servers.url + "/pinned", { redirect: "manual", headers: tok ? { authorization: `Bearer ${tok}` } : {} });
+      expect((await get()).status).toBe(303);
+      expect((await get(bobTok)).status).toBe(404);
+      const empty = await (await get(adminTok)).text();
+      expect(empty).toContain("No pinned forge yet");
+      expect(empty).toContain('href="/deploy-to"');
+
+      cloudNet.fetch = async () => new Response(JSON.stringify({ account: { email: "a@b.c", status: "active" } }), { status: 200 });
+      const added = await addAccount(app, getUserByName(app.db, "alice"), "digitalocean", "main", "dop_v1_9Zq4TxLm7Kp2Vb8nWcR5");
+      if (!added.ok) throw new Error(String(added.error));
+      allowWrite(app, getUserByName(app.db, "alice"), "digitalocean", "main", true);
+      net.fetch = async (url) =>
+        new Response(JSON.stringify(new URL(url).pathname === "/v2/volumes" ? { volume: { id: "vol-1" } } : { droplet: { id: 7 } }), { status: 202 });
+      const r = await fetch(servers.url + "/deploy-to", {
+        method: "POST", redirect: "manual",
+        headers: { authorization: `Bearer ${adminTok}`, origin: servers.url, "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ name: "acme", account: "main", app: "alice/shop", source: SOURCE, version: V }),
+      });
+      expect(r.status).toBe(303);
+      const t = await (await get(adminTok)).text();
+      expect(t).toContain("acme");
+      expect(t).toContain("alice/shop");
+      expect(t).toContain(V.slice(0, 12));
+      expect(t).toContain("deploy to");
+      expect(t).toContain("alice");
+      expect(t).toContain("never checked");
+      expect(t).not.toContain("<table");
+      app.bus.append({ kind: "pinned.check", actorId: getUserByName(app.db, "alice")!.id, payload: { name: "acme", state: "running", healthy: true } });
+      const checked = await (await get(adminTok)).text();
+      expect(checked).not.toContain("never checked");
+      expect(checked).toContain("Last check");
+      expect(t).not.toContain("No pinned forge yet");
+    } finally {
+      await servers.stop();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+});

@@ -7,6 +7,7 @@ A pinned forge is a forge the owner put on their own cloud. It has **no crew** a
 - HTTP: `GET /api/v1/admin/pinned` (forges, their changes, the targets), `POST /api/v1/admin/pinned` (deploy), `POST /api/v1/admin/pinned/:name/update`, `POST /api/v1/admin/pinned/:name/rollback`.
 - Terminal: palette → **Pinned forges** (forge admin): `d` deploy, `u` update, `r` roll back; it follows the bus, so a change made at any door shows at once (`src/tui/screens/pinned.ts`).
 - Web: `/deploy-to` (forge admin; linked from Cloud accounts) is a server-rendered form for cloud account, app, source, version and name. The link `/deploy-to?app=owner/name&source=https://…&version=v1.2.3` (`deployToHref` in `src/web/pinned.ts`) lands on it with those filled in after one sign-in; nothing deploys until the button is pressed. The POST is same-origin checked and calls the same `deployPinned` (`src/http/pinned_routes.ts`).
+- Web list: `/pinned` (forge admin; 404 otherwise) is server-rendered, one block of plain rows per forge: name, app, version, address (a link), health (the state), when the last check ran (the newest `pinned.check` event; `never checked` before the first), and the last change with who and when, from the same `pinnedForges` read as the API (`src/web/pages/pinned.ts`). The intro links `/deploy-to`; an empty list says so.
 - MCP: `pinned_forge` with `verb` `list`, `deploy`, `update`, `rollback` (and `check`) — the same words and the same checks (`src/actions/pinned.ts`).
 
 A deploy names a cloud account (Settings → Cloud accounts, **writes allowed**), the app (`owner/name`), a git `source` (https) and a `version` (a 40-character commit id or a tag like `v1.2.3` — never a branch, so nothing moves under it).
@@ -49,7 +50,6 @@ Each id is recorded the moment it exists. A first deploy that fails before a dro
 
 - No canary result on a real account yet: the script is written, the run needs an owner's token (#8746, see Canary).
 - No TLS or domain: the URL is `http://<droplet IPv4>:<PORT or 3000>/`.
-- No page in the web studio lists the pinned forges yet; `/deploy-to` deploys one, and the API, MCP and terminal list them.
 - AWS and Azure drivers.
 
 ## Canary (#8746)

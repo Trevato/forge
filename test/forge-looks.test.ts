@@ -20,6 +20,7 @@ quietLogs();
 
 /** Top-level routes that are not pages, or are not worth a picture, and why. */
 const NOT_A_PAGE: Record<string, string> = {
+  "/audit": "no picture: its slot went to /pinned; /audit.csv is its download, covered by test/audit.test.ts",
   "/deploy-to": "a form for a forge admin that fills from its link; covered by test/pinned-page.test.ts",
   "/asked": "no picture: the cap of 24 looks went to /notes, the page that now leads with a person's thoughts; /asked is covered by test/asked.test.ts",
   "/forges": "no picture: the cap of 24 looks went to the preview's /waves and /milestones; the page is covered by its own tests",
