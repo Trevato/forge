@@ -28,6 +28,7 @@ import { createApp as insertApp, deleteApp } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
 import { muteRepo } from "../src/core/interactions.ts";
 import { readFeedPage } from "../src/feed/feed.ts";
+import { clearFires, recordFire } from "../src/core/feature_fires.ts";
 import { absorb, featureSettings, getAbsorbed } from "../src/core/features.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -340,6 +341,19 @@ describe("absorbing an app", () => {
     expect(detail).toContain("<dt>Last changed by</dt>");
     const list = await (await web(adaCookie, "/settings/features")).text();
     expect(list).toMatch(/<dl class="row-facts"><div><dt>Last changed by<\/dt><dd>cy, \d{4}-\d{2}-\d{2}<\/dd><\/div><\/dl>/);
+  });
+
+  test("how the forge's scheduled calls went shows on the feature's page and in the API, escaped", async () => {
+    recordFire(app.db, appId, { tool: "scan", at: Date.now() - 120_000, ok: false, error: "<b>the app answered 500</b>", durationMs: 42 });
+    const view = await getFeature(app, ada, "radar");
+    expect(view.ok && view.value.fires).toEqual([{ tool: "scan", at: expect.any(Number), ok: false, error: "<b>the app answered 500</b>", durationMs: 42 }]);
+    const page = await (await web(adaCookie, "/settings/features/radar")).text();
+    expect(page).toContain("<h3>Scheduled</h3>");
+    expect(page).toContain("&lt;b&gt;the app answered 500&lt;/b&gt;");
+    expect(page).not.toContain("<b>the app answered 500");
+    expect(((await (await api("GET", adaToken, "/radar")).json()) as { fires: unknown[] }).fires).toHaveLength(1);
+    clearFires(app.db, appId);
+    expect(await (await web(adaCookie, "/settings/features/radar")).text()).not.toContain("<h3>Scheduled</h3>");
   });
 
   test("the facts are plain and escaped", () => {

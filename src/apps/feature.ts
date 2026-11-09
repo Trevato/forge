@@ -68,7 +68,7 @@ export interface FeatureSpec {
   readonly settings: readonly SettingSpec[];
   /** MCP tools the app serves through the forge's `features` tool (`feature_tools.ts`). */
   readonly tools: readonly ToolSpec[];
-  /** Tools the app asks the forge to call on a timer; empty when none. Declared only: nothing fires yet. */
+  /** Tools the app asks the forge to call on a timer; empty when none. Fired by `apps/feature_schedule.ts`. */
   readonly schedule: readonly ScheduleEntry[];
 }
 

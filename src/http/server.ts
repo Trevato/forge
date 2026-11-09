@@ -470,6 +470,7 @@ import {
 import { captureStore, loopWatch, perfRecord, readLedger } from "../perf/live.ts";
 import { classOf, countryOf, repoOf, signatureOf } from "../perf/traffic.ts";
 import { createTrafficWriter } from "../perf/traffic_store.ts";
+import { startFeatureSchedule } from "../apps/feature_schedule.ts";
 import { startGithubPull } from "../perf/github_traffic.ts";
 import { appSourcesPage } from "../web/pages/sources.ts";
 import { createViewWriter } from "../perf/views_store.ts";
@@ -2310,6 +2311,7 @@ export async function serve(app: App): Promise<Servers> {
   // Page views are buffered by the beacon doors and written here; GitHub's traffic is pulled daily when a token is set.
   const viewWriter = createViewWriter(app.db, app.log);
   const githubPull = startGithubPull(app.db, app.log);
+  const featureSchedule = startFeatureSchedule(app);
   const readWriter = createReadWriter(app.db, readLedger, app.log);
   const counted = (
     owner: App,
@@ -2632,6 +2634,7 @@ export async function serve(app: App): Promise<Servers> {
       trafficWriter.stop();
       viewWriter.stop();
       githubPull?.stop();
+      featureSchedule?.stop();
       readWriter.stop();
       // A child's hooks stop answering before its database closes.
       for (const key of [...new Set([...childHttps.keys(), ...childInternals.keys()])]) letGo(key);

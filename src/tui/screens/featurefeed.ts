@@ -7,10 +7,14 @@
  */
 
 import { absorbedForNav, feedOf, getFeature, type NavFeature } from "../../actions/features.ts";
+import type { Fired } from "../../core/feature_fires.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
+import { style } from "../term/style.ts";
+import { truncate } from "../term/width.ts";
+import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import { ListState, ago, drawList, type ListRow } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
@@ -21,8 +25,10 @@ const oneLine = (text: string): string => text.replace(/[\p{Cc}\p{Cf}\u2028\u202
 export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Screen {
   const state = new ListState();
   let items: readonly FeedItem[] = [];
+  let fires: readonly Fired[] = [];
   void getFeature(f.app, f.user, feature.slug).then((found) => {
     items = found.ok ? feedOf(f.app, f.user, found.value) : [];
+    fires = found.ok ? found.value.fires : [];
     ctx.invalidate();
   });
   return {
@@ -30,12 +36,17 @@ export function featureFeedScreen(f: Session, ctx: Ctx, feature: NavFeature): Sc
     keys: [binding(["j", "k"], "move"), binding(["esc", "q"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
+      const [head, body] = fires.length === 0 ? [undefined, area] : split(area, "v", [len(1), fill(1)]);
+      if (head !== undefined) {
+        const line = `Scheduled: ${fires.map((x) => `${x.tool} ${x.ok ? "ok" : oneLine(x.error ?? "failed")} ${ago(new Date(x.at).toISOString())}`).join("; ")}`;
+        s.text(head.x, head.y, truncate(line, head.w), style(c.mutedFg, c.bg), head.x + head.w);
+      }
       if (items.length === 0) {
-        emptyState(s, area, c, { title: "Nothing yet." });
+        emptyState(s, body!, c, { title: "Nothing yet." });
         return;
       }
       const rows: ListRow[] = items.map((i) => ({ title: oneLine(i.what), secondary: oneLine(i.actor ?? i.app), meta: ago(i.at) }));
-      drawList(s, area, c, state, rows);
+      drawList(s, body!, c, state, rows);
     },
     key(e) {
       if (e.key === "esc" || e.key === "q") ctx.pop();

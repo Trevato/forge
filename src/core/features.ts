@@ -5,6 +5,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { clearFires } from "./feature_fires.ts";
 
 export interface Absorbed {
   readonly appId: string;
@@ -45,6 +46,7 @@ export function keepDeclaration(db: Database, appId: string, name: string, page:
 
 /** True when the app was absorbed. Its settings stay, so absorbing again picks them up. */
 export function unabsorb(db: Database, appId: string): boolean {
+  clearFires(db, appId);
   return db.query("DELETE FROM app_feature WHERE app_id = ?1").run(appId).changes > 0;
 }
 

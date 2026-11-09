@@ -12,6 +12,7 @@ import { absorbApp } from "../src/actions/features.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
+import { clearFires, recordFire } from "../src/core/feature_fires.ts";
 import { featureSettings, getAbsorbed } from "../src/core/features.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -150,6 +151,17 @@ describe("features in the terminal", () => {
     expect(t.text()).toContain("Radar");
     await t.press("enter");
     expect(t.text()).toContain("Radar misses Tuesday");
+    t.stop();
+  });
+
+  test("the feed screen says how the last scheduled calls went, on one line", async () => {
+    recordFire(forge.db, appId, { tool: "scan", at: Date.now() - 120_000, ok: false, error: "the app answered 500", durationMs: 3 });
+    const t = boot(ada);
+    await t.palette("Feature feeds");
+    await t.press("enter");
+    await t.press("enter");
+    expect(t.text()).toContain("Scheduled: scan the app answered 500");
+    clearFires(forge.db, appId);
     t.stop();
   });
 

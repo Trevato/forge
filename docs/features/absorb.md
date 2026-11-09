@@ -82,11 +82,11 @@ Settings stay behind on a fork. A fork of another forge's app carries its `featu
 
 ## Schedule
 
-A feature may declare `"schedule": [{ "tool": "scan", "every": "1h" }]`: at most 4 entries, each naming one of the feature's own `tools` and an `every` of `15m`, `1h`, `6h` or `1d`. Anything else is refused with the field and the entry named. The forge keeps it as `schedule` (`tool`, `everyMs`) on the parsed feature. Firing is not done yet: nothing calls the tool on that interval (#9883).
+A feature may declare `"schedule": [{ "tool": "scan", "every": "1h" }]`: at most 4 entries, each naming one of the feature's own `tools` and an `every` of `15m`, `1h`, `6h` or `1d`. Anything else is refused with the field and the entry named. The forge keeps it as `schedule` (`tool`, `everyMs`) on the parsed feature. The forge calls it on that interval while the app is absorbed and running, and remembers how it went: see [feature-schedule.md](feature-schedule.md).
 
 ## Not done yet
 
-Until then an absorbed app is a menu link with kept settings (Settings › Features says so). The forge does not yet fire a feature's schedule (#9883).
+An absorbed app is a menu link with kept settings (Settings › Features says so).
 
 ## MCP tools
 

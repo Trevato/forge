@@ -221,6 +221,13 @@ function featureView(ctx: Ctx, f: FeatureView, refused?: Refused, items: readonl
             meta: html`${i.actor ?? i.app} · ${time(i.at)}`,
           }))}</ul>`}
     </section>
+    ${when(f.fires.length > 0, () => html`<section class="settings-block">
+      <h3>Scheduled</h3>
+      <ul class="list">${f.fires.map((x) => row({
+        title: html`<span class="mono">${x.tool}</span>`,
+        meta: html`${x.ok ? "ok" : html`<span class="danger">${x.error ?? "failed"}</span>`} · ${time(new Date(x.at).toISOString())} · ${x.durationMs} ms`,
+      }))}</ul>
+    </section>`)}
     <p class="muted small">
       Saving restarts ${f.name}: its process reads each setting as an environment variable, named on the right.
       <a href="/settings/features">All features</a>
