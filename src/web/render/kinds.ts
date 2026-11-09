@@ -125,6 +125,8 @@ const MEDIA: Readonly<Record<string, Media>> = {
 const TEXTUAL: Readonly<Record<string, FileKind>> = {
   csv: "csv",
   tsv: "csv",
+  jsonl: "csv",
+  ndjson: "csv",
   gltf: "model3d",
   json: "config",
   jsonc: "config",

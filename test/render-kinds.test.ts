@@ -39,6 +39,8 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   glb: [enc("glTF\x02\0\0\0"), "model3d", "model/gltf-binary"],
   csv: [enc("a,b\n1,2\n"), "csv", "application/octet-stream"],
   tsv: [enc("a\tb\n"), "csv", "application/octet-stream"],
+  jsonl: [enc("{\"a\":1}\n"), "csv", "application/octet-stream"],
+  ndjson: [enc("{\"a\":1}\n"), "csv", "application/octet-stream"],
   gltf: [enc('{"asset":{}}'), "model3d", "application/octet-stream"],
   json: [enc("{}"), "config", "application/octet-stream"],
   jsonc: [enc("{}"), "config", "application/octet-stream"],
