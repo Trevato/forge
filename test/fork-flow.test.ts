@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { listEvents } from "../src/core/events.ts";
 import { firstFetchRetry } from "../src/origins/mirror.ts";
+import { forkBackoff } from "../src/origins/fork-route.ts";
 import { settled } from "../src/origins/jobs.ts";
 import {
   mirrorAndWait,
@@ -122,13 +123,19 @@ describe("the fork flow", () => {
     });
   }
 
-  const fakeFor = (kind: "forgejo" | "github", repos: FakeState["repos"]) => {
+  // The origin does not finish making a fork before it answers: a read of
+  // the new repository 404s before it appears. This is GitHub's real
+  // behaviour, and the reason `forkOrigin` polls at all. One 404 makes the
+  // poll go round; the backoff between polls is shortened to 10 ms, since
+  // what is proved is that it goes round, not how long it waits.
+  const fakeFor = (
+    kind: "forgejo" | "github",
+    repos: FakeState["repos"],
+    forkDelayReads = 1,
+  ) => {
     const state = newFakeState(kind, ORIGIN_LOGIN, originToken);
     state.repos.push(...repos);
-    // The origin does not finish making a fork before it answers: two reads
-    // of the new repository 404 before it appears. This is GitHub's real
-    // behaviour, and the reason `forkOrigin` polls at all.
-    state.forkDelayReads = 2;
+    state.forkDelayReads = forkDelayReads;
     return serveFakeForge(state);
   };
 
@@ -145,32 +152,68 @@ describe("the fork flow", () => {
     return (await read<{ id: string }>(connected)).id;
   };
 
+  const foundBackoff = forkBackoff.ms;
+
   beforeAll(async () => {
+    forkBackoff.ms = [10];
     dataDir = await mkdtemp(join(tmpdir(), "forge-ff-"));
     originDataDir = await mkdtemp(join(tmpdir(), "forge-ff-up-"));
 
+    // Both forges are built at once: nothing on one waits for the other
+    // until the origins are connected.
     // ---- the upstream forge: the git host behind every fake clone URL ----
     originApp = createApp({ dataDir: originDataDir, port: 0 });
-    originServers = await serve(originApp);
-    await mkAccount(originServers, UPSTREAM_OWNER);
-    originToken = await mkAccount(originServers, ORIGIN_LOGIN);
+    // ---- the local forge ----
+    app = createApp({ dataDir, port: 0 });
+    [originServers, servers] = await Promise.all([serve(originApp), serve(app)]);
+    base = servers.url;
+    [, originToken, aliceToken, bobToken] = await Promise.all([
+      mkAccount(originServers, UPSTREAM_OWNER),
+      mkAccount(originServers, ORIGIN_LOGIN),
+      mkAccount(servers, "alice"),
+      mkAccount(servers, "bob"),
+    ]);
     proveAll(originApp);
     promote(originApp.db);
+    proveAll(app);
+    promote(app.db);
 
-    await seedUpstream("gears");
-    await seedUpstream("widgets");
-    // A repo `me` owns outright — the "you can already push here" case.
-    await seedUpstream("own", ORIGIN_LOGIN);
+    await Promise.all([
+      seedUpstream("gears"),
+      seedUpstream("widgets"),
+      // A repo `me` owns outright — the "you can already push here" case.
+      seedUpstream("own", ORIGIN_LOGIN),
+    ]);
 
     // `me` really forks both upstreams, so the fake's clone URL for the fork
     // points at a repository that exists and that `me` may push to.
-    for (const name of ["gears", "widgets"]) {
-      const forked = await upstream(
-        `/api/v1/repos/${UPSTREAM_OWNER}/${name}/forks`,
-        { as: ORIGIN_LOGIN, method: "POST", body: "{}" },
-      );
-      expect(forked.status).toBe(201);
-    }
+    const forks = await Promise.all(
+      ["gears", "widgets"].map((name) =>
+        upstream(`/api/v1/repos/${UPSTREAM_OWNER}/${name}/forks`, {
+          as: ORIGIN_LOGIN,
+          method: "POST",
+          body: "{}",
+        }),
+      ),
+    );
+    for (const forked of forks) expect(forked.status).toBe(201);
+
+    // The upstream forge stands in for the origin's git, not for its push
+    // policy: GitHub runs no forge hooks. Each contribution pushes twice into
+    // these three repositories, and each push would spawn two Bun processes
+    // to ask the upstream forge's own rules, about 100 ms a push. A hook
+    // that accepts keeps the pushes real and leaves the local forge's own
+    // hooks, which this file does exercise, as they are.
+    await Promise.all(
+      ["gears", "widgets", "own"].flatMap((name) =>
+        ["pre-receive", "post-receive"].map((hook) =>
+          writeFile(
+            join(originDataDir, "repos", ORIGIN_LOGIN, `${name}.git`, "hooks", hook),
+            "#!/bin/sh\nexit 0\n",
+          ),
+        ),
+      ),
+    );
 
     // The upstream moves on AFTER the fork: a branch started from the fork's
     // own copy of main would now be proposing a stale tree.
@@ -216,20 +259,14 @@ describe("the fork flow", () => {
       },
     ]);
 
-    // ---- the local forge ----
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-    base = servers.url;
-    aliceToken = await mkAccount(servers, "alice");
-    bobToken = await mkAccount(servers, "bob");
-    proveAll(app);
-    promote(app.db);
-
-    forgejoOrigin = await connect(forgejo);
-    githubOrigin = await connect(github, "github");
+    [forgejoOrigin, githubOrigin] = await Promise.all([
+      connect(forgejo),
+      connect(github, "github"),
+    ]);
   });
 
   afterAll(async () => {
+    forkBackoff.ms = foundBackoff;
     forgejo.stop();
     github.stop();
     servers.stop();
@@ -375,29 +412,6 @@ describe("the fork flow", () => {
     expect(pull?.pull?.headRepo).toBe(`${ORIGIN_LOGIN}/gears`);
   });
 
-  test("a second contribution reuses the fork rather than making another", async () => {
-    const before = forgejo.state.requests.filter(
-      (r) => r.method === "POST" && r.path.endsWith("/gears/forks"),
-    ).length;
-    const response = await api(
-      `/api/v1/user/origins/${forgejoOrigin}/browse/${UPSTREAM_OWNER}/gears/contribute`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          branch: "second-go",
-          message: "another",
-          files: [{ path: "b.txt", content: "two\n" }],
-          openPull: { title: "another" },
-        }),
-      },
-    );
-    expect(response.status).toBe(201);
-    const after = forgejo.state.requests.filter(
-      (r) => r.method === "POST" && r.path.endsWith("/gears/forks"),
-    ).length;
-    expect(after).toBe(before);
-  });
-
   test("push rights mean no fork: the branch lands on the upstream itself", async () => {
     const before = forgejo.state.requests.filter(
       (r) => r.method === "POST" && r.path.endsWith("/forks"),
@@ -492,7 +506,7 @@ describe("the fork flow", () => {
 
   // ---- contributing from a mirrored upstream ----
 
-  test("the repo route contributes to the upstream a mirror names", async () => {
+  test("the repo route contributes to the upstream a mirror names, through the fork already made", async () => {
     // Mirror the upstream itself, then contribute from its own page.
     const job = await mirrorAndWait(
       await api(`/api/v1/user/origins/${forgejoOrigin}/mirror`, {
@@ -503,6 +517,11 @@ describe("the fork flow", () => {
     expect(job?.stage).toBe("done");
     const mirror = job!.repo!;
     mirrorPath = `${mirror.ownerName}/${mirror.name}`;
+    const forksAsked = () =>
+      forgejo.state.requests.filter(
+        (r) => r.method === "POST" && r.path.endsWith("/gears/forks"),
+      ).length;
+    const before = forksAsked();
 
     const response = await api(
       `/api/v1/repos/${mirror.ownerName}/${mirror.name}/contribute`,
@@ -524,6 +543,9 @@ describe("the fork flow", () => {
     }>(response);
     expect(result.via).toBe("fork");
     expect(result.forkFullName).toBe(`${ORIGIN_LOGIN}/gears`);
+    // A second contribution to gears reuses the fork the first one made
+    // rather than asking the origin for another.
+    expect(forksAsked()).toBe(before);
     // The upstream IS mirrored here, so the pull came back as a local row.
     expect(result.pull?.local?.number).toBe(result.pull!.number);
 

@@ -56,6 +56,12 @@ export const forkDeadline: { ms: number } = { ms: FORK_DEADLINE_MS };
 /** Backoff between polls, in ms; the last value repeats until the deadline. */
 const FORK_BACKOFF = [250, 500, 1_000, 2_000, 3_000] as const;
 
+/**
+ * The backoff a fork poll walks. Mutable like `forkDeadline`: a test that
+ * proves the poll goes round shortens the steps and puts back what it found.
+ */
+export const forkBackoff: { ms: readonly number[] } = { ms: FORK_BACKOFF };
+
 /** Pushing a branch into the fork: the same cap as any push through. */
 const PUSH_TIMEOUT_MS = 120_000;
 
@@ -128,8 +134,8 @@ export async function awaitFork(
           ? "origin_unreachable"
           : "origin_refused",
       );
-    const wait =
-      FORK_BACKOFF[Math.min(attempt, FORK_BACKOFF.length - 1)] ?? 3_000;
+    const steps = forkBackoff.ms;
+    const wait = steps[Math.min(attempt, steps.length - 1)] ?? 3_000;
     if (Date.now() + wait > deadline) return err("fork_timeout");
     await new Promise((resolve) => setTimeout(resolve, wait));
   }
