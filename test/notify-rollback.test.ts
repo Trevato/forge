@@ -42,11 +42,11 @@ afterEach(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-const record = () => {
+const record = (said?: string) => {
   mkdirSync(join(dataDir, "release"), { recursive: true });
   writeFileSync(
     join(dataDir, "release", "rolled-back.json"),
-    JSON.stringify({ from: "0.7.166", to: "0.7.162", at: "2026-10-19T05:17:00.000Z", why: "it exited with 1 before it was ready", paged: false }),
+    JSON.stringify({ from: "0.7.166", to: "0.7.162", at: "2026-10-19T05:17:00.000Z", why: "it exited with 1 before it was ready", said, paged: false }),
   );
 };
 
@@ -95,4 +95,12 @@ test("a page that was not delivered is not marked, and goes out on a later try",
 test("no record, no page", async () => {
   await boot();
   expect(posts).toEqual([]);
+});
+
+test("the release's last words reach the card and the page, with anything credential-shaped masked", async () => {
+  record("error: GET https://x.test failed with Bearer abcdefghijklmnopqrstuvwxyz0123");
+  const said = `${SENTENCE} It said: error: GET https://x.test failed with [redacted]`;
+  expect(vitals({ db: app.db, signals: app.signals, dataDir }).degraded.find((d) => d.cause === "release:rolled-back")?.sentence).toBe(said);
+  await boot();
+  expect(posts).toEqual([`${said}\nhttps://forge.example.test/`]);
 });

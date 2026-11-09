@@ -43,6 +43,7 @@ import { RECOVERED, drainIncident, nextPage, observe, recoveredLine, type Watch 
 import { firedAlarms, type FiredAlarm } from "../flow/alarms.ts";
 import { reachAlarms } from "../spawn/reach.ts";
 import { loadClog } from "../flow/clog_tick.ts";
+import { redactSecrets } from "../kernel/log.ts";
 import { forgeCeiling } from "../flow/ceiling.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
@@ -456,7 +457,8 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       const url = notifyUrlOf(app.db, id);
       if (user === undefined || url === undefined || !user.isAdmin || user.kind !== "user") continue;
       reachable = true;
-      if (await push(id, url, need.sentence)) delivered = true;
+      // The sentence quotes the release's stderr: nothing credential-shaped leaves in a push.
+      if (await push(id, url, redactSecrets(need.sentence))) delivered = true;
     }
     if (delivered || !reachable) markRollbackPaged(dataDir);
   }
