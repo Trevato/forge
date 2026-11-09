@@ -10,13 +10,24 @@ answer and records each pull as a run.
 
 ## Status
 
-This is the contract, not a description of running code. Today the forge
-reads the `adapter` block (`src/apps/adapter.ts`) and does not call
-`POST /pull`. The answer's
-checks and the pull run record exist (`src/apps/pull.ts`: `parsePullAnswer`,
-`recordPull`, kept in the `pull_run` table), but nothing calls them yet. An
-adapter written to this page is an ordinary app until that work lands. The rest of the forge's app rules apply to it now: see
-[`docs/APPS.md`](APPS.md).
+The forge runs this contract today. Once a minute it checks every app
+(`src/apps/pull_schedule.ts`). If an app's production is running, its
+`forge.json` on the default branch has a valid `adapter` block
+(`src/apps/adapter.ts`), and its schedule is due, the forge sends that app
+`POST /pull`. The forge never wakes a sleeping app to pull it. Two pulls of
+the same app never overlap. The forge judges each answer and records it as a
+pull run in the `pull_run` table (`src/apps/pull.ts`: `parsePullAnswer`,
+`recordPull`), whether the answer is good or failed.
+
+The call is signed as an `admin` the forge vouches for (see "The template"
+below), so an adapter that admits only a signed `admin` answers it.
+
+One thing is still missing: no page or API shows the recorded runs yet. They
+are kept, and they decide when the next pull is due, but no page or API reads
+them.
+
+The rest of the forge's app rules apply to an adapter as they apply to any
+other app: see [`docs/APPS.md`](APPS.md).
 
 ## The template
 
