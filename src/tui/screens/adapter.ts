@@ -19,7 +19,7 @@ import type { Command } from "../app/palette.ts";
 import type { Session } from "../session.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
-import { drawFacts } from "./common.ts";
+import { Scroll, drawFacts, drawLines } from "./common.ts";
 
 const mayRead = (f: Session, repo: Repo): boolean => canSeeOwnerFacts(f.db, repo, f.user);
 
@@ -46,7 +46,9 @@ export function adapterScreen(
 ): Screen {
   const mayPull = (): boolean => f.user !== undefined && canWrite(f.db, repo, f.user);
   let pulling = false;
+  const scroll = new Scroll();
   let rows: Array<[string, string]> | undefined;
+  let runRows: Array<[string, string]> = [];
   let loaded = false;
   const load = (): void => {
     const record = mayRead(f, repo) ? getAppByRepo(f.db, repo.id) : undefined;
@@ -59,11 +61,8 @@ export function adapterScreen(
         rows =
           read === undefined
             ? undefined
-            : [
-                ...adapterRows(read),
-                ["Pull runs", (read.runs ?? []).length === 0 ? NO_RUNS_WORDS : ""],
-                ...adapterRunRows(read),
-              ];
+            : [...adapterRows(read), ["Pull runs", (read.runs ?? []).length === 0 ? NO_RUNS_WORDS : ""]];
+        runRows = read === undefined ? [] : adapterRunRows(read);
         loaded = true;
         ctx.invalidate();
       },
@@ -87,8 +86,15 @@ export function adapterScreen(
         return;
       }
       drawFacts(s, area, c, rows);
+      const top = rows.length;
+      if (top >= area.h || runRows.length === 0) return;
+      const lines = runRows.map(([when, words]) => [
+        { text: truncate(`${when.slice(0, 16).replace("T", " ")}  ${words}`, Math.max(0, area.w - 1)), style: style(c.fg, c.bg) },
+      ]);
+      drawLines(s, { ...area, y: area.y + top, h: area.h - top }, c, scroll, lines);
     },
     key(e) {
+      if (rows !== undefined && scroll.key(e, runRows.length)) return true;
       if (e.key !== "p" || !mayPull()) return false;
       if (pulling) return true;
       pulling = true;

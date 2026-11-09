@@ -172,3 +172,26 @@ test("a reader is shown no key and p does nothing", async () => {
   expect(calls).toEqual([]);
   expect(t.toasts).toEqual([]);
 });
+
+test("j scrolls the runs when they overflow, and the facts stay", async () => {
+  const many = { ...facts, runs: Array.from({ length: 10 }, (_, i) => ({ ...facts.runs![0]!, id: `r${i}`, error: `boom ${i}` })) };
+  const terminal = headlessTerminal(100, 12);
+  const { app: tui, session } = createForgeApp(
+    app,
+    { sshUsername: olive.username, remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user: olive },
+    { terminal, exitHooks: false },
+  );
+  tui.start();
+  const screen = adapterScreen(session, tui.ctx, repo, async () => many);
+  tui.ctx.push(screen);
+  await settleApp(tui);
+  await settleApp(tui);
+  expect(tui.screen.toText()).toContain("boom 0");
+  for (let i = 0; i < 3; i++) expect(screen.key?.({ key: "j" } as never)).toBe(true);
+  tui.ctx.invalidate();
+  await settleApp(tui);
+  const text = tui.screen.toText();
+  expect(text).not.toContain("boom 0");
+  expect(text).toContain("Shop API");
+  tui.stop?.();
+});
