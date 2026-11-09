@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isNewer, lastProof, proofDue, proofNeed, proveRelease, proveRunning, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
+import { isNewer, lastProof, proofDue, proofNeed, proveRelease, proveRunning, QUICK_RETRIES, retryAfter, RETRY_MS, startProving, type Proof } from "../src/release/prove.ts";
 import { owned } from "../src/crew/incidents.ts";
 
 const CSS = '<html><link rel="stylesheet" href="/a.css"></html>';
@@ -129,10 +129,28 @@ describe("proving a release", () => {
     expect(old.hits.every((h) => h === "/healthz")).toBe(true);
   });
 
-  test("only a first give-up is retried after one tick; a repeat backs off (#10168)", () => {
+  test("every give-up is retried after one tick, and a retry polls only ten seconds (#10222)", async () => {
     expect(retryAfter(1, true, true)).toBe(60_000);
-    expect(retryAfter(2, true, true)).toBe(RETRY_MS * 2);
-    expect(retryAfter(9, true, true)).toBe(60 * 60_000);
+    expect(retryAfter(2, true, true)).toBe(60_000);
+    expect(retryAfter(QUICK_RETRIES, true, true)).toBe(60_000);
+    // the cap: past QUICK_RETRIES give-ups the plain doubling takes over
+    expect(retryAfter(QUICK_RETRIES + 1, true, true)).toBe(retryAfter(QUICK_RETRIES + 1, true));
+    expect(retryAfter(QUICK_RETRIES + 1, true, true)).toBeGreaterThan(60_000);
+    expect(retryAfter(40, false, true)).toBe(60 * 60_000);
+    let t = 0;
+    const old = site("0.9.0");
+    const sleep = async (ms: number) => void (t += ms);
+    const first = await run("1.0.0", old.fake, { now: () => t, sleep });
+    t = Date.parse(first!.at) + 60_000;
+    const start = t;
+    const firstHits = old.hits.length;
+    expect(firstHits).toBeGreaterThan(250); // a first attempt polls the full ten minutes
+    const second = await run("1.0.0", old.fake, { now: () => t, sleep });
+    expect(second?.failures).toBe(2);
+    expect(t - start).toBeLessThanOrEqual(10_000);
+    expect(old.hits.length - firstHits).toBeLessThanOrEqual(10_000 / 2_000 + 1); // a retry polls about RETRY_POLL_MS worth
+    t += 60_000;
+    expect(proofDue(second, "1.0.0", t)).toBe(true);
     expect(retryAfter(4, true)).toBe(4 * 60_000);
   });
 

@@ -9,14 +9,14 @@
  * again: `startProving` asks every minute, and a failed version runs again
  * once `retryAfter` has passed since its last try (5 minutes, doubling each
  * failure up to an hour), so one slow answer in the watch no longer stands
- * for the version's whole life (#7622) and a version that stays broken
- * costs its public URL a few loads an hour, not one every 5 minutes. It
- * gives up after ten minutes. A first give-up is retried after one tick,
- * since the swap may only be late (#9942, #10168); a repeated one backs off
- * by the plain doubling, so a version that never answers is not polled
- * without pause. When a newer release answers
- * instead, this process is being replaced: it keeps nothing and never polls
- * again (#10138).
+ * for the version's whole life (#7622). A first proof gives up after ten
+ * minutes without the public URL answering as the version; the first
+ * `QUICK_RETRIES` give-ups in a row are asked again after one tick and a
+ * retry polls only `RETRY_POLL_MS`, since the swap may only be late (#9942,
+ * #10168, #10222). After that the plain doubling takes over, so a version
+ * that never answers costs its public URL a few loads an hour. When a newer
+ * release answers instead, this process is being replaced: it keeps nothing
+ * and never polls again (#10138).
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -35,6 +35,10 @@ export const RETRY_MS = 5 * 60_000;
 export const MAX_RETRY_MS = 60 * 60_000;
 /** How often `startProving` asks whether a proof is due. */
 export const TICK_MS = 60_000;
+/** How long a retry after a give-up waits for the public URL to answer as the version: the long wait was already spent (#10222). */
+export const RETRY_POLL_MS = 10_000;
+/** How many give-ups in a row are retried after one tick before the doubling takes over. */
+export const QUICK_RETRIES = 10;
 
 export interface Proof {
   readonly version: string;
@@ -57,13 +61,12 @@ export interface Proof {
  * doubled per failure, capped at `MAX_RETRY_MS`. A proof that failed only
  * because an answer was slow (`slow`) is a moment's load, not a broken
  * release, so it waits `min(that, TICK_MS * failures)`: 1, 2, 3, 4 minutes,
- * then the doubling takes over (#9238). A first give-up (`gaveUp`)
- * already polled ten minutes, so it waits one tick; a repeated give-up is
- * not a slow answer and backs off by the plain doubling (#10168).
+ * then the doubling takes over (#9238). A give-up (`gaveUp`) is probably a
+ * late swap: its first `QUICK_RETRIES` in a row wait one tick (#10222), the
+ * ones after the plain doubling.
  */
 export function retryAfter(failures: number, slow = false, gaveUp = false): number {
-  // The first give-up already polled ten minutes, so it is asked again after one tick; a repeat backs off by the plain doubling.
-  if (gaveUp) return failures <= 1 ? TICK_MS : Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** (Math.min(failures, 20) - 1));
+  if (gaveUp && failures <= QUICK_RETRIES) return TICK_MS;
   const backoff = Math.min(MAX_RETRY_MS, RETRY_MS * 2 ** Math.max(0, Math.min(failures, 20) - 1));
   return slow ? Math.min(backoff, TICK_MS * Math.max(1, failures)) : backoff;
 }
@@ -168,7 +171,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
   };
   try {
     const health = new URL("/healthz", o.url).href;
-    const deadline = now() + (o.giveUpMs ?? GIVE_UP_MS);
+    const deadline = now() + (o.giveUpMs ?? (failedBefore?.gaveUp === true ? RETRY_POLL_MS : GIVE_UP_MS));
     let seen = "";
     for (;;) {
       try {
