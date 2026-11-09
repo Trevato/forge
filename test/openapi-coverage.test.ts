@@ -11,7 +11,8 @@ import { ROUTES } from "../src/contract/openapi.ts";
 const NOT_YET_DESCRIBED: readonly string[] = [
 ];
 
-const norm = (path: string) => path.replace(/[:*]\w+/g, "{}").replace(/\{\w+\}/g, "{}");
+// "/api/v1/" is the same operation as "/api/v1": a trailing slash is not a second row.
+const norm = (path: string) => path.replace(/[:*]\w+/g, "{}").replace(/\{\w+\}/g, "{}").replace(/(?<=\w)\/$/, "");
 
 /** Every file under src/http (and its route modules in src/http/api/) that registers routes. */
 const files = () =>

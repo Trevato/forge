@@ -223,6 +223,28 @@ describe("what the open web expects", () => {
     expect(body).not.toContain("alice/closed");
   });
 
+  test("GET /api/v1 names the forge and where its API, MCP, OAuth and docs live; POST is still no_route", async () => {
+    for (const path of ["/api/v1", "/api/v1/"]) {
+      const res = await fetch(`${base}${path}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("cache-control")).toBe("no-cache");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("content-security-policy")).not.toBeNull();
+      const j = (await res.json()) as Record<string, unknown>;
+      expect(Object.keys(j).sort()).toEqual(["commit", "here", "llms", "mcp", "name", "oauth", "openapi", "version"]);
+      expect(j["openapi"]).toBe(`${base}/api/v1/openapi.json`);
+      expect(j["mcp"]).toBe(`${base}/mcp`);
+      expect(j["oauth"]).toBe(`${base}/.well-known/oauth-protected-resource`);
+      expect(j["llms"]).toBe(`${base}/llms.txt`);
+      expect(j["here"]).toBe(`${base}/api/v1/here`);
+    }
+    expect((await fetch(`${base}/api/v1`, { method: "HEAD" })).status).toBe(200);
+    const post = await fetch(`${base}/api/v1`, { method: "POST", headers: { origin: base } });
+    expect(post.status).toBe(404);
+    expect(((await post.json()) as { error?: string }).error).toBe("no_route");
+    expect(await fetch(`${base}/llms.txt`).then((r) => r.text())).toContain(`${base}/api/v1 (the root`);
+  });
+
   test("llms.txt says how to use the forge from a harness, with the endpoint built from the URL", async () => {
     const body = await fetch(`${base}/llms.txt`).then((r) => r.text());
     const section = body.slice(body.indexOf("## Use it from your harness"));

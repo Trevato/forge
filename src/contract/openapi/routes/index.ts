@@ -33,6 +33,7 @@ export { route as deleteApiV1UserOriginAppsId } from "./deleteApiV1UserOriginApp
 export { route as deleteApiV1UserOriginsId } from "./deleteApiV1UserOriginsId.ts";
 export { route as deleteApiV1UserPinsOwnerName } from "./deleteApiV1UserPinsOwnerName.ts";
 export { route as deleteApiV1UsersUsernameSessionsId } from "./deleteApiV1UsersUsernameSessionsId.ts";
+export { route as getApiV1 } from "./getApiV1.ts";
 export { route as getApiV1AdminAccounts } from "./getApiV1AdminAccounts.ts";
 export { route as getApiV1AdminCapacity } from "./getApiV1AdminCapacity.ts";
 export { route as getApiV1AdminCrawlers } from "./getApiV1AdminCrawlers.ts";

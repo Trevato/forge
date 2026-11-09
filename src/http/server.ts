@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { apiRoot } from "./api_root.ts";
 import { isTokenScheme, tokenSecret } from "./token_header.ts";
 import {
   followSourceRemove,
@@ -1545,6 +1546,8 @@ export function buildApiRouter(): Router<Handler> {
   checksRecheckRoutes(router);
   // What went live, as /changelog shows it; the page's own module answers.
   router.add("GET", "/api/v1/changelog", changelogJson);
+  router.add("GET", "/api/v1", apiRoot);
+  router.add("GET", "/api/v1/", apiRoot);
   // The reference page for these routes lives at their root, so it answers here.
   router.add("GET", "/api", apiPage);
   return router;
@@ -2774,7 +2777,9 @@ async function answerGet(
       // it offers no sign-in rather than one to someone who has signed in.
       return notFoundPage(anonCtx, { plain: true });
     }
-    if (isApiPath && request.method !== "OPTIONS") {
+    // The API root is read-only and answers a write as it always did: no route.
+    const apiRootPath = url.pathname === "/api/v1" || url.pathname === "/api/v1/";
+    if (isApiPath && !apiRootPath && request.method !== "OPTIONS") {
       const allowed = apiRouter.allowed(url.pathname);
       if (allowed.length > 0) return methodNotAllowed(request.method, allowed);
     }

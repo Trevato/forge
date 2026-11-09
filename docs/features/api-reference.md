@@ -21,3 +21,5 @@ path parameter runs it as the person at the terminal and shows the status, time,
 `/api` answers `no_route` in JSON to a caller whose `Accept` prefers JSON, as the rest of `/api` does.
 
 A list the contract gives a `cursor` pages by it: `?page=` or `?offset=` on one is a 400 `invalid_query` ("This list pages by cursor: pass next_cursor as ?cursor="), answered by one guard in `src/http/cursor_lists.ts` before any handler runs, and named in the document as the route's 400.
+
+The root, `GET /api/v1`, names the OpenAPI, MCP, OAuth and llms.txt URLs with no account: [the API root](api-root.md).

@@ -450,7 +450,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "## For agents with an account",
       "",
       `- MCP: ${mcp.url} (OAuth discovery: ${mcp.oauth}; server card, a draft format: ${o}/.well-known/mcp.json)`,
-      `- API: ${o}/api/v1, Authorization: Bearer <token>`,
+      `- API: ${o}/api/v1 (the root lists the other URLs), Authorization: Bearer <token>`,
       `- OpenAPI: GET ${o}/api/v1/openapi.json (redirects to ${o}/contract/openapi.json)`,
       "",
       ...mcpToolsSection(o, signedIn),
