@@ -19,6 +19,8 @@ export interface Source {
   readonly label: string;
   readonly kind: "forge" | "app";
   readonly path: string;
+  /** For an app's file: where it sits, so a tree can group by it. */
+  readonly where?: { readonly repo: string; readonly app: string; readonly env: string; readonly file: string };
 }
 
 const DB_FILE = /^[\w.-]+\.db$/;
@@ -42,8 +44,8 @@ export function listSources(
     apps.map((a) => a.repoId),
   );
   for (const app of apps) {
-    if (!writable.has(app.repoId) || getRepoById(db, app.repoId) === undefined)
-      continue;
+    const repo = writable.has(app.repoId) ? getRepoById(db, app.repoId) : undefined;
+    if (repo === undefined) continue;
     let envs: string[];
     try {
       envs = readdirSync(join(dataDir, "apps", app.id)).filter(isEnvName);
@@ -65,6 +67,7 @@ export function listSources(
           label: `${app.slug} · ${env} · ${file}`,
           kind: "app",
           path: join(dir, file),
+          where: { repo: `${repo.ownerName}/${repo.name}`, app: app.slug, env, file },
         });
     }
   }

@@ -31,6 +31,7 @@ forge open owner/name --web        # the page, in a browser
 forge ship 12                      # land pull #12 after a y/N, as Merge does
 forge pulls                        # open pulls of this clone, newest first
 forge runs                         # the crew's last 10 runs here: state, agent, #N, title, age, cost
+forge data notes "select * from users" --json   # read an app's SQLite, read-only, secrets masked
 forge asks                         # what waits on you, most important first
 forge asks --repo owner/name       # only that repository's; --json for the API's answer
 forge asks --ship 1 3              # decide by the line numbers just printed: planned, then Apply? [y/N]

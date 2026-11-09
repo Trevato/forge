@@ -36,7 +36,7 @@ export { EXIT };
 /** Every command by name, built once from `commands/index.ts`. */
 const TABLE = new Map(commands.map((c) => [c.name, c]));
 
-const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo", "kind", "reason", "owner", "variants", "from"];
+const VALUE_FLAGS = ["token", "interval", "root", "url", "limit", "repo", "kind", "reason", "owner", "variants", "from", "table", "file", "page"];
 
 export async function main(
   argv: readonly string[],
