@@ -13,3 +13,5 @@ section keeps `.editor-commit` for its spacing). Field names and the `data-previ
 
 The issue page's folded Edit form is the same: plain title and body fields and Save, no box (`.card` and `.comment-form`
 are gone from it), spaced like the home composer. It adds no component class.
+
+With `?edit=1` the fold is drawn open (no script), which is what the preview's phone look of the issue page takes (#10074); `test/issue-fit.test.ts` holds it and measures no sideways scroll at 390 px.

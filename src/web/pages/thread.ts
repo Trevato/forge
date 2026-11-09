@@ -306,8 +306,8 @@ export interface ConversationOptions {
  * the body as they stand, one form, one Save. Folded away until asked for,
  * since most visits read and few rewrite.
  */
-function editForm(issue: Issue, action: string): Html {
-  return html`<details class="tl-edit" id="edit">
+function editForm(issue: Issue, action: string, open: boolean): Html {
+  return html`<details class="tl-edit" id="edit"${open ? html` open` : null}>
     <summary class="muted small">${icon("pencil")} Edit</summary>
     <form class="mt" method="post" action="${action}">
       <label class="sr-only" for="edit-title">Title</label>
@@ -415,7 +415,7 @@ export function conversation(
   return {
     node: html`<div class="timeline" id="conversation">
       ${opening}${when(options.editAction, (action) =>
-        editForm(issue, action),
+        editForm(issue, action, ctx.url.searchParams.get("edit") === "1"),
       )}${planCard(ctx.app.db, issue)}${earlier}${shown.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",

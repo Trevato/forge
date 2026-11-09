@@ -83,6 +83,9 @@ export const PREVIEW_NEXT_PAGE = `${PREVIEW_REPO_HOME}/next`;
 /** The sample's first issue, whose long title and comments must wrap at a 390 px phone (#9384). */
 export const PREVIEW_ISSUE_PAGE = `${PREVIEW_REPO_HOME}/issues/1`;
 
+/** The same issue with its Edit fold open, for its phone look (#10074). */
+export const PREVIEW_ISSUE_EDIT_PAGE = `${PREVIEW_ISSUE_PAGE}?edit=1`;
+
 /** The commits list, whose long messages must wrap at a 390 px phone (#9348). */
 export const PREVIEW_COMMITS_PAGE = `${PREVIEW_REPO_HOME}/commits`;
 
@@ -141,6 +144,7 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_COMMITS_PAGE,
   PREVIEW_ISSUES_PAGE,
   PREVIEW_ISSUE_PAGE,
+  PREVIEW_ISSUE_EDIT_PAGE,
   PREVIEW_RESILIENCE_PAGE,
   PREVIEW_SEARCH_PAGE,
   ...PREVIEW_SETTINGS_PAGES,
