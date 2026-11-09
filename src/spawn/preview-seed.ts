@@ -26,6 +26,8 @@ import { pinBuild } from "../actions/builds.ts";
 import { addReview, mergePull, openPull } from "../actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../actions/repos.ts";
 import { reviewGate } from "../actions/gate_review.ts";
+import { forgeHttp } from "../http/server.ts";
+import { transferRepository } from "../actions/transfer.ts";
 import { linkIssue } from "../actions/dependencies.ts";
 import { createApp as createAppRecord } from "../core/apps.ts";
 import { studioApp } from "../web/studio/app.ts";
@@ -57,6 +59,9 @@ import {
   PREVIEW_ITERATIONS_PAGE,
   PREVIEW_PULL,
   PREVIEW_PULL_PAGE,
+  PREVIEW_MOVED,
+  PREVIEW_MOVED_OWNER,
+  PREVIEW_MOVED_PAGE,
   PREVIEW_REPO,
   PREVIEW_SETTINGS_PAGES,
 } from "./preview-looks.ts";
@@ -69,12 +74,43 @@ export {
   PREVIEW_HELD_PAGE,
   PREVIEW_HELD_THEMES,
   PREVIEW_ITERATIONS_PAGE,
+  PREVIEW_MOVED_PAGE,
   PREVIEW_OWNER_LOOKS,
   PREVIEW_PULL,
   PREVIEW_PULL_PAGE,
   PREVIEW_REPO,
   PREVIEW_REPO_HOME,
 } from "./preview-looks.ts";
+
+/**
+ * A repository moved just now, through the action a person uses (#10195):
+ * its head draws "Moved from <old path> on <date>". Refused unless that page
+ * answers 200 and holds the line, in the first-paint HTML.
+ */
+async function seedMoved(app: App, admin: User): Promise<Result<void, string>> {
+  const made = await createRepo(app, admin, { name: PREVIEW_MOVED, visibility: "public", description: "A repository that moved" });
+  if (!made.ok) return err(`the moved repository: ${String(made.error)}`);
+  const first = await commitToBranch(app, admin, made.value, {
+    message: "Start",
+    files: [{ path: "README.md", content: "# moved\n\nA repository that changed owner.\n" }],
+  });
+  if (!first.ok) return err(`the moved repository's commit: ${JSON.stringify(first.error)}`);
+  const moved = await transferRepository(app, admin, made.value, PREVIEW_MOVED_OWNER);
+  if (!moved.ok) return err(`the move: ${String(moved.error)}`);
+  const http = forgeHttp(app);
+  const session = createSession(app.db, admin.id);
+  try {
+    const res = await http.handle(
+      new Request(`http://localhost${PREVIEW_MOVED_PAGE}`, { headers: { cookie: `forge_session=${session.token}` } }),
+    );
+    if (res.status !== 200) return err(`${PREVIEW_MOVED_PAGE} answers ${String(res.status)}, not 200`);
+    if (!(await res.text()).includes("moved-from")) return err(`${PREVIEW_MOVED_PAGE} holds no moved-from line`);
+  } finally {
+    destroySession(app.db, session.token);
+    http.close();
+  }
+  return ok();
+}
 
 /** The seeded wave's version and headline, which the owner's /waves look shows. */
 export const PREVIEW_WAVE = "0.1.0";
@@ -173,7 +209,6 @@ async function seedSettingsPages(app: App, admin: User): Promise<Result<void, st
     });
     if (!added.ok) return err(`the sample account: ${added.error}`);
   }
-  const { forgeHttp } = await import("../http/server.ts");
   const http = forgeHttp(app);
   const session = createSession(app.db, admin.id);
   try {
@@ -319,6 +354,8 @@ async function seedWorld(app: App, admin: User): Promise<Result<void, string>> {
   if (!gated.ok) return gated;
   const hosted = await seedApp(app, admin);
   if (!hosted.ok) return hosted;
+  const moved = await seedMoved(app, admin);
+  if (!moved.ok) return moved;
   const valve = turnValveFor(app, admin, `${PREVIEW_ADMIN}/${PREVIEW_REPO}`, 60);
   if (!valve.ok) return err(`the valve: ${valve.error}`);
 
