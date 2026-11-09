@@ -165,3 +165,8 @@ Settings › Flags (`flagsPage()` in `src/web/pages/flags.ts`, #9872) has no car
 ## General (#9853)
 
 Settings › General (`settingsPage()` and `provenanceCard()` in `src/web/pages/settings.ts`, #9853) adds no class and holds no `.card`: About, Your team, On its own and Held files (`src/web/studio/crew.ts`, `file_holds.ts`), Branch and gates, Mirror, Show where this came from, Follow upstream and Followed sources (`upstream-follow.ts`), and Cut a wave and Archive are each a `<section class="settings-block">` with an `<h2>`, one plain sentence and the form. The crew-readiness notices (`crewReadiness()` in `src/web/pages/crew.ts`) are `.toast` rows with `data-tone="danger"`. Every form keeps its action, method, field names and ids. Pinned by `test/settings.test.ts`, which asserts the whole page has no `class="card`.
+
+Settings › Danger zone (`src/web/pages/danger.ts`, #9952) adds no component class. The detach (`detachSection()` in
+`src/web/pages/detach.ts`, a fork only) and the delete are each a `<section class="settings-block">` with an `<h2>`,
+no `.card`: the plan says what goes and what survives, its danger button goes through `/-/confirm`. A running detach is
+one line with since-when; a failed one is a danger `.toast` over the plan. `test/danger-language.test.ts` holds the shape.

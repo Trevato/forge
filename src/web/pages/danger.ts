@@ -12,10 +12,9 @@ import { loadRepo, repoBase, repoNotFound } from "../chrome.ts";
 import { DELETE_REPO } from "../danger_words.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
-import { icon } from "../icons.ts";
 import { flashTo } from "../layout.ts";
-import { card, confirmAction } from "../ui.ts";
-import { detachCard } from "./detach.ts";
+import { confirmAction } from "../ui.ts";
+import { detachSection } from "./detach.ts";
 import { adminForm, settingsPageResponse, timedAdminRepo } from "./settings.ts";
 
 export function dangerPage(ctx: Ctx): Response {
@@ -25,35 +24,27 @@ export function dangerPage(ctx: Ctx): Response {
   const base = repoBase(repo);
   const full = `${repo.ownerName}/${repo.name}`;
 
-  const body = card(
-    html`<p>
-        Deleting <strong>${full}</strong> removes its issues, pull requests,
-        reviews, labels and webhooks, and erases the git objects from disk.
-      </p>
-      <p class="muted small mt">
-        Any fork of this repository is detached first — it repacks so it owns
-        its objects, then loses the link. Forks survive; this repository does
-        not. There is no undo and no backup.
-      </p>
-      <div class="form-actions">
-        ${confirmAction({
-          action: `${base}/settings/delete`,
-          verb: DELETE_REPO,
-        })}
-      </div>`,
-    {
-      tone: "danger",
-      head: html`${icon("alert")}
-        <h2>${DELETE_REPO}</h2>`,
-    },
-  );
-  const detach = detachCard(ctx.app.db, repo, ctx.auth.user);
+  const remove = html`<section class="settings-block" id="delete">
+    <h2>${DELETE_REPO}</h2>
+    <p>
+      Deleting <strong>${full}</strong> removes its issues, pull requests,
+      reviews, labels and webhooks, and erases the git objects from disk.
+    </p>
+    <p class="muted small">
+      Any fork of this repository is detached first — it repacks so it owns
+      its objects, then loses the link. Forks survive; this repository does
+      not. There is no undo and no backup.
+    </p>
+    <div class="form-actions">
+      ${confirmAction({ action: `${base}/settings/delete`, verb: DELETE_REPO })}
+    </div>
+  </section>`;
   const response = settingsPageResponse(
     ctx,
     repo,
     "danger",
     "Danger zone",
-    detach === null ? body : html`${detach}<div class="mt">${body}</div>`,
+    html`${detachSection(ctx.app.db, repo, ctx.auth.user)}${remove}`,
   );
   notePhase(ctx.request, "render", performance.now() - rendering);
   return response;
