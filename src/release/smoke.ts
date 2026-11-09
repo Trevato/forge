@@ -313,12 +313,19 @@ export async function smoke(base: string, token = "", options: Options = {}): Pr
   }
   if (options.appHost) {
     const url = new URL("/", options.appHost).href;
-    try {
-      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { "user-agent": AGENTS["desktop"]! } });
-      const body = await res.text();
-      if (/<title>\s*forge\s*<\/title>/i.test(body)) fail(url, "desktop", res, "an app host answered with the forge's page");
-    } catch (error) {
-      failures.push({ url, agent: "desktop", status: "error", contentType: "", why: String(error) });
+    // This check asks one thing: does an app host answer as the forge (#6726)? An app that is
+    // asleep, stopped or broken and gives no answer at all says nothing about that: it is the
+    // app's health, not the release's, so it is asked once more and then left out of the verdict
+    // (#10189: hello's host timing out held release 0.7.479 unproven for hours).
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000), headers: { "user-agent": AGENTS["desktop"]! } });
+        const body = await res.text();
+        if (/<title>\s*forge\s*<\/title>/i.test(body)) fail(url, "desktop", res, "an app host answered with the forge's page");
+        break;
+      } catch (error) {
+        console.warn(`smoke: app host ${url} gave no answer (${error}); ${attempt === 1 ? "asking again" : "the app's health, not the release's"}`);
+      }
     }
   }
   if (options.heavy && failures.length === 0) {
