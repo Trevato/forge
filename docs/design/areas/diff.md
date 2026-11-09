@@ -10,7 +10,7 @@ file.
 - `.diff-stat` — a file's `+`/`−` line counts, in the head and in a stub.
 - `.diff-body` — the file's contents under its head: scrolls sideways for long lines, hidden once the file is marked viewed.
 - `.diff-table` — the table of hunks and rows inside the body, monospace at 12.5px.
-- `.diff-note` — a centred muted line in place of rows: a binary file, no content changes, or files past the cap not shown.
+- `.diff-note` — a centred muted line in place of rows: a binary file or no content changes. Files past the cap are not a `.diff-note`: the cut is a plain `p.muted.small` line under the last file, with its own 12px top margin.
 - `.diff-stub` — a `.diff-note` for a file too large or generated to draw: why, its real counts and a View file button.
 - `.dn-comment` — a line number in the gutter that links to commenting on that line, when the diff is reviewable.
 - `.nonl` — the `↵` mark after a line that has no newline at the end of the file.

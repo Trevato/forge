@@ -562,6 +562,7 @@ form.inline { display: inline; margin-left: auto; }
 }
 .diff-stat .add { color: var(--add-fg); }
 .diff-stat .del { color: var(--del-fg); }
+.diff > p.muted { margin: 12px 0 0; padding: 0 4px; }
 .diff-note { padding: 20px 16px; text-align: center; color: var(--muted-fg); font-size: 13px; }
 .diff-stub p { margin: 0 0 10px; }
 .diff-stub .diff-stat { display: inline-flex; }

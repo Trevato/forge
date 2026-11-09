@@ -587,10 +587,10 @@ export function renderDiff(
     ${when(
       hidden > 0,
       () =>
-        html`<div class="card diff-note">
+        html`<p class="muted small">
           ${hidden.toLocaleString()} more ${hidden === 1 ? "file" : "files"} not
           shown.
-        </div>`,
+        </p>`,
     )}
   </div>`;
 }
