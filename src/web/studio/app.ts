@@ -493,7 +493,7 @@ export async function studioApp(
     policyLine(ctx, repo, record),
   );
   const adapter = ownerFacts
-    ? await timePhaseAsync(req, "adapter", () => adapterCard(ctx.app, record))
+    ? await timePhaseAsync(req, "adapter", () => adapterCard(ctx, record, repo))
     : null;
   const rendering = performance.now();
   const body = html`${repoHeader(ctx, repo, "app", {

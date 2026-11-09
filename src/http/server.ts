@@ -219,6 +219,7 @@ import {
   newIssueAnywhere,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
+import { adapterPull } from "../web/studio/adapter.ts";
 import { noteModerate } from "../web/studio/notes.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { issuePicture } from "../web/studio/picture.ts";
@@ -1288,6 +1289,7 @@ export function buildRouter(): Router<Handler> {
   // Where a private app sends a person who arrived by its link.
   router.add("GET", "/apps/open", appsOpen);
   router.add("POST", "/:owner/:name/app/notes", noteModerate);
+  router.add("POST", "/:owner/:name/app/pull", adapterPull);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
   router.add("GET", "/:owner/:name/events", eventsList);

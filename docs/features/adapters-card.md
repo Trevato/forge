@@ -12,6 +12,13 @@ when), the **next pull** and the **cursor** of the last good pull.
   rows. A writer presses `p` there to pull now (`pullNow`): the rows are
   read again, and a refusal shows its `PULL_NOW_REFUSALS` sentence in the
   status line. Anyone else is shown no key and `p` does nothing.
+- **Pull now:** a writer (not a reader) also gets a **Pull now** button
+  under the rows. It posts same-origin to `POST /<owner>/<repo>/app/pull`
+  (`adapterPull`, `src/web/studio/adapter.ts`), which calls `pullNow`, the
+  function the API and MCP use, and redirects back to the app page, where
+  Last pull shows the new run. A refusal comes back as `?pull=<code>` and
+  shows its sentence from `PULL_NOW_REFUSALS` in one muted line. Anyone who
+  may not write gets 404 and no button.
 - Both list the **last ten pull runs** under the facts (`pullRunLines`,
   limit 10): when, ok or failed, written/skipped/failed and, for a failed
   run, its error sentence. With no runs, one muted line says "No pull runs
