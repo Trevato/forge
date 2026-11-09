@@ -109,7 +109,7 @@ const FIELDS: Record<FleetKind, Record<string, Predicate>> = {
  */
 function limbIds(
   db: Database,
-  viewer: User,
+  viewer: User | undefined,
   query: FleetQuery,
   term: Term,
 ): Result<string[], QueryError> {
@@ -180,16 +180,18 @@ export function parseQuery(text: string): Result<FleetQuery, QueryError> {
 }
 
 /**
- * The ids a query selects for `viewer`, in a stable order. More than
+ * The ids a query selects for `viewer` (undefined: a signed-out visitor),
+ * in a stable order. More than
  * `MAX_ROWS` is refused rather than cut: an operation over the first 500
  * of 900 rows is not what anyone meant.
  */
 export function selectRows(
   db: Database,
-  viewer: User,
+  viewer: User | undefined,
   query: FleetQuery,
 ): Result<string[], QueryError> {
-  const params: (string | number)[] = [viewer.id];
+  // Signed out, `?1` is an id no account has: only public repositories hold.
+  const params: (string | number)[] = [viewer?.id ?? ""];
   const bind = (value: string): string => {
     params.push(value);
     return `?${params.length}`;

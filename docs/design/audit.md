@@ -94,6 +94,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/claim` — `pages/claim.ts` · claim a forge that was sent to me · none · colour 1.
 - `/first-admin` — `pages/first-admin.ts` · the first person becomes admin · none · none seen.
 - `/fleet/graph` — `pages/fleet-graph.ts` · the fleet as a graph · `/family`, `/forges` · none seen.
+- `/fleet` — `pages/fleet.ts` · the rows a fleet query line selects, as a table · `/fleet/graph` · none seen.
 
 ### Machine and operation (admin)
 

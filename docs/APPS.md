@@ -1395,6 +1395,14 @@ The same numbers are `GET /fleet/graph.csv` and `GET /api/v1/fleet/graph`;
 spend is the owner's fact, so a repository you cannot write is dropped
 and counted with the names that do not exist, never told apart.
 
+Before a fleet operation acts, `GET /fleet?q=<query line>` shows the rows
+its query line selects, as a table: `repo autonomy:autonomous`,
+`run state:queued`, `issue assignee:none`. The grammar and the rule that
+a repository you cannot read is absent are `src/fleet/selection.ts`'s; a
+line that does not parse shows why beside it. Headers sort by one column
+(`&sort=<column>`, `-<column>` descending), without JavaScript. Past 500
+rows the page asks for a narrower query rather than cutting the list.
+
 The agent runs Claude Code headless in its clone, with a prompt the forge
 composes: who it is, what the task is, how to finish, and what will be
 refused. Permissions are the forge's, passed as settings: file tools

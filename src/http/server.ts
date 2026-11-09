@@ -337,6 +337,7 @@ import {
   fleetGraphLive,
   fleetGraphPage,
 } from "../web/pages/fleet-graph.ts";
+import { fleetPage } from "../web/pages/fleet.ts";
 import { fileHoldUpdate } from "../web/pages/file_holds.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
 import {
@@ -912,6 +913,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/maintenance/resume", maintenanceResume);
   router.add("GET", "/resilience/nightly/:job", nightlyOutputPage);
   // A selection's spend and runs over time; literal, above /:owner.
+  router.add("GET", "/fleet", fleetPage);
   router.add("GET", "/fleet/graph", fleetGraphPage);
   router.add("GET", "/fleet/graph/live", fleetGraphLive);
   router.add("GET", "/fleet/graph.csv", fleetGraphCsv);

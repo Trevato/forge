@@ -27,6 +27,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/llms.txt": "plain markdown for machines, not a page to picture",
   "/agents": "/llms.txt drawn as a page for an assistant; no picture: the cap of 24 looks is spent, and test/agents-page.test.ts covers it",
   "/packs": "no picture: the cap of 24 looks is spent; the page is covered by test/packs.test.ts",
+  "/fleet": "no picture: the cap of 24 looks is spent; the page is covered by test/fleet-table.test.ts",
   "/robots.txt": "plain text for crawlers",
   "/openapi.json": "a redirect to the contract document",
   "/favicon.ico": "the tab icon, an image",
