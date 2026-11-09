@@ -611,4 +611,18 @@ describe("a snapshot's uploads", () => {
       await svc.stop();
     }
   }, 15_000);
+
+  test("until the boot's look at the store is done, the service counts as taking, so no release lands in that gap", async () => {
+    const { store } = slowStore(0);
+    const svc = startSnapshots(app, store, { version: "t", snapshotCatchUpMs: 30, snapshotCheckMs: 60_000 });
+    try {
+      expect(svc.takingMs()).toBeGreaterThanOrEqual(0);
+      await Bun.sleep(400);
+      await svc.now().catch(() => {});
+      await Bun.sleep(50);
+      expect(svc.takingMs()).toBeUndefined();
+    } finally {
+      await svc.stop();
+    }
+  }, 15_000);
 });

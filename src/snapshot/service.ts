@@ -449,9 +449,16 @@ export function startSnapshots(
     catchUpSnapshot = setTimeout(() => {
       takeIfDue()
         .catch(() => {})
-        .finally(() => scheduleCatchUp(options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS));
+        .finally(() => {
+          bootLookAt = undefined;
+          scheduleCatchUp(options.snapshotCheckMs ?? SNAPSHOT_CHECK_MS);
+        });
     }, ms);
   };
+  // Until the boot's look at the store is done, a snapshot may be about to
+  // start; the keeper counts that as one running, so a swap does not land in
+  // the gap between a boot and the catch-up and cut it short again (#9675).
+  let bootLookAt: number | undefined = options.nightly === false ? undefined : Date.now();
   scheduleCatchUp(options.snapshotCatchUpMs ?? SNAPSHOT_CATCH_UP_MS);
 
   // The bucket is read by this process, on its own clock, whatever any job says.
@@ -488,7 +495,10 @@ export function startSnapshots(
     },
     last: () => last,
     progress: () => running,
-    takingMs: () => (startedAt === undefined ? undefined : Date.now() - startedAt),
+    takingMs: () => {
+      const since = startedAt ?? bootLookAt;
+      return since === undefined ? undefined : Date.now() - since;
+    },
     get mirror() {
       return currentMirror();
     },
