@@ -39,11 +39,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 11084,
   },
   {
-    file: "test/crew-interrupted.test.ts",
-    reason: "not yet admitted: green alone in 8.9 s (2026-11-10); its admission runs under #11053",
-    issue: 11053,
-  },
-  {
     file: "test/probe.test.ts",
     reason: "red alone under --randomize (2026-11-10): a scaffolded app obeys every cell: verdict mismatch, not ok",
     issue: 11084,
