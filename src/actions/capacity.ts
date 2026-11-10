@@ -22,7 +22,14 @@ import {
   type CapacityChange,
   type CapacityKey,
 } from "../core/capacity.ts";
-import { egressTotals, npmBytesLastHour, npmTopRepoLastHour, type EgressTotal } from "../apps/egress.ts";
+import type { EgressTotal } from "../apps/egress.ts";
+import {
+  egressTotalsFor,
+  liveCounters,
+  npmBytesFor,
+  npmTopRepoFor,
+  type ProcessCounters,
+} from "../spawn/process_counters.ts";
 import { getRepoById } from "../core/repos.ts";
 import { selfSwapState, type SelfSwap } from "../release/swap.ts";
 import { signinReach, signsInWithoutEdge } from "../core/accounts.ts";
@@ -69,14 +76,15 @@ export interface EgressHour {
   readonly destinations: readonly EgressTotal[];
 }
 
-export function egressHour(db: Database, now = Date.now()): EgressHour {
-  const top = npmTopRepoLastHour(now);
-  const repo = top === undefined ? undefined : getRepoById(db, top.repoId);
+/** This hour's egress as `app` may read it: none of it on a hosted child (#10517). */
+export function egressHour(app: App, now = Date.now(), read: ProcessCounters = liveCounters): EgressHour {
+  const top = npmTopRepoFor(app, now, read);
+  const repo = top === undefined ? undefined : getRepoById(app.db, top.repoId);
   return {
-    npmBytesLastHour: npmBytesLastHour(now),
+    npmBytesLastHour: npmBytesFor(app, now, read),
     npmTopRepoLastHour:
       top === undefined || repo === undefined ? null : { repo: `${repo.ownerName}/${repo.name}`, bytes: top.bytes },
-    destinations: egressTotals(now).slice(0, 10),
+    destinations: egressTotalsFor(app, now, read).slice(0, 10),
   };
 }
 
@@ -119,7 +127,7 @@ export function listCapacity(
       ...changedOf(app.db, key),
     })),
     changes: capacityChanges(app.db),
-    egress: egressHour(app.db),
+    egress: egressHour(app),
     selfSwap: selfSwapState(app.config.selfSwap === true),
   });
 }

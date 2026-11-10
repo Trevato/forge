@@ -9,7 +9,7 @@
 import { changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { CAPACITY, belowCeiling, type CapacityKey } from "../../core/capacity.ts";
 import { bytes } from "../../system/format.ts";
-import { egressSnapshot } from "../../apps/egress.ts";
+import { egressRowsFor } from "../../spawn/process_counters.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
@@ -162,7 +162,7 @@ export function capacityPage(ctx: Ctx): Response {
           : ""}.
       </p>`,
   );
-  const open = egressSnapshot();
+  const open = egressRowsFor(ctx.app);
   // The bun cache at work (#7546): a warm cache keeps this near zero.
   const npm = html`The npm registry sent
     <span class="mono">${bytes(egress.npmBytesLastHour)}</span> over the last hour${

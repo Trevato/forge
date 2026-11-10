@@ -32,7 +32,7 @@ const RUNS = 5;
 type Door = { query: unknown };
 
 /** Run `work` once with the statement counter on; return what it cost. */
-async function once(
+export async function once(
   db: Database,
   work: () => Promise<void> | void,
 ): Promise<number> {
@@ -76,9 +76,10 @@ export async function quiet(db: Database): Promise<void> {
 export async function statements(
   db: Database,
   work: () => Promise<void> | void,
+  runs: number = RUNS,
 ): Promise<number> {
   let fewest = Number.POSITIVE_INFINITY;
-  for (let run = 0; run < RUNS; run++) {
+  for (let run = 0; run < runs; run++) {
     await quiet(db);
     fewest = Math.min(fewest, await once(db, work));
   }

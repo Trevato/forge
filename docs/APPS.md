@@ -548,6 +548,14 @@ Only `text/html` responses the app sends uncompressed with a `Content-Length`
 (up to 4 MiB) are rewritten; JSON, images, compressed or chunked HTML and
 `HEAD` requests pass through byte for byte. `"toolbar": false` keeps it out.
 
+`toolchain`, at the top level, pins a toolchain: `{ "toolchain": { "rust":
+"1.82" } }`. The forge knows `rust` and provides the versions listed in
+`src/apps/toolchain.ts`. An unknown toolchain, a version that is not
+`major.minor`, or one this forge does not provide fails the deploy in one
+line ("rust 1.70 is not provided here; this forge has rust 1.82"). Without the
+field nothing changes. The pinned toolchain is put on `PATH` for the app's install, test and run
+steps only ([`docs/features/toolchains.md`](features/toolchains.md)).
+
 `adapter`, at the top level, says the app is an adapter the forge pulls
 from on a schedule (#437): `{ "adapter": { "schedule": { "every": 900 } } }`.
 `every` is whole seconds, 60 to 86400. `source` (the system's name and the
@@ -591,6 +599,22 @@ read-only by default, so the operator delegates it, for example as a
 writable cgroup mount owned by the forge's uid. Without that, cells are
 watched only. /system says which holds the cap, and why, and shows each
 cell's memory beside its cap.
+
+Processes are held the same way. The watch stops a cell whose tree passes
+512 processes; where the pids controller is delegated with memory, each
+app and check cell also gets `pids.max` 512, so a fork bomb fails inside
+its cell before a tick of the watch, and the forge's process table is
+never exhausted (#10518). Crew runs get no process cap, as before.
+/system says beside the memory line who holds the process count, and why
+when it is the watch alone.
+
+On a Kubernetes pod the forge is usually not at a cgroup namespace root
+(`/proc/self/cgroup` is not `0::/`) and `/sys/fs/cgroup` is read-only, so
+cells are watched only. The operator delegates one: run the container in
+its own cgroup namespace with a writable cgroup2 mount owned by the
+forge's uid, or set `FORGE_CELL_CGROUP` to a delegated subtree with
+`memory` (and `pids`) in its `cgroup.controllers`. /system then says the
+kernel holds the cap.
 
 The forge's own process outranks what it starts (#3319, `apps/background.ts`).
 Every check step (install, test, check) and every crew run starts in the

@@ -6,8 +6,10 @@
  */
 
 import { found, type Finding } from "../hunt/finding.ts";
-import { budgetFor, gitBudgetFor } from "./budgets.ts";
-import { summarize, WINDOW_MS, type PerfRecord } from "./record.ts";
+import type { Database } from "bun:sqlite";
+import { dayOf } from "./day.ts";
+import { budgetFor, gitBudgetFor, PAGE_BUDGET } from "./budgets.ts";
+import { percentile, summarize, WINDOW_MS, type PerfRecord } from "./record.ts";
 
 export { WINDOW_MS };
 export const MIN_REQUESTS = 20;
@@ -87,4 +89,64 @@ export function fresh(findings: readonly Finding[], filed: Set<string>): Finding
   const out = findings.filter((f) => !filed.has(f.key));
   for (const f of out) filed.add(f.key);
   return out;
+}
+
+/** The window real-user timings roll up over, and the fewest reports a page needs to be judged. */
+export const PAGE_WINDOW_MS = 60 * 60 * 1000;
+export const PAGE_MIN_REPORTS = 10;
+/** The most routes judged, and the newest reports read for each: the cost of a look is bounded. */
+export const PAGE_ROUTES = 50;
+export const PAGE_SAMPLE = 500;
+
+export interface SlowPage {
+  readonly route: string;
+  readonly reports: number;
+  readonly serverP95: number;
+  readonly paintP95: number | null;
+  /** `server` when time to first byte is most of the wait, else `render` (first byte to first paint). */
+  readonly phase: "server" | "render";
+}
+
+/**
+ * The page timings browsers reported in the last hour, rolled up per route
+ * pattern: p95 server time (TTFB) and p95 first paint (LCP). Only routes that
+ * miss `PAGE_BUDGET` come back, the worst first; every page fast is `[]`.
+ */
+export function slowPages(db: Database, now: number): SlowPage[] {
+  const since = now - PAGE_WINDOW_MS;
+  const day = dayOf(since);
+  // Bounded work: count per route in SQL, judge only the busiest routes, and read
+  // at most the newest PAGE_SAMPLE reports of each, never the whole hour.
+  const routes = db
+    .query<{ route: string; n: number }, [string, number, number, number]>(
+      "SELECT route, COUNT(*) AS n FROM page_vital WHERE day >= ?1 AND at >= ?2 GROUP BY route HAVING n >= ?3 ORDER BY n DESC LIMIT ?4",
+    )
+    .all(day, since, PAGE_MIN_REPORTS, PAGE_ROUTES);
+  const sample = db.query<{ ttfb: number | null; lcp: number | null }, [string, number, string, number]>(
+    "SELECT ttfb, lcp FROM page_vital WHERE day >= ?1 AND at >= ?2 AND route = ?3 ORDER BY at DESC LIMIT ?4",
+  );
+  const byRoute = new Map<string, { ttfb: number[]; lcp: number[]; n: number }>();
+  for (const { route, n } of routes) {
+    const e = { ttfb: [] as number[], lcp: [] as number[], n };
+    for (const r of sample.all(day, since, route, PAGE_SAMPLE)) {
+      if (r.ttfb !== null) e.ttfb.push(r.ttfb);
+      if (r.lcp !== null) e.lcp.push(r.lcp);
+    }
+    byRoute.set(route, e);
+  }
+  const out: SlowPage[] = [];
+  for (const [route, e] of byRoute) {
+    if (e.n < PAGE_MIN_REPORTS) continue;
+    const server = percentile(e.ttfb, 95) ?? 0;
+    const paint = percentile(e.lcp, 95);
+    if (server <= PAGE_BUDGET.serverP95Ms && (paint === null || paint <= PAGE_BUDGET.paintP95Ms)) continue;
+    out.push({ route, reports: e.n, serverP95: server, paintP95: paint, phase: paint !== null && paint - server > server ? "render" : "server" });
+  }
+  return out.sort((a, b) => b.serverP95 + (b.paintP95 ?? 0) - (a.serverP95 + (a.paintP95 ?? 0)));
+}
+
+/** One line per slow page, in the words both the page and the terminal use. */
+export function slowPageLine(p: SlowPage): string {
+  const paint = p.paintP95 === null ? "" : `, first paint ${Math.round(p.paintP95)} ms (budget ${PAGE_BUDGET.paintP95Ms})`;
+  return `${p.route}: server ${Math.round(p.serverP95)} ms (budget ${PAGE_BUDGET.serverP95Ms})${paint}; slowest part: ${p.phase === "server" ? "the server" : "the browser drawing it"}`;
 }

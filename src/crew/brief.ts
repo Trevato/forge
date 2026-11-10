@@ -544,9 +544,7 @@ function taskBody(input: TaskInput): string {
             ...input.sourceNote.map((n) => `- ${n}`),
             "",
           ]),
-      "```diff",
-      input.reviewDiff ?? "(no diff available)",
-      "```",
+      ...fenced(input.reviewDiff ?? "(no diff available)", "diff"),
     );
     // The conversation is context for the verdict, never the task.
     if (talk.length > 0) {
@@ -645,9 +643,7 @@ function taskBody(input: TaskInput): string {
       out.push(
         "",
         `The end of the ${input.checkKind === "check" ? "check" : "deploy"} log:`,
-        "```",
-        ...input.checkLog,
-        "```",
+        ...fenced(input.checkLog.join("\n")),
       );
     }
     out.push("", "Fix the cause, make sure the tests pass, and push again.");

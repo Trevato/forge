@@ -15,6 +15,7 @@
 import type { Database } from "bun:sqlite";
 import { quietly } from "../core/write_clock.ts";
 import { sha256 } from "../kernel/hash.ts";
+import { dayOf } from "../perf/day.ts";
 
 /** A report is a few dozen bytes; this is already generous. */
 export const REPORT_MAX = 512;
@@ -108,7 +109,7 @@ export function optedOut(request: Request): boolean {
   return cookie.split(";").some((pair) => pair.trim() === "forge_measure=off");
 }
 
-export const dayOf = (at: number): string => new Date(at).toISOString().slice(0, 10);
+export { dayOf };
 
 /** Today's salt, made on first use; every other day's is deleted. */
 export function saltFor(db: Database, at: number): string {

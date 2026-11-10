@@ -42,3 +42,6 @@ export const HEAVY_GIT_BUDGET: Budget = { pattern: "git *", words: "a pack-movin
 export function gitBudgetFor(key: string): Budget {
   return HEAVY_GIT.has(key.slice(4)) ? HEAVY_GIT_BUDGET : GIT_BUDGET;
 }
+
+/** What a real visitor's page is held to (#10536): the browser's time to first byte at p95, and its largest paint at p95. */
+export const PAGE_BUDGET = { serverP95Ms: 150, paintP95Ms: 1000 } as const;

@@ -386,7 +386,7 @@ import { upstreamRoutes } from "./api/upstream.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
-import { egressSnapshot, egressTotals } from "../apps/egress.ts";
+import { egressRowsFor, egressTotalsFor } from "../spawn/process_counters.ts";
 import { egressMetrics } from "../apps/egress_metrics.ts";
 import { forgeMetrics } from "../metrics/forge.ts";
 import { appSources } from "../metrics/app_sources.ts";
@@ -3368,7 +3368,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/metrics", (ctx) => {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
-    return new Response(egressMetrics(egressSnapshot(), egressTotals()) + forgeMetrics(ctx.app.db, appSources(ctx.app)), {
+    return new Response(egressMetrics(egressRowsFor(ctx.app), egressTotalsFor(ctx.app)) + forgeMetrics(ctx.app.db, appSources(ctx.app)), {
       headers: {
         "content-type": "text/plain; version=0.0.4; charset=utf-8",
         "cache-control": "no-store",

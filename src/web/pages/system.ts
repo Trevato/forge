@@ -19,12 +19,13 @@
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
 import type { Ctx } from "../../http/context.ts";
-import { memoryCapHolder } from "../../apps/contain.ts";
+import { memoryCapHolder, PROCESSES_MAX, processCapHolder } from "../../apps/contain.ts";
 import { bytes, spark, span } from "../../system/format.ts";
 import { eventStream } from "../../http/sse.ts";
 import type { SystemView } from "../../system/view.ts";
 import { live } from "../../system/live.ts";
 import { readerPaces, type ReaderPace } from "../../system/telemetry_reads.ts";
+import { slowPageLine, slowPages, type SlowPage } from "../../perf/watch.ts";
 import { stallHour } from "../../metrics/stalls.ts";
 import type { RouteStall } from "../../perf/loop.ts";
 import { loopWatch } from "../../perf/live.ts";
@@ -162,6 +163,23 @@ export function stallSection(rows: readonly RouteStall[]): Html {
       </table></div>`}</section>`;
 }
 
+const SLOW_TTL_MS = 5000;
+let slowKept: { db: object; at: number; rows: SlowPage[] } | undefined;
+/** `slowPages`, kept a few seconds so a busy /system never repeats the query; changes show on reload. */
+function slowPagesCached(db: Parameters<typeof slowPages>[0]): SlowPage[] {
+  const now = Date.now();
+  if (slowKept === undefined || slowKept.db !== db || now - slowKept.at > SLOW_TTL_MS)
+    slowKept = { db, at: now, rows: slowPages(db, now) };
+  return slowKept.rows;
+}
+
+/** Real visitors' pages over budget (#10536): one line each, and nothing at all when every page is fast. */
+export function slowPagesSection(rows: readonly SlowPage[]): Html {
+  if (rows.length === 0) return html``;
+  return html`<section class="settings-block" id="slow-pages"><h2>Pages over budget, last hour</h2>
+    <ul class="list" aria-label="Pages over their budget for real visitors">${rows.map((p) => html`<li data-route="${p.route}" data-phase="${p.phase}">${slowPageLine(p)}</li>`)}</ul></section>`;
+}
+
 /** Who read the telemetry routes in the last 10 minutes and how fast (#9069); `readerPaces`' rows. */
 export function readersSection(rows: readonly ReaderPace[]): Html {
   const secs = (ms: number | null): string => (ms === null ? "—" : `${(ms / 1000).toFixed(1)} s`);
@@ -239,11 +257,15 @@ export function systemPage(ctx: Ctx): Response {
   const reader = timePhase(ctx.request, "reader", () => telemetryReader(ctx.app, ctx.auth.user!));
   if (reader?.kind !== "owner") return notFoundPage(ctx);
   const v = timePhase(ctx.request, "sample", () => live().read());
-  const holder = timePhase(ctx.request, "caps", () => memoryCapHolder());
+  const [holder, pids] = timePhase(ctx.request, "caps", () => [memoryCapHolder(), processCapHolder()] as const);
   const caps: Html =
     holder.by === "kernel"
       ? html`<p class="small" id="cell-caps" data-by="kernel">Each cell's memory is capped by the kernel (its own cgroup's <code>memory.max</code>): a cell over it is killed alone.</p>`
       : html`<p class="small" id="cell-caps" data-by="watch">Each cell's memory is watched once a second and the cell stopped over its cap; the kernel does not cap it (${holder.reason}).</p>`;
+  const processCaps: Html =
+    pids.by === "kernel"
+      ? html`<p class="small" id="cell-pids" data-by="kernel">Each cell's processes are capped by the kernel at ${PROCESSES_MAX} (its cgroup's <code>pids.max</code>; not a crew run's): a fork past it fails inside that cell.</p>`
+      : html`<p class="small" id="cell-pids" data-by="watch">Each cell's processes are counted once a second and the cell stopped past ${PROCESSES_MAX}; the kernel does not cap them (${pids.reason}).</p>`;
   const memory = memorySection(ctx);
   const stalls = timePhase(ctx.request, "stalls", () => stallHour(loopWatch.tally(performance.now())));
   const rendering = performance.now();
@@ -264,6 +286,7 @@ export function systemPage(ctx: Ctx): Response {
         <ul class="list" id="cores" aria-label="Per-core CPU, percent, with its last readings">${at("cores")}</ul>
         <ul class="list" id="mem">${at("mem")}</ul>
         ${caps}
+        ${processCaps}
         <p class="small mono" id="temps">${at("temps")}</p></section>
     <section class="settings-block"><h2>Disks and network</h2>
       <ul class="list" id="sys-disks">${at("sys-disks")}</ul></section>
@@ -273,6 +296,7 @@ export function systemPage(ctx: Ctx): Response {
       <div id="sys-procs">${at("sys-procs")}</div></section>
     ${featuresSection(timePhase(ctx.request, "features", () => featureHealth(ctx.app, reader)))}
     <div id="sys-stalls">${stallSection(stalls)}</div>
+    <div id="sys-slow-pages">${slowPagesSection(timePhase(ctx.request, "slowpages", () => slowPagesCached(ctx.app.db)))}</div>
     <div id="sys-readers">${readersSection(readerPaces())}</div>
     <div id="sys-caches">${cachesSection(pageCaches())}</div>
     ${memory}`;

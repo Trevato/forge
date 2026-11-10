@@ -31,6 +31,7 @@ import {
 } from "./kernel/log.ts";
 import { RefusedLedger } from "./kernel/internal_refused.ts";
 import { closeReadersUnder } from "./git/read.ts";
+import { dropAllPins } from "./git/pins_kept.ts";
 
 export interface ForgeConfig {
   /** Everything lives here: index db, bare repos, the internal socket. */
@@ -255,6 +256,11 @@ export function createApp(config: ForgeConfig): App {
   // sends them. Listener throws are swallowed by the bus, so this can never
   // break the action that produced the event.
   bus.subscribe((event) => enqueueForEvent(db, event));
+  // A push, a merge, a repository change or a build event may move pins: the kept listings go (`git/pins_kept.ts`).
+  bus.subscribe((event) => {
+    const k = event.kind;
+    if (k === "push" || k === "pull.merged" || k.startsWith("repo.") || k.startsWith("build.")) dropAllPins();
+  });
   // What a push moves besides its own branch: the pulls it heads elsewhere,
   // and the forks whose default branch is still a copy of this one's.
   follow({

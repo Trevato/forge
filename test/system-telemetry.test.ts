@@ -306,6 +306,8 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     // Each check cell's memory beside its cap, and who holds the cap (#2410).
     expect(html).toContain('data-cap="8589934592" data-cap-by="kernel">of 8.0 GiB (kernel cap)');
     expect(html).toMatch(/id="cell-caps" data-by="(kernel|watch)"/);
+    // And who holds each cell's process count (#10518).
+    expect(html).toMatch(/id="cell-pids" data-by="(kernel|watch)"/);
     // Built from the system's own parts: pills, meters and the process table grouped by kind (#2721), no style attribute (#2691).
     expect(html).toMatch(/id="summary"[^>]*>\s*<span class="pill"/);
     expect(html).toContain('<tbody data-kind="check"');
