@@ -5,6 +5,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { mcpCard } from "../src/core/mcp_card.ts";
+import { opencodeInstall } from "../src/http/plugin_routes.ts";
 import { reservedName } from "../src/core/reserved.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -58,4 +60,25 @@ test("the Dockerfile copies plugins/opencode", () => {
     .filter((l) => l.startsWith("COPY ") && !l.includes("--from"))
     .flatMap((l) => l.trim().split(/\s+/).slice(1, -1).map((p) => p.replace(/\/$/, "")));
   expect(copies).toContain("plugins/opencode");
+});
+
+test("the printed install command, run, fetches the plugin's bytes from this forge", async () => {
+  const work = await mkdtemp(join(tmpdir(), "plugin-install-"));
+  try {
+    const run = Bun.spawn(["sh", "-c", opencodeInstall(servers.url)], { cwd: work });
+    expect(await run.exited).toBe(0);
+    expect(readFileSync(join(work, ".opencode/plugin/forge.ts"), "utf8")).toBe(readFileSync(join(ROOT, "plugins/opencode/forge.ts"), "utf8"));
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+});
+
+test("llms.txt and the card print opencodeInstall, never the code host", async () => {
+  const cmd = opencodeInstall(servers.url);
+  const llms = await (await fetch(`${servers.url}/llms.txt`)).text();
+  expect(llms).toContain(cmd);
+  expect(llms).not.toMatch(/OpenCode[^\n]*forge\.open-platform\.sh/);
+  expect(llms).not.toMatch(/raw\/main\/plugins\/opencode/);
+  const card = mcpCard(servers.url, "trevato/forge");
+  expect(card.plugins.find((p: any) => p.harness === "opencode")?.install).toBe(cmd);
 });
