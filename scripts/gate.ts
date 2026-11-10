@@ -33,51 +33,41 @@ export type Exclusion = {
 };
 
 export const EXCLUDED: readonly Exclusion[] = [
-  { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/apps-open-host.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
   {
     file: "test/apps-sleep.test.ts",
     reason: "red alone under --randomize (2026-11-10): an environment nobody asks for sleeps, and the next request wakes it — times out at 30s",
-    issue: 11049,
+    issue: 11084,
   },
   {
     file: "test/crew-interrupted.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
+    reason: "not yet admitted: green alone in 8.9 s (2026-11-10); its admission runs under #11053",
+    issue: 11053,
   },
   {
     file: "test/probe.test.ts",
     reason: "red alone under --randomize (2026-11-10): a scaffolded app obeys every cell: verdict mismatch, not ok",
-    issue: 11049,
+    issue: 11084,
   },
   {
     file: "test/probes.test.ts",
     reason: "red alone under --randomize (2026-11-10): the first clean probe after closes the issue: verdict down, not ok",
-    issue: 11049,
+    issue: 11084,
   },
-  { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/prompts.test.ts",
+    reason: "red alone under --randomize (2026-11-10): 11 of 23 fail, tests read the prompts and Reels earlier tests made",
+    issue: 11097,
+  },
   {
     file: "test/rehearsal-real.test.ts",
-    reason: "red on main@accaa65 under the gate: the second real roll's old forge does not come up",
-    issue: 7632,
+    reason: "green alone (3 of 3, 2026-11-10) but unproven under the gate's load, where on main@accaa65 the second real roll's old forge did not come up",
+    issue: 11098,
   },
-  { file: "test/scaffold.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/snapshot-destination.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
+    reason: "red alone under --randomize (2026-11-10): precedence and follow-the-saved-destination read a destination an earlier test saved",
+    issue: 11097,
   },
-  { file: "test/ssh-app.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/ssh-port-taken.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/ssh.test.ts", reason: "not yet admitted", issue: 261 },
 ];
 
 /**
