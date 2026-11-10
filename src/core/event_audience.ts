@@ -111,6 +111,8 @@ const READER_KINDS: ReadonlySet<string> = new Set([
   "forge.removed",
   "forge.stopped",
   "forge.claim_reissued",
+  "forge.claim_revoked",
+  "forge.claim_restored",
   "agent.created",
   "agent.updated",
   "agent.deleted",

@@ -11,8 +11,9 @@ import { ATTENTION_WORDS, CLAIM_WORDS, claimState, clientRows, runningWords, spe
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
-import { page } from "../layout.ts";
-import { reissueDoor } from "../../spawn/door.ts";
+import { page, redirect } from "../layout.ts";
+import { undoable } from "../../spawn/claim.ts";
+import { changeDoor, reissueDoor } from "../../spawn/door.ts";
 import { readForm } from "../form.ts";
 import { badge, btn, row, time } from "../ui.ts";
 import { noRoom } from "../../spawn/door.ts";
@@ -41,7 +42,7 @@ function spendNote(r: ClientRow): Html | null {
     : html`<span data-spend="ok">${s.words}</span>`;
 }
 
-function forgeRow(r: ClientRow): Html {
+function forgeRow(r: ClientRow, now: number): Html {
   const state = claimState(r);
   const meta = [
     r.for === null ? null : html`for ${r.for}`,
@@ -86,7 +87,13 @@ function forgeRow(r: ClientRow): Html {
         ? html`<form method="post" action="/forges/${r.name}/claim-link">
             ${btn("Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
           </form>`
-        : null}${r.made
+        : null}${r.link === null
+        ? null
+        : html`<span data-link="${r.link.state}">${badge(LINK_WORDS[r.link.state], { variant: "outline" as const })}</span>${r.link.state === "open"
+            ? html`<form method="post" action="/forges/${r.name}/revoke-link" class="inline">${btn("Revoke", { size: "sm", title: "End this link now; you can undo for a minute" })}</form>`
+            : undoable(r.link, now)
+              ? html`<form method="post" action="/forges/${r.name}/undo-link" class="inline">${btn("Undo", { size: "sm", title: "Bring the link back; possible for a minute after it ended" })}</form>`
+              : null}`}${r.made
         ? html`<form method="post" action="/forges/${r.name}/stop" class="inline">${btn("Stop", { size: "sm", title: "Put it to sleep now; its next visitor wakes it" })}</form>
           ${btn("Remove", { href: `/forges/${r.name}/remove`, size: "sm", title: "Asks first, then deletes this forge and its data for good" })}`
         : null}`,
@@ -149,6 +156,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
         sub: "Each forge you sent: who it is for and what runs there.",
         actions: action,
       })}
+      ${receipt(ctx, rows)}
       ${rows.length === 0
         ? html`<section class="settings-block">
             <h2>No forges sent yet</h2>
@@ -161,7 +169,7 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
             <section class="settings-block">
               <h2>Forges</h2>
               <ul class="list setting-list">
-                ${rows.map(forgeRow)}
+                ${rows.map((r) => forgeRow(r, Date.now()))}
               </ul>
             </section>`}
       <p class="mt"><a href="/fleet/graph">Fleet graph</a></p>
@@ -200,6 +208,37 @@ export async function forgeLinkSubmit(ctx: Ctx): Promise<Response> {
   response.headers.set("cache-control", "no-store");
   return response;
 }
+
+const LINK_WORDS = { open: "Link open", used: "Link used", ended: "Link ended" } as const;
+
+/** What `/forges?link=…&forge=…` says after a revoke or undo: fixed words, and only for a forge in the list. */
+function receipt(ctx: Ctx, rows: readonly ClientRow[]): Html | null {
+  const name = ctx.url.searchParams.get("forge") ?? "";
+  if (!rows.some((r) => r.name === name)) return null;
+  const says = {
+    revoked: html`The link for <strong>${name}</strong> has ended. Undo is beside it for a minute.`,
+    restored: html`The link for <strong>${name}</strong> is open again.`,
+    refused: html`The link for <strong>${name}</strong> did not change: it was not open, or the minute is over.`,
+  }[ctx.url.searchParams.get("link") ?? ""];
+  return says === undefined ? null : html`<p role="status" class="muted" data-receipt>${says}</p>`;
+}
+
+// POST /forges/:name/revoke-link and /undo-link — take the link back, or bring it back for a minute; then the row, with a receipt.
+function linkChange(act: "revoke" | "undo") {
+  return async (ctx: Ctx): Promise<Response> => {
+    const user = ctx.auth.user;
+    if (!user?.isAdmin) return notFoundPage(ctx);
+    const form = await readForm(ctx, "admin");
+    if (form instanceof Response) return form;
+    const name = ctx.params["name"] ?? "";
+    const door = await changeDoor(ctx, user, name, act);
+    if (door.status === 404) return notFoundPage(ctx);
+    const link = door.status >= 400 ? "refused" : act === "revoke" ? "revoked" : "restored";
+    return redirect(`/forges?link=${link}&forge=${encodeURIComponent(name)}`);
+  };
+}
+export const forgeLinkRevoke = linkChange("revoke");
+export const forgeLinkUndo = linkChange("undo");
 
 // POST /forges/:name/stop and /remove — the owner's hands on a hosted forge.
 function manageSubmit(act: (app: Ctx["app"], name: string) => Promise<Managed>, title: string) {

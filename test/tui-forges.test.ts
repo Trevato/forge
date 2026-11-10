@@ -26,6 +26,7 @@ const row = (over: Partial<ClientRow>): ClientRow => ({
   lastActivityAt: null,
   running: null,
   reach: null,
+  link: null,
   attention: null,
   spendTodayUsd: null,
   ceilingUsd: null,
@@ -56,6 +57,10 @@ describe("forges you sent in the terminal", () => {
         for (const ch of "Forges you sent") key(ch);
         await settleApp(app);
         return app.screen.toText();
+      },
+      async press(k: string) {
+        key(k);
+        await settleApp(app);
       },
       async enter() {
         key("enter");
@@ -91,6 +96,29 @@ describe("forges you sent in the terminal", () => {
     await h.enter();
     expect(h.text()).toContain("You have not sent a forge yet");
     h.stop();
+  });
+
+  test("the screen lists the keys for a link: end it, undo it; with none to change it says so", async () => {
+    const h = boot("alice");
+    await h.palette();
+    await h.enter();
+    expect(h.text()).toContain("end a link");
+    expect(h.text()).toContain("undo an ended link");
+    await h.press("l");
+    expect(h.text()).toContain("No open link to end");
+    await h.press("u");
+    expect(h.text()).toContain("No ended link to bring back");
+    h.stop();
+  });
+
+  test("a row says whether its link is open, ended, or can be undone; a used link says nothing", () => {
+    const line = (link: ClientRow["link"]) => forgeLines([row({ link })])[0]![1];
+    expect(line({ state: "open", revokedAt: null })).toContain("link open");
+    expect(line({ state: "ended", revokedAt: null })).toContain("link ended");
+    expect(line({ state: "ended", revokedAt: null })).not.toContain("undo");
+    expect(line({ state: "ended", revokedAt: new Date().toISOString() })).toContain("link ended, undo with u");
+    expect(line({ state: "used", revokedAt: null })).not.toContain("link");
+    expect(line(null)).not.toContain("link");
   });
 
   test("a member and a guest are not offered it", async () => {

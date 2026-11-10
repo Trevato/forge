@@ -15,7 +15,7 @@ import { timingSafeEqual } from "node:crypto";
 import { sha256 } from "../kernel/hash.ts";
 import type { ChildAppsSummary } from "./child-apps.ts";
 import { childAwake, hostedChildApps } from "./host.ts";
-import { hasAdmin, spawnedOrg } from "./claim.ts";
+import { hasAdmin, linkOf, spawnedOrg, type LinkInfo, type LinkState } from "./claim.ts";
 import { lastHeard, type Beat } from "./heartbeat.ts";
 import { reachOf, reachWords, type ChildReach } from "./reach.ts";
 import type { Size } from "./sizes.ts";
@@ -25,6 +25,8 @@ import { forgeUse, type ForgeUse } from "./usage.ts";
 export interface ForgeState {
   readonly claimed: boolean;
   readonly lastActivityAt: string | null;
+  /** The claim link's state; only the parent's secret unlocks it. Absent from an older child. */
+  readonly link?: LinkInfo | null;
 }
 
 /** One row of the client list; `claimed` is null when the child did not answer. */
@@ -44,6 +46,8 @@ export interface ClientRow {
   readonly running: ChildAppsSummary | null;
   /** What a visitor got from its public addresses when last asked (`spawn/reach.ts`); null before it was. */
   readonly reach: ChildReach | null;
+  /** The claim link's state (open, used, ended) and when it was taken back; null when the child did not say. */
+  readonly link: LinkInfo | null;
   /** Why this forge needs its owner now; null when it does not. */
   readonly attention: Attention | null;
   /** Dollars the child's crew spent today, from its last heartbeat; null when it has not said. */
@@ -123,7 +127,17 @@ export async function forgeState(
        )`,
     )
     .get();
-  return { claimed, lastActivityAt: last?.at ?? null };
+  return { claimed, lastActivityAt: last?.at ?? null, link: linkOf(app.db) };
+}
+
+const LINK_STATES: readonly LinkState[] = ["open", "used", "ended"];
+
+/** The link a child reported, or null when it said nothing usable. */
+function linkOfBody(v: unknown): LinkInfo | null {
+  if (typeof v !== "object" || v === null) return null;
+  const { state, revokedAt } = v as Record<string, unknown>;
+  if (!LINK_STATES.includes(state as LinkState)) return null;
+  return { state: state as LinkState, revokedAt: typeof revokedAt === "string" && !Number.isNaN(Date.parse(revokedAt)) ? revokedAt : null };
 }
 
 async function probe(app: App, child: Child): Promise<ForgeState | undefined> {
@@ -141,6 +155,7 @@ async function probe(app: App, child: Child): Promise<ForgeState | undefined> {
     if (typeof body["claimed"] !== "boolean") return undefined;
     const at = body["lastActivityAt"];
     return {
+      link: linkOfBody(body["link"]),
       claimed: body["claimed"],
       lastActivityAt:
         typeof at === "string" && !Number.isNaN(Date.parse(at)) ? at : null,
@@ -160,6 +175,11 @@ const heard = new WeakMap<App, Map<string, Heard>>();
 /** Asked again at most this often, however often the list is opened. */
 const FRESH_MS = 1500;
 const asking = new WeakMap<App, Map<string, Promise<ForgeState | undefined>>>();
+
+/** Forget what a child last said, so the next list asks it again (after its link changed). */
+export function forgetHeard(app: App, name: string): void {
+  heard.get(app)?.delete(name);
+}
 
 function ask(app: App, child: Child): Promise<ForgeState | undefined> {
   let pending = asking.get(app);
@@ -214,6 +234,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       size: c.size,
       use: forgeUse(c, childDirOf(app, c.bodyId)),
       lastHeartbeatAt: beats[i] === undefined ? null : new Date(beats[i]!.receivedAt).toISOString(),
+      link: states[i]?.link ?? null,
       nextStep: nextStepOf(states[i]?.claimed ?? null, beats[i]?.beat),
     })),
     now,

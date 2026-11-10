@@ -16,7 +16,8 @@ import { canRead, getRepo } from "../core/repos.ts";
 import { kindOfToken, normalizeToken, parseApiBase } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
-import type { Ctx } from "../http/context.ts";
+import { crossOrigin, type Ctx } from "../http/context.ts";
+import { changeLink } from "./manage.ts";
 import { takeDoor } from "../http/strangers.ts";
 import {
   childPublicUrl,
@@ -346,4 +347,14 @@ export async function reissueDoor(ctx: Ctx, user: User, name: string): Promise<D
   if (made.error.kind === "not_found")
     return { status: 404, body: { error: "not_found", message: `no child forge named ${name}` } };
   return spawnWords(made.error);
+}
+
+/** Take a child's unclaimed link back, or undo that within the minute: an admin's, same-origin. */
+export async function changeDoor(ctx: Ctx, user: User, name: string, act: "revoke" | "undo"): Promise<Door> {
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return spawnWords({ kind: "cross_origin" });
+  if (!user.isAdmin) return { status: 403, body: { error: "forbidden", message: "only a site admin can end or bring back a claim link" } };
+  const done = await changeLink(ctx.app, user.id, name, act);
+  if (done.ok) return { status: 200, body: { name, says: done.says } };
+  if (done.missing) return { status: 404, body: { error: "not_found", message: `no child forge named ${name}` } };
+  return spawnWords({ kind: "refused", reason: "not_open", message: done.says });
 }

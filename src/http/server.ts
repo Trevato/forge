@@ -261,7 +261,7 @@ import {
 import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
 import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
-import { forgeLinkSubmit, forgeRemoveConfirm, forgeRemoveSubmit, forgeStopSubmit, forgesPage } from "../web/pages/forges.ts";
+import { forgeLinkRevoke, forgeLinkSubmit, forgeLinkUndo, forgeRemoveConfirm, forgeRemoveSubmit, forgeStopSubmit, forgesPage } from "../web/pages/forges.ts";
 import { forgeItSubmit } from "../web/pages/forge-it.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
@@ -821,6 +821,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/forges", forgesPage);
   router.add("GET", "/family", familyPage);
   router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
+  router.add("POST", "/forges/:name/revoke-link", forgeLinkRevoke);
+  router.add("POST", "/forges/:name/undo-link", forgeLinkUndo);
   router.add("POST", "/forges/:name/stop", forgeStopSubmit);
   router.add("GET", "/forges/:name/remove", forgeRemoveConfirm);
   router.add("POST", "/forges/:name/remove", forgeRemoveSubmit);

@@ -8,6 +8,9 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { childDirOf, listChildren } from "../actions/spawn.ts";
+import { createApp } from "../app.ts";
+import { restoreClaim, revokeClaim, spawnedOrg } from "./claim.ts";
+import { forgetHeard } from "./clients.ts";
 import { sleepChild } from "./host.ts";
 import { CHILD_NAME } from "./placement.ts";
 
@@ -34,4 +37,35 @@ export async function removeForge(app: App, name: string): Promise<Managed> {
   await rm(childDirOf(app, child.bodyId), { recursive: true, force: true });
   app.bus.append({ kind: "forge.removed", payload: { name } });
   return { ok: true, says: `${name} is removed, with its data` };
+}
+
+/**
+ * Take a child's unclaimed link back, or undo that within the minute: the
+ * site admin's (callers check), receipted; the link's secret is in no event.
+ * `missing` says there is no such forge; otherwise a refusal means the link
+ * was not open (or the minute is over).
+ */
+export async function changeLink(
+  app: App,
+  actorId: string,
+  name: string,
+  act: "revoke" | "undo",
+): Promise<Managed & { readonly missing?: true }> {
+  const child = await find(app, name);
+  if (child === undefined || !child.done) return { ok: false, says: `no forge named ${name}`, missing: true };
+  const own = createApp({ dataDir: childDirOf(app, child.bodyId) });
+  try {
+    const spawned = await spawnedOrg(own);
+    if (!spawned) return { ok: false, says: "That forge has no link to change." };
+    if (!(act === "revoke" ? revokeClaim : restoreClaim)(own.db, spawned.org.id))
+      return { ok: false, says: act === "revoke" ? "That link is not open." : "That link cannot be brought back now." };
+  } finally {
+    own.close();
+  }
+  forgetHeard(app, name);
+  app.bus.append({ kind: act === "revoke" ? "forge.claim_revoked" : "forge.claim_restored", actorId, payload: { name } });
+  return {
+    ok: true,
+    says: act === "revoke" ? `The link for ${name} has ended. You can undo this for a minute.` : `The link for ${name} is open again.`,
+  };
 }

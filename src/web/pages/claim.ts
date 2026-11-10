@@ -87,6 +87,11 @@ function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
       title: "This link has expired",
       text: "Claim links work for a day. Ask whoever sent it for a new one.",
     },
+    revoked: {
+      status: 410,
+      title: "This link has ended",
+      text: "Whoever sent it took it back. Ask them for a new one.",
+    },
     owned: {
       status: 410,
       title: "This forge already has an owner",

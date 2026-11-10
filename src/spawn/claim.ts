@@ -49,11 +49,13 @@ interface Stored {
   readonly e: string;
   /** When it was used, ISO; null while it is unused. */
   readonly u: string | null;
+  /** When the spawner took it back, ISO; absent while it stands. */
+  readonly r?: string;
 }
 
 export type ClaimState =
   | { readonly state: "ok"; readonly orgId: string }
-  | { readonly state: "used" | "expired" | "unknown" | "owned" };
+  | { readonly state: "used" | "expired" | "revoked" | "unknown" | "owned" };
 
 /** What a spawned child's `parent.json` says, when it has one. */
 export interface Spawned {
@@ -167,6 +169,7 @@ function judge(
   const found = find(db, orgId, token);
   if (found === undefined) return { state: { state: "unknown" } };
   if (found.stored.u !== null) return { state: { state: "used" } };
+  if (found.stored.r !== undefined) return { state: { state: "revoked" } };
   if (Date.parse(found.stored.e) <= now) return { state: { state: "expired" } };
   if (hasAdmin(db)) return { state: { state: "owned" } };
   return {
@@ -234,4 +237,70 @@ export function handOver(db: Database, spawned: Spawned, userId: string): void {
   addTeamMember(db, team, userId);
   if (!spawned.keepAccess && spawner && spawner.id !== userId)
     removeTeamMember(db, team, spawner.id);
+}
+
+/** How long a revoke can be taken back. */
+export const REVOKE_UNDO_MS = 60_000;
+
+/** A link as its sender sees it: open, used, or ended (revoked or past its day). */
+export type LinkState = "open" | "used" | "ended";
+
+/** The link's state, and when its sender took it back (ISO) when they did. */
+export interface LinkInfo {
+  readonly state: LinkState;
+  readonly revokedAt: string | null;
+}
+
+/** True while an ended link can still be brought back: revoked in the last minute, in date, unspent. */
+export const undoable = (link: LinkInfo, now = Date.now()): boolean =>
+  link.state === "ended" && link.revokedAt !== null && now - Date.parse(link.revokedAt) <= REVOKE_UNDO_MS;
+
+type Found = { readonly value: string; readonly stored: Stored };
+
+const readStored = (db: Database, orgId?: string): Found | undefined => {
+  const row =
+    orgId === undefined
+      ? db.query<{ value: string }, [string]>("SELECT value FROM user_setting WHERE key = ?1").get(KEY)
+      : db.query<{ value: string }, [string, string]>("SELECT value FROM user_setting WHERE user_id = ?2 AND key = ?1").get(KEY, orgId);
+  if (!row) return undefined;
+  try {
+    return { value: row.value, stored: JSON.parse(row.value) as Stored };
+  } catch {
+    return undefined;
+  }
+};
+
+const stateOf = (s: Stored, now: number): LinkState =>
+  s.u !== null ? "used" : s.r !== undefined || Date.parse(s.e) <= now ? "ended" : "open";
+
+/** The claim link in this forge's own database; null when it has none. */
+export function linkOf(db: Database, now = Date.now()): LinkInfo | null {
+  const found = readStored(db);
+  return found === undefined ? null : { state: stateOf(found.stored, now), revokedAt: found.stored.r ?? null };
+}
+
+/** Replace the stored link only if nobody changed it since it was read. */
+function swap(db: Database, orgId: string, from: Found, next: Stored): boolean {
+  return (
+    db
+      .query("UPDATE user_setting SET value = ?1 WHERE user_id = ?2 AND key = ?3 AND value = ?4")
+      .run(JSON.stringify(next), orgId, KEY, from.value).changes === 1
+  );
+}
+
+/** Take back an open link: from now it answers "ended". False when it was not open. */
+export function revokeClaim(db: Database, orgId: string, now = Date.now()): boolean {
+  const found = readStored(db, orgId);
+  if (found === undefined || stateOf(found.stored, now) !== "open") return false;
+  return swap(db, orgId, found, { ...found.stored, r: new Date(now).toISOString() });
+}
+
+/** Undo a revoke made in the last minute, if the link is still unspent and in date. */
+export function restoreClaim(db: Database, orgId: string, now = Date.now()): boolean {
+  const found = readStored(db, orgId);
+  if (found === undefined) return false;
+  const { r, ...back } = found.stored;
+  if (r === undefined || back.u !== null || Date.parse(back.e) <= now) return false;
+  if (!undoable({ state: "ended", revokedAt: r }, now)) return false;
+  return swap(db, orgId, found, back);
 }

@@ -21,6 +21,7 @@ const row = (name: string, o: Partial<ClientRow> = {}): Omit<ClientRow, "attenti
   lastActivityAt: ago(1),
   running: null,
   reach: null,
+  link: null,
   size: "small",
   use: { kind: "shared" },
   lastHeartbeatAt: null,

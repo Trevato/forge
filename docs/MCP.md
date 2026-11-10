@@ -78,7 +78,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `branches` | `create`, `delete`, `branches`, `tags` | A repo's branches; `name`, `action` create (from `from`) or delete one, not the default | 407 |
 | `builds` | — | A repo's build pins (`refs/builds/`): label, commit, pinned by, note | 231 |
 | `capacity` | — | Forge capacity and guards, live | 390 |
-| `claim_link` | — | A new claim link for an unclaimed child forge, only with `reveal: true`; the old stops | 289 |
+| `claim_link` | `revoke`, `undo` | A child's claim link: `reveal` a new one, or `action` revoke/undo | 304 |
 | `close` | — | Close or reopen (`state` open) an issue or pull | 463 |
 | `cloud_account` | — | Change a cloud account by `verb` (admin) | 549 |
 | `cloud_accounts` | — | Cloud accounts (admin): each token's use | 131 |
