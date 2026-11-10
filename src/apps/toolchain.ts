@@ -43,3 +43,48 @@ export function parseToolchain(value: unknown): Result<ToolchainPin | undefined,
   }
   return ok(Object.keys(pin).length === 0 ? undefined : pin);
 }
+
+/**
+ * Where the host keeps its toolchains: `$FORGE_TOOLCHAINS/<name>/<version>/`,
+ * read-only, laid out as `bin/` (cargo, rustc), `cargo/` and `rustup/`.
+ * An admin adds a version by unpacking it there (docs/features/toolchains.md);
+ * nothing is ever fetched at deploy time.
+ */
+export function toolchainRoot(): string | undefined {
+  const root = process.env["FORGE_TOOLCHAINS"];
+  return root === undefined || root === "" ? undefined : root;
+}
+
+/** What a pinned toolchain adds to a step or the app: env, and the directory a cell must show. */
+export interface ToolchainUse {
+  readonly env: Record<string, string>;
+  readonly reveal: readonly string[];
+}
+
+/**
+ * The environment for a pin, from files already on the host. Synchronous
+ * and offline by construction: it only checks the directory is there.
+ * `scratch` is a writable place for CARGO_HOME (the registry cache and
+ * locks cargo writes), since the toolchain itself is read-only.
+ */
+export function toolchainUse(
+  pin: ToolchainPin | undefined,
+  scratch: string,
+  root: string | undefined = toolchainRoot(),
+): Result<ToolchainUse | undefined, string> {
+  const version = pin?.rust;
+  if (version === undefined) return ok(undefined);
+  const dir = root === undefined ? undefined : `${root.replace(/\/+$/, "")}/rust/${version}`;
+  if (dir === undefined || !Bun.file(`${dir}/bin/cargo`).size)
+    return err(`rust ${version} is pinned but not installed on this host`);
+  return ok({
+    env: {
+      PATH: `${dir}/bin:${process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin"}`,
+      CARGO_HOME: `${scratch.replace(/\/+$/, "")}/.cargo`,
+      RUSTUP_HOME: `${dir}/rustup`,
+      // Never let a proxy binary go and fetch another toolchain.
+      RUSTUP_TOOLCHAIN: version,
+    },
+    reveal: [dir],
+  });
+}

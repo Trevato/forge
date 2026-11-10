@@ -553,8 +553,8 @@ Only `text/html` responses the app sends uncompressed with a `Content-Length`
 `src/apps/toolchain.ts`. An unknown toolchain, a version that is not
 `major.minor`, or one this forge does not provide fails the deploy in one
 line ("rust 1.70 is not provided here; this forge has rust 1.82"). Without the
-field nothing changes. For now the field is only read and checked; nothing is
-installed from it yet.
+field nothing changes. The pinned toolchain is put on `PATH` for the app's install, test and run
+steps only ([`docs/features/toolchains.md`](features/toolchains.md)).
 
 `adapter`, at the top level, says the app is an adapter the forge pulls
 from on a schedule (#437): `{ "adapter": { "schedule": { "every": 900 } } }`.

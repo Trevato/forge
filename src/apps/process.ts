@@ -20,6 +20,7 @@ import { isFeatureVarName } from "./feature_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
+import { toolchainUse, type ToolchainUse } from "./toolchain.ts";
 import { notFoundHint, shellCommand } from "./run_command.ts";
 import { cellInstall, meteredInstall, prefillInstallCache, withLock } from "../checks/install.ts";
 import {
@@ -175,6 +176,8 @@ export function appEnv(input: {
   feature?: Record<string, string> | undefined;
   /** A read-only forge token for this process (`apps/token.ts`). */
   forgeToken?: string | undefined;
+  /** A pinned toolchain's PATH and homes (`apps/toolchain.ts`). */
+  toolchain?: Record<string, string> | undefined;
 }): Record<string, string> {
   const pull = envPull(input.env);
   // The operator's variables go underneath everything the forge names, so
@@ -185,6 +188,7 @@ export function appEnv(input: {
     ...operatorVars(input.vars),
     ...featureVars(input.feature),
     ...childEnv({
+      ...input.toolchain,
       PORT: String(input.port),
       HOST: "127.0.0.1",
       NODE_ENV: "production",
@@ -399,10 +403,11 @@ export async function runStep(
 }
 
 /** The cell a step of this deploy runs in: the checkout and the home, the registry and what the app declared. */
-export function stepCell(input: StartInput): CellSpec | undefined {
+export function stepCell(input: StartInput, use?: ToolchainUse): CellSpec | undefined {
   const base = input.cell;
   if (base === undefined) return undefined;
   return {
+    ...(use === undefined ? {} : { reveal: use.reveal }),
     dir: input.dir,
     writable: [],
     home: base.home,
@@ -443,9 +448,10 @@ export function installPlan(
   input: StartInput,
   env: Record<string, string>,
   filled: boolean,
+  use?: ToolchainUse,
 ): InstallPlan {
   const cache = input.installCache;
-  const cell = stepCell(input);
+  const cell = stepCell(input, use);
   if (cache === undefined || !filled) return { command, env, cell, lock: undefined };
   if (cell !== undefined)
     return { ...cellInstall(command, env, cache), cell: { ...cell, reveal: [...(cell.reveal ?? []), cache] }, lock: undefined };
@@ -461,6 +467,7 @@ async function install(
   command: string,
   input: StartInput,
   env: Record<string, string>,
+  use?: ToolchainUse,
 ): Promise<Result<void, string>> {
   let filled = false;
   if (input.installCache !== undefined) {
@@ -475,7 +482,7 @@ async function install(
     if (fill.ok) filled = fill.value;
     else input.log(`cache not filled: ${fill.error}`);
   }
-  const plan = installPlan(command, input, env, filled);
+  const plan = installPlan(command, input, env, filled, use);
   const step = (): Promise<Result<void, string>> =>
     runStep("install", plan.command, { cwd: input.dir, env: plan.env, log: input.log, signal: input.signal, cell: plan.cell });
   if (plan.lock !== undefined) {
@@ -499,7 +506,12 @@ export async function startProcess(
   input: StartInput,
 ): Promise<Result<StartedProcess, StartError>> {
   const { manifest, log } = input;
+  const scratch = input.cell?.home ?? input.dir;
+  const used = toolchainUse(manifest.toolchain, scratch);
+  if (!used.ok) return err({ stage: "install", message: used.error });
+  const use = used.value;
   const stepEnv = childEnv({
+    ...use?.env,
     CI: "1",
     FORGE_APP_ENV: input.env === "production" ? "production" : "preview",
     // A mirror the forge itself is pointed at is the one the fill and the
@@ -508,7 +520,7 @@ export async function startProcess(
   });
 
   if (manifest.install !== null && input.warm !== true) {
-    const installed = await install(manifest.install, input, stepEnv);
+    const installed = await install(manifest.install, input, stepEnv, use);
     if (!installed.ok)
       return err({ stage: "install", message: installed.error });
   }
@@ -532,7 +544,7 @@ export async function startProcess(
           env: stepEnv,
           log,
           signal: testAbort.signal,
-          cell: stepCell(input),
+          cell: stepCell(input, use),
         });
 
   // The port is chosen, then released, then bound by the app: another
@@ -552,6 +564,7 @@ export async function startProcess(
               writable: [input.dataDir],
               home: input.cell.home,
               hide: input.cell.hide,
+              ...(use === undefined ? {} : { reveal: use.reveal }),
               egress: manifest.egress ?? [],
               granted: input.cell.granted,
               reach: [input.forgeUrl],
@@ -565,6 +578,7 @@ export async function startProcess(
           );
     const command = shellCommand(manifest.run);
     const env = appEnv({
+      toolchain: use?.env,
       port,
       dataDir: input.dataDir,
       env: input.env,
