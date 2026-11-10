@@ -143,6 +143,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["bulk", "Bulk actions", "your last bulk actions; u undoes one inside its day"],
     ["subscriptions", "Crew subscriptions", "each account's budget and rest; wake one, set its budget, add or remove one"],
     ["app-templates", "App templates", "the repositories New app offers; mark or unmark one"],
+    ["devices", "Devices", "LAN printers: model, state, supplies; declare or remove one"],
     ["edge-only-accounts", "Edge-only accounts", "who would be locked out if the platform edge sign-in went off"],
     ["traffic-sources", "Traffic sources", "where people come from and where they go, for the forge"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],

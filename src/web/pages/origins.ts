@@ -108,6 +108,7 @@ export type AccountSection =
   | "backups"
   | "traffic"
   | "secrets"
+  | "devices"
   | "capacity"
   | "telemetry"
   | "access"
@@ -153,6 +154,7 @@ const SECTION_ROWS: readonly (readonly [
   ["Connections", "Origins", "/settings/origins", "globe", (c) => c === "origins", false],
   ["Connections", "Cloud accounts", "/settings/cloud", "key", (c) => c === "cloud", true],
   ["Connections", "Secrets", "/settings/secrets", "lock", (c) => c === "secrets", true],
+  ["Connections", "Devices", "/settings/devices", "globe", (c) => c === "devices", true],
   ["Security", "Security", "/settings/security", "lock", (c) => c === "security", true],
   ["Security", "Traffic", "/settings/traffic", "users", (c) => c === "traffic", true],
   ["Security", "Trusted sources", "/settings/trusted", "lock", (c) => c === "trusted", true],

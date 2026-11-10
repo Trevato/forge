@@ -145,6 +145,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/people` — `pages/people.ts` · people and their roles · `/settings/accounts`, `/settings/crew` · none seen.
 - `/settings/crew` — `pages/crew.ts` · the named agents and what each may do · `/settings/model`, `/settings/telemetry` · none seen.
 - `/settings/teams` — `pages/teams.ts` · the named crew teams, each with a charter, a dial and members · `/settings/crew` · none seen.
+- `/settings/devices` — `settings/devices.ts` · LAN printers the owner declares, with model, state and supplies · `/settings/origins` (the same account sections) · none seen.
 - `/settings/origins` — `pages/origins.ts` (1,497 lines) · other forges this one reads and mirrors from · `/migrate` · none seen.
 - `/settings/security` — `pages/security.ts` · the Shield and the evidence an admin needs to act with no AI · `/settings/traffic`, `/settings/backups` · none seen.
 - `/settings/security/controls` — `pages/security_controls.ts` · one line per RED-TEAM control and when it was last checked · `/settings/security` · none seen.

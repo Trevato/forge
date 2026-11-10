@@ -14,6 +14,7 @@ import { entry as askData } from "./ask_data.ts";
 import { entry as archived } from "./archived.ts";
 import { entry as audit } from "./audit.ts";
 import { entry as appTemplates } from "./app_templates.ts";
+import { entry as devices } from "./devices.ts";
 import { entry as bets } from "./bets.ts";
 import { entry as boards } from "./boards.ts";
 import { entry as bugs } from "./bugs.ts";
@@ -117,6 +118,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   limits,
   economics,
   appTemplates,
+  devices,
   flowsAll,
   scrapes,
   trafficScreenEntry,

@@ -38,6 +38,7 @@ import { confirmsList, confirmYes } from "../web/pages/confirms.ts";
 import { packsSettingsPage, packsSettingsSave } from "../web/pages/packs-settings.ts";
 import { featureAccept, featurePage, featureRun, featureSave, featuresPage, featureSwitch } from "../web/pages/features.ts";
 import { passkeyAdd, passkeyDelete, passkeyOptions, passkeysPage } from "../web/pages/passkeys.ts";
+import { deviceDeclare, devicesPage, deviceRemove } from "../web/settings/devices.ts";
 import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
 import {
   backupsClear,
@@ -178,6 +179,9 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("GET", "/settings/secrets", secretsPage);
   router.add("POST", "/settings/secrets", secretSet);
   router.add("POST", "/settings/secrets/delete", secretDelete);
+  router.add("GET", "/settings/devices", devicesPage);
+  router.add("POST", "/settings/devices", deviceDeclare);
+  router.add("POST", "/settings/devices/delete", deviceRemove);
   router.add("GET", "/settings/cloud", cloudPage);
   router.add("POST", "/settings/cloud", cloudAdd);
   router.add("POST", "/settings/cloud/verify", cloudVerify);

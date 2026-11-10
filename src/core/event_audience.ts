@@ -228,6 +228,8 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind.startsWith("pinned.") ||
     // Which of a person's connected accounts a mirror syncs through is too.
     kind.startsWith("origin.") ||
+    // A declared LAN device names the owner's own network (#10567).
+    kind.startsWith("device.") ||
     kind === "repo.settings_updated" ||
     // Where a repository follows is its admins' to read, off or on: the
     // address is often a private repository's.
