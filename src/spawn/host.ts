@@ -119,10 +119,15 @@ function touch(parent: App, ledger: { bodyId: string; name: string }, now = Date
 
 /** Forges awake now: hosted children open in this process plus children running in a cell. */
 export function awakeCount(parent: App): number {
-  const awake = (caches.get(parent)?.size ?? 0) + cellChildren(parent).list().length;
+  // A child boot opened and nobody has asked for is not in use: it never crowds out a person's wake.
+  const unasked = bootOpened.get(parent)?.size ?? 0;
+  const awake = Math.max(0, (caches.get(parent)?.size ?? 0) - unasked) + cellChildren(parent).list().length;
   // A wake granted but not finished holds its slot, so two at once cannot both pass the ceiling.
   return awake + reservedCount(parent);
 }
+
+/** Hosted children the boot opened that no request has reached since, by body id. */
+const bootOpened = new WeakMap<App, Set<string>>();
 
 /** Wakes granted and not yet awake, by body id, with when. */
 const waking = new WeakMap<App, Map<string, number>>();
@@ -220,6 +225,7 @@ export function childAwake(parent: App, name: string): boolean {
 
 async function closeOne(parent: App, cache: Map<string, App>, bodyId: string, child: App, name: string): Promise<string> {
   cache.delete(bodyId);
+  bootOpened.get(parent)?.delete(bodyId);
   touched.get(parent)?.delete(bodyId);
   waking.get(parent)?.delete(bodyId);
   for (const onClose of closeWatchers.get(parent) ?? []) {
@@ -262,6 +268,7 @@ export function wakeGate(parent: App, request: Request): Response | undefined {
   const known = carriesCredentials(parent, ledger.bodyId, request);
   if (isAwakeBody(parent, ledger.bodyId)) {
     if (known) {
+      bootOpened.get(parent)?.delete(ledger.bodyId);
       touch(parent, ledger);
       cellChildren(parent).touch(ledger.bodyId);
     }
@@ -295,6 +302,7 @@ export function closeHostedChildren(parent: App): void {
   if (sweeper !== undefined) clearInterval(sweeper);
   sweepers.delete(parent);
   touched.delete(parent);
+  bootOpened.delete(parent);
   waking.delete(parent);
   inFlight.delete(parent);
   const m = caches.get(parent);
@@ -459,7 +467,14 @@ export async function bootHostedChildren(parent: App): Promise<void> {
     if (!f.endsWith(".json")) continue;
     const name = f.slice(0, -".json".length);
     if (parseHostedChildName(`${name}${childHostSuffix(childHost(parent))}`, childHost(parent)) !== name) continue;
+    const ledger = readLedgerSync(parent, name);
+    const was = ledger !== undefined && caches.get(parent)?.has(ledger.bodyId) === true;
     await bootHostedChild(parent, name);
+    if (ledger !== undefined && !was && caches.get(parent)?.has(ledger.bodyId) === true) {
+      let set = bootOpened.get(parent);
+      if (!set) bootOpened.set(parent, (set = new Set()));
+      set.add(ledger.bodyId);
+    }
   }
 }
 
