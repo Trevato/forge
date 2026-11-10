@@ -54,7 +54,7 @@ test("one <h2> per part, each in a settings-block, and no card", async () => {
     "Processes",
     "Main-thread stalls, last hour",
     "Telemetry readers",
-    "Code page caches",
+    "Code page caches, since start",
     "Forge memory",
   ]);
   expect(main.match(/<section class="settings-block"/g)?.length).toBe(heads.length);
@@ -95,8 +95,8 @@ test("no stalls says so rather than drawing a header over nothing", () => {
   expect(stallSection([{ route: "/x", ms: 300, count: 1 }]).text).toContain("<table");
 });
 
-test("the caches section keeps one short sentence", () => {
-  expect(cachesSection([]).text.match(/<p /g)?.length).toBe(1);
+test("the caches section keeps no note: the counts' span is in its heading, what each holds is in the `?`", () => {
+  expect(cachesSection([]).text).not.toContain("<p ");
 });
 
 test("no memory samples yet says so", () => {

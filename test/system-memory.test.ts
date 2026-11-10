@@ -122,7 +122,6 @@ describe("code page caches (#9514)", () => {
     expect(caps).toBe(128 * MiB);
     const html = String(cachesSection([{ name: "kept pages", holds: "<b>", capBytes: 64 * MiB, entries: 3, bytes: 2 * MiB, hits: 3, misses: 1 }]));
     expect(html).toContain('data-cache="kept pages"');
-    expect(html).toContain("&lt;b&gt;");
     expect(html).toContain("2.0 MiB");
     expect(html).toContain("64.0 MiB");
     expect(html).toContain("75.0%");
@@ -130,7 +129,7 @@ describe("code page caches (#9514)", () => {
 
   test("the owner's /system shows them", async () => {
     const body = await (await get("alice")).text();
-    expect(body).toContain("<h2>Code page caches</h2>");
+    expect(body).toContain("<h2>Code page caches, since start</h2>");
     for (const name of ["kept pages", "encoded bodies", "page columns", "folders and refs"]) expect(body).toContain(`data-cache="${name}"`);
   });
 });
