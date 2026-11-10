@@ -14,6 +14,7 @@
 import type { App } from "../app.ts";
 import { PASS_LEAD, tickBoxes, unticked } from "../core/done_on_main.ts";
 import { addComment, getIssue, setIssueState as setIssueStateCore, updateIssueText } from "../core/issues.ts";
+import { noteShipped } from "../crew/note_closed.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { closesFromBody, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
@@ -141,12 +142,14 @@ export function applyBoxPass(app: App, repo: Repo, pull: Pull, reviewer: User, p
         });
     }
     // A pull that landed before its boxes were read closes the issue now, as the landing would have.
-    if (pull.mergedAt !== null && unticked(body).length === 0 && setIssueStateCore(app.db, issue.id, "closed"))
+    if (pull.mergedAt !== null && unticked(body).length === 0 && setIssueStateCore(app.db, issue.id, "closed")) {
       app.bus.append({
         kind: "issue.closed",
         repoId: repo.id,
         actorId: reviewer.id,
         payload: { number: n, by: "merge", pull: pull.number },
       });
+      noteShipped(app, reviewer.id, repo, issue, pull);
+    }
   }
 }

@@ -10,6 +10,7 @@ import { takeGuestPull } from "./guests.ts";
 import { requireAbility } from "./roles.ts";
 import { announceTeamWaits } from "./team_waits.ts";
 import { addComment as addIssueComment } from "../core/issues.ts";
+import { noteShipped } from "../crew/note_closed.ts";
 import { landedNote, leftNote, unticked } from "../core/done_on_main.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
@@ -649,6 +650,8 @@ export async function mergePull(
       actorId: writer.value.id,
       payload: { number: issue.number, by: "merge", pull: pull.number },
     });
+    // A note from an app's button hears, in plain words, that it shipped (#10564).
+    noteShipped(app, writer.value.id, repo, issue, pull);
   }
   return merged;
 }

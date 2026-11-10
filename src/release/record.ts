@@ -82,3 +82,10 @@ export function releaseOfPull(db: Database, repoId: string, pullNumber: number):
 
 /** What a release is called where people read it: the landed commit, short. */
 export const releaseName = (r: Release): string => r.sha.slice(0, 12);
+
+/** What a release is called in plain words: its number and the day it was cut. */
+export const releaseLabel = (r: Release): string => {
+  const day = new Date(r.createdAt);
+  const when = Number.isNaN(day.getTime()) ? r.createdAt.slice(0, 10) : day.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return `release ${r.id} (${when})`;
+};
