@@ -12,7 +12,7 @@ afterAll(async () => {
   await f.close();
 });
 
-type Row = [string, string, number];
+type Row = [string, string, number, string];
 // The very source the browser receives, run here as a function.
 const goMatch = new Function(`${GO_MATCH_JS}; return goMatch;`)() as (pages: Row[], q: string) => Row[];
 const all = goPagesData();

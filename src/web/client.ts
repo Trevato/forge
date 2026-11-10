@@ -1584,7 +1584,7 @@ const shellCore = /* js */ `
     if (e.key === 'Escape' && e.defaultPrevented) return;
     if (e.key === 'Escape' && escClosedHints) { escClosedHints = false; e.preventDefault(); return; }
     if (e.key === 'Escape' && leaveToList()) { e.preventDefault(); return; }
-    if (Date.now() - last > 1200) seq.length = 0;
+    if (Date.now() - last > 1000) seq.length = 0;
     last = Date.now();
     seq.push(e.key);
     if (seq.length > 2) seq.splice(0, seq.length - 2);
@@ -1597,6 +1597,11 @@ const shellCore = /* js */ `
       var after = target.type === 'radio' && target.form ? target.form.querySelector('textarea') : null;
       if (after) after.focus();
       return;
+    }
+    // \`g\` then a letter: a page from the one list (go_pages.ts), only if this viewer may open it.
+    if (seq.length === 2 && seq[0] === 'g') {
+      var gp = gotoPages().filter(function (p) { return p[3] !== '' && p[3] === e.key; })[0];
+      if (gp) { seq.length = 0; e.preventDefault(); location.assign(gp[1]); return; }
     }
     if (e.key === 'j') { seq.length = 0; e.preventDefault(); move(1); }
     else if (e.key === 'k') { seq.length = 0; e.preventDefault(); move(-1); }
@@ -1675,6 +1680,8 @@ const shellCore = /* js */ `
       var pl = doc.createElement('td'); pl.textContent = 'Pages: ' + names.join(', ');
       pr.appendChild(pk); pr.appendChild(pl); tbody.appendChild(pr);
     }
+    // The \`g\` jumps, read from the same list: one row per page this viewer may open by key.
+    gotoPages().forEach(function (p) { if (p[3] !== '') tbody.appendChild(keyRow('g ' + p[3], 'Go to ' + p[0])); });
     table.appendChild(tbody);
     if (body) { body.textContent = ''; body.appendChild(table); }
     openModal(dlg);
