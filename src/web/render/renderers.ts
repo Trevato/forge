@@ -15,6 +15,7 @@ import { geojson } from "./geojson.ts";
 import { gpx } from "./gpx.ts";
 import { font } from "./font.ts";
 import { ics } from "./ics.ts";
+import { vcf } from "./vcf.ts";
 import { image } from "./image.ts";
 import { fileKind, HEAD_BYTES, kindByName, NO_BYTES, RENDER_CAP, type FileKind } from "./kinds.ts";
 import { log, hasEscape } from "./log.ts";
@@ -78,6 +79,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   gpx,
   geojson,
   calendar: ics,
+  contacts: vcf,
   archive,
   font,
 };

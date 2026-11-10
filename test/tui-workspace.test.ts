@@ -416,6 +416,39 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .vcf opens as a table of its contacts sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "people",
+      visibility: "public",
+      description: "contacts",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "team.vcf",
+          content:
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Ada Lovelace\r\nORG:Analytical\r\nEMAIL:ada@example.com\r\nEND:VCARD\r\n",
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "people");
+      await openFile(h, "team.vcf");
+      expect(h.text()).toContain("Organisation");
+      expect(h.text()).toContain("Ada Lovelace");
+      expect(h.text()).toContain("ada@example.com");
+      expect(h.text()).toContain("1 contact");
+      await h.press("s");
+      expect(h.text()).toContain("FN:Ada Lovelace");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .gpx opens as its facts, sharing the web parser, and s flips to the source", async () => {
     const made = await createRepo(forge, alice, {
       name: "tracks",

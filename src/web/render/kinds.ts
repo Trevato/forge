@@ -32,6 +32,7 @@ export type FileKind =
   | "gpx"
   | "geojson"
   | "calendar"
+  | "contacts"
   | "text"
   | "binary";
 
@@ -63,6 +64,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   gpx: 20 * MB,
   geojson: 5 * MB,
   calendar: 5 * MB,
+  contacts: 5 * MB,
   text: 1 * MB,
   binary: 0,
 };
@@ -173,6 +175,8 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   gpx: "gpx",
   geojson: "geojson",
   ics: "calendar",
+  vcf: "contacts",
+  vcard: "contacts",
 };
 
 /**

@@ -58,6 +58,7 @@ import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
 import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
+import { CARD_CAP, parseVcf } from "../../web/render/vcf-parse.ts";
 import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
 import { layoutTable, type Grid } from "../ui/grid.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -340,6 +341,25 @@ function icsTable(source: string): Table | null {
   };
 }
 
+/** `.vcf` and `.vcard`: contacts, drawn as a table of people. */
+function isVcfPath(path: string): boolean {
+  return /\.(vcf|vcard)$/i.test(path);
+}
+
+/** The cards of a contacts file as a table; null when the file is not one. Shares the web's parser. */
+function vcfTable(source: string): Table | null {
+  const parsed = parseVcf(source);
+  if ("error" in parsed || parsed.total === 0) return null;
+  const shown = parsed.cards.slice(0, CARD_CAP);
+  return {
+    header: ["Name", "Organisation", "Email", "Phone"],
+    rows: shown.map((c) => [c.name, c.org, c.emails.join(", "), c.phones.join(", ")]),
+    more: parsed.total - shown.length,
+    delimiter: ",",
+    columns: 4,
+  };
+}
+
 /** `.gpx`: a GPS track, drawn as a table of its facts (track, distance, climb, points). */
 function isGpxPath(path: string): boolean {
   return /\.gpx$/i.test(path);
@@ -524,6 +544,9 @@ class Tab {
       this.grid = layoutTable(this.table);
     } else if (isIcsPath(this.path)) {
       this.table = icsTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isVcfPath(this.path)) {
+      this.table = vcfTable(new TextDecoder().decode(source));
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGpxPath(this.path)) {
       this.table = gpxTable(new TextDecoder().decode(source), this.path);
@@ -2613,7 +2636,7 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isGeoJsonPath(t.path))
+                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -2947,9 +2970,9 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, features = false): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, subs ? "cue" : events ? "event" : facts ? "fact" : features ? "feature" : "row")}${
+  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : "row")}${
     unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
   }${
     table.more > 0 ? `, first ${table.rows.length} shown` : ""
