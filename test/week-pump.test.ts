@@ -78,11 +78,10 @@ test("builds fill the pace slots, yet a review or assigned run still starts; a t
   if (!sub.ok) throw new Error(sub.error);
   setHeadroom(app.db, sub.value.id, 0);
   app.db.query("INSERT INTO subscription_grant (scope_id, agent_id, subscription_id) VALUES (?1, '', ?2)").run(made.value.id, sub.value.id);
-  setCapacity(app.db, "crew.concurrency", "10", alice.id);
-  setCapacity(app.db, "pace.floor", "2", alice.id);
+  setCapacity(app.db, "crew.concurrency", "7", alice.id); // the pace floor follows: half of 7 is 3
   const now = Date.now();
   noteMeasure(app.db, sub.value.id, { window: "week", usedPct: 70, resetsAt: new Date(now + 3.5 * DAY).toISOString(), observedAt: new Date(now).toISOString() });
-  // 30% free now, 36% an hour ago: 6 points an hour, far over what is allowed, so the pace is the floor of 2 slots.
+  // 30% free now, 36% an hour ago: 6 points an hour, far over what is allowed, so the pace is the floor of 3 slots.
   app.db.query("INSERT INTO week_reading (scope, at, free_pct) VALUES (?1, ?2, 36)").run(sub.value.id, new Date(now - 3_600_000).toISOString());
   const on = await updateRepoSettings(app, alice, made.value, { autonomy: "autonomous", autonomyDirection: "Ship.", autonomyCeilingUsd: 1000, autonomySlots: 4, autonomyBy: alice.id });
   expect(on.ok).toBe(true);
@@ -100,15 +99,15 @@ test("builds fill the pace slots, yet a review or assigned run still starts; a t
   };
   const stateOf = (id: string) => getRun(app.db, id)!.state;
   const logOf = (id: string) => readRunLog(app.config.dataDir, id).lines.join("\n");
-  // Two builds fill the pace; one review and one assigned run are going in their own lane.
-  run("push", true);
-  run("push", true);
+  // Three builds fill the pace; one review and one assigned run are going in their own lane.
+  for (let i = 0; i < 3; i++) run("push", true);
+  run("review", true);
   run("review", true);
   run("assigned", true);
   const build = run("push", false);
   const review = run("review", false);
   await until(() => logOf(build).includes("queued, not started: Ahead of pace"), "the build to be held");
-  await until(() => logOf(review).includes("2 of 2 places for reviews and assigned work are taken"), "the third priority run to be held");
+  await until(() => logOf(review).includes("3 of 3 places for reviews and assigned work are taken"), "the third priority run to be held");
   expect(stateOf(build)).toBe("queued");
   expect(stateOf(review)).toBe("queued");
   // One priority run ends: the lane has room and the review starts, the build still waits.

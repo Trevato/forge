@@ -17,7 +17,7 @@ import type { Repo } from "../core/repos.ts";
 import { raisedAt } from "../core/thought_links.ts";
 import type { Agent, CrewRole } from "../core/agents.ts";
 import { mayPick } from "./bets.ts";
-import { isPolish, polishSpend, smallIssues } from "./small_share.ts";
+import { isPolish, polishSpend, smallIssues } from "./polish_share.ts";
 import { shunnedBy } from "./stalls.ts";
 
 /** Why the picker passes a startable issue over. */

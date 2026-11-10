@@ -75,7 +75,7 @@ import {
   requireWriter,
   type AccessError,
 } from "./access.ts";
-import { validPolishShare } from "../crew/small_share.ts";
+import { validPolishShare } from "../crew/polish_share.ts";
 import { removeInstallCache } from "../crew/workdir.ts";
 import type { SettingsChanged } from "../core/settings_changed.ts";
 

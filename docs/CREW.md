@@ -216,7 +216,8 @@ while the suspect is judged. A pull in two red batches is never in a third:
 it waits for a gate of its own. Red alone, it is handed back (`[queue] red
 alone`); green alone, it rides at the tail of a later batch, never its head.
 While a candidate gates, the next one gates on top of it (`queue.depth`
-under Settings → Capacity, `FORGE_QUEUE_DEPTH`, default 2): when the first
+derived from Speed: half of it rounded up, 1 to 4, shown read-only under Settings → Capacity
+and on the knobs panel): when the first
 lands whole the next lands right after it, on the tree it was gated on; when
 it does not, the next is formed again on main. A gate beyond a line's first
 starts only on a free check slot and holds it, and two slots are always kept
@@ -296,13 +297,12 @@ bar, and the terminal's Flow command prints it as a line per app
 (`flow/held.ts`, kept 5 s). Of the startable, the picker takes the order Next up shows
 (#8826, `pickOrder` in `core/next_up.ts`): the owner's ranked issues by place,
 then the ready order, what the owner raised again first. Small issues — a title like "A test pins …" or
-"Tests: …", or a label `test`, `tests`, `tests-only` or `small` (#7571, `crew/small_share.ts`) — hold
-at most `slots.smallShare` percent of the builder slots (default 30, rounded up:
-2 of 5; an admin sets it on `/settings/capacity`). At the cap a small issue is
-skipped, not waited on, unless the owner ranked it. The tick line's `small: 1/2`, the
-Flow command's `small 1/2`, the app's row in Today on `/boards` (`small
-issues: 1 of 2 slots`) and the studio's crew panel show small issues in
-flight of what they may hold. An issue labelled `polish` is a small issue too, and its run is stopped past `polish.capMinutes` (default 60) with one comment saying what is left (`crew/polish_cap.ts`, `docs/features/polish-cap.md`). When nothing is startable while builder slots are free and some of the
+"Tests: …", or a label `test`, `tests`, `tests-only`, `small` or `polish`
+(`crew/polish_share.ts`) — hold no slots of
+their own: Speed and that order bound them like any work (the small share and the polish run
+cap are gone; a stored old value is ignored). Polish is held to its share of the week
+(`docs/features/polish-share.md`). When nothing is startable while builder slots are free
+and some of the
 held are stalled, capped or parked twice, the planner is owed one pass with
 that breakdown in its brief, to re-plan them into smaller, fresh issues; a
 full plate and its own unanswered decline do not hold that pass, and the
@@ -500,8 +500,8 @@ each subscription's `week 38%, 5h 80%` line, and the forge usage block
 The week's pace (`src/crew/week.ts`) limits only the crew's own picks: the
 builds the tick assigns under the operator's name (marked `pick` on the
 `issue.assigned` event). Reviews and issues a person assigned are not slowed
-by it: while the pace allows any slots at all, up to `pace.floor` of them (a
-capacity setting, env `FORGE_PACE_FLOOR`, default 2, 1 to 16, read on every
+by it: while the pace allows any slots at all, up to `pace.floor` of them (derived from Speed:
+half of it, at least 1, read-only on the capacity page and the knobs panel, read on every
 pump) run at once, apart from the picks; it is also the fewest slots a fast burn
 slows a repository to. At the reserve's wall (no slots) everything waits for the
 reset. Not covered: feedback, check and conflict runs still count with the picks.

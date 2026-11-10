@@ -1,4 +1,4 @@
-import { SETTABLE_CAPACITY, changeCapacity, listCapacity } from "../../../actions/capacity.ts";
+import { DERIVED_WORDS, SETTABLE_CAPACITY, changeCapacity, listCapacity } from "../../../actions/capacity.ts";
 import { SETTING_WORDS } from "../../../actions/setting_words.ts";
 import { scopeAllows } from "../../../core/tokens.ts";
 import { good, bad, type Tool } from "../shared.ts";
@@ -36,7 +36,7 @@ export const tool: Tool = {
     if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
       return bad("forbidden", "changing the forge's capacity needs an admin-scope token");
     const changed = changeCapacity(ctx.app, user, key, value);
-    if (!changed.ok) return bad(changed.error, SETTING_WORDS.outOfRange);
+    if (!changed.ok) return bad(changed.error, changed.error === "derived" ? DERIVED_WORDS : SETTING_WORDS.outOfRange);
     return good({
       says: `${key}: ${changed.value.from || "auto"} → ${changed.value.to || "auto"}, from the next pick on.`,
       ...changed.value,

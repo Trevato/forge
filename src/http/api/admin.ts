@@ -13,7 +13,7 @@ import { kpiProbe } from "../../web/studio/kpi_probe.ts";
 import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
-import { changeCapacity, edgeOffDryRun, listCapacity } from "../../actions/capacity.ts";
+import { DERIVED_WORDS, changeCapacity, edgeOffDryRun, listCapacity } from "../../actions/capacity.ts";
 import { changeShield, lastShieldChange, shieldState } from "../../actions/shield.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
@@ -196,7 +196,9 @@ export function adminRoutes(router: Router<Handler>): void {
       422,
       changed.error === "no_such_setting"
         ? "no such capacity setting"
-        : SETTING_WORDS.outOfRange,
+        : changed.error === "derived"
+          ? DERIVED_WORDS
+          : SETTING_WORDS.outOfRange,
     );
   });
 

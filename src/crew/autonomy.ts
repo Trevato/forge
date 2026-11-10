@@ -31,10 +31,8 @@ import { queueStore } from "../checks/queue_store.ts";
 import { addLearned } from "../checks/learned.ts";
 import { batchWords, dropFromLine, enqueue, type GateCandidate, type Queued, type QueueOptions, queueClashes, queueWords, waitingPulls } from "../checks/queue.ts";
 import { checksFor } from "../checks/service.ts";
-import { queueBatch, queueDepth, smallShare } from "../core/capacity.ts";
-import { shareWords, slotOrder, smallCap, smallIssues, smallOfIds } from "./small_share.ts";
+import { queueBatch, queueDepth } from "../core/capacity.ts";
 import { crewFor as crewForIssue, passedWords, pickFilter, routable } from "./pick_filter.ts";
-import { tickPolish } from "./polish_cap.ts";
 import { readConflictLane, readConflictRoom } from "./conflict_room.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { CLOSED_NOTE, leftNote, reopenedByPerson, unticked } from "../core/done_on_main.ts";
@@ -48,7 +46,6 @@ import {
   crewRole,
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
-import { firstAt } from "../core/first.ts";
 import { fromAppIssues } from "../core/from_app.ts";
 import { pickOrder } from "../core/next_up.ts";
 import { ranksInRepo } from "../core/rank.ts";
@@ -434,38 +431,12 @@ function freeSlots(app: App, repo: Repo, now: Date): number {
   return Math.max(0, repoPace(app, repo, now, false).slots - slotted.length);
 }
 
-/** The pickable issues in slot order: the order Next up shows, small work held to its share (#7571). */
-export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], slotted: readonly Run[], slots: number, picked: ReadonlySet<string> = new Set(), now: Date = new Date()): Ranked[] {
-  const issues = ready.map((r) => r.issue);
-  const small = smallIssues(app.db, issues);
-  const first = firstAt(app.db, issues.map((i) => i.id));
+/** The pickable issues in slot order: the order Next up shows. */
+export function inSlotOrder(app: App, repo: Repo, ready: readonly Ranked[], now: Date = new Date()): Ranked[] {
   const ranked = ranksInRepo(app.db, repo.id);
-  // Issues picked earlier in this tick hold their share before their runs show (#8729).
-  const running = smallOfIds(app.db, [...new Set([...slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])), ...picked])]);
   const { allowed } = pickFilter(app, repo, ready, now);
   // The order is the one Next up shows (#8826): ranked by place, then the ready order.
-  return slotOrder(
-    pickOrder(allowed, ranked, (r) => r.issue.id, [], fromAppIssues(app.db, allowed.map((r) => r.issue.id))),
-    (r) => ({
-      ranked: ranked.has(r.issue.id),
-      small: small.has(r.issue.id) && !first.has(r.issue.id),
-    }),
-    running,
-    smallCap(slots, smallShare(app.db)),
-  );
-}
-
-/** Slotted runs on small issues, and the slots they may hold (#7571). */
-export function smallShareOf(app: App, repo: Repo, now = new Date()): { running: number; cap: number } {
-  const slotted = slottedRuns(activeRuns(app, repo.id), listCrewRoles(app.db, repo.id));
-  const running = smallOfIds(app.db, slotted.flatMap((r) => (r.issueId === null ? [] : [r.issueId])));
-  return { running, cap: smallCap(repoPace(app, repo, now).slots, smallShare(app.db)) };
-}
-
-/** `1/2`: {@link smallShareOf} as the tick line, the terminal and the studio print it. */
-export function smallShareWords(app: App, repo: Repo, now = new Date()): string {
-  const { running, cap } = smallShareOf(app, repo, now);
-  return shareWords(running, cap);
+  return pickOrder(allowed, ranked, (r) => r.issue.id, [], fromAppIssues(app.db, allowed.map((r) => r.issue.id)));
 }
 
 export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "released" | "idle";
@@ -506,7 +477,6 @@ async function driveOnce(
 ): Promise<Drove> {
   if (repo.autonomy === "off") return "off";
   tickBets(app, repo, now);
-  tickPolish(app, repo, now);
   const status = autonomyStatus(app, repo, now);
   if (status.paused !== null) return "paused";
   const by = getUserById(app.db, repo.autonomyBy!);
@@ -565,7 +535,7 @@ async function driveOnce(
   const crewFor = (issue: Issue) => crewForIssue(app, repo, issue.id, crew, now);
   const pickable = await withoutRetired(app, repo, routable(app, repo, ready, crew, now).kept);
   // The roadmap first, and small issues held to their share of the slots (#7571).
-  const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, slotted, paced.slots, taken, now));
+  const next = await nextOf(app, repo, inSlotOrder(app, repo, pickable, now));
   if (next !== undefined) {
     taken.add(next.issue.id);
     const routed = await routeIssue(app, repo, next.issue, crewFor(next.issue), inFlight);
@@ -1432,8 +1402,6 @@ export async function autonomyTick(
         slots: status.slots,
         // Builders with nothing in flight: what bounds active beside slots and startable (#7006).
         idle: idleBuilders(activeNow, crewNow),
-        // Small issues in flight of the slots they may hold (#7571).
-        small: smallShareWords(app, current, now),
         ...(governor === undefined ? {} : { governor }),
         // Approved conflicted pulls: queued, in flight, and why each other is
         // skipped (#3682, #6237), or "0 candidates of N open" (#6263); and the lane for rebases: conflicted N,

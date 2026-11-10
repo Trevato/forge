@@ -241,7 +241,7 @@ export function openerLines(rows: readonly Opener[], inner: number): string[] {
   return rows.length > 5 ? [...lines, `and ${rows.length - 5} more`] : lines;
 }
 
-/** One line per autonomous repository: its name, then `startable=N`, each filter holding any, and `small 1/2` (#7571). */
+/** One line per autonomous repository: its name, then `startable=N`, each filter holding any. */
 export function heldLines(rows: readonly HeldRow[], inner: number): string[] {
   if (rows.length === 0) return ["Ready, and why it waits: no repository runs on its own."];
   return [
@@ -252,7 +252,6 @@ export function heldLines(rows: readonly HeldRow[], inner: number): string[] {
           r.repo,
           `startable=${r.startable}`,
           ...HOLDS.filter((h) => r.counts[h] > 0).map((h) => `${h}=${r.counts[h]}`),
-          `small ${r.small}`,
         ].join(" "),
         inner,
       ),

@@ -83,10 +83,8 @@ import {
   autonomyStatus,
   holdWords,
   plannerHold,
-  smallShareOf,
   startOfTodayUtc,
 } from "../../crew/autonomy.ts";
-import { smallIssuesWords } from "../../crew/small_share.ts";
 import { distinct, notesRegion, type Note } from "./board-notes.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
@@ -1043,8 +1041,6 @@ function today(ctx: Ctx, scope: BoardScope): Html {
             <span><b>${shipped}</b> shipped</span>`,
           `${perShippedWords(week.get(repo.id))} this week`,
           holdLine,
-          // Small issues in flight of the slots they may hold (#7571).
-          repo.autonomy === "off" ? null : smallIssuesWords(smallShareOf(ctx.app, repo, now)),
           review,
         ],
         under: meter(

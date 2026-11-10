@@ -17,7 +17,7 @@ import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { driveRepo } from "../src/crew/autonomy.ts";
-import { isPolish, polishPosition, polishSpend, polishWords, validPolishShare } from "../src/crew/small_share.ts";
+import { isPolish, polishPosition, polishSpend, polishWords, validPolishShare } from "../src/crew/polish_share.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 describe("the rules", () => {

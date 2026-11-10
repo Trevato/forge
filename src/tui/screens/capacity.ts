@@ -6,7 +6,7 @@
  */
 
 import type { SelfSwap } from "../../release/swap.ts";
-import { changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
+import { DERIVED_WORDS, changeCapacity, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { SETTING_WORDS } from "../../actions/setting_words.ts";
 import { CAPACITY, belowCeiling, validCapacity, type CapacityKey } from "../../core/capacity.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -28,8 +28,10 @@ export function boundsOf(key: CapacityKey): string {
 }
 
 /** What a refused change says, in its own words. */
-const refused = (error: "not_found" | "no_such_setting" | "invalid_value" | "no_credential"): string =>
-  error === "no_credential"
+const refused = (error: "not_found" | "no_such_setting" | "invalid_value" | "no_credential" | "derived"): string =>
+  error === "derived"
+    ? DERIVED_WORDS
+    : error === "no_credential"
     ? "Set a password or a passkey first: turning the edge off would lock you out"
     : error === "invalid_value"
       ? SETTING_WORDS.outOfRange

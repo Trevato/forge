@@ -42,6 +42,7 @@ export function knobsScreen(f: Session, ctx: Ctx): Screen {
       if (e.key !== "e") return state.key(e, rows.length);
       const row = rows[state.index];
       if (row === undefined) return true;
+      if (row.control === "derived") return ctx.toast(`${row.name} follows Speed.`, "success"), true;
       if (row.control === "fixed") return ctx.toast(`${row.name} is always on.`, "success"), true;
       later(ctx, () =>
         promptScreen(ctx, screen, {

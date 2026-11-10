@@ -1,23 +1,26 @@
 /**
- * The five knobs (#10461): Speed, Weekly budget, Polish share, Autonomy per
+ * The knobs (#10461): Speed, Weekly budget, Polish share, Autonomy per
  * repository, Feedback first. Plain data out: one row each with its name, a
  * line on what it does, the value, a control kind and its live effect. The
  * crew page, the terminal and the MCP `knobs` tool print these same rows;
- * `actions/knobs.ts` is the one place that turns them. The pipeline's own
- * dials (small share, polish cap) stay on the
- * capacity page.
+ * `actions/knobs.ts` is the one place that turns them. Pace floor and queue
+ * depth ride along as derived rows: Speed sets them, nothing else does. The
+ * reserve is not one of them: it is what Weekly budget leaves (100 minus it),
+ * so it moves with that dial and not with Speed.
  */
 
 import type { App } from "../app.ts";
-import { capacityValue, followsSpeed, paceFloor, queueDepth } from "../core/capacity.ts";
+import { capacityValue, paceFloor, queueDepth } from "../core/capacity.ts";
 import { labelsForIssues } from "../core/issues.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listActive } from "../core/runs.ts";
 import { waitingOnPeople } from "./people_first.ts";
-import { POLISH_SHARE_DEFAULT, isPolish, polishSpend } from "./small_share.ts";
+import { POLISH_SHARE_DEFAULT, isPolish, polishSpend } from "./polish_share.ts";
 import { budgetEffect } from "./week_read.ts";
 
-export type KnobId = "speed" | "budget" | "polish" | "autonomy" | "feedback";
+export type KnobId = "speed" | "budget" | "polish" | "autonomy" | "feedback" | "floor" | "depth";
+/** The dials Speed sets: shown on the panel with their value, never turned there. */
+export const DERIVED_KNOBS: readonly string[] = ["floor", "depth", "pace.floor", "queue.depth"];
 export type AutonomyWord = "off" | "ask" | "go";
 export const AUTONOMY_WORDS: readonly AutonomyWord[] = ["off", "ask", "go"];
 
@@ -27,7 +30,7 @@ export interface KnobRow {
   readonly does: string;
   /** The value as typed back: a number, a percent's number, or one of the words. */
   readonly value: string;
-  readonly control: "number" | "percent" | "words" | "fixed";
+  readonly control: "number" | "percent" | "words" | "fixed" | "derived";
   readonly min?: number;
   readonly max?: number;
   readonly words?: readonly string[];
@@ -41,11 +44,6 @@ export interface KnobRow {
 export function autonomyWord(repo: Repo): AutonomyWord {
   if (repo.autonomy === "off") return "off";
   return !repo.plansNeedNod && repo.decisionsBy !== "me" ? "go" : "ask";
-}
-
-/** Whether a dial follows Speed, in the words the capacity page and the terminal use. */
-function from(app: App, key: "pace.floor" | "queue.depth"): string {
-  return followsSpeed(app.db, key) ? " (derived from Speed)" : " (set)";
 }
 
 function runsLine(app: App): string {
@@ -91,7 +89,23 @@ export function readKnobs(app: App, now: Date = new Date()): KnobRow[] {
       control: "number",
       min: 1,
       max: 16,
-      effect: `${runsLine(app)} · pace floor ${paceFloor(app.db)}${from(app, "pace.floor")} · queue depth ${queueDepth(app.db)}${from(app, "queue.depth")}`,
+      effect: runsLine(app),
+    },
+    {
+      id: "floor",
+      name: "Pace floor",
+      does: "The slots the pace always leaves reviews and assigned work. Derived from Speed: half of it, at least 1.",
+      value: String(paceFloor(app.db)),
+      control: "derived",
+      effect: `${paceFloor(app.db)} slots`,
+    },
+    {
+      id: "depth",
+      name: "Queue depth",
+      does: "How many merge-queue candidates of one repository gate at once. Derived from Speed: half of it rounded up, 1 to 4.",
+      value: String(queueDepth(app.db)),
+      control: "derived",
+      effect: `${queueDepth(app.db)} candidates`,
     },
     {
       id: "budget",

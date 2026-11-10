@@ -7,11 +7,12 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { changeCapacity } from "../src/actions/capacity.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { setKnob } from "../src/actions/knobs.ts";
 import { createApp, type App } from "../src/app.ts";
 import { listCapacity } from "../src/actions/capacity.ts";
-import { CAPACITY_KEYS, capacityCount, followsSpeed, paceFloor, queueDepth, setCapacity, weekUse } from "../src/core/capacity.ts";
+import { CAPACITY_KEYS, capacityCount, paceFloor, queueDepth, setCapacity, weekUse } from "../src/core/capacity.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getRepoById } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -47,16 +48,16 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test("the panel has Speed, Weekly budget, Polish share, Autonomy per repository and Feedback first, each with an effect", () => {
+test("the panel has Speed, the derived pace floor and queue depth, Weekly budget, Polish share, Autonomy per repository and Feedback first, each with an effect", () => {
   const rows = readKnobs(app);
-  expect(rows.map((r) => r.id)).toEqual(["speed", "budget", "polish", "autonomy", "feedback"]);
+  expect(rows.map((r) => r.id)).toEqual(["speed", "floor", "depth", "budget", "polish", "autonomy", "feedback"]);
   for (const r of rows) {
     expect(r.does.length).toBeGreaterThan(0);
     expect(r.effect.length).toBeGreaterThan(0);
   }
   expect(rows[0]!.effect).toMatch(/\d+ running · \d+ queued/);
-  expect(rows[4]!.effect).toBe("nothing from a person waiting");
-  expect(knobLines(rows)).toHaveLength(5);
+  expect(rows[6]!.effect).toBe("nothing from a person waiting");
+  expect(knobLines(rows)).toHaveLength(7);
 });
 
 test("Speed 4 → 2 is read by the next pump", async () => {
@@ -69,9 +70,24 @@ test("Speed 4 → 2 is read by the next pump", async () => {
   expect(listEvents(app.db, {}).some((e) => e.kind === "capacity.changed")).toBe(true);
 });
 
-test("the pipeline's dials stay on capacity and no knob reaches them", async () => {
-  for (const key of ["slots.smallShare", "polish.capMinutes", "pace.floor", "queue.depth"]) expect(CAPACITY_KEYS as string[]).toContain(key);
-  for (const knob of ["queue.depth", "pace.floor", "slots.smallShare"]) expect((await setKnob(app, admin, knob, "1")).ok).toBe(false);
+test("the small share and the polish cap are gone from capacity; a stored old value is ignored", () => {
+  for (const key of ["slots.smallShare", "polish.capMinutes"]) expect(CAPACITY_KEYS as string[]).not.toContain(key);
+  app.db.query("INSERT OR REPLACE INTO forge_setting (key, value, updated_by, updated_at) VALUES ('slots.smallShare', '5', ?1, ?2)").run(admin.id, new Date().toISOString());
+  const listed = listCapacity(app, admin);
+  if (!listed.ok) throw new Error("not admin");
+  expect(listed.value.settings.map((r) => r.key)).not.toContain("slots.smallShare");
+  expect(readKnobs(app).length).toBeGreaterThan(0);
+});
+
+test("no knob or capacity POST sets the pace floor or the queue depth: a plain line, nothing stored", async () => {
+  for (const knob of ["queue.depth", "pace.floor", "floor", "depth", "slots.smallShare"]) expect((await setKnob(app, admin, knob, "1")).ok).toBe(false);
+  const knob = await setKnob(app, admin, "pace.floor", "1");
+  expect(!knob.ok && knob.error).toBe("derived");
+  for (const key of ["pace.floor", "queue.depth"]) {
+    const changed = changeCapacity(app, admin, key, "3");
+    expect(!changed.ok && changed.error).toBe("derived");
+    expect(app.db.query("SELECT 1 FROM forge_setting WHERE key = ?1").get(key)).toBeNull();
+  }
 });
 
 test("Weekly budget sets the reserve the pacer holds back", () => {
@@ -131,30 +147,50 @@ test("pace floor and queue depth follow Speed, and the next pump reads the new f
   expect(queueDepth(app.db)).toBe(1);
 });
 
-test("a stored pace floor or queue depth wins over Speed", () => {
+test("a stored pace floor or queue depth is ignored: Speed decides", () => {
   setCapacity(app.db, "crew.concurrency", "6", admin.id);
   setCapacity(app.db, "pace.floor", "2", admin.id);
   setCapacity(app.db, "queue.depth", "4", admin.id);
-  expect(paceFloor(app.db)).toBe(2);
-  expect(queueDepth(app.db)).toBe(4);
-  expect(followsSpeed(app.db, "queue.depth")).toBe(false);
+  expect(paceFloor(app.db)).toBe(3);
+  expect(queueDepth(app.db)).toBe(3);
 });
 
-test("derived rows are labelled on the capacity page, the terminal's lines and the knobs", async () => {
+test("the derivation at the lowest, middle and highest Speed", () => {
+  const at = (speed: string) => {
+    setCapacity(app.db, "crew.concurrency", speed, admin.id);
+    return [paceFloor(app.db), queueDepth(app.db)];
+  };
+  expect(at("1")).toEqual([1, 1]);
+  expect(at("8")).toEqual([4, 4]);
+  expect(at("16")).toEqual([8, 4]);
+});
+
+test("the capacity page and the knobs list the derived dials with their value, read-only", async () => {
   setCapacity(app.db, "crew.concurrency", "6", admin.id);
   const rows = listCapacity(app, admin);
   if (!rows.ok) throw new Error("not admin");
-  const floor = rows.value.settings.find((r) => r.key === "pace.floor")!;
-  expect(floor.source).toBe("derived");
-  expect(floor.value).toBe("3");
-  setCapacity(app.db, "queue.depth", "2", admin.id);
-  const set = listCapacity(app, admin);
-  if (!set.ok) throw new Error("not admin");
-  expect(set.value.settings.find((r) => r.key === "queue.depth")!.source).toBe("setting");
-  const effect = readKnobs(app)[0]!.effect;
-  expect(effect).toContain("pace floor 3 (derived from Speed)");
-  expect(effect).toContain("queue depth 2 (set)");
+  for (const key of ["pace.floor", "queue.depth"]) {
+    const r = rows.value.settings.find((x) => x.key === key)!;
+    expect(r.source).toBe("derived");
+    expect(r.value).toBe("3");
+  }
+  const knobs = readKnobs(app);
+  for (const [id, unit] of [["floor", "slots"], ["depth", "candidates"]]) {
+    const r = knobs.find((x) => x.id === id)!;
+    expect([r.control, r.value, r.effect]).toEqual(["derived", "3", `3 ${unit}`]);
+  }
   // The MCP tool prints the same rows, in the same words.
   const ctx = { app, auth: { scope: "admin" } } as never;
-  expect(JSON.stringify(await tool.run(ctx, admin, {}))).toContain("pace floor 3 (derived from Speed)");
+  expect(JSON.stringify(await tool.run(ctx, admin, {}))).toContain("Pace floor: 3 — 3 slots");
+});
+
+test("the knobs card renders the derived dials as plain values with no form", async () => {
+  const { knobsCard } = await import("../src/web/pages/knobs.ts");
+  const out = String(knobsCard({ app } as never));
+  for (const id of ["floor", "depth"]) {
+    const row = out.slice(out.indexOf(`data-knob="${id}"`), out.indexOf("</div>", out.indexOf(`data-knob="${id}"`)));
+    expect(row).toContain(`data-derived="${id}"`);
+    expect(row).not.toContain("<form");
+    expect(row).not.toContain("<input");
+  }
 });

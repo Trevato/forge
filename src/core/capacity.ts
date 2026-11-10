@@ -28,8 +28,6 @@ export type CapacityKey =
   | "children.registryEgress"
   | "guard_new_accounts"
   | "signin.edge"
-  | "slots.smallShare"
-  | "polish.capMinutes"
   | "pace.floor";
 
 interface Definition {
@@ -77,7 +75,7 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     env: "FORGE_QUEUE_DEPTH",
     kind: { type: "count", min: 1, max: 4 },
     fallback: "2",
-    help: "How many merge-queue candidates of one repository gate at once, each on top of the one before: while one gates on main the next gates on it, and lands right after it if both are green. 1 gates one candidate at a time. A gate beyond the first takes a free check slot only, never one of the two kept for pull checks.",
+    help: "How many merge-queue candidates of one repository gate at once, each on top of the one before: while one gates on main the next gates on it, and lands right after it if both are green. Derived from Speed (half of it rounded up, 1 to 4), read-only; FORGE_QUEUE_DEPTH is ignored. A gate beyond the first takes a free check slot only, never one of the two kept for pull checks.",
   },
   "queue.batch": {
     label: "Merge queue batch size",
@@ -135,26 +133,12 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     fallback: "on",
     help: "on reads the platform edge's identity headers (when the forge has an edge secret) and offers its sign-in; off ignores them on every door, so people sign in with the forge's own methods — password and passkey. Accounts the edge made keep their names but have no password until they set one. Takes effect on the next request.",
   },
-  "slots.smallShare": {
-    label: "Builder slots small issues may hold (%)",
-    env: "FORGE_SLOTS_SMALL_SHARE",
-    kind: { type: "count", min: 0, max: 100 },
-    fallback: "30",
-    help: "The most of a repository's builder slots that tests-only and small-addition issues (\"A test pins …\", or a label test, tests, tests-only or small) hold at once, as a percent rounded up: 30 lets 2 of 5 slots go to them. At the cap a small issue is skipped and the slot goes to the next issue in the Next up order; a ranked small issue is still taken. 100 lifts the cap; 0 starts none. Read on every pick.",
-  },
-  "polish.capMinutes": {
-    label: "Run time a polish issue may take (minutes)",
-    env: "FORGE_POLISH_CAP_MINUTES",
-    kind: { type: "count", min: 1, max: 1440 },
-    fallback: "60",
-    help: "An issue labelled polish is small work: a builder run on it that has gone this many minutes is stopped, not extended, and the issue gets one comment saying what is left. Read on every tick.",
-  },
   "pace.floor": {
     label: "Slots the pace always leaves reviews and assigned work",
     env: "FORGE_PACE_FLOOR",
     kind: { type: "count", min: 1, max: 16 },
     fallback: "2",
-    help: "While the week's pace allows any slots, this many reviews and issues a person assigned may run at once, apart from the crew's own picks, however hard the pace slows them; also the fewest slots a fast burn slows a repository to. At the reserve's wall everything waits. Read on every pump.",
+    help: "While the week's pace allows any slots, this many reviews and issues a person assigned may run at once, apart from the crew's own picks, however hard the pace slows them; also the fewest slots a fast burn slows a repository to. At the reserve's wall everything waits. Derived from Speed (half of it, at least 1), read-only; FORGE_PACE_FLOOR is ignored; read on every pump.",
   },
 };
 
@@ -378,11 +362,11 @@ export function paceFloor(db: Database): number {
   return Number(effectiveCapacity(db, "pace.floor"));
 }
 
-/** The dials that follow Speed (`crew.concurrency`) until set on their own. */
+/** The dials Speed (`crew.concurrency`) sets: always derived, never stored. */
 export type SpeedDerivedKey = "pace.floor" | "queue.depth";
 
-export function followsSpeed(db: Database, key: CapacityKey): key is SpeedDerivedKey {
-  return (key === "pace.floor" || key === "queue.depth") && storedCapacity(db, key) === undefined;
+export function followsSpeed(key: CapacityKey): key is SpeedDerivedKey {
+  return key === "pace.floor" || key === "queue.depth";
 }
 
 /** What Speed implies for a dial that follows it: half of Speed, at least 1 for the floor; half rounded up, 1 to 4, for the depth. */
@@ -392,9 +376,9 @@ export function derivedFromSpeed(db: Database, key: SpeedDerivedKey): number {
   return Math.min(4, Math.max(1, Math.ceil(speed / 2)));
 }
 
-/** A capacity's value as the crew reads it: derived from Speed while a following dial is unset. */
+/** A capacity's value as the crew reads it: derived from Speed for the dials that follow it. */
 export function effectiveCapacity(db: Database, key: CapacityKey): string {
-  return followsSpeed(db, key) ? String(derivedFromSpeed(db, key)) : capacityValue(db, key);
+  return followsSpeed(key) ? String(derivedFromSpeed(db, key)) : capacityValue(db, key);
 }
 
 /** The share of the week the crew may use, in percent (`week.use`); the rest is the reserve. */
@@ -454,16 +438,6 @@ export function queueDepth(db: Database): number {
 /** The most pulls one merge-queue candidate carries (#6674); the line adapts below it. */
 export function queueBatch(db: Database): number {
   return Number(capacityValue(db, "queue.batch"));
-}
-
-/** The percent of builder slots small issues may hold (#7571). */
-export function smallShare(db: Database): number {
-  return Number(capacityValue(db, "slots.smallShare"));
-}
-
-/** The minutes of run time a polish issue may take before its run is stopped (#8852). */
-export function polishCapMinutes(db: Database): number {
-  return Number(capacityValue(db, "polish.capMinutes"));
 }
 
 /** Whether the platform edge's identity is read at all; on every request. */

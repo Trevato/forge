@@ -16,6 +16,7 @@ import { btn } from "../ui.ts";
 
 function control(r: KnobRow): Html {
   if (r.control === "fixed") return html`<span class="badge">${r.value}</span>`;
+  if (r.control === "derived") return html`<span class="mono" data-derived="${r.id}" title="Read-only: Speed sets it">${r.value}</span>`;
   const label = `${r.name}${r.repo === undefined ? "" : ` for ${r.repo}`}`;
   const input =
     r.control === "words"
@@ -35,7 +36,7 @@ export function knobsCard(ctx: Ctx): Html {
   const rows = readKnobs(ctx.app);
   return html`<section id="knobs">
     <h2 class="mb">Knobs</h2>
-    <p class="muted small">Five dials for the crew; a change applies on the next pump.</p>
+    <p class="muted small">Dials for the crew; a change applies on the next pump.</p>
     <dl class="status-rows">
       ${rows.map(
         (r) => html`<div class="status-row" data-knob="${r.id}">
@@ -62,6 +63,9 @@ export async function knobSet(ctx: Ctx): Promise<Response> {
     "/settings/crew",
     set.ok
       ? { message: `${knob}: ${set.value.value}, from the next pump on.` }
-      : { tone: "danger", message: "That value is outside what this knob takes." },
+      : {
+          tone: "danger",
+          message: set.error === "derived" ? "That dial follows Speed: turn Speed and it moves." : "That value is outside what this knob takes.",
+        },
   );
 }

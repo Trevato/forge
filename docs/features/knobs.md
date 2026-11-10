@@ -12,6 +12,12 @@ A change applies on the next pump and leaves the event the setting's own page le
 
 ## Derived from Speed
 
-`pace.floor` (half of Speed, at least 1) and `queue.depth` (half of Speed rounded up, 1 to 4) follow Speed until someone sets them on **Settings › Capacity**; a stored value always wins and nothing stored is dropped. While they follow, the Speed row (page, terminal, MCP) says `(derived from Speed)` beside each, and the capacity page and its terminal screen mark the row `derived`. Because the floor was a fixed 2 before, an install with no stored floor now gets half its Speed (Speed 10: 5). That is a deliberate move of the default pace; set `pace.floor` to keep the old number.
+`pace.floor` (half of Speed, at least 1) and `queue.depth` (half of Speed rounded up, 1 to 4)
+are computed from Speed every time they are read. They show with their value, read-only, on
+the knobs panel and under Settings › Capacity; a POST that tries to set one is refused with
+a plain line, and `FORGE_PACE_FLOOR`, `FORGE_QUEUE_DEPTH` and any stored value are ignored.
+The reserve is not one of them: it is what Weekly budget leaves (100 minus `week.use`), so it
+moves with that dial, not with Speed. The small share and the polish run cap are gone; a
+stored old value is ignored.
 
 `week.use` is new; a stored or `FORGE_WEEK_USE` value is read as the budget.

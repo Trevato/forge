@@ -11,7 +11,7 @@
 
 import { takeProposal } from "../../actions/week.ts";
 import { canRead, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
-import { polishSpend, polishWords } from "../../crew/small_share.ts";
+import { polishSpend, polishWords } from "../../crew/polish_share.ts";
 import { latestRetro, takenOf, type Retro } from "../../flow/retro.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";

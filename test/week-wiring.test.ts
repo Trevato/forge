@@ -83,7 +83,7 @@ beforeAll(async () => {
   const a = await seedAdmin(app, { username: "alice", email: "a@forge.test", password: "a-long-passphrase" });
   if (!a.ok) throw new Error("signup failed");
   alice = a.value;
-  setCapacity(app.db, "pace.floor", "2", alice.id);
+  setCapacity(app.db, "crew.concurrency", "4", alice.id); // pace floor follows Speed: half of 4 is 2
   const made = await createRepo(app, alice, { name: "svc", visibility: "private" });
   if (!made.ok) throw new Error(String(made.error));
   repo = made.value;
@@ -120,7 +120,7 @@ afterAll(async () => {
 beforeEach(() => forgetWeek());
 // A failed expectation must not leave the lowered crew concurrency for later tests.
 afterEach(() => {
-  changeCapacity(app, alice, "crew.concurrency", null);
+  changeCapacity(app, alice, "crew.concurrency", "4");
 });
 
 test("behind pace, with an idle slot and nothing startable, the tick releases the gated issue and says why", async () => {
@@ -196,6 +196,8 @@ test("Usage → Spend carries the same sentence, so pacing is not mistaken for t
     });
     const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
     const spend = () => fetch(`${servers.url}/settings/spend`, { headers: { cookie } }).then((r) => r.text());
+    expect(changeCapacity(app, alice, "crew.concurrency", String(Number(capacityDefault("crew.concurrency")))).ok).toBe(true);
+    forgetWeek();
     expect(await spend()).not.toContain("below its ceiling");
     expect(changeCapacity(app, alice, "crew.concurrency", "1").ok).toBe(true);
     forgetWeek();

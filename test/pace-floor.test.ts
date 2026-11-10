@@ -4,13 +4,13 @@
  * pace sentence, and at the reserve's wall everything waits (#8962).
  */
 
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { addToCrew } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { paceFloor, setCapacity } from "../src/core/capacity.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
-import { claimRun, createRun, getRun, listActive } from "../src/core/runs.ts";
+import { cancelRun, claimRun, createRun, getRun, listActive } from "../src/core/runs.ts";
 import { noteMeasure } from "../src/core/measure.ts";
 import { setHeadroom } from "../src/core/standing.ts";
 import { addSubscription } from "../src/core/subscriptions.ts";
@@ -23,10 +23,13 @@ let standIn: StandInCrew;
 
 beforeAll(async () => {
   standIn = await startStandInCrew({ tickMs: 50 });
-  setCapacity(standIn.app.db, "pace.floor", "2", standIn.alice.id);
-  setCapacity(standIn.app.db, "crew.concurrency", "10", standIn.alice.id);
+  setCapacity(standIn.app.db, "crew.concurrency", "4", standIn.alice.id);
 }, 30_000);
 afterAll(() => stopStandInCrew(standIn));
+// Speed bounds every run at once: each test starts with no run left over from the one before.
+afterEach(() => {
+  for (const r of listActive(standIn.app.db, "agent")) cancelRun(standIn.app.db, r.id);
+});
 
 async function until(done: () => boolean, what: string, ms = 20_000): Promise<void> {
   const deadline = Date.now() + ms;
@@ -72,7 +75,7 @@ function assigned(repo: Repo, title: string, pick: boolean): string {
   return run.id;
 }
 
-test("the floor is a config value, 2 by default", () => {
+test("the floor follows Speed: half of 4 is 2", () => {
   expect(paceFloor(standIn.app.db)).toBe(2);
 });
 

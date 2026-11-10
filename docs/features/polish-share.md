@@ -1,6 +1,6 @@
 # The polish share
 
-The percent of the last seven days' agent spend that polish may take: issues labelled `polish`, or in the small-fixes lane (`isSmall`, `src/crew/small_share.ts`). 10 to start; a whole number 0 to 50. At 0 no polish starts.
+The percent of the last seven days' agent spend that polish may take: issues labelled `polish`, or in the small-fixes lane (`isSmall`, `src/crew/polish_share.ts`). 10 to start; a whole number 0 to 50. At 0 no polish starts.
 
 - **Set it.** Web: Settings → Branch and gates → Polish share. Terminal: Autonomy, key `o`. Both go through `updateRepoSettings`, refuse anything but 0–50, and are on the settings trail, so an open week page or screen updates.
 - **See it.** `/:owner/:name/week` ("Polish this week"), the terminal's week screen (last line) and the `week` MCP tool (`polish: { share, percent, polishUsd, totalUsd, under, says }`) print the same `polishWords`.

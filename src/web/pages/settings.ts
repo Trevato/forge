@@ -8,7 +8,7 @@
  * same-origin POST and every one of them says what happened.
  */
 
-import { POLISH_SHARE_DEFAULT, POLISH_SHARE_MAX } from "../../crew/small_share.ts";
+import { POLISH_SHARE_DEFAULT, POLISH_SHARE_MAX } from "../../crew/polish_share.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
 import { showProvenance } from "../../actions/provenance.ts";
 import { getProvenance, parentUrl, sourceLabel } from "../../core/provenance.ts";

@@ -6,7 +6,7 @@
  * and each one is listed below the settings: who, when, from what to what.
  */
 
-import { changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
+import { DERIVED_WORDS, changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { CAPACITY, belowCeiling, type CapacityKey } from "../../core/capacity.ts";
 import { bytes } from "../../system/format.ts";
 import { egressRowsFor } from "../../spawn/process_counters.ts";
@@ -102,10 +102,12 @@ export function capacityPage(ctx: Ctx): Response {
               <span class="mono">${s.default === "" ? "auto" : s.default}</span>
               (<span class="mono">${s.env}</span>).`
           : s.source === "derived"
-            ? html`Derived from Speed (<span class="mono">crew.concurrency</span>); set it here to stop following.`
+            ? html`Derived from Speed (<span class="mono">crew.concurrency</span>); read-only here: change Speed and it moves.`
             : html`The boot default, from <span class="mono">${s.env}</span>.`}
         ${awayLine(s, now)}`,
-      trail: html`<form
+      trail: s.source === "derived"
+        ? html`<span class="mono" data-derived="${s.key}">${s.value}</span>`
+        : html`<form
         class="row-fields"
         method="post"
         action="/settings/capacity"
@@ -240,6 +242,7 @@ export function capacityPage(ctx: Ctx): Response {
 
 const ERRORS: Record<string, string> = {
   no_such_setting: "There is no such setting.",
+  derived: DERIVED_WORDS,
   invalid_value: "That value is outside what this setting takes.",
   no_credential:
     "Add a passkey (or a password) to your own account first: with the edge off, you would be signed out for good.",

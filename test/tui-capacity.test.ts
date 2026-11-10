@@ -134,14 +134,15 @@ describe("tui capacity", () => {
     h.stop();
   });
 
-  test("queue.depth, which the page sets, changes after a confirm", async () => {
+  test("queue.depth follows Speed: an edit there changes nothing", async () => {
+    const before = capacityValue(app.db, "queue.depth");
     const h = boot(carol);
     for (let i = 0; i < CAPACITY_KEYS.indexOf("queue.depth"); i++) await h.press("j");
     await h.press("e");
     for (let i = 0; i < 4; i++) await h.press("backspace");
-    await h.press("4", "enter");
+    await h.press("9", "enter");
     await h.press("left", "enter");
-    expect(capacityValue(app.db, "queue.depth")).toBe("4");
+    expect(capacityValue(app.db, "queue.depth")).toBe(before);
     h.stop();
   });
 

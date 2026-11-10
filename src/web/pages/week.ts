@@ -5,7 +5,7 @@
  * and nothing else on the page changes anything.
  */
 import { takeProposal } from "../../actions/week.ts";
-import { polishSpend } from "../../crew/small_share.ts";
+import { polishSpend } from "../../crew/polish_share.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { latestRetro, takenOf, type Line, type Retro } from "../../flow/retro.ts";

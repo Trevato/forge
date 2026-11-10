@@ -9,12 +9,12 @@ import type { App } from "../app.ts";
 import { changeCapacity } from "./capacity.ts";
 import { updateRepoSettings } from "./repos.ts";
 import { getRepo } from "../core/repos.ts";
-import { AUTONOMY_WORDS, knobRepos, type AutonomyWord, type KnobId } from "../crew/knobs.ts";
-import { validPolishShare } from "../crew/small_share.ts";
+import { AUTONOMY_WORDS, DERIVED_KNOBS, knobRepos, type AutonomyWord, type KnobId } from "../crew/knobs.ts";
+import { validPolishShare } from "../crew/polish_share.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { User } from "../core/users.ts";
 
-export type KnobError = "not_found" | "no_such_knob" | "invalid_value";
+export type KnobError = "not_found" | "no_such_knob" | "invalid_value" | "derived";
 
 const WORDS: Record<AutonomyWord, { autonomy: "off" | "autonomous"; plansNeedNod: boolean; decisionsBy: "me" | "decider" }> = {
   off: { autonomy: "off", plansNeedNod: true, decisionsBy: "me" },
@@ -31,6 +31,7 @@ export async function setKnob(
 ): Promise<Result<{ knob: KnobId; value: string }, KnobError>> {
   if (actor?.isAdmin !== true || actor.kind === "agent") return err("not_found");
   const v = value.trim();
+  if (DERIVED_KNOBS.includes(knob)) return err("derived");
   if (knob === "speed" || knob === "budget") {
     const changed = changeCapacity(app, actor, knob === "speed" ? "crew.concurrency" : "week.use", v);
     if (!changed.ok) return err(changed.error === "not_found" ? "not_found" : "invalid_value");

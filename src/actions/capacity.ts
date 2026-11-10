@@ -37,6 +37,9 @@ import { signinReach, signsInWithoutEdge } from "../core/accounts.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
+/** What a refused change to a dial that follows Speed says, on every door. */
+export const DERIVED_WORDS = "The pace floor and the queue depth follow Speed: change Speed (crew.concurrency) and they move with it.";
+
 /** The six guards a caller may set by `key`: the MCP tool's enum and the terminal's `e`. */
 export const SETTABLE_CAPACITY = [
   "crew.concurrency",
@@ -122,7 +125,7 @@ export function listCapacity(
       label: CAPACITY[key].label,
       help: CAPACITY[key].help,
       value: effectiveCapacity(app.db, key),
-      source: followsSpeed(app.db, key) ? "derived" : storedCapacity(app.db, key) === undefined ? "default" : "setting",
+      source: followsSpeed(key) ? "derived" : storedCapacity(app.db, key) === undefined ? "default" : "setting",
       default: bootDefault(app.db, key),
       env: CAPACITY[key].env,
       ...changedOf(app.db, key),
@@ -166,11 +169,12 @@ export function changeCapacity(
   value: string | null,
 ): Result<
   { key: CapacityKey; from: string; to: string },
-  "not_found" | "no_such_setting" | "invalid_value" | "no_credential"
+  "not_found" | "no_such_setting" | "invalid_value" | "no_credential" | "derived"
 > {
   const who = admin(actor);
   if (!who.ok) return who;
   if (!isCapacityKey(key)) return err("no_such_setting");
+  if (followsSpeed(key)) return err("derived");
   const next = value === null ? null : value.trim();
   if (next !== null && next !== "" && !validCapacity(key, next))
     return err("invalid_value");

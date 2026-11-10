@@ -1,5 +1,5 @@
 import { takeProposal } from "../../../actions/week.ts";
-import { polishSpend, polishWords } from "../../../crew/small_share.ts";
+import { polishSpend, polishWords } from "../../../crew/polish_share.ts";
 import { latestRetro, takenOf } from "../../../flow/retro.ts";
 import { bad, good, type Tool, APP_ARG, planRepo, isAnswer } from "../shared.ts";
 
