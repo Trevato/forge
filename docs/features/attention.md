@@ -22,8 +22,8 @@ reader sees on first view at 390 px and 1280 px: **words**, **text blocks** and 
 | Page | 390 px | 1280 px |
 |---|---|---|
 | home | 95 / 20 / 2 | 95 / 20 / 2 |
-| repository | 189 / 28 / 2 | 189 / 28 / 2 |
-| app | 189 / 28 / 2 | 189 / 28 / 2 |
+| repository | 116 / 18 / 2 | 116 / 18 / 2 |
+| app | 116 / 18 / 2 | 116 / 18 / 2 |
 | pull | 133 / 22 / 4 | 133 / 22 / 4 |
 | issue | 76 / 19 / 2 | 76 / 19 / 2 |
 | issues list | 32 / 8 / 2 | 32 / 8 / 2 |
@@ -31,3 +31,7 @@ reader sees on first view at 390 px and 1280 px: **words**, **text blocks** and 
 | runs | 46 / 8 / 1 | 46 / 8 / 1 |
 | run | 34 / 11 / 3 | 34 / 11 / 3 |
 | settings | 137 / 32 / 1 | 137 / 32 / 1 |
+
+## App page, calmed (#10299)
+
+A new app that has not run, and has shipped nothing, shows only its progress: the state line (`docs/features/onboarding-line.md`), the box to tell the crew, and Now (`src/web/studio/fresh.ts` judges it). Past that, the empty This week and Crew cards are gone, and the page's second link row (Map, Issues, Pull requests) is gone because the head's tabs already hold them. Before, on the seeded new app: 197 words / 29 blocks (over its 189 / 28 budget on main); after: 116 / 18.

@@ -17,6 +17,7 @@ import {
   onboardingLine,
   ONBOARDING_WINDOW_MS,
 } from "../src/apps/onboarding.ts";
+import { ageApp } from "./helpers/history.ts";
 
 const OID = (c: string) => c.repeat(40);
 
@@ -133,7 +134,7 @@ describe("only a new app", () => {
   test("an app created before this shipped has no line and is never looked at", () => {
     const f = fixture();
     openPull(f);
-    f.db.run("UPDATE app SET created_at = '2026-01-02T00:00:00.000Z' WHERE repo_id = 'r1'");
+    ageApp(f.db, "r1");
     const old = { ...f, record: { ...f.record, createdAt: "2026-01-02T00:00:00.000Z" } };
     const facts = onboardingFacts(old.db, old.repo, old.record, "/owner/exact", old.user, true);
     expect(onboardingLine(facts)).toBeUndefined();

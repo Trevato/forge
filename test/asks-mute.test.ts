@@ -27,6 +27,7 @@ import { mcpTool } from "./helpers/mcp.ts";
 import { askCountFor, askLinesFor, forgeNeedsFor, repoAsks } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { listAt } from "./mcp-list.ts";
+import { giveHistory } from "./helpers/history.ts";
 
 quietLogs();
 // Every test here is HTTP round trips against a server on a shared machine: the 5s default measures its load, not the code.
@@ -169,6 +170,7 @@ describe("muting a repository's asks", () => {
     expect(repoAsks(app.db, alice, repo)).toEqual({ count: 1, muted: true });
     // The repository's page is the app's once it is one.
     expect(createAppRecord(app.db, { repoId: repo.id, slug: "muted", access: "public" }).ok).toBe(true);
+    giveHistory(app.db, repo.id);
     const page = await fetch(`${servers.url}/alice/muted`, { headers: headers(cookie) });
     expect(page.status).toBe(200);
     const text = await page.text();

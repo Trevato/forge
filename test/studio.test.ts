@@ -38,6 +38,7 @@ import {
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { giveHistory } from "./helpers/history.ts";
 
 describe("the studio", () => {
   let dataDir: string;
@@ -118,6 +119,7 @@ describe("the studio", () => {
     const scout = await createAgent(app, alice, { username: "scout" });
     if (!scout.ok) throw new Error(String(scout.error));
     repo = await makeApp("notes", "a place for notes");
+    giveHistory(app.db, repo.id);
   }, 60_000);
 
   afterAll(async () => {
