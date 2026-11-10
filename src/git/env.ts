@@ -245,11 +245,15 @@ export interface RunOptions {
   stdin?: Uint8Array | string;
   /** Kill the process after this long. @default 30_000 */
   timeoutMs?: number;
+  /** Kill the process, and fail with code `OVER_CAP`, once stdout passes this many bytes. */
+  maxBytes?: number;
   /** Kill the process when this aborts. */
   signal?: AbortSignal;
 }
 
 /** Run git to completion, capturing output as bytes. Non-zero exit is an Err. */
+export const OVER_CAP = -2;
+
 export async function runGitRaw(
   args: readonly string[],
   options: RunOptions = {},
@@ -268,14 +272,19 @@ export async function runGitRaw(
     const timeoutMs = options.timeoutMs ?? 30_000;
     const timer = setTimeout(() => proc.kill("SIGKILL"), timeoutMs);
     const stop = () => proc.kill("SIGKILL");
+    let over = false;
     if (options.signal?.aborted) stop();
     options.signal?.addEventListener("abort", stop, { once: true });
     try {
       const [stdout, stderr, code] = await Promise.all([
-        readAll(proc.stdout),
+        readAll(proc.stdout, options.maxBytes, () => {
+          over = true;
+          stop();
+        }),
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
+      if (over) return err({ code: OVER_CAP, stderr: "output over the cap", args });
       if (code !== 0) return err({ code, stderr: stderr.trim(), args });
       return ok(stdout);
     } finally {
@@ -407,12 +416,18 @@ export async function runGitCapture(
  */
 async function readAll(
   stream: ReadableStream<Uint8Array>,
+  maxBytes?: number,
+  onOver?: () => void,
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let total = 0;
   for await (const chunk of stream) {
     chunks.push(chunk.slice());
     total += chunk.length;
+    if (maxBytes !== undefined && total > maxBytes) {
+      onOver?.();
+      break;
+    }
   }
   const out = new Uint8Array(total);
   let offset = 0;

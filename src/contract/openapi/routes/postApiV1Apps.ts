@@ -1,7 +1,7 @@
 import type { Route } from "../shared.ts";
 
 /** What `POST /api/v1/apps` reads from its body, and the refusals it answers. */
-const APP_BODY = { name: "string", owner: "string", description: "string", sentence: "string", visibility: "string", agent: "string", pick: "boolean" };
+const APP_BODY = { name: "string", owner: "string", description: "string", sentence: "string", visibility: "string", agent: "string", pick: "boolean", template: "string" };
 const APP_REFUSALS = {
   unverified: "the account has not verified its email",
   no_name: "no `name`, and the `sentence` leaves nothing to make one from",

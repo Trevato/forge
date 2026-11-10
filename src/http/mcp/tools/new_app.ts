@@ -2,7 +2,7 @@ import { appsRuntime } from "../../../apps/runtime.ts";
 import { listActiveRuns } from "../../../core/runs.ts";
 import { getUserByName } from "../../../core/users.ts";
 import { repositoryLimitMessage } from "../../../actions/repos.ts";
-import { NO_NAME_ERROR, newApp, newAppFromSentence, type NewAppInput } from "../../../actions/apps.ts";
+import { NEW_APP_ERRORS, NO_NAME_ERROR, newApp, newAppFromSentence, type NewAppInput } from "../../../actions/apps.ts";
 import { appLimitWords } from "../../../actions/app_limit.ts";
 import { storageLimitMessage } from "../../../core/storage.ts";
 import { VERIFY_FIRST } from "../../../actions/verify_words.ts";
@@ -19,7 +19,7 @@ async function fromSentence(app: App, user: User, sentence: string, input: Omit<
 
 export const tool: Tool = {
   name: "new_app",
-  doc: "`{ name?, sentence?, description?, owner?, visibility?, agent?, pick? }`: make an app from a sentence: with `sentence` and no `name` the name is derived from it (`-2`, `-3` when taken), as the web and terminal do; `name` and `sentence` together keep the name; the first issue is `description`, else `sentence`; answers `{ repo, url, issue, agent, run }` (`run` is the first run's state, or `none`) and draws the `ui://forge/app` card: name, production URL, first issue, agent, first run; refused as `POST /api/v1/apps` is (unverified, app_limit, no_such_agent, name_taken)",
+  doc: "`{ name?, sentence?, description?, owner?, visibility?, agent?, pick?, template? }`: make an app from a sentence: with `sentence` and no `name` the name is derived from it (`-2`, `-3` when taken), as the web and terminal do; `name` and `sentence` together keep the name; the first issue is `description`, else `sentence`; answers `{ repo, url, issue, agent, run }` (`run` is the first run's state, or `none`) and draws the `ui://forge/app` card: name, production URL, first issue, agent, first run; refused as `POST /api/v1/apps` is (unverified, app_limit, no_such_agent, name_taken)",
   description:
     "Make an app from a sentence: a repo, production, and with `description` a first issue.",
   inputSchema: {
@@ -32,6 +32,7 @@ export const tool: Tool = {
       visibility: { type: "string", enum: ["public", "private"] },
       agent: { type: "string", maxLength: 39 },
       pick: { type: "boolean" },
+      template: { type: "string", maxLength: 201, description: "owner/name to copy, readable by you" },
     },
   },
   writes: true,
@@ -42,10 +43,12 @@ export const tool: Tool = {
     const description = text("description");
     const agent = text("agent");
     const sentence = text("sentence");
+    const template = text("template");
     const rest: Omit<NewAppInput, "name" | "description"> = {
       ...(owner === undefined ? {} : { owner }),
       ...(visibility === "public" || visibility === "private" ? { visibility } : {}),
       ...(agent === undefined ? {} : { agent }),
+      ...(template === undefined || template === "" ? {} : { template }),
       ...(args["pick"] === true ? { pickAgent: true } : {}),
     };
     const given = str(args["name"]).trim();
@@ -70,7 +73,7 @@ export const tool: Tool = {
         case "storage_limit":
           return bad("storage_limit", storageLimitMessage(ctx.app, user.id));
         default:
-          return bad(made.error, made.error);
+          return bad(made.error, NEW_APP_ERRORS[made.error] ?? made.error);
       }
     }
     const { repo, app: record, issue } = made.value;

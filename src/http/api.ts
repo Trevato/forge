@@ -3581,6 +3581,7 @@ export function apiRoutes(router: Router<Handler>): void {
         ? { visibility: input.visibility }
         : {}),
       ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
+      ...(typeof input.template === "string" && input.template !== "" ? { template: input.template } : {}),
       // Only a real boolean asks; like the other fields, anything else is ignored.
       ...(input.pick === true ? { pickAgent: true } : {}),
     };

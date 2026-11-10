@@ -506,6 +506,7 @@ and `pick`: `pick: true` turns the description into a checklist and lets the
 plan pick the agent (ignored when `agent` is given or there is no
 description). The 201 answer carries `plan: {agent, summary, confidence}` when
 a pick happened and `plan: null` otherwise, planning being unavailable included.
+`template: "owner/name"` starts the app as a copy of that repository's tip, if the caller can read it (see `docs/features/app-template.md`).
 
 ## How an app is declared
 

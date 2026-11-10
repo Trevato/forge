@@ -94,7 +94,7 @@ import { newForgeScreen } from "./screens/newforge.ts";
 import { newOrgScreen } from "./screens/neworg.ts";
 import { migrateScreen } from "./screens/migrate.ts";
 import { bringScreen } from "./screens/bring.ts";
-import { newAppScreen } from "./screens/newapp.ts";
+import { newAppScreen, templateAppScreen } from "./screens/newapp.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { signInScreen } from "./screens/signin.ts";
@@ -287,6 +287,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "New app",
         hint: "say what it does in a sentence; the crew starts on it",
         run: () => ctx.push(newAppScreen(session, ctx, blank("New app"))),
+      });
+    // The same from a template repository, as /apps/new?template= does.
+    if (session.user !== undefined && session.user.kind !== "agent")
+      commands.push({
+        id: "new-app-template",
+        title: "New app from a template",
+        hint: "copy a repository you can read, as the starting files",
+        run: () => ctx.push(templateAppScreen(session, ctx, blank("New app"))),
       });
     // An app from another forge, as /bring does: a person's, never an agent's.
     if (session.user !== undefined && session.user.kind !== "agent")

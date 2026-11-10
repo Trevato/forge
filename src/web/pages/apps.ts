@@ -283,6 +283,8 @@ interface NewAppValues {
   description: string;
   visibility: string;
   agent: string;
+  /** `owner/name` of a template to copy; empty for the starter app. */
+  template?: string;
 }
 
 /** The agent select's sentinel for "turn the sentence into a plan and pick". */
@@ -326,6 +328,9 @@ function newAppForm(
       sub: "Describe what it should do. You get a repository, a first issue, a crew member on it, a live app, and a preview for every change.",
     })}
     ${html`<form method="post" action="/apps/new">
+        ${values.template
+          ? formField({ label: "Copy of", name: "template", value: values.template, readonly: true, mono: true })
+          : html``}
         ${formField({
           label: "What should it do?",
           name: "description",
@@ -449,6 +454,7 @@ export function newAppPage(ctx: Ctx): Response {
       description: starterFromQuery(ctx.url.searchParams.get("description")),
       visibility: "private",
       agent: picks ? PICK_AGENT : "",
+      template: ctx.url.searchParams.get("template") ?? "",
     }, picks),
     scriptJs: appNameJs,
   });
@@ -469,6 +475,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
     description: field(form, "description"),
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     agent: field(form, "agent"),
+    template: field(form, "template"),
   };
   const pickAgent = values.agent === PICK_AGENT;
   // An explicit name is never second-guessed; left blank, the sentence
@@ -478,6 +485,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
   const rest = {
     owner: values.owner,
     visibility: values.visibility === "public" ? "public" : "private",
+    ...(values.template ? { template: values.template } : {}),
     ...(pickAgent
       ? { pickAgent: true }
       : values.agent === ""
