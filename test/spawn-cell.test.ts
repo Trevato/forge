@@ -30,7 +30,7 @@ describe("a child forge's cell", () => {
       expect(cellLimits(size)).toEqual({ memoryMiB: SIZES[size].memoryMiB, cpus: SIZES[size].cpu, diskMiB: SIZES[size].diskMiB });
     }
     const spec = cellSpecFor({ dir: "/d/children/c1", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
-    expect(spec.limits).toEqual({ memoryMiB: 512, cpus: 1, diskMiB: 2048 });
+    expect(spec.limits).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
     expect(spec.hide).toEqual(["/d"]);
     expect(spec.listen).toBe(4100);
     expect(spec.dir).toBe("/d/children/c1");
@@ -49,6 +49,17 @@ describe("a child forge's cell", () => {
     expect(hostAllowed(open.egress, "openrouter.ai", 80)).toBe(false);
     expect(hostAllowed(open.egress, "evil.openrouter.ai", 443)).toBe(false);
     expect(hostAllowed(open.egress, "api.anthropic.com", 443)).toBe(false);
+  });
+
+  test("a small forge holds a forge with an app deploying, and reaches its own address", () => {
+    // scottishbob, 2026-11-10: its first deploy used 1195 MiB and the cell
+    // stopped it at 512; its own address was refused as outside egress.
+    expect(SIZES.small.memoryMiB).toBeGreaterThanOrEqual(2048);
+    expect(SIZES.medium.memoryMiB).toBeGreaterThan(SIZES.small.memoryMiB);
+    expect(SIZES.large.memoryMiB).toBeGreaterThan(SIZES.medium.memoryMiB);
+    const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", url: "https://kid--f.test", size: "small", port: 4100, label: "forge:kid" });
+    expect(spec.reach).toEqual(["https://f.test", "https://kid--f.test"]);
+    expect(spec.egress).toEqual([]);
   });
 
   test("the model provider is the admin's choice, off until set, and ignores report mode", () => {
@@ -396,7 +407,7 @@ describe("a real child forge", () => {
     expect(seen["failure"]).toBeNull();
     expect(seen["first"]).toBe(503);
     expect(seen["firstMs"] as number).toBeLessThan(1_000);
-    expect(seen["limits"]).toEqual({ memoryMiB: 512, cpus: 1, diskMiB: 2048 });
+    expect(seen["limits"]).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
     expect(seen["root"] as number).toBeLessThan(400);
     expect(seen["health"]).toBe(200);
     expect(seen["labelled"]).toBe(true);

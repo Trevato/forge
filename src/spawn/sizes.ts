@@ -13,9 +13,12 @@ export interface SizeLimits {
   readonly diskMiB: number;
 }
 
+// A child is a whole forge: its own process, its apps, a crew run and a
+// check, all held to one figure. One app's first deploy took a forge to
+// 1195 MiB and another past 2 GiB, so a small forge never came up in 512.
 export const SIZES: Readonly<Record<Size, SizeLimits>> = {
-  small: { cpu: 1, memoryMiB: 512, diskMiB: 2048 },
-  medium: { cpu: 2, memoryMiB: 2048, diskMiB: 10240 },
+  small: { cpu: 1, memoryMiB: 2048, diskMiB: 2048 },
+  medium: { cpu: 2, memoryMiB: 4096, diskMiB: 10240 },
   large: { cpu: 4, memoryMiB: 8192, diskMiB: 40960 },
 };
 

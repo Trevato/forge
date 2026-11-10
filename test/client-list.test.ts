@@ -233,7 +233,7 @@ describe("the client list", () => {
       expect(html).toContain(`<th scope="col">${col}</th>`);
     const maria = html.slice(html.indexOf('data-compare="maria"'), html.indexOf("</tr>", html.indexOf('data-compare="maria"')));
     expect(maria).toContain('data-use="shared"');
-    expect(maria).toContain("<td>small · 512 MiB, 1 core, 2 GiB</td>");
+    expect(maria).toContain("<td>small · 2 GiB, 1 core, 2 GiB</td>");
     expect(maria).toContain("<td>shared</td>");
     expect(maria).toContain("<td>none yet</td>");
   });

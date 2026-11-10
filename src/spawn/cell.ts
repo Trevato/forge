@@ -63,6 +63,8 @@ export function cellSpecFor(input: {
   dir: string;
   parentDataDir: string;
   parentUrl: string;
+  /** The child's own public address, which its pages and checks call back on; the parent answers it. */
+  url?: string;
   /** The parent's heartbeat door (`beat-door.ts`): the only way to it that needs no public address (a preview's cell has none). */
   parentPort?: number;
   size: Size;
@@ -86,7 +88,11 @@ export function cellSpecFor(input: {
     // A child's cell is held to this list whatever cells.egress says: report
     // mode is for apps still declaring hosts, not for a whole forge.
     egressMode: "enforce",
-    reach: input.parentPort === undefined ? [input.parentUrl] : [input.parentUrl, parentLocal(input.parentPort)],
+    reach: [
+      input.parentUrl,
+      ...(input.url === undefined ? [] : [input.url]),
+      ...(input.parentPort === undefined ? [] : [parentLocal(input.parentPort)]),
+    ],
     limits: cellLimits(input.size),
     // A forge is busy in bursts (a check's shards, an install): the kernel
     // holds it to its cores; the watch stopping it killed the check with it.
@@ -193,6 +199,7 @@ function makeRegistry(parent: App): CellChildren {
       dir,
       parentDataDir: parent.config.dataDir,
       parentUrl: parentOrigin(parent.config),
+      url,
       parentPort,
       size: input.size,
       port,
