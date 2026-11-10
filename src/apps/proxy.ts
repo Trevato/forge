@@ -65,8 +65,9 @@ import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { secureFor } from "../http/cookie_secure.ts";
-import { currentLoopLag } from "../perf/loop_worst.ts";
-import { noteRelayWait } from "./relay_wait.ts";
+import { currentLoopLag, forgeWaited, LAG_WINDOW_MS } from "../perf/loop_worst.ts";
+import { loopWatch } from "../perf/live.ts";
+import { heldBy, noteRelayWait, stallTiming } from "./relay_wait.ts";
 import { cspNonce, htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
 
 const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
@@ -430,8 +431,17 @@ function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined 
  */
 function withPhases(request: Request, res: Response): Response {
   const phases = takePhases(request);
-  if (phases.length === 0) return res;
-  const mine = phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`).join(", ");
+  const stall = stallFor.get(request);
+  if (stall !== undefined) {
+    stallFor.delete(request);
+    // An admin's copy names internal routes: never one a shared cache may keep.
+    res.headers.set("cache-control", "private, no-store");
+    res.headers.delete("etag");
+  }
+  if (phases.length === 0 && stall === undefined) return res;
+  const named = phases.map((p) => `${p.name};dur=${p.ms.toFixed(1)}`);
+  if (stall !== undefined) named.push(stall);
+  const mine = named.join(", ");
   const theirs = res.headers.get("server-timing");
   res.headers.set("server-timing", theirs === null || theirs === "" ? mine : `${theirs}, ${mine}`);
   return res;
@@ -460,13 +470,38 @@ function relayPhase(request: Request, name: RelayPhase, ms: number): void {
  * so a loop blocked by something else lands in it while the app sat idle;
  * `forgeWaited` (the one place the rule lives) says when the wait was the forge's.
  */
-function relayUpstream(request: Request, target: AppTarget, headersMs: number): void {
+function relayUpstream(
+  runtime: AppsRuntime,
+  request: Request,
+  target: AppTarget,
+  headersMs: number,
+  who: GrantWho | undefined,
+): void {
   const lag = currentLoopLag();
   relayPhase(request, "ttfb", headersMs);
   relayPhase(request, "lag", lag);
   relayPhase(request, "upstream", headersMs);
+  // What held a wait that was the forge's (#11000): the stalls of the lag's
+  // window, read only then — at most 40 of them, so the common relay pays nothing.
+  const now = performance.now();
+  const held = forgeWaited(lag, headersMs) ? heldBy(loopWatch.within(now - LAG_WINDOW_MS, now)) : [];
   // Production's slowest wait, for the app's speed card (`apps/relay_wait.ts`).
-  if (target.env === "production") noteRelayWait(target.app.id, headersMs, lag);
+  if (target.env === "production") noteRelayWait(target.app.id, headersMs, lag, Date.now(), held);
+  if (held.length > 0 && forgeAdmin(runtime, who)) stallFor.set(request, stallTiming(held));
+}
+
+/**
+ * The `forge-stall` entries a relayed answer carries, by request, until
+ * `withPhases` writes them. Set only for a forge admin: route patterns are
+ * the forge's own, so nobody else sees them.
+ */
+const stallFor = new WeakMap<Request, string>();
+
+/** Whether the grant names an active person who administers the forge (an agent never does). */
+function forgeAdmin(runtime: AppsRuntime, who: GrantWho | undefined): boolean {
+  if (who === undefined) return false;
+  const user = getUserById(runtime.app.db, who.id);
+  return user !== undefined && isActive(user) && user.isAdmin && user.kind !== "agent";
 }
 
 /**
@@ -1223,10 +1258,10 @@ export async function proxyApp(
     } as RequestInit);
   } catch {
     answered();
-    relayUpstream(request, target, performance.now() - sent);
+    relayUpstream(runtime, request, target, performance.now() - sent, vouched?.who);
     return withPhases(request, unavailable(runtime, target, status, "the app stopped answering"));
   }
-  relayUpstream(request, target, performance.now() - sent);
+  relayUpstream(runtime, request, target, performance.now() - sent, vouched?.who);
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
   // Which app answered: a probe from outside (`spawn/reach.ts`) tells this

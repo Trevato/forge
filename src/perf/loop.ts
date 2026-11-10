@@ -57,12 +57,18 @@ export interface LoopWatch {
   stalled(lateMs: number, at: number): Stall | null;
   /** The stalls so far by route, the hour ending at `now` (same clock as `at`). */
   tally(now: number): StallTally;
+  /**
+   * The stalls noted at `from`..`to` (same clock as `at`), newest first. Read
+   * from the end, so it costs the stalls in the window: at most one per
+   * `LIMIT_MS`, 40 in a 10 s window (#11000).
+   */
+  within(from: number, to: number): readonly Stall[];
   /** Forget every request and stall noted so far; a test sharing the process's watch starts from nothing. */
   clear(): void;
 }
 
 /** What a stall is counted against: its routes, else its jobs, else `NO_REQUEST`. */
-const blamed = (s: Stall): readonly string[] =>
+export const blamed = (s: Stall): readonly string[] =>
   s.routes.length > 0 ? s.routes : s.jobs.length > 0 ? s.jobs.map((j) => JOB_PREFIX + j) : [NO_REQUEST];
 
 function byRoute(stalls: Iterable<Stall>): RouteStall[] {
@@ -120,6 +126,15 @@ export function createLoopWatch(limitMs = LIMIT_MS, jobsAcross: JobsAcross = () 
         total: [...totals].map(([route, t]) => ({ route, ms: t.ms, count: t.count })).sort((a, b) => (a.route < b.route ? -1 : 1)),
         hour: byRoute(hour.filter((s) => s.at <= now)).sort((a, b) => b.ms - a.ms || (a.route < b.route ? -1 : 1)),
       };
+    },
+    within(from, to) {
+      const out: Stall[] = [];
+      for (let i = hour.length - 1; i >= 0; i--) {
+        const s = hour[i]!;
+        if (s.at < from) break;
+        if (s.at <= to) out.push(s);
+      }
+      return out;
     },
   };
 }

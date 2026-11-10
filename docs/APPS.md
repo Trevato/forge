@@ -273,7 +273,11 @@ clock, so a loop busy with something else lands in it), `forge-body` (reading a 
 `forge-rewrite` (pill injection with that read, when it ran). Big `forge-wake`
 is a cold start, big `forge-ttfb` is the app or its listener — unless
 `forge-lag` is more than half of `forge-ttfb`, when the wait was the forge's,
-not the app's (`forgeWaited` in `src/perf/loop_worst.ts`) — big `forge-body`
+not the app's (`forgeWaited` in `src/perf/loop_worst.ts`), and a signed-in
+forge admin also gets `forge-stall;desc="<pattern>";dur=<ms>`, up to three, naming
+the route pattern or `job:<name>` that held the loop, longest first (that copy is
+`cache-control: private, no-store`; nobody else gets `forge-stall`;
+`docs/features/app-slowest-wait.md`) — big `forge-body`
 is an app slow to finish its page; if all are small, the time went before the
 request reached the forge. The forge opens no second socket to time the
 connect: it would take a backlog slot in the very case it is meant to find.

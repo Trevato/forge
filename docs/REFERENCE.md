@@ -22,7 +22,9 @@ Slow app? Its response's `Server-Timing` keeps the app's entries and adds the
 forge's `forge-route`, `forge-wake`, `forge-upstream`, `forge-ttfb`,
 `forge-lag`, `forge-body` and `forge-rewrite` (milliseconds only; see
 `docs/APPS.md`). When `forge-lag` is more than half of `forge-ttfb`, the wait
-was the forge's, not the app's.
+was the forge's, not the app's; a signed-in forge admin then also gets
+`forge-stall;desc="<pattern>";dur=<ms>` naming the route or `job:<name>` that held
+the loop (sent `private, no-store`; nobody else gets it).
 
 A forge this one spawned (hosted) runs the apps it was given too: its `bakery`
 answers at `bakery--<child>--<this forge's host>`, in this forge's lanes, on the
