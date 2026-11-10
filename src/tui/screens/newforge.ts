@@ -43,7 +43,7 @@ const SPECS: readonly Spec[] = [
   { key: "direction", label: "What it is for", hint: "The crew's first direction. Optional." },
   { key: "apps", label: "Apps to fork", hint: "owner/name, comma-separated. Optional." },
   { key: "fresh", label: "Or a fresh app", hint: "One line on what it is. Optional." },
-  { key: "modelKey", label: "Model key", hint: "Sealed in the child, never shown again. Optional.", secret: true },
+  { key: "modelKey", label: "AI account key", hint: "Sealed in the new forge, never shown again. Optional.", secret: true },
   { key: "modelEndpoint", label: "API base URL", hint: "A gateway for the key; empty for Anthropic. Optional." },
   { key: "budgetUsd", label: "Budget in dollars", hint: `${MIN_BUDGET_USD}–${MAX_BUDGET_USD}, for the key's whole life. Needed with a key.` },
   { key: "followMode", label: "Follows this forge's code", hint: FOLLOW_LINE },

@@ -80,8 +80,8 @@ const all = (form: Form, name: string): string[] =>
 function errorsOf(door: Door): Errors {
   const message = String(door.body["message"] ?? "");
   const m = /^([A-Za-z]+): (.*)$/.exec(message);
-  if (door.body["error"] === "invalid" && m) return { [m[1]!]: m[2]! };
-  return { form: message };
+  if (door.body["error"] === "invalid" && m) return { [m[1]!]: plainError(m[2]!) };
+  return { form: plainError(message) };
 }
 
 /** What the form reads before it draws: room, then (when there is room) the repositories and the crew. */
@@ -132,6 +132,30 @@ function templateOptions(chosen: string): { value: string; label: string; select
   }));
 }
 
+/** The page's words for what the data names in the API's terms (#10787); the data keeps its own. */
+const PLAIN: Readonly<Record<string, string>> = {
+  tokens: "access passes",
+  "SSH keys": "remote-login keys",
+  "agent credentials": "the crew's sign-ins",
+};
+/**
+ * The door's refusals speak to the API and the terminal too; on this page they
+ * name the key the way the form does. A test posts each one and reads the page.
+ */
+const PLAIN_ERRORS: readonly (readonly [RegExp, string])[] = [
+  [/^is empty or over 4096 characters[^]*$/, "is empty or too long: paste the whole key from your AI account"],
+  [/a subscription token \(sk-ant-oat…\)/g, "a Claude sign-in key (sk-ant-oat…)"],
+  [/; send modelKey with it/g, ": add the key too"],
+  [/\bmodel key\b/g, "AI account key"],
+];
+export function plainError(message: string): string {
+  return PLAIN_ERRORS.reduce((m, [from, to]) => m.replace(from, to), message);
+}
+
+export function plainWords(item: string): string {
+  return PLAIN[item] ?? item.replace("its own model key", "its own AI account key");
+}
+
 function formView(
   ctx: Ctx,
   user: User | undefined,
@@ -160,7 +184,7 @@ function formView(
         : "Pick a name and the apps to start from; you get one link to send.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
-    <p class="muted small" id="hosting-terms">Free within limits: it sleeps when idle, and its crew stays off until you bring a model key.</p>
+    <p class="muted small" id="hosting-terms">Free within limits: it sleeps when idle, and its crew starts once you add your AI account.</p>
     ${quota ? html`<p role="status" id="quota-full">This forge cannot hold another child: ${quota}.</p>` : null}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
@@ -270,14 +294,14 @@ function formView(
         ${anon
           ? null
           : formField({
-              label: values.hadKey ? "Model key" : "Model key (optional)",
+              label: values.hadKey ? "AI account key" : "AI account key (optional)",
               name: "modelKey",
               type: "password",
               autocomplete: "off",
               required: values.hadKey,
               hint: values.hadKey
-                ? "Type the key again to spawn: it is never sent back to your browser."
-                : "An Anthropic key (sk-ant-api…, sk-ant-usr…), a `claude setup-token` token (sk-ant-oat…), or any gateway's key with its base URL below; with its own spend limit, sealed in the child, never shown again.",
+                ? "Type the key again to make the forge: it is never sent back to your browser."
+                : "Paste a key from your AI account. It is sealed in the new forge and never shown again.",
               ...(errors["modelKey"] ? { error: errors["modelKey"] } : {}),
             })}
         ${anon
@@ -315,7 +339,7 @@ function formView(
           ...(errors["size"] ? { error: errors["size"] } : {}),
         })}
           <p class="muted small">
-            Never copied: ${LEFT_BEHIND.join(", ")}. The child mints its own.
+            Never copied: ${LEFT_BEHIND.map(plainWords).join(", ")}. The child mints its own.
           </p>
         </details>
         <div class="form-actions">
@@ -362,7 +386,7 @@ function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record
       </ul>
       <p class="mb">Copied into it:</p>
       <ul class="mb">
-        ${copied.map((c) => html`<li>${c}</li>`)}
+        ${copied.map((c) => html`<li>${plainWords(c)}</li>`)}
       </ul>
       <p class="muted small">
         About ${Math.max(1, Math.round(bytes / 1024))} KB. Nothing is made until
