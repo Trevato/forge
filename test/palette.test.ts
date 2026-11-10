@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { shellJs } from "../src/web/client.ts";
+import { components } from "../src/web/style/components.ts";
 import {
   frecencyOrder,
   fuzzyScore,
@@ -377,5 +378,18 @@ describe("recent visits in the running shell", () => {
       input.dispatchEvent(new p.win.Event("input", { bubbles: true }));
     }
     expect(reads).toBe(opened);
+  });
+});
+
+describe("the palette's text is readable (#11028)", () => {
+  const rule = (sel: string) => components.match(new RegExp(`${sel.replace(/[.\[\]"=]/g, "\\$&")}\\s*\\{[^}]*\\}`))?.[0] ?? "";
+  test("headings and row details use --muted-fg, not --faint (2.3:1 on the selected row in light)", () => {
+    for (const sel of [".palette-heading", ".palette-item .cat"]) {
+      expect(rule(sel)).toContain("color: var(--muted-fg)");
+      expect(rule(sel)).not.toContain("--faint");
+    }
+  });
+  test("the selected row's detail reads in --fg: --muted-fg is 4.40:1 on its highlight", () => {
+    expect(rule('.palette-item[aria-selected="true"] .cat')).toContain("color: var(--fg)");
   });
 });

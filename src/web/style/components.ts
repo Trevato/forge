@@ -804,10 +804,13 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
   padding: 6px; scrollbar-width: thin;
 }
 .palette-group + .palette-group { margin-top: 4px; }
+/* Headings and details are text people read (a recent page's detail says
+   where it was), so they take --muted-fg: --faint is 2.3:1 on the selected
+   row in light. The icon alone stays faint. */
 .palette-heading {
   padding: 8px 10px 4px;
   font-size: var(--fs-min); font-weight: 600; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--faint);
+  text-transform: uppercase; color: var(--muted-fg);
 }
 .palette-item {
   display: flex; align-items: center; gap: 10px; width: 100%;
@@ -821,11 +824,13 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .palette-item .cat {
   flex: none; max-width: 45%; margin-left: auto;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12.5px; color: var(--faint);
+  font-size: 12.5px; color: var(--muted-fg);
 }
 /* One highlight. The pointer moves it (the script listens) rather than
    painting a second one under the cursor; the finder keeps plain hover. */
 .palette-item[aria-selected="true"], .finder .palette-item:hover { background: var(--muted); }
+/* --muted-fg is 4.40:1 on that highlight in light; the detail takes --fg there. */
+.palette-item[aria-selected="true"] .cat { color: var(--fg); }
 .palette-foot {
   display: flex; align-items: center; gap: 10px; padding: 8px 14px;
   border-top: 1px solid var(--border); font-size: 12.5px; color: var(--faint);
