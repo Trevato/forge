@@ -38,6 +38,7 @@ export function allFlowsPage(ctx: Ctx): Response {
   const rows = shown.map((l) =>
     row({
       href: l.href,
+      nav: true,
       title: html`${l.repo} · ${l.kind}`,
       meta: html`${l.label} · ${l.at === null ? "never moved" : time(l.at)}`,
       trail: badge(l.state, { tone: TONE[l.health] }),
