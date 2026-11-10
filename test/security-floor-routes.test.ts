@@ -131,6 +131,7 @@ const UNSEEDED: Record<string, string> = {
   "/settings/origins/:id/mirror/:job": ORIGIN,
   "/settings/origins/:id/repos": ORIGIN,
   "/settings/origins/flows/:id": ORIGIN,
+  "/settings/origins/flows/:id/stream": ORIGIN,
 };
 
 let dataDir = "";

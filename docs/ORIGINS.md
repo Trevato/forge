@@ -101,7 +101,8 @@ is "No such origin."). Which
 way in you get is a property of the forge, not a preference:
 
 - **GitHub** — a device code. The forge shows a short code and a URL; you type
-  the code on whatever device has a browser, and the forge does the polling. Setting
+  the code on whatever device has a browser, and the forge does the polling (once per
+  flow however many tabs wait; the page is told over a stream and reloads once). Setting
   it up is three steps, once, for everyone on the forge:
   1. Create an OAuth App at <https://github.com/settings/developers>. Name it
      anything, set the homepage to your forge's URL, set the authorization

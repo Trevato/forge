@@ -62,34 +62,23 @@ const modalJs = /* js */ `
 `;
 
 /**
- * The device-code page's only enhancement: submit the "check again" form on
- * the interval the provider asked for, and reload when the flow stops being
- * pending. Everything it does is something the page already offers a button
- * for, and the poll route answers JSON only because it was asked to — the
- * same POST from a plain form gets a redirect.
+ * The device-code page's only enhancement: listen on the page's own stream
+ * (`data-stream` on the "check again" form) and re-read the page when the
+ * forge says the flow has left pending. The forge does the asking of the
+ * provider (`src/http/flow_stream.ts`); this loops on nothing. Without script
+ * the form's button and a reload still re-poll.
  *
- * Shipped per page (`PageOptions.scriptJs`) rather than in the shell: a page
- * with no connect in flight should carry none of it.
+ * Shipped per page (`PageOptions.scriptJs`) rather than in the shell.
  */
 export const pollJs = /* js */ `
 (function () {
-  var form = document.querySelector('form[data-poll]');
-  if (!form) return;
-  var every = Number(form.getAttribute('data-poll') || 0);
-  if (!every) return;
-  var tries = 0;
-  function ask() {
-    if (tries++ > 200) return;
-    fetch(form.getAttribute('action') || location.href, {
-      method: 'POST',
-      headers: { accept: 'application/json' },
-      body: new FormData(form),
-    }).then(function (r) { return r.json(); }).then(function (out) {
-      if (out && out.status && out.status !== 'pending') { location.reload(); return; }
-      window.setTimeout(ask, every * 1000);
-    }, function () { window.setTimeout(ask, every * 1000); });
-  }
-  window.setTimeout(ask, every * 1000);
+  var form = document.querySelector('form[data-stream]');
+  if (!form || typeof EventSource === 'undefined') return;
+  var source = new EventSource(form.getAttribute('data-stream'));
+  source.addEventListener('flow.settled', function () {
+    source.close();
+    location.reload();
+  });
 })();
 `;
 

@@ -229,12 +229,6 @@ describe("no rendered page polls", () => {
  * reads each page's markup and the scripts it loads.
  */
 
-/** A script that legitimately waits on something outside the page: marker in its text → why. */
-const POLL_ALLOWED: Record<string, string> = {
-  "form[data-poll]":
-    "the device-code connect page (pollJs, src/web/client.ts) waits on a provider that sets the cadence (its `interval`), so there is no event of ours to stream; it posts the form the page already offers, stops after 200 tries, and reloads only once the flow leaves pending",
-};
-
 /** The text of the balanced `(…)` or `{…}` whose opener is at `open`. Strings and comments are not understood: a bracket inside one skews it. */
 function balanced(src: string, open: number): string {
   const pairs: Record<string, string> = { "(": ")", "{": "}" };
@@ -282,9 +276,6 @@ export function findPolling(source: string): string[] {
   return [...new Set(found)];
 }
 
-const pollReason = (source: string): string | undefined =>
-  Object.entries(POLL_ALLOWED).find(([marker]) => source.includes(marker))?.[1];
-
 /**
  * GET patterns the walk cannot fill from its seed, each with why: the walk is
  * every pattern minus these, and the list is checked both ways, so a new page
@@ -323,6 +314,7 @@ const NOT_WALKED: Record<string, string> = {
   "/settings/origins/:id/mirror/:job": ORIGIN,
   "/settings/origins/:id/repos": ORIGIN,
   "/settings/origins/flows/:id": ORIGIN,
+  "/settings/origins/flows/:id/stream": ORIGIN,
   "/settings/teams/:slug": "needs a team",
   "/talk/:id": "needs a conversation of the signed-in person",
 };
@@ -381,8 +373,7 @@ describe("every page the router lists", () => {
     for (const [name, source] of scripts) {
       const found = findPolling(source);
       if (!found.length) continue;
-      if (pollReason(source)) allowed.push(name);
-      else offenders.push(`${name}: ${found.join("; ")}`);
+      offenders.push(`${name}: ${found.join("; ")}`);
     }
     return { htmlPages: htmlPages.sort(), offenders, allowed };
   }
@@ -442,9 +433,8 @@ describe("the polling detector", () => {
     expect(findPolling(`setInterval(pick("fast"), 1000)`)).toEqual([]);
   });
 
-  test("the device-code poll is flagged, and the one allowlist entry matches it and says why", () => {
-    expect(findPolling(pollJs).length).toBeGreaterThan(0);
-    expect(pollReason(pollJs)).toBeDefined();
-    for (const why of Object.values(POLL_ALLOWED)) expect(why.length).toBeGreaterThan(30);
+  test("the device-code page waits on a stream, not a timer", () => {
+    expect(findPolling(pollJs)).toEqual([]);
+    expect(pollJs).toContain("EventSource");
   });
 });

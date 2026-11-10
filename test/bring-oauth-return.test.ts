@@ -88,4 +88,54 @@ describe("sign in from /bring and come back to it", () => {
     expect(back.status).toBe(200);
     expect(await back.text()).toContain(`value="${link}"`);
   });
+
+  test("the page listens on a stream; the forge polls the provider and says once when the flow settles", async () => {
+    // A fresh account: alice is already connected to this host by the test above.
+    const bobAuth = `Basic ${Buffer.from(`bob:${PASSWORD}`).toString("base64")}`;
+    await fetch(`${servers.url}/api/v1/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "bob", email: "bob@forge.test", password: PASSWORD }),
+    });
+    proveAll(app);
+    const started = await fetch(`${servers.url}/settings/origins/oauth`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { authorization: bobAuth, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ host: fake.url, kind: "github" }),
+    });
+    const flowPage = started.headers.get("location")!;
+    const flowId = flowPage.split("/flows/")[1]!.split("?")[0]!;
+    const shown = await (await fetch(`${servers.url}${flowPage}`, { headers: { authorization: bobAuth } })).text();
+    expect(shown).toContain(`data-stream="/settings/origins/flows/${flowId}/stream"`);
+
+    // Signed out: no stream.
+    expect((await fetch(`${servers.url}/settings/origins/flows/${flowId}/stream`, { redirect: "manual" })).status).toBeGreaterThanOrEqual(401);
+
+    // Someone else's flow: not found, not a stream.
+    const foreign = await fetch(`${servers.url}/settings/origins/flows/${flowId}/stream`, { headers: { authorization: auth } });
+    expect(foreign.status).toBe(404);
+    expect(foreign.headers.get("content-type") ?? "").not.toContain("text/event-stream");
+
+    // Pending says nothing; once the provider approves, the stream says "done" and ends.
+    oauth.approved = false;
+    const res = await fetch(`${servers.url}/settings/origins/flows/${flowId}/stream`, { headers: { authorization: bobAuth }, signal: AbortSignal.timeout(20_000) });
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    const drained = (async () => {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        body += decoder.decode(value);
+      }
+    })();
+    await Bun.sleep(300);
+    expect(body).not.toContain("flow.settled");
+    oauth.approved = true;
+    await drained; // the stream ends itself once the flow settles
+    expect(body).toContain("event: flow.settled");
+    expect(body).toContain('"status":"done"');
+  }, 25_000);
 });

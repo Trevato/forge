@@ -128,6 +128,7 @@ import {
   originTrustedHosts,
 } from "../web/pages/origins.ts";
 import { originArchivedPage, originArchivedRestore } from "../web/pages/origin-archived.ts";
+import { originFlowStream } from "./flow_stream.ts";
 import { originFlowPage, originFlowPoll } from "../web/pages/origin-flow.ts";
 import { originMirrorSubmit, originReposPage } from "../web/pages/origin-repos.ts";
 
@@ -309,6 +310,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/origins/apps/:id/delete", originAppDelete);
   router.add("GET", "/settings/origins/flows/:id", originFlowPage);
   router.add("POST", "/settings/origins/flows/:id/poll", originFlowPoll);
+  router.add("GET", "/settings/origins/flows/:id/stream", originFlowStream);
   router.add("GET", "/settings/origins/:id/repos", originReposPage);
   router.add("GET", "/settings/origins/:id/archived", originArchivedPage);
   router.add("POST", "/settings/origins/:id/archived", originArchivedRestore);

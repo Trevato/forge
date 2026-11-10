@@ -47,6 +47,7 @@ const MAX_UNFIXTURED = 144;
 const NOT_PAGES = new Set([
   "/events", "/system/stream", "/settings/teams/stream", "/fleet/graph/live",
   "/settings/traffic/scrapes/export", "/settings/backups/live", "/:owner/:name/stream",
+  "/settings/origins/flows/:id/stream",
 ]);
 
 /** Patterns with an id in them, and the path the fixture fills them with. */
