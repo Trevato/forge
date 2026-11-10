@@ -43,7 +43,7 @@ import {
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { Page } from "../origins/types.ts";
-import { HEAD_BYTES } from "../web/render/kinds.ts";
+import { HEAD_BYTES, RENDER_CAP } from "../web/render/kinds.ts";
 import type {
   Blob,
   Branch,
@@ -61,6 +61,8 @@ import type {
 
 /** The same ceiling the contents route uses; a page is a page. */
 const MAX_BLOB_BYTES = 5_000_000;
+/** A sliced G-code file is read whole, up to the cap its renderer draws. */
+const blobCeiling = (path: string): number => (/\.(gcode|gco)$/i.test(path) ? RENDER_CAP.gcode : MAX_BLOB_BYTES);
 const COMMIT_PAGE = 50;
 
 export function localSource(
@@ -201,7 +203,7 @@ export function localSource(
 
     async blob(ref: string, path: string): Promise<Result<Blob, SourceError>> {
       if (!isSafeRef(ref) || !isSafeTreePath(path)) return err("not_found");
-      const blob = await blobForRender(dir, ref, path, MAX_BLOB_BYTES);
+      const blob = await blobForRender(dir, ref, path, blobCeiling(path));
       if (blob.kind === "missing") return err("not_found");
       if (blob.kind !== "too_large") return ok(blob);
       // Too large to read, but its first bytes still say what it is.

@@ -76,6 +76,8 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   vcard: [enc("BEGIN:VCARD\nEND:VCARD\n"), "contacts", "application/octet-stream"],
   geojson: [enc('{"type":"FeatureCollection","features":[]}'), "geojson", "application/octet-stream"],
   ics: [enc("BEGIN:VCALENDAR\nEND:VCALENDAR\n"), "calendar", "application/octet-stream"],
+  gcode: [enc("G28\nG1 X1 E1\n"), "gcode", "application/octet-stream"],
+  gco: [enc("G28\n"), "gcode", "application/octet-stream"],
 };
 
 describe("the registry of file kinds", () => {

@@ -57,6 +57,7 @@ import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
 import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
+import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { CARD_CAP, parseVcf } from "../../web/render/vcf-parse.ts";
@@ -375,6 +376,17 @@ function gpxTable(source: string, path: string): Table | null {
   return { header: ["Fact", "Value"], rows, more: 0, delimiter: ",", columns: 2 };
 }
 
+/** `.gcode`: a sliced print, drawn as a table of its facts (layers, box, filament, time). Shares the web's parser. */
+function isGcodePath(path: string): boolean {
+  return /\.(gcode|gco)$/i.test(path);
+}
+
+function gcodeTable(source: string): Table | null {
+  const parsed = parseGcode(source);
+  if (parsed === undefined) return null;
+  return { header: ["Fact", "Value"], rows: gcodeFacts(parsed).map(([k, v]) => [k, v]), more: 0, delimiter: ",", columns: 2 };
+}
+
 /** `.geojson`: features, drawn as a table of their geometry type and properties. */
 function isGeoJsonPath(path: string): boolean {
   return /\.geojson$/i.test(path);
@@ -552,6 +564,9 @@ class Tab {
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGpxPath(this.path)) {
       this.table = gpxTable(new TextDecoder().decode(source), this.path);
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isGcodePath(this.path)) {
+      this.table = gcodeTable(new TextDecoder().decode(source));
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGeoJsonPath(this.path)) {
       this.table = geoJsonTable(new TextDecoder().decode(source));

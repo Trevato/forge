@@ -12,6 +12,7 @@ import { config } from "./config.ts";
 import { isFormConfig } from "./config-format.ts";
 import { csv } from "./csv.ts";
 import { geojson } from "./geojson.ts";
+import { gcode } from "./gcode.ts";
 import { gpx } from "./gpx.ts";
 import { font } from "./font.ts";
 import { ics } from "./ics.ts";
@@ -47,6 +48,8 @@ export interface RenderInput {
   readonly all?: boolean;
   /** `?table=<name>`: unchecked text; a renderer matches it against its own list. */
   readonly table?: string;
+  /** `?layer=N` (1-based) on a G-code file; the renderer clamps it to the layers it has. */
+  readonly layer?: number;
 }
 
 export interface Rendered {
@@ -77,6 +80,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   log,
   subtitles,
   gpx,
+  gcode,
   geojson,
   calendar: ics,
   contacts: vcf,

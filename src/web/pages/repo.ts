@@ -82,12 +82,13 @@ import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { creditLine } from "../credit_line.ts";
 import { type CodeRows, rowsMarkup } from "../code_rows.ts";
-import { rowsOffThread } from "../code_rows_pool.ts";
+import { gcodeOffThread, rowsOffThread } from "../code_rows_pool.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { overSize } from "../render/archive.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
 import { fontJs } from "../render/font.ts";
+import { INLINE_MAX, keepGcode, keptGcode, layerCount } from "../render/gcode.ts";
 import { hasTable } from "../render/sqlite.ts";
 import { fileKind, HEAD_BYTES, kindByName, RENDER_CAP } from "../render/kinds.ts";
 import { RENDERERS, rendererFor } from "../render/renderers.ts";
@@ -1100,6 +1101,8 @@ function blobRenderer(scope: RepoScope, path: string, blob: Blob): ReturnType<ty
 function overCap(path: string, blob: Blob): string | undefined {
   if (kindByName(path) === "notebook" && blob.size > RENDER_CAP.notebook)
     return `This notebook is over ${RENDER_CAP.notebook / 1_000_000} MB, so it is not drawn as cells${blob.kind === "too_large" ? ". Download it to read it" : " and is shown as plain text"}.`;
+  if (kindByName(path) === "gcode" && blob.size > RENDER_CAP.gcode)
+    return `G-code, over the ${fileSize(RENDER_CAP.gcode)} the page draws, so its layers are not drawn. Download it to read it.`;
   if (blob.kind !== "binary" || fileKind(path, blob.body.subarray(0, HEAD_BYTES)) !== "archive") return undefined;
   return blob.size > RENDER_CAP.archive ? overSize(RENDER_CAP.archive) : undefined;
 }
@@ -1141,6 +1144,8 @@ export function renderBlob(
     all?: boolean;
     /** `?table=` on a SQLite file. */
     table?: string;
+    /** `?layer=` on a G-code file. */
+    layer?: number;
     /** Rows a worker already built for this file. */
     rows?: CodeRows;
   },
@@ -1161,6 +1166,7 @@ export function renderBlob(
           pathHref: `${base}/blob/${encoded}/${o.path}`,
           all: o.all === true,
           ...(o.table !== undefined ? { table: o.table } : {}),
+          ...(o.layer !== undefined ? { layer: o.layer } : {}),
         })
       : undefined;
   const fellBack = drawn?.fallback;
@@ -1662,6 +1668,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const view = blobView(ctx.url.searchParams.get("view"));
   const all = ctx.url.searchParams.get("all") === "1";
   const table = ctx.url.searchParams.get("table")?.slice(0, 256) ?? undefined;
+  const layerText = ctx.url.searchParams.get("layer");
+  const layer = layerText !== null && /^\d{1,6}$/.test(layerText) ? Number(layerText) : undefined;
   // The whole page as it last went out to a stranger, encoded (`kept_page.ts`).
   const keptKey = kept ? keptPageKey(ctx, repo.id) : undefined;
   const finished = keptKey === undefined ? undefined : keptPage(keptKey);
@@ -1673,7 +1681,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   let keepable = true;
   const keepFinished = (response: Response) => (keptKey === undefined || !keepable ? response : keepPage(keptKey, response, true));
   if (kept) {
-    const hit = cachedBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}`, all);
+    const hit = cachedBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}\0${layer ?? ""}`, all);
     if (hit !== undefined) {
       git.done();
       return immutableWhenAddressed(
@@ -1701,6 +1709,16 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const renderStart = performance.now();
   const shown = capped(blob.value, path);
   if (table !== undefined) keepable = shown.kind !== "too_large" && hasTable(shown.body, table);
+  // A big sliced file is parsed on a worker, never on this thread; the renderer finds the parse kept.
+  if (shown.kind !== "too_large" && shown.body.length > INLINE_MAX && kindByName(path) === "gcode" && keptGcode(shown.body) === undefined) {
+    const began = performance.now();
+    const made = await gcodeOffThread(shown.body);
+    if (made !== undefined) keepGcode(shown.body, made.parsed ?? undefined);
+    notePhase(ctx.request, "parse", performance.now() - began);
+  }
+  // A `?layer=` past the last layer is a stranger's number: its page is never kept.
+  if (layer !== undefined && keepable)
+    keepable = shown.kind !== "too_large" && layer >= 1 && layer <= layerCount(shown.body);
   // A cold page for a stranger highlights and lays out its rows on a worker (#9630).
   let rows: CodeRows | undefined;
   if (kept && shown.kind === "text" && (view === "source" || !blobRenderer(scope, path, shown))) {
@@ -1718,6 +1736,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
     all,
     ...(table !== undefined ? { table } : {}),
+    ...(layer !== undefined ? { layer } : {}),
   });
   if (highlightMs !== undefined) notePhase(ctx.request, "highlight", highlightMs);
   const paneMs = performance.now() - renderStart - (highlightMs ?? 0);
@@ -1747,7 +1766,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const objectSrc = drawsPdf(scope, path, shown, view);
   const font = drawsFont(scope, path, shown, view);
   if (kept && keepable)
-    keepBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}`, all, {
+    keepBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}\0${layer ?? ""}`, all, {
       title: `${filename} · ${repo.name}`,
       explorer: explorerHtml,
       content: pane,
@@ -1797,6 +1816,8 @@ export async function pathsJson(ctx: Ctx): Promise<Response> {
 export function capped(blob: Blob, path = ""): Blob {
   // A SQLite file is read whole, up to its own cap, because the database is opened from the bytes.
   if (blob.kind !== "too_large" && fileKind(path, blob.body.subarray(0, HEAD_BYTES)) === "sqlite" && blob.size <= RENDER_CAP.sqlite)
+    return blob;
+  if (blob.kind !== "too_large" && blob.size <= RENDER_CAP.gcode && fileKind(path, blob.body.subarray(0, HEAD_BYTES)) === "gcode")
     return blob;
   return blob.kind !== "too_large" && blob.size > MAX_RENDER_BYTES
     ? { kind: "too_large", size: blob.size, head: blob.body.slice(0, HEAD_BYTES) }

@@ -482,6 +482,28 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .gcode opens as its facts, sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "prints3d", visibility: "public", description: "slices" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [{ path: "cube.gcode", content: "G21\nG90\nM82\nG92 E0\nG1 Z0.2\nG1 X10 Y0 E1\nG1 X10 Y10 E2\nG1 Z0.4\nG1 X0 Y10 E3\n" }],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "prints3d");
+      await openFile(h, "cube.gcode");
+      expect(h.text()).toContain("Layers");
+      expect(h.text()).toContain("Bounding box");
+      expect(h.text()).toContain("3 mm");
+      await h.press("s");
+      expect(h.text()).toContain("G1 X10 Y0 E1");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .geojson opens as its features table, sharing the web parser, and s flips to the source", async () => {
     const made = await createRepo(forge, alice, { name: "places", visibility: "public", description: "geo" });
     if (!made.ok) throw new Error("repo failed");

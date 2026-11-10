@@ -8,6 +8,7 @@
 import { availableParallelism } from "node:os";
 import type { Encoding } from "../http/compress.ts";
 import type { CodeRows } from "./code_rows.ts";
+import type { Gcode } from "./render/gcode.ts";
 import type { Job } from "./code_rows_worker.ts";
 
 /** The floor: one worker busy on a long file must not stall every cold page. */
@@ -49,6 +50,8 @@ export function poolSize(
 
 const WORKERS = poolSize();
 const JOB_MS = 5_000;
+/** A 50 MB sliced file takes longer than a page of code. */
+const GCODE_JOB_MS = 30_000;
 /** Jobs in flight past which the caller renders inline instead of queueing. */
 const MAX_PENDING = 64;
 
@@ -86,7 +89,7 @@ function start(): Worker | undefined {
 
 type Spec = Job extends infer J ? (J extends Job ? Omit<J, "id"> : never) : never;
 
-function run<T>(job: Spec): Promise<T | undefined> {
+function run<T>(job: Spec, ms: number = JOB_MS): Promise<T | undefined> {
   if (waiting.size >= MAX_PENDING) return Promise.resolve(undefined);
   if (pool.length < WORKERS) {
     const w = start();
@@ -99,7 +102,7 @@ function run<T>(job: Spec): Promise<T | undefined> {
     const timer = setTimeout(() => {
       waiting.delete(id);
       resolve(undefined);
-    }, JOB_MS);
+    }, ms);
     waiting.set(id, {
       worker,
       done: (result) => {
@@ -121,3 +124,7 @@ export const encodeOffThread = (body: Uint8Array<ArrayBuffer>, encoding: Encodin
 
 /** Test seam: the live workers. */
 export const workersForTest = (): readonly Worker[] => pool;
+
+/** A G-code file parsed on a worker (up to `GCODE_JOB_MS`): a parse, null for none, undefined when the caller should not wait. */
+export const gcodeOffThread = async (body: Uint8Array): Promise<{ parsed: Gcode | null } | undefined> =>
+  run<{ parsed: Gcode | null }>({ kind: "gcode", body }, GCODE_JOB_MS);
