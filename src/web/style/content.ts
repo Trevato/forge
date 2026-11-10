@@ -536,6 +536,13 @@ form.inline { display: inline; margin-left: auto; }
   font-family: var(--mono); color: var(--muted-fg);
   white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible;
 }
+/* A fold in prose (an issue's "Where this came from"): the global reset hides the marker, so the chevron is drawn here;
+   the summary is a native, focusable, Enter/Space control with a row-high target. */
+.prose details { margin: 12px 0; }
+.prose summary { cursor: pointer; padding: 10px 0; min-height: 44px; color: var(--muted-fg); font-size: 13px; }
+.prose summary::before { content: "\\25B8"; display: inline-block; width: 1.2em; }
+.prose details[open] > summary::before { content: "\\25BE"; }
+.prose details > ul { margin-top: 0; font-size: 13px; }
 .prose code { background: var(--muted); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; }
 .prose pre code { background: none; border: none; padding: 0; }
 .prose blockquote {

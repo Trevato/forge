@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
+import { renderMarkdown } from "../src/web/markdown.ts";
 import { toolbarJs } from "../src/apps/toolbar.ts";
 import { filtered, moderateNote, noteClock, PER_APP_DAY, PER_SENDER, PER_SOURCE, saysFromApp } from "../src/actions/app_notes.ts";
 import { feedback, REQUEST_MAX } from "../src/apps/feedback.ts";
@@ -57,6 +58,7 @@ describe("the forge button takes notes from anyone", () => {
     alice = a.value;
     for (const [name, visibility] of [
       ["notes", "public"],
+      ["context", "public"],
       ["diary", "private"],
     ] as const) {
       const made = await newApp(app, a.value, { name, description: "Words", visibility });
@@ -126,6 +128,40 @@ describe("the forge button takes notes from anyone", () => {
     expect(issue.body).toMatch(/- Time: \d{4}-\d\d-\d\dT/);
     expect(issue.body).toContain(j.name);
     expect(j.note.url).toBe(`${servers.url}/alice/notes/issues/${issue.number}`);
+  });
+
+  test("a note's context is stored under a fold: build from the forge, errors scrubbed, capped and escaped", async () => {
+    const spy = spyOn(AppsRuntime.prototype, "liveFor").mockImplementation(() => ({ commitOid: "c0ffee1234567890abcdef" }) as never);
+    try {
+      const send = (extra: Record<string, unknown>, source: string) =>
+        at("context", "/__forge/note", { method: "POST", body: JSON.stringify({ text: "It broke", page: `http://${host("context")}/cart?x=1`, viewport: "390x844", ...extra }) }, "", source);
+      const bodyOf = async (res: Response) => {
+        expect(res.status).toBe(201);
+        const j = (await res.json()) as { note: { url: string } };
+        return getIssue(app.db, getRepo(app.db, "alice", "context")!.id, Number(j.note.url.split("/").pop()))!.body;
+      };
+      const hostile = ["<img src=x onerror=alert(1)> `tick`", "x".repeat(900), "GET http://a.test/p?api_key=sekret failed", "t1", "t2", "t3 beyond five", 7, { a: 1 }];
+      const body = await bodyOf(await send({ errors: hostile, build: "deadbeef" }, "10.7.0.1"));
+      expect(body).toContain("<details><summary>Where this came from</summary>");
+      expect(body).toContain("- Build: `c0ffee1234567890abcdef`"); // the forge's, never the client's `build`
+      expect(body).not.toContain("deadbeef");
+      expect(body).not.toContain("- Path:");
+      expect(body).not.toMatch(/sekret|beyond five/);
+      const lines = body.split("\n").filter((l) => l.startsWith("- Console error:"));
+      expect(lines.length).toBe(5);
+      expect(Math.max(...lines.map((l) => l.length))).toBeLessThanOrEqual(200 + 20);
+      expect(lines[0]).not.toContain("`tick`");
+      const rendered = String(renderMarkdown(body));
+      expect(rendered).not.toContain("<img");
+      expect(rendered).toContain("&lt;img");
+      // No context at all: the note still goes, the fold only says the build.
+      expect(await bodyOf(await send({ errors: "nope" }, "10.7.0.2"))).not.toContain("Console error");
+      // An oversized request is refused before any of it is read.
+      const big = await send({ errors: ["e".repeat(REQUEST_MAX)] }, "10.7.0.3");
+      expect(big.status).toBe(400);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("the sender sees their notes, and the status follows the issue", async () => {

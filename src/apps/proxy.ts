@@ -1105,6 +1105,7 @@ export async function proxyApp(
       sealed,
       viewerId,
       grantCookie: cookie,
+      build: runtime.liveFor(target.app, target.env)?.commitOid,
       secure: proxySecure(request, url, runtime.options.forgeUrl),
       source: clientBucket(request),
     });

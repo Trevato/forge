@@ -4,6 +4,9 @@
  * transformation, so the renderer cannot be talked into emitting markup.
  * CommonMark completeness is a non-goal — READMEs and issue prose are.
  *
+ * A fold (`<details><summary>Title</summary>` … `</details>`, each on a line
+ * of its own) is the one other tag it emits, with a title it checks.
+ *
  * A fence with an info string is handed to the tokenizer, so the code samples
  * in a README read as code. That is the one place this renderer emits markup
  * it did not escape itself, and it is safe for the same reason the file
@@ -157,6 +160,7 @@ function renderUncached(source: string): Html {
   let body: string[] = [];
   let align: string[] | null = null;
   let skip = -1;
+  let folded = false;
 
   const closeParagraph = () => {
     if (paragraph.length > 0) {
@@ -212,6 +216,22 @@ function renderUncached(source: string): Html {
       fenceWidth = /^`+/.exec(line)?.[0].length ?? 3;
       body = [];
       fenceLang = languageFromName((raws[index] ?? "").slice(fenceWidth));
+      continue;
+    }
+
+    // A fold: `<details><summary>Title</summary>` on a line of its own, then
+    // `</details>`. The title is escaped text; nothing else opens a tag.
+    const fold = /^<details><summary>([^<>&"'`]{1,80})<\/summary>$/.exec(raws[index] ?? "");
+    if (fold !== null && !folded) {
+      closeBlocks();
+      out.push(`<details><summary>${fold[1]}</summary>`);
+      folded = true;
+      continue;
+    }
+    if (folded && raws[index] === "</details>") {
+      closeBlocks();
+      out.push("</details>");
+      folded = false;
       continue;
     }
 
@@ -278,5 +298,6 @@ function renderUncached(source: string): Html {
 
   if (fence) out.push(closeFence(body, fenceLang));
   closeBlocks();
+  if (folded) out.push("</details>");
   return raw(out.join("\n"));
 }

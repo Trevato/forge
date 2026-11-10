@@ -275,6 +275,18 @@ export const toolbarJs = `(function () {
       } catch (e) { end(); }
     });
   }
+  // The last few console errors: message text only, cut short here and again on the server.
+  var errs = [];
+  function noted(m) { errs.push(String(m).slice(0, 200)); if (errs.length > 5) errs.shift(); }
+  if (window.addEventListener) {
+    window.addEventListener("error", function (e) { noted(e && e.message); });
+    window.addEventListener("unhandledrejection", function (e) { var r = e && e.reason; noted(r && r.message ? r.message : r); });
+  }
+  var logged = typeof console === "object" && console ? console.error : null;
+  if (logged) console.error = function () {
+    try { noted(Array.prototype.map.call(arguments, function (a) { return a && a.message ? a.message : typeof a === "string" ? a : ""; }).join(" ")); } catch (x) {}
+    return logged.apply(console, arguments);
+  };
   tellBox.addEventListener("submit", function (e) {
     e.preventDefault();
     var text = tellText.value.trim();
@@ -291,7 +303,7 @@ export const toolbarJs = `(function () {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight })
+        body: JSON.stringify({ text: text, page: location.href, viewport: window.innerWidth + "x" + window.innerHeight, errors: errs.slice(-5) })
       })
         .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
         .then(function (a) {

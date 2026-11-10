@@ -24,6 +24,7 @@ import { getNote } from "../core/app_notes.ts";
 import { PICTURE_MAX, savePicture, sniffPicture } from "../core/note_pictures.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
+import { parseNoteContext } from "../actions/note_context.ts";
 import { NOTE_FAILED } from "./note_words.ts";
 
 export const REQUEST_MAX = 16 * 1024;
@@ -42,6 +43,8 @@ export interface FeedbackAsk {
   readonly viewerId: string | undefined;
   /** The grant cookie's value, which the panel's proof is bound to. */
   readonly grantCookie?: string | undefined;
+  /** The commit the env is serving, when it is up; the client never says it. */
+  readonly build?: string | undefined;
   readonly secure: boolean;
   /** The client's limit key, from the socket (`clientBucket`). */
   readonly source: string;
@@ -181,7 +184,12 @@ async function send(ask: FeedbackAsk, door: Door): Promise<Response> {
   const viewport = typeof body.viewport === "string" && /^\d{2,5}x\d{2,5}$/.test(body.viewport) ? body.viewport : "unknown";
   const sent = await sendNote(
     ask.app, ask.record, door.repo, ask.env, ask.forgeUrl, sender,
-    { text: typeof body.text === "string" ? body.text : "", page, viewport },
+    {
+      text: typeof body.text === "string" ? body.text : "",
+      page,
+      viewport,
+      context: parseNoteContext(body.errors, ask.build),
+    },
     ask.source,
     door.viewer,
   );

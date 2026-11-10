@@ -20,6 +20,7 @@ import { getUserById, isActive, type User } from "../core/users.ts";
 import { crewWithRole, isCrew } from "../core/agents.ts";
 import { fence } from "../crew/fence.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
+import { contextFold, type NoteContext } from "./note_context.ts";
 import { NOTE_EMPTY } from "../apps/note_words.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { assignIssue, openIssueThrough, setIssueLabelsThrough, setIssueStateThrough } from "./issues.ts";
@@ -196,6 +197,8 @@ export interface NoteInput {
   /** The page, already reduced to this app's own origin and path. */
   readonly page: string;
   readonly viewport: string;
+  /** Path, build and console errors, already checked (`parseNoteContext`). */
+  readonly context?: NoteContext;
 }
 
 /**
@@ -249,7 +252,7 @@ export async function sendNote(
     `- Page: ${input.page === "" ? "unknown" : `\`${input.page.replace(/`/g, "%60")}\``}`,
     `- Viewport: ${input.viewport}`,
     `- Time: ${new Date().toISOString()}`,
-  ].join("\n");
+  ].join("\n") + (input.context === undefined ? "" : contextFold(input.context));
   // The label exists before the issue does, so a mirror's origin can apply it too.
   if (getLabel(app.db, repo.id, FROM_APP_LABEL) === undefined) createLabel(app.db, repo.id, FROM_APP_LABEL, LABEL_COLOR);
   const unavailable = err({ error: "unavailable", message: "The builders cannot take notes right now." } as const);
