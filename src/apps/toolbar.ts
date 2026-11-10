@@ -663,7 +663,19 @@ function lastBodyClose(buffer: Buffer): number {
   return -1;
 }
 
-/** `bytes` with the pill's tag before the last `</body>`, or at the end. */
+/** The opening of the tag the proxy writes, with the hashed name: what a page that has the toolbar contains. */
+const TAG_OPEN = Buffer.from(`<script src="${TOOLBAR_ASSET_PATH}"`);
+
+/**
+ * Whether a page already carries this toolbar's tag (a page served through two
+ * forges, or cached with one). A byte search for the exact tag opening: a page
+ * that only quotes the path in its text does not match, and nothing is decoded.
+ */
+export function carriesToolbar(bytes: Uint8Array): boolean {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).includes(TAG_OPEN);
+}
+
+/** `bytes` with the pill's tag before the last `</body>`, or at the end; a page that has one is returned as it is. */
 export function withToolbar(
   bytes: Uint8Array,
   forgeUrl: string,
@@ -671,6 +683,7 @@ export function withToolbar(
   proof?: string,
   nonce?: string,
 ): Uint8Array<ArrayBuffer> {
+  if (carriesToolbar(bytes)) return new Uint8Array(bytes);
   const tag = Buffer.from(toolbarTag(forgeUrl, where, proof, nonce));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const at = lastBodyClose(buffer);

@@ -27,6 +27,7 @@ platform for organizations.
 
 - [Origins](ORIGINS.md): connect accounts on other forges, mirror and write through.
 - [A forge is an origin](features/forge-origin.md): connect one forge to another.
+- [The forge toolbar](features/forge-toolbar.md): the pill in every app and preview.
 
 ## Operate it
 

@@ -55,6 +55,10 @@ describe("the forge pill", () => {
               })
             : new Response(HTML, { headers });
         }
+        if (path === "/has-tag")
+          return new Response(`<html><body>hi<script src="${TOOLBAR_ASSET_PATH}" defer></script></body></html>`, { headers: html });
+        if (path === "/quotes")
+          return new Response(`<html><body><code>&lt;script src="${TOOLBAR_ASSET_PATH}"&gt;</code> src="/__forge/toolbar-x"</body></html>`, { headers: html });
         if (path === "/json") return Response.json({ a: 1 });
         if (path === "/img") return new Response(PNG, { headers: { "content-type": "image/png" } });
         if (path === "/bare") return new Response("<p>no body tag</p>", { headers: html });
@@ -237,6 +241,26 @@ describe("the forge pill", () => {
 
   test("a streamed text/html answer that does not start like markup is untouched", async () => {
     expect(await (await at("/notmarkup")).text()).toBe('{"a":1}</body>');
+  });
+
+  test("through the proxy: data, ranges and HEAD come back byte for byte; a page with the tag keeps exactly one", async () => {
+    expect(await (await at("/json")).text()).toBe('{"a":1}');
+    expect(new Uint8Array(await (await at("/img")).arrayBuffer())).toEqual(PNG);
+    const range = await at("/range");
+    expect(await range.text()).toBe(HTML.slice(0, 20));
+    const head = await fetch(`${servers.url}/`, { method: "HEAD", headers: { host: `notes.${DOMAIN}` } });
+    expect(head.headers.get("content-length")).toBe(String(HTML.length));
+    expect(await head.text()).toBe("");
+    const had = await (await at("/has-tag")).text();
+    expect(had.split(TOOLBAR_ASSET_PATH).length - 1).toBe(1);
+    expect(had).not.toContain("data-forge");
+  });
+
+  test("a page that only quotes the toolbar's path still gets one tag", async () => {
+    const quoted = await (await at("/quotes")).text();
+    expect(quoted.split("<script").length - 1).toBe(1);
+    expect(quoted).toContain("data-forge");
+    expect(quoted).toContain(`&lt;script src="${TOOLBAR_ASSET_PATH}"&gt;`);
   });
 
   test("a ranged answer, a HEAD, a huge page and a foreign charset pass through", async () => {
