@@ -23,7 +23,7 @@ import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
 import { offersSignup, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, card, empty, nameMark, row as rowOf, seg, tabs, timeAgo } from "../ui.ts";
+import { btn, card, empty, nameMark, row as rowOf, seg, tabs, time } from "../ui.ts";
 
 const href = (query: ExploreQuery): string => {
   const params = exploreParams(query);
@@ -36,17 +36,19 @@ const href = (query: ExploreQuery): string => {
  * read as a figure ("3085.9 h") that says nothing to a visitor. They still
  * weigh in the ranking (`core/front.ts`).
  */
-function numbers(row: ExploreRow): { apps: string; rest: string } {
+function numbers(row: ExploreRow): { apps: string; rest: Html } {
   const n = row.numbers;
   const rest = [
     n.forks > 0 ? `${n.forks} fork${n.forks === 1 ? "" : "s"}` : "",
     n.likes > 0 ? `${n.likes} like${n.likes === 1 ? "" : "s"}` : "",
     n.ships > 0 ? `${n.ships} shipped this month` : "",
-    row.shippedAt !== null ? `last shipped ${timeAgo(row.shippedAt)}` : "",
   ];
+  const shipped = row.shippedAt === null ? null : html`shipped ${time(row.shippedAt)}`;
+  const restText = rest.filter((p) => p !== "").map((p) => html`${p}`);
+  if (shipped !== null) restText.push(shipped);
   return {
     apps: row.kind === "person" ? `${n.apps} app${n.apps === 1 ? "" : "s"}` : "",
-    rest: rest.filter((p) => p !== "").join(" · "),
+    rest: restText.reduce((all, p, i) => (i === 0 ? p : html`${all} · ${p}`), html``),
   };
 }
 
@@ -58,7 +60,7 @@ function rowHtml(row: ExploreRow, signedIn: boolean): Html {
   const parts = [
     row.description === "" ? html`` : html`${row.description}`,
     count,
-    rest === "" ? html`` : html`${rest}`,
+    rest,
   ].filter((p) => p.toString() !== "");
   const metaHtml = parts.reduce((all, p, i) => (i === 0 ? p : html`${all} · ${p}`), html``);
   return rowOf({

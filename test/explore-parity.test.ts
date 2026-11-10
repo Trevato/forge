@@ -261,3 +261,12 @@ describe("separate parameters", () => {
     expect(pageOrder(html).every((u) => u.split("/").length === 3)).toBe(true);
   });
 });
+
+describe("last ship on the row", () => {
+  test("the page words it as 'shipped 1d ago' with the absolute date in title; the API carries shippedAt", async () => {
+    const html = await (await fetch(`${servers.url}/explore?q=${encodeURIComponent("kind:app sort:fresh")}`)).text();
+    expect(html).toMatch(/shipped <time datetime="[^"]+" title="\d{4}-\d\d-\d\d \d\d:\d\d UTC"\s*>1d ago<\/time/);
+    const api = (await (await fetch(`${servers.url}/api/v1/explore?q=${encodeURIComponent("kind:app sort:fresh")}`)).json()) as { items: { name: string; shippedAt: string | null }[] };
+    expect(api.items[0]!.shippedAt).not.toBeNull();
+  });
+});
