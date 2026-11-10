@@ -206,16 +206,15 @@ test("the tile says plainly when strangers hold most of the time, and not for a 
   expect(trafficWords(t).note).toContain("too much");
   expect(trafficWords(t).title).toStartWith("Something is wrong");
   const row = String(kpiRowFor(emptyKpis(), null, NOW, t));
-  expect(row).toMatch(
-    /<a class="stat" href="\/settings\/traffic" data-tone="attn"/,
-  );
+  // The home row no longer carries a Traffic tile; the board at /settings/traffic does.
+  expect(row).not.toContain("/settings/traffic");
 
   const handful = createPerfRecord();
   handful.add("/a", sample(5000, { deepStranger: true }));
   expect(trafficAttention(handful.ledger.totals(END))).toBeNull();
   expect(
     String(kpiRowFor(emptyKpis(), null, NOW, handful.ledger.totals(END))),
-  ).not.toMatch(/traffic" data-tone="attn"/);
+  ).not.toContain("/settings/traffic");
 
   expect(trafficValue(createPerfRecord().ledger.totals(END))).toBe("—");
 });
@@ -290,13 +289,18 @@ test("every tile's value equals the probe's, from known requests and page_vital 
   for (const n of probe.numbers) {
     expect(n.counts.length).toBeGreaterThan(10);
     expect([n.id, n.agrees, n.recomputed]).toEqual([n.id, true, n.value]);
+    // These figures are the probe's and the boards', no longer tiles on the home row.
+    if (["traffic", "visitors", "users", "accounts"].includes(n.id)) {
+      expect([n.id, tiles.has(n.label)]).toEqual([n.id, false]);
+      continue;
+    }
     const shown = tiles.get(n.label);
     expect([n.label, n.id === "live" ? shown !== undefined : shown]).toEqual([
       n.label,
       n.id === "live" ? true : n.value,
     ]);
   }
-  expect(tiles.size).toBe(probe.numbers.length);
+  expect(tiles.size).toBe(probe.numbers.length - 3);
   // The live tile's short form is the start of the probe's full id.
   expect(byId.get("live")!.value.startsWith(tiles.get("Live version")!)).toBe(
     true,

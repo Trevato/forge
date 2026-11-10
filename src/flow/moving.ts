@@ -15,6 +15,8 @@ import type { PipelineStage } from "./pipeline.ts";
 export interface MovingRow {
   readonly who: string;
   readonly title: string;
+  /** The title whole, for a hover or a screen reader: cutting `title` loses nothing. */
+  readonly full: string;
   readonly href: string;
   readonly at: string;
   /** `owner/name`, for the row's title attribute. */
@@ -22,6 +24,18 @@ export interface MovingRow {
 }
 
 export const MOVING_ROWS = 3;
+/** Longest title a home row shows. */
+export const TITLE_MAX = 60;
+
+/** A title cut at a word boundary, with an ellipsis; whole when it fits. */
+export function shortTitle(title: string, max = TITLE_MAX): string {
+  const t = title.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const at = cut.lastIndexOf(" ");
+  // One long unbroken token has no boundary to cut at: it is cut at the limit.
+  return `${(at > max / 2 ? cut.slice(0, at) : cut).replace(/[\s:,;.\-–]+$/, "")}…`;
+}
 /** Rows read before the viewer's access filters them; bounded, so the read is. */
 const SCAN = 40;
 
@@ -66,7 +80,8 @@ function visible(db: Database, viewer: User, raw: readonly Raw[], path: string, 
     if (repo === undefined) continue;
     out.push({
       who: r.who ?? "",
-      title: r.title,
+      title: shortTitle(r.title),
+      full: r.title.replace(/\s+/g, " ").trim(),
       href: `/${repo.ownerName}/${repo.name}/${r.kind === undefined ? path : r.kind === "pull" ? "pulls" : "issues"}/${r.number}`,
       at: r.at,
       repo: `${repo.ownerName}/${repo.name}`,

@@ -11,7 +11,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { KPI_COUNTS, backupFull, backupOverdue, backupValue, buildersValue, checkTime, reactNote, shippedValue, speedWords, spendCeilingWords, spendFull, spendValue, trafficValue, trafficWords, usersValue, visitorsNote, visitorsValue, waitingWords } from "../../flow/kpi_words.ts";
+import { KPI_COUNTS, backupFull, backupOverdue, backupValue, buildersValue, checkTime, reactNote, shippedValue, speedWords, spendCeilingWords, spendFull, spendValue, waitingWords } from "../../flow/kpi_words.ts";
 import { perfRecord } from "../../perf/live.ts";
 import type { TrafficClass, TrafficMinute, TrafficTotals } from "../../perf/traffic.ts";
 import type { IdleReason } from "../../crew/idle_reason.ts";
@@ -80,11 +80,6 @@ export function sparkline(hours: readonly number[]): Html {
   return spark([...hours].reverse(), "Shipped each hour over the last 24 hours");
 }
 
-/** Distinct visitors per day, oldest first, today on the right. */
-export function visitorsSpark(days: readonly number[]): Html {
-  return spark(days, `Distinct visitors each day over the last ${days.length} days`);
-}
-
 /** Lightest first, stacked from the bottom: the strangers sit on top and read darkest. */
 export const TRAFFIC_TONES: readonly (readonly [TrafficClass, string])[] = [
   ["internal", "0.12"],
@@ -124,7 +119,6 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
   const overdue = k.backup ? k.backup.state === "red" : backupOverdue(k.backupAt, now);
   const spendWords = spendCeilingWords(k.spend);
   const rate = shippedValue(k.landed, k.landedHours.length);
-  const trafficSays = traffic === null ? null : trafficWords(traffic);
   return html`<section class="stats kpi-row mb" aria-label="The forge's figures, each over its own window; hover one for what it counts">
     ${tile(
       "Shipped per hour",
@@ -189,18 +183,6 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
       null,
       k.bugs.overdue > 0 ? "attn" : null,
     )}
-    ${traffic === null || trafficSays === null ? null : tile(
-      "Traffic, 15 min",
-      "/settings/traffic",
-      trafficValue(traffic),
-      `${traffic.requests} requests, ${traffic.refused} refused`,
-      trafficSays.note,
-      trafficSays.title,
-      trafficColumns(traffic.minutes, W, H, "Answering time each minute over the last 15 minutes, by who asked"),
-      trafficSays.attn ? "attn" : null,
-    )}
-    ${tile("Reporting browsers", "/boards/reach", visitorsValue(k.reach), `${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}`, visitorsNote(k.reach), KPI_COUNTS.visitors, visitorsSpark(k.reach.visitorDays))}
-    ${tile("Accounts", "/boards/reach", usersValue(k.reach), usersValue(k.reach), "seen today", KPI_COUNTS.accounts)}
     ${tile(
       "Reported page speed",
       "/boards/reach",

@@ -19,7 +19,7 @@ import { standings } from "../core/standing.ts";
 import { grantedAccounts } from "../core/subscriptions.ts";
 import { slottedRuns, spentToday } from "./autonomy.ts";
 import { atCeiling } from "./dispatch.ts";
-import { heldNow } from "./held.ts";
+import { heldNow, HOLDS } from "./held.ts";
 import { pace } from "./pacing.ts";
 
 export interface IdleReason {
@@ -54,7 +54,10 @@ export function idleReason(app: App, now: Date): IdleReason | null {
     }
 
     const held = heldNow(app, repo);
-    return held.startable.length === 0 ? { word: "nothing ready", href: "/map" } : null;
+    if (held.startable.length > 0) return null;
+    // "Nothing ready" is true only when the map's ready list is empty; otherwise the ready issues are all held.
+    const ready = HOLDS.reduce((n, h) => n + held.by[h].length, 0);
+    return { word: ready === 0 ? "nothing ready" : "none startable", href: "/map" };
   }
   return null;
 }

@@ -149,6 +149,7 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
         ? `under a point over the last ${WEEK.burnHours} h (the meter moves in whole points and the crew ran)`
         : `${pct(burn)} an hour over the last ${WEEK.burnHours} h`;
   // `full`: the free percent and run-out time are said here; otherwise the crew line above says them.
+  const behindLabel = used < (1 - left / WINDOW_MS.week) * 100 ? "Behind pace" : "Under the allowed burn";
   const say = (full: boolean): string => {
     const weekLeft = full ? `${Math.round(meter.freePct)}% of the week left with ${timeGone}` : `the week has ${timeGone}`;
     const runOut = full && runsOutAt !== null ? `, running out about ${utc(runsOutAt)}` : "";
@@ -158,7 +159,7 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
         ? `On pace: ${weekLeft}; burning ${burnWords}, ${pct(allowed)} is allowed.`
         : status === "ahead"
           ? `Ahead of pace: ${weekLeft}, burning ${burnWords} against ${pct(allowed)} allowed${runOut}; ${slots === 0 ? "holding the crew for the reset" : `slowing to ${slots} of ${ceiling} slots`}.`
-          : `Behind pace: ${weekLeft}, burning ${burnWords} against ${pct(allowed)} allowed; ${slots === 0 ? "holding the crew for the reset" : `speeding up to ${slots} of ${ceiling} slots`}${release ? " and releasing the next issue" : ""}.`;
+          : `${behindLabel}: ${weekLeft}, burning ${burnWords} against ${pct(allowed)} allowed; ${slots === 0 ? "holding the crew for the reset" : `speeding up to ${slots} of ${ceiling} slots`}${release ? " and releasing the next issue" : ""}.`;
   };
   return { status, targetPctPerHour, allowedPctPerHour: allowed, runsOutAt, slots, release, sentence: say(true), besideCrewLine: say(false) };
 }

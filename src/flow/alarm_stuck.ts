@@ -140,7 +140,7 @@ export function alarmStuck(from: App | Database, now: Date, scope: StuckScope = 
       repo,
       number,
       wall,
-      says: `${repo}#${number} is approved and waits for a person: ${wall.join("; ")}. Allow it (merge) or send it back.`,
+      says: `${repo}#${number} is approved and waits for a person to merge it.`,
     };
   return {
     fired: true,

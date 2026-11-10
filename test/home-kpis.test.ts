@@ -145,8 +145,8 @@ describe("home kpi row titles", () => {
   });
 
   test("no value or note lacks a title, and none brings back a git word", () => {
-    expect(full.match(/class="stat-(value num|note)"/g)).toHaveLength(18);
-    expect(full.match(/class="stat-(value num|note)" title=/g)).toHaveLength(18);
+    expect(full.match(/class="stat-(value num|note)"/g)).toHaveLength(14);
+    expect(full.match(/class="stat-(value num|note)" title=/g)).toHaveLength(14);
     expect(full).not.toMatch(/commit|merge|branch|repositor|pull request/i);
   });
 });

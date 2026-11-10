@@ -59,7 +59,7 @@ function listOf(label: string, rows: readonly MovingRow[], empty: string, headin
     row({
       href: r.href,
       ...(r.who === "" ? {} : { lead: html`<span class="muted small">${r.who}</span>` }),
-      title: html`<span class="truncate" title="${r.repo}">${r.title}</span>`,
+      title: html`<span class="truncate" title="${r.repo}: ${r.full}">${r.title}</span>`,
       trail: html`<span class="muted small">${timeAgo(r.at)}</span>`,
     }),
   );

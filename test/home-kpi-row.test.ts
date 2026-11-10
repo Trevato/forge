@@ -256,8 +256,10 @@ describe("the reach tiles", () => {
   test("say what they count in words, each linking to the reach board", () => {
     const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 };
     const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    for (const v of ["5 today", "31 in 7 days", "3 of 12", "seen today", "1.3 s", "reacts in 180 ms"]) expect(out).toContain(`>${v}<`);
-    expect((out.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(3);
+    for (const v of ["1.3 s", "reacts in 180 ms"]) expect(out).toContain(`>${v}<`);
+    // Reporting browsers and Accounts feed no decision: only the page speed stays (#10440).
+    for (const gone of ["Reporting browsers", "Accounts", "Traffic"]) expect(out).not.toContain(gone);
+    expect((out.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(1);
     expect(out).not.toContain("INP");
     expect(out).not.toContain("p75");
   });
@@ -289,10 +291,6 @@ describe("the visitors sparkline", () => {
     expect(r.visitorDays[29]).toBe(2);
     expect(r.visitorDays[0]).toBe(1); // 2026-09-20 is 29 days back; 09-19 is out
     expect(r.visitorDays.reduce((a, b) => a + b, 0)).toBe(3);
-    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: r, medianCheckMs: null, builders: { running: 0, slots: 0, idle: null }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
-    const svg = /<svg[^>]*last 30 days[^>]*><polyline points="([^"]+)"/.exec(out)!;
-    expect(svg[1]!.split(" ")).toHaveLength(30);
-    expect(out).toContain('href="/boards/reach"');
   });
 });
 

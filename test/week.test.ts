@@ -171,3 +171,13 @@ describe("efficiency", () => {
     expect(efficiencyWords({ landings: 0, runs: 2, costUsd: 4 })).toContain("Nothing has landed");
   });
 });
+
+describe("the pace words (#10440)", () => {
+  test("`Behind pace` only when less is used than the time gone; otherwise it says what is true", () => {
+    // base: 84 h of 168 left, so half the week is gone.
+    expect(used(20, { burnPctPerHour: 0 }).sentence).toContain("Behind pace");
+    const heavy = used(70, { burnPctPerHour: 0 });
+    expect(heavy.sentence).not.toContain("Behind pace");
+    expect(heavy.sentence).toContain("Under the allowed burn");
+  });
+});

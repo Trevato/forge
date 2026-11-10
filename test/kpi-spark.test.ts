@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { daySpark, sparkline, visitorsSpark } from "../src/web/studio/kpi_row.ts";
+import { daySpark, sparkline } from "../src/web/studio/kpi_row.ts";
 
 const LINE = 'fill="none" stroke="currentColor" stroke-width="1.5"';
 
@@ -49,12 +49,6 @@ describe("daySpark", () => {
 });
 
 describe("the numbers-only sparklines are unchanged", () => {
-  test("visitorsSpark", () => {
-    expect(visitorsSpark([0, 2, 4]).toString()).toBe(
-      `<svg viewBox="0 0 96 24" width="96" height="24" role="img" aria-label="Distinct visitors each day over the last 3 days"><polyline points="0.0,22.0 48.0,12.0 96.0,2.0" ${LINE}/></svg>`,
-    );
-  });
-
   test("sparkline, newest first in, oldest on the left", () => {
     expect(sparkline([2, 0]).toString()).toBe(
       `<svg viewBox="0 0 96 24" width="96" height="24" role="img" aria-label="Shipped each hour over the last 24 hours"><polyline points="0.0,22.0 96.0,2.0" ${LINE}/></svg>`,
