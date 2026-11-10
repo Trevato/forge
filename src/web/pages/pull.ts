@@ -31,6 +31,7 @@ import { RED_ALONE_WAIT, redAloneAt, redMark, type RedMark } from "../../checks/
 import { tierLine, type TierState } from "../../checks/tiers.ts";
 import { fromKeptFork } from "../../core/landing_kind.ts";
 import { combinedCard } from "./pull-combined.ts";
+import { verdictLine, verdictOf, type VerdictInput } from "./pull-verdict.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import { marksByName } from "../../core/marks.ts";
@@ -170,6 +171,62 @@ function standings(
     state: review.state,
     stale: review.commitOid !== headOid,
   }));
+}
+
+/**
+ * The change between a pull's base and head with its highlighting, kept by
+ * the two oids (`diff-cache.ts`): the Files page and the pull's own page
+ * ask here, so the second reader of a head gets it from memory.
+ */
+export function keptChange(
+  dir: string,
+  status: PullStatus,
+  stretches: DiffLaps & { highlight?: number } = {},
+) {
+  return keptDiff(diffKey(status.baseOid, status.headOid), async () => {
+    const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid, stretches);
+    const highlighting = performance.now();
+    const syntax = await diffSyntax(dir, diff, from, status.headOid);
+    stretches.highlight = performance.now() - highlighting;
+    return { from, diff, failed, syntax };
+  });
+}
+
+/**
+ * The facts the verdict line reads, from the same sources the merge box
+ * reads. `status` is absent for a merged or closed pull, which is history.
+ */
+export function verdictFacts(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+  status: PullStatus | undefined,
+  known: Partial<VerdictInput> = {},
+): VerdictInput {
+  const db = ctx.app.db;
+  const headOid = status?.headOid ?? pull.headOid;
+  const check = checkSummary(db, pull.id, headOid);
+  const stale =
+    status !== undefined && pull.state === "open" && pull.mergedAt === null
+      ? checkStale(check.run, status.baseOid)
+      : false;
+  const by = standings(db, pull, headOid);
+  return {
+    merged: pull.mergedAt !== null,
+    closed: pull.state === "closed",
+    onOrigin: repo.origin !== null || pull.originHeadRepo !== null,
+    mergeable: status?.mergeable ?? false,
+    ahead: status?.ahead ?? 0,
+    conflicts: status?.conflicts.length ?? 0,
+    baseBranch: pull.baseBranch,
+    reviewGated: status?.reviews != null && !status.reviews.mergeable,
+    changesRequested: by.some((s) => !s.stale && s.state === "changes_requested"),
+    teamsHolding: teamsHolding(db, { ...pull, headOid }).length,
+    checksHeld: checksHold(repo.requireChecks, check.state, stale),
+    checkState: check.state,
+    mayMerge: canWrite(db, repo, ctx.auth.user),
+    ...known,
+  };
 }
 
 /**
@@ -923,15 +980,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   // On a miss the stretches say where the time went; a hit has none.
   const stretches: DiffLaps & { highlight?: number } = {};
   const cacheBefore = diffCacheCounts();
-  const { diff, syntax, failed } = await lap("diff", () =>
-    keptDiff(diffKey(status.baseOid, status.headOid), async () => {
-      const { from, diff, failed } = await diffBetween(dir, status.baseOid, status.headOid, stretches);
-      const highlighting = performance.now();
-      const syntax = await diffSyntax(dir, diff, from, status.headOid);
-      stretches.highlight = performance.now() - highlighting;
-      return { from, diff, failed, syntax };
-    }),
-  );
+  const { diff, syntax, failed } = await lap("diff", () => keptChange(dir, status, stretches));
   const cacheAfter = diffCacheCounts();
   const diffHit = cacheAfter.hits > cacheBefore.hits && cacheAfter.misses === cacheBefore.misses;
   // A merged or closed pull is history; the wall is a question about landing.
@@ -1051,12 +1100,16 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     },
   );
 
+  const holdingTeams = teamsHolding(ctx.app.db, { ...pull, headOid: status.headOid }).map((v) => v.name);
+  const verdict = verdictOf(verdictFacts(ctx, repo, pull, status), thread);
+
   const body = html`${repoHeader(ctx, repo, "pulls", {
       compact: true,
       ownTitle: true,
     })}
     ${changeHead(ctx, repo, pull, { headOid: status.headOid, conflicts: status.conflicts.length })}
     ${changeTabs(repo, pull, "files")}
+    ${verdictLine(verdict)}
     <p class="files-where muted small" id="files">
       <span class="mono">${headLabel} → ${pull.baseBranch}</span>
       <span class="sep" aria-hidden="true">·</span>
@@ -1079,8 +1132,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${when(wall, (w) => wallCard(w, mayMerge ? thread : undefined))}
     ${holdCard(ctx, repo, pull, { act: false })}
     ${teamsCard(teamVerdicts(ctx.app.db, { ...pull, headOid: status.headOid }))}
-    ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale,
-      teamsHolding(ctx.app.db, { ...pull, headOid: status.headOid }).map((v) => v.name))}
+    <div id="merge">${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale, holdingTeams)}</div>
     ${slicesCard(base, thread, slices, ends.length > 0 ? ends.length : status.ahead, ends, pull.state === "open" && pull.mergedAt === null, mayLand)}
     ${await combinedCard(dir, pull, status.headOid, status.baseOid)}
     <div class="split">

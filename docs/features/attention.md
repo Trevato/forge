@@ -24,7 +24,7 @@ reader sees on first view at 390 px and 1280 px: **words**, **text blocks** and 
 | home | 95 / 20 / 2 | 95 / 20 / 2 |
 | repository | 116 / 18 / 2 | 116 / 18 / 2 |
 | app | 116 / 18 / 2 | 116 / 18 / 2 |
-| pull | 133 / 22 / 4 | 133 / 22 / 4 |
+| pull | 141 / 24 / 4 | 141 / 24 / 4 |
 | issue | 72 / 19 / 2 | 72 / 19 / 2 |
 | issues list | 30 / 7 / 2 | 30 / 7 / 2 |
 | pulls list | 24 / 6 / 1 | 24 / 6 / 1 |

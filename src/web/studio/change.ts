@@ -64,7 +64,8 @@ import {
 } from "../ui.ts";
 import { previewBlock } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
-import { approveHereCard, pullChecksLineFor, teamsCard } from "../pages/pull.ts";
+import { approveHereCard, keptChange, pullChecksLineFor, teamsCard, verdictFacts } from "../pages/pull.ts";
+import { changeSummary, verdictLine, verdictOf } from "../pages/pull-verdict.ts";
 import { guestWalls, strangerCard } from "../pages/pull-guest.ts";
 import { combinedCard } from "../pages/pull-combined.ts";
 import { teamVerdicts } from "../../core/issue_teams.ts";
@@ -730,7 +731,15 @@ async function changeConversation(
   spent.reviews += performance.now() - reviewsAt;
 
   // From here on nothing is read: `render` only builds the page.
+  // The page opens on its verdict, then the change; the merge box and the
+  // reviews live on Files, so the line's anchors point there.
+  const files = `${thread}/files`;
+  const totals =
+    status === undefined ? null : (await lap(spent, "diff", () => keptChange(wordCtx.dir, status))).diff;
+  const verdict = verdictOf(verdictFacts(ctx, repo, pull, status, { mayMerge: writer }), thread, files);
   const body = html`${pageHead.top}
+    ${verdictLine(verdict, { action: false })}
+    ${changeSummary(pull.body, totals, files)}
     ${when(siblings.length > 0, () =>
       html`<p class="muted small variant-link">
         <a href="${base}/variants/${pull.variantGroup ?? ""}"

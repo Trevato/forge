@@ -77,6 +77,7 @@ import { fromKeptFork } from "../../core/landing_kind.ts";
 import { getPull, pullDir, variantSiblings, type MergePullError, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
+import { verdictOf, type Verdict } from "../../web/pages/pull-verdict.ts";
 import { wallOf, wallPlain, type Wall } from "../../contract/policy.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import { err, ok } from "../../kernel/result.ts";
@@ -636,6 +637,33 @@ export function pullScreen(
   const checksGated = (): boolean =>
     repo !== undefined && checksHold(requireChecks, check.state, checkOld);
 
+  /**
+   * The page's verdict line, in the page's words (`verdictOf`): can it land,
+   * and what holds it. Null until the pull is read, or while git has not
+   * said whether it merges.
+   */
+  const verdict = (): Verdict | null => {
+    if (detail === undefined || facts === null || facts.mergeable === null) return null;
+    return verdictOf(
+      {
+        merged: facts.mergedAt !== null,
+        closed: detail.issue.state === "closed",
+        onOrigin: mirrored(),
+        mergeable: facts.mergeable,
+        ahead: facts.diff !== null && facts.diff.files.length === 0 ? 0 : 1,
+        conflicts: facts.conflicts.length,
+        baseBranch: facts.baseBranch,
+        reviewGated: gated(),
+        changesRequested: standing().blocking.length > 0,
+        teamsHolding: holding.length,
+        checksHeld: checksGated(),
+        checkState: check.state,
+        mayMerge: mayWrite(),
+      },
+      "",
+    );
+  };
+
   /** `O` — the preview, through a grant when the app is private. */
   // Production beside the preview: comparing the two is the review.
   const openProduction = (): void => {
@@ -1173,13 +1201,13 @@ export function pullScreen(
         "v",
         [
           len(whereRows(src)),
-          len(2),
+          len(3),
           len(strangerLine === "" ? 0 : 1),
           len(isApp ? 1 : 0),
           len(boxH),
           len(2),
           fill(1),
-          len(Math.min(foot, Math.max(0, area.h - 13 - whereRows(src)))),
+          len(Math.min(foot, Math.max(0, area.h - 14 - whereRows(src)))),
         ],
       );
       whereStrip(s, strip!, c, f, src);
@@ -1215,6 +1243,12 @@ export function pullScreen(
         style(c.mutedFg, c.bg),
         edge,
       );
+      const verdictNow = verdict();
+      // Merged and closed pulls are told by the head line and the merge box.
+      if (verdictNow !== null && head!.h > 2 && detail?.issue.state === "open" && facts?.mergedAt === null) {
+        const at = dot(s, head!.x, head!.y + 2, c, verdictNow.tone === undefined ? {} : { tone: verdictNow.tone as Tone });
+        s.text(at, head!.y + 2, truncate(` ${verdictNow.words}`, Math.max(0, edge - at)), style(c.fg, c.bg, BOLD), edge);
+      }
       if (strangerLine !== "" && nextRow!.h > 0)
         s.text(nextRow!.x, nextRow!.y, truncate(`next: ${strangerLine}`, nextRow!.w), style(c.mutedFg, c.bg), nextRow!.x + nextRow!.w);
       if (isApp && previewRow!.h > 0)
