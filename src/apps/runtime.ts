@@ -336,6 +336,27 @@ function diedBeforeAnswering(error: StartError): boolean {
   );
 }
 
+/**
+ * What is wrong with an app's `/`, if anything: the line naming the status
+ * when it answers 4xx or 5xx, `undefined` when it answers 200 or redirects.
+ * It asks the process on its own port, so a private app's access door never
+ * answers in its place: whatever status comes back is the app's own.
+ */
+export async function rootFault(port: number): Promise<string | undefined> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/`, {
+      signal: AbortSignal.timeout(5_000),
+      redirect: "manual",
+    });
+    await response.body?.cancel();
+    if (response.status >= 400)
+      return `/ answered ${response.status}; the app is up but has no page at its root`;
+  } catch {
+    // No answer is the health path's business, not this check's.
+  }
+  return undefined;
+}
+
 /** A running environment, as a terminal session needs it. */
 /**
  * A checkout that served and was stopped for want of visitors, kept whole:
@@ -1556,6 +1577,14 @@ export class AppsRuntime {
         ok: false,
         error: `${started.error.stage}: ${started.error.message}`,
       };
+    }
+    // The health path answered; the page people open must too.
+    const fault = await rootFault(started.value.handle.port);
+    if (fault !== undefined) {
+      await started.value.handle.stop();
+      revokeAppToken(this.app.db, token.id);
+      rmSync(dir, { recursive: true, force: true });
+      return { ok: false, error: `ready: ${fault}` };
     }
     return {
       ok: true,
