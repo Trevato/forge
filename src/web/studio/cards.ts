@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release";
 
 export interface CardRow {
   readonly label: string;
@@ -42,7 +42,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -51,6 +51,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   runs: "run",
   asks: "decision",
   milestones: "milestones",
+  releases: "release",
   asks_act: "decision",
   waves: "wave",
   map: "map",
@@ -85,6 +86,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   board: "Board",
   forks: "Forks",
   milestones: "Milestones",
+  release: "Releases",
 };
 
 type Obj = Record<string, unknown>;
@@ -98,6 +100,7 @@ const FEED_LIMIT = 10;
 const PULLS_LIMIT = 20;
 const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
+const RELEASE_ROWS = 20;
 /** A waiting row's words are cut to this many characters. */
 const SAYS_WORDS = 160;
 /** A board card shows this many panels, then counts the rest. */
@@ -329,6 +332,23 @@ export function cardFor(
         ...(web(origin) && slugOf(slug) && /^[1-9]\d*$/.test(number) && here(origin, path)
           ? { link: origin + path }
           : {}),
+      });
+    }
+    return { kind, title: CARD_TITLE[kind], status, rows, actions };
+  }
+  if (kind === "release") {
+    // `releases` answers `{ items: [{ sha, version, pull?, landed, proof, live? }] }`; the shipped list has no `items`, so no card.
+    const items = list(obj(value)["items"]).map(obj);
+    if (!Array.isArray(obj(value)["items"])) return undefined;
+    const count = (w: string): number => items.filter((i) => i["proof"] === w).length;
+    status = `${items.length} kept · ${count("proven")} proven · ${count("unproven")} unproven · ${count("rolled back")} rolled back`;
+    for (const i of items.slice(0, RELEASE_ROWS)) {
+      const p = obj(i["pull"]);
+      const pull = text(p["number"]) === "" ? "" : `#${text(p["number"])} · `;
+      const at = text(i["landed"]);
+      rows.push({
+        label: text(i["version"]) || text(i["sha"]),
+        value: `${at === "" ? "" : `${timeAgo(at)} · `}${pull}${text(i["proof"])}`,
       });
     }
     return { kind, title: CARD_TITLE[kind], status, rows, actions };

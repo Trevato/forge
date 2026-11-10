@@ -1299,6 +1299,7 @@ describe("the forge over MCP", () => {
       "ui://forge/milestones",
       "ui://forge/pull",
       "ui://forge/pulls",
+      "ui://forge/release",
       "ui://forge/run",
       "ui://forge/scorecard",
       "ui://forge/wave",

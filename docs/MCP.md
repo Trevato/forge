@@ -175,7 +175,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `read_file` | — | Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge | 307 |
 | `release_hold` | — | Hold or release the release keeper's cuts (admin) | 202 |
 | `release_keeper` | — | The release keeper's releases, holds and what blocks the next cut | 192 |
-| `releases` | — | Kept releases, newest first | 201 |
+| `releases` | — | Kept releases, newest first | 253 |
 | `repo` | — | One repository you can read, as GET /api/v1/repos/:owner/:name | 223 |
 | `repo_labels` | — | Repo labels: list (default), create, update, remove (admin token) | 351 |
 | `repo_settings` | — | Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams | 444 |
@@ -482,15 +482,16 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `waves` (one wave), `map`, `feed`, `pull`, `pulls` and `asked` name a `ui://` resource in
+- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `releases`, `waves` (one wave), `map`, `feed`, `pull`, `pulls` and `asked` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
-  `decision`, `wave`, `map`, `feed`, `pull`, `pulls`, `asked`. The Plan card (`map`) shows one row per pillar with
+  `decision`, `release`, `wave`, `map`, `feed`, `pull`, `pulls`, `asked`. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
   to their pages; it has no actions. The decision card's rows link to the pull or issue
   they are about (a paused repository's row has none).
   The Apps card (`apps`) links each `owner/name` row to the app's page on the forge and adds a
   linked production row when the app has an http(s) URL; the `new_app` card links its
   Production row the same way. Any other address stays plain text, never a link.
+  The Releases card (`releases`, `ui://forge/release`) is one row per kept release, newest first: its version (else its short sha), how long ago it landed, the pull that landed it (as the releases page names it) and one word, `proven` (the keeper verified it), `unproven` (preflight failed, the keeper never cut it or is still verifying it) or `rolled back` (the keeper rolled it back). The keeper's row is looked up by sha, however old. The rows are the `items` of the tool's text, which carry the same `proof` and `pull`; `releases` with `shipped` has no card.
   The Forks card (`fork_tree`, `ui://forge/forks`) is one row per repository you may read, nested by a `depth` field the card pads (not leading spaces, which HTML collapses); the value says how it follows: `follows on its own`, `takes updates`, `offers updates` (the card's own wording for the `offers` mode) or `off`.
   `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the
