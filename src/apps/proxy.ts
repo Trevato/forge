@@ -1439,7 +1439,7 @@ const portSockets = new WeakMap<Bun.ServerWebSocket<AppSocket>, () => void>();
  * it the socket is closed rather than the memory kept, and the forge never
  * buffers a frame on its own account.
  */
-const WS_MAX_MESSAGE = 16 * 1024 * 1024;
+export const WS_MAX_MESSAGE = 16 * 1024 * 1024;
 /**
  * Seconds a socket may go without a frame or a pong before it is dropped.
  * Bun pings on its own at half this, so a quiet tab that is still there
@@ -1574,9 +1574,11 @@ function closeBoth(
  * close of one side carried to the other. Text stays text and binary
  * stays binary; the forge reads neither.
  */
-export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
-  maxPayloadLength: WS_MAX_MESSAGE,
-  backpressureLimit: WS_MAX_MESSAGE,
+export const appWebSocketWith = (
+  maxMessage: number = WS_MAX_MESSAGE,
+): Bun.WebSocketHandler<AppSocket> => ({
+  maxPayloadLength: maxMessage,
+  backpressureLimit: maxMessage,
   closeOnBackpressureLimit: true,
   idleTimeout: WS_IDLE_SECONDS,
 
@@ -1604,7 +1606,7 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
         typeof data === "string"
           ? Buffer.byteLength(data)
           : (data as ArrayBuffer).byteLength;
-      if (size > WS_MAX_MESSAGE) {
+      if (size > maxMessage) {
         closeBoth(ws, 1009, "message too big");
         return;
       }
@@ -1649,7 +1651,7 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
     if (code === 1006) upstream.close(1001, "the browser went away");
     else upstream.close(sendable(code) ? code : 1000, reason);
   },
-};
+});
 
 function grant(
   runtime: AppsRuntime,

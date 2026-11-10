@@ -518,7 +518,7 @@ export async function forward(
 /**
  * Carry a websocket handshake to the child's loopback port: the child's side
  * is opened first, and only then is the visitor's answered, as `proxyApp`
- * does for an app (`apps/proxy.ts`). Frames then go through `appWebSocket`,
+ * does for an app (`apps/proxy.ts`). Frames then go through `appWebSocketWith`,
  * the forge's one pump. `undefined` means the request became a socket.
  */
 export async function forwardSocket(

@@ -40,7 +40,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   { file: "test/apps-sleep.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/apps-ws.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/board-windows.test.ts",
     reason:

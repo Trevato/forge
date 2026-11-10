@@ -570,7 +570,7 @@ import { appsRuntime } from "../apps/runtime.ts";
 import { holdAppHost } from "../apps/holding.ts";
 import { isArcadeHost, serveArcade } from "../arcade/host.ts";
 import {
-  appWebSocket,
+  appWebSocketWith,
   type AppSocket,
   isWebSocketHandshake,
   proxyApp,
@@ -2706,7 +2706,7 @@ export async function serve(app: App): Promise<Servers> {
     maxRequestBodySize: REQUEST_MAX,
     // The only sockets the forge holds are an app's, carried through the
     // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
-    websocket: withShells(appWebSocket),
+    websocket: withShells(appWebSocketWith(app.config.wsMaxMessage)),
     fetch: handle,
     // A last resort: `handle` answers a throw itself, so it is counted.
     error: (error) => failure(app, error),
