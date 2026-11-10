@@ -56,6 +56,7 @@ import { entry as resilience } from "./resilience.ts";
 import { entry as scorecard } from "./scorecard.ts";
 import { entry as scrapes } from "./scrapes.ts";
 import { entry as trafficScreenEntry } from "./traffic.ts";
+import { entry as securityControls } from "./controls.ts";
 import { entry as secrets } from "./secrets.ts";
 import { entry as sentinel } from "./sentinel.ts";
 import { entry as subscriptions } from "./subscriptions.ts";
@@ -97,6 +98,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   edgeOnly,
   traffic,
   audit,
+  securityControls,
   secrets,
   crewSplits,
   crewHandover,

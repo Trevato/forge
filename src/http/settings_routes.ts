@@ -19,6 +19,7 @@ import { economicsPage, economicsSet } from "../web/pages/economics.ts";
 import { trustedAdd, trustedPage, trustedRemove, trustedRevert, trustedStop } from "../web/pages/trusted.ts";
 import { usagePage } from "../web/pages/usage.ts";
 import { spendPage } from "../web/pages/spend-tab.ts";
+import { securityControlsPage } from "../web/pages/security_controls.ts";
 import { securityPage, securityShieldSet } from "../web/pages/security.ts";
 import { trafficPage } from "../web/pages/traffic.ts";
 import { sourcesPage } from "../web/pages/sources.ts";
@@ -203,6 +204,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/traffic/scrapes/stop", captureStop);
   router.add("POST", "/settings/traffic/scrapes/networks", networksImport);
   router.add("GET", "/settings/security", securityPage);
+  router.add("GET", "/settings/security/controls", securityControlsPage);
   router.add("POST", "/settings/security/shield", securityShieldSet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("GET", "/settings/backups/live", backupsLive);

@@ -139,6 +139,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["edge-only-accounts", "Edge-only accounts", "who would be locked out if the platform edge sign-in went off"],
     ["traffic-sources", "Traffic sources", "where people come from and where they go, for the forge"],
     ["audit", "Who can do what", "each app's doors from its contract.json: yes, own or no"],
+    ["security-controls", "Security controls", "each safeguard, and when it was last tested"],
     ["archived", "Archived repositories", "put away, not gone: open one or wake it"],
     ["cloud", "Cloud accounts", "provider tokens, what they are used for, today's calls"],
     ["pinned", "Pinned forges", "deploy, update and roll back a forge on your cloud"],

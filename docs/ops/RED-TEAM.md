@@ -25,4 +25,4 @@ so the live run is still open as its own issue.
   happens there.
 - **The live run inside the pod and the sandbox escape attempts**: #10450.
 - **Wider prompt-injection tests**: #10451.
-- **A security page under ops** with one line per control: #10452.
+- Done: the security controls page, `/settings/security/controls` (#10452); how it reads `security-report.json` is in `docs/features/security-controls.md`.

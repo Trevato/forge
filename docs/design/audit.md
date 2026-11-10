@@ -144,6 +144,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/teams` — `pages/teams.ts` · the named crew teams, each with a charter, a dial and members · `/settings/crew` · none seen.
 - `/settings/origins` — `pages/origins.ts` (1,497 lines) · other forges this one reads and mirrors from · `/migrate` · none seen.
 - `/settings/security` — `pages/security.ts` · the Shield and the evidence an admin needs to act with no AI · `/settings/traffic`, `/settings/backups` · none seen.
+- `/settings/security/controls` — `pages/security_controls.ts` · one line per RED-TEAM control and when it was last checked · `/settings/security` · none seen.
 - `/settings/traffic` — `pages/traffic.ts` · who used the answering time in the last 15 minutes · `/settings/usage`, `/settings/telemetry` · none seen.
 - `/settings/traffic/sources` — `pages/sources.ts` · where people come from and where they go: sources, campaigns, landing pages, exits, a path to a goal, GitHub traffic; each number links to its probe · `/settings/traffic`, `/settings/traffic/scrapes` · none seen.
 - `/settings/traffic/scrapes` — `pages/scrapes.ts` · what was read by repository and path, which networks and addresses did it, a bounded capture, the abuse export · `/settings/traffic`, `/settings/security` · none seen.

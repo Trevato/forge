@@ -258,7 +258,7 @@ export function securityPage(ctx: Ctx): Response {
   const none = (n: number, what: string) => (n === 0 ? html`<span class="muted">None</span>` : html`${n} ${what}`);
   const deleted = deletedRows(db, since);
   const body = html`<p class="small muted mb">
-      Checked ${time(nowIso)}. Something looks wrong? <a href="${RUNBOOK}" title="docs/SECURITY-RUNBOOK.md">The runbook</a> says what to do.
+      Checked ${time(nowIso)}. <a href="/settings/security/controls">Each safeguard, and when it was last tested.</a> Something looks wrong? <a href="${RUNBOOK}" title="docs/SECURITY-RUNBOOK.md">The runbook</a> says what to do.
     </p>
     ${shieldCard(ctx)}
     <dl class="status-rows">
