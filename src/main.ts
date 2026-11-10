@@ -20,6 +20,7 @@ import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
 import { readOnlyFrom } from "./http/read_only.ts";
 import { warmDisplays } from "./display/known.ts";
+import { warmSearch } from "./search/warm.ts";
 import { warmFlow } from "./system/flow_cache.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { refreshCatalogQuietly } from "./packs/catalog.ts";
@@ -577,6 +578,8 @@ void bootHostedChildren(app);
 void warmFlow(app);
 // Every repository's display read behind the listener, so /displays never pays the cold read (#11007).
 void warmDisplays(app).catch(() => undefined);
+// The release probe's search, grepped once behind the listener so the first visit reads the cache (#11059).
+void warmSearch(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
