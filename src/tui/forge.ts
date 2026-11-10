@@ -81,6 +81,7 @@ import { noteRead, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
 import { apiScreen } from "./screens/api.ts";
 import { changelogScreen } from "./screens/changelog.ts";
+import { docsScreen } from "./screens/docs.ts";
 import { keeperScreen } from "./screens/keeper.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
@@ -513,6 +514,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
       title: "API",
       hint: "the forge's endpoints; run a GET",
       run: () => ctx.push(apiScreen(session, ctx)),
+    });
+    // The forge's documentation, as /docs lists it: for anyone.
+    commands.push({
+      id: "docs",
+      title: "Docs",
+      hint: "the forge's documentation; Enter reads one",
+      run: () => ctx.push(docsScreen(ctx)),
     });
     // The last releases with their pulls, as /changelog shows them: for anyone.
     commands.push({
