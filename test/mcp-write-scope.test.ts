@@ -122,9 +122,13 @@ describe("a token that may only read cannot write through any tool", () => {
     const counted = ownCount(app.db);
     const events = app.db.query("SELECT * FROM event ORDER BY rowid").all();
     const unrefused: string[] = [];
+    const planned: string[] = [];
     for (const t of writes) {
       const args = writing(t);
-      expect(t.plansOnly(args)).toBe(false);
+      if (t.plansOnly(args)) {
+        planned.push(t.name);
+        continue;
+      }
       const body = await rpc(ro, t.name, args);
       const text: string | undefined = body.result?.content?.[0]?.text;
       const refused = t.needsAdminScope
@@ -132,6 +136,8 @@ describe("a token that may only read cannot write through any tool", () => {
         : body.result?.isError === true && text === "forbidden: this token may read, not act";
       if (!refused) unrefused.push(t.name);
     }
+    // A tool named here needs valid arguments in WRITE_ARGS: the generic ones only plan or read.
+    expect(planned).toEqual([]);
     expect(unrefused).toEqual([]);
     expect(snapshot(app.db)).toEqual(before);
     expect(ownCount(app.db)).toBeGreaterThanOrEqual(counted);
