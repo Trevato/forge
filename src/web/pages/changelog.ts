@@ -108,8 +108,33 @@ export const localDaysJs = /* js */ `
 })();
 `;
 
-/** The region: the top line, what is on its way, and what went live by day. */
+/** Rendered regions kept by what they were rendered from; a few views (repo filters) are in use at once. */
+const REGIONS = 8;
+const rendered = new Map<string, Html>();
+
+/**
+ * The region, kept per input: the same landings, view, day and minute (rows
+ * speak in "5m ago") render the same markup, and 500 rows cost ~50 ms to build.
+ */
 export function shippedRegion(
+  read: Landings,
+  choice: string,
+  now: Date = new Date(),
+  zone = "UTC",
+  toLive?: { version: string; seconds: number },
+  readable = true,
+): Html {
+  const key = `${Bun.hash(JSON.stringify([read, choice, zone, toLive ?? null, readable])).toString(36)}:${Math.floor(now.getTime() / 60_000)}`;
+  const kept = rendered.get(key);
+  if (kept !== undefined) return kept;
+  const made = renderRegion(read, choice, now, zone, toLive, readable);
+  if (rendered.size >= REGIONS) rendered.delete(rendered.keys().next().value as string);
+  rendered.set(key, made);
+  return made;
+}
+
+/** The region: the top line, what is on its way, and what went live by day. */
+function renderRegion(
   read: Landings,
   choice: string,
   now: Date = new Date(),
