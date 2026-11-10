@@ -1287,9 +1287,9 @@ describe("the forge over MCP", () => {
     expect(uris).toEqual([
       "ui://forge/app",
       "ui://forge/asked",
+      "ui://forge/asks",
       "ui://forge/board",
       "ui://forge/crew",
-      "ui://forge/decision",
       "ui://forge/explore",
       "ui://forge/feed",
       "ui://forge/flow",
@@ -1316,9 +1316,9 @@ describe("the forge over MCP", () => {
     expect(meta("apps")).toBe("ui://forge/app");
     expect(meta("new_app")).toBe("ui://forge/app");
     expect(meta("now")).toBe("ui://forge/crew");
-    expect(meta("asks")).toBe("ui://forge/decision");
+    expect(meta("asks")).toBe("ui://forge/asks");
     expect(meta("milestones")).toBe("ui://forge/milestones");
-    expect(meta("asks_act")).toBe("ui://forge/decision");
+    expect(meta("asks_act")).toBe("ui://forge/asks");
     expect(meta("map")).toBe("ui://forge/map");
     expect(meta("boards")).toBe("ui://forge/board");
     expect(meta("feed")).toBe("ui://forge/feed");
@@ -1433,7 +1433,7 @@ describe("the forge over MCP", () => {
     expect(cardFor("issue", {}, "https://forge.test", { repo: "alice/game" })).toBeUndefined();
   });
 
-  test("the decision card links each ask to its pull or issue, and to nothing unsafe", async () => {
+  test("the asks card links each ask to its pull or issue, and to nothing unsafe", async () => {
     const { cardFor } = await import("../src/web/studio/cards.ts");
     const words = { decision: "Ship it?", options: ["ship", "close"] };
     const rows = [
@@ -1529,7 +1529,7 @@ describe("the forge over MCP", () => {
     expect(card.kind).toBe("app");
     expect(card.rows.some((r: any) => r.label === "alice/game")).toBe(true);
     const asks = await call(rw, "tools/call", { name: "asks", arguments: {} });
-    expect(asks.body.result.structuredContent.card.kind).toBe("decision");
+    expect(asks.body.result.structuredContent.card.kind).toBe("asks");
   });
 
   test("ship and close card actions never apply at once and always meet the target tool's required fields", async () => {
@@ -1547,7 +1547,7 @@ describe("the forge over MCP", () => {
     ];
     let actions = 0;
     for (const card of cards)
-      for (const a of card!.actions) {
+      for (const a of [...card!.actions, ...card!.rows.flatMap((r) => r.actions ?? [])]) {
         actions++;
         expect(a.args["dryRun"]).not.toBe(false);
         const t = tools.find((x: any) => x.name === a.tool);

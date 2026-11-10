@@ -57,8 +57,8 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `apps` | — | Apps you can see: live or not, where served, how each runs, what works | 343 |
 | `archive` | — | Archive or wake a repository (`archived`) | 332 |
 | `asked` | — | What people asked the crew for: unmerged by default, oldest first | 372 |
-| `asks` | — | What waits on you, most important first; saved filter applies | 457 |
-| `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 539 |
+| `asks` | — | What waits on you, most important first; saved filter applies | 453 |
+| `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 535 |
 | `asks_decide` | — | Answer a hand-over: the decider (`parked:<id>`), or `give_back` to its builder (`handover:`/`assigned:<id>`) | 270 |
 | `asks_proposal` | — | Act on a wave proposal: `approve`, `redirect` (`words`), `later` (`again`) | 315 |
 | `asks_undecide` | — | Put a set-aside card back on your board, within a day | 208 |
@@ -484,9 +484,15 @@ answers
 
 - **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `releases`, `waves` (one wave), `map`, `feed`, `pull`, `pulls` and `asked` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
-  `decision`, `release`, `wave`, `map`, `feed`, `pull`, `pulls`, `asked`. The Plan card (`map`) shows one row per pillar with
+  `asks`, `release`, `wave`, `map`, `feed`, `pull`, `pulls`, `asked`. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
-  to their pages; it has no actions. The decision card's rows link to the pull or issue
+  to their pages; it has no actions. The asks card (`ui://forge/asks`, drawn by `asks`) is one row per waiting decision:
+  what, which repository, how long it has waited, and its one button on the row itself.
+  **Ship** is for a green or agent change, **Decide** for one parked issue and **Decline** otherwise.
+  A proposal, a pause and a row of several parked issues have no button.
+  The buttons call `asks_act` or `asks_decide`, which check the same permission as the page's buttons.
+  Your saved filter applies to it as to the answer; an empty inbox is one line, `Nothing waits on you.`
+  The rows link to the pull or issue
   they are about (a paused repository's row has none).
   The Apps card (`apps`) links each `owner/name` row to the app's page on the forge and adds a
   linked production row when the app has an http(s) URL; the `new_app` card links its
@@ -500,10 +506,8 @@ answers
   buttons ask the host to call a tool (`asks_act`, `say`, `stop`, `tell`); the
   host decides, and every call is checked as any other. A card with a
   words action shows one text field: **Tell <app>** (app card) sends the
-  words to `tell` as `text` with `repo` and `context.said`; **Redirect**
-  (decision card) sends them to `say` with the first ask's `repo`, `number`
-  and `text`. Empty words send nothing. `asks` rows carry `repo`
-  (`owner/name`) beside `number` for this.
+  words to `tell` as `text` with `repo` and `context.said`.
+  Empty words send nothing.
 - **The manifest's shape.** `GET /api/v1/here?path=/owner/name` (or the
   `here` tool with the page URL) answers `{ here, you, can, mcp, docs }`.
   `you.as` is `anonymous`, `reader`, `writer`, `owner` or `agent`; `can` is

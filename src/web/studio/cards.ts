@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release";
 
 export interface CardRow {
   readonly label: string;
@@ -20,6 +20,8 @@ export interface CardRow {
   readonly link?: string;
   /** How many steps the row is nested (a tree): the card pads the label by this much. */
   readonly depth?: number;
+  /** The row's own buttons: what the person can do with this one row. */
+  readonly actions?: readonly CardAction[];
 }
 export interface CardAction {
   readonly label: string;
@@ -42,17 +44,17 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   apps: "app",
   now: "crew",
   runs: "run",
-  asks: "decision",
+  asks: "asks",
   milestones: "milestones",
   releases: "release",
-  asks_act: "decision",
+  asks_act: "asks",
   waves: "wave",
   map: "map",
   feed: "feed",
@@ -71,7 +73,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   app: "Apps",
   run: "Working now",
-  decision: "Waiting on you",
+  asks: "Waiting on you",
   wave: "Wave",
   map: "Plan",
   feed: "Feed",
@@ -448,38 +450,35 @@ export function cardFor(
       if (r["run"] && actions.length < 3)
         actions.push({ label: `Stop ${text(r["who"])}`, tool: "stop", args: { repo: text(r["app"]), run: text(r["run"]) } });
     }
-  } else if (kind === "decision") {
+  } else if (kind === "asks") {
     const asks = list(obj(value)["rows"]).map(obj);
-    status = asks.length === 0 ? "nothing waits" : `${asks.length} waiting`;
+    status = asks.length === 0 ? "Nothing waits on you." : `${asks.length} waiting`;
     for (const a of asks.slice(0, LIMIT)) {
       const words = obj(a["words"]);
       const repo = text(a["repo"]);
       const number = Number(a["number"]);
       const page = a["numberOf"] === "pull" ? "pulls" : a["numberOf"] === "issue" ? "issues" : "";
       const at = text(a["link"]);
+      const waited = text(a["since"]) === "" ? "" : `waiting ${timeAgo(text(a["since"]))}`.replace(" ago", "");
+      const what = `${text(words["decision"])} ${list(words["options"]).map(text).join(" / ")}`.trim();
+      const items = list(a["items"]).map(text);
+      const kindOf = text(a["kind"]);
+      // No `dryRun`: the press is the dry run `asks_act` defaults to, and the
+      // host shows what would change before anything ships or closes. The
+      // tools check the same permission the page's buttons do.
+      const one: CardAction | undefined =
+        items.length === 0 || kindOf === "proposal" || kindOf === "paused" ? undefined
+        : kindOf === "look" || kindOf === "review" ? { label: "Ship", tool: "asks_act", args: { action: "ship", items } }
+        : kindOf === "parked" ? (items.length === 1 ? { label: "Decide", tool: "asks_decide", args: { item: items[0] } } : undefined)
+        : { label: "Decline", tool: "asks_act", args: { action: "close", items } };
       rows.push({
         label: text(a["line"]),
-        value: `${text(words["decision"])} ${list(words["options"]).map(text).join(" / ")}`.trim(),
+        value: [waited, what].filter((x) => x !== "").join(" · "),
         ...(web(origin) && slugOf(repo) && Number.isInteger(number) && number > 0 && page !== ""
           ? { link: `${origin}/${repo}/${page}/${number}` }
           : web(origin) && here(origin, at) ? { link: origin + at } : {}),
+        ...(one === undefined ? {} : { actions: [one] }),
       });
-    }
-    const first = asks[0];
-    if (first !== undefined) {
-      const items = list(first["items"]).map(text);
-      const kindOf = text(first["kind"]);
-      // No `dryRun`: the press is the dry run `asks_act` defaults to, and the
-      // host shows what would change before anything ships or closes. Redirect
-      // sends the typed words to `say` on the row's own pull or issue.
-      if (kindOf === "look" || kindOf === "review")
-        actions.push({ label: "Approve", tool: "asks_act", args: { action: "ship", items } });
-      actions.push({ label: "Decline", tool: "asks_act", args: { action: "close", items } });
-      actions.push({ label: "Dismiss", tool: "asks_act", args: { action: "dismiss", items } });
-      const repo = text(first["repo"]);
-      const number = Number(first["number"]);
-      if (repo !== "" && Number.isInteger(number) && number > 0)
-        actions.push({ label: "Redirect", tool: "say", args: { repo, number }, words: true });
     }
   } else if (kind === "map") {
     const v = obj(value);
@@ -577,6 +576,21 @@ export const SHELL_JS = `
 const root = document.getElementById("card");
 const el = (tag, text, cls) => { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; return e; };
 let n = 0;
+let field = null;
+function button(a) {
+  const b = el("button", a.label);
+  b.onclick = () => {
+    let args = a.args;
+    if (a.words) {
+      const said = field.value.trim();
+      if (said === "") { field.focus(); return; }
+      args = { ...a.args, text: said };
+      if (a.args.context && typeof a.args.context === "object") args.context = { ...a.args.context, said };
+    }
+    parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "tools/call", params: { name: a.tool, arguments: args } }, "*");
+  };
+  return b;
+}
 function draw(card) {
   root.replaceChildren(el("h2", card.title), el("p", card.status, "status"));
   const dl = document.createElement("dl");
@@ -584,25 +598,14 @@ function draw(card) {
     const dt = el("dt", r.label);
     if (r.depth > 0) dt.style.paddingInlineStart = Math.min(8, r.depth) * 1.25 + "em";
     if (r.link && (r.link.startsWith("https://") || r.link.startsWith("http://"))) { const a = el("a", r.label); a.href = r.link; a.target = "_blank"; a.rel = "noopener noreferrer"; a.onclick = (ev) => { ev.preventDefault(); parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "ui/open-link", params: { url: r.link } }, "*"); }; dt.replaceChildren(a); }
-    dl.append(dt, el("dd", r.value));
+    const dd = el("dd", r.value);
+    for (const a of r.actions || []) dd.append(button(a));
+    dl.append(dt, dd);
   }
   root.append(dl);
-  const field = card.actions.some((a) => a.words) ? document.createElement("input") : null;
+  field = card.actions.some((a) => a.words) ? document.createElement("input") : null;
   if (field) { field.type = "text"; field.maxLength = 2000; field.placeholder = "Your words"; field.setAttribute("aria-label", "Your words"); root.append(field); }
-  for (const a of card.actions) {
-    const b = el("button", a.label);
-    b.onclick = () => {
-      let args = a.args;
-      if (a.words) {
-        const said = field.value.trim();
-        if (said === "") { field.focus(); return; }
-        args = { ...a.args, text: said };
-        if (a.args.context && typeof a.args.context === "object") args.context = { ...a.args.context, said };
-      }
-      parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "tools/call", params: { name: a.tool, arguments: args } }, "*");
-    };
-    root.append(b);
-  }
+  for (const a of card.actions) root.append(button(a));
 }
 addEventListener("message", (e) => {
   if (e.source !== parent) return;

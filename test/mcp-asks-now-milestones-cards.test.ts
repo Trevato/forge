@@ -12,7 +12,7 @@ import { claimRun, createRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { CARD_URI, cardFor } from "../src/web/studio/cards.ts";
+import { CARD_SHELL, CARD_URI, SHELL_JS, cardFor } from "../src/web/studio/cards.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { seedMilestones } from "./fixtures/milestones-seed.ts";
 import { listVia } from "./mcp-list.ts";
@@ -68,22 +68,41 @@ describe("MCP asks, now and milestones cards", () => {
     const body = await call("asks");
     const text = JSON.parse(body.result.content[0].text);
     const card = body.result.structuredContent.card;
-    expect(CARD_URI(card.kind)).toBe("ui://forge/decision");
+    expect(CARD_URI(card.kind)).toBe("ui://forge/asks");
     expect(card.title).toBe("Waiting on you");
     expect(card.rows.length).toBe(text.rows.length);
     expect(card.rows.map((r: any) => r.label)).toEqual(text.rows.map((r: any) => r.line));
     expect(card.rows.some((r: any) => r.link === `${servers.url}/alice/game/issues/${text.rows.find((x: any) => x.numberOf === "issue")?.number}`)).toBe(true);
     rooted(servers.url, card.rows);
-    const act = card.actions.filter((a: any) => a.tool === "asks_act");
-    expect(act.map((a: any) => a.args.action)).toEqual(expect.arrayContaining(["close", "dismiss"]));
-    for (const a of act) expect(a.args.items).toEqual(text.rows[0].items);
+    // Each row carries its one action, on its own items.
+    for (const [i, r] of card.rows.entries()) {
+      if (r.actions === undefined) continue;
+      expect(r.actions.length).toBe(1);
+      const args = r.actions[0].args;
+      expect(args.items ?? [args.item]).toEqual(r.actions[0].tool === "asks_decide" ? [text.rows[i].items[0]] : text.rows[i].items);
+    }
+    expect(card.rows.some((r: any) => r.actions?.[0]?.tool === "asks_act")).toBe(true);
+    expect(card.rows[0].value).toMatch(/^waiting /);
     // The tools/list entry names the card.
     const list = await listVia(async (p) => (await fetch(`${servers.url}/mcp`, { method: "POST",
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
       body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: p }) })).json());
     const by = (n: string) => list.result.tools.find((t: any) => t.name === n)?._meta?.ui?.resourceUri;
-    expect(by("asks")).toBe("ui://forge/decision");
+    expect(by("asks")).toBe("ui://forge/asks");
     expect(by("milestones")).toBe("ui://forge/milestones");
+  });
+
+  test("asks card: parked is Decide, an empty inbox is one calm line, and nothing in it is markup", () => {
+    const row = (kind: string, items: string[], line: string) => ({ line, kind, items, repo: "a/b", number: 1, numberOf: "issue", since: "2020-01-01T00:00:00Z", words: { decision: "d", options: ["x"] } });
+    const card = cardFor("asks", { rows: [row("parked", ["parked:i1"], "<script>alert(1)</script>"), row("look", ["look:p1"], "l"), row("stopped", ["stopped:p2"], "s")] }, "https://forge.test")!;
+    expect(card.rows.map((r) => r.actions?.[0]?.label)).toEqual(["Decide", "Ship", "Decline"]);
+    expect(card.rows[0]!.actions![0]).toEqual({ label: "Decide", tool: "asks_decide", args: { item: "parked:i1" } });
+    expect(card.rows[0]!.label).toBe("<script>alert(1)</script>");
+    expect(SHELL_JS).not.toMatch(/innerHTML|insertAdjacentHTML|outerHTML/);
+    expect(CARD_SHELL("asks")).not.toContain("<script>alert");
+    const empty = cardFor("asks", { rows: [] }, "https://forge.test")!;
+    expect(empty.rows).toEqual([]);
+    expect(empty.status).toBe("Nothing waits on you.");
   });
 
   test("asks_act: a done action's receipt carries Undo with its operation; a plan has no card", () => {
