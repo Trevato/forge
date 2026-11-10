@@ -21,17 +21,21 @@ import { fill, len, split } from "../ui/layout.ts";
 import { ListState, drawList, type ListRow } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
 import { dollars, signed } from "../../web/studio/money_line.ts";
+import { positionWord } from "../../core/slider.ts";
 
 const figures = (m: MoneyLine): string => `cost ${dollars(m.cost)} · revenue ${dollars(m.revenue)} · gap ${signed(m.gap)}`;
 const hours = (s: number): string => `${(s / 3600).toFixed(1)} h`;
 const pct = (part: number, whole: number): string => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : "0%");
 
-/** The month, today, the slider, then each of the thirty days, newest first. */
+/**
+ * The month, today, the slider in the board's words (`positionWord`,
+ * #11102: "balanced", not "50"), then each of the thirty days, newest first.
+ */
 export function forgeMoneyRows(m: ForgeMoney): ListRow[] {
   return [
     { title: `This month (${m.month})`, meta: figures(m.thisMonth) },
     { title: `Today (${m.today.day})`, meta: figures(m.today) },
-    { title: "Economics slider", meta: String(m.position) },
+    { title: "Economics slider", meta: positionWord(m.position) },
     ...[...m.days].reverse().map((d) => ({ title: d.day, meta: figures(d) })),
   ];
 }

@@ -14,6 +14,7 @@
 
 Drawn by `src/web/studio/money_line.ts`; styled in `src/web/style/content.ts`.
 
-- `.money-line` — the board's line: this month's cost, revenue and gap on one row, today's gap and the economics slider (the one link, in the accent) on a second, and the chart beside them. Two 24px rows are reserved, three at 480px and under where the first wraps once; the chart is a fixed size, zeros included, so nothing shifts.
+- `.money-line` — the board's line: this month's cost, revenue, gap and the slider's word (`spend: balanced`) on one row, today's gap on a second, and the chart beside them. Two 24px rows are reserved, three at 480px and under where the first wraps once; the chart is a fixed size, zeros included, so nothing shifts.
 - `.money-gap` — the gap, signed with + or −, in the text colour; `data-sign="down"` (a loss) alone takes `--attn`. The accent is never a gap's: it is for the link. The app page's month card wears it too.
+- `.money-spend` — the slider's position in words (#11102), the line's one link to Settings → Economics, in the accent; it never breaks inside itself, so the row wraps between its parts.
 - `.money-chart` — the thirty-day SVG, 240 × 48, server-rendered, no library. `.money-cost` (muted) and `.money-revenue` (text colour) are its two polylines; `.money-band` holds one polygon per pair of days, `data-sign` tinting the gap between them: a faint text-colour wash for a profit, `--attn` for a loss.

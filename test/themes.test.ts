@@ -65,7 +65,7 @@ describe("the accent as text", () => {
     expect(contrast("#2563eb", "#2563eb")).toBe(1);
   });
 
-  // The board's month gap is small text in the accent (#11056): it must read on the ground.
+  // The board's "spend: balanced" link is small text in the accent (#11056, #11102): it must read on the ground.
   test.each(THEME_NAMES)("%s: the accent on the ground holds 4.5:1", (name) => {
     const t = THEMES[name].tokens;
     expect(contrast(t.accent, t.bg)).toBeGreaterThanOrEqual(4.5);

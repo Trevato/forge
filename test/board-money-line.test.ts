@@ -1,8 +1,8 @@
 /**
  * The board's money line (#11056): one line, "This month · cost $10.00 ·
- * revenue $12.00 · +$2.00", the gap the one link to Settings → Economics,
- * marked by its sign and named for a screen reader, and the slider's
- * position beside it as text.
+ * revenue $12.00 · +$2.00 · spend: balanced", the gap marked by its sign,
+ * and the slider's position in words the one link to Settings → Economics,
+ * named for a screen reader (#11102).
  *
  * The board reads the real clock, so the prices that spread over the month
  * (the owned box, storage, awake time) are set to zero, and only crew spend
@@ -28,6 +28,7 @@ import { recordUsage, type UsageEntry } from "../src/core/usage.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { getPrices, setEconomics, setPrices } from "../src/settings/economics.ts";
+import { positionWord } from "../src/core/slider.ts";
 
 describe("the board's money line", () => {
   let dataDir: string;
@@ -62,8 +63,9 @@ describe("the board's money line", () => {
     if (!m) throw new Error("no money line on the board");
     return m[0].replace(/\s+/g, " ");
   };
-  const gapLink = (sign: string, figure: string): string =>
-    `<a class="money-gap num" data-sign="${sign}" href="/settings/economics" aria-label="Month gap ${figure}, open Economics settings">${figure}</a>`;
+  const gapSpan = (sign: string, figure: string): string => `<span class="money-gap num" data-sign="${sign}">${figure}</span>`;
+  const spendLink = (word: string): string =>
+    `<a class="money-spend" href="/settings/economics" aria-label="Spend slider: ${word}, open Economics settings">spend: ${word}</a>`;
   const words = (section: string): string => section.replace(/<svg[\s\S]*<\/svg>/, "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ");
 
   beforeAll(async () => {
@@ -95,7 +97,6 @@ describe("the board's money line", () => {
       },
       alice.id,
     );
-    setEconomics(app.db, { position: 62, marginPct: 20 }, alice.id);
     const res = await fetch(`${servers.url}/signin`, {
       method: "POST",
       redirect: "manual",
@@ -109,18 +110,44 @@ describe("the board's money line", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("with nothing spent the slot is there, even, at zero", async () => {
+  test("with nothing spent and no position saved: even, at zero, the default's word", async () => {
     const section = await moneySection();
-    expect(words(section)).toContain("This month · cost $0.00 · revenue $0.00 · $0.00");
-    expect(section).toContain(gapLink("even", "$0.00"));
+    expect(words(section)).toContain("This month · cost $0.00 · revenue $0.00 · $0.00 · spend: balanced");
+    expect(section).toContain(gapSpan("even", "$0.00"));
+    expect(section).toContain(spendLink("balanced"));
   });
 
-  test("a profit: the line, the gap the one link, the slider beside it as text", async () => {
+  test("each slider position reads as its word, linked to Settings → Economics", async () => {
+    for (const [position, word] of [
+      [10, "lean"],
+      [0, "cheapest"],
+      [80, "responsive"],
+      [100, "most responsive"],
+    ] as const) {
+      setEconomics(app.db, { position, marginPct: 20 }, alice.id);
+      const section = await moneySection();
+      expect(words(section)).toContain(`spend: ${word}`);
+      expect(section).toContain(spendLink(word));
+      expect(section.match(/<a /g)?.length).toBe(1);
+    }
+    expect([positionWord(39), positionWord(40), positionWord(60), positionWord(61), positionWord(-1), positionWord(NaN)]).toEqual([
+      "lean",
+      "balanced",
+      "balanced",
+      "responsive",
+      "balanced",
+      "balanced",
+    ]);
+    setEconomics(app.db, { position: 62, marginPct: 20 }, alice.id);
+  });
+
+  test("a profit: the line, the gap marked up, the slider's word the one link", async () => {
     spend(notesId, 10);
     const section = await moneySection();
-    expect(words(section)).toContain("This month · cost $10.00 · revenue $12.00 · +$2.00");
-    expect(section).toContain(gapLink("up", "+$2.00"));
-    expect(words(section)).toContain("Today: gap +$2.00 · Economics slider: 62");
+    expect(words(section)).toContain("This month · cost $10.00 · revenue $12.00 · +$2.00 · spend: responsive");
+    expect(section).toContain(gapSpan("up", "+$2.00"));
+    expect(section).toContain(spendLink("responsive"));
+    expect(words(section)).toContain("Today: gap +$2.00");
     expect(section.match(/<a /g)?.length).toBe(1);
     // The same function as the statement's sum: the board says what readForgeMoney says.
     const m = readForgeMoney(app, alice);
@@ -135,8 +162,8 @@ describe("the board's money line", () => {
     closeAwake(app.db, { repoId: notesId, env: "pr-1", at: new Date(Date.parse(start) + 60_000).toISOString() });
     const section = await moneySection();
     expect(words(section)).toContain("This month · cost $15.00 · revenue $12.00 · -$3.00");
-    expect(section).toContain(gapLink("down", "-$3.00"));
-    expect(words(section)).toContain("Economics slider: 62");
+    expect(section).toContain(gapSpan("down", "-$3.00"));
+    expect(words(section)).toContain("· -$3.00 · spend: responsive");
     expect(section.match(/<a /g)?.length).toBe(1);
   });
 });
