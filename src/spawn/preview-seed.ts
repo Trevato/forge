@@ -47,16 +47,19 @@ import { createToken, listTokens } from "../core/tokens.ts";
 import { recordUsage } from "../core/usage.ts";
 import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { createUser, getUserByName, type User } from "../core/users.ts";
+import { diskSummary, recordReading } from "../machines/disk_readings.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { PREVIEW_CONFIG_FILES } from "./preview-config.ts";
 import {
   PREVIEW_ADMIN,
   PREVIEW_APP,
   PREVIEW_APP_PAGE,
+  PREVIEW_DISK_ALERT,
   PREVIEW_FORKS,
   PREVIEW_HELD_PAGE,
   PREVIEW_HELD_THEMES,
   PREVIEW_ITERATIONS_PAGE,
+  PREVIEW_MACHINES_PAGE,
   PREVIEW_PULL,
   PREVIEW_PULL_PAGE,
   PREVIEW_MOVED,
@@ -140,6 +143,56 @@ async function seedMoveSection(app: App, admin: User): Promise<Result<void, stri
   }
 }
 
+/** One NVMe reading in smartctl's JSON shape (`smartctl -j -a`), as a host files it. */
+function nvmeReading(o: { name: string; units: number; spare: number; used: number }): string {
+  return JSON.stringify({
+    smartctl: { version: [7, 4] },
+    device: { name: o.name, type: "nvme", protocol: "NVMe" },
+    model_name: "Samsung SSD 980 PRO 1TB",
+    firmware_version: "5B2QGXA7",
+    user_capacity: { bytes: 1_000_204_886_016 },
+    nvme_smart_health_information_log: {
+      critical_warning: 0, temperature: 41, available_spare: o.spare, available_spare_threshold: 10,
+      percentage_used: o.used, data_units_written: o.units, media_errors: 0, power_on_hours: 1234,
+      unsafe_shutdowns: 7, warning_temp_time: 3, critical_comp_time: 0,
+    },
+  });
+}
+
+/**
+ * Disk readings for the sample's `standard` machine (#10466), once: a healthy
+ * disk, one that needs a look (spare under its threshold, wear at 85%), and
+ * one behind a controller. Fake numbers in a preview only, so the owner's
+ * look of Settings › Machines has every kind of line. Refused unless the page
+ * answers 200 and draws the alerting line.
+ */
+async function seedDisks(app: App, admin: User): Promise<Result<void, string>> {
+  if (diskSummary(app.db, "standard").devices.length === 0) {
+    const now = Date.now();
+    // 1e8 units × 512 000 B = 51.2 TB of the 980 PRO's 600 TBW.
+    const filed = [
+      recordReading(app.db, "standard", "nvme0", nvmeReading({ name: "/dev/nvme0", units: 100_000_000, spare: 100, used: 4 }), now),
+      recordReading(app.db, "standard", PREVIEW_DISK_ALERT, nvmeReading({ name: "/dev/nvme1", units: 1_000_000_000, spare: 5, used: 85 }), now),
+      recordReading(app.db, "standard", "sda", JSON.stringify({ smartctl: { version: [7, 4] }, device: { name: "/dev/sda", type: "megaraid,0" } }), now),
+    ];
+    const refused = filed.find((r) => !r.ok);
+    if (refused !== undefined && !refused.ok) return err(`the sample disk readings: ${refused.reason}`);
+  }
+  const http = forgeHttp(app);
+  const session = createSession(app.db, admin.id);
+  try {
+    const res = await http.handle(
+      new Request(`http://localhost${PREVIEW_MACHINES_PAGE}`, { headers: { cookie: `forge_session=${session.token}` } }),
+    );
+    if (res.status !== 200) return err(`${PREVIEW_MACHINES_PAGE} answers ${String(res.status)}, not 200`);
+    if (!(await res.text()).includes(`data-disk="${PREVIEW_DISK_ALERT}"`)) return err(`${PREVIEW_MACHINES_PAGE} draws no disk line`);
+  } finally {
+    destroySession(app.db, session.token);
+    http.close();
+  }
+  return ok();
+}
+
 /** The seeded wave's version and headline, which the owner's /waves look shows. */
 export const PREVIEW_WAVE = "0.1.0";
 export const PREVIEW_WAVE_HEADLINE = "The sample says hello";
@@ -200,6 +253,8 @@ export async function seedPreview(
     if (!settings.ok) return settings;
     const moveSection = await seedMoveSection(app, admin);
     if (!moveSection.ok) return moveSection;
+    const disks = await seedDisks(app, admin);
+    if (!disks.ok) return disks;
     const files = await seedConfigFiles(app, admin);
     return files.ok ? ok({ seeded: false }) : files;
   }
@@ -210,6 +265,8 @@ export async function seedPreview(
   if (!settings.ok) return settings;
   const moveSection = await seedMoveSection(app, admin);
   if (!moveSection.ok) return moveSection;
+  const disks = await seedDisks(app, admin);
+  if (!disks.ok) return disks;
   const files = await seedConfigFiles(app, admin);
   return files.ok ? ok({ seeded: true }) : files;
 }

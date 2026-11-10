@@ -139,6 +139,15 @@ export const PREVIEW_SETTINGS_PAGES: readonly string[] = [
   "/settings/usage",
 ];
 
+/**
+ * The sample's Settings › Machines with the disks the seed records for its
+ * `standard` machine (#10466): healthy, alerting and behind a controller,
+ * closed; and the alerting line opened by its figures' fragment.
+ */
+export const PREVIEW_MACHINES_PAGE = `${PREVIEW_REPO_HOME}/settings/machines`;
+export const PREVIEW_DISK_ALERT = "nvme1";
+export const PREVIEW_DISK_OPEN_LOOK = `${PREVIEW_MACHINES_PAGE}#disk-standard-${PREVIEW_DISK_ALERT}-figures`;
+
 export interface OwnerLook {
   readonly page: string;
   readonly kind: LookKind;
@@ -168,6 +177,8 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   PREVIEW_ISSUE_EDIT_PAGE,
   PREVIEW_RESILIENCE_PAGE,
   PREVIEW_SEARCH_PAGE,
+  PREVIEW_MACHINES_PAGE,
+  PREVIEW_DISK_OPEN_LOOK,
   ...PREVIEW_SETTINGS_PAGES,
 ].flatMap((page) => (["desktop", "phone"] as const).map((kind) => ({ page, kind })));
 

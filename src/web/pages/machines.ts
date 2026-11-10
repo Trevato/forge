@@ -32,6 +32,9 @@ import {
 import { page } from "../layout.ts";
 import { html } from "../html.ts";
 import { badge, btn, icon, row, time } from "../ui.ts";
+import { readMachine } from "../../actions/disk_readings.ts";
+import { WEAR_ALERT_PERCENT } from "../../machines/disk_health.ts";
+import type { DeviceSummary } from "../../machines/disk_readings.ts";
 import { ghosttyWasmAsset, machineTermAsset } from "../machine-term-asset.ts";
 import { settingsPageResponse } from "./settings.ts";
 
@@ -59,7 +62,76 @@ export async function machinesSettingsPage(ctx: Ctx): Promise<Response> {
   const config = await timePhaseAsync(ctx.request, "machines", () => repoMachines(ctx.app, repo));
   const sessions = timePhase(ctx.request, "sessions", () => lastSessions(ctx.app.db, repo.id));
   const states = machineStates(ctx.app, repo.id, ctx.auth.user!.id);
-  return timePhase(ctx.request, "render", () => render(ctx, repo, config.machines, sessions, states));
+  // Readings are the host's, keyed by machine name alone, so they are shown
+  // to the owner (`mayHandleDisks`) and to no other writer: a name two
+  // repositories share must not carry one repository's disks to the other.
+  const disks = timePhase(ctx.request, "disks", () => {
+    const seen = new Map<string, readonly DeviceSummary[]>();
+    for (const m of config.machines) {
+      const r = readMachine(ctx.app, ctx.auth.user, m.name);
+      if (r.ok) seen.set(m.name, r.value.devices);
+    }
+    return seen;
+  });
+  return timePhase(ctx.request, "render", () => render(ctx, repo, config.machines, sessions, states, disks));
+}
+
+/** Terabytes as vendors state them (1 TB = 10^12 bytes), to two places. */
+const tb = (bytes: number): string => (bytes / 1e12).toFixed(2);
+
+/**
+ * One disk, a `row()` under its machine's row: device and model as the title,
+ * written of rated TBW with its percentage and the temperature as the meta
+ * (each wraps on its own in a `.setting-list`, so 360px never scrolls
+ * sideways). The row folds open to every figure beside its rating. An alert
+ * adds a badge, and its reasons in words on a muted line in the row's `after`
+ * slot, outside the `<details>`, so they read with the line closed; nothing
+ * else changes colour.
+ */
+export function diskRow(machine: string, d: DeviceSummary) {
+  if (d.kind === "behind-controller")
+    return row({ title: d.device, meta: html`behind a controller; SMART not visible`, data: { disk: d.device } });
+  const r = d.reading;
+  const spec = d.spec;
+  const written = spec
+    ? `${tb(r.bytesWritten)} of ${spec.ratedTbw} TBW (${((r.bytesWritten / (spec.ratedTbw * 1e12)) * 100).toFixed(1)}%)`
+    : `${tb(r.bytesWritten)} TB written · no spec sheet`;
+  const alert = d.assessment.level === "alert";
+  const rated = (v: string, r2: string | undefined) => (r2 === undefined ? html`${v} <span class="muted">(no spec sheet)</span>` : html`${v} <span class="muted">(rated ${r2})</span>`);
+  const figures: [string, ReturnType<typeof html>][] = [
+    ["Percentage used", html`${r.percentageUsed}% <span class="muted">(alert at ${WEAR_ALERT_PERCENT}%)</span>`],
+    ["Available spare", html`${r.availableSpare}% <span class="muted">(threshold ${r.spareThreshold}%)</span>`],
+    ["Media errors", html`${r.mediaErrors}`],
+    ["Minutes above warning", rated(`${r.warnTempMinutes}`, spec ? `warning ${spec.warnTempC} °C` : undefined)],
+    ["Minutes above critical", rated(`${r.critTempMinutes}`, spec ? `critical ${spec.critTempC} °C` : undefined)],
+    ["Power-on hours", html`${r.powerOnHours}`],
+    ["Unsafe shutdowns", html`${r.unsafeShutdowns}`],
+    ["Written", rated(`${tb(r.bytesWritten)} TB`, spec ? `${spec.ratedTbw} TBW, ${spec.warrantyYears}-year warranty` : undefined)],
+    ["Projected TBW date", html`${d.ratedReachedAt ?? (spec ? "no projection yet" : "no spec sheet")}`],
+  ];
+  return row({
+    lead: icon("chevronRight"),
+    title: `${d.device} · ${r.model}`,
+    meta: html`${written} · ${r.temperatureC} °C`,
+    ...(alert ? { trail: badge("needs a look", { tone: "attn" }) } : {}),
+    // The body's id is a link to the line open: a fragment that names
+    // something inside a closed <details> opens it (HTML's ancestor-details
+    // revealing), so `#disk-<machine>-<device>-figures` shares it opened.
+    fold: {
+      id: `disk-${machine}-${d.device}`,
+      open: false,
+      body: html`<div class="card-body" id="disk-${machine}-${d.device}-figures"><dl class="row-facts" data-disk-figures>${figures.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl></div>`,
+    },
+    ...(alert ? { after: html`<p class="muted small" data-disk-reasons>${d.assessment.reasons.join("; ")}</p>` } : {}),
+    data: { disk: d.device },
+  });
+}
+
+/** A machine's disk rows, or one line saying there is no reading yet; nothing when its disks are not this person's to see. */
+function diskChildren(name: string, devices: readonly DeviceSummary[] | undefined) {
+  if (devices === undefined) return undefined;
+  if (devices.length === 0) return [row({ title: html`<span class="muted">No disk reading yet.</span>`, data: { "disks-empty": name } })];
+  return devices.map((d) => diskRow(name, d));
 }
 
 /** The state line as muted text in a row's meta, which wraps; nothing when no shell is live. */
@@ -70,24 +142,31 @@ function stateMeta(state: MachineState | undefined) {
 }
 
 /** One data-nav link per machine, to its shell; none when there are no machines. */
-export function machineRows(repo: Repo, list: readonly Machine[], states: ReadonlyMap<string, MachineState> = new Map()) {
-  return html`${list.map((m) =>
-    row({
+export function machineRows(
+  repo: Repo,
+  list: readonly Machine[],
+  states: ReadonlyMap<string, MachineState> = new Map(),
+  disks: ReadonlyMap<string, readonly DeviceSummary[]> = new Map(),
+) {
+  return html`${list.map((m) => {
+    const children = diskChildren(m.name, disks.get(m.name));
+    return row({
       lead: icon("terminal"),
       title: m.name,
       meta: html`Tools: ${m.tools.length === 0 ? "none" : m.tools.join(", ")} · Reach: ${m.reach.length === 0 ? "the forge only" : "the forge and its apps"}${stateMeta(states.get(m.name))}`,
       href: shellPath(repo, m.name),
       nav: true,
       data: { machine: m.name },
-    }),
-  )}`;
+      ...(children === undefined ? {} : { children }),
+    });
+  })}`;
 }
 
-function render(ctx: Ctx, repo: Repo, list: readonly Machine[], sessions: readonly SessionRecord[], states: ReadonlyMap<string, MachineState>): Response {
+function render(ctx: Ctx, repo: Repo, list: readonly Machine[], sessions: readonly SessionRecord[], states: ReadonlyMap<string, MachineState>, disks: ReadonlyMap<string, readonly DeviceSummary[]>): Response {
   const machines = html`<section class="settings-block">
     <h2>Machines</h2>
     <ul class="list setting-list" id="machines">
-      ${machineRows(repo, list, states)}
+      ${machineRows(repo, list, states, disks)}
     </ul>
   </section>`;
   // The mark is not colour alone: a running shell carries the word in a badge,
