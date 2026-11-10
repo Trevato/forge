@@ -17,6 +17,7 @@ import { sourceFor } from "../view/source.ts";
 import { fleetCommand } from "./screens/fleet.ts";
 import { dataCommand } from "./screens/data.ts";
 import { packsCommand } from "./screens/packs.ts";
+import { workCommand } from "./screens/work.ts";
 import { shellsScreen } from "./screens/shells.ts";
 import { forkTreeScreen } from "./screens/fork_tree.ts";
 import { roadmapScreen } from "./screens/roadmap.ts";
@@ -287,6 +288,8 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    // The owner's read-only mirrors, as the profile's "work (read-only)" draws them.
+    if (session.user !== undefined && session.user.kind !== "agent") commands.push(workCommand(session, ctx));
     // An app from a sentence, as /apps/new makes it: a person's, never an agent's.
     if (session.user !== undefined && session.user.kind !== "agent")
       commands.push({

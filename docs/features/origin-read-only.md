@@ -11,3 +11,7 @@ Tick **Read-only** when you connect an account by token (Settings → Origins, e
 ## Private to its owner (#10520)
 
 A repository mirrored from a read-only origin is created private, whatever the origin says, and cannot be made public while the origin is read-only: `PATCH /api/v1/repos/:owner/:name` with `"visibility": "public"` answers `409` `origin_read_only` (the same through the MCP and the settings page). Being private it is left out of every list, count, search, the changelog and Talk for anyone but its owner, by the same visibility filter as any private repository. Test: `test/origin-read-only-private.test.ts`.
+
+## On the owner's profile (#10522)
+
+The owner's own `/:owner` lists each read-only origin's mirrors under **work (read-only)**, each with its last fetch time; when the last fetch failed, one line says why (token refused, host unreachable, repository gone), taken from the sync result, never a stack. Server-rendered for the owner only: anyone else gets no section and no placeholder. The scheduled sync already fetches commits, branches, open and merged pulls and reviews. Mirrors also still appear in the owner's Repositories list. Test: `test/origin-read-only-profile.test.ts`.

@@ -47,6 +47,7 @@ import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
+import { readOnlyWork } from "../../origins/read-only-work.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -119,7 +120,11 @@ function repoSection(
     ctx.app.db,
     page.map((r) => r.id),
   );
-  const shown = page.filter((repo) => !apps.has(repo.id));
+  // The owner's read-only mirrors are drawn once, in "work (read-only)".
+  const mirrored = new Set(
+    isSelf ? readOnlyWork(ctx.app.db, owner.id).flatMap((o) => o.repos.map((r) => r.name)) : [],
+  );
+  const shown = page.filter((repo) => !apps.has(repo.id) && !mirrored.has(repo.name));
 
   const lead = (repo: Repo) =>
     icon(repo.forkParentId !== null ? "fork" : "repo");
@@ -184,6 +189,38 @@ function repoSection(
         ? { next: `/${owner.username}?${nextParams.toString()}` }
         : {},
     )}`;
+}
+
+/**
+ * "work (read-only)": what the owner mirrors from origins connected read-only,
+ * with its last fetch and, when it failed, why in one line. Only ever drawn
+ * for the owner's own view; nothing at all for anyone else.
+ */
+function workSection(ctx: Ctx, owner: User): Html {
+  const origins = readOnlyWork(ctx.app.db, owner.id);
+  if (origins.length === 0) return html``;
+  return html`<section class="settings-block" id="work-read-only">
+    <h2>work (read-only)</h2>
+    ${origins.map(
+      (o) => html`<p class="small muted">${URL.parse(o.webUrl)?.host ?? o.webUrl}</p>
+        ${plainList(
+          o.repos.map((r) =>
+            row({
+              href: `/${owner.username}/${r.name}`,
+              lead: icon("repo"),
+              title: r.fullName,
+              nav: true,
+              meta:
+                r.problem !== ""
+                  ? html`Last fetch failed: ${r.problem}`
+                  : r.lastFetchAt === null
+                    ? html`Not fetched yet`
+                    : html`Last fetch ${time(r.lastFetchAt)}`,
+            }),
+          ),
+        )}`,
+    )}
+  </section>`;
 }
 
 /**
@@ -382,6 +419,9 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
       : null}
     ${apps.html}
     ${repos}
+    ${when(ctx.auth.user !== undefined && ctx.auth.user.id === owner.id && !isOrg, () =>
+      workSection(ctx, owner),
+    )}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
     )}
