@@ -530,7 +530,7 @@ function crossingsSection(crossings: readonly Crossing[]): Html {
 }
 
 /** Contract commits, newest first, each with what it did to the cells. */
-function contractChangesSection(changes: readonly ContractChange[]): Html {
+export function contractChangesSection(changes: readonly ContractChange[]): Html {
   return part(
     html`<ul class="list">
       ${changes.map((c) => {
@@ -559,7 +559,7 @@ function contractChangesSection(changes: readonly ContractChange[]): Html {
                 ? "success"
                 : "default";
         return html`<li>
-          <div class="row">
+          <div class="row" data-nav tabindex="-1">
             <span class="row-lead">${icon("commit")}</span>
             <span class="row-main">
               <span class="row-title">${name(c.repo)}: ${c.subject}</span>

@@ -145,6 +145,18 @@ const CSS = `
 .rs-text { width: 100%; min-height: 3.5em; font-family: monospace; }
 `;
 
+/** The other conflicted files as links the shell's j/k walk; nothing when there is one file. */
+export function fileSwitcher(here: string, files: readonly string[], file: string): Html {
+  if (files.length < 2) return html``;
+  return html`<p class="small">
+          ${files.map((f) =>
+            f === file
+              ? html`<strong class="mono">${f}</strong> `
+              : html`<a class="mono" data-nav href="${here}?file=${encodeURIComponent(f)}">${f}</a> `,
+          )}
+        </p>`;
+}
+
 export async function conflictsPage(ctx: Ctx): Promise<Response> {
   const req = ctx.request;
   notePhase(req, "session", takeSessionTime(req));
@@ -231,15 +243,7 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
       <strong id="rs-count">${done} of ${total} resolved</strong>
       · nothing is saved until you finish
     </p>
-    ${files.length > 1
-      ? html`<p class="small">
-          ${files.map((f) =>
-            f === file
-              ? html`<strong class="mono">${f}</strong> `
-              : html`<a class="mono" href="${here}?file=${encodeURIComponent(f)}">${f}</a> `,
-          )}
-        </p>`
-      : ""}
+    ${fileSwitcher(here, files, file)}
     ${crew}
     ${total === 0
       ? html`<p class="mt">This file has no text to choose between. It may be deleted on
