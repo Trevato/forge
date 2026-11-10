@@ -70,6 +70,11 @@ describe("a child forge's cell", () => {
       expect(childModelHosts(app.db)).toEqual([]);
       setCapacity(app.db, "children.modelEgress", "openrouter", "system");
       expect(childModelHosts(app.db)).toEqual(["openrouter.ai:443"]);
+      setCapacity(app.db, "children.modelEgress", "anthropic", "system");
+      expect(childModelHosts(app.db)).toEqual(["api.anthropic.com:443"]);
+      setCapacity(app.db, "children.modelEgress", "both", "system");
+      expect(childModelHosts(app.db)).toEqual(["openrouter.ai:443", "api.anthropic.com:443"]);
+      expect(hostAllowed(childModelHosts(app.db), "evil.anthropic.com", 443)).toBe(false);
       setCapacity(app.db, "children.modelEgress", "off", "system");
       expect(childModelHosts(app.db)).toEqual([]);
     } finally {
