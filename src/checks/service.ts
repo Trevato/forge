@@ -12,9 +12,9 @@
  */
 
 import { pullDir, runDir } from "../core/pulls.ts";
+import { cellHides } from "../spawn/hosted-mark.ts";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { chmod, lstat, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { releaseOnGreen } from "../actions/holds.ts";
@@ -1179,7 +1179,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           dir,
           writable: [],
           home,
-          hide: [app.config.dataDir, process.env["HOME"] ?? "", tmpdir()],
+          hide: cellHides(app),
           egress: [...STEP_HOSTS, ...manifest.egress],
           reach: [options.forgeUrl],
           limits: resolveLimits("step", manifest.limits),

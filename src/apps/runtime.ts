@@ -14,6 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { cellHides, grantsHere } from "../spawn/hosted-mark.ts";
 import { VERIFYING_NOTE } from "./env_phrase.ts";
 import { listEgressGrants } from "../core/egress_grants.ts";
 import { recordCarried } from "../core/carried.ts";
@@ -24,7 +25,6 @@ import { sshCommand } from "../ssh/command.ts";
 import { checkPreview } from "./preview_spec.ts";
 import { appHostSuffix } from "./host.ts";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
@@ -1579,12 +1579,12 @@ export class AppsRuntime {
     if (!this.cells.ok) return undefined;
     const dataDir = this.app.config.dataDir;
     return {
-      hide: [dataDir, process.env["HOME"] ?? "", tmpdir()],
+      hide: cellHides(this.app),
       home: join(envDir(dataDir, record.id, env), "home"),
       onUndeclared: (host, port) =>
         noteReached(dataDir, record.repoId, host, port),
       // Asked at every start: an admin's grant reaches the next cell.
-      granted: grantedFor(this.app.db, record.repoId),
+      granted: grantsHere(this.app, () => grantedFor(this.app.db, record.repoId)),
       // Likewise an admin's flip of the egress mode.
       egressMode: egressSetting(this.app.db),
       label: `app:${record.slug}/${env}`,
