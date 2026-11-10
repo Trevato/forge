@@ -179,6 +179,7 @@ here fails `test/dependencies-named.test.ts`; so does a line for one that left.
 
 - `@anthropic-ai/sandbox-runtime` — lets `test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code builds from the crew's settings.
 - `@types/bun` — the type check's types for Bun's own APIs.
+- `@vscode/ripgrep` — the `rg` that `srt` scans with, pinned and shipped in the package (no install script), so `test/crew-sandbox-escape.test.ts` runs on a check host with no ripgrep of its own.
 - `axe-core` — the release check's accessibility rules (`src/release/axe.ts`); they need a rendered page, and there is no zero-dependency equivalent.
 - `happy-dom` — a DOM for tests that run a page's script (`test/changelog.test.ts`) without a browser.
 - `typescript` — the native 7.x checker behind `bun x tsc --noEmit`.
