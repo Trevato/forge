@@ -37,6 +37,7 @@ import {
 } from "../src/crew/instagram.ts";
 import {
   startPromptRoutine,
+  tellText,
   type PromptRoutineHandle,
 } from "../src/crew/prompts.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -87,6 +88,23 @@ describe("topComment", () => {
     expect(topComment([c])?.id).toBe("c");
     expect(topComment([blank])).toBeUndefined();
     expect(topComment([])).toBeUndefined();
+  });
+});
+
+describe("tellText", () => {
+  const reel = reelOf("r", "2026-09-27");
+  const from =
+    "From Instagram: the top comment (1 like) by @fan on the Reel of 2026-09-27. https://www.instagram.com/reel/r/";
+
+  test("puts the first line as the title above the whole comment", () => {
+    const c = comment("c", "  Add a boss\nIt feels empty.  ", 1, at("2026-09-27T18:00:00+0000"), "fan");
+    expect(tellText(reel, c)).toBe(`Add a boss\nAdd a boss\nIt feels empty.\n\n${from}`);
+  });
+
+  test("a first line too long for a title is not repeated", () => {
+    const long = "x".repeat(81);
+    const c = comment("c", `${long}\nmore`, 1, at("2026-09-27T18:00:00+0000"), "fan");
+    expect(tellText(reel, c)).toBe(`${long}\nmore\n\n${from}`);
   });
 });
 
