@@ -109,6 +109,8 @@ describe("unavailable page", () => {
     const failed = await page(`pull-${open}`, { state: "failed", error: `boom token=${secret}` }).text();
     expect(failed).toContain("boom");
     expect(failed).not.toContain(secret);
+    const limit = await page(`pull-${open}`, { state: "failed", error: "the build used its 15 minutes" }).text();
+    expect(limit).toContain("the build used its 15 minutes");
     const running = await page(`pull-${open}`, { state: "running", port: 1 }).text();
     expect(running).toContain("It is running.");
   });

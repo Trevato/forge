@@ -285,6 +285,7 @@ const LIMIT_FIELDS = {
   memory: { key: "memoryMiB", min: 64, max: 65536, unit: "MiB" },
   cpus: { key: "cpus", min: 0.1, max: 64, unit: "cores" },
   disk: { key: "diskMiB", min: 64, max: 1048576, unit: "MiB" },
+  time: { key: "timeMs", min: 1, max: 3600, unit: "seconds a build step may take" },
 } as const;
 
 /** `app.limits` / `check.limits`: `{ memory, cpus, disk }`, each optional. */
@@ -296,18 +297,22 @@ function limitsField(
   if (value === undefined) return ok({});
   if (!isObject(value))
     return invalid(`forge.json: ${name}.limits must be an object`);
-  const out: { memoryMiB?: number; cpus?: number; diskMiB?: number } = {};
+  const out: { memoryMiB?: number; cpus?: number; diskMiB?: number; timeMs?: number } = {};
   for (const [field, raw] of Object.entries(value)) {
     const rule = LIMIT_FIELDS[field as keyof typeof LIMIT_FIELDS];
     if (rule === undefined)
       return invalid(
-        `forge.json: ${name}.limits takes memory, cpus and disk, not ${field}`,
+        `forge.json: ${name}.limits takes memory, cpus, disk and time, not ${field}`,
+      );
+    if (field === "time" && name === "check")
+      return invalid(
+        "forge.json: check.limits.time is not read: a check's time is the forge's own; app.limits.time lowers the build steps",
       );
     if (typeof raw !== "number" || !(raw >= rule.min && raw <= rule.max))
       return invalid(
         `forge.json: ${name}.limits.${field} must be a number of ${rule.unit}, ${rule.min}–${rule.max}`,
       );
-    out[rule.key] = raw;
+    out[rule.key] = rule.key === "timeMs" ? raw * 1000 : raw;
   }
   return ok(out);
 }

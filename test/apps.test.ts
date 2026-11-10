@@ -780,6 +780,29 @@ exec bun -e "Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch
     notForgePaths(await page.text());
   }, 60_000);
 
+  test("a deploy whose install runs past limits.time says so in one line on the app page", async () => {
+    // Invariant: a build stopped by its time limit fails the deploy with that sentence, in the summary, the status and the app page (#10527).
+    const { repo, record, production: run } = await deployApp(leaky, "slow-build", [
+      {
+        path: "forge.json",
+        content: JSON.stringify({
+          app: { run: "sh run.sh", install: "sleep 30", health: "/", ready: 3, limits: { time: 1 } },
+        }),
+      },
+      { path: "run.sh", content: "exit 1\n" },
+    ]);
+    expect(run.state).toBe("failed");
+    const sentence = "the build used its 1 second";
+    expect(run.summary ?? "").toContain(sentence);
+    expect(leaky.runtime.envStatus(record, "production")?.error ?? "").toContain(sentence);
+    const cookie = await signedInCookie(leaky.servers);
+    const page = await fetch(`${leaky.servers.url}/${repo.ownerName}/${repo.name}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+    });
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain(sentence);
+  }, 60_000);
+
   /**
    * Issue #254: the terminal command has a `login@host` in it, which an
    * email-scanning edge on the forge's own domain rewrites into a `mailto:`

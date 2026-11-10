@@ -28,6 +28,9 @@ import {
   killTree,
   openCell,
   resolveLimits,
+  breachLine,
+  timeLine,
+  type Limits,
   signalTree,
   STEP_HOSTS,
   type Cell,
@@ -321,6 +324,11 @@ export async function runStep(
     timeoutMs?: number;
     /** Run inside a cell (`apps/contain.ts`) instead of as a plain child. */
     cell?: CellSpec | undefined;
+    /**
+     * Set for a build step (install, test): its limits. The time is the
+     * step's bound, and a stop by any limit is one line saying which.
+     */
+    build?: Limits | undefined;
   },
 ): Promise<Result<void, string>> {
   options.log(`$ ${command}`);
@@ -357,14 +365,18 @@ export async function runStep(
     if (recent.length > TAIL_LINES) recent.shift();
     options.log(line);
   };
-  const timeoutMs = options.timeoutMs ?? STEP_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? options.build?.timeMs ?? STEP_TIMEOUT_MS;
   let why: string | undefined;
   // A killed process's pipes are not guaranteed to close on their own
   // (see `pump`); this stops the reads directly the same moment the kill
   // is sent, so a step in flight never outlives its own cancellation.
   const stopReading = new AbortController();
   const timer = setTimeout(() => {
-    why = `${name} took longer than ${Math.round(timeoutMs / 1000)}s`;
+    why =
+      options.build === undefined
+        ? `${name} took longer than ${Math.round(timeoutMs / 1000)}s`
+        : timeLine({ ...options.build, timeMs: timeoutMs });
+    if (options.build !== undefined) options.log(why);
     kill();
     stopReading.abort();
   }, timeoutMs);
@@ -376,7 +388,7 @@ export async function runStep(
   if (options.signal.aborted) onAbort();
   else options.signal.addEventListener("abort", onAbort, { once: true });
   cell?.watch(proc.pid, (breach) => {
-    why = `${name} stopped: it ${breach}`;
+    why = (options.build && breachLine(breach, options.build)) || `${name} stopped: it ${breach}`;
     killTree(proc.pid);
     stopReading.abort();
   });
@@ -389,7 +401,8 @@ export async function runStep(
     if (why !== undefined) return err(why);
     // The kernel's OOM kill at the cell's cap is a breach no watch tick saw.
     const kernel = code === 0 ? undefined : cell?.breach();
-    if (kernel !== undefined) return err(`${name} stopped: it ${kernel}`);
+    if (kernel !== undefined)
+      return err((options.build && breachLine(kernel, options.build)) || `${name} stopped: it ${kernel}`);
     // Ended by a signal this run never sent: no verdict of the step's own.
     const killer = code === 0 ? undefined : (proc.signalCode ?? SIGNAL_CODES[code]);
     if (killer !== undefined) return err(`${name} was killed by ${killer}`);
@@ -405,6 +418,15 @@ export async function runStep(
   }
 }
 
+/** What a build step of this deploy is held to: the defaults, with forge.json's `limits.time` able to lower the time. */
+export function stepLimits(input: Pick<StartInput, "manifest">): Limits {
+  // A build keeps the step's own memory and cores: `app.limits.memory` and
+  // `app.limits.cpus` hold the running app, and a 128 MiB web app still
+  // needs room for `bun install`. Only `app.limits.time` reaches a build,
+  // and only to lower it.
+  return resolveLimits("step", { timeMs: input.manifest.limits?.timeMs });
+}
+
 /** The cell a step of this deploy runs in: the checkout and the home, the registry and what the app declared. */
 export function stepCell(input: StartInput, use?: ToolchainUse): CellSpec | undefined {
   const base = input.cell;
@@ -417,7 +439,7 @@ export function stepCell(input: StartInput, use?: ToolchainUse): CellSpec | unde
     hide: base.hide,
     egress: [...STEP_HOSTS, ...(input.manifest.egress ?? [])],
     reach: [input.forgeUrl],
-    limits: resolveLimits("step", undefined),
+    limits: stepLimits(input),
     onUndeclared: base.onUndeclared,
     allowed: base.allowed,
     onRefused: base.onRefused,
@@ -489,7 +511,7 @@ async function install(
   }
   const plan = installPlan(command, input, env, filled, use);
   const step = (): Promise<Result<void, string>> =>
-    runStep("install", plan.command, { cwd: input.dir, env: plan.env, log: input.log, signal: input.signal, cell: plan.cell });
+    runStep("install", plan.command, { cwd: input.dir, env: plan.env, log: input.log, signal: input.signal, cell: plan.cell, build: stepLimits(input) });
   if (plan.lock !== undefined) {
     const held = await withLock(plan.lock, step, { signal: input.signal });
     return held.ok ? held.value : held;
@@ -550,6 +572,7 @@ export async function startProcess(
           log,
           signal: testAbort.signal,
           cell: stepCell(input, use),
+          build: stepLimits(input),
         });
 
   // The port is chosen, then released, then bound by the app: another

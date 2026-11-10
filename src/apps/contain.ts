@@ -55,6 +55,8 @@ export interface Limits {
   readonly cpus: number;
   /** Bytes on disk under the cell's writable directories, MiB. */
   readonly diskMiB: number;
+  /** Wall-clock time of a build step (install, test), ms; unset for an app, which runs on. */
+  readonly timeMs?: number | undefined;
 }
 
 /** What `forge.json` may ask for (`app.limits`, `check.limits`). */
@@ -63,8 +65,11 @@ export type DeclaredLimits = Partial<Limits>;
 /** A long-lived app, and a step (install, test, check) that ends. */
 export const DEFAULT_LIMITS: Record<"app" | "step", Limits> = {
   app: { memoryMiB: 512, cpus: 1, diskMiB: 1024 },
-  step: { memoryMiB: 2048, cpus: 2, diskMiB: 4096 },
+  step: { memoryMiB: 2048, cpus: 2, diskMiB: 4096, timeMs: 15 * 60_000 },
 };
+
+/** The most time a build step may be given, whatever forge.json declares. */
+export const STEP_TIME_MAX_MS = 30 * 60_000;
 
 /** The most any declaration gets on this machine. */
 export function maxLimits(podFile = POD_MEMORY_FILE): Limits {
@@ -72,6 +77,7 @@ export function maxLimits(podFile = POD_MEMORY_FILE): Limits {
     memoryMiB: memoryCeiling(process.env["FORGE_CELL_MEMORY_MAX_MIB"], podFile),
     cpus: availableParallelism(),
     diskMiB: positive(process.env["FORGE_CELL_DISK_MAX_MIB"]) ?? 16384,
+    timeMs: STEP_TIME_MAX_MS,
   };
 }
 
@@ -167,7 +173,39 @@ export function resolveLimits(
     ceilingFrom: memoryCeilingSource(process.env["FORGE_CELL_MEMORY_MAX_MIB"], podFile),
     cpus: Math.min(declared?.cpus ?? base.cpus, max.cpus),
     diskMiB: Math.min(declared?.diskMiB ?? base.diskMiB, max.diskMiB),
+    ...(base.timeMs === undefined
+      ? {}
+      : { timeMs: Math.min(declared?.timeMs ?? base.timeMs, max.timeMs ?? STEP_TIME_MAX_MS) }),
   };
+}
+
+const plural = (n: number, unit: string): string => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+/** A duration in the words a person reads: "15 minutes", "1 second". */
+export function durationWords(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return seconds >= 60 && seconds % 60 === 0 ? plural(seconds / 60, "minute") : plural(seconds, "second");
+}
+
+/** MiB as "2 GiB" where it is whole, else "1536 MiB". */
+export function sizeWords(mib: number): string {
+  return mib >= 1024 && mib % 1024 === 0 ? `${mib / 1024} GiB` : `${mib} MiB`;
+}
+
+/** The one line for a build stopped by its time limit. */
+export function timeLine(limits: Limits): string {
+  return `the build used its ${durationWords(limits.timeMs ?? DEFAULT_LIMITS.step.timeMs ?? 0)}`;
+}
+
+/**
+ * The one line for a build the cell stopped, from the watch's reason: which
+ * limit, and what it was. Undefined for a reason that is not a limit.
+ */
+export function breachLine(why: string, limits: Limits): string | undefined {
+  if (/memory/.test(why)) return `the build ran out of its ${sizeWords(limits.memoryMiB)}`;
+  if (/cores/.test(why)) return `the build used more than its ${plural(limits.cpus, "core")}`;
+  if (/disk/.test(why)) return `the build ran out of its ${sizeWords(limits.diskMiB)} of disk`;
+  return undefined;
 }
 
 /** Always reachable from inside a cell: the npm registry, for install steps. */

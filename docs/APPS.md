@@ -585,6 +585,15 @@ are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
 holds at most 256 MiB.
 
+An install or test step is also bounded in time: 15 minutes by default.
+`app.limits.time` (seconds, 1–3600) can lower it, and is held to 30 minutes. A
+build stopped by its time, memory or cores says which in one line, in the
+deploy log and as the deploy's error: "the build used its 15 minutes", "the
+build ran out of its 2 GiB", "the build used more than its 2 cores".
+`app.limits.memory` and `app.limits.cpus` hold the running app only: an
+install or test step keeps the step's own memory and cores, so a 128 MiB app
+still has room to install.
+
 Memory is held twice. The watch reads every cell's resident memory once a
 second and stops one over its limit. Where the forge holds a delegated
 cgroup v2 (`apps/cgroup.ts`), the kernel holds it as well: each cell runs
