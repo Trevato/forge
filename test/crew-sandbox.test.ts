@@ -606,10 +606,17 @@ test.skipIf(process.platform !== "linux")("a child forge's run reads and writes 
   mkdirSync(join(data, "crew", "scottishbot"), { recursive: true });
   const neighbour = join(tmpdir(), `fc-neighbour-${Date.now()}`);
   mkdirSync(neighbour, { recursive: true });
+  const otherRun = join(tmpdir(), `fr-other${Date.now()}`);
+  mkdirSync(otherRun, { recursive: true });
   const p = sandboxPolicy({ dataDir: data, agentName: "scottishbot", urls: [], runId: "01m71kw4dfp4z8arr359fkygy5" });
   expect(p.tmpDir).toBe(join(tmpdir(), "fr-arr359fkygy5"));
   expect(p.denyRead).not.toContain(p.tmpDir);
   expect(p.denyRead).toContain(neighbour);
+  expect(p.denyRead).toContain(otherRun);
+  // The data directory is in the temp directory too: it is not denied whole,
+  // so the agent still reaches its own working directory.
+  const under = (path: string) => p.denyRead.some((d) => path === d || path.startsWith(`${d}/`));
+  expect(under(join(data, "crew", "scottishbot", "01repo", "7"))).toBe(false);
   expect(p.denyRead).toContain(join(data, "forge.db"));
 });
 

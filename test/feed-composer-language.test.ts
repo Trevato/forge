@@ -81,7 +81,9 @@ test("a repository name with markup in it is escaped in the select, never raw", 
   app.db.query("UPDATE repo SET name = ?1 WHERE id = ?2").run('x"><img src=x onerror=alert(1)>', made.value.id);
   const form = await composerOf(cookie);
   expect(form).not.toContain("<img");
-  expect(form).not.toContain('x">');
+  // Anchored on the slug: a bare 'x">' also matches data-draft="<user id>" whenever
+  // the random id ends in "x" (#10486), which failed this test with nothing wrong.
+  expect(form).not.toContain('alice/x"');
   expect(form).toContain("alice/x&quot;&gt;&lt;img src=x onerror=alert(1)&gt;");
 });
 
