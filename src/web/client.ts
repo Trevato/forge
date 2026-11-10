@@ -898,6 +898,7 @@ export const codeJs = /* js */ `
     var list = dlg.querySelector('.palette-list');
     var note = dlg.querySelector('.palette-foot > span');
     var at = 0;
+    var armed = null;      // the action row awaiting its one confirmation
 
     function render(rows) {
       var hits = search(rows, input.value);
@@ -1900,6 +1901,9 @@ const shellCore = /* js */ `
       var r = { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
       if (i.n) r.n = String(i.n);
       if (i.m === 1) r.m = 1;
+      if (typeof i.k === 'number') r.k = i.k;
+      if (i.a === 1) r.a = 1;
+      if (i.d) r.d = String(i.d);
       if (i.x) r.x = String(i.x);
       if (i.o && String(i.o).charAt(0) === '/') r.o = String(i.o);
       if (i.p && typeof i.p === 'object' && r.h.charAt(0) === '/') r.p = i.p;
@@ -1928,6 +1932,7 @@ const shellCore = /* js */ `
       a.setAttribute('aria-selected', 'false');
       // Same-origin paths only: the index is ours, and this keeps it so.
       a.setAttribute('href', r.h.charAt(0) === '/' ? r.h : '/');
+      if (r.a) a.setAttribute('data-action', '');
       if (r.p) a.setAttribute('data-post', JSON.stringify(r.p));
       var t = doc.createElement('span');
       t.className = 'grow';
@@ -1971,8 +1976,18 @@ const shellCore = /* js */ `
     // when the list changes under it (a server answer landing); a new query
     // starts at the top.
     function render(keep) {
+      armed = null;
       var q = input.value.trim();
       var pool = (q === '' ? recent : []).concat(items, q.length >= 2 ? served : []);
+      // "#123" on a repository's page: that number, built here from the page's own path (the server read no issue for it).
+      var hereBase = loadIndex().here;
+      var num = /^#(\\d+)$/.exec(q);
+      if (num && typeof hereBase === 'string' && hereBase.charAt(0) === '/') {
+        // Issues and pulls share one number space and each address redirects to the other kind, so one row serves both.
+        pool = [
+          { t: 'Go to #' + num[1], h: hereBase + '/issues/' + num[1], g: 'Issues and pulls', d: '#' + num[1], k: Number(num[1]) },
+        ].concat(pool);
+      }
       var groups = rankPalette(pool, q, recentHrefs, q === '' ? 24 : 20);
       var was = keep && nodes[at] ? nodes[at].getAttribute('href') : null;
       var frag = doc.createDocumentFragment();
@@ -2122,6 +2137,24 @@ const shellCore = /* js */ `
       var a = e.target && e.target.closest ? e.target.closest('.palette-item') : null;
       var i = a ? nodes.indexOf(a) : -1;
       if (i === -1) return;
+      // An action asks once: the first press arms the row, the second runs it.
+      // Navigation rows have no data-action and never ask.
+      if (a.hasAttribute('data-action') && armed !== a.getAttribute('href')) {
+        e.preventDefault();
+        armed = a.getAttribute('href');
+        var label = a.querySelector('.grow');
+        var say = 'Tap or press Enter again to confirm: ' + shown[i].t;
+        if (label) label.textContent = shown[i].t + ' \u2014 tap or press Enter again to confirm';
+        a.setAttribute('aria-description', 'Tap or press Enter again to confirm');
+        var live = dlg.querySelector('[data-armed]');
+        if (!live) {
+          live = doc.createElement('div'); live.className = 'sr-only';
+          live.setAttribute('aria-live', 'polite'); live.setAttribute('data-armed', '');
+          dlg.appendChild(live);
+        }
+        live.textContent = say;
+        return;
+      }
       if (a.hasAttribute('data-tell')) {
         e.preventDefault();
         close();

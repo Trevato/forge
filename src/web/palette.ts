@@ -25,6 +25,10 @@ export interface PaletteRow {
   readonly x?: string;
   /** Where Cmd/Ctrl+Enter goes: the app itself. */
   readonly o?: string;
+  /** An issue or pull's number: typing `#123` lands on it. */
+  readonly k?: number;
+  /** An action: asks one confirmation before it runs. */
+  readonly a?: 1;
 }
 
 /** A heading and the rows under it, best first. */
@@ -101,6 +105,18 @@ export function rankPalette(
     if (q !== "") {
       const title = fuzzyScore(q, r.t);
       const detail = r.d === undefined ? 0 : fuzzyScore(q, r.d);
+      const num = /^#(\d+)$/.exec(q);
+      if (num !== null && r.k !== undefined) {
+        // "#123" lands on that number; a shorter run of digits finds its extensions after.
+        const want = num[1]!;
+        const have = String(r.k);
+        if (have === want) s = 5000;
+        else if (have.indexOf(want) === 0) s = 1000 - have.length;
+        else return;
+        seen.add(r.h);
+        scored.push({ r, s, i });
+        return;
+      }
       if (title === 0 && detail === 0) return;
       s = title + detail / 2 + (recent.indexOf(r.h) === -1 ? 0 : 50);
       // A repository named by what was typed beats every other kind of

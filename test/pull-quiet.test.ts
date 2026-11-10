@@ -66,8 +66,8 @@ afterAll(async () => {
 const get = async (path: string) => (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text();
 const bytes = (t: string) => new TextEncoder().encode(t).length;
 
-// Measured ~31,650 (pull: 31,130 on main plus the verdict line and the change above the check) and 25,064 (list) with the Displays entry in the account menu and palette. Each budget is that plus ~160 B, the spread the port digits and times in the page showed, so it holds the page from growing and is not a tighter squeeze.
-const BUDGET = { pull: 31_810, list: 25_400 };
+// Measured ~31,650 (pull: 31,130 on main plus the verdict line and the change above the check) and 25,064 (list) with the Displays entry in the account menu and palette. Each budget is that plus ~160 B, the spread the port digits and times in the page showed, so it holds the page from growing and is not a tighter squeeze. The palette now also carries the people, three settings rows and the Tell-the-crew action (#10659): 31,869 measured on the pull page, so the pull budget is that plus ~160.
+const BUDGET = { pull: 32_030, list: 25_400 };
 
 test("the pull page's check is a line with a dot and its word, not a card around a badge", async () => {
   const text = await get(`/alice/r/pulls/${number}`);

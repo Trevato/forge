@@ -17,11 +17,13 @@ import { administersAny } from "../core/admin_repos.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { foundryHref } from "../actions/foundry_door.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { actionRows, peopleRows, settingsRows } from "./palette_rows.ts";
 import { wordClip } from "../text/word_clip.ts";
 import { absorbedForNav } from "../actions/features.ts";
 import {
   enterableApps,
   getRepo,
+  type Repo,
   listReposByOwner,
   listReposVisibleTo,
 } from "../core/repos.ts";
@@ -77,6 +79,12 @@ export interface PaletteItem {
   m?: 1;
   /** A mutation: the palette posts these fields to `h`, as the page's own form does. */
   p?: Record<string, string>;
+  /** An issue or pull's number: `#123` lands on it. */
+  k?: number;
+  /** A person's detail or an issue's "#n". */
+  d?: string;
+  /** An action: the palette asks once before it runs. */
+  a?: 1;
 }
 
 export interface PageOptions {
@@ -416,6 +424,15 @@ const NOT_AN_OWNER = new Set([
   "api", "releases", "audit", "admin", "tell", "login", "logout", "signup", "feed", "boards", "organizations", "static", "assets",
 ]);
 
+/** The repository the page is on, if its path names one; signed out, none (no read, #5885). */
+function pageRepo(ctx: Ctx): Repo | undefined {
+  if (ctx.auth.user === undefined) return undefined;
+  const [owner, name] = ctx.url.pathname.split("/").filter((s) => s !== "");
+  return owner !== undefined && name !== undefined && !NOT_AN_OWNER.has(owner)
+    ? getRepo(ctx.app.db, owner, name)
+    : undefined;
+}
+
 /**
  * Where the palette's "Tell the crew" row sends a sentence, as the feed
  * composer's `app` field names it: the repository the page is on when the
@@ -423,14 +440,9 @@ const NOT_AN_OWNER = new Set([
  * repository read. Absent for anyone who may not tell (signed out, or an
  * organization), and then the row is not drawn.
  */
-function tellTarget(ctx: Ctx): { app: string } | undefined {
+function tellTarget(ctx: Ctx, here: Repo | undefined): { app: string } | undefined {
   const user = ctx.auth.user;
   if (user === undefined || user.kind === "org") return undefined;
-  const [owner, name] = ctx.url.pathname.split("/").filter((s) => s !== "");
-  const here =
-    owner !== undefined && name !== undefined && !NOT_AN_OWNER.has(owner)
-      ? getRepo(ctx.app.db, owner, name)
-      : undefined;
   if (here !== undefined && mayDirectCrew(ctx.app.db, here, user))
     return { app: `${here.ownerName}/${here.name}` };
   return { app: "forge" };
@@ -483,8 +495,17 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   });
   const states = open.length > 0 ? appsRuntime(ctx.app)?.statusMany(open) : undefined;
   const foundry = foundryHref(ctx.app, ctx.auth.user);
+  const here = pageRepo(ctx);
+  const tell = tellTarget(ctx, here);
+  const tellHref =
+    here !== undefined && tell?.app === `${here.ownerName}/${here.name}`
+      ? `/${tell.app}/tell?from=${encodeURIComponent(ctx.url.pathname)}`
+      : undefined;
   const items: PaletteItem[] = [
     ...extra,
+    ...peopleRows(ctx.app.db, ctx.auth.user),
+    ...settingsRows(ctx.auth.user),
+    ...actionRows(ctx.auth.user, tellHref),
     ...repos.map((r): PaletteItem => {
       const found = apps.get(r.id);
       const app = found !== undefined && enterable.has(found.id) ? found : undefined;
@@ -537,7 +558,9 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     items,
     studio,
     me: ctx.auth.user?.username,
-    tell: tellTarget(ctx),
+    tell,
+    here:
+      here !== undefined && (here.visibility === "public" || tellHref !== undefined) ? `/${here.ownerName}/${here.name}` : undefined,
   }).replaceAll("<", "\\u003c");
   return raw(
     `<script type="application/json" id="palette-index">${json}</script>`,
