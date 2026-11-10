@@ -40,6 +40,7 @@ export type FileKind =
   | "sarif"
   | "lcov"
   | "junit"
+  | "openapi"
   | "text"
   | "binary";
 
@@ -78,6 +79,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   sarif: 5 * MB,
   lcov: 5 * MB,
   junit: 5 * MB,
+  openapi: 1 * MB,
   text: 1 * MB,
   binary: 0,
 };
@@ -203,6 +205,9 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   lcov: "lcov",
 };
 
+/** `openapi.json|yaml|yml` and `*.openapi.*`: the name of an OpenAPI document; its content decides whether it is drawn as one. */
+const isOpenApiName = (path: string): boolean => /(^|\/|\.)openapi\.(json|ya?ml)$/i.test(path);
+
 /** `lcov.info`: the name `lcov` and `bun test` write, whatever its extension. */
 const isLcovName = (path: string): boolean => /(^|\/)lcov\.info$/i.test(path);
 
@@ -273,6 +278,7 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (looksBinary(head)) return "binary";
   if (isLcovName(path)) return "lcov";
   if (isJunit(path, head)) return "junit";
+  if (isOpenApiName(path)) return "openapi";
   return TEXTUAL[extension(path)] ?? "text";
 }
 
@@ -287,6 +293,7 @@ export const needsPaths = (kind: FileKind): boolean => kind === "sarif" || kind 
 export function kindByName(path: string): FileKind {
   const ext = extension(path);
   if (isLcovName(path)) return "lcov";
+  if (isOpenApiName(path)) return "openapi";
   return MEDIA[ext]?.kind ?? TEXTUAL[ext] ?? "text";
 }
 

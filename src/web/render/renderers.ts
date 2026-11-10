@@ -28,6 +28,7 @@ import { model3d } from "./model3d.ts";
 import { notebook } from "./notebook.ts";
 import { patch } from "./patch.ts";
 import { pdf } from "./pdf.ts";
+import { openapi } from "./openapi.ts";
 import { lcov } from "./lcov.ts";
 import { sarif } from "./sarif.ts";
 import { sqlite } from "./sqlite.ts";
@@ -97,6 +98,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   sarif,
   lcov,
   junit,
+  openapi,
   mail: eml,
   archive,
   font,

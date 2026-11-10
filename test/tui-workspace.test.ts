@@ -595,6 +595,27 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("an openapi.json opens as its operations, and s shows the source", async () => {
+    const made = await createRepo(forge, alice, { name: "apidoc", visibility: "public", description: "api" });
+    if (!made.ok) throw new Error("repo failed");
+    const spec = JSON.stringify({ openapi: "3.0.0", paths: { "/pets": { get: { tags: ["pets"], summary: "List pets" } }, "/old": { post: { summary: "Gone", deprecated: true } } } });
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "openapi.json", content: spec }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "apidoc");
+      await openFile(h, "openapi.json");
+      expect(h.text()).toContain("/pets");
+      expect(h.text()).toContain("List pets");
+      expect(h.text()).toContain("Gone (deprecated)");
+      expect(h.text()).toContain("2 operations");
+      await h.press("s");
+      expect(h.text()).toContain('"openapi":"3.0.0"');
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a JUnit report opens as its totals and failing cases, sharing the web parser", async () => {
     const made = await createRepo(forge, alice, { name: "junitrepo", visibility: "public", description: "tests" });
     if (!made.ok) throw new Error("repo failed");

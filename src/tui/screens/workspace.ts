@@ -60,6 +60,7 @@ import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
 import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
+import { parseOpenApi } from "../../web/render/openapi.ts";
 import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
 import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/lcov.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
@@ -434,6 +435,23 @@ function lcovTable(source: string): Table | string {
   return { header: ["File", "Lines", "Functions", "Branches"], rows, more: sorted.length - rows.length, delimiter: ",", columns: 4 };
 }
 
+/** An OpenAPI document by file name; whether its content is one is `openapiTable`'s to say. */
+function isOpenApiPath(path: string): boolean {
+  return kindByName(path) === "openapi";
+}
+
+/**
+ * The operations of an OpenAPI document as a table, tag by tag; null when the file is not one,
+ * the reason when it is but cannot be drawn. Shares the web's parser.
+ */
+function openapiTable(text: string, path: string): Table | string | null {
+  const parsed = parseOpenApi(text, path);
+  if (parsed === "not") return null;
+  if ("error" in parsed) return `not drawn as an API: ${parsed.error}`;
+  const rows = parsed.groups.flatMap((g) => g.ops.map((o) => [g.tag === "" ? "-" : g.tag, o.method, o.path, o.deprecated ? `${o.summary} (deprecated)`.trim() : o.summary]));
+  return { header: ["Tag", "Method", "Path", "Summary"], rows, more: parsed.more, delimiter: ",", columns: 4 };
+}
+
 /** A JUnit report, by the web's own rule (file name, or root element). */
 function isJunitPath(path: string, source: Uint8Array): boolean {
   return /\.xml$/i.test(path) && fileKind(path, source.subarray(0, 4096)) === "junit";
@@ -653,6 +671,7 @@ class Tab {
         this.lines = kind.lines;
       }
     }
+    const api = isOpenApiPath(this.path) ? openapiTable(text, this.path) : null;
     if (isSubtitlePath(this.path)) {
       const subs = subtitleTable(new TextDecoder().decode(source));
       this.table = subs.table;
@@ -679,6 +698,10 @@ class Tab {
       const coverage = lcovTable(new TextDecoder().decode(source));
       this.table = typeof coverage === "string" ? null : coverage;
       this.fault = typeof coverage === "string" ? coverage : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (api !== null) {
+      this.table = typeof api === "string" ? null : api;
+      this.fault = typeof api === "string" ? api : "";
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isJunitPath(this.path, source)) {
       const results = junitTable(new TextDecoder().decode(source));
@@ -2801,7 +2824,7 @@ export function workspaceScreen(
                   t.tabular && t.table !== null
                     ? t.raw !== null && isJunitPath(t.path, t.raw)
                       ? plural(t.table.rows.length - 1 + t.table.more, "failing case")
-                      : tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path), isLcovPath(t.path))
+                      : tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path), isLcovPath(t.path), isOpenApiPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -3135,9 +3158,9 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false, files = false): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false, files = false, operations = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : files ? "file" : "row")}${
+  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : files ? "file" : operations ? "operation" : "row")}${
     unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
   }${
     table.more > 0
