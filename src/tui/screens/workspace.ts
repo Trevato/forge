@@ -50,7 +50,7 @@ import { canAdmin, canWrite, DECISIONS_BY, getRepoById, type Repo } from "../../
 import type { TreeEntry } from "../../git/read.ts";
 import { parseUnifiedDiff, type Diff } from "../../git/diff.ts";
 import { renderDiff as renderPatch } from "../ui/diff.ts";
-import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
+import { fileKind, kindByName, NO_BYTES } from "../../web/render/kinds.ts";
 import { downloadHref } from "../../web/pages/media.ts";
 import { isModelPath, modelFacts } from "../../web/render/model-facts.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
@@ -61,6 +61,7 @@ import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
 import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
+import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/lcov.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { fileSize } from "../../web/ui.ts";
 import { parseEml } from "../../web/render/eml-parse.ts";
@@ -418,6 +419,21 @@ function sarifTable(source: string): Table | string {
   return { header: ["Level", "Rule", "Location", "Message", "Tool"], rows, more: all.length - rows.length, delimiter: ",", columns: 5 };
 }
 
+/** `lcov.info` / `.lcov`: a coverage tracefile, drawn as a table per source file, worst line coverage first. */
+function isLcovPath(path: string): boolean {
+  return kindByName(path) === "lcov";
+}
+
+/** The coverage of an lcov file as a table; the reason, as the page words it, when it is not lcov. Shares the web's parser. */
+function lcovTable(source: string): Table | string {
+  const parsed = parseLcov(source);
+  if ("error" in parsed) return `not drawn as coverage: ${parsed.error}`;
+  const pct = (r: Ratio | undefined): string => (r === undefined || r.found === 0 ? "-" : `${r.hit}/${r.found} ${(Math.floor((r.hit / r.found) * 1000) / 10).toFixed(1)}%`);
+  const sorted = worstFirst(parsed.records);
+  const rows = sorted.slice(0, RECORD_CAP).map((r) => [r.file, pct(r.lines), pct(r.functions), pct(r.branches)]);
+  return { header: ["File", "Lines", "Functions", "Branches"], rows, more: sorted.length - rows.length, delimiter: ",", columns: 4 };
+}
+
 /** A JUnit report, by the web's own rule (file name, or root element). */
 function isJunitPath(path: string, source: Uint8Array): boolean {
   return /\.xml$/i.test(path) && fileKind(path, source.subarray(0, 4096)) === "junit";
@@ -658,6 +674,11 @@ class Tab {
       const findings = sarifTable(new TextDecoder().decode(source));
       this.table = typeof findings === "string" ? null : findings;
       this.fault = typeof findings === "string" ? findings : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isLcovPath(this.path)) {
+      const coverage = lcovTable(new TextDecoder().decode(source));
+      this.table = typeof coverage === "string" ? null : coverage;
+      this.fault = typeof coverage === "string" ? coverage : "";
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isJunitPath(this.path, source)) {
       const results = junitTable(new TextDecoder().decode(source));
@@ -2780,7 +2801,7 @@ export function workspaceScreen(
                   t.tabular && t.table !== null
                     ? t.raw !== null && isJunitPath(t.path, t.raw)
                       ? plural(t.table.rows.length - 1 + t.table.more, "failing case")
-                      : tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path))
+                      : tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path), isLcovPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -3114,9 +3135,9 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false, files = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : "row")}${
+  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : files ? "file" : "row")}${
     unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
   }${
     table.more > 0

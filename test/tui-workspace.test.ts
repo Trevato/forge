@@ -567,6 +567,34 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("an lcov.info opens as coverage per file, worst first, and a broken one says why", async () => {
+    const made = await createRepo(forge, alice, { name: "covered", visibility: "public", description: "coverage" });
+    if (!made.ok) throw new Error("repo failed");
+    const info = "SF:src/good.ts\nLF:10\nLH:10\nend_of_record\nSF:src/bad.ts\nLF:4\nLH:1\nFNF:2\nFNH:1\nend_of_record\n";
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "lcov.info", content: info }, { path: "sub/lcov.info", content: "SF:x\n" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "covered");
+      await openFile(h, "lcov.info");
+      expect(h.text()).toContain("1/4 25.0%");
+      expect(h.text()).toContain("2 files");
+      expect(h.text().indexOf("src/bad.ts")).toBeLessThan(h.text().indexOf("src/good.ts"));
+    } finally {
+      h.stop();
+    }
+    const broken = boot();
+    try {
+      await broken.settle();
+      await open(broken, "covered");
+      await openFile(broken, "sub/lcov.info");
+      expect(broken.text()).toContain("SF:x");
+      expect(broken.text()).toContain("not drawn as coverage: the record for x has no end_of_record");
+    } finally {
+      broken.stop();
+    }
+  });
+
   test("a JUnit report opens as its totals and failing cases, sharing the web parser", async () => {
     const made = await createRepo(forge, alice, { name: "junitrepo", visibility: "public", description: "tests" });
     if (!made.ok) throw new Error("repo failed");

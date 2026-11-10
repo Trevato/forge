@@ -38,6 +38,7 @@ export type FileKind =
   | "mail"
   | "gcode"
   | "sarif"
+  | "lcov"
   | "junit"
   | "text"
   | "binary";
@@ -75,6 +76,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   mail: 5 * MB,
   gcode: 50 * MB,
   sarif: 5 * MB,
+  lcov: 5 * MB,
   junit: 5 * MB,
   text: 1 * MB,
   binary: 0,
@@ -198,7 +200,11 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   gcode: "gcode",
   gco: "gcode",
   sarif: "sarif",
+  lcov: "lcov",
 };
+
+/** `lcov.info`: the name `lcov` and `bun test` write, whatever its extension. */
+const isLcovName = (path: string): boolean => /(^|\/)lcov\.info$/i.test(path);
 
 /**
  * Archives: the extension names the kind and the bytes confirm it. Their
@@ -265,9 +271,13 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (media !== undefined) return media.kind;
   if (isArchive(path, head)) return "archive";
   if (looksBinary(head)) return "binary";
+  if (isLcovName(path)) return "lcov";
   if (isJunit(path, head)) return "junit";
   return TEXTUAL[extension(path)] ?? "text";
 }
+
+/** Kinds whose renderer links paths to files in the repository, so the page reads the ref's file list. */
+export const needsPaths = (kind: FileKind): boolean => kind === "sarif" || kind === "lcov";
 
 /**
  * What a file's name says it is, for a file too large to have been read:
@@ -276,6 +286,7 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
  */
 export function kindByName(path: string): FileKind {
   const ext = extension(path);
+  if (isLcovName(path)) return "lcov";
   return MEDIA[ext]?.kind ?? TEXTUAL[ext] ?? "text";
 }
 

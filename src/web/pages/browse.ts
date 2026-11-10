@@ -87,7 +87,7 @@ import {
 } from "./explorer.ts";
 import { accountOnly, hostLabel, originIcon } from "./origins.ts";
 import { refSetFrom } from "./refs.ts";
-import { kindByName } from "../render/kinds.ts";
+import { kindByName, needsPaths } from "../render/kinds.ts";
 import { stageRow, stageStateFor } from "../stage-row.ts";
 import {
   blobView,
@@ -510,7 +510,7 @@ export async function browseBlob(ctx: Ctx): Promise<Response> {
   const blob = await scope.source.blob(ref, path);
   if (!blob.ok) return notFoundPage(ctx);
   const refs = await refSetFrom(scope.source);
-  const exists = kindByName(path) === "sarif" ? await pathsAt(scope, ref) : undefined;
+  const exists = needsPaths(kindByName(path)) ? await pathsAt(scope, ref) : undefined;
   const pane = renderBlob(scope, {
     refs,
     ref,
