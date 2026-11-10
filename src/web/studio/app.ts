@@ -54,6 +54,7 @@ import {
   row,
 } from "../ui.ts";
 import { answersRegion } from "./answers.ts";
+import { appMilestones } from "./milestone_lines.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
 import { notesCard } from "./notes.ts";
@@ -505,6 +506,7 @@ export async function studioApp(
       ${tellRegion}
       <div id="app-previews"></div>
       ${nowRegion(repo, now)}
+      ${appMilestones(ctx, repo)}
       ${more}
     </div>
     ${liveMount({ repo: base, app: true })}`
@@ -533,6 +535,7 @@ export async function studioApp(
         ${tellRegion}
         <div id="app-previews">${previews}</div>
         ${nowRegion(repo, now)}
+        ${appMilestones(ctx, repo)}
         ${notesCard(ctx, repo, record)}
       </div>
       <aside class="stack">

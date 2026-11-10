@@ -39,6 +39,7 @@ import { html, when, type Html } from "../html.ts";
 import { fragment, page, redirect } from "../layout.ts";
 import { siteStructuredData } from "../structured_data.ts";
 import { running } from "../../kernel/version.ts";
+import { homeMilestones } from "./milestone_lines.ts";
 import { liveClientJs } from "../live.ts";
 import {
   btn,
@@ -359,6 +360,7 @@ export async function studioHome(
   const allowed = untoldAnswer(ctx.app.db, user.id) === "allowed";
   if (allowed) markTold(ctx.app.db, user.id, new Date().toISOString());
   const needsYou = html`${requests}${waiting}${held}${alarms}`;
+  const mine = writableAppsOf(ctx, user).repos;
   const body = html`<h1 class="sr-only">Home</h1>
     ${allowed ? html`<div class="toast" data-tone="success" role="status" id="youre-in"><strong>${YOURE_IN_MESSAGE}</strong> Your account is open: tell the crew what you want to build.</div>` : null}
     ${tellBox(ctx, user)}
@@ -366,9 +368,10 @@ export async function studioHome(
     ${when(String(needsYou).trim() !== "", () => html`<section class="stack stack-tight" id="needs-you" aria-label="Needs you"><h2 class="small muted">Needs you</h2>${needsYou}</section>`)}
     ${when(String(since).trim() !== "", () => html`<section aria-label="Since you were here">${since}</section>`)}
     <section aria-label="Live">${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}</section>
+    ${homeMilestones(ctx, mine)}
     <section class="stack" aria-label="The forge">${kpis}</section>
     ${pinnedSlot(ctx.app.db, user)}
-    ${appChips(ctx, user)}
+    ${appChips(ctx, user, mine)}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home"><a href="/">Just my apps</a></p>`,
@@ -869,6 +872,8 @@ export function studioDoor(ctx: Ctx): Response {
       </ul>
     </section>
 
+    <div class="door-section">${homeMilestones(ctx)}</div>
+
     <section class="door-section door-split" id="yours">
       <div class="stack">
         <h2>Get your own forge</h2>
@@ -904,6 +909,7 @@ bun run src/main.ts</code></pre>
     title: "forge: software for what you're building, yours to keep",
     description: "Your own forge, with a private AI crew that builds your apps, games and business tools. Open source, and yours to keep.",
     body,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
     jsonLd: siteStructuredData(origin, running().version),
     ...(visitor
       ? {

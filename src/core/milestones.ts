@@ -649,6 +649,8 @@ function weightJson(weight: Weight): Record<string, unknown> {
     open: weight.open,
     building: weight.building,
     mergedInDays: { days: PILLAR_DAYS, merged: weight.merged },
+    // What landed in the last 7 days, named for who asks "what moved".
+    movedThisWeek: weight.merged,
     lastMovement: weight.last,
     ...(weight.spentUsd === undefined ? {} : { spentUsd: weight.spentUsd }),
   };

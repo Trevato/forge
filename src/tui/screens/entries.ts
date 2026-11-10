@@ -40,6 +40,7 @@ import { entry as features } from "./featureswitch.ts";
 import { entry as forgeView } from "./forgeview.ts";
 import { entry as flowsAll } from "./flowsall.ts";
 import { entry as front } from "./front.ts";
+import { entry as frontMilestones } from "./frontms.ts";
 import { entry as forges } from "./forges.ts";
 import { entry as homePins } from "./home_pins.ts";
 import { entry as claimStart } from "./claim_start.ts";
@@ -162,6 +163,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   profile,
   dotfiles,
   now,
+  frontMilestones,
   forgeView,
   repos,
   displays,

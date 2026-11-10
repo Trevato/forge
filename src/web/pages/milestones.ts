@@ -40,9 +40,10 @@ import { watchMilestone } from "../../actions/watches.ts";
 import { replanResult } from "../../actions/limb_replan.ts";
 import { given, pendingFor } from "../../core/limb_replan.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { cachedPlan } from "../map_cache.ts";
 import { milestonePath } from "../../story/wave_plan.ts";
+import { lastWaves, type LastWave } from "../../story/wave_last.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
 import {
   crumbsFor,
@@ -203,7 +204,7 @@ function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
 }
 
 /** The repository's plan, kept while nothing it reads changes. */
-export const planFor = (ctx: Ctx, repo: Repo, spend: boolean, now: Date): Plan =>
+export const planFor = (ctx: Pick<Ctx, "app"> & { request?: Request }, repo: Repo, spend: boolean, now: Date, named = true): Plan =>
   cachedPlan(
     {
       repoId: repo.id,
@@ -215,7 +216,9 @@ export const planFor = (ctx: Ctx, repo: Repo, spend: boolean, now: Date): Plan =
       readPlan(ctx.app.db, repo, {
         spend,
         now,
-        stretch: (name, ms) => notePhase(ctx.request, `plan-${name}`, ms),
+        ...(named && ctx.request !== undefined
+          ? { stretch: (name: string, ms: number) => notePhase(ctx.request!, `plan-${name}`, ms) }
+          : {}),
       }),
   );
 
@@ -548,7 +551,10 @@ function milestoneBody(
 }
 
 /** GET /:owner/:name/milestones/:number — one milestone, opened. */
-export function milestonePage(ctx: Ctx, now: Date = new Date()): Response {
+export async function milestonePage(
+  ctx: Ctx,
+  now: Date = new Date(),
+): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = timePhase(ctx.request, "repo", () => loadRepo(ctx));
   if (!repo) return notFoundPage(ctx);
@@ -559,8 +565,19 @@ export function milestonePage(ctx: Ctx, now: Date = new Date()): Response {
     : undefined;
   const milestone = plan?.milestone(number);
   if (plan === undefined || milestone === undefined) return notFoundPage(ctx);
-  const rendering = performance.now();
   const viewer = ctx.auth.user;
+  const wave = (
+    await timePhaseAsync(ctx.request, "waves", () =>
+      lastWaves({
+        db: ctx.app.db,
+        reposRoot: ctx.app.reposRoot,
+        repo,
+        viewer,
+        plan: () => plan,
+      }),
+    )
+  ).get(number);
+  const rendering = performance.now();
   // Watch is each person's own; acting on the whole limb is for whoever
   // administers the repository. One row, Watch first.
   const watch =
@@ -595,6 +612,7 @@ export function milestonePage(ctx: Ctx, now: Date = new Date()): Response {
     palette: repoPalette(ctx, repo),
     body: html`${repoHeader(ctx, repo, "map")}<div data-milestone>
     ${milestoneBody(repo, milestone, owner, actions, move)}
+    ${wave === undefined ? null : html`<ul class="list setting-list" id="ms-wave">${row({ nav: true, href: wave.href, title: `Last moved in wave ${wave.version}`, meta: html`${wave.headline}`, trail: html`${wave.date}` })}</ul>`}
     ${replanChanged(ctx, repo, milestone)}</div>
     ${liveMount({ repo: repoBase(repo) })}`,
     scriptJs: liveClientJs,
@@ -638,14 +656,31 @@ export async function milestonesJson(
     spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
   });
   const ask = askByUmbrella(ctx, repo);
+  const waves = await lastWaves({
+    db: ctx.app.db,
+    reposRoot: ctx.app.reposRoot,
+    repo,
+    viewer: ctx.auth.user,
+    plan: () => plan,
+  });
   return {
     repo: { owner: repo.ownerName, name: repo.name },
     limbs: plan.limbs.map((limb) => ({
       ...limbJson(limb),
       ...askOf(ask, limb.issue.number),
+      ...lastWaveOf(waves, limb.issue.number),
     })),
   };
 }
+
+/** The wave that last moved a milestone, as data: absent when none did. */
+const lastWaveOf = (
+  waves: ReadonlyMap<number, LastWave>,
+  number: number,
+): { lastWave?: LastWave } => {
+  const w = waves.get(number);
+  return w === undefined ? {} : { lastWave: w };
+};
 
 /** Each pillar's ask-to-live, by its umbrella's number: what its limb shows too. */
 function askByUmbrella(
@@ -679,16 +714,22 @@ export async function milestoneData(
   now: Date = new Date(),
 ): Promise<Record<string, unknown> | undefined> {
   const owner = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
-  const milestone = readPlan(ctx.app.db, repo, { spend: owner, now }).milestone(
-    number,
-  );
+  const plan = readPlan(ctx.app.db, repo, { spend: owner, now });
+  const milestone = plan.milestone(number);
   const viewer = ctx.auth.user;
-  return milestone === undefined
-    ? undefined
-    : {
+  if (milestone === undefined) return undefined;
+  const waves = await lastWaves({
+    db: ctx.app.db,
+    reposRoot: ctx.app.reposRoot,
+    repo,
+    viewer,
+    plan: () => plan,
+  });
+  return {
         repo: { owner: repo.ownerName, name: repo.name },
         ...milestoneJson(milestone, owner),
         ...askOf(askByUmbrella(ctx, repo, number), number),
+        ...lastWaveOf(waves, number),
         // Whether the caller watches it; a caller who cannot has no answer.
         ...(viewer?.kind === "user"
           ? {

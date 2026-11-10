@@ -244,6 +244,10 @@ import { firstSubmit } from "../web/pages/first.ts";
 import { nextPage, nextSubmit } from "../web/pages/next.ts";
 import { weekPage, weekSubmit } from "../web/pages/week.ts";
 import {
+  appMilestonesFragment,
+  liveMilestonesFragment,
+} from "../web/studio/milestone_lines.ts";
+import {
   milestonePage,
   milestonesPage,
   milestoneWatch,
@@ -992,6 +996,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/live/on-you", liveOnYouFragment);
   router.add("GET", "/live/client-apps", liveClientAppsFragment);
   router.add("GET", "/live/feed", liveFeedFragment);
+  router.add("GET", "/live/milestones", liveMilestonesFragment);
   router.add("GET", "/live/moving", liveMovingFragment);
   router.add("GET", "/live/chips", liveChipsFragment);
   router.add("GET", "/feed", feedPage);
@@ -1349,6 +1354,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/app/state", appStateFragment);
   // "Now" on the same page, alone: the region's own address.
   router.add("GET", "/:owner/:name/app/now", appNowFragment);
+  router.add("GET", "/:owner/:name/app/milestones", appMilestonesFragment);
   router.add("GET", "/:owner/:name/app/answers", appAnswersFragment);
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
   // Where a private app sends a person who arrived by its link.

@@ -98,7 +98,7 @@ export function appsOf(ctx: Pick<Ctx, "app">, user: User | undefined, archived =
  * repositories, with their records. This is "your apps": the studio home's
  * shelf and its cost line, never widened by what a stranger merely made
  * public. */
-export function writableAppsOf(ctx: Ctx, user: User | undefined) {
+export function writableAppsOf(ctx: Pick<Ctx, "app">, user: User | undefined) {
   return appsFiltered(
     ctx,
     listReposWritableTo(ctx.app.db, user, {
