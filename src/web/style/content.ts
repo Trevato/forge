@@ -477,6 +477,10 @@ form.inline { display: inline; margin-left: auto; }
 
 /* A font specimen: set in the font itself once the script has loaded it from
    the media route; until then (or without script) in the page's own face. */
+/* ---- gpx view: the outline scales to the column; its facts are status rows ---- */
+.gpx-view { margin: 0; }
+.gpx-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
+.gpx-view .status-rows { margin-top: 12px; }
 .font-view { padding: 16px 20px; }
 .font-name { margin: 0 0 12px; font-size: 1.75rem; line-height: 1.3; overflow-wrap: anywhere; }
 .font-line { margin: 0 0 10px; line-height: 1.4; overflow-wrap: anywhere; }

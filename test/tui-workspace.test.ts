@@ -416,6 +416,39 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .gpx opens as its facts, sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "tracks",
+      visibility: "public",
+      description: "routes",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "ride.gpx",
+          content:
+            '<gpx><trk><name>Morning ride</name><trkseg><trkpt lat="10" lon="20"><ele>100</ele></trkpt><trkpt lat="11" lon="20"><ele>150</ele></trkpt></trkseg></trk></gpx>',
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "tracks");
+      await openFile(h, "ride.gpx");
+      expect(h.text()).toContain("Morning ride");
+      expect(h.text()).toContain("111.2 km");
+      expect(h.text()).toContain("50 m");
+      expect(h.text()).toContain("4 facts");
+      await h.press("s");
+      expect(h.text()).toContain("<trkpt");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("tables: search, edit, the caps in the status line, a ; file, and s on a broken one", async () => {
     const made = await createRepo(forge, alice, {
       name: "sheets",
