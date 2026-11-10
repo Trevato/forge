@@ -17,7 +17,7 @@ import { canAdmin, canWrite, type Repo } from "../../core/repos.ts";
 import { nameFrame, notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { repoMachines } from "../../crew/machines_read.ts";
 import type { Ctx } from "../../http/context.ts";
-import { ENDED, lastSessions, type SessionRecord } from "../../machines/shell.ts";
+import { ENDED, lastSessions, machineStates, stateLine, type MachineState, type SessionRecord } from "../../machines/shell.ts";
 import {
   crumbsFor,
   forbiddenPage,
@@ -58,16 +58,24 @@ export async function machinesSettingsPage(ctx: Ctx): Promise<Response> {
   if (!canWrite(ctx.app.db, repo, ctx.auth.user)) return forbiddenPage(ctx, NOT_YOURS_TO_DO);
   const config = await timePhaseAsync(ctx.request, "machines", () => repoMachines(ctx.app, repo));
   const sessions = timePhase(ctx.request, "sessions", () => lastSessions(ctx.app.db, repo.id));
-  return timePhase(ctx.request, "render", () => render(ctx, repo, config.machines, sessions));
+  const states = machineStates(ctx.app, repo.id, ctx.auth.user!.id);
+  return timePhase(ctx.request, "render", () => render(ctx, repo, config.machines, sessions, states));
+}
+
+/** The state line as muted text in a row's meta, which wraps; nothing when no shell is live. */
+function stateMeta(state: MachineState | undefined) {
+  const line = stateLine(state);
+  if (state === undefined || line === undefined) return html``;
+  return html` · <span class="muted" data-shell-state="${state.attached ? "attached" : "detached"}">${line}</span>`;
 }
 
 /** One data-nav link per machine, to its shell; none when there are no machines. */
-export function machineRows(repo: Repo, list: readonly Machine[]) {
+export function machineRows(repo: Repo, list: readonly Machine[], states: ReadonlyMap<string, MachineState> = new Map()) {
   return html`${list.map((m) =>
     row({
       lead: icon("terminal"),
       title: m.name,
-      meta: html`Tools: ${m.tools.length === 0 ? "none" : m.tools.join(", ")} · Reach: ${m.reach.length === 0 ? "the forge only" : "the forge and its apps"}`,
+      meta: html`Tools: ${m.tools.length === 0 ? "none" : m.tools.join(", ")} · Reach: ${m.reach.length === 0 ? "the forge only" : "the forge and its apps"}${stateMeta(states.get(m.name))}`,
       href: shellPath(repo, m.name),
       nav: true,
       data: { machine: m.name },
@@ -75,12 +83,12 @@ export function machineRows(repo: Repo, list: readonly Machine[]) {
   )}`;
 }
 
-function render(ctx: Ctx, repo: Repo, list: readonly Machine[], sessions: readonly SessionRecord[]): Response {
+function render(ctx: Ctx, repo: Repo, list: readonly Machine[], sessions: readonly SessionRecord[], states: ReadonlyMap<string, MachineState>): Response {
   const machines = html`<section class="settings-block">
     <h2>Machines</h2>
     <p class="muted">A machine is where the crew shell runs; each writer gets a directory and home of their own on it.</p>
     <ul class="list setting-list" id="machines">
-      ${machineRows(repo, list)}
+      ${machineRows(repo, list, states)}
     </ul>
   </section>`;
   // The mark is not colour alone: a running shell carries the word in a badge,

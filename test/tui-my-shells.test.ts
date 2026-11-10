@@ -85,3 +85,12 @@ test("s stops the picked live shell and i stops idle ones, with the page's recei
   expect(tui.screen.toText()).toContain("No idle shell to stop.");
   tui.stop();
 });
+
+test("the machines screen line names each machine's state with the page's words", async () => {
+  const { shellStatesLine } = await import("../src/tui/screens/machines.ts");
+  expect(shellStatesLine(new Map())).toBeUndefined();
+  expect(shellStatesLine(new Map([["standard", { attached: true, stopsAt: 0 }]]))).toBe("Your shell — standard: attached");
+  expect(shellStatesLine(new Map([["big", { attached: false, stopsAt: Date.UTC(2026, 0, 1, 9, 30) }]]))).toBe(
+    "Your shell — big: detached, stops at 09:30 UTC unless you come back",
+  );
+});

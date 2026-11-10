@@ -20,6 +20,16 @@ records `end_reason = 'stopped'`. MCP: `sessions` with `kind: "shells"` and `act
 
 Pinned by `test/my-shells.test.ts` and `test/tui-my-shells.test.ts`.
 
+## Attached or detached (#10546)
+
+Closing the tab does not end a shell: tmux keeps it, and the machine's line says so. On Settings › Machines (the page)
+and on the terminal's machines screen, a machine you hold a shell on reads **attached** while a tab is open, and
+**detached, stops at HH:MM UTC unless you come back** once the last tab has gone. The time is in UTC, not your local
+zone: it is the later of your last keystroke and the shell's last output, plus the idle limit. Opening the shell again
+joins the same session with its scrollback and the line goes back to attached. The line shows only your own shells,
+never another person's; a machine with no live shell shows no line. Both doors build it with `stateLine` and
+`machineStates` in `src/machines/shell.ts`; it sits in the row's meta so it wraps on a narrow screen.
+
 ## App terminals (#10549)
 
 An app's terminal (`tty` in forge.json, over SSH or the forge's UI) is held in `src/apps/tty_registry.ts` while it is open: app, environment, holder, start, last input and output. `myShells` lists it as a `kind: "app"` row beside the machine shells, on the account page and in `sessions` (`kind: "shells"`). Stop and Stop all idle hang up its pty (SIGHUP, its process group ends); one idle for the shell idle limit stops itself. Only live terminals are listed: an ended one leaves no row.

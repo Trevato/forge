@@ -29,6 +29,7 @@ import type { App } from "../app.ts";
 import { cellCounters, openCell, resolveLimits, type Cell, type CellSpec } from "../apps/contain.ts";
 import { appTtysOf, stopAllAppTtys, stopAppTty, stopIdleAppTtys } from "../apps/tty_registry.ts";
 import { startTerminal, type TerminalProgram } from "../apps/tty.ts";
+import { scheduleClock } from "../apps/feature_schedule.ts";
 import { holdOpen } from "../http/caller.ts";
 import { canWrite, getRepo, getRepoById, type Repo } from "../core/repos.ts";
 import { getUserById, isActive } from "../core/users.ts";
@@ -432,6 +433,35 @@ const idleLimit = (opts: ShellOptions): number => (typeof opts.idleMs === "funct
 /** Idle only when both the last keystroke and the last output are older than the limit. */
 export function idle(session: { lastInput: number; lastOutput: number }, limitMs: number, now = Date.now()): boolean {
   return now - session.lastInput >= limitMs && now - session.lastOutput >= limitMs;
+}
+
+/** One live shell of a person's on a machine: attached while a connection is open, else detached and due to stop. */
+export interface MachineState {
+  readonly attached: boolean;
+  /** When an idle session ends (ms since epoch): the later of the last keystroke and output, plus the idle limit. */
+  readonly stopsAt: number;
+}
+
+/** "attached", or "detached, stops at HH:MM UTC unless you come back"; undefined when no shell is live. Both doors say it. */
+export function stateLine(state: MachineState | undefined): string | undefined {
+  if (state === undefined) return undefined;
+  return state.attached ? "attached" : `detached, stops at ${scheduleClock(state.stopsAt)} UTC unless you come back`;
+}
+
+/** A person's live shells in one repository, by machine name; only theirs, never another person's. */
+export function machineStates(app: App, repoId: string, userId: string): Map<string, MachineState> {
+  const opts = options.get(app);
+  const idleMs = opts === undefined ? shellIdleMs(app.db) : idleLimit(opts);
+  const states = new Map<string, MachineState>();
+  for (const s of sessionsOf(app).values()) {
+    if (s.userId !== userId || s.repoId !== repoId || s.ended) continue;
+    const row = app.db
+      .query<{ machine: string }, [string]>("SELECT machine FROM machine_sessions WHERE id = ?")
+      .get(s.row);
+    if (row === null) continue;
+    states.set(row.machine, { attached: s.peers.size > 0, stopsAt: Math.max(s.lastInput, s.lastOutput) + idleMs });
+  }
+  return states;
 }
 
 function end(app: App, session: Session, reason: EndReason): void {
