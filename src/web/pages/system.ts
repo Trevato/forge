@@ -25,6 +25,7 @@ import { eventStream } from "../../http/sse.ts";
 import type { SystemView } from "../../system/view.ts";
 import { live } from "../../system/live.ts";
 import { readerPaces, type ReaderPace } from "../../system/telemetry_reads.ts";
+import { slowPageLine, slowPages, type SlowPage } from "../../perf/watch.ts";
 import { stallHour } from "../../metrics/stalls.ts";
 import type { RouteStall } from "../../perf/loop.ts";
 import { loopWatch } from "../../perf/live.ts";
@@ -162,6 +163,23 @@ export function stallSection(rows: readonly RouteStall[]): Html {
       </table></div>`}</section>`;
 }
 
+const SLOW_TTL_MS = 5000;
+let slowKept: { db: object; at: number; rows: SlowPage[] } | undefined;
+/** `slowPages`, kept a few seconds so a busy /system never repeats the query; changes show on reload. */
+function slowPagesCached(db: Parameters<typeof slowPages>[0]): SlowPage[] {
+  const now = Date.now();
+  if (slowKept === undefined || slowKept.db !== db || now - slowKept.at > SLOW_TTL_MS)
+    slowKept = { db, at: now, rows: slowPages(db, now) };
+  return slowKept.rows;
+}
+
+/** Real visitors' pages over budget (#10536): one line each, and nothing at all when every page is fast. */
+export function slowPagesSection(rows: readonly SlowPage[]): Html {
+  if (rows.length === 0) return html``;
+  return html`<section class="settings-block" id="slow-pages"><h2>Pages over budget, last hour</h2>
+    <ul class="list" aria-label="Pages over their budget for real visitors">${rows.map((p) => html`<li data-route="${p.route}" data-phase="${p.phase}">${slowPageLine(p)}</li>`)}</ul></section>`;
+}
+
 /** Who read the telemetry routes in the last 10 minutes and how fast (#9069); `readerPaces`' rows. */
 export function readersSection(rows: readonly ReaderPace[]): Html {
   const secs = (ms: number | null): string => (ms === null ? "—" : `${(ms / 1000).toFixed(1)} s`);
@@ -273,6 +291,7 @@ export function systemPage(ctx: Ctx): Response {
       <div id="sys-procs">${at("sys-procs")}</div></section>
     ${featuresSection(timePhase(ctx.request, "features", () => featureHealth(ctx.app, reader)))}
     <div id="sys-stalls">${stallSection(stalls)}</div>
+    <div id="sys-slow-pages">${slowPagesSection(timePhase(ctx.request, "slowpages", () => slowPagesCached(ctx.app.db)))}</div>
     <div id="sys-readers">${readersSection(readerPaces())}</div>
     <div id="sys-caches">${cachesSection(pageCaches())}</div>
     ${memory}`;
