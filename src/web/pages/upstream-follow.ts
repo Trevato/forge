@@ -223,6 +223,7 @@ function sourceLine(base: string, s: FollowSource): Html {
   const stamp = stampOf(s);
   const stand = sourceStanding(s);
   return row({
+    nav: true,
     lead: icon("sync"),
     title: html`<a href="${s.url}" rel="noreferrer noopener">${upstreamShort(s.url)}</a> <span class="mono">${s.branch}</span>`,
     meta: html`${stamp === undefined ? "" : `${stamp.account}@${stamp.host}`} · ${stand}${
