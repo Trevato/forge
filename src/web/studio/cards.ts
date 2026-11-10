@@ -9,8 +9,9 @@
 
 import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
+import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "crew";
 
 export interface CardRow {
   readonly label: string;
@@ -39,7 +40,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "crew"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -57,6 +58,8 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   pulls: "pulls",
   asked: "asked",
   issue: "issue",
+  flow: "flow",
+  scorecard: "crew",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -71,6 +74,8 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   pulls: "Pulls",
   asked: "Asked",
   issue: "Issue",
+  flow: "Flow",
+  crew: "Crew",
 };
 
 type Obj = Record<string, unknown>;
@@ -124,6 +129,40 @@ export function cardFor(
     if (pulls.length > 0)
       rows.push({ label: "Pulls", value: pulls.slice(0, LIMIT).map((n) => `#${n}`).join(" ") });
     return { kind, title: `Wave ${text(w["version"])}`, status: `${repo} · ${text(w["date"])}`.replace(/^ · /, ""), rows, actions };
+  }
+  if (kind === "flow") {
+    // Only the no-argument answer has `stages`; a fleet query or a `why` answer stays plain JSON.
+    const stages = list(obj(value)["stages"]).map(obj).filter((s) => text(s["key"]) in STAGE_LABEL);
+    if (stages.length === 0) return undefined;
+    const now = Date.now();
+    const typed = stages.map((s): PipelineStage => ({
+      key: text(s["key"]) as PipelineKey,
+      waiting: Number(s["waiting"]) || 0,
+      active: Number(s["active"]) || 0,
+      oldestWaiting: typeof s["oldestWaiting"] === "string" ? s["oldestWaiting"] : null,
+      capacity: typeof s["capacity"] === "string" ? s["capacity"] : null,
+    }));
+    for (const s of typed) {
+      const wait = s.oldestWaiting === null || Number.isNaN(Date.parse(s.oldestWaiting)) ? "" : ` · oldest ${span(now - Date.parse(s.oldestWaiting))}`;
+      rows.push({ label: STAGE_LABEL[s.key], value: `${s.waiting} waiting · ${s.active} active${wait}` });
+    }
+    return { kind, title: CARD_TITLE[kind], status: verdict(typed, now), rows, actions };
+  }
+  if (kind === "crew") {
+    // `scorecard` answers `{ agents: [{ username, all, recent }], keeperDays: [{ landed }] }`.
+    const v = obj(value);
+    if (!Array.isArray(v["agents"])) return undefined;
+    const agents = v["agents"].map(obj);
+    const week = list(v["keeperDays"]).reduce<number>((n, d) => n + (Number(obj(d)["landed"]) || 0), 0);
+    const crewStatus = `${week} landed this week`;
+    for (const a of agents.slice(0, LIMIT)) {
+      const r = obj(a["recent"]);
+      const red = typeof r["redCheckRate"] === "number" ? `${Math.round(r["redCheckRate"] * 100)}% red` : "no checks";
+      rows.push({ label: text(a["username"]), value: `${Number(r["landed"]) || 0} landed this month · ${red}` });
+    }
+    // The card shows LIMIT agents; the rest are counted, never dropped silently.
+    if (agents.length > LIMIT) rows.push({ label: "More", value: `+${agents.length - LIMIT} more` });
+    return { kind, title: CARD_TITLE[kind], status: crewStatus, rows, actions };
   }
   if (tool === "new_app") {
     const made = obj(value);

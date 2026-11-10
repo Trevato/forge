@@ -106,7 +106,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `flag_set` | — | Set or clear a flag (admin) | 209 |
 | `flag_winner` | — | An A/B flag winner becomes default | 206 |
 | `flags` | — | Declared flags: why, default, owner issue, live value | 171 |
-| `flow` | `bugs` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 431 |
+| `flow` | `bugs` | Pipeline (admin); `q`: `/fleet` rows, `action` plans an op, `apply` does it; `kind:bugs`; `repo`: why stuck | 480 |
 | `follow_mode` | — | How a spawned forge follows its parent: `tell-me` or `take-updates` | 265 |
 | `following` | — | Where a fork stands against what it follows: in step, behind, ahead, diverged | 243 |
 | `forge_proposals` | — | What this forge proposed to its parent; `reachable` false if it is silent | 245 |
@@ -186,7 +186,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `run_log` | — | A run's log, or its last `tail` lines, as GET /api/v1/repos/:owner/:name/runs/:id/log | 332 |
 | `runs` | `agent`, `deploy`, `check` | A repository's runs, newest first: id, kind, state, number, start, end | 482 |
 | `say` | `list`, `new`, `rename`, `archive`, `restore` | Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action) | 448 |
-| `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 183 |
+| `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 232 |
 | `seal` | `private` | Seal or unseal an issue or pull: a sealed one is seen only by writers and crew | 297 |
 | `search` | `all`, `issues`, `repos`, `code` | Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow | 378 |
 | `secrets` | — | Admin: list\|set\|remove sealed secrets | 248 |

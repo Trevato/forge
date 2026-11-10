@@ -1284,9 +1284,11 @@ describe("the forge over MCP", () => {
     expect(uris).toEqual([
       "ui://forge/app",
       "ui://forge/asked",
+      "ui://forge/crew",
       "ui://forge/decision",
       "ui://forge/explore",
       "ui://forge/feed",
+      "ui://forge/flow",
       "ui://forge/issue",
       "ui://forge/map",
       "ui://forge/pull",
@@ -1315,6 +1317,8 @@ describe("the forge over MCP", () => {
     expect(meta("pull")).toBe("ui://forge/pull");
     expect(meta("pulls")).toBe("ui://forge/pulls");
     expect(meta("asked")).toBe("ui://forge/asked");
+    expect(meta("flow")).toBe("ui://forge/flow");
+    expect(meta("scorecard")).toBe("ui://forge/crew");
   });
 
   test("tools/call pull carries the card beside an unchanged text answer", async () => {
