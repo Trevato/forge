@@ -31,6 +31,7 @@ const FILTERS = 6;
 function landingRow(l: Landing, own: string | undefined, showRepo: boolean): Html {
   return row({
     href: `/${l.repo}/pulls/${l.number}`,
+    nav: true,
     title: l.title,
     meta: html`${showRepo || l.repo !== own ? html`${l.repo} · ` : null}#${l.number}${l.bet === undefined ? null : html` · ${badge(l.bet, { variant: "outline" })}`}${l.from === undefined ? null : html` · folded in from ${l.from}`}`,
     facts: [...(l.by === undefined ? [] : [{ label: "By", value: l.by }]), ...(l.with === undefined ? [] : [{ label: "With", value: l.with.join(", ") }])],
