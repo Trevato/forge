@@ -24,6 +24,11 @@
  * through the sandbox's proxy. The control reaches the forge's host:port,
  * which is allowed, through the proxy.
  *
+ * The through-proxy requests are raw requests to the proxy, not `fetch`: srt
+ * puts 127.0.0.1 and localhost in NO_PROXY, which a client honours by going
+ * direct (#10602). `srt` is launched without proxy variables (`withoutParentProxy`): it would
+ * chain through them, and the check host's egress proxy refuses loopback.
+ *
  * Like crew-sandbox-real.test.ts this needs a sandbox of its own, so inside a
  * crew run or a container that refuses user namespaces it is skipped, naming
  * itself and the reason on the console; the forge's check runs it. Where a
@@ -71,6 +76,21 @@ const DIRS = {
 const WRITTEN = "escape-written.txt";
 /** Hosts off the allowlist that name the outside server. */
 const OFF_LIST = ["127.0.0.1", "localhost"] as const;
+
+/**
+ * The environment `srt` is launched with, minus any proxy setting. `srt`
+ * reads `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` of its own process as its
+ * *parent proxy* and chains every allowed request through it. On the check
+ * host that is the cell's egress proxy, which refuses `127.0.0.1:<port>`,
+ * so the allowed forge host:port got "Unable to connect" (#10602). A crew
+ * run's real sandbox is not launched behind one, so the test is not either.
+ */
+function withoutParentProxy(env: NodeJS.ProcessEnv): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env))
+    if (value !== undefined && !/^(http|https|all|ftp|no)_proxy$/i.test(key)) kept[key] = value;
+  return kept;
+}
 
 function routed(route: Route, path: string, pid: number): string {
   if (route === "by its path") return path;
@@ -151,10 +171,38 @@ const has = (path: string, needle: string) => {
   try { return readFileSync(path, "utf8").includes(needle); } catch { return false; }
 };
 // The network first, before the shell touches /proc.
-const get = async (url: string, proxy?: string) => {
-  try { return await (await fetch(url, { proxy })).text(); }
-  catch (e) { return "refused: " + String(e); }
-};
+// Through the proxy is a raw request to it too, in the absolute form a proxy
+// takes, so no client's NO_PROXY handling (srt sets 127.0.0.1 and localhost
+// in it) can send it direct instead: what comes back is the body, or the
+// proxy's status line, or the refusal to connect.
+const get = (url: string, proxy: string) =>
+  new Promise<string>((resolve) => {
+    const p = new URL(proxy);
+    const target = new URL(url);
+    const auth = p.username
+      ? "proxy-authorization: Basic " +
+        btoa(decodeURIComponent(p.username) + ":" + decodeURIComponent(p.password)) + "\\r\\n"
+      : "";
+    let bytes = "";
+    const done = () => {
+      const at = bytes.indexOf("\\r\\n\\r\\n");
+      const status = bytes.split("\\r\\n")[0] ?? "";
+      resolve(at >= 0 && / 2\\d\\d/.test(status) ? bytes.slice(at + 4) : "refused: " + (status || "no answer"));
+    };
+    Bun.connect({
+      hostname: p.hostname,
+      port: Number(p.port),
+      socket: {
+        open(socket) {
+          socket.write("GET " + url + " HTTP/1.1\\r\\nhost: " + target.host + "\\r\\n" + auth + "connection: close\\r\\n\\r\\n");
+        },
+        data(_socket, chunk) { bytes += new TextDecoder().decode(chunk); },
+        close() { done(); },
+        error(_socket, e) { resolve("refused: " + String(e)); },
+        connectError(_socket, e) { resolve("refused: connecting to the proxy: " + String(e)); },
+      },
+    }).catch((e: unknown) => resolve("refused: " + String(e)));
+  });
 // Direct is a raw TCP connection, so no proxy setting in the environment
 // can carry it: what comes back is the server's bytes or the refusal.
 const direct = (hostname: string, port: number) =>
@@ -178,7 +226,7 @@ const own = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Respons
 const ownDirect = await direct("127.0.0.1", own.port);
 own.stop(true);
 // The allowed control first: a refusal must not be what decides it.
-const forgeViaProxy = await get("http://127.0.0.1:${forge.port}/", process.env.HTTP_PROXY);
+const forgeViaProxy = process.env.HTTP_PROXY ? await get("http://127.0.0.1:${forge.port}/", process.env.HTTP_PROXY) : "no proxy in the shell";
 const net: Record<string, string> = {};
 for (const host of ${JSON.stringify(OFF_LIST)}) {
   const url = "http://" + host + ":" + ${outside.port} + "/";
@@ -237,6 +285,7 @@ console.log(JSON.stringify({
   );
   const proc = Bun.spawn([srt, "--settings", settings, "-c", `'${process.execPath}' probe.ts`], {
     cwd: work,
+    env: withoutParentProxy(process.env),
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -256,21 +305,6 @@ if (nestedReason === undefined)
   await runEscape().catch((e: unknown) => {
     probeError = e instanceof Error ? e.message : String(e);
   });
-
-/**
- * Where the allowed host cannot be reached through the proxy either, the
- * proxy answers nothing here (the check host today, #10602, as for
- * crew-sandbox-real.test.ts), and a refusal through it would prove nothing:
- * those attempts and their control are skipped, named.
- */
-const proxyReason =
-  nestedReason === undefined && probeError === undefined && report!.forgeViaProxy !== "forge"
-    ? `the sandbox's proxy does not answer here, even for an allowed host (#10602): ${report!.forgeViaProxy}`
-    : undefined;
-if (proxyReason !== undefined)
-  console.warn(
-    `skipped: test/crew-sandbox-escape.test.ts, the attempts through the proxy: ${proxyReason}`,
-  );
 
 describe.skipIf(nestedReason !== undefined)(
   "read attempts from a real sandboxed shell, /proc unmasked",
@@ -311,12 +345,9 @@ describe.skipIf(nestedReason !== undefined)(
       expect(readFileSync(join(work, "own-written.txt"), "utf8")).toBe(CANARY);
     });
 
-    test.skipIf(proxyReason !== undefined)(
-      "control: the shell reaches the forge's host:port through the proxy",
-      () => {
-        expect(report.forgeViaProxy).toBe("forge");
-      },
-    );
+    test("control: the shell reaches the forge's host:port through the proxy", () => {
+      expect(report.forgeViaProxy).toBe("forge");
+    });
 
     for (const label of Object.keys(DIRS))
       for (const route of ROUTES)
@@ -340,13 +371,10 @@ describe.skipIf(nestedReason !== undefined)(
         expect(report.net[`${host}|direct`]).not.toContain("outside");
       });
 
-      test.skipIf(proxyReason !== undefined)(
-        `cannot reach ${host}:<port off the allowlist>, through the proxy`,
-        () => {
-          expect(report.net[`${host}|proxy`]).not.toBe("outside");
-          expect(report.net[`${host}|proxy`]).not.toBe("no proxy");
-        },
-      );
+      test(`cannot reach ${host}:<port off the allowlist>, through the proxy`, () => {
+        expect(report.net[`${host}|proxy`]).not.toBe("outside");
+        expect(report.net[`${host}|proxy`]).not.toBe("no proxy");
+      });
     }
   },
 );

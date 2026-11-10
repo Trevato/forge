@@ -42,12 +42,14 @@ forge's check runs it.
 | Controls: read and write the own worktree, read the own environ, reach a listener in the own network namespace directly, reach the forge's host:port through the proxy | works | the four "control:" tests |
 
 The controls keep a probe that never ran, or a proxy that refuses
-everything, from passing as "all refused". Where the allowed host does not
-answer through the proxy either (the forge's check host today, the same cause
-that keeps `test/crew-sandbox-real.test.ts` out of the gate; #10602 makes them run there), the
-attempts through the proxy and their control are skipped, printing
-`skipped: test/crew-sandbox-escape.test.ts, the attempts through the proxy:
-<reason>`; the direct attempts, the reads and the writes still run.
+everything, from passing as "all refused". The probe makes its through-proxy
+requests as raw requests to the proxy (with the credential `srt` puts in
+`HTTP_PROXY`), not with `fetch`: `srt` puts `127.0.0.1` and `localhost` in
+`NO_PROXY`, and a client that honours it goes direct and cannot connect, which
+is what the allowed forge host:port did on the check host (#10602). `srt` itself
+is launched without proxy variables, so it does not chain through the cell's
+egress proxy. Nothing is skipped for the proxy any more; a failure prints the
+proxy's own status line.
 
 ## Not done here
 
