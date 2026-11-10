@@ -13,6 +13,9 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { exploreParams } from "../src/actions/explore.ts";
+/** The href the page gives a line: separate parameters, `&` escaped as in markup. */
+const linkOf = (line: string): string => `/explore?${exploreParams(readExploreLine(line).query)}`.replace(/&/g, "&amp;");
 
 quietLogs();
 
@@ -105,7 +108,7 @@ describe("the page and the API", () => {
     expect(out.split("is not a sort").length).toBe(2);
     expect(out).toContain("sort:bogus is not a sort — use score, forks, ships, likes, use, fresh, name");
     expect(out).not.toContain(encodeURIComponent("sort:bogus"));
-    expect(out).toContain(`href="/explore?q=${encodeURIComponent("kind:app garden")}"`);
+    expect(out).toContain(`href="${linkOf("kind:app garden")}"`);
   });
 
   test("the page says an updated:, archived: or owner: word once, escaped", async () => {
@@ -197,7 +200,7 @@ describe("did you mean", () => {
     try {
       const q = encodeURIComponent("garden sort:froks");
       const html = await (await fetch(`${s.url}/explore?q=${q}`)).text();
-      expect(html).toContain(`Did you mean <a href="/explore?q=${encodeURIComponent("garden sort:forks")}">sort:forks</a>?`);
+      expect(html).toContain(`Did you mean <a href="${linkOf("garden sort:forks")}">sort:forks</a>?`);
       const api = (await (await fetch(`${s.url}/api/v1/explore?q=${q}`)).json()) as { suggest?: string };
       expect(api.suggest).toBe("garden sort:forks");
       const none = (await (await fetch(`${s.url}/api/v1/explore?q=sort:zzzzzzzz`)).json()) as { suggest?: string };

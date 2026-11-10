@@ -13,6 +13,9 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { exploreParams, readExploreLine } from "../src/actions/explore.ts";
+/** The href the page gives a line: separate parameters, `&` escaped as in markup. */
+const linkOf = (line: string): string => `/explore?${exploreParams(readExploreLine(line).query)}`.replace(/&/g, "&amp;");
 
 quietLogs();
 
@@ -184,7 +187,7 @@ describe("one filter, three surfaces", () => {
   test("the page's chips are links whose q is a line the API takes", async () => {
     const html = await (await fetch(`${servers.url}/explore`)).text();
     for (const line of ["kind:app", "sort:forks", "sort:ships", "sort:likes", "sort:use", "sort:fresh", "updated:7d", "kind:person"]) {
-      expect(html).toContain(`href="/explore?q=${encodeURIComponent(line)}"`);
+      expect(html).toContain(`href="${linkOf(line)}"`);
       expect((await fetch(`${servers.url}/api/v1/explore?q=${encodeURIComponent(line)}`)).status).toBe(200);
     }
   });
@@ -205,5 +208,56 @@ describe("one filter, three surfaces", () => {
     for (const bad of ["kind:x", "updated:2y", "archived:maybe"]) {
       expect((await fetch(`${servers.url}/api/v1/explore?q=${encodeURIComponent(bad)}`)).status).toBe(422);
     }
+  });
+});
+
+describe("separate parameters", () => {
+  const PARAMS: Record<string, string>[] = [
+    { kind: "app", sort: "forks" },
+    { kind: "app", sort: "name", owner: "pine" },
+    { kind: "app", updated: "7d" },
+    { kind: "app", archived: "yes", sort: "name" },
+  ];
+  async function mcpArgs(args: Record<string, string>): Promise<{ ok: boolean; text: string }> {
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "explore", arguments: args } }),
+    });
+    const out = ((await res.json()) as any).result;
+    return { ok: out.isError !== true, text: out.content[0].text };
+  }
+  const names = async (qs: string) =>
+    (((await (await fetch(`${servers.url}/api/v1/explore?${qs}`)).json()) as { items: { kind: string; name: string }[] }).items);
+
+  for (const params of PARAMS) {
+    test(`${JSON.stringify(params)} gives the same rows on the API, the MCP and the page`, async () => {
+      const qs = new URLSearchParams(params).toString();
+      const api = await names(qs);
+      expect(api.length).toBeGreaterThan(0);
+      const tool = await mcpArgs(params);
+      expect(tool.ok).toBe(true);
+      expect(ids((JSON.parse(tool.text) as { items: typeof api }).items)).toEqual(ids(api));
+      // The same as the one-line form.
+      const line = Object.entries(params).map(([k, v]) => `${k}:${v}`).join(" ");
+      expect(ids(await names(`q=${encodeURIComponent(line)}`))).toEqual(ids(api));
+      const html = await (await fetch(`${servers.url}/explore?${qs}`)).text();
+      expect(pageOrder(html)).toEqual(
+        ((await (await fetch(`${servers.url}/api/v1/explore?${qs}`)).json()) as { items: { url: string }[] }).items.map((i) => i.url),
+      );
+    });
+  }
+
+  test("a parameter wins over the same key in q, on the API, the MCP and the page", async () => {
+    const want = ids(await names("kind=app&sort=name"));
+    expect(want.every((w) => w.startsWith("app:"))).toBe(true);
+    const q = encodeURIComponent("kind:person sort:forks");
+    expect(ids(await names(`q=${q}&kind=app&sort=name`))).toEqual(want);
+    const tool = await mcpArgs({ q: "kind:person sort:forks", kind: "app", sort: "name" });
+    expect(ids((JSON.parse(tool.text) as { items: { kind: string; name: string }[] }).items)).toEqual(want);
+    const html = await (await fetch(`${servers.url}/explore?q=${q}&kind=app&sort=name`)).text();
+    const urls = (await names("kind=app&sort=name")).map((_, i) => i);
+    expect(pageOrder(html).length).toBe(urls.length);
+    expect(pageOrder(html).every((u) => u.split("/").length === 3)).toBe(true);
   });
 });

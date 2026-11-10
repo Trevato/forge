@@ -336,6 +336,7 @@ import {
   exploreNote,
   exploreSuggestion,
   readExploreLine,
+  exploreLineFrom,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
@@ -3404,7 +3405,7 @@ export function apiRoutes(router: Router<Handler>): void {
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {
     notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-    const line = ctx.url.searchParams.get("q") ?? "";
+    const line = exploreLineFrom((name) => ctx.url.searchParams.get(name));
     const { query, unknown } = readExploreLine(line);
     const suggest = exploreSuggestion(line);
     if (unknown.length > 0)

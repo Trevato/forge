@@ -1,9 +1,9 @@
-import { explorePage, exploreLine, exploreNote, exploreSuggestion, readExploreLine } from "../../../actions/explore.ts";
+import { explorePage, exploreLine, exploreLineFrom, EXPLORE_PARAMS, exploreNote, exploreSuggestion, readExploreLine } from "../../../actions/explore.ts";
 import { bad, good, type Tool, str } from "../shared.ts";
 
 export const tool: Tool = {
   name: "explore",
-  doc: "`{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with their numbers; `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; page on with `cursor`",
+  doc: "`{ q?, cursor? }` (`query` is the same, `q` wins): the apps and people you can see, ranked, with their numbers; `kind:` `sort:` `updated:` `owner:` `archived:` and words in one line; each also as its own argument; page on with `cursor`",
   description:
     "The apps, people (and, for an admin, forges) you can see, ranked.",
   inputSchema: {
@@ -19,6 +19,7 @@ export const tool: Tool = {
         maxLength: 200,
         description: "Alias of q",
       },
+      ...Object.fromEntries(EXPLORE_PARAMS.map((k) => [k, { type: "string", maxLength: 100 }])),
       cursor: {
         type: "string",
       },
@@ -27,7 +28,7 @@ export const tool: Tool = {
   writes: false,
   async run(ctx, user, args) {
     const q = str(args["q"]);
-    const line = q !== "" ? q : str(args["query"]);
+    const line = exploreLineFrom((name) => (name === "q" ? (q !== "" ? q : str(args["query"])) : str(args[name])));
     const { query, unknown } = readExploreLine(line);
     const suggest = exploreSuggestion(line);
     if (unknown.length > 0) return bad("unknown_filter", exploreNote(unknown) + (suggest === undefined ? "" : `; did you mean "${suggest.line}"?`));

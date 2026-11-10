@@ -94,6 +94,41 @@ export function parseExploreQuery(line: string): ExploreQuery {
   return readExploreLine(line).query;
 }
 
+/** The filter names a request may carry as separate parameters (`?kind=app&sort=forks`), beside `q`. */
+export const EXPLORE_PARAMS = ["kind", "sort", "updated", "owner", "archived"] as const;
+
+/**
+ * The one line a request asks for: `q`, then each separate parameter as its
+ * `key:value` word. A value is one word (whitespace removed, so it cannot
+ * smuggle in text or another key), and one the line does not take is an
+ * unknown word like any other. Parameters win over the same key in `q`.
+ */
+export function exploreLineFrom(get: (name: string) => string | null | undefined): string {
+  const given = new Map<string, string>();
+  for (const key of EXPLORE_PARAMS) {
+    const value = (get(key) ?? "").replace(/\s+/g, "").slice(0, 100);
+    if (value !== "") given.set(key, value);
+  }
+  // A parameter wins: the same key typed in `q` is dropped, not left to the reader's order.
+  const typed = (get("q") ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w !== "" && !(w.includes(":") && given.has(w.slice(0, w.indexOf(":")).toLowerCase())));
+  return [...typed, ...[...given].map(([k, v]) => `${k}:${v}`)].join(" ");
+}
+
+/** A query as separate URL parameters, the form the page links to; "" for the default view. */
+export function exploreParams(query: ExploreQuery): string {
+  const p = new URLSearchParams();
+  if (query.kind !== "all") p.set("kind", query.kind);
+  if (query.sort !== "score") p.set("sort", query.sort);
+  if (query.updated !== "all") p.set("updated", query.updated);
+  if (query.archived) p.set("archived", "yes");
+  if (query.owner !== undefined) p.set("owner", query.owner);
+  if (query.text !== "") p.set("q", query.text);
+  return p.toString();
+}
+
 const EXPLORE_KEYS = /(^|\s)(kind|sort|updated|owner|archived):/i;
 
 /** Whether a line has any word the explorer reads as a key, so every surface takes it as the explorer's. */

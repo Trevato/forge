@@ -9,6 +9,8 @@
 import {
   explore,
   exploreLine,
+  exploreLineFrom,
+  exploreParams,
   exploreNote,
   exploreSuggestion,
   readExploreLine,
@@ -24,8 +26,8 @@ import { page } from "../layout.ts";
 import { btn, card, empty, nameMark, row as rowOf, seg, tabs, timeAgo } from "../ui.ts";
 
 const href = (query: ExploreQuery): string => {
-  const line = exploreLine(query);
-  return line === "" ? "/explore" : `/explore?q=${encodeURIComponent(line)}`;
+  const params = exploreParams(query);
+  return params === "" ? "/explore" : `/explore?${params}`;
 };
 
 /**
@@ -136,7 +138,7 @@ function emptyState(ctx: Ctx, query: ExploreQuery): Html {
 // GET /explore
 export async function explorePage(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const line = ctx.url.searchParams.get("q") ?? "";
+  const line = exploreLineFrom((name) => ctx.url.searchParams.get(name));
   const { query, unknown } = readExploreLine(line);
   const note = exploreNote(unknown);
   const suggestion = exploreSuggestion(line);
@@ -186,7 +188,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     ${note === "" ? html`` : html`<p class="muted mb" role="status">${note}${
           suggestion === undefined
             ? html``
-            : html` Did you mean <a href="/explore?q=${encodeURIComponent(suggestion.line)}">${suggestion.fix}</a>?`
+            : html` Did you mean <a href="${href(readExploreLine(suggestion.line).query)}">${suggestion.fix}</a>?`
         }</p>`}
     <div class="mb">
       ${tabs(
