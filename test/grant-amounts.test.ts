@@ -82,7 +82,7 @@ describe("a spend grant: what amount is kept, who takes one", () => {
     }
   });
 
-  test("an agent or an admin takes no grant, and an org is not found", async () => {
+  test("an agent or an admin takes no grant; an org takes one from an admin but is no member", async () => {
     const bot = await createAgent(app, admin, { username: "bot" });
     if (!bot.ok) throw new Error(String(bot.error));
     const org = createOrg(app.db, "patco", pat.id);
@@ -93,9 +93,10 @@ describe("a spend grant: what amount is kept, who takes one", () => {
       expect(setRole(app, admin, name, "member", 5)).toEqual({ ok: false, error: "not_allowed" });
       expect(stored(user)).toBeUndefined();
     }
-    expect(setAccountGrant(app, admin, "patco", 5)).toEqual({ ok: false, error: "not_found" });
     expect(setRole(app, admin, "patco", "member", 5)).toEqual({ ok: false, error: "not_found" });
     expect(stored(getUserByName(app.db, "patco")!)).toBeUndefined();
+    expect(setAccountGrant(app, admin, "patco", 5).ok).toBe(true);
+    expect(stored(getUserByName(app.db, "patco")!)).toBe(5);
     expect(setAccountGrant(app, admin, "nobody", 5)).toEqual({ ok: false, error: "not_found" });
   });
 

@@ -42,7 +42,7 @@ import {
   userLink,
 } from "../ui.ts";
 import { sessionsCard } from "./account.ts";
-import { ceilingCard, grantCard } from "./model.ts";
+import { grantCard } from "./model.ts";
 import { accountSections } from "./origins.ts";
 import { markOf } from "../../core/marks.ts";
 import { requestsCard } from "../requests_card.ts";
@@ -269,9 +269,9 @@ export function personSignInsPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
   const named = getUserByName(ctx.app.db, ctx.params.username ?? "");
-  // An organization has no sign-ins: its page is its spend ceilings.
+  // An organization has no sign-ins: its page is its model grant and spend ceilings.
   if (named?.kind === "org" && ctx.auth.user.kind === "user")
-    return shell(ctx, ceilingCard(ctx, named, `/settings/accounts/${encodeURIComponent(named.username)}`));
+    return shell(ctx, grantCard(ctx, named, `/settings/accounts/${encodeURIComponent(named.username)}`));
   const seen = accountSignIns(ctx.app, ctx.auth.user, ctx.params.username ?? "");
   // Yourself is your own settings; another admin, an agent, nobody: no page.
   if (!seen.ok || seen.value.user.id === ctx.auth.user.id)

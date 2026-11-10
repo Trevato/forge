@@ -11,6 +11,7 @@
  * what the forge has.
  */
 
+import type { Database } from "bun:sqlite";
 import { isStrangerPull } from "./stranger.ts";
 import { noteMeasure } from "../core/measure.ts";
 import { capacityEnv } from "../core/capacity.ts";
@@ -263,6 +264,16 @@ export function steerRun(app: App, runId: string, text: string): boolean {
     `you: ${text.replace(/\s*\n\s*/g, " ")}`,
   );
   return send(text);
+}
+
+/** What a refused run says: an org is named with the page where an admin grants it; a person keeps the plain words. */
+function noGrantSaid(db: Database, ownerId: string, ownerName: string): string {
+  const org = db
+    .query<{ kind: string }, [string]>("SELECT kind FROM user WHERE id = ?1")
+    .get(ownerId)?.kind === "org";
+  return org
+    ? `the account \`${ownerName}\` has no model grant; an admin can grant one at /settings/accounts/${ownerName}`
+    : "This repository has no model account: ask an admin to grant one";
 }
 
 /**
@@ -1355,7 +1366,7 @@ async function work(
     ) {
       const said =
         grantCap === undefined
-          ? "This repository has no model account: ask an admin to grant one"
+          ? noGrantSaid(app.db, repo.ownerId, repo.ownerName)
           : "This month's model grant is spent: an admin can raise it";
       write(said);
       return { state: "failed", summary: said };
