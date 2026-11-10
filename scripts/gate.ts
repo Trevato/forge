@@ -33,7 +33,12 @@ export type Exclusion = {
 };
 
 export const EXCLUDED: readonly Exclusion[] = [
-  { file: "test/crew-sandbox-real.test.ts", reason: "landed unlisted and red locally; the builder admits it", issue: 1238 },
+  {
+    file: "test/crew-sandbox-real.test.ts",
+    reason:
+      "no ten green admit runs yet: the builder's sandbox refuses user namespaces, so the file only skips by name there and has passed nowhere",
+    issue: 10709,
+  },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/apps-open-host.test.ts",

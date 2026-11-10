@@ -44,6 +44,7 @@ import { join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
 import { claudeSettings } from "../src/crew/claude.ts";
 import { sandboxAvailable, sandboxPolicy } from "../src/crew/sandbox.ts";
+import { runtimeSettings, withoutParentProxy } from "./helpers/srt.ts";
 
 const probe = await sandboxAvailable();
 const srt = join(import.meta.dir, "../node_modules/.bin/srt");
@@ -76,21 +77,6 @@ const DIRS = {
 const WRITTEN = "escape-written.txt";
 /** Hosts off the allowlist that name the outside server. */
 const OFF_LIST = ["127.0.0.1", "localhost"] as const;
-
-/**
- * The environment `srt` is launched with, minus any proxy setting. `srt`
- * reads `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` of its own process as its
- * *parent proxy* and chains every allowed request through it. On the check
- * host that is the cell's egress proxy, which refuses `127.0.0.1:<port>`,
- * so the allowed forge host:port got "Unable to connect" (#10602). A crew
- * run's real sandbox is not launched behind one, so the test is not either.
- */
-function withoutParentProxy(env: NodeJS.ProcessEnv): Record<string, string> {
-  const kept: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env))
-    if (value !== undefined && !/^(http|https|all|ftp|no)_proxy$/i.test(key)) kept[key] = value;
-  return kept;
-}
 
 function routed(route: Route, path: string, pid: number): string {
   if (route === "by its path") return path;
@@ -270,19 +256,7 @@ console.log(JSON.stringify({
   });
   const real = claudeSettings(policy).sandbox as Record<string, any>;
   const settings = join(dataDir, "srt-settings.json");
-  writeFileSync(
-    settings,
-    JSON.stringify({
-      ripgrep: { command: rgPath },
-      network: { deniedDomains: [], ...real.network },
-      filesystem: {
-        denyRead: [],
-        denyWrite: [],
-        ...real.filesystem,
-        allowWrite: [work, ...(real.filesystem?.allowWrite ?? [])],
-      },
-    }),
-  );
+  writeFileSync(settings, JSON.stringify(runtimeSettings(real, work)));
   const proc = Bun.spawn([srt, "--settings", settings, "-c", `'${process.execPath}' probe.ts`], {
     cwd: work,
     env: withoutParentProxy(process.env),
