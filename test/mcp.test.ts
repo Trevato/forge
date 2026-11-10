@@ -1287,6 +1287,7 @@ describe("the forge over MCP", () => {
     expect(uris).toEqual([
       "ui://forge/app",
       "ui://forge/asked",
+      "ui://forge/board",
       "ui://forge/crew",
       "ui://forge/decision",
       "ui://forge/explore",
@@ -1314,6 +1315,7 @@ describe("the forge over MCP", () => {
     expect(meta("asks")).toBe("ui://forge/decision");
     expect(meta("milestones")).toBe("ui://forge/wave");
     expect(meta("map")).toBe("ui://forge/map");
+    expect(meta("boards")).toBe("ui://forge/board");
     expect(meta("feed")).toBe("ui://forge/feed");
     expect(meta("issue")).toBe("ui://forge/issue");
     expect(meta("explore")).toBe("ui://forge/explore");

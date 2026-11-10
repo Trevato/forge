@@ -75,7 +75,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `board_delete` | — | Delete a board by slug (history keeps it) | 194 |
 | `board_pins` | — | The panels pinned to the caller's home (person admins) | 302 |
 | `board_write` | — | Write a whole board under a slug: {title, range, refresh, panels} | 231 |
-| `boards` | — | The forge's boards for person admins: slug, title, range, refresh and panels | 425 |
+| `boards` | — | The forge's boards for person admins: slug, title, range, refresh and panels | 475 |
 | `branches` | `create`, `delete`, `branches`, `tags` | A repo's branches; `name`, `action` create (from `from`) or delete one, not the default | 407 |
 | `builds` | — | A repo's build pins (`refs/builds/`): label, commit, pinned by, note | 231 |
 | `capacity` | — | Forge capacity and guards, live | 415 |

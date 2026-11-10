@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "crew";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "crew" | "board";
 
 export interface CardRow {
   readonly label: string;
@@ -40,7 +40,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "crew"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "crew", "board"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -60,6 +60,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   issue: "issue",
   flow: "flow",
   scorecard: "crew",
+  boards: "board",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -76,6 +77,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   issue: "Issue",
   flow: "Flow",
   crew: "Crew",
+  board: "Board",
 };
 
 type Obj = Record<string, unknown>;
@@ -89,6 +91,8 @@ const FEED_LIMIT = 10;
 const PULLS_LIMIT = 20;
 const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
+/** A board card shows this many panels, then counts the rest. */
+const BOARD_PANELS = 8;
 /** The forge's id shape (src/kernel/id.ts): 26 lowercase Crockford base32 characters. */
 const RUN_ID = /^[0-9a-hjkmnp-tv-z]{26}$/;
 
@@ -157,6 +161,18 @@ export function cardFor(
       rows.push({ label: STAGE_LABEL[s.key], value: `${s.waiting} waiting · ${s.active} active${wait}` });
     }
     return { kind, title: CARD_TITLE[kind], status: verdict(typed, now), rows, actions };
+  }
+  if (kind === "board") {
+    // One board's answer is `{ slug, title, range, refresh, panels: [{ title, … }] }`; the list and a
+    // panel's data have no `panels`, so no card. `extra.values` are the panels' current values, in order.
+    const v = obj(value);
+    if (!Array.isArray(v["panels"]) || text(v["title"]) === "") return undefined;
+    const panels = v["panels"].map(obj);
+    const values = list(extra["values"]).map(text);
+    for (const [i, p] of panels.slice(0, BOARD_PANELS).entries())
+      rows.push({ label: text(p["title"]), value: values[i] ?? "no data" });
+    if (panels.length > BOARD_PANELS) rows.push({ label: "More", value: `${panels.length - BOARD_PANELS} more` });
+    return { kind, title: text(v["title"]), status: `${panels.length} panel${panels.length === 1 ? "" : "s"} · ${text(v["range"])}`, rows, actions };
   }
   if (kind === "crew") {
     // `scorecard` answers `{ agents: [{ username, all, recent }], keeperDays: [{ landed }] }`.
