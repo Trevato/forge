@@ -12,6 +12,7 @@
 import type { App } from "../app.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { blockedHosts, refusalLine } from "../apps/egress_refused.ts";
 import { type AppAccess, getAppByRepo } from "../core/apps.ts";
 import { LIST_LIMIT_MAX } from "../core/issues.ts";
 import { listPulls } from "../core/pulls.ts";
@@ -24,6 +25,8 @@ export interface OwnApp {
   readonly production: string;
   /** One preview per open pull, by number. */
   readonly previews: readonly { readonly number: number; readonly url: string }[];
+  /** Hosts its cells were refused and nobody answered: the likely cause of an app that hangs on a fetch. */
+  readonly blocked?: readonly string[];
 }
 
 /** Repo R's own app URLs, or undefined when R is not an app this forge serves. */
@@ -41,7 +44,8 @@ export function ownApp(app: App, repo: Repo): OwnApp | undefined {
       url: runtime.urlFor(record, previewEnv(pull.number)),
     }))
     .sort((a, b) => a.number - b.number);
-  return { access: record.access, production, previews };
+  const blocked = blockedHosts(app.config.dataDir, repo.id).map((r) => refusalLine(r).replace(/^Blocked: /, ""));
+  return { access: record.access, production, previews, ...(blocked.length === 0 ? {} : { blocked }) };
 }
 
 /** Every URL of `own`, for the sandbox to allow. */

@@ -97,6 +97,9 @@ export interface CellBase {
   readonly home: string;
   /** Told of an undeclared host reached while egress is only reported. */
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /** Entries an owner allowed since the cell started, and told of each refusal (`apps/egress_refused.ts`). */
+  readonly allowed?: (() => readonly string[]) | undefined;
+  readonly onRefused?: ((host: string, port: number, isPrivate: boolean) => void) | undefined;
   /** Private `host:port` destinations a site admin granted this repository. */
   readonly granted?: readonly string[] | undefined;
   /** The egress mode, as the forge's setting says at this start. */
@@ -416,6 +419,8 @@ export function stepCell(input: StartInput, use?: ToolchainUse): CellSpec | unde
     reach: [input.forgeUrl],
     limits: resolveLimits("step", undefined),
     onUndeclared: base.onUndeclared,
+    allowed: base.allowed,
+    onRefused: base.onRefused,
     egressMode: base.egressMode,
     label: base.label,
   };
@@ -571,6 +576,8 @@ export async function startProcess(
               limits: resolveLimits("app", manifest.limits),
               listen: port,
               onUndeclared: input.cell.onUndeclared,
+              allowed: input.cell.allowed,
+              onRefused: input.cell.onRefused,
               egressMode: input.cell.egressMode,
               label: input.cell.label,
             },

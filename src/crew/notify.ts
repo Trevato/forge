@@ -20,6 +20,7 @@
  * settings, is never logged, and the account page shows its host only.
  */
 
+import { blockedLines } from "../actions/egress_refused.ts";
 import { newAccountLines } from "../actions/accounts.ts";
 import { mailCeilingLines } from "../actions/mail.ts";
 import { forgetOnboarding, onboardedLines } from "../apps/onboarding.ts";
@@ -76,6 +77,10 @@ const WAKES = new Set([
   "user.created",
   "mail.ceiling",
   "drill.finished",
+  // An app's cell was refused a host for the first time (`apps/egress_refused.ts`).
+  "app.egress.refused",
+  "app.egress.ignored",
+  "app.egress.allowed",
 ]);
 
 export type NotifyUrlError =
@@ -505,6 +510,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...alarmLines(app, user, now(), options.alarms?.()),
       ...clogLines(app, user),
       ...onboardedLines(app.db, user, now()),
+      ...blockedLines(app, user, now()),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by

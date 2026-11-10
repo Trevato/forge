@@ -375,6 +375,7 @@ import {
   appDomainDelete,
   appEnvDelete,
   appEnvSet,
+  appBlocked,
   appEgressGrant,
   appEgressRevoke,
   appSettingsPage,
@@ -1493,6 +1494,8 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/settings/app/egress/:destination/revoke",
     appEgressRevoke,
   );
+  for (const how of ["allow", "ignore"] as const)
+    router.add("POST", `/:owner/:name/settings/app/blocked/:destination/${how}`, appBlocked(how));
   router.add("GET", "/:owner/:name/settings/prompts", promptsSettingsPage);
   router.add("POST", "/:owner/:name/settings/prompts", promptSourceAdd);
   router.add("POST", "/:owner/:name/settings/prompts/:id/run", promptSourceRun);

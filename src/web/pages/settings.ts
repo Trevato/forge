@@ -38,6 +38,8 @@ import {
   revokeAppEgress,
   type EgressView,
 } from "../../actions/egress_grants.ts";
+import { allowBlocked, blockedView, ignoreBlocked, withLiveOnly, type Allowed, type BlockedView } from "../../actions/egress_refused.ts";
+import { blockedNote } from "../studio/blocked.ts";
 import type { DnsRecord } from "../../apps/domains.ts";
 import {
   listAppEnvNames,
@@ -712,6 +714,7 @@ function appSettingsView(
   values: AppValues,
   error?: string,
   egress?: EgressView,
+  blocked?: BlockedView,
 ): Html {
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
@@ -822,6 +825,7 @@ function appSettingsView(
     <div class="mt">
       ${appDomainsView(base, domains.ok ? domains.value : undefined)}
     </div>
+    ${when(blocked !== undefined, () => html`<div class="mt">${blockedNote(base, blocked!)}</div>`)}
     ${when(egress !== undefined, () => html`<div class="mt">${appEgressView(base, egress!)}</div>`)}
     <div class="mt">
       ${card(
@@ -1124,6 +1128,8 @@ export async function appSettingsPage(ctx: Ctx): Promise<Response> {
     record === undefined
       ? undefined
       : await egressView(ctx.app, ctx.auth.user, repo);
+  const blockedBase = record === undefined ? undefined : blockedView(ctx.app, ctx.auth.user, repo);
+  const blocked = blockedBase?.ok ? { ok: true as const, value: await withLiveOnly(ctx.app, repo, blockedBase.value) } : blockedBase;
   const view = appSettingsView(
     ctx,
     repo,
@@ -1131,6 +1137,7 @@ export async function appSettingsPage(ctx: Ctx): Promise<Response> {
     appValues(repo, record),
     undefined,
     egress?.ok ? egress.value : undefined,
+    blocked?.ok ? blocked.value : undefined,
   );
   const rendering = performance.now();
   const response = settingsPageResponse(ctx, repo, "app", "App", view);
@@ -1454,6 +1461,40 @@ export async function appEgressGrant(ctx: Ctx): Promise<Response> {
           message: EGRESS_ERRORS[granted.error] ?? "That could not be granted.",
         },
   );
+}
+
+const BLOCKED_ERRORS: Record<string, string> = {
+  invalid: "That is not a host and port.",
+  not_refused: "The app was not refused that.",
+  needs_site_admin: "A private destination needs a site admin's yes.",
+  needs_human: "An agent proposes the forge.json change in a pull.",
+};
+
+// POST /:owner/:name/settings/app/blocked/:destination/(allow|ignore)
+export function appBlocked(how: "allow" | "ignore") {
+  return async (ctx: Ctx): Promise<Response> => {
+    const gate = await adminForm(ctx);
+    if (gate instanceof Response) return gate;
+    const { repo } = gate;
+    const destination = ctx.params.destination ?? "";
+    const done =
+      how === "allow"
+        ? await allowBlocked(ctx.app, ctx.auth.user, repo, destination)
+        : ignoreBlocked(ctx.app, ctx.auth.user, repo, destination);
+    if (!done.ok && done.error === "not_found") return repoNotFound(ctx);
+    const to = `${repoBase(repo)}/settings/app`;
+    if (!done.ok)
+      return flashTo(ctx, to, { tone: "danger", message: BLOCKED_ERRORS[done.error] ?? "That could not be done." });
+    return flashTo(ctx, to, { message: blockedMessage(done.value) });
+  };
+}
+
+function blockedMessage(value: string | Allowed): string {
+  if (typeof value === "string") return `Ignoring ${value}.`;
+  if (value.needsGrant) return `${value.entry} is in forge.json; a site admin grants it below.`;
+  return value.committed
+    ? `${value.entry} is allowed now and committed to forge.json.`
+    : `${value.entry} is allowed now; forge.json could not be edited, add it by hand.`;
 }
 
 // POST /:owner/:name/settings/app/egress/:destination/revoke

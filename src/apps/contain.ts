@@ -197,6 +197,10 @@ export interface CellSpec {
   readonly terminal?: boolean | undefined;
   /** Told of every undeclared host let through while egress is only reported. */
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /** Egress entries allowed since the cell started, asked on every connection (`apps/egress_refused.ts`). */
+  readonly allowed?: (() => readonly string[]) | undefined;
+  /** Told of every refusal by policy, host and port, and whether it is private. */
+  readonly onRefused?: ((host: string, port: number, isPrivate: boolean) => void) | undefined;
   /**
    * Refuse undeclared egress, or only report it, for this cell — the
    * forge's setting when the cell starts (`core/capacity.ts`); the
@@ -474,6 +478,8 @@ export function openCell(
         hosts: spec.egress,
         granted: spec.granted,
         label: spec.label,
+        allowed: spec.allowed,
+        refused: spec.onRefused,
         origins,
         // A cell a child forge opens (its check, app or step) has no way out
         // but the proxy of the cell the child runs in. A child in a cell is

@@ -40,6 +40,10 @@ export interface EgressPolicy {
   readonly report?: ((host: string, port: number) => void) | undefined;
   /** Whose proxy this is (`app:<slug>/<env>`), for the connection gauges. */
   readonly label?: string | undefined;
+  /** More `egress` entries, asked on every connection: what an owner allowed since the cell started (#10456). */
+  readonly allowed?: (() => readonly string[]) | undefined;
+  /** Told of every connection refused by policy (not one that merely failed), with whether the destination is private. */
+  readonly refused?: ((host: string, port: number, isPrivate: boolean) => void) | undefined;
   /** Most connections open to one destination at once; default 8. */
   readonly maxPerDestination?: number | undefined;
   /** Close a connection that moved no bytes for this long; default 5 min. */
@@ -379,7 +383,7 @@ export function isPublicAddress(address: string): boolean {
 
 export type Verdict =
   | { ok: true; address: string; undeclared: boolean }
-  | { ok: false; why: string };
+  | { ok: false; why: string; policy?: { private: boolean } };
 
 export async function decide(
   policy: EgressPolicy,
@@ -390,7 +394,7 @@ export async function decide(
   const origin = policy.origins.some(
     (o) => o.host.toLowerCase() === name && o.port === port,
   );
-  const declared = origin || hostAllowed(policy.hosts, name, port);
+  const declared = origin || hostAllowed([...policy.hosts, ...(policy.allowed?.() ?? [])], name, port);
   const literalPrivate = isIP(name) !== 0 && !isPublicAddress(name);
   const askAdmin =
     `${name}:${port} is a private destination: ` +
@@ -403,11 +407,12 @@ export async function decide(
   // Reporting lets an undeclared host through (and says so) on the web
   // ports alone; any other port, and any private address (below), is
   // refused in both modes.
-  if (!declared && literalPrivate) return { ok: false, why: askAdmin };
+  if (!declared && literalPrivate) return { ok: false, why: askAdmin, policy: { private: true } };
   if (!declared && (policy.report === undefined || !WEB_PORTS.includes(port)))
     return {
       ok: false,
       why: `${name}:${port} is not in this repository's egress (forge.json "egress")`,
+      policy: { private: false },
     };
   // Inside a cell, the cell's proxy resolves and checks the name itself.
   if (policy.upstream !== undefined) return { ok: true, address: name, undeclared: !declared };
@@ -428,6 +433,7 @@ export async function decide(
           ? askAdmin
           : `${name} resolves to a private address; add ${name}:${port} ` +
             "to forge.json egress and ask a site admin to grant it",
+        policy: { private: true },
       };
     // A grant opens one destination, never the metadata service or the
     // forge's own cluster, whatever a name resolves to.
@@ -589,6 +595,7 @@ async function open(
   const verdict = await decide(policy, host, port);
   if (!verdict.ok) {
     log(`egress refused: ${verdict.why}`);
+    if (verdict.policy !== undefined) policy.refused?.(host.toLowerCase(), port, verdict.policy.private);
     refuse(client, "403 Forbidden", verdict.why);
     return;
   }

@@ -102,6 +102,7 @@ import {
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
+import { cellHooks } from "./egress_refused.ts";
 import { egressSetting } from "../core/capacity.ts";
 import { policyAt } from "../core/slider.ts";
 import { getEconomics, getOwnedNodeLabel } from "../settings/economics.ts";
@@ -1583,6 +1584,11 @@ export class AppsRuntime {
       home: join(envDir(dataDir, record.id, env), "home"),
       onUndeclared: (host, port) =>
         noteReached(dataDir, record.repoId, host, port),
+      // Asked on every connection: an owner's Allow reaches the running cell.
+      // Said once per host: the first refusal is an event, the rest a count.
+      ...cellHooks(dataDir, record.repoId, env, (host, port) =>
+        this.app.bus.append({ kind: "app.egress.refused", repoId: record.repoId, payload: { host, port } }),
+      ),
       // Asked at every start: an admin's grant reaches the next cell.
       granted: grantsHere(this.app, () => grantedFor(this.app.db, record.repoId)),
       // Likewise an admin's flip of the egress mode.
@@ -1638,6 +1644,8 @@ export class AppsRuntime {
               limits: resolveLimits("app", live.manifest.limits),
               terminal: true,
               onUndeclared: base.onUndeclared,
+              allowed: base.allowed,
+              onRefused: base.onRefused,
               egressMode: base.egressMode,
               label: base.label,
             },
