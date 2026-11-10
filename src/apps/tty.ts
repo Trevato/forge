@@ -36,6 +36,8 @@ import {
 } from "./data.ts";
 import { appEnv, signalGroup } from "./process.ts";
 import { appsRuntime } from "./runtime.ts";
+import { openAppTty, type AppTtyHandle } from "./tty_registry.ts";
+import { shellIdleMs } from "../machines/shell.ts";
 
 const CRLF = "\r\n";
 
@@ -165,11 +167,6 @@ export async function runAppTty(
   }
   if (live.tty === null) return err({ refusal: "no_tty", detail: "" });
 
-  const terminal = new Bun.Terminal({
-    cols: Math.max(1, host.cols || 80),
-    rows: Math.max(1, host.rows || 24),
-    data: (_t, chunk) => host.write(chunk),
-  });
   const env = appEnv({
     port: live.port,
     dataDir: live.dataDir,
@@ -201,19 +198,65 @@ export async function runAppTty(
     user === undefined ? "" : canWrite(forge.db, repo, user) ? "admin" : "user";
   // The terminal is held exactly as the app is (`apps/contain.ts`).
   const cell = live.cell === undefined ? undefined : openCell(live.cell);
-  const program = startTerminal(shellCommand(live.tty), {
-    terminal,
+  const code = await serveTerminal(host, {
+    command: shellCommand(live.tty),
     env,
     cwd: live.dir,
     cell,
+    register: (program) => {
+      forge.log.info("app terminal opened", {
+        app: target.app.slug,
+        env: target.env,
+        user: user?.username ?? "guest",
+      });
+      return openAppTty(forge, {
+        userId: user?.id,
+        repository: `${repo.ownerName}/${repo.name}`,
+        slug: target.app.slug,
+        env: target.env,
+        hangup: program.hangup,
+        idleMs: () => shellIdleMs(forge.db),
+      });
+    },
   });
-  forge.log.info("app terminal opened", {
-    app: target.app.slug,
-    env: target.env,
-    user: user?.username ?? "guest",
-  });
+  return ok(code);
+}
 
+/**
+ * Run `command` on a new pty for `host` until it exits: pty bytes to the
+ * host (stamping the registry's output), host bytes and resizes to the pty
+ * (stamping its input), a hangup when the host goes away, and the registry
+ * entry forgotten however the program ends. `register` is told the started
+ * program and returns the registry's handle for it.
+ */
+export async function serveTerminal(
+  host: TtyHost,
+  options: {
+    command: string;
+    env: Record<string, string>;
+    cwd: string;
+    cell: Cell | undefined;
+    register: (program: TerminalProgram) => AppTtyHandle;
+  },
+): Promise<number> {
+  let held: AppTtyHandle | undefined;
+  const terminal = new Bun.Terminal({
+    cols: Math.max(1, host.cols || 80),
+    rows: Math.max(1, host.rows || 24),
+    data: (_t, chunk) => {
+      held?.output();
+      host.write(chunk);
+    },
+  });
+  const program = startTerminal(options.command, {
+    terminal,
+    env: options.env,
+    cwd: options.cwd,
+    cell: options.cell,
+  });
+  held = options.register(program);
   host.onData((chunk) => {
+    held?.input();
     if (terminal.closed) return;
     try {
       terminal.write(chunk);
@@ -232,8 +275,9 @@ export async function runAppTty(
   host.onClose?.(program.hangup);
   try {
     // `exited`, never the pty's own exit callback (see runEditor).
-    return ok(await program.exited);
+    return await program.exited;
   } finally {
+    held.close();
     terminal.close();
   }
 }
@@ -292,8 +336,9 @@ export function startTerminal(
   cell?.watch(proc.pid, () => killTree(proc.pid));
   const hangup = (): void => {
     if (cell === undefined) {
+      // Hung up right after the start, `setsid` may not have made the group
+      // yet: signal the program itself too, so the hangup is never lost.
       signalGroup(proc.pid, "SIGHUP");
-      return;
     }
     try {
       proc.kill("SIGHUP");

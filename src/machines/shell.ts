@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { cellCounters, openCell, resolveLimits, type Cell, type CellSpec } from "../apps/contain.ts";
+import { appTtysOf, stopAllAppTtys, stopAppTty, stopIdleAppTtys } from "../apps/tty_registry.ts";
 import { startTerminal, type TerminalProgram } from "../apps/tty.ts";
 import { holdOpen } from "../http/caller.ts";
 import { canWrite, getRepo, getRepoById, type Repo } from "../core/repos.ts";
@@ -547,6 +548,8 @@ export const cellLabel = (repoId: string, machine: string, userId: string): stri
 /** One shell a person holds or held: plain data for the account page and the `sessions` tool. */
 export interface ShellRow {
   readonly id: string;
+  /** A machine shell, or an app's terminal (#10549); an app row's `machine` is its environment. */
+  readonly kind: "machine" | "app";
   /** `owner/name`. */
   readonly repository: string;
   readonly machine: string;
@@ -581,6 +584,7 @@ export function liveShells(app: App, userId: string): ShellRow[] {
     const counter = counters.get(cellLabel(s.repoId, started.machine, userId));
     rows.push({
       id: s.row,
+      kind: "machine",
       repository: `${repo.ownerName}/${repo.name}`,
       machine: started.machine,
       startedAt: started.started_at,
@@ -594,6 +598,22 @@ export function liveShells(app: App, userId: string): ShellRow[] {
       endedBecause: null,
     });
   }
+  for (const e of appTtysOf(app, userId))
+    rows.push({
+      id: e.id,
+      kind: "app",
+      repository: e.repository,
+      machine: `${e.slug} · ${e.env}`,
+      startedAt: iso(e.startedAt),
+      lastInputAt: iso(e.lastInput),
+      lastOutputAt: iso(e.lastOutput),
+      peers: 0,
+      cpuCores: null,
+      memoryMiB: null,
+      endedAt: null,
+      endReason: null,
+      endedBecause: null,
+    });
   return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
@@ -615,6 +635,7 @@ export function myShells(app: App, userId: string, ended = RECENT_ENDED): ShellR
     .map(
       (r): ShellRow => ({
         id: r.id,
+        kind: "machine",
         repository: `${r.owner_name}/${r.name}`,
         machine: r.machine,
         startedAt: r.started_at,
@@ -633,6 +654,7 @@ export function myShells(app: App, userId: string, ended = RECENT_ENDED): ShellR
 
 /** Stop one shell a person holds, by its row id: false when they hold no such live shell (another person's is the same answer). */
 export function stopShell(app: App, userId: string, id: string): boolean {
+  if (stopAppTty(app, userId, id)) return true;
   for (const s of sessionsOf(app).values()) {
     if (s.userId !== userId || s.row !== id) continue;
     end(app, s, "stopped");
@@ -649,7 +671,7 @@ export function stopIdleShells(app: App, userId: string, idleMs = shellIdleMs(ap
     end(app, s, "stopped");
     n++;
   }
-  return n;
+  return n + stopIdleAppTtys(app, userId, idleMs);
 }
 
 /** The receipts, one line each; the page and the `sessions` tool say them in the same words. */
@@ -661,6 +683,7 @@ export const stoppedIdleSays = (n: number): string =>
 /** End every session (the forge is stopping). */
 export function stopShells(app: App): void {
   for (const session of [...sessionsOf(app).values()]) end(app, session, "stopped");
+  stopAllAppTtys(app);
 }
 
 /** Whether a socket's data is a shell's, so the forge's one handler can tell. */

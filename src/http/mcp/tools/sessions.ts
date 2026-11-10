@@ -4,7 +4,7 @@ import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "sessions",
-  doc: "`{ username?, action?, id?, kind? }`: where you (or, as the forge's owner, a person) are signed in: tokens and browsers, as `GET /api/v1/users/:username/signins` lists them, never a secret; `action: \"end\"` with a session `id` signs that browser out, as `DELETE /api/v1/users/:username/sessions/:id` does, and says so when it was this one; `kind: \"shells\"` lists your machine shells, live then ended, `action: \"end\"` with an `id` stops one and `\"end_idle\"` stops those detached and past half the idle limit; an admin-scope token, the route's refusals",
+  doc: "`{ username?, action?, id?, kind? }`: where you (or, as the forge's owner, a person) are signed in: tokens and browsers, as `GET /api/v1/users/:username/signins` lists them, never a secret; `action: \"end\"` with a session `id` signs that browser out, as `DELETE /api/v1/users/:username/sessions/:id` does, and says so when it was this one; `kind: \"shells\"` lists your machine shells and app terminals (rows `kind: \"app\"`), live then ended, `action: \"end\"` with an `id` stops one and `\"end_idle\"` stops those detached and past half the idle limit; an admin-scope token, the route's refusals",
   description: "Where you are signed in: your tokens and browsers, never a secret; `username` for a person as owner; action end + id signs a browser out.",
   inputSchema: {
     type: "object",

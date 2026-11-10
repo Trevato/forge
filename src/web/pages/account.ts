@@ -410,15 +410,19 @@ export function shellsView(ctx: Ctx, user: User): Html {
       s.endedAt === null
         ? row({
             title: html`${s.repository} · ${s.machine}`,
-            meta: html`Started ${time(s.startedAt)}`,
+            meta: html`${s.kind === "app" ? "App terminal · " : ""}Started ${time(s.startedAt)}`,
             trail: html`${badge("running", { tone: "success" })}
               <form method="post" action="/settings/shells/${s.id}/stop">${btn("Stop", { type: "submit", size: "sm", label: `Stop ${s.repository} · ${s.machine}` })}</form>`,
             facts: [
               { label: "Last input", value: s.lastInputAt ? time(s.lastInputAt) : "–" },
               { label: "Last output", value: s.lastOutputAt ? time(s.lastOutputAt) : "–" },
-              { label: "Attached", value: s.peers === 0 ? "nobody" : String(s.peers) },
-              { label: "CPU", value: reading(s.cpuCores === null ? null : Math.round(s.cpuCores * 100), "%") },
-              { label: "Memory", value: reading(s.memoryMiB, " MiB") },
+              ...(s.kind === "app"
+                ? []
+                : [
+                    { label: "Attached", value: s.peers === 0 ? "nobody" : String(s.peers) },
+                    { label: "CPU", value: reading(s.cpuCores === null ? null : Math.round(s.cpuCores * 100), "%") },
+                    { label: "Memory", value: reading(s.memoryMiB, " MiB") },
+                  ]),
             ],
             data: { session: s.id },
           })

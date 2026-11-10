@@ -19,3 +19,7 @@ attached to and that is past half the idle limit. Both are same-origin form post
 records `end_reason = 'stopped'`. MCP: `sessions` with `kind: "shells"` and `action: "end"` + `id`, or `"end_idle"`. Terminal: `s` and `i` as above, answering in a toast.
 
 Pinned by `test/my-shells.test.ts` and `test/tui-my-shells.test.ts`.
+
+## App terminals (#10549)
+
+An app's terminal (`tty` in forge.json, over SSH or the forge's UI) is held in `src/apps/tty_registry.ts` while it is open: app, environment, holder, start, last input and output. `myShells` lists it as a `kind: "app"` row beside the machine shells, on the account page and in `sessions` (`kind: "shells"`). Stop and Stop all idle hang up its pty (SIGHUP, its process group ends); one idle for the shell idle limit stops itself. Only live terminals are listed: an ended one leaves no row.

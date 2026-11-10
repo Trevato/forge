@@ -18,6 +18,7 @@ const reading = (n: number | null, unit: string): string => (n === null ? "-" : 
 /** One shell as a line of plain words. */
 export function shellLine(s: ShellRow): string {
   if (s.endedAt !== null) return `${s.repository} · ${s.machine}  ended ${s.endedAt.slice(0, 16).replace("T", " ")}, ${s.endedBecause}`;
+  if (s.kind === "app") return `${s.repository} · ${s.machine}  app terminal, running`;
   const cpu = reading(s.cpuCores === null ? null : Math.round(s.cpuCores * 100), "%");
   return `${s.repository} · ${s.machine}  running, ${s.peers === 0 ? "nobody attached" : `${s.peers} attached`}, CPU ${cpu}, memory ${reading(s.memoryMiB, " MiB")}`;
 }

@@ -12,6 +12,8 @@ import { createRepo, type Repo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { openAppTty } from "../src/apps/tty_registry.ts";
+import { shellLine } from "../src/tui/screens/shells.ts";
 import { liveShells, myShells, recordEnd, recordStart, setShellOptions, stopIdleShells, stopShells } from "../src/machines/shell.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -263,4 +265,17 @@ test("terminal: s stops the picked live shell with the page's receipt", async ()
   expect(liveShells(app, aliceId)).toHaveLength(0);
   tui.stop();
   ws.close();
+});
+
+test("an app terminal is a row on the account page and a line in the terminal, claiming no attached count", async () => {
+  const handle = openAppTty(app, { userId: aliceId, repository: "alice/lab", slug: "lab", env: "production", hangup: () => {}, idleMs: () => 600_000 });
+  const row = myShells(app, aliceId).find((r) => r.id === handle.id)!;
+  expect(row.kind).toBe("app");
+  expect(shellLine(row)).toBe("alice/lab · lab · production  app terminal, running");
+  const html = await page();
+  expect(html).toContain("App terminal · Started");
+  expect(html).toContain(`/settings/shells/${handle.id}/stop`);
+  const mine = html.slice(html.indexOf(`data-session="${handle.id}"`));
+  expect(mine.slice(0, mine.indexOf("</li>"))).not.toContain("Attached");
+  handle.close();
 });
