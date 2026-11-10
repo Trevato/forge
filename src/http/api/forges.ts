@@ -4,7 +4,10 @@
  * link. Moved out of `api.ts` (#6331); the rules live in `actions/spawn.ts` and `spawn/`.
  */
 
+import { lendCredit } from "../../actions/child_credit.ts";
 import { listChildren } from "../../actions/spawn.ts";
+import { usdWords } from "../../spawn/credit.ts";
+import { fundingOf, fundingWords, refreshFunding } from "../../spawn/funding.ts";
 import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { clientRows } from "../../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../../spawn/door.ts";
@@ -69,6 +72,32 @@ export function forgeRoutes(router: Router<Handler>): void {
       return apiError("invalid", 422, "send a JSON object: name, apps, crew, dryRun");
     const door = await spawnDoor(ctx, ctx.auth.user, input as Record<string, unknown>);
     return json(door.body, door.status);
+  });
+
+  // The dollars this forge lends a child on its own model credential (#10484): a site admin sets the cap.
+  router.add("PUT", "/api/v1/forges/:name/credit", async (ctx) => {
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const name = ctx.params["name"] ?? "";
+    const set = await lendCredit(ctx.app, ctx.auth.user, name, input["usd"]);
+    if (set.ok)
+      return json({ name, capUsd: set.value.capUsd, spentUsd: set.value.spentUsd, says: `${name} may spend ${usdWords(set.value.capUsd)} of this forge's credit.` });
+    if (set.error === "unauthorized" || set.error === "forbidden") return forbidden();
+    if (set.error === "not_found") return apiError("not_found", 404, "no such forge");
+    if (set.error === "unreachable") return apiError("unreachable", 502, "the child's data could not be reached");
+    return apiError("invalid", 422, "usd is dollars above 0 and up to 100000");
+  });
+
+  // On a forge its parent funds: how much is left, as the parent last said (asked afresh first).
+  router.add("GET", "/api/v1/credit", async (ctx) => {
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    if (ctx.auth.user === undefined) return forbidden();
+    const f = fundingOf(ctx.app.config.dataDir) === undefined ? undefined : await refreshFunding(ctx.app);
+    if (f === undefined) return apiError("not_found", 404, "no parent funds this forge");
+    return json({ capUsd: f.capUsd, spentUsd: f.spentUsd, says: fundingWords(f) });
   });
 
   // A new claim link for a child nobody has claimed (#729); the old one dies.

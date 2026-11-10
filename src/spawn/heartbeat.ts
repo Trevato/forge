@@ -22,6 +22,7 @@ import { beatKeyOf, listChildren } from "../actions/spawn.ts";
 import { shippedReleases } from "../release/shipped.ts";
 import { forgeLinkOf, forgeTipOf, FOLLOW_MODES, type FollowMode, type ForgeLink } from "./chain.ts";
 import { isParentLocal } from "./beat-door.ts";
+import { refreshFunding } from "./funding.ts";
 import { upstreamState } from "./upstream.ts";
 import { progress } from "../core/next-steps.ts";
 import { running } from "../kernel/version.ts";
@@ -315,6 +316,7 @@ export async function sendBeat(
       signal: AbortSignal.timeout(5000),
       redirect: "error",
     });
+    if (res.ok) await refreshFunding(app, fetcher);
     return res.ok;
   } catch {
     return false;

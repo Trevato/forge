@@ -513,7 +513,7 @@ function begin(
           budgetUsd: budget,
           resume: session,
           env: {
-            ...credentialEnv(picked),
+            ...credentialEnv(picked, app.config.dataDir),
             CLAUDE_CONFIG_DIR: configDir,
             FORGE_MCP_TOKEN: minted.value.token,
           },

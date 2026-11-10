@@ -49,7 +49,7 @@ export async function oneShot(app: App, userId: string, system: string, prompt: 
       appendSystemPrompt: system,
       model: model ?? options.model,
       budgetUsd: budget,
-      env: { ...credentialEnv(picked), CLAUDE_CONFIG_DIR: sessionsDir(app.config.dataDir, options.configDir) },
+      env: { ...credentialEnv(picked, app.config.dataDir), CLAUDE_CONFIG_DIR: sessionsDir(app.config.dataDir, options.configDir) },
       sandbox: sandboxPolicy({ dataDir: app.config.dataDir, agentName: "one-shot", urls: [], enforced: false, runId }),
       label: "one-shot",
       timeoutMs: ONE_SHOT_MS,

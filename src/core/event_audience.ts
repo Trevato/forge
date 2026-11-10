@@ -250,7 +250,9 @@ export function classifiedAudience(kind: string): EventAudience | undefined {
     kind === "repo.file_held" ||
     kind === "repo.file_released" ||
     // Which repositories New app offers is the admins' choice (`actions/app_templates.ts`).
-    kind.startsWith("app_template.")
+    kind.startsWith("app_template.") ||
+    // What a parent lends a child's crew, by name and dollar, is the admins' business (`actions/child_credit.ts`, #10484).
+    kind === "forge.credit_set"
   )
     return "admins";
   // A broken adapter sync is for those who may write the repository (`apps/pull.ts`).

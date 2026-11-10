@@ -197,6 +197,7 @@ import {
   skipsFeedback,
 } from "./guard.ts";
 import { passportEnv } from "./passport_env.ts";
+import { fundedEnv } from "../spawn/funding.ts";
 
 const log = createLog("crew");
 
@@ -1408,7 +1409,7 @@ async function work(
       FORGE_URL: options.forgeUrl,
       FORGE_TOKEN: token.token,
       ...passportEnv(app.config.dataDir),
-      ...credentialEnv(picked),
+      ...credentialEnv(picked, app.config.dataDir),
       ...grant.env,
       ...machineEnv(machine),
       ...(options.configDir === undefined
@@ -2340,8 +2341,11 @@ function redactResult<T extends { result: string }>(r: T): T {
  * the account has one), or — with nothing granted — whatever the forge
  * itself was started with.
  */
-export function credentialEnv(picked: Pick): Record<string, string> {
+export function credentialEnv(picked: Pick, dataDir?: string): Record<string, string> {
   if (picked.kind === "ready") return credentialEnvOf(picked);
+  // A forge its parent funds (#10484): with no account of its own, the crew calls the model through the parent.
+  const lent = picked.kind === "env" && dataDir !== undefined ? fundedEnv(dataDir) : undefined;
+  if (lent !== undefined) return lent;
   const own: Record<string, string> = {};
   for (const name of [
     "ANTHROPIC_API_KEY",

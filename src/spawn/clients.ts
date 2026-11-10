@@ -13,6 +13,7 @@ import type { App } from "../app.ts";
 import { childDirOf, listChildren, statusTokenOf, type Child } from "../actions/spawn.ts";
 import { timingSafeEqual } from "node:crypto";
 import { sha256 } from "../kernel/hash.ts";
+import { creditView, usdWords } from "./credit.ts";
 import type { ChildAppsSummary } from "./child-apps.ts";
 import { childAwake, hostedChildApps } from "./host.ts";
 import { hasAdmin, linkOf, spawnedOrg, type LinkInfo, type LinkState } from "./claim.ts";
@@ -54,6 +55,9 @@ export interface ClientRow {
   readonly spendTodayUsd: number | null;
   /** The child's forge cap in dollars; null when none or unsaid. */
   readonly ceilingUsd: number | null;
+  /** The dollars this forge lends it on its own model credential, and what it has spent; null when none is lent. */
+  readonly creditCapUsd?: number | null;
+  readonly creditSpentUsd?: number | null;
   /** Its size (`spawn/sizes.ts`). */
   readonly size: Size;
   /** What it uses against that size: its cell's reading, or "shared" when it is hosted here. */
@@ -231,6 +235,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       reach: reachOf(app, c.name) ?? null,
       spendTodayUsd: beats[i]?.beat.spendTodayUsd ?? null,
       ceilingUsd: beats[i]?.beat.ceilingUsd ?? null,
+      ...creditView(app, c.name),
       size: c.size,
       use: forgeUse(c, childDirOf(app, c.bodyId)),
       lastHeartbeatAt: beats[i] === undefined ? null : new Date(beats[i]!.receivedAt).toISOString(),
@@ -309,6 +314,11 @@ export function runningWords(r: ClientRow): string | null {
 }
 
 const money = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
+/** "$3.20 of $200 lent"; null when this forge lends the child nothing. */
+export function creditWords(r: Pick<ClientRow, "creditCapUsd" | "creditSpentUsd">): string | null {
+  return r.creditCapUsd === null || r.creditCapUsd === undefined ? null : `${usdWords(r.creditSpentUsd ?? 0)} of ${usdWords(r.creditCapUsd)} lent`;
+}
 
 /**
  * "$3.20 of $10 today", with "ceiling reached" at the cap; `warn` from 80%.

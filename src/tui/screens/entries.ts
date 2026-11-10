@@ -20,6 +20,7 @@ import { entry as bets } from "./bets.ts";
 import { entry as boards } from "./boards.ts";
 import { entry as bugs } from "./bugs.ts";
 import { entry as bulk } from "./bulk.ts";
+import { entry as childCredit } from "./childcredit.ts";
 import { entry as cloud } from "./cloud.ts";
 import { entry as connections } from "./connections.ts";
 import { entry as crewHandover } from "./crewhandover.ts";
@@ -146,6 +147,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   front,
   owner,
   forges,
+  childCredit,
   originAhead,
   profile,
   dotfiles,

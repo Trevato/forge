@@ -6,6 +6,7 @@
  * the crew is actually there, in words, before anyone assigns anything.
  */
 
+import { fundingOf, fundingWords } from "../../spawn/funding.ts";
 import {
   createAgent,
   deleteAgent,
@@ -142,8 +143,10 @@ export function crewReadiness(ctx: Ctx): Html {
   if (!crew.ready)
     return html`<div class="toast" data-tone="danger" role="alert">${icon("alert")}<div class="toast-body">The crew cannot run: ${crew.detail}. Agents can be
         created, but nothing picks up their work until this is fixed.</div></div>`;
+  const funded = fundingOf(ctx.app.config.dataDir);
+  // One sentence: a forge its parent funds says so in the readiness line, not in a second paragraph (#10484).
   return html`<p class="muted small mb">
-    ${icon("check")} ${crew.detail} is ready to run the crew.
+    ${icon("check")} ${crew.detail} is ready to run the crew${funded === undefined ? "." : html`, <span data-funded>${fundingWords(funded)}</span>.`}
   </p>
   ${when(
     !crew.sandbox.enforced,

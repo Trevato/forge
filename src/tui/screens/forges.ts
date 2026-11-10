@@ -6,7 +6,7 @@
 
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
-import { ATTENTION_WORDS, CLAIM_WORDS, claimState, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
+import { ATTENTION_WORDS, CLAIM_WORDS, claimState, creditWords, runningWords, spendWords, type ClientRow } from "../../spawn/clients.ts";
 import { useLine } from "../../spawn/usage.ts";
 import { timeAgo } from "../../web/ui.ts";
 import { card } from "../ui/widgets.ts";
@@ -23,7 +23,7 @@ export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
   if (rows.length === 0) return [["", "You have not sent a forge yet"]];
   return rows.flatMap((r): [string, string][] => [[
     r.name,
-    [r.made ? (r.awake === true ? "awake" : "asleep") : null, r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], linkWords(r.link), runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null, useLine(r.size, r.use), r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
+    [r.made ? (r.awake === true ? "awake" : "asleep") : null, r.attention === null ? null : ATTENTION_WORDS[r.attention], r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], linkWords(r.link), runningWords(r), r.nextStep.words, spendWords(r)?.words ?? null, creditWords(r), useLine(r.size, r.use), r.lastHeartbeatAt === null ? "no heartbeat yet" : `heartbeat ${timeAgo(r.lastHeartbeatAt)}`]
       .filter((m): m is string => m !== null)
       .join(" · "),
   ], ...addressLines(r)]);
