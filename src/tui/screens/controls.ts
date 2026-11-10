@@ -1,10 +1,14 @@
 /**
  * Security controls in the terminal, a forge admin's: the same lines as
  * /settings/security/controls (`checks/controls.ts`), each safeguard and when
- * it was last tested. Read-only.
+ * it was last tested, then what the page policy blocked this week by
+ * directive (the security page's "Blocked by the page policy" line), absent
+ * when nothing was. Read-only.
  */
 
+import type { Database } from "bun:sqlite";
 import { controlStandings } from "../../checks/controls.ts";
+import { violationsByDirective } from "../../http/csp_report.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
@@ -24,9 +28,19 @@ export function controlRows(dataDir: string, nowMs: number): ListRow[] {
   }));
 }
 
+/** One row per directive the Content-Security-Policy blocked in the last 7 days; none when nothing was. */
+export function cspRows(db: Database, nowMs: number): ListRow[] {
+  return violationsByDirective(db, 7, new Date(nowMs)).map((w) => ({
+    title: `Blocked by the page policy: ${w.directive}`,
+    secondary: "",
+    meta: `${w.n} in 7 days`,
+  }));
+}
+
 export function controlsScreen(f: Session, ctx: Ctx): Screen {
   const state = new ListState();
-  const rows = controlRows(f.app.config.dataDir, Date.now());
+  const now = Date.now();
+  const rows = [...controlRows(f.app.config.dataDir, now), ...cspRows(f.app.db, now)];
   return {
     title: "Security controls",
     keys: [binding(["j", "k"], "move cursor")],

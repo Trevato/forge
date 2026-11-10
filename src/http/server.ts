@@ -34,6 +34,7 @@ import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
+import { cspReportSubmit } from "./csp_report.ts";
 import { settingsRoutes } from "./settings_routes.ts";
 import { pluginRoutes } from "./plugin_routes.ts";
 import { pinnedRoutes } from "./pinned_routes.ts";
@@ -805,6 +806,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/sw.js", serviceWorker);
   // The page-view beacon's report (http/measure.ts): numbers only, no IP kept.
   router.add("POST", "/_measure", (ctx) => measureSubmit(ctx, routeOf));
+  // What a page's Content-Security-Policy blocked (http/csp_report.ts): counts only.
+  router.add("POST", "/csp-report", cspReportSubmit);
   router.add("GET", "/", home);
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim", claimFragmentPage);

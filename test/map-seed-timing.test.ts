@@ -80,7 +80,14 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
+/** The snapshot is keyed by the minute: start a cold/warm pair well clear of the next one. */
+const clearOfMinute = async (): Promise<void> => {
+  const left = 60_000 - (Date.now() % 60_000);
+  if (left < 5_000) await Bun.sleep(left + 50);
+};
+
 test("warm, the seed's map answers from its snapshot with the bytes of a cold build", async () => {
+  await clearOfMinute();
   mapSnapshots(app.db).clear();
   const cold = await get();
   const data = JSON.parse(cold.body) as { issues: unknown[]; edges: unknown[]; pillars: { merged?: number }[] };
@@ -96,7 +103,7 @@ test("warm, the seed's map answers from its snapshot with the bytes of a cold bu
   expectWork(await statements(app.db, async () => void (await get())), { max: 9 });
   expect(mapSnapshots(app.db).hits).toBeGreaterThan(warmHits);
   expect(warm.timing).toContain("asktolive");
-});
+}, 20_000);
 
 test("a plan is on the next read", async () => {
   await get();

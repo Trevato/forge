@@ -48,6 +48,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/recover": "an account-recovery form, not a page of the forge",
   "/verify": "answers 400 without the emailed code",
   "/logout": "a mutation, answers 404 to a GET",
+  "/csp-report": "a mutation: where browsers report what the page policy blocked",
   "/theme": "a mutation, answers 404 to a GET",
   "/tell": "answers 404 to a GET",
   "/asks": "redirects to /#needs-you",

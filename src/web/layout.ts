@@ -66,6 +66,7 @@ import { quotaFull } from "../spawn/quota.ts";
 import { icon, inlineIcons, pointAtSprite, themeGlyph } from "./icons.ts";
 import { btn, copyField, hintAttr, kbd, menu, type MenuItem } from "./ui.ts";
 import { SITE_LINE } from "./site_line.ts";
+import { CSP_REPORT_DIRECTIVES, CSP_REPORTING_ENDPOINTS } from "../http/csp_report.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -927,7 +928,9 @@ export function page(options: PageOptions, status = 200): Response {
     // The hashed stylesheet and scripts are 'self'; the two inline <style>s
     // are named by hash. connect-src 'self' lets the live event stream
     // (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.wasm ? " 'wasm-unsafe-eval'" : ""}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${frameSources(options)}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}${options.fontSrc ? "font-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' ${styleSources}; script-src 'self'${options.wasm ? " 'wasm-unsafe-eval'" : ""}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${frameSources(options)}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; ${options.objectSrc ? "object-src 'self'; " : ""}${options.fontSrc ? "font-src 'self'; " : ""}form-action 'self'; base-uri 'none'; frame-ancestors 'none'; ${CSP_REPORT_DIRECTIVES}`,
+    // Where the browser says what that policy blocked (http/csp_report.ts).
+    "reporting-endpoints": CSP_REPORTING_ENDPOINTS,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are

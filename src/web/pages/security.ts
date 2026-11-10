@@ -14,6 +14,7 @@ import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { backupOverdue, trafficAttention, TRAFFIC_WORDS } from "../../flow/kpi_words.ts";
 import { readBackup } from "../../flow/kpis.ts";
 import type { Ctx } from "../../http/context.ts";
+import { violationsByDirective } from "../../http/csp_report.ts";
 import { perfRecord } from "../../perf/live.ts";
 import { getSignup } from "../../settings/signup.ts";
 import { trafficHistory } from "../../perf/traffic_store.ts";
@@ -237,6 +238,18 @@ function reportRow(dataDir: string, nowMs: number): Html {
   );
 }
 
+/** What browsers said the Content-Security-Policy blocked this week, by directive; nothing when nothing was. */
+function cspRow(db: Database, nowMs: number): Html | null {
+  const week = violationsByDirective(db, 7, new Date(nowMs));
+  if (week.length === 0) return null;
+  return statusRow(
+    "Blocked by the page policy, 7 days",
+    html`${week.map((w, i) => html`${i > 0 ? ", " : ""}<span class="mono">${w.directive}</span> ${w.n}`)}`,
+    null,
+    "csp",
+  );
+}
+
 export function securityPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
@@ -283,6 +296,7 @@ export function securityPage(ctx: Ctx): Response {
           : html`${drill.verdict === "green" ? badge("Passed", { tone: "success" }) : badge("Failed", { tone: "danger" })} Last ran ${time(drill.at)}.`,
       )}
       ${reportRow(dataDir, nowMs)}
+      ${cspRow(db, nowMs)}
       ${statusRow("Admin accounts", html`${admins.map((a, i) => html`${i > 0 ? ", " : ""}${a.username}${a.is_agent === 1 ? " (agent)" : ""}${a.suspended_at === null ? "" : " (suspended)"}`)}`)}
       ${statusRow("Admin-scope tokens", none(adminTokens.length, adminTokens.length === 1 ? "token" : "tokens"))}
       ${statusRow(`Keys and tokens added, ${WINDOW_DAYS} days`, none(added.length, "added"))}
