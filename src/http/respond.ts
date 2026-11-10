@@ -48,18 +48,18 @@ export function json(
 const HINTS: Record<number, string> = {
   401: "Send `Authorization: Bearer <token>` with a token you hold, then repeat the call.",
   403: "Use a token or account with the scope or role this route needs (the message names it), or ask the owner for it.",
-  404: "Check the path and ids against GET /api/v1/openapi.json, or list the parent collection to find the right one.",
+  404: "Check the path and ids against GET /contract/openapi.json, or list the parent collection to find the right one.",
   409: "The resource changed or already exists: read its current state with a GET, then repeat the call with what you see.",
-  422: "A field failed validation: fix the one the message names (see the route's body in GET /api/v1/openapi.json) and send again.",
+  422: "A field failed validation: fix the one the message names (see the route's body in GET /contract/openapi.json) and send again.",
 };
 const HINTS_BY_CODE: Record<string, string> = {
   held: "This pull is on hold: ask the person who placed the hold to release it, then repeat the call.",
   review_required: "This pull needs an approving review first: ask a reviewer, read GET its reviews to see what is missing, then repeat the call.",
   checks_required: "The pull's head needs a passing check or deploy first: push a fix or wait for the check, then repeat the call.",
-  invalid: "A field failed validation: fix the field the message names (see the route's body in GET /api/v1/openapi.json) and send the whole body again.",
+  invalid: "A field failed validation: fix the field the message names (see the route's body in GET /contract/openapi.json) and send the whole body again.",
   not_admin: "This route is for administrators only: use an administrator's token; a different scope will not help.",
   forbidden: "Your token's scope or your role on this resource does not allow this: a read-only (`ro`) token cannot write, so mint an `rw` token, or ask an owner for the role the message names.",
-  no_route: "No route matches this path: pick one from GET /api/v1/openapi.json and check the spelling.",
+  no_route: "No route matches this path: pick one from GET /contract/openapi.json and check the spelling.",
 };
 
 /** Every 401, 403, 404, 409 and 422 error body carries `hint`; a site's own is kept. */
