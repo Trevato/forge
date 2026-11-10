@@ -62,6 +62,23 @@ describe("GET /changelog.atom", () => {
     expect(text).not.toContain("Not shipped yet");
   });
 
+  test("caps the feed at the newest 30 entries", async () => {
+    const insertIssue = app.db.query(
+      `INSERT INTO issue (id, repo_id, number, kind, title, author_id, state) SELECT ?1, repo_id, ?2, 'pull', ?3, author_id, 'closed' FROM issue WHERE id = 'i1'`,
+    );
+    const insertPull = app.db.query(
+      `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at, merged_oid) VALUES (?1, 'main', 'b', 'base', '', ?2, 'oid-live')`,
+    );
+    for (let n = 10; n < 50; n++) {
+      insertIssue.run(`bulk${n}`, n, `Bulk ${n}`);
+      insertPull.run(`bulk${n}`, `2026-09-01T10:${String(n).padStart(2, "0")}:00.000Z`);
+    }
+    const text = await (await fetch(`${servers.url}/changelog.atom`)).text();
+    expect(text.match(/<entry>/g)?.length).toBe(30);
+    app.db.query(`DELETE FROM pull WHERE issue_id LIKE 'bulk%'`).run();
+    app.db.query(`DELETE FROM issue WHERE id LIKE 'bulk%'`).run();
+  });
+
   test("answers 304 to its ETag", async () => {
     const first = await fetch(`${servers.url}/changelog.atom`);
     const etag = first.headers.get("etag")!;

@@ -192,7 +192,7 @@ ${entries.join("\n")}
   });
 }
 
-const CHANGELOG_ENTRIES = 50;
+const CHANGELOG_ENTRIES = 30;
 
 /**
  * The weak tag of a changelog answer: the live version, the rows' repo,
