@@ -387,6 +387,7 @@ import { rollbackRoutes } from "./api/rollback.ts";
 import { takeBackRoutes } from "./api/take_back.ts";
 import { conversationConfirmRoutes } from "./api/conversation_confirms.ts";
 import { conversationTalkRoutes } from "./api/conversation_talk.ts";
+import { conversationBuildRoutes } from "./api/conversation_build.ts";
 import { orgRoutes } from "./api/orgs.ts";
 import { promptRoutes } from "./api/prompts.ts";
 import { cloudRoutes } from "./api/cloud.ts";
@@ -2147,6 +2148,7 @@ export function apiRoutes(router: Router<Handler>): void {
   takeBackRoutes(router);
   conversationConfirmRoutes(router);
   conversationTalkRoutes(router);
+  conversationBuildRoutes(router);
 
   // Which stage of the one flow each open issue is in, and what went live in
   // the last day (src/flow).

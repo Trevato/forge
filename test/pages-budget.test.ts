@@ -16,6 +16,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
+import { startChatBuild } from "../src/core/chat_build.ts";
+import { createConversation } from "../src/core/conversations.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { pin } from "../src/core/pins.ts";
 import { getRepo } from "../src/core/repos.ts";
@@ -133,6 +135,14 @@ beforeAll(async () => {
   const pull = createIssue(app.db, { repoId: forge.id, authorId: bob.id, title: "A pull", body: "body", kind: "pull" });
   if (!pull.ok) throw new Error(pull.error);
   app.db.run("INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid) VALUES (?1, 'main', 'topic', '', 'h')", [pull.value.id]);
+  // A conversation that builds, with a version on its branch, for the two build reads.
+  const talk = createConversation(app.db, alice.id);
+  if (!talk.ok) throw new Error(talk.error);
+  startChatBuild(app.db, talk.value.id, forge.id);
+  const version = await commitToBranch(app, alice, forge, { branch: `talk-${talk.value.id}`, message: "A version", files: [{ path: "page.txt", content: "v1\n" }] } as never);
+  if (!version.ok) throw new Error(JSON.stringify(version.error));
+  FIXTURE["/api/v1/conversations/:id/build"] = `/api/v1/conversations/${talk.value.id}/build`;
+  FIXTURE["/api/v1/conversations/:id/build/versions/:n/diff"] = `/api/v1/conversations/${talk.value.id}/build/versions/1/diff`;
   // An agent's start the claim page can show (`/claim/start/:token`): bob's, so no extra account joins the walk.
   recordStart(app.db, bob.id, "claim_fixture", "127.0.0.1");
   servers = await serve(app);

@@ -54,6 +54,8 @@ import { html, raw, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { badge, btn, row, time } from "../ui.ts";
+import { buildBox, buildCss, chosenTemplate, panelFor } from "../talk_build.ts";
+import { chatBuildOf } from "../../core/chat_build.ts";
 import { stepOf, repoOf, type Step } from "../../core/talk_steps.ts";
 import { VIEWS, talkPane, type View } from "./talk_preview.ts";
 import { talkCss, talkJs } from "./talk_client.ts";
@@ -285,7 +287,7 @@ function chats(ctx: Ctx, conversation: Conversation, showArchived: boolean, type
     </div>`;
 }
 
-function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefined, prefill: string, latest: boolean, edit: boolean): Response {
+async function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefined, prefill: string, latest: boolean, edit: boolean): Promise<Response> {
   const user = ctx.auth.user!;
   let before = before0;
   const here = latest ? HERE : urlOf(conversation);
@@ -313,11 +315,16 @@ function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefi
   const acts = !paged ? exchangeActs(ctx.app.db, user.id, conversation.id, running, here) : new Map<string, Html>();
   // Edit shows the composer holding the last message, posting to Edit instead of Send.
   const editing = edit ? lastExchange(ctx.app.db, user.id, conversation.id).person : undefined;
+  // A conversation that builds an app shows its versions and preview; an empty one offers the one box (#11010).
+  const building = chatBuildOf(ctx.app.db, conversation.id) !== undefined;
+  const panel = building ? await panelFor(ctx, conversation.id, here) : null;
+  const box = !building && !paged && turns.length === 0 ? buildBox(ctx.app.db, user, chosenTemplate(ctx.app.db, user, ctx.url.searchParams.get("template"))) : null;
   const asked = ctx.url.searchParams.get("pane");
   const view: View | undefined = VIEWS.find((p) => p === asked);
   const shown = view ?? "chat";
   const pane = talkPane(ctx, user, repoOf(turns), works, view);
   const body = html`<h1 class="sr-only">Talk</h1>
+    ${box}
     <div class="talk-shell" data-shell data-pane="${shown}">
     <div class="talk-side">${chats(ctx, conversation, showArchived, typed)}</div>
     <nav class="seg talk-tabs" aria-label="Chat or preview"><a href="?pane=chat"${shown === "chat" ? raw(' aria-current="page"') : null}>Chat</a><a href="?pane=preview"${shown !== "chat" ? raw(' aria-current="page"') : null}>Preview</a></nav>
@@ -356,8 +363,9 @@ function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefi
       </form>
     </div>
     ${pane.html}
+    ${panel}
     </div>`;
-  return page({ ctx, title: "Talk", body, styleCss: talkCss, scriptJs: talkJs, description: "Talk to the forge.", ...(pane.frame === undefined ? {} : { frameSrc: pane.frame }) });
+  return page({ ctx, title: "Talk", body, styleCss: panel === null && box === null ? talkCss : talkCss + buildCss, scriptJs: talkJs, description: "Talk to the forge.", ...(pane.frame === undefined ? {} : { frameSrc: pane.frame }) });
 }
 
 /** The conversation a request names (`:id`), or the person's latest when it names none; undefined when it is not theirs. */
@@ -368,7 +376,7 @@ const conversationOf = (ctx: Ctx, user: { readonly id: string }): Conversation |
 };
 
 // GET /talk and GET /talk/:id
-export function talkView(ctx: Ctx): Response {
+export function talkView(ctx: Ctx): Response | Promise<Response> {
   if (ctx.auth.user === undefined) return signInFirst(ctx);
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const before = ctx.url.searchParams.get("before");

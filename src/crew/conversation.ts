@@ -20,6 +20,9 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { dailyLeft } from "../core/account_ceiling.ts";
 import { aboutContext } from "../core/talk_about.ts";
+import { buildTurnEnded } from "../actions/build_pull.ts";
+import { buildLead, chatBuildOf } from "../core/chat_build.ts";
+import { getRepoById } from "../core/repos.ts";
 import { appendTurn, getConversation, lastExchange, listTurns, openConversation, removeTurn, restoreTurns, setAsideFrom, setClaudeSession, type Conversation } from "../core/conversations.ts";
 import { attach, deliver, fileOwnedBy, NOTHING, release, type ConversationFile, type Delivery } from "../core/conversation_files.ts";
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
@@ -316,7 +319,11 @@ export function say(
   }
   // The subject rides with a new conversation's first message only (#10496), as fenced data the agent reads before the words.
   const first = listTurns(app.db, userId, conversation.id, { limit: 1 });
-  const lead = about === undefined || about === null || !first.ok || first.value.length > 0 ? "" : aboutContext(app.db, about, user);
+  const subject = about === undefined || about === null || !first.ok || first.value.length > 0 ? "" : aboutContext(app.db, about, user);
+  // A conversation that builds an app tells the agent where to work with every message (#11010).
+  const building = chatBuildOf(app.db, conversation.id);
+  const repo = building === undefined ? undefined : getRepoById(app.db, building.repoId);
+  const lead = (repo === undefined || building === undefined ? "" : buildLead(`${repo.ownerName}/${repo.name}`, building.branch, repo.defaultBranch)) + subject;
   const stored = appendTurn(app.db, userId, conversation.id, { role: "person", text });
   if (!stored.ok) return err("too_long");
   attach(app.db, files, stored.value.id);
@@ -619,7 +626,11 @@ function begin(
       if (stoppers.get(conversation.id)?.runId === runId) stoppers.delete(conversation.id);
       // A restart leaves the next message unsent (its turn would be cut again); anything else sends it.
       if (options.signal.aborted) queues.delete(conversation.id);
-      else drain(app, options, conversation);
+      else {
+        // A build's first version gives its branch the pull that previews it (#11010).
+        await buildTurnEnded(app, userId, conversation.id).catch((error: unknown) => app.log.warn("build pull failed", { error: String(error) }));
+        drain(app, options, conversation);
+      }
     }
   })();
   return ok(turn);

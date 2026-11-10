@@ -59,6 +59,7 @@ import { usageScreen } from "./screens/usage.ts";
 import { canScreen } from "./screens/can.ts";
 import { modelScreen } from "./screens/model.ts";
 import { notifyScreen } from "./screens/notify.ts";
+import { talkBuildScreen } from "./screens/talk_build.ts";
 import { talkChatsScreen } from "./screens/talk_chats.ts";
 import { sshKeysScreen } from "./screens/sshkeys.ts";
 import { passkeysScreen } from "./screens/passkeys.ts";
@@ -404,6 +405,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Conversations",
         hint: "your talks with the forge's agent; n starts one, r renames, x archives",
         run: () => ctx.push(talkChatsScreen(session, ctx)),
+      });
+    // One prompt builds an app; each turn is a version to diff, restore and publish (#11010).
+    if (session.signedIn && session.user?.kind !== "agent")
+      commands.push({
+        id: "build-app",
+        title: "Build an app",
+        hint: "say what to build; versions, diff, restore and publish. n starts one",
+        run: () => ctx.push(talkBuildScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push({

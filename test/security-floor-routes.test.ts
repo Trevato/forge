@@ -28,6 +28,8 @@ import { createRun } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { buildApiRouter, buildRouter, serve, type Servers } from "../src/http/server.ts";
+import { startChatBuild } from "../src/core/chat_build.ts";
+import { createConversation } from "../src/core/conversations.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { pool } from "./helpers/sweep-clock.ts";
@@ -35,7 +37,7 @@ import { pool } from "./helpers/sweep-clock.ts";
 quietLogs();
 
 /** Parameters the seed supplies; any other parameter makes a pattern unseeded. */
-const SEEDED = new Set(["owner", "name", "username", "number", "ref", "oid", "path", "env", "slug", "spec", "machine"]);
+const SEEDED = new Set(["owner", "name", "username", "number", "ref", "oid", "path", "env", "slug", "spec", "machine", "n"]);
 
 const ORIGIN = "needs a connected origin account and a mirror job; the seed connects none";
 const MIGRATE = "needs a migration job, which only an import creates";
@@ -174,6 +176,11 @@ beforeAll(async () => {
     path: "a.txt", env: "prod", slug: "notes", spec: "192", machine: "standard",
     issue: String(issue.value.number), pull: String(pull.value.number), run: run.id,
   });
+  // A conversation that builds, with the version its branch holds, for the build reads.
+  const talk = createConversation(app.db, ada.id);
+  if (!talk.ok) throw new Error(talk.error);
+  startChatBuild(app.db, talk.value.id, repo.id);
+  fill.conversation = talk.value.id;
   cookie = `forge_session=${createSession(app.db, ada.id).token}`;
 }, 30_000);
 
@@ -191,7 +198,8 @@ const getPatterns = (): string[] =>
 
 function pathFor(pattern: string): string {
   const number = pattern.includes("/pulls/") ? fill.pull : fill.issue;
-  const runId = pattern.includes("/runs/:id") ? fill.run : "x";
+  const runId = pattern.includes("/runs/:id") ? fill.run : pattern.includes("/conversations/:id/build") ? fill.conversation : "x";
+  if (pattern.includes("/build/versions/:n/")) fill.n = "1";
   return pattern
     .replace(/[:*]([a-z_]+)/g, (_, key: string) => {
       if (key === "number") return number!;
@@ -204,7 +212,7 @@ function pathFor(pattern: string): string {
 
 const unseeded = (pattern: string): boolean =>
   paramsOf(pattern).some(
-    (key) => !SEEDED.has(key) && !(key === "id" && pattern.includes("/runs/:id")) && !(key === "file" && pattern.includes("/data/:env/:file/")),
+    (key) => !SEEDED.has(key) && !(key === "id" && (pattern.includes("/runs/:id") || pattern.includes("/conversations/:id/build"))) && !(key === "file" && pattern.includes("/data/:env/:file/")),
   );
 
 /**
