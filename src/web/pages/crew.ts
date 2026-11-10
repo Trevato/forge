@@ -37,6 +37,7 @@ import {
   type SplitScorecard,
 } from "../../core/scorecard.ts";
 import { keeperDays, type KeeperDay } from "../../flow/keeper_rate.ts";
+import { knobsCard } from "./knobs.ts";
 import { decideChange, readReview } from "../../actions/model_review.ts";
 import { wastedDays, type WastedDay } from "../../core/wasted_days.ts";
 import { modelDays, type ModelDay } from "../../core/model_days.ts";
@@ -602,6 +603,7 @@ function crewView(
     error !== undefined && /username/i.test(error) ? error : undefined;
   const handover = crewHandover(ctx.app.db);
   return html`${crewReadiness(ctx)}
+  ${knobsCard(ctx)}
   ${when(spending.length > 0, () =>
     spendingCard(spending, forgeCeiling(ctx.app.config) ?? undefined),
   )}

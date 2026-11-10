@@ -55,3 +55,18 @@ export function peopleFirst(
   if (first.length === 0 || first.length === queued.length) return [...queued];
   return [...first, ...queued.filter((r) => !personal(r))];
 }
+
+/**
+ * The queued runs that carry a person's ask and the time the oldest one
+ * began waiting (the Feedback-first knob's live effect, #10461): a person's
+ * comment, a note from an app, or work a person assigned.
+ */
+export function waitingOnPeople(db: Database, queued: readonly Run[]): { count: number; since: string | null } {
+  const fromApp = fromAppIssues(db, queued.flatMap((r) => (r.issueId === null ? [] : [r.issueId])));
+  const spoke = people(db, queued.flatMap((r) => (r.actorId !== null && (r.reason === "feedback" || r.reason === "assigned") ? [r.actorId] : [])));
+  const mine = queued.filter(
+    (r) => (r.issueId !== null && fromApp.has(r.issueId)) || ((r.reason === "feedback" || r.reason === "assigned") && r.actorId !== null && spoke.has(r.actorId)),
+  );
+  const since = mine.map((r) => r.createdAt).filter((t): t is string => typeof t === "string").sort()[0] ?? null;
+  return { count: mine.length, since };
+}

@@ -1,0 +1,117 @@
+/**
+ * The five knobs (#10461): read in plain words, turned in place, and each
+ * turn read by the next pump; the pipeline's own dials stay on the capacity page.
+ */
+
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createRepo } from "../src/actions/repos.ts";
+import { setKnob } from "../src/actions/knobs.ts";
+import { createApp, type App } from "../src/app.ts";
+import { CAPACITY_KEYS, capacityCount, setCapacity, weekUse } from "../src/core/capacity.ts";
+import { listEvents } from "../src/core/events.ts";
+import { getRepoById } from "../src/core/repos.ts";
+import { createUser, type User } from "../src/core/users.ts";
+import { knobLines, readKnobs } from "../src/crew/knobs.ts";
+import { weekDecision } from "../src/crew/week.ts";
+import { tool } from "../src/http/mcp/tools/knobs.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+quietLogs();
+
+let dir: string;
+let app: App;
+let admin: User;
+let bob: User;
+let repoId: string;
+
+beforeAll(async () => {
+  dir = await mkdtemp(join(tmpdir(), "forge-knobs-"));
+  app = createApp({ dataDir: dir, port: 0 });
+  const mk = async (username: string, first = false) => {
+    const r = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@forge.local`, password: "a-good-passphrase", adminIfFirst: first });
+    if (!r.ok) throw new Error(r.error);
+    return r.value;
+  };
+  admin = await mk("carol", true);
+  bob = await mk("bob");
+  const made = await createRepo(app, admin, { name: "site", visibility: "private" });
+  if (!made.ok) throw new Error(String(made.error));
+  repoId = made.value.id;
+}, 30_000);
+afterAll(async () => {
+  app.close();
+  await rm(dir, { recursive: true, force: true });
+});
+
+test("the panel has Speed, Weekly budget, Polish share, Autonomy per repository and Feedback first, each with an effect", () => {
+  const rows = readKnobs(app);
+  expect(rows.map((r) => r.id)).toEqual(["speed", "budget", "polish", "autonomy", "feedback"]);
+  for (const r of rows) {
+    expect(r.does.length).toBeGreaterThan(0);
+    expect(r.effect.length).toBeGreaterThan(0);
+  }
+  expect(rows[0]!.effect).toMatch(/\d+ running · \d+ queued/);
+  expect(rows[4]!.effect).toBe("nothing from a person waiting");
+  expect(knobLines(rows)).toHaveLength(5);
+});
+
+test("Speed 4 → 2 is read by the next pump", async () => {
+  setCapacity(app.db, "crew.concurrency", "4", admin.id);
+  expect((await setKnob(app, admin, "speed", "2")).ok).toBe(true);
+  // The pump asks exactly this, with the number it booted on as the fallback.
+  expect(capacityCount(app.db, "crew.concurrency", 4)).toBe(2);
+  expect(readKnobs(app)[0]!.value).toBe("2");
+  expect((await setKnob(app, admin, "speed", "99")).ok).toBe(false);
+  expect(listEvents(app.db, {}).some((e) => e.kind === "capacity.changed")).toBe(true);
+});
+
+test("the pipeline's dials stay on capacity and no knob reaches them", async () => {
+  for (const key of ["slots.smallShare", "polish.capMinutes", "pace.floor", "queue.depth"]) expect(CAPACITY_KEYS as string[]).toContain(key);
+  for (const knob of ["queue.depth", "pace.floor", "slots.smallShare"]) expect((await setKnob(app, admin, knob, "1")).ok).toBe(false);
+});
+
+test("Weekly budget sets the reserve the pacer holds back", () => {
+  expect(weekUse(app.db)).toBe(90);
+  const week = (reserve: number) =>
+    weekDecision({
+      meter: { freePct: 20, keptPct: 0, burnPctPerHour: 1, resetsAt: new Date(Date.now() + 3 * 86_400_000) },
+      now: new Date(),
+      ceiling: 4,
+      floorSlots: 1,
+      idleSlots: 0,
+      startable: 0,
+      gated: 0,
+      reserve,
+    })!;
+  expect(week(0.1).slots).toBeGreaterThan(0);
+  expect(week(0.9).slots).toBe(0);
+});
+
+test("Autonomy turns ask and go into the repository's settings; Polish share sets its share", async () => {
+  expect((await setKnob(app, admin, "autonomy", "ask", "carol/site")).ok).toBe(true);
+  let repo = getRepoById(app.db, repoId)!;
+  expect([repo.autonomy, repo.plansNeedNod, repo.decisionsBy]).toEqual(["autonomous", true, "me"]);
+  expect((await setKnob(app, admin, "autonomy", "go", "carol/site")).ok).toBe(true);
+  repo = getRepoById(app.db, repoId)!;
+  expect([repo.plansNeedNod, repo.decisionsBy]).toEqual([false, "decider"]);
+  expect(readKnobs(app).find((r) => r.id === "autonomy" && r.repo === "carol/site")!.value).toBe("go");
+  expect((await setKnob(app, admin, "polish", "20")).ok).toBe(true);
+  expect(getRepoById(app.db, repoId)!.polishShare).toBe(20);
+  expect((await setKnob(app, admin, "polish", "70")).ok).toBe(false);
+  expect((await setKnob(app, admin, "autonomy", "maybe", "carol/site")).ok).toBe(false);
+  expect(listEvents(app.db, {}).some((e) => e.kind === "repo.settings_updated")).toBe(true);
+  expect((await setKnob(app, admin, "autonomy", "off", "carol/site")).ok).toBe(true);
+});
+
+test("only a forge admin turns a knob, and the MCP tool says the same words", async () => {
+  expect((await setKnob(app, bob, "speed", "3")).ok).toBe(false);
+  const ctx = { app, auth: { scope: "admin" } } as never;
+  const read = (await tool.run(ctx, admin, {})) as { content?: unknown };
+  expect(JSON.stringify(read)).toContain("Weekly budget");
+  const dry = await tool.run(ctx, admin, { knob: "speed", value: "3" });
+  expect(JSON.stringify(dry)).toContain("Would set speed");
+  expect(JSON.stringify(await tool.run(ctx, bob, {}))).toContain("not_found");
+});

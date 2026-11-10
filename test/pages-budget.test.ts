@@ -36,7 +36,7 @@ const HEAVIER: Record<string, { statements?: number; git?: number }> = {
   "/:owner/:name/next": { statements: 64 },
   "/:owner/:name/pulls/:number": { statements: 106 },
   "/board": { statements: 64 },
-  "/settings/capacity": { statements: 65 },
+  "/settings/capacity": { statements: 71 },
 };
 
 /** Patterns with no fixture today: lower this as fixtures are added, never raise it silently. */

@@ -70,6 +70,8 @@ export interface WeekInput {
    * is a meter too coarse to read, not a crew that is behind (#10440).
    */
   readonly crewRan?: boolean;
+  /** The share of the week kept for people (1 − the weekly budget knob); `WEEK.reserve` when absent. */
+  readonly reserve?: number;
 }
 
 export interface WeekDecision {
@@ -116,7 +118,7 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   const hours = left / 3_600_000;
   const capPct = Math.max(0, 100 - meter.keptPct);
   const used = 100 - meter.freePct;
-  const wall = capPct * (1 - WEEK.reserve);
+  const wall = capPct * (1 - (input.reserve ?? WEEK.reserve));
   const targetPctPerHour = Math.max(0, capPct - used) / hours;
 
   // Allowed: what the crew may still spend before the reserve, over the hours left.

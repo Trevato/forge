@@ -247,6 +247,7 @@ describe("the forge over MCP", () => {
       "issues",
       "iterations",
       "keep_plan",
+      "knobs",
       "orgs",
       "now",
       "open_pull",

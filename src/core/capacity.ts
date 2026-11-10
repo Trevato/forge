@@ -21,6 +21,7 @@ export type CapacityKey =
   | "checks.shards"
   | "queue.depth"
   | "queue.batch"
+  | "week.use"
   | "children.max"
   | "cells.egress"
   | "children.modelEgress"
@@ -84,6 +85,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "count", min: 1, max: 32 },
     fallback: "8",
     help: "The most pulls one merge-queue candidate carries. A bigger batch lands more pulls per green gate; a red one costs more search gates to find its culprit (one bad pull in 16 is found in two rounds, at most √16 = 4 gates each). The queue starts each line here, halves the batch after a red gate and doubles it back after two green gates in a row, never past this. Read on every sweep.",
+  },
+  "week.use": {
+    label: "Share of the week to use (%)",
+    env: "FORGE_WEEK_USE",
+    kind: { type: "count", min: 10, max: 100 },
+    fallback: "90",
+    help: "The weekly budget knob: how much of the week's subscription the crew may spend, evenly to the reset. The rest is kept for conversations and a person's own requests; the crew stops at it. Read on every pump.",
   },
   "children.max": {
     label: "Forges this one may send",
@@ -368,6 +376,11 @@ export function capacityCount(
 /** The slots the pace leaves reviews and assigned work (`pace.floor`). */
 export function paceFloor(db: Database): number {
   return Number(capacityValue(db, "pace.floor"));
+}
+
+/** The share of the week the crew may use, in percent (`week.use`); the rest is the reserve. */
+export function weekUse(db: Database): number {
+  return Number(capacityValue(db, "week.use"));
 }
 
 /** How many hosted children this forge may hold now; read on every use. */

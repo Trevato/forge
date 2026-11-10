@@ -86,6 +86,7 @@ export { tool as issue_teams } from "./issue_teams.ts";
 export { tool as issues } from "./issues.ts";
 export { tool as iterations } from "./iterations.ts";
 export { tool as keep_plan } from "./keep_plan.ts";
+export { tool as knobs } from "./knobs.ts";
 export { tool as labels } from "./labels.ts";
 export { tool as land_past_gate } from "./land_past_gate.ts";
 export { tool as lift } from "./lift.ts";

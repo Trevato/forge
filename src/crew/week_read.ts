@@ -10,7 +10,7 @@ import { measureFor } from "../core/measure.ts";
 import { getHeadroom, WINDOW_MS } from "../core/standing.ts";
 import { grantedAccounts, PLATFORM } from "../core/subscriptions.ts";
 import { burnFrom, noteReading, readingsSince } from "./week_burn.ts";
-import { belowCeiling, capacityCount, capacityValue, paceFloor } from "../core/capacity.ts";
+import { belowCeiling, capacityCount, capacityValue, paceFloor, weekUse } from "../core/capacity.ts";
 import { efficiencyWords, WEEK, weekDecision, type Efficiency, type WeekDecision, type WeekMeter } from "./week.ts";
 
 /** The week as the provider's meter reads it: a meter, or null while no account's limit is known. */
@@ -132,7 +132,7 @@ export function weekFor(
   seen: { idleSlots: number; startable: number; gated: number } = { idleSlots: 0, startable: 0, gated: 0 },
 ): WeekDecision | null {
   const week = weekOf(app, repo, now);
-  return weekDecision({ ...week, now, ceiling: repo.autonomySlots, floorSlots: paceFloor(app.db), ...seen });
+  return weekDecision({ ...week, now, ceiling: repo.autonomySlots, floorSlots: paceFloor(app.db), reserve: 1 - weekUse(app.db) / 100, ...seen });
 }
 
 /** The key of the accounts a repository draws its week from. */
@@ -158,7 +158,7 @@ export function crewCeiling(app: App, repo: Repo): number {
  */
 export function crewWeekFor(app: App, repo: Repo, now: Date): WeekDecision | null {
   const week = weekOf(app, repo, now);
-  return weekDecision({ ...week, now, ceiling: crewCeiling(app, repo), floorSlots: paceFloor(app.db), idleSlots: 0, startable: 0, gated: 0 });
+  return weekDecision({ ...week, now, ceiling: crewCeiling(app, repo), floorSlots: paceFloor(app.db), reserve: 1 - weekUse(app.db) / 100, idleSlots: 0, startable: 0, gated: 0 });
 }
 
 /** A sentence saying the crew's cap is lowered, so pacing is not mistaken for it; empty at the ceiling. */
@@ -239,4 +239,21 @@ export function weekBlock(app: App, now: Date = new Date()): string[] {
   const crew = crewLineWords(app, now);
   const words = weekWords(app, now, crew !== null);
   return [...(crew === null ? [] : [crew]), ...(words === null ? [] : [words])];
+}
+
+/**
+ * The weekly-budget knob's live effect (#10461): `25% used, 73% of the time
+ * left · on pace · lasts to the reset Sat 02:00 UTC` — the busiest repository's
+ * meter, the same week `weekWords` states. Plain words while it is unmeasured.
+ */
+export function budgetEffect(app: App, now: Date = new Date()): string {
+  const words = busiest(app, now, (repo, week) => {
+    const meter = weekOf(app, repo, now).meter;
+    if (meter === null) return null;
+    const used = Math.round(Math.min(100, Math.max(0, 100 - meter.freePct)));
+    const left = Math.round(Math.min(100, Math.max(0, ((meter.resetsAt.getTime() - now.getTime()) / WINDOW_MS.week) * 100)));
+    const lasts = week.runsOutAt === null ? `lasts to ${dayTime(meter.resetsAt)}` : `runs out ${dayTime(week.runsOutAt)}`;
+    return `${used}% used, ${left}% of the time left · ${week.status} · ${lasts}`;
+  });
+  return words ?? "the week is not measured yet · the crew holds at a few slots until it is";
 }

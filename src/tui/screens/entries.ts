@@ -21,6 +21,7 @@ import { entry as cloud } from "./cloud.ts";
 import { entry as connections } from "./connections.ts";
 import { entry as crewHandover } from "./crewhandover.ts";
 import { entry as crewSplits } from "./crewsplits.ts";
+import { entry as knobs } from "./knobs.ts";
 import { entry as displays } from "./displays.ts";
 import { entry as domains } from "./domains.ts";
 import { entry as edgeOnly } from "./edgeonly.ts";
@@ -103,6 +104,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   securityControls,
   secrets,
   crewSplits,
+  knobs,
   crewHandover,
   scorecard,
   modelGrantEntry,

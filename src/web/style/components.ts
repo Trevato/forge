@@ -80,6 +80,7 @@ export const components = /* css */ `
   background: var(--card); color: var(--fg);
   transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
 }
+.input.input-num { width: 5rem; }
 .input:hover { border-color: var(--border-strong); }
 .input:focus-visible {
   outline: none; border-color: var(--accent);

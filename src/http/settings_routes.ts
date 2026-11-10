@@ -11,6 +11,7 @@ import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
 import { parentLinkStart } from "./rp.ts";
 import { accessPage } from "../web/pages/access.ts";
+import { knobSet } from "../web/pages/knobs.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { teamPage, teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
@@ -249,6 +250,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/accounts/:username/retire", retireAct);
   router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
   router.add("GET", "/settings/crew", crewPage);
+  router.add("POST", "/settings/crew/knobs", knobSet);
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/teams", teamsPage);
   router.add("GET", "/settings/teams/stream", teamsStream);
