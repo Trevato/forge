@@ -4,6 +4,7 @@
  * write path — committing files to a branch without a git client.
  */
 
+import { getOriginById } from "../core/origins.ts";
 import { isContributionFork, type GuestRefusal } from "../core/contribute.ts";
 import { contributionRefusal } from "../core/storage.ts";
 import { limitValue } from "../settings/limits.ts";
@@ -313,7 +314,7 @@ export async function privateRepoForSealed(
   return sealedForkFor(app, actor, base);
 }
 
-export type UpdateSettingsError = "not_found" | "unknown_branch" | "polish_share";
+export type UpdateSettingsError = "not_found" | "unknown_branch" | "polish_share" | "origin_read_only";
 
 /** Each repository's archive transitions, one after another. */
 const archiveTurns = new WeakMap<App, Map<string, Promise<void>>>();
@@ -394,6 +395,12 @@ export function settingsChanged(repo: Repo, settings: RepoSettings): SettingsCha
   return changed;
 }
 
+/** Whether `repo` mirrors an origin that was connected read-only. */
+export function mirrorsReadOnlyOrigin(app: App, repo: Repo): boolean {
+  if (repo.origin === null || repo.origin === undefined) return false;
+  return getOriginById(app.db, repo.origin.originId)?.readOnly === true;
+}
+
 /**
  * Change settings. A new default branch must exist; git HEAD is moved first
  * and the row follows (git is truth, the index is derived from it).
@@ -421,6 +428,10 @@ export async function updateRepoSettings(
   // base, whoever owns it (`core/sealed.ts`).
   if (repo.sealedFor !== null && settings.visibility === "public")
     return err("not_found");
+  // A repository mirrored from a read-only origin is private to its owner
+  // for as long as the origin is read-only (#10520).
+  if (settings.visibility === "public" && mirrorsReadOnlyOrigin(app, repo))
+    return err("origin_read_only");
   if (settings.polishShare !== undefined && !validPolishShare(settings.polishShare))
     return err("polish_share");
   const branch = settings.defaultBranch;

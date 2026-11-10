@@ -1667,6 +1667,7 @@ export function apiRoutes(router: Router<Handler>): void {
         ? { plansNeedNod: input.plansNeedNod }
         : {}),
     });
+    if (!updated.ok && updated.error === "origin_read_only") return apiError("origin_read_only", 409, "this repository mirrors a read-only origin, so it stays private to its owner; nothing was changed");
     if (!updated.ok) return respondAccess(updated.error, 422);
     // "Show where this came from" (#3293): an admin's, never an agent's.
     if (typeof input.showProvenance === "boolean") {

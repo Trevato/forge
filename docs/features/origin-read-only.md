@@ -7,3 +7,7 @@ Tick **Read-only** when you connect an account by token (Settings → Origins, e
 - **Stored:** `origin.read_only`, default 0, so every connection from before stays as it was. The token stays sealed either way.
 - **Try it:** connect with Read-only ticked, mirror a repository, comment on it: refused, and the origin saw no write.
 - Test: `test/origin-read-only.test.ts`.
+
+## Private to its owner (#10520)
+
+A repository mirrored from a read-only origin is created private, whatever the origin says, and cannot be made public while the origin is read-only: `PATCH /api/v1/repos/:owner/:name` with `"visibility": "public"` answers `409` `origin_read_only` (the same through the MCP and the settings page). Being private it is left out of every list, count, search, the changelog and Talk for anyone but its owner, by the same visibility filter as any private repository. Test: `test/origin-read-only-private.test.ts`.
