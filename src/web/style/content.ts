@@ -487,6 +487,12 @@ form.inline { display: inline; margin-left: auto; }
 .gpx-view { margin: 0; }
 .gpx-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
 .gpx-view .status-rows { margin-top: 12px; }
+.gj-view { margin: 0; }
+.gj-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
+.gj-table { overflow-x: auto; max-width: 100%; }
+.gj-table:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
+.gj-table table { width: 100%; font-size: 13px; }
+.gj-table th, .gj-table td { text-align: left; padding: 3px 8px; overflow-wrap: anywhere; }
 .font-view { padding: 16px 20px; }
 .font-name { margin: 0 0 12px; font-size: 1.75rem; line-height: 1.3; overflow-wrap: anywhere; }
 .font-line { margin: 0 0 10px; line-height: 1.4; overflow-wrap: anywhere; }

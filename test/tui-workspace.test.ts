@@ -449,6 +449,34 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .geojson opens as its features table, sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, { name: "places", visibility: "public", description: "geo" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "p.geojson",
+          content:
+            '{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[1,2]},"properties":{"name":"Harbour"}}]}',
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "places");
+      await openFile(h, "p.geojson");
+      expect(h.text()).toContain("Harbour");
+      expect(h.text()).toContain("Point");
+      expect(h.text()).toContain("1 feature");
+      await h.press("s");
+      expect(h.text()).toContain("FeatureCollection");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("tables: search, edit, the caps in the status line, a ; file, and s on a broken one", async () => {
     const made = await createRepo(forge, alice, {
       name: "sheets",

@@ -11,6 +11,7 @@ import { audio } from "./audio.ts";
 import { config } from "./config.ts";
 import { isFormConfig } from "./config-format.ts";
 import { csv } from "./csv.ts";
+import { geojson } from "./geojson.ts";
 import { gpx } from "./gpx.ts";
 import { font } from "./font.ts";
 import { ics } from "./ics.ts";
@@ -75,6 +76,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   log,
   subtitles,
   gpx,
+  geojson,
   calendar: ics,
   archive,
   font,

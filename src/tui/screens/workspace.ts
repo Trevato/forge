@@ -55,6 +55,7 @@ import { isModelPath, modelFacts } from "../../web/render/model-facts.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
+import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
@@ -352,6 +353,19 @@ function gpxTable(source: string, path: string): Table | null {
   return { header: ["Fact", "Value"], rows, more: 0, delimiter: ",", columns: 2 };
 }
 
+/** `.geojson`: features, drawn as a table of their geometry type and properties. */
+function isGeoJsonPath(path: string): boolean {
+  return /\.geojson$/i.test(path);
+}
+
+/** The properties table of a GeoJSON file; null when it is not GeoJSON. Shares the web's parser. */
+function geoJsonTable(source: string): Table | null {
+  const parsed = parseGeoJson(source);
+  if (parsed === undefined) return null;
+  const { header, rows } = propertyRows(parsed.features);
+  return { header, rows, more: Math.max(0, parsed.features.length - rows.length), delimiter: ",", columns: header.length };
+}
+
 /** `README.md`, `NOTES.markdown`, `readme` — the prose a repo opens on. */
 function isMarkdownPath(path: string): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1);
@@ -513,6 +527,9 @@ class Tab {
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGpxPath(this.path)) {
       this.table = gpxTable(new TextDecoder().decode(source), this.path);
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isGeoJsonPath(this.path)) {
+      this.table = geoJsonTable(new TextDecoder().decode(source));
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isTablePath(this.path)) {
       // The decoded source, not `plain`: `expandTabs` has eaten every tab there.
@@ -2596,7 +2613,7 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path))
+                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isGeoJsonPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -2930,9 +2947,9 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, features = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, subs ? "cue" : events ? "event" : facts ? "fact" : "row")}${
+  return `${plural(rows, subs ? "cue" : events ? "event" : facts ? "fact" : features ? "feature" : "row")}${
     unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
   }${
     table.more > 0 ? `, first ${table.rows.length} shown` : ""

@@ -30,6 +30,7 @@ export type FileKind =
   | "log"
   | "subtitles"
   | "gpx"
+  | "geojson"
   | "calendar"
   | "text"
   | "binary";
@@ -60,6 +61,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   log: 1 * MB,
   subtitles: 5 * MB,
   gpx: 20 * MB,
+  geojson: 5 * MB,
   calendar: 5 * MB,
   text: 1 * MB,
   binary: 0,
@@ -169,6 +171,7 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   srt: "subtitles",
   vtt: "subtitles",
   gpx: "gpx",
+  geojson: "geojson",
   ics: "calendar",
 };
 

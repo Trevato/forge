@@ -71,6 +71,7 @@ const SAMPLES: Record<string, [Uint8Array, FileKind, string]> = {
   srt: [enc("1\n00:00:01,000 --> 00:00:02,000\nHi\n"), "subtitles", "application/octet-stream"],
   vtt: [enc("WEBVTT\n"), "subtitles", "application/octet-stream"],
   gpx: [enc("<gpx/>"), "gpx", "application/octet-stream"],
+  geojson: [enc('{"type":"FeatureCollection","features":[]}'), "geojson", "application/octet-stream"],
   ics: [enc("BEGIN:VCALENDAR\nEND:VCALENDAR\n"), "calendar", "application/octet-stream"],
 };
 
