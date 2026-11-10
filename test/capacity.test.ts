@@ -302,6 +302,7 @@ describe("capacity: only a forge admin reads or changes it", () => {
     const made = await mcp(aliceAdmin, {
       key: "cells.egress",
       value: "report",
+      reason: "a test says why",
       dryRun: false,
     });
     expect(made.error).toBe(false);
@@ -457,7 +458,7 @@ describe("report mode is loud to admins, and to nobody else", () => {
   });
 
   test("reported: the Capacity page says it once, as a note; vitals do not", async () => {
-    expect(changeCapacity(app, alice, "cells.egress", "report").ok).toBe(true);
+    expect(changeCapacity(app, alice, "cells.egress", "report", "a test says why").ok).toBe(true);
     expect(needs(alice)).toEqual([]);
     const shown = await page();
     expect(shown).toContain('id="egress-reported"');
@@ -831,7 +832,7 @@ describe("the egress mode is the emergency lever: the next cell starts with what
       if (!record.ok) throw new Error(String(record.error));
       // A runtime that can hold cells is asked; one that cannot has none to start.
       (runtime as unknown as { cells: { ok: true } }).cells = { ok: true };
-      expect(changeCapacity(app, alice, "cells.egress", "report").ok).toBe(
+      expect(changeCapacity(app, alice, "cells.egress", "report", "a test says why").ok).toBe(
         true,
       );
       expect(runtime.cellFor(record.value, "production")?.egressMode).toBe(

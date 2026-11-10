@@ -33,7 +33,7 @@ export interface EgressPolicy {
    */
   readonly granted?: readonly string[] | undefined;
   /**
-   * Set while egress is only reported (`FORGE_CELLS_EGRESS=report`): an
+   * Set while egress is only reported (`cells.egress` = `report`, an admin's setting): an
    * undeclared public host is let through and handed here instead of
    * refused. Private addresses are refused either way.
    */

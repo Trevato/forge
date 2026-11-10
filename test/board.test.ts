@@ -716,7 +716,7 @@ describe("the board's forge strip", () => {
     claimRun(app.db, createRun(app.db, { repoId: made.value.id, kind: "agent" }).id);
     // Clear the stuck run the first test left behind.
     app.db.query("UPDATE run SET state = 'failed' WHERE heartbeat_at = ?1").run("2020-01-01T00:00:00.000Z");
-    expect(changeCapacity(app, admin, "cells.egress", "report").ok).toBe(true);
+    expect(changeCapacity(app, admin, "cells.egress", "report", "a test says why").ok).toBe(true);
     try {
       const text = await board("root");
       expect(text).toContain("All fine");

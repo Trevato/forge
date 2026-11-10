@@ -6,8 +6,8 @@
  * and each one is listed below the settings: who, when, from what to what.
  */
 
-import { DERIVED_WORDS, changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
-import { CAPACITY, belowCeiling, type CapacityKey } from "../../core/capacity.ts";
+import { DERIVED_WORDS, REASON_WORDS, changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
+import { CAPACITY, REASON_MAX, belowCeiling, needsReason, type CapacityKey } from "../../core/capacity.ts";
 import { EGRESS_REPORTED } from "../../system/egress_line.ts";
 import { bytes } from "../../system/format.ts";
 import { egressRowsFor } from "../../spawn/process_counters.ts";
@@ -100,11 +100,14 @@ export function capacityPage(ctx: Ctx): Response {
       )}`,
       meta: html`${s.help} <br />Now <span class="mono">${s.value === "" ? "auto" : s.value}</span>. ${s.source === "setting"
           ? html`Set here; the boot default is
-              <span class="mono">${s.default === "" ? "auto" : s.default}</span>
-              (<span class="mono">${s.env}</span>).`
+              <span class="mono">${s.default === "" ? "auto" : s.default}</span>${s.env === ""
+                ? "."
+                : html` (<span class="mono">${s.env}</span>).`}`
           : s.source === "derived"
             ? html`Derived from Speed (<span class="mono">crew.concurrency</span>); read-only here: change Speed and it moves.`
-            : html`The boot default, from <span class="mono">${s.env}</span>.`}
+            : s.env === ""
+              ? html`The default.`
+              : html`The boot default, from <span class="mono">${s.env}</span>.`}
         ${awayLine(s, now)}`,
       trail: s.source === "derived"
         ? html`<span class="mono" data-derived="${s.key}">${s.value}</span>`
@@ -115,6 +118,20 @@ export function capacityPage(ctx: Ctx): Response {
       >
         <input type="hidden" name="key" value="${s.key}" />
         ${input(s.key, s.value)}
+        ${when(
+          // Inside the row's own form, posted with Save: a move to report says why (#10778).
+          needsReason(s.key),
+          () => html`<input
+            class="input"
+            id="cap-${s.key}-reason"
+            type="text"
+            name="reason"
+            maxlength="${String(REASON_MAX)}"
+            autocomplete="off"
+            placeholder="Why (needed to set report)"
+            aria-label="Why (needed to set report)"
+          />`,
+        )}
         ${btn("Save", {
           size: "sm",
           variant: "primary",
@@ -142,7 +159,7 @@ export function capacityPage(ctx: Ctx): Response {
       title: html`<span class="mono">${c.key}</span>
         <span class="mono">${c.from === "" ? "auto" : c.from}</span> →
         <span class="mono">${c.to === "" ? "auto" : c.to}</span>`,
-      meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
+      meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}${c.reason === "" ? "" : html` · ${c.reason}`}`,
     }),
   );
   const reported = settings.some(
@@ -239,6 +256,7 @@ const ERRORS: Record<string, string> = {
   no_such_setting: "There is no such setting.",
   derived: DERIVED_WORDS,
   invalid_value: "That value is outside what this setting takes.",
+  reason_required: REASON_WORDS,
   no_credential:
     "Add a passkey (or a password) to your own account first: with the edge off, you would be signed out for good.",
 };
@@ -268,6 +286,7 @@ export async function capacitySet(ctx: Ctx): Promise<Response> {
     ctx.auth.user,
     key,
     reset ? null : field(form, "value"),
+    field(form, "reason"),
   );
   if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
   return flashTo(

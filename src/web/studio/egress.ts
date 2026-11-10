@@ -6,7 +6,6 @@
  */
 
 import { egressModeSentence, undeclaredHosts } from "../../apps/egress_report.ts";
-import { egressMode } from "../../apps/contain.ts";
 import { html, type Html } from "../html.ts";
 import { row } from "../ui.ts";
 
@@ -16,7 +15,7 @@ export function egressNote(
   /** What production declares now: a host declared since is not repeated. */
   declared: readonly string[],
   /** The forge's egress mode now (`core/capacity.ts`). */
-  mode: "enforce" | "report" = egressMode(),
+  mode: "enforce" | "report",
 ): Html | null {
   // Once egress is enforced the forge refuses these calls; the note is for the
   // window before that, when adding them to forge.json still saves the app.

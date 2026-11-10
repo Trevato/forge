@@ -11,7 +11,7 @@ import { createAgent } from "../src/actions/crew.ts";
 import { createApp, type App } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
-import { CAPACITY_KEYS, capacityDefault, capacityValue } from "../src/core/capacity.ts";
+import { CAPACITY_KEYS, capacityChanges, capacityDefault, capacityValue } from "../src/core/capacity.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { capacityScreen } from "../src/tui/screens/capacity.ts";
@@ -98,11 +98,41 @@ describe("tui capacity", () => {
     };
     try {
       expect(await egressShown()).toBe(false);
-      expect(changeCapacity(app, carol, "cells.egress", "report").ok).toBe(true);
+      expect(changeCapacity(app, carol, "cells.egress", "report", "a test says why").ok).toBe(true);
       expect(await egressShown()).toBe(true);
       expect(changeCapacity(app, carol, "cells.egress", "enforce").ok).toBe(true);
       expect(await egressShown()).toBe(false);
     } finally {
+      changeCapacity(app, carol, "cells.egress", null);
+    }
+  });
+
+  test("cells.egress to report asks why in the terminal, keeps it with who; enforce asks nothing (#10778)", async () => {
+    const egress = () => capacityValue(app.db, "cells.egress");
+    const h = boot(carol, 60);
+    try {
+      for (let i = 0; i < CAPACITY_KEYS.indexOf("cells.egress"); i++) await h.press("j");
+      await h.press("e");
+      for (let i = 0; i < 10; i++) await h.press("backspace");
+      await h.press(..."report", "enter");
+      expect(h.text()).toContain("Why set cells.egress to report?");
+      await h.press("enter");
+      expect(h.text()).toContain("Say why");
+      await h.press(..."lab move", "enter");
+      expect(h.text()).toContain("why: lab move");
+      await h.press("left", "enter");
+      expect(egress()).toBe("report");
+      const kept = capacityChanges(app.db)[0]!;
+      expect([kept.actorName, kept.reason]).toEqual(["carol", "lab move"]);
+
+      await h.press("e");
+      for (let i = 0; i < 10; i++) await h.press("backspace");
+      await h.press(..."enforce", "enter");
+      expect(h.text()).not.toContain("Why set");
+      await h.press("left", "enter");
+      expect(egress()).toBe("enforce");
+    } finally {
+      h.stop();
       changeCapacity(app, carol, "cells.egress", null);
     }
   });

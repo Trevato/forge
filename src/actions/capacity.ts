@@ -22,6 +22,8 @@ import {
   type CapacityKey,
   effectiveCapacity,
   followsSpeed,
+  needsReason,
+  REASON_MAX,
 } from "../core/capacity.ts";
 import type { EgressTotal } from "../apps/egress.ts";
 import {
@@ -161,15 +163,23 @@ export function edgeOffDryRun(
   });
 }
 
-/** Set `key` to `value`; `null` or `""` goes back to the boot default. */
+/** What a move to report, said without a reason, is told. */
+export const REASON_WORDS = "Say why: setting cells.egress to report is kept with who made it and the reason.";
+
+/**
+ * Set `key` to `value`; `null` or `""` goes back to the boot default.
+ * `reason` is kept beside who; a move of `cells.egress` to report is refused
+ * without one (#10778). Tightening (enforce, or back to the default) never is.
+ */
 export function changeCapacity(
   app: App,
   actor: User | undefined,
   key: string,
   value: string | null,
+  reason = "",
 ): Result<
   { key: CapacityKey; from: string; to: string },
-  "not_found" | "no_such_setting" | "invalid_value" | "no_credential" | "derived"
+  "not_found" | "no_such_setting" | "invalid_value" | "no_credential" | "derived" | "reason_required"
 > {
   const who = admin(actor);
   if (!who.ok) return who;
@@ -180,16 +190,19 @@ export function changeCapacity(
     return err("invalid_value");
   if (key === "signin.edge" && next === "off" && !signsInWithoutEdge(app.db, who.value.id))
     return err("no_credential");
+  const why = reason.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, REASON_MAX);
+  if (needsReason(key) && next === "report" && why === "") return err("reason_required");
   const changed = setCapacity(
     app.db,
     key,
     next === "" ? null : next,
     who.value.id,
+    why,
   );
   app.bus.append({
     kind: "capacity.changed",
     actorId: who.value.id,
-    payload: { key, from: changed.from, to: changed.to },
+    payload: { key, from: changed.from, to: changed.to, ...(why === "" ? {} : { reason: why }) },
   });
   return ok({ key, ...changed });
 }

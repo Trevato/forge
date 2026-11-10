@@ -672,8 +672,10 @@ purpose: a repository admin who is no site admin sees the list read-only on the
 page, and nothing on the terminal screen (no rows, no `g`/`x`).
 
 A release that turns egress on must not break an app whose writers have
-not declared what it uses yet, so the operator can start it reported:
-`FORGE_CELLS_EGRESS=report` lets an undeclared public host through (on 80
+not declared what it uses yet, so an admin can set it reported:
+`cells.egress` = `report` on /settings/capacity (or the API's
+`PUT /api/v1/admin/capacity/cells.egress` with a `reason`; the change log
+keeps who and why) lets an undeclared public host through (on 80
 and 443 only) and
 counts it per repository (`<data>/egress/<repo id>.json`, under the
 forge's data where no cell sees it), and the app's page tells its writers
@@ -1655,7 +1657,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
 | `FORGE_CHECK_CACHE_DAYS`  | `30`                            | days a package may go unlent before the check install cache drops it |
 | `FORGE_CHECK_CACHE_MB`    | `2048`                          | size one repository's check install cache is swept down to |
-| `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
+| `FORGE_CELLS_EGRESS`      | ignored                         | logged once at boot; egress is enforced unless an admin sets `cells.egress` (Settings → Capacity), with a reason |
 | `FORGE_CELL_CGROUP`       | `/sys/fs/cgroup` at a namespace root | the delegated cgroup v2 whose children cap each cell's memory; `off` watches only |
 | `FORGE_CREW_CPUS`         | `4` | cores one crew run may use (`cpu.max` on its own cell cgroup, where the cpu controller is delegated) |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |

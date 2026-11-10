@@ -455,7 +455,7 @@ describe("web pages end to end", () => {
     const { changeCapacity } = await import("../src/actions/capacity.ts");
     const { getUserByName } = await import("../src/core/users.ts");
     const ada = getUserByName(app.db, "ada")!;
-    expect(changeCapacity(app, ada, "cells.egress", "report").ok).toBe(true);
+    expect(changeCapacity(app, ada, "cells.egress", "report", "a test says why").ok).toBe(true);
     try {
       const text = await (await fetch(base, { headers: { cookie } })).text();
       expect(text).not.toMatch(/class="[^"]*\berror-note/);

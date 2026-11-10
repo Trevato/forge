@@ -33,7 +33,7 @@ export type CapacityKey =
 interface Definition {
   /** What the settings page and the API call it. */
   readonly label: string;
-  /** The environment variable that is its boot default. */
+  /** The environment variable that is its boot default; "" for a setting only an admin moves. */
   readonly env: string;
   /** Whole numbers in a range, or one of a few words. */
   readonly kind:
@@ -100,10 +100,12 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
   },
   "cells.egress": {
     label: "Egress from cells",
-    env: "FORGE_CELLS_EGRESS",
+    // No environment default: report is a decision an admin makes and the
+    // change log keeps, never what a deployment's environment says (#10778).
+    env: "",
     kind: { type: "choice", values: ["enforce", "report"] },
     fallback: "enforce",
-    help: "enforce refuses a host an app or check did not declare; report lets it through on 80 and 443 and lists it on the app's page. Takes effect on the next cell started.",
+    help: "enforce refuses a host an app or check did not declare; report lets it through on 80 and 443 and lists it on the app's page. Enforce unless an admin sets report here, with a reason. Takes effect on the next cell started.",
   },
   "children.modelEgress": {
     label: "Model provider a child forge cell may reach",
@@ -178,7 +180,9 @@ export function capacityDefault(key: CapacityKey, cpus?: number): string {
 
 /** The environment's value for `key`, when it holds a valid one. */
 function explicitDefault(key: CapacityKey): string | undefined {
-  const env = process.env[CAPACITY[key].env]?.trim() ?? "";
+  const name = CAPACITY[key].env;
+  if (name === "") return undefined;
+  const env = process.env[name]?.trim() ?? "";
   return env !== "" && validCapacity(key, env) ? env : undefined;
 }
 
@@ -391,9 +395,30 @@ export function maxChildren(db: Database): number {
   return Number(capacityValue(db, "children.max"));
 }
 
-/** The egress mode a cell starts with now. */
+/** The egress mode a cell starts with now: enforce unless an admin set report. */
 export function egressSetting(db: Database): "enforce" | "report" {
   return capacityValue(db, "cells.egress") === "report" ? "report" : "enforce";
+}
+
+/** The variable that once set the egress mode, and is now only noticed (#10778). */
+export const EGRESS_ENV = "FORGE_CELLS_EGRESS";
+
+/**
+ * The one boot line for an environment that still asks for an egress mode:
+ * it is ignored, and this says so once, plainly; null when it asks nothing.
+ */
+export function egressEnvIgnored(env: Record<string, string | undefined> = process.env): string | null {
+  const asked = env[EGRESS_ENV]?.trim() ?? "";
+  if (asked === "" || asked === "enforce") return null;
+  return `${EGRESS_ENV}=${asked.slice(0, 32)} is ignored: egress is enforced unless an admin sets cells.egress on /settings/capacity, with a reason`;
+}
+
+/** Most characters a change's reason keeps. */
+export const REASON_MAX = 500;
+
+/** Keys whose loosening must say why: a move of these to report needs a reason. */
+export function needsReason(key: CapacityKey): boolean {
+  return key === "cells.egress";
 }
 
 /** The model provider hosts a child forge's cell may reach now: none unless an admin chose one. */
@@ -466,6 +491,8 @@ export interface CapacityChange {
   readonly actorId: string;
   readonly actorName: string;
   readonly at: string;
+  /** Why, as the admin said it; "" for a change made before reasons were kept. */
+  readonly reason: string;
 }
 
 /**
@@ -479,6 +506,8 @@ export function setCapacity(
   key: CapacityKey,
   value: string | null,
   actorId: string,
+  /** Why, in the admin's words, already cut to REASON_MAX by the action; kept beside who (#10778). */
+  reason = "",
 ): { from: string; to: string } {
   const from = capacityValue(db, key);
   const at = new Date().toISOString();
@@ -494,9 +523,9 @@ export function setCapacity(
   })();
   const to = capacityValue(db, key);
   db.query(
-    `INSERT INTO forge_setting_change (key, from_value, to_value, actor_id, at)
-     VALUES (?1, ?2, ?3, ?4, ?5)`,
-  ).run(key, from, to, actorId, at);
+    `INSERT INTO forge_setting_change (key, from_value, to_value, actor_id, at, reason)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+  ).run(key, from, to, actorId, at, reason);
   return { from, to };
 }
 
@@ -511,10 +540,11 @@ export function capacityChanges(db: Database, limit = 20): CapacityChange[] {
         actor_id: string;
         username: string | null;
         at: string;
+        reason: string;
       },
       [number]
     >(
-      `SELECT c.key, c.from_value, c.to_value, c.actor_id, u.username, c.at
+      `SELECT c.key, c.from_value, c.to_value, c.actor_id, u.username, c.at, c.reason
          FROM forge_setting_change c LEFT JOIN user u ON u.id = c.actor_id
         ORDER BY c.at DESC, c.rowid DESC LIMIT ?1`,
     )
@@ -527,5 +557,6 @@ export function capacityChanges(db: Database, limit = 20): CapacityChange[] {
       actorId: r.actor_id,
       actorName: r.username ?? "",
       at: r.at,
+      reason: r.reason,
     }));
 }

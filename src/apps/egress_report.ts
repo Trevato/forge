@@ -1,6 +1,6 @@
 /**
  * What a repository's code reached without declaring it, while egress is
- * only reported (`FORGE_CELLS_EGRESS=report`, `apps/contain.ts`): one small
+ * only reported (`cells.egress` = `report`, `core/capacity.ts`): one small
  * file per repository under `<data>/egress/`, read by the app's page so its
  * writers know what to add to `forge.json` before egress is enforced.
  */

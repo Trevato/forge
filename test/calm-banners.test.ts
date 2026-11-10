@@ -63,7 +63,7 @@ test("with egress enforced, System and Capacity say nothing about it, and neithe
 });
 
 test("egress in report mode is one line on Capacity and System, not on / or /board", async () => {
-  const changed = await changeCapacity(app, admin.value, "cells.egress", "report");
+  const changed = await changeCapacity(app, admin.value, "cells.egress", "report", "a test says why");
   expect(changed.ok).toBe(true);
   expect(await get("/settings/capacity")).toContain('id="egress-reported"');
   expect(await get("/system")).toContain('id="egress-reported"');

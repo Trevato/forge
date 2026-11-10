@@ -63,7 +63,7 @@ test("the egress row reads its true current state, and the reported note says so
   const before = await page();
   expect(before).not.toContain('id="egress-reported"');
   const now = /Now <span class="mono">([^<]+)<\/span>/.exec(egressRow(before))?.[1];
-  expect(changeCapacity(app, alice, "cells.egress", "report").ok).toBe(true);
+  expect(changeCapacity(app, alice, "cells.egress", "report", "a test says why").ok).toBe(true);
   const after = await page();
   expect(egressRow(after)).toContain('Now <span class="mono">report</span>');
   expect(now).not.toBe("report");

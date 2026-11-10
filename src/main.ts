@@ -93,7 +93,7 @@ import { ownTagsReader } from "./release/own_tags.ts";
 import { rollProbe, tick as keeperTick } from "./keeper/keeper.ts";
 import { keeperEnv, keeperPorts } from "./keeper/wire.ts";
 import { snapshotPlace } from "./actions/health.ts";
-import { capacityDefault } from "./core/capacity.ts";
+import { capacityDefault, egressEnvIgnored } from "./core/capacity.ts";
 import { bootCounts, recordBoot, recordCleanExit } from "./kernel/boots.ts";
 import { census, censusWords, processRows } from "./kernel/census.ts";
 import { reapLeftoverBridges } from "./crew/leftovers.ts";
@@ -397,6 +397,9 @@ const publicUrl = new URL(forgeUrl);
 if (appDomain?.ok === false) app.log.error(appDomain.reason);
 if (appDomain?.ok === true && appDomain.note !== undefined)
   app.log.warn(appDomain.note);
+// An environment asking for egress report is ignored, and said so once (#10778).
+const egressIgnored = egressEnvIgnored();
+if (egressIgnored !== null) app.log.info(egressIgnored);
 // One crew run's length: what a run takes, and how long past its idle
 // window an app busy with one is left awake.
 const crewRunMs = positive(process.env.FORGE_CREW_TIMEOUT_MIN, 45) * 60_000;

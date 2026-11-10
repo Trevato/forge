@@ -906,10 +906,8 @@ describe.skipIf(noCells)(
         hostname: "127.0.0.1",
         fetch: () => new Response("inside"),
       });
-      process.env["FORGE_CELLS_EGRESS"] = "report";
     });
     afterAll(async () => {
-      delete process.env["FORGE_CELLS_EGRESS"];
       listener.stop(true);
       await rm(dir, { recursive: true, force: true });
     });
@@ -938,6 +936,7 @@ describe.skipIf(noCells)(
             egress: [],
             reach: [],
             limits: { memoryMiB: 1024, cpus: 2, diskMiB: 1024 },
+            egressMode: "report",
             onUndeclared: (host, port) => seen.push(`${host}:${port}`),
           },
         },

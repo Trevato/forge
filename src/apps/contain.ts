@@ -241,8 +241,8 @@ export interface CellSpec {
   readonly onRefused?: ((host: string, port: number, isPrivate: boolean) => void) | undefined;
   /**
    * Refuse undeclared egress, or only report it, for this cell — the
-   * forge's setting when the cell starts (`core/capacity.ts`); the
-   * environment's (`egressMode`) when the caller has none.
+   * forge's setting when the cell starts (`core/capacity.ts`); enforce
+   * when the caller has none. The environment never says (#10778).
    */
   readonly egressMode?: "enforce" | "report" | undefined;
   /**
@@ -272,16 +272,6 @@ export interface CellSpec {
  */
 export function watchedLimits(limits: Limits, cgroup: { readonly cpuCapped: boolean } | undefined): Limits {
   return cgroup?.cpuCapped === true ? { ...limits, cpus: Number.POSITIVE_INFINITY } : limits;
-}
-
-/**
- * Whether undeclared egress is refused (`enforce`, the default) or let
- * through and reported (`FORGE_CELLS_EGRESS=report`), for a release that
- * must not break an app before its writers have declared what it uses.
- * Files, processes and private addresses are held the same in both.
- */
-export function egressMode(): "enforce" | "report" {
-  return process.env["FORGE_CELLS_EGRESS"] === "report" ? "report" : "enforce";
 }
 
 export interface Cell {
@@ -524,7 +514,8 @@ export function openCell(
         // the forge told its parent's door; a check that boots a forge is not.
         upstream: process.env["FORGE_PARENT_LOCAL"] === undefined ? undefined : upstreamProxy(),
         report:
-          (spec.egressMode ?? egressMode()) === "report"
+          // Enforce unless the caller carries an admin's report (`egressSetting`, #10778).
+          spec.egressMode === "report"
             ? (host, port) => spec.onUndeclared?.(host, port)
             : undefined,
       },

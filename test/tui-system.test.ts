@@ -285,7 +285,7 @@ describe("tui system: the forge's own state (#7296)", () => {
     await seed({});
     try {
       expect(await systemText(carol)).not.toContain(EGRESS_REPORTED.slice(0, 40));
-      expect(changeCapacity(app, carol, "cells.egress", "report").ok).toBe(true);
+      expect(changeCapacity(app, carol, "cells.egress", "report", "a test says why").ok).toBe(true);
       const text = await systemText(carol);
       expect(text).toContain("forge 9.8.7 · 0123456 · serving");
       // The dialog clips the sentence at its width; its opening words are one row.

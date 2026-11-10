@@ -13,7 +13,7 @@ import { kpiProbe } from "../../web/studio/kpi_probe.ts";
 import { MAX_SECONDS, sampleStacks } from "../../perf/sample.ts";
 import { listAccounts, removeAccount, retireAndRemoveAccount, retirementPlan, suspendAccount, unsuspendAccount, verifyAccount } from "../../actions/accounts.ts";
 import { ADMIN_WORDS } from "../../actions/admin_words.ts";
-import { DERIVED_WORDS, changeCapacity, edgeOffDryRun, listCapacity } from "../../actions/capacity.ts";
+import { DERIVED_WORDS, REASON_WORDS, changeCapacity, edgeOffDryRun, listCapacity } from "../../actions/capacity.ts";
 import { changeShield, lastShieldChange, shieldState } from "../../actions/shield.ts";
 import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
 import { changeLimit, listLimits } from "../../actions/limits.ts";
@@ -188,7 +188,8 @@ export function adminRoutes(router: Router<Handler>): void {
       return dry.ok ? json({ dry_run: true, ...dry.value }) : notFound();
     }
     const value = input.value === null ? null : str(input.value);
-    const changed = changeCapacity(ctx.app, ctx.auth.user, ctx.params.key!, value);
+    const reason = typeof input.reason === "string" ? input.reason : "";
+    const changed = changeCapacity(ctx.app, ctx.auth.user, ctx.params.key!, value, reason);
     if (changed.ok) return json(changed.value);
     if (changed.error === "not_found") return notFound();
     return apiError(
@@ -198,7 +199,9 @@ export function adminRoutes(router: Router<Handler>): void {
         ? "no such capacity setting"
         : changed.error === "derived"
           ? DERIVED_WORDS
-          : SETTING_WORDS.outOfRange,
+          : changed.error === "reason_required"
+            ? REASON_WORDS
+            : SETTING_WORDS.outOfRange,
     );
   });
 
