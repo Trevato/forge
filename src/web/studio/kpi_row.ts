@@ -11,7 +11,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { KPI_COUNTS, backupFull, backupOverdue, backupValue, buildersValue, checkTime, reactNote, shippedValue, speedWords, spendCeilingWords, spendFull, spendValue, waitingWords } from "../../flow/kpi_words.ts";
+import { KPI_COUNTS, backupFull, backupOverdue, backupValue, buildersValue, checkTime, shippedValue, vitalsNote, speedWords, spendCeilingWords, spendFull, spendValue, waitingWords } from "../../flow/kpi_words.ts";
 import { perfRecord } from "../../perf/live.ts";
 import type { TrafficClass, TrafficMinute, TrafficTotals } from "../../perf/traffic.ts";
 import type { IdleReason } from "../../crew/idle_reason.ts";
@@ -188,7 +188,7 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
       "/boards/reach",
       speedWords(k.reach.loadP75),
       speedWords(k.reach.loadP75),
-      reactNote(k.reach),
+      vitalsNote(k.reach),
       KPI_COUNTS.speed,
     )}
   </section>`;

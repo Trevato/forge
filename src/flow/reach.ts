@@ -25,9 +25,11 @@ export interface Reach {
   /** Milliseconds; null when no page view in 7 days measured it. */
   readonly loadP75: number | null;
   readonly inpP75: number | null;
+  /** Largest contentful paint, the same window; null when none was measured. */
+  readonly lcpP75: number | null;
 }
 
-export const NO_REACH: Reach = { usersToday: 0, usersTotal: 0, visitorsToday: 0, visitors7d: 0, visitorDays: new Array<number>(DAYS).fill(0), loadP75: null, inpP75: null };
+export const NO_REACH: Reach = { usersToday: 0, usersTotal: 0, visitorsToday: 0, visitors7d: 0, visitorDays: new Array<number>(DAYS).fill(0), loadP75: null, inpP75: null, lcpP75: null };
 
 /** The 75th percentile, nearest rank: the value at rank ⌈0.75·n⌉ of `values` sorted. */
 export function p75(values: number[]): number | null {
@@ -40,19 +42,21 @@ export function p75(values: number[]): number | null {
  * Page load and INP over the days since `fromDay`, read in one pass (#3693):
  * two counts and two sorted OFFSET reads cost home 70 ms on a month of views.
  */
-function vitals(db: Database, fromDay: string): { load: number[]; inp: number[] } {
+function vitals(db: Database, fromDay: string): { load: number[]; inp: number[]; lcp: number[] } {
   const load: number[] = [];
   const inp: number[] = [];
+  const lcp: number[] = [];
   // Rows as arrays: a week of views is tens of thousands, and objects cost.
-  for (const [l, i] of db
-    .query<[number | null, number | null], [string]>(
-      "SELECT load, inp FROM page_vital WHERE day >= ?1 AND (load IS NOT NULL OR inp IS NOT NULL)",
+  for (const [l, i, c] of db
+    .query<[number | null, number | null, number | null], [string]>(
+      "SELECT load, inp, lcp FROM page_vital WHERE day >= ?1 AND (load IS NOT NULL OR inp IS NOT NULL OR lcp IS NOT NULL)",
     )
-    .values(fromDay) as [number | null, number | null][]) {
+    .values(fromDay) as [number | null, number | null, number | null][]) {
+    if (c !== null) lcp.push(c);
     if (l !== null) load.push(l);
     if (i !== null) inp.push(i);
   }
-  return { load, inp };
+  return { load, inp, lcp };
 }
 
 export function readReach(db: Database, now: Date): Reach {
@@ -84,5 +88,6 @@ export function readReach(db: Database, now: Date): Reach {
     visitors7d: days.reduce((a, d) => a + d.n, 0),
     loadP75: p75(week.load),
     inpP75: p75(week.inp),
+    lcpP75: p75(week.lcp),
   };
 }

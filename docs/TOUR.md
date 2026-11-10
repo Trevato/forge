@@ -101,8 +101,8 @@ The backup tile past 24 hours, or with none (`never`), takes the card's existing
 `data-tone="attn"` and says overdue in its label.
 The last three (`src/flow/reach.ts`, the `reach` board source's rows) are
 reporting browsers (`5 today`, `31 in 7 days`), accounts (`1 of 2`, seen today) and
-page speed (the slowest quarter's page load over 7 days, and `reacts in 180 ms`,
-the same for the delay after a tap), from the page-view beacon. Each links to
+page speed (the slowest quarter's page load over 7 days, and `LCP 2.4 s · INP 180 ms`,
+LCP and INP, the main content and a tap), from the page-view beacon. Each links to
 the Reach starting board (`/boards/reach`). The visitor hash rotates daily, so
 the 7-day reporting browsers is each day's distinct count summed.
 They count every repository, so only a site admin sees them, on both doors;

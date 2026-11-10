@@ -26,3 +26,7 @@ The two scans behind the lists are read once per write (`writeStamp`), so a warm
 - **Just shipped** titles are cut at a word (`shortTitle`); the row's hover and screen-reader title carry the whole one.
 - **Dropped on purpose** (the issue named them: no decision uses them): the Traffic, Reporting browsers and Accounts tiles. The same numbers stay on `/settings/traffic`, `/boards/reach` and the KPI probe.
 - A stuck approved pull is one line ("… waits for a person to merge it."); the wall it hit is on the pull.
+
+## The speed tile's note (#10738)
+
+"Reported page speed" shows the 75th-percentile page load as its figure and, under it, `LCP … · INP …` over seven days from the first-party beacon (`vitalsNote`): LCP is how long the main content takes to show, INP how long a tap takes to answer. With no report yet it says "no visitors yet". The terminal's "Reported page speed" line (`kpiLines`) uses the same note.

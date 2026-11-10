@@ -69,7 +69,7 @@ test("home renders the eight tiles; only an admin sees them", async () => {
   // 2 accounts, the admin alone with a session today; visitors 3 today and 4 over 7 days;
   // load p75 of [100,200,300,400,1900] is 400 ms, INP p75 of [40,80,120,160] is 120 ms.
   expect(a).toContain(">400 ms<");
-  expect(a).toContain(">reacts in 120 ms<");
+  expect(a).toContain(">LCP 100 ms · INP 120 ms<");
   expect((a.match(/class="stat" href="\/boards\/reach"/g) ?? []).length).toBe(1);
 
   // The figures count every repository, so a non-admin sees none.
