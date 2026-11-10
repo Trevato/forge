@@ -38,7 +38,16 @@ import { dirname, join } from "node:path";
 import { portInsteadOfSocket } from "../git/hook-address.ts";
 import { relay, startEgress, upstreamProxy, type Egress } from "./egress.ts";
 import { BACKGROUND_CPU_WEIGHT } from "./background.ts";
-import { cgroupHost, enterArgv, openCellCgroup, pidsDelegated, type CellCgroup, type CgroupHost } from "./cgroup.ts";
+import {
+  cgroupHost,
+  diskDevice,
+  enterArgv,
+  openCellCgroup,
+  pidsDelegated,
+  type CellCgroup,
+  type CgroupHost,
+  type IoMax,
+} from "./cgroup.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
 export type CeilingFrom = "env" | "pod" | "default";
@@ -263,6 +272,12 @@ export interface CellSpec {
    * it is busy rather than stopped.
    */
   readonly cpuQuota?: boolean | undefined;
+  /**
+   * Disk bandwidth the kernel holds the cell to (`io.max`) on the disk
+   * under `dir` — the forge's data volume — where io is delegated. A child
+   * forge's comes from its size (`spawn/sizes.ts`); unset, no cap.
+   */
+  readonly io?: IoMax | undefined;
 }
 
 /**
@@ -475,9 +490,15 @@ export function cellMounts(
 
 /**
  * A cell's own cgroup on `at`: its memory cap, its share of the cores, and
- * `pids.max` at the watch's process limit where pids is delegated (#10518).
+ * `pids.max` at the watch's process limit where pids is delegated (#10518),
+ * and `io.max` on the disk under its directory when it declares `io`.
  */
-export function cellCgroup(spec: CellSpec, at: CgroupHost = cgroupHost()): CellCgroup | undefined {
+export function cellCgroup(
+  spec: CellSpec,
+  at: CgroupHost = cgroupHost(),
+  device: (path: string) => string | undefined = diskDevice,
+): CellCgroup | undefined {
+  const disk = spec.io === undefined || !at.ok ? undefined : device(spec.dir);
   return openCellCgroup(
     spec.limits.memoryMiB,
     at,
@@ -487,6 +508,7 @@ export function cellCgroup(spec: CellSpec, at: CgroupHost = cgroupHost()): CellC
         ? { weight: 100, cpus: spec.limits.cpus }
         : undefined,
     PROCESSES_MAX,
+    spec.io === undefined || disk === undefined ? undefined : { device: disk, max: spec.io },
   );
 }
 

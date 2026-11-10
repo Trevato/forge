@@ -20,7 +20,7 @@ import { childEnv, freePort } from "../apps/process.ts";
 import { childDirOf } from "../actions/spawn.ts";
 import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
 import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Placement } from "./placement.ts";
-import { SIZES, type Size } from "./sizes.ts";
+import { SIZE_IO, SIZES, type Size } from "./sizes.ts";
 import { childModelHosts, childRegistryHosts } from "../core/capacity.ts";
 
 export const CELL_PREFIX = "cell-";
@@ -140,6 +140,9 @@ export function cellSpecFor(input: {
     // A forge is busy in bursts (a check's shards, an install): the kernel
     // holds it to its cores; the watch stopping it killed the check with it.
     cpuQuota: true,
+    // Its disk bandwidth too, on the data volume: one child's install
+    // cannot starve the forge's database of the disk (#10854).
+    io: SIZE_IO[input.size],
     listen: input.port,
     label: input.label,
   };
