@@ -143,9 +143,74 @@ export function opensAsSheet(marked: boolean, width: number): boolean {
   return marked && width > 0 && width < 720;
 }
 
+/** A row opened before: where, how it was labelled, how often, and when last. */
+export interface PaletteUse {
+  readonly t: string;
+  readonly h: string;
+  readonly g: string;
+  /** Times opened. */
+  readonly c: number;
+  /** Milliseconds since the epoch of the last opening. */
+  readonly l: number;
+}
+
+/**
+ * Remembered rows in frecency order, best first: each opening is worth one,
+ * halved for every week since the last, so a row opened often and a row
+ * opened just now both lead a row opened once long ago. (Mozilla-style
+ * frecency, reduced to count × 2^(-weeks); the decay is applied to the whole
+ * count, an approximation that needs no per-visit history.) Ties go to the
+ * later opening. Returns a new array; `now` is passed in so the function is
+ * pure. Self-contained, shipped in the script.
+ */
+export function frecencyOrder<T extends { c: number; l: number }>(uses: readonly T[], now: number): T[] {
+  const week = 7 * 24 * 3600 * 1000;
+  const score = (u: T) => u.c * Math.pow(0.5, Math.max(0, now - u.l) / week);
+  return uses.slice().sort((a, b) => score(b) - score(a) || b.l - a.l);
+}
+
+/**
+ * What the browser's stored list means: anything that is not an array of
+ * `{t, h}` with a same-origin `h` is dropped; a missing or bad count is one
+ * opening, a missing time is the epoch (oldest). Cut to `max`. Self-contained.
+ */
+export function readUses(raw: unknown, max: number): PaletteUse[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PaletteUse[] = [];
+  for (const r of raw) {
+    if (out.length >= max) break;
+    if (!r || typeof r.t !== "string" || typeof r.h !== "string" || r.h.charAt(0) !== "/") continue;
+    out.push({
+      t: r.t,
+      h: r.h,
+      g: typeof r.g === "string" ? r.g : "",
+      c: typeof r.c === "number" && r.c >= 1 ? Math.min(r.c, 1e6) : 1,
+      l: typeof r.l === "number" && r.l > 0 ? r.l : 1,
+    });
+  }
+  return out;
+}
+
+/**
+ * The list after opening `row` at `now`: its count is one more than before
+ * (one if new), its time is now, and the whole list is re-ordered by
+ * frecency and cut to `max` — so the least useful entry is the one that
+ * falls off. Pure; self-contained apart from `frecencyOrder`.
+ */
+export function recordUse(
+  uses: readonly PaletteUse[],
+  row: { t: string; h: string; g: string },
+  now: number,
+  max: number,
+): PaletteUse[] {
+  const prev = uses.find((x) => x.h === row.h);
+  const entry: PaletteUse = { t: row.t, h: row.h, g: row.g, c: (prev ? prev.c : 0) + 1, l: now };
+  return frecencyOrder([entry].concat(uses.filter((x) => x.h !== row.h)), now).slice(0, max);
+}
+
 /**
  * The functions above as the JavaScript the page runs: Bun transpiles
  * this module before it ever parses it, so `toString` is already the
  * browser's dialect. A test proves the string and the module agree.
  */
-export const paletteHelpersJs = `${fuzzyScore.toString()}\n${rankPalette.toString()}\n${opensAsSheet.toString()}`;
+export const paletteHelpersJs = `${fuzzyScore.toString()}\n${rankPalette.toString()}\n${opensAsSheet.toString()}\n${frecencyOrder.toString()}\n${readUses.toString()}\n${recordUse.toString()}`;

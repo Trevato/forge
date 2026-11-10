@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { shellJs } from "../src/web/client.ts";
 import {
+  frecencyOrder,
   fuzzyScore,
   paletteHelpersJs,
   rankPalette,
+  readUses,
+  recordUse,
+  type PaletteUse,
   type PaletteGroup,
   type PaletteRow,
 } from "../src/web/palette.ts";
@@ -173,5 +177,77 @@ describe("the page runs the same functions", () => {
     );
     // The palette's index rides as data; the script never carries runtime text.
     expect(shellJs).not.toContain("${");
+  });
+});
+
+describe("frecency", () => {
+  const now = Date.UTC(2026, 10, 10);
+  const day = 24 * 3600 * 1000;
+  const u = (h: string, c: number, ago: number) => ({ t: h, h, g: "", c, l: now - ago });
+
+  test("recent and frequent both beat old and rare", () => {
+    const order = frecencyOrder([u("/old", 1, 60 * day), u("/often", 6, 7 * day), u("/now", 1, 0)], now).map((x) => x.h);
+    // /often: 6 × 0.5 = 3; /now: 1; /old: ~0.003
+    expect(order).toEqual(["/often", "/now", "/old"]);
+  });
+
+  test("a hand calculation: 4 openings two weeks ago equal one opening now", () => {
+    const order = frecencyOrder([u("/a", 4, 14 * day), u("/b", 1, 1 * day)], now).map((x) => x.h);
+    // /a: 4 × 0.25 = 1; /b: 2^(-1/7) ≈ 0.906
+    expect(order).toEqual(["/a", "/b"]);
+  });
+
+  test("ties go to the later opening; the input is not mutated", () => {
+    const input = [u("/x", 1, 0), u("/y", 1, 0)].map((e, i) => ({ ...e, l: now - i }));
+    const out = frecencyOrder(input, now);
+    expect(out.map((x) => x.h)).toEqual(["/x", "/y"]);
+    expect(out).not.toBe(input);
+  });
+
+  test("the helpers ride in the shell script", () => {
+    for (const f of ["frecencyOrder", "readUses", "recordUse"]) expect(paletteHelpersJs).toContain(`function ${f}`);
+  });
+});
+
+describe("recording uses", () => {
+  const row = (h: string) => ({ t: h, h, g: "Go to" });
+
+  test("opening a row again raises its count and moves its time", () => {
+    const a = recordUse([], row("/a"), 1000, 50);
+    const b = recordUse(a, row("/a"), 2000, 50);
+    expect(b).toEqual([{ t: "/a", h: "/a", g: "Go to", c: 2, l: 2000 }]);
+  });
+
+  test("at most 50 are kept, and the least useful one falls off", () => {
+    let uses: PaletteUse[] = [];
+    for (let i = 0; i < 60; i++) uses = recordUse(uses, row("/r" + i), 1000 + i, 50);
+    expect(uses.length).toBe(50);
+    expect(uses[0]!.h).toBe("/r59");
+    expect(uses.some((u) => u.h === "/r0")).toBe(false);
+  });
+
+  test("a often-opened old row survives the cap over once-opened newer ones", () => {
+    let uses = recordUse([], row("/keep"), 1000, 3);
+    uses = recordUse(uses, row("/keep"), 1001, 3);
+    uses = recordUse(uses, row("/keep"), 1002, 3);
+    for (let i = 0; i < 5; i++) uses = recordUse(uses, row("/n" + i), 2000 + i, 3);
+    expect(uses.map((u) => u.h)).toContain("/keep");
+  });
+
+  test("legacy entries (no count or time) read as one opening; junk and off-origin links drop", () => {
+    const raw = [{ t: "A", h: "/a", g: "x" }, { t: "B", h: "https://evil.example/" }, { h: "/c" }, null, "s", { t: "D", h: "/d", c: -4, l: "no" }];
+    expect(readUses(raw, 50)).toEqual([
+      { t: "A", h: "/a", g: "x", c: 1, l: 1 },
+      { t: "D", h: "/d", g: "", c: 1, l: 1 },
+    ]);
+    expect(readUses("nope", 50)).toEqual([]);
+    expect(readUses(raw, 1).length).toBe(1);
+  });
+
+  test("the shell script remembers through the helpers, and lists 8", () => {
+    expect(shellJs).toContain("recordUse(readRecent()");
+    expect(shellJs).toContain("frecencyOrder(readRecent(), Date.now()).slice(0, RECENT_SHOWN)");
+    expect(shellJs).toContain("RECENT_MAX = 50");
+    expect(shellJs).toContain("RECENT_SHOWN = 8");
   });
 });

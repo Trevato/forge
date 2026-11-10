@@ -1661,7 +1661,8 @@ const shellCore = /* js */ `
   //    first while the box is empty
   ${paletteHelpersJs}
   var RECENT_KEY = 'forge.palette.recent';
-  var RECENT_MAX = 8;
+  var RECENT_MAX = 50;  // entries kept
+  var RECENT_SHOWN = 8; // entries listed while the box is empty
   var index = null;
   function loadIndex() {
     if (index) return index;
@@ -1672,21 +1673,12 @@ const shellCore = /* js */ `
   // Storage may be absent, full or refused (a private window): a palette
   // with no memory is still a palette.
   function readRecent() {
-    try {
-      var raw = JSON.parse(window.localStorage.getItem(RECENT_KEY) || '[]');
-      if (!Array.isArray(raw)) return [];
-      return raw.filter(function (r) {
-        return r && typeof r.t === 'string' && typeof r.h === 'string' && r.h.charAt(0) === '/';
-      }).slice(0, RECENT_MAX).map(function (r) {
-        return { t: r.t, h: r.h, g: typeof r.g === 'string' ? r.g : '' };
-      });
-    } catch (_) { return []; }
+    try { return readUses(JSON.parse(window.localStorage.getItem(RECENT_KEY) || '[]'), RECENT_MAX); } catch (_) { return []; }
   }
   function remember(r) {
     try {
-      var rest = readRecent().filter(function (x) { return x.h !== r.h; });
-      var next = [{ t: r.t, h: r.h, g: r.g === 'Recent' ? (r.d || '') : r.g }].concat(rest);
-      window.localStorage.setItem(RECENT_KEY, JSON.stringify(next.slice(0, RECENT_MAX)));
+      var next = recordUse(readRecent(), { t: r.t, h: r.h, g: r.g === 'Recent' ? (r.d || '') : r.g }, Date.now(), RECENT_MAX);
+      window.localStorage.setItem(RECENT_KEY, JSON.stringify(next));
     } catch (_) {}
   }
   // What the server found, as rows. The links are built here from the
@@ -1914,7 +1906,7 @@ const shellCore = /* js */ `
       return r;
     });
     var tellApp = (loadIndex().tell || {}).app;
-    var recent = readRecent().map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
+    var recent = frecencyOrder(readRecent(), Date.now()).slice(0, RECENT_SHOWN).map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
     var recentHrefs = recent.map(function (r) { return r.h; });
     var served = [];       // rows the server found, for the query servedFor
     var servedFor = '';
