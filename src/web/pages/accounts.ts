@@ -84,6 +84,7 @@ function personRow(a: AccountRow, sole: readonly string[]): Html {
   // Who may be acted on: a person who is not an admin and is still here.
   const actionable = a.kind === "user" && !a.isAdmin && a.removedAt === null;
   return row({
+    nav: true,
     title: html`${userLink(a.username, { mark: markOf(a) })} ${standing(a)}`,
     meta: html`joined
       ${time(a.createdAt)}${how.length > 0 ? html` · ${how.join(" · ")}` : null}
