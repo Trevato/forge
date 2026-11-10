@@ -79,14 +79,14 @@ async function carriesChain(ctx: Ctx): Promise<boolean> {
 
 const STATE_WORDS = { open: "open", merged: "merged", closed: "closed" } as const;
 
-function proposalSection(base: string, proposals: readonly ForgeProposal[], writer: boolean): Html {
+export function proposalSection(base: string, proposals: readonly ForgeProposal[], writer: boolean): Html {
   return html`<h2 class="mt">Proposals</h2>
     ${proposals.length === 0
       ? html`<p class="muted">Nothing proposed to the parent forge yet.</p>`
       : html`<ul class="list" aria-label="Proposals to the parent forge">
           ${proposals.map(
             (p) => html`<li>
-              <div class="row">
+              <div class="row" data-nav tabindex="-1">
                 <span class="row-main">
                   <a class="row-title" href="${p.url}" rel="noopener">#${p.number} ${p.title}</a>
                   <span class="row-meta">${STATE_WORDS[p.state]}${p.reachable ? null : html` · parent unreachable`}</span>
