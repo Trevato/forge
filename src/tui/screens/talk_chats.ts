@@ -20,6 +20,8 @@ import {
   TOO_MANY_WORDS,
   type Conversation,
 } from "../../core/conversations.ts";
+import { filesOf, repoOf, stepOf } from "../../core/talk_steps.ts";
+import { workspaceOf } from "../../actions/talk_workspace.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -35,7 +37,10 @@ const WHO: Readonly<Record<string, string>> = { person: "You", agent: "Forge", t
 /**
  * One conversation, newest turns last: j/k scroll, s says something in it, r
  * reloads. `hit` is a search result's turn: the view opens on the page around
- * it, that turn marked ▶.
+ * it, that turn marked ▶. p flips to what the chat is working on, the web's
+ * pane beside the chat: the repository, what runs and where, the newest pull's
+ * diff, and the files the chat touched. Turns are read when the view opens
+ * and on r, not on every draw.
  */
 function chatScreen(f: Session, ctx: Ctx, chat: Conversation, hit?: string): Screen {
   const scroll = new Scroll();
@@ -47,16 +52,44 @@ function chatScreen(f: Session, ctx: Ctx, chat: Conversation, hit?: string): Scr
   let around = hit;
   let mark = 0;
   let placed = false;
+  let pane = false;
+  type Turns = Exclude<ReturnType<typeof listTurns>, { ok: false }>["value"];
+  let turns: Turns = [];
+  let recent: Turns = [];
+  let repo: string | undefined;
+  const load = (): void => {
+    if (f.user === undefined) return;
+    const before = around === undefined ? undefined : pageAround(f.app.db, f.user.id, chat.id, around);
+    const listed = listTurns(f.app.db, f.user.id, chat.id, { limit: 50, ...(before === undefined ? {} : { before }) });
+    turns = listed.ok ? listed.value : [];
+    const last = before === undefined ? listed : listTurns(f.app.db, f.user.id, chat.id, { limit: 50 });
+    recent = last.ok ? last.value : [];
+    repo = repoOf(recent);
+  };
+  load();
+  const paneLines = (): string[] => {
+    if (repo === undefined || f.user === undefined) return ["No repository yet."];
+    const ws = workspaceOf(f.app, f.user, repo);
+    if (ws === undefined) return ["Not a repository you can see."];
+    const files = filesOf(recent, repo);
+    return [
+      `${repo} · ${ws.pull === undefined ? "Production" : `Pull #${String(ws.pull)}`}`,
+      "",
+      ws.url === undefined ? "Nothing running yet." : `Preview: ${ws.url}`,
+      ws.pull === undefined ? "No open pull yet." : `Diff: /${repo}/pulls/${String(ws.pull)}/files`,
+      "",
+      ...(files.length === 0 ? ["No files touched yet."] : ["Files touched:", ...files.map((p) => `  ${p}`)]),
+    ];
+  };
   const lines = (): { text: string; style: ReturnType<typeof style> }[][] => {
     const c = ctx.theme.c;
-    const before = f.user === undefined || around === undefined ? undefined : pageAround(f.app.db, f.user.id, chat.id, around);
-    const listed = f.user === undefined ? undefined : listTurns(f.app.db, f.user.id, chat.id, { limit: 50, ...(before === undefined ? {} : { before }) });
-    const turns = listed?.ok ? listed.value : [];
+    if (pane) return paneLines().flatMap((l) => wrap(l, Math.max(10, width - 2))).map((l) => [{ text: l, style: style(c.fg, c.bg) }]);
     if (turns.length === 0) return [[{ text: "Nothing said yet; s says something.", style: style(c.mutedFg, c.bg) }]];
     let n = 0;
     return turns.flatMap((t) => {
       if (t.id === around) mark = n;
-      const own = t.text.split("\n").flatMap((l) => wrap(l, Math.max(10, width - 2)));
+      const step = t.role === "tool" ? stepOf(t.text) : undefined;
+      const own = (step === undefined ? t.text : [step.label, ...step.details.map((d) => `  ${d}`)].join("\n")).split("\n").flatMap((l) => wrap(l, Math.max(10, width - 2)));
       n += own.length + 2;
       return [
         [{ text: `${t.id === around ? "▶ " : ""}${WHO[t.role] ?? t.role}${t.replaced ? " · replaced" : ""} · ${ago(t.createdAt)}`, style: style(c.mutedFg, c.bg) }],
@@ -69,15 +102,15 @@ function chatScreen(f: Session, ctx: Ctx, chat: Conversation, hit?: string): Scr
     get title() {
       return chat.title === "" ? "Untitled conversation" : chat.title;
     },
-    keys: [binding(["j", "k"], "scroll"), binding(["s"], "say"), binding(["r"], "reload"), binding(["esc"], "back")],
+    keys: [binding(["j", "k"], "scroll"), binding(["s"], "say"), binding(["r"], "reload"), binding(["p"], "pane"), binding(["esc"], "back")],
     render(area, s) {
       const c = ctx.theme.c;
       width = area.w;
       const [head, body] = split(area, "v", [len(1), fill(1)]);
-      const text = note !== "" ? note : `/talk/${chat.id}${chat.archivedAt === null ? "" : " · archived: sending does not bring it back"}`;
+      const text = note !== "" ? note : `/talk/${chat.id}${repo === undefined ? "" : ` · working on ${repo}`}${chat.archivedAt === null ? "" : " · archived: sending does not bring it back"}`;
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       const all = lines();
-      if (follow) scroll.to(all.length - body!.h, all.length);
+      if (follow || pane) scroll.to(pane ? 0 : all.length - body!.h, all.length);
       else if (around !== undefined && !placed) {
         scroll.to(mark, all.length);
         placed = true;
@@ -91,6 +124,11 @@ function chatScreen(f: Session, ctx: Ctx, chat: Conversation, hit?: string): Scr
       }
       const user = f.user;
       if (user === undefined || e.ctrl || e.alt) return false;
+      if (e.key === "p" || (pane && e.key === "esc")) {
+        pane = !pane;
+        ctx.invalidate();
+        return true;
+      }
       if (e.key === "esc" || e.key === "q") {
         ctx.pop();
         return true;
@@ -99,6 +137,7 @@ function chatScreen(f: Session, ctx: Ctx, chat: Conversation, hit?: string): Scr
         note = "";
         follow = true;
         around = undefined;
+        load();
         ctx.invalidate();
         return true;
       }

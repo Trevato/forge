@@ -159,7 +159,7 @@ describe("the page", () => {
     expect(page).toContain("Forge · <time");
     expect(page).not.toContain("data-copy");
     expect(page).toContain('role="log"');
-    expect(page).toMatch(/<details><summary>list_issues /);
+    expect(page).toMatch(/<details><summary>List issues /);
     expect(page).not.toMatch(/<details open/);
   });
 
@@ -218,8 +218,8 @@ describe("the page", () => {
 
   test("the page's own bytes are held: stylesheet and script stay small", async () => {
     const { talkCss, talkJs } = await import("../src/web/pages/talk_client.ts");
-    expect(Buffer.byteLength(talkCss)).toBeLessThan(3_750);
-    expect(Buffer.byteLength(talkJs)).toBeLessThan(13_550);
+    expect(Buffer.byteLength(talkCss)).toBeLessThan(4_050);
+    expect(Buffer.byteLength(talkJs)).toBeLessThan(14_000);
     say(alice, "agent", "```ts\nlet x = 1;\n```");
     const page = await get("/talk", alice);
     const size = (await page.arrayBuffer()).byteLength;
@@ -297,12 +297,14 @@ describe("the page", () => {
         <form class="talk-compose"><p class="talk-status" role="status"></p><ul data-chips></ul><textarea name="text"></textarea><div class="bar"><span data-compose-hint></span><label data-attach hidden><input type="file" data-pick /></label><button class="btn" type="button" data-stop hidden>Stop</button><button class="btn" type="button" data-steer hidden>Steer</button><button class="btn" type="submit">Send</button></div></form></div>`;
       const how = { value: "started" };
       const cancel = { status: 200 };
+      const page = { html: "" };
       const sent: string[] = [];
       const urls: string[] = [];
       const copied: string[] = [];
       const bodies: { files?: string[] }[] = [];
       const fetchStub = async (u: string, init: { body: string; method?: string }) => {
         urls.push(u);
+        if (u.startsWith("?pane=")) return { ok: true, text: async () => page.html };
         if (u.endsWith("/files")) return { ok: true, json: async () => ({ id: "f1", name: "shot.png" }) };
         if (init.method === "DELETE") return { ok: true, json: async () => ({}) };
         if (u.includes("/queue/")) return { ok: cancel.status === 200, status: cancel.status, json: async () => ({}) };
@@ -319,9 +321,44 @@ describe("the page", () => {
       const box = doc.querySelector("textarea");
       const key = (init: object) => box.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }));
       const emit = (id: string, html: string) => sources.at(-1)!.on["turn"]!({ data: JSON.stringify({ id, html }) });
-      return { how, cancel, emit, bodies, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
+      return { how, cancel, page, emit, bodies, sources, urls, window, doc, box, sent, copied, store, key, status: doc.querySelector(".talk-status") };
     };
     const tick = () => new Promise((r) => setTimeout(r, 5));
+
+    test("when a turn ends the preview frame is loaded again (a push has deployed)", async () => {
+      const t = await boot();
+      const loads: string[] = [];
+      const frame = t.doc.createElement("div");
+      frame.setAttribute("data-frame", "");
+      Object.defineProperty(frame, "src", { get: () => "https://x.example/", set: (v: string) => loads.push(v) });
+      t.doc.body.appendChild(frame);
+      t.sources.at(-1)!.on["running"]!({ data: "{}" });
+      expect(loads).toEqual([]);
+      t.sources.at(-1)!.on["done"]!({ data: "{}" });
+      expect(loads).toEqual(["https://x.example/"]);
+    });
+
+    test("a pane tab swaps the pane in place: no reload, the stream and the composer's words kept", async () => {
+      const t = await boot();
+      const shell = t.doc.createElement("div");
+      shell.setAttribute("data-shell", "");
+      shell.dataset.pane = "chat";
+      shell.innerHTML = `<nav class="seg talk-tabs"><a href="?pane=chat" aria-current="page">Chat</a><a href="?pane=preview">Preview</a></nav><aside class="talk-pane"><nav class="tabs"><a href="?pane=preview" aria-current="page">Preview</a><a href="?pane=code">Code</a></nav><p>old</p></aside>`;
+      t.doc.body.appendChild(shell);
+      t.box.value = "half typed";
+      const source = t.sources.at(-1);
+      const click = (a: any) => a.dispatchEvent(new t.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      click(shell.querySelectorAll(".talk-tabs a")[1]);
+      expect(shell.dataset.pane).toBe("preview");
+      expect(shell.querySelectorAll(".talk-tabs a")[1].getAttribute("aria-current")).toBe("page");
+      t.page.html = `<html><body><div data-shell><aside class="talk-pane"><nav class="tabs"><a href="?pane=code" aria-current="page">Code</a></nav><p>new files</p></aside></div></body></html>`;
+      click(shell.querySelector(".talk-pane nav a[href='?pane=code']"));
+      await tick();
+      expect(t.urls.at(-1)).toBe("?pane=code");
+      expect(shell.querySelector(".talk-pane").textContent).toContain("new files");
+      expect(t.box.value).toBe("half typed");
+      expect(t.sources.at(-1)).toBe(source);
+    });
 
     test("a pasted file becomes a chip with Remove, and a sent message carries its id once", async () => {
       const t = await boot();

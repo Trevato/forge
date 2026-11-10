@@ -50,10 +50,12 @@ import { json } from "../../http/respond.ts";
 import { eventStream } from "../../http/sse.ts";
 import { signInFirst, forbiddenPage, notFoundPage } from "../chrome.ts";
 import { readForm } from "../form.ts";
-import { html, type Html } from "../html.ts";
+import { html, raw, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { badge, btn, row, time } from "../ui.ts";
+import { stepOf, repoOf, type Step } from "../../core/talk_steps.ts";
+import { VIEWS, talkPane, type View } from "./talk_preview.ts";
 import { talkCss, talkJs } from "./talk_client.ts";
 
 /** A stream lasts this long at most; the client reconnects from its last turn id. */
@@ -128,9 +130,13 @@ const meta = (who: string, at: string): Html =>
 const toolCard = (id: string, says: string, name: string, at: string, set = ""): Html =>
   html`<li class="talk-turn talk-tool${set}" id="${id}"><details><summary>${name.slice(0, 60)} <span class="talk-when">${time(at)}</span></summary><p>${says}</p></details></li>`;
 
+/** A call as a readable step: its label closed, `key: value` lines open; never the JSON. */
+const stepCard = (id: string, step: Step, at: string, set = ""): Html =>
+  html`<li class="talk-turn talk-tool talk-step${set}" id="${id}"><details><summary>${step.label} <span class="talk-when">${time(at)}</span></summary><p>${step.details.length === 0 ? "No details." : step.details.join("\n")}</p></details></li>`;
+
 /** The quiet steps line and the links to what the turn opened or changed, under its reply. */
 const workHtml = (work: Work): Html =>
-  html`<p class="talk-steps small muted">${work.steps}</p>${work.links.length === 0 ? null : html`<p class="talk-links small">${work.links.map((l) => html`<a href="${l.href}">${l.label}</a>`)}</p>`}`;
+  html`<p class="talk-steps small muted">${work.steps.charAt(0).toUpperCase() + work.steps.slice(1)}</p>${work.links.length === 0 ? null : html`<p class="talk-links small">${work.links.map((l) => html`<a href="${l.href}">${l.label}</a>`)}</p>`}`;
 
 /** What an empty chat offers to start with; each is a link that fills the composer (`?q=`), so it works without the script. */
 const SUGGESTIONS = ["What needs my attention?", "What did the crew do today?", "Show me my apps"] as const;
@@ -216,6 +222,8 @@ export function turnHtml(turn: Turn, waiting: ReadonlySet<string>, cost?: number
     const says = data["cancelled"] === true ? `Cancelled: ${tool}.` : data["done"] === true ? `Done: ${tool}.${typeof data["undo"] === "string" ? ` To undo: ${data["undo"]}.` : ""}` : `${tool} did not go through: ${String(data["message"] ?? data["error"] ?? "")}`;
     return toolCard(id, says, tool, turn.createdAt, set);
   }
+  const step = stepOf(turn.text);
+  if (step !== undefined) return stepCard(id, step, turn.createdAt, set);
   const call = turn.text.slice(0, 300);
   return toolCard(id, call, call.split(/[\s(:{]/, 1)[0] ?? "tool", turn.createdAt, set);
 }
@@ -305,8 +313,14 @@ function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefi
   const acts = !paged ? exchangeActs(ctx.app.db, user.id, conversation.id, running, here) : new Map<string, Html>();
   // Edit shows the composer holding the last message, posting to Edit instead of Send.
   const editing = edit ? lastExchange(ctx.app.db, user.id, conversation.id).person : undefined;
+  const asked = ctx.url.searchParams.get("pane");
+  const view: View | undefined = VIEWS.find((p) => p === asked);
+  const shown = view ?? "chat";
+  const pane = talkPane(ctx, user, repoOf(turns), works, view);
   const body = html`<h1 class="sr-only">Talk</h1>
-    ${chats(ctx, conversation, showArchived, typed)}
+    <div class="talk-shell" data-shell data-pane="${shown}">
+    <div class="talk-side">${chats(ctx, conversation, showArchived, typed)}</div>
+    <nav class="seg talk-tabs" aria-label="Chat or preview"><a href="?pane=chat"${shown === "chat" ? raw(' aria-current="page"') : null}>Chat</a><a href="?pane=preview"${shown !== "chat" ? raw(' aria-current="page"') : null}>Preview</a></nav>
     <div class="talk" data-talk data-user="${user.id}" data-c="${conversation.id}" data-here="${here}" data-paged="${paged ? "1" : "0"}" data-running="${running && !paged ? "1" : "0"}">
       <div>
         ${contextLine(context)}
@@ -340,8 +354,10 @@ function talkPage(ctx: Ctx, conversation: Conversation, before0: string | undefi
           ${btn(editing === undefined ? "Send" : "Resend", { variant: "primary" })}
         </div>
       </form>
+    </div>
+    ${pane.html}
     </div>`;
-  return page({ ctx, title: "Talk", body, styleCss: talkCss, scriptJs: talkJs, description: "Talk to the forge." });
+  return page({ ctx, title: "Talk", body, styleCss: talkCss, scriptJs: talkJs, description: "Talk to the forge.", ...(pane.frame === undefined ? {} : { frameSrc: pane.frame }) });
 }
 
 /** The conversation a request names (`:id`), or the person's latest when it names none; undefined when it is not theirs. */
