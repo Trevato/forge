@@ -18,19 +18,21 @@ before it lapses; deleting it ends that, see [OAuth refresh](oauth-refresh.md).
 
 ## Connect Claude Code from anywhere
 
-Settings › Tokens, "Connect your harness", offers two lines that work outside a
-clone, while the forge's own source repository is public on this forge. That
-repository is the one an admin names (`PATCH /api/v1/admin/settings` with
-`{"forgeRepo": "owner/name"}`), else `FORGE_REPO`:
+Settings › Tokens, "Connect your harness", offers one command that works
+outside a clone, while a source repository is public on this forge (the
+upstream's counts):
 
-    /plugin marketplace add <forge address>/<owner>/<name>.git
-    /plugin install forge@forge
+    claude plugin marketplace add <forge address>/plugins/claude-code/marketplace.json && claude plugin install forge@forge
 
-Run them inside Claude Code; then sign in through `/mcp`. The same two lines
-show on the terminal's screen for a token you just made (Signed in › `m`),
-wrapped whole; `a` and `i` copy them. While no source is named, or it is
-private, they are not shown, since a stranger could not run them; the
-`--plugin-dir` line, for a clone, is always shown. The card at
-`/.well-known/mcp.json` and `/llms.txt` name the same repository. The address
-is the forge's public one, the same on the page and in the terminal, and is
-escaped.
+The forge serves that manifest itself, from its configured address (never the
+Host header); the plugin is fetched as `plugins/claude-code` of the source
+repository, the one an admin names (`PATCH /api/v1/admin/settings` with
+`{"forgeRepo": "owner/name"}`), else `FORGE_REPO`.
+
+Run it in a shell, then sign in through `/mcp` in Claude Code. The same single
+command shows on the terminal's screen for a token you just made (Signed in ›
+`m`), wrapped whole; `c` copies it. A source that is named but private falls
+back to the upstream's, so a stranger can still run it; the `--plugin-dir`
+line, for a clone, is always shown. The card at `/.well-known/mcp.json` and
+`/llms.txt` print the same command. The address is the forge's public one, the
+same on the page and in the terminal, and is escaped.

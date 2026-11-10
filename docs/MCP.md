@@ -546,9 +546,8 @@ answers
   entries: `forge` sends no Authorization header, so Claude Code signs in
   through the OAuth flow (the default); `forge-token` sends `FORGE_TOKEN` as a
   bearer, for scripts.
-  Install it without a clone: `/plugin marketplace add <FORGE_URL>/trevato/forge.git`
-  (the clone URL as the forge prints it), then `/plugin install forge@forge`
-  (the root `.claude-plugin/marketplace.json` names the marketplace `forge`).
+  Install it without a clone: `claude plugin marketplace add <FORGE_URL>/plugins/claude-code/marketplace.json && claude plugin install forge@forge`
+  (the forge serves that manifest, marketplace `forge`).
   From a clone, `claude --plugin-dir plugins/claude-code` is the local way.
 
 `flow` with `{ kind: "drift" }` (#10861) is another: `{ drifting: [{ repo, number, landings, hours }] }`,

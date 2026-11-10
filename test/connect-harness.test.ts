@@ -66,19 +66,18 @@ test("the marketplace lines show only while the forge's plugin repository is pub
   const cookie = ((await fetch(`${base}/signin`, { method: "POST", body: new URLSearchParams({ username: "ada", password: "connect-password" }), redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0]!;
   const get = async () => (await fetch(`${base}/settings/tokens`, { headers: { cookie } })).text();
   const url = (app.config.url ?? base).replace(/\/+$/, "");
-  expect(value(await get(), "connect-claude-add")).toBe("/plugin marketplace add https://forge.open-platform.sh/trevato/forge.git"); // no own source: the upstream's
+  expect(value(await get(), "connect-claude-install")).toBe(`claude plugin marketplace add ${url}/plugins/claude-code/marketplace.json && claude plugin install forge@forge`); // no own source: the upstream's
   expect(await get()).toContain('id="connect-claude"');
 
   const owner = await createUser(app.db, { origin: "seed", trusted: true, username: "trevato", email: "t@f.dev", password: "connect-password" });
   if (!owner.ok) throw new Error(owner.error);
   const made = await initRepo(app.db, app.reposRoot, { ownerId: owner.value.id, name: "forge", visibility: "private", description: "" });
   expect(made).toMatchObject({ ok: true });
-  expect(value(await get(), "connect-claude-add")).toBe("/plugin marketplace add https://forge.open-platform.sh/trevato/forge.git"); // private: the upstream's, which a stranger can run
+  expect(value(await get(), "connect-claude-install")).toBe(`claude plugin marketplace add ${url}/plugins/claude-code/marketplace.json && claude plugin install forge@forge`); // private: the upstream's, which a stranger can run
   app.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'forge'").run();
 
   const page = await get();
-  expect(value(page, "connect-claude-add")).toBe(`/plugin marketplace add ${url}/trevato/forge.git`);
-  expect(value(page, "connect-claude-install")).toBe("/plugin install forge@forge");
+  expect(value(page, "connect-claude-install")).toBe(`claude plugin marketplace add ${url}/plugins/claude-code/marketplace.json && claude plugin install forge@forge`);
   expect(value(page, "connect-claude")).toContain("--plugin-dir plugins/claude-code");
   expect(value(page, "connect-opencode")).toContain(`FORGE_URL=${url}`);
 
@@ -88,7 +87,7 @@ test("the marketplace lines show only while the forge's plugin repository is pub
   try {
     const hostile = await get();
     expect(hostile).not.toContain("<script>x</script>");
-    expect(hostile).toContain("marketplace add http://h.test/&quot;&gt;&lt;script&gt;x&lt;/script&gt;/trevato/forge.git");
+    expect(hostile).toContain("marketplace add http://h.test/&quot;&gt;&lt;script&gt;x&lt;/script&gt;/plugins/claude-code/marketplace.json");
   } finally {
     Object.assign(app.config, { url: was });
   }

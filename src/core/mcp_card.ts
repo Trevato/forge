@@ -7,7 +7,7 @@
  * later standard's field names; when one settles, the card follows it.
  */
 import type { Database } from "bun:sqlite";
-import { opencodeInstall } from "../http/plugin_routes.ts";
+import { claudeInstall, opencodeInstall, pluginSource } from "./plugin_install.ts";
 import { running, type Running } from "../kernel/version.ts";
 import { forgeSource } from "../settings/forge_source.ts";
 import { repoVisibility } from "./repos.ts";
@@ -87,20 +87,7 @@ export function offeredPluginRepo(db: Database, fromEnv: string | undefined, ups
   return upstream;
 }
 
-/** Where a plugin repository lives: `owner/name` is on this forge's origin, a full URL is its own. */
-function pluginBase(origin: string, repo: string): string {
-  return repo.startsWith("https://") ? repo : `${origin}/${repo}`;
-}
-
-/** The two Claude Code lines that install the plugin from the marketplace. */
-export function marketplaceLines(origin: string, repo: string): { add: string; install: string } {
-  return { add: `/plugin marketplace add ${pluginSource(origin, repo)}`, install: "/plugin install forge@forge" };
-}
-
-/** The clone URL of that repository on this forge's origin. */
-export function pluginSource(origin: string, repo: string): string {
-  return `${pluginBase(origin, repo)}.git`;
-}
+export { pluginSource };
 
 /** The one list the card and /llms.txt both read, so they cannot drift. */
 export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
@@ -109,8 +96,7 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     label: "Claude Code",
     path: "plugins/claude-code",
     cloned: true,
-    install: (o, r) =>
-      `git clone --depth 1 --filter=blob:none --sparse ${pluginSource(o, r)} forge-plugin && git -C forge-plugin sparse-checkout set plugins/claude-code && claude --plugin-dir forge-plugin/plugins/claude-code`,
+    install: (o) => claudeInstall(o),
     setup: "set FORGE_URL, then sign in through /mcp with the forge server; or also set FORGE_TOKEN and use the forge-token server",
   },
   {

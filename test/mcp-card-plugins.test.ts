@@ -64,8 +64,7 @@ test("card and llms.txt name both plugins, their install lines, and paths that e
     expect(p.install).not.toMatch(/\bcp /);
   }
   const claude = card.plugins.find((p: any) => p.harness === "claude-code");
-  expect(claude.install).toContain("--sparse");
-  expect(claude.install).toContain("--plugin-dir forge-plugin/plugins/claude-code");
+  expect(claude.install).toBe(`claude plugin marketplace add ${servers.url}/plugins/claude-code/marketplace.json && claude plugin install forge@forge`);
   const oc = card.plugins.find((p: any) => p.harness === "opencode");
   expect(oc.install).toContain(`${servers.url}/plugins/opencode/forge.ts`);
   for (const p of card.plugins) expect(existsSync(join(import.meta.dir, "..", p.path))).toBe(true);

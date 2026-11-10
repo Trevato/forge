@@ -7,17 +7,28 @@
  * server, as for any route. `plugins` is a reserved name (src/core/reserved.ts).
  */
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { offeredPluginRepo } from "../core/mcp_card.ts";
+import { claudeMarketplace } from "../core/plugin_install.ts";
+import { publicOrigin } from "../core/public_origin.ts";
+import { UPSTREAM_REPO } from "../core/upstream.ts";
 import type { Handler } from "./context.ts";
 import { holds, weakEtag } from "./etag.ts";
 import type { Router } from "./router.ts";
 
 const FILE = join(import.meta.dir, "../../plugins/opencode/forge.ts");
 
-/** The one-line install: the forge's own origin, no trailing slash. */
-export function opencodeInstall(origin: string): string {
-  return `mkdir -p .opencode/plugin && curl -fsSo .opencode/plugin/forge.ts ${origin.replace(/\/+$/, "")}/plugins/opencode/forge.ts`;
+const COMMANDS = join(import.meta.dir, "../../plugins/claude-code/commands");
+
+/** The command files of a directory; empty when it is missing (only ENOENT is quiet, anything else is a real fault). */
+function commandsIn(dir: string): string[] {
+  try {
+    return readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    return [];
+  }
 }
 
 const headers = {
@@ -47,6 +58,25 @@ export const opencodePlugin: Handler = (ctx) => {
     : new Response(ctx.request.method === "HEAD" ? null : bytes, { headers: { ...headers, etag } });
 };
 
+/**
+ * The manifest handler. The commands are read once, when it is made; it is 404
+ * when the tree carries none or no source repository is offered.
+ */
+export function marketplaceManifest(dir: string = COMMANDS, upstream: { repo: string | undefined } = { repo: UPSTREAM_REPO }): Handler {
+  const files = commandsIn(dir);
+  return (ctx) => {
+    const repo = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, upstream.repo);
+    if (repo === undefined || files.length === 0) return new Response("not found\n", { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } });
+    // The configured address, never the Host header: the response is publicly cacheable.
+    const origin = publicOrigin(ctx.app.config.url, ctx.url.origin);
+    const body = JSON.stringify(claudeMarketplace(origin, repo, files), null, 2) + "\n";
+    return new Response(ctx.request.method === "HEAD" ? null : body, {
+      headers: { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=300" },
+    });
+  };
+}
+
 export function pluginRoutes(router: Router<Handler>): void {
+  router.add("GET", "/plugins/claude-code/marketplace.json", marketplaceManifest());
   router.add("GET", "/plugins/opencode/forge.ts", opencodePlugin);
 }
