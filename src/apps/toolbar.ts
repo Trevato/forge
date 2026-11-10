@@ -23,8 +23,8 @@ export const FRESHNESS_WORDS = {
   behind: "Shows an older push than the pull's newest",
 } as const;
 
-/** The client, as plain source: no `eval`, no inline handlers. */
-export const toolbarJs = `(function () {
+/** The client, as plain source: no `eval`, no inline handlers. Its comments are for readers here. */
+const toolbarSource = `(function () {
   if (window.__forgeToolbar) return;
   window.__forgeToolbar = true;
   var me = document.currentScript;
@@ -555,6 +555,9 @@ export const toolbarJs = `(function () {
   (document.body || document.documentElement).appendChild(host);
 })();
 `;
+
+/** What is served: the source without its whole-line comments, so the notes cost the pill none of its 24 KB (#10869). */
+export const toolbarJs = toolbarSource.replace(/^[ \t]*\/\/[^\n]*\n/gm, "");
 
 const hash = sha256(toolbarJs);
 const name = `toolbar-${hash.slice(0, 16)}`;

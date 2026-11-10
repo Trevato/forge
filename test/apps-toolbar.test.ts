@@ -393,6 +393,8 @@ describe("the forge pill", () => {
     expect(code.length).toBeLessThan(24 * 1024);
     expect(code).not.toMatch(/\beval\b|new Function|\son[a-z]+\s*=/);
     expect(code).toContain("attachShadow");
+    // The source's whole-line comments are for readers, not shipped (#10869).
+    expect(code).not.toMatch(/^[ \t]*\/\//m);
   });
 
   test("the tag lands before the last </body>, whatever its case", () => {
