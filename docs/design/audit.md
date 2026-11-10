@@ -121,6 +121,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/cloud` — `pages/cloud.ts` · cloud provider connection · none · none seen.
 - `/settings/cloud/audit` — `pages/cloud.ts` · what the cloud connection did · `/audit` (different subject, same word) · none seen.
 - `/settings/access` — `pages/access.ts` · who may reach the forge · `/settings/people`, `/settings/accounts` · none seen.
+- `/settings/captain` — `pages/captain.ts` · what Talk remembers and the check-ins it posts · `/talk` · none seen.
 
 ### Sign-in and account
 

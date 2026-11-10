@@ -19,6 +19,7 @@ import { entry as devices } from "./devices.ts";
 import { entry as bets } from "./bets.ts";
 import { entry as boards } from "./boards.ts";
 import { entry as drift } from "./drift.ts";
+import { entry as captain } from "./captain.ts";
 import { entry as bugs } from "./bugs.ts";
 import { entry as bulk } from "./bulk.ts";
 import { entry as childCredit } from "./childcredit.ts";
@@ -98,6 +99,7 @@ export const ENTRIES: readonly PaletteEntry[] = [
   sentinel,
   boards,
   drift,
+  captain,
   askData,
   bugs,
   homePins,

@@ -118,6 +118,7 @@ export type AccountSection =
   | "templates"
   | "features"
   | "packs"
+  | "captain"
   | "cloud";
 
 /**
@@ -149,10 +150,11 @@ const SECTION_ROWS: readonly (readonly [
   ["Account", "Confirms", "/settings/confirms", "check", (c) => c === "confirms", false],
   ["Crew and AI", "Model", "/settings/model", "key", (c) => c === "model", false],
   ["Crew and AI", "Crew", "/settings/crew", "bot", (c) => c === "crew", true],
+  ["Crew and AI", "Captain", "/settings/captain", "bot", (c) => c === "captain", true],
   ["Crew and AI", "Subscriptions", "/settings/subscriptions", "key", (c) => c === "subscriptions", true],
   ["Crew and AI", "Usage", "/settings/spend", "activity", (c) => USAGE.has(c), true],
   ["Connections", "Connected accounts", "/settings/origins", "globe", (c) => c === "origins", false],
-  ["Connections", "Cloud accounts", "/settings/cloud", "key", (c) => c === "cloud", true],
+  ["Connections", "Cloud", "/settings/cloud", "key", (c) => c === "cloud", true],
   ["Connections", "Secrets", "/settings/secrets", "lock", (c) => c === "secrets", true],
   ["Connections", "Devices", "/settings/devices", "globe", (c) => c === "devices", true],
   ["Security", "Security", "/settings/security", "lock", (c) => c === "security", true],

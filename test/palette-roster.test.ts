@@ -101,6 +101,7 @@ test("a site-admin person is offered the whole roster", () => {
     ["home-pins", "Pinned panels", "the panels pinned to home: reorder and unpin"],
     ["now", "Now", "what check, review, land and live count, with the rows"],
     ["forge-view", "Forge view", "the forge's counts, and Foundry when it is installed"],
+    ["captain", "Captain", "what Talk remembers, and the check-ins it posts for you"],
     ["origin-apps", "Connection apps", "your OAuth apps for connecting accounts; a adds, d removes"],
     ["system-memory", "System memory", "RSS beside the JS heap, hourly for 24 h"],
     ["flow", "Flow", "the pipeline's bottleneck and throughput"],

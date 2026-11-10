@@ -25,6 +25,8 @@ import { attach, deliver, fileOwnedBy, NOTHING, release, type ConversationFile, 
 import { carryWrites, forgetWrites, unended } from "../core/conversation_writes.ts";
 import { cancelHeld, WORDS_MAX } from "../core/fence.ts";
 import { thinkingOf } from "../core/talk_work.ts";
+import { contextOf } from "../core/conversation_cost.ts";
+import { memoryBrief } from "../core/talk_memory.ts";
 import { PLATFORM, pickSubscription, type Pick } from "../core/subscriptions.ts";
 import { getUserById } from "../core/users.ts";
 import { mintViaToken, VIA_TOKEN_MAX_MS } from "../core/via_token.ts";
@@ -332,10 +334,22 @@ export function say(
     if (steerRun(app, running, text + delivery.text)) return ok({ how: "steered" });
   }
   if (live.size >= (options.liveMax ?? TURNS_LIVE_MAX)) return refuse("busy");
-  const started = begin(app, options, conversation, text, 0, conversation.claudeSessionId || undefined, delivery, lead);
+  // A thread that runs for days summarises itself when it fills (#11011): the next turn starts a fresh
+  // session whose context is the stored record and the person's memory.
+  const full = (contextOf(app.db, conversation.id)?.share ?? 0) >= CONTEXT_FULL && conversation.claudeSessionId !== "";
+  const started = full
+    ? begin(app, options, conversation, withHistory(app, conversation, text), 0, undefined, delivery, lead)
+    : begin(app, options, conversation, text, 0, conversation.claudeSessionId || undefined, delivery, lead);
   if (!started.ok) return refuse(started.error);
+  if (full) appendTurn(app.db, userId, conversation.id, { role: "agent", text: CONTEXT_RENEWED_LINE });
   return ok({ how: "started", done: started.value });
 }
+
+/** The share of the context window from which the next turn continues in a fresh session. */
+export const CONTEXT_FULL = 0.85;
+
+/** The one line a thread says when it continues in a fresh session. */
+export const CONTEXT_RENEWED_LINE = "This thread's context was nearly full, so I continue in a fresh session from its record and your standing rules.";
 
 export type RedoHow = "edit" | "regenerate" | "retry";
 export type RedoRefusal = SayRefusal | "running" | "nothing";
@@ -508,7 +522,7 @@ function begin(
           // Attachments go with the message itself, never with a resume.
           prompt: resumes > 0 && session !== undefined ? RESUME_PROMPT : lead + fresh + attached.text,
           images: resumes > 0 && session !== undefined ? [] : attached.images,
-          appendSystemPrompt: CONVERSATION_BRIEF,
+          appendSystemPrompt: [CONVERSATION_BRIEF, memoryBrief(app.db, userId)].filter((p) => p !== "").join(" "),
           model: options.model,
           budgetUsd: budget,
           resume: session,

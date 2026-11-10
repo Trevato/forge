@@ -60,6 +60,7 @@ import { startLooks } from "./looks/service.ts";
 import { startMirrorOut } from "./origins/mirror-out.ts";
 import { startMirrorPulls } from "./origins/mirror-pulls.ts";
 import { startProbes } from "./contract/probes.ts";
+import { startRoutines } from "./crew/routines.ts";
 import { startNightly } from "./nightly/service.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
@@ -564,6 +565,7 @@ if (crew !== undefined) {
     signal: conversationsStop.signal,
   };
   configureConversation(app, conversation);
+  startRoutines(app, conversationsStop.signal);
   for (const turn of resumeInterrupted(app, conversation))
     turn.catch((error: unknown) => app.log.error("resumed conversation turn crashed", { error: String(error) }));
 }
