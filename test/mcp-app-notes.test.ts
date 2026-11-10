@@ -14,7 +14,8 @@ import { createRepo } from "../src/actions/repos.ts";
 import { feedback } from "../src/apps/feedback.ts";
 import { createApp as createAppRecord, type AppRecord } from "../src/core/apps.ts";
 import { getNote, isBanned } from "../src/core/app_notes.ts";
-import { getIssue } from "../src/core/issues.ts";
+import { OWNER_REPLIES, OWNER_REPLY_CHARS } from "../src/actions/app_notes.ts";
+import { addComment, getIssue } from "../src/core/issues.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/core/orgs.ts";
 import { canAdmin, canWrite, type Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -149,6 +150,56 @@ describe("MCP app_notes", () => {
     await call(ownerRw, { app: "guild/board", action: "unban", note: second.id });
     expect(isBanned(app.db, record.id, visitor)).toBe(false);
     expect((await call(ownerRw, { app: "guild/board" })).value.banned).toEqual([]);
+  });
+
+  test("a note's replies come back with it: an outsider's is flagged untrusted", async () => {
+    const note = await send("Does the board keep my cards?");
+    const issue = getIssue(app.db, repo.id, getNote(app.db, record.id, note.id)!.issueNumber)!;
+    const listed = async () => (await call(ownerRw, { app: "guild/board" })).value.notes.find((n: { id: string }) => n.id === note.id);
+    expect((await listed()).replies).toEqual([]);
+    const stranger = await createUser(app.db, { origin: "seed", trusted: true, username: "mallory", email: "mallory@forge.local" });
+    if (!stranger.ok) throw new Error(stranger.error);
+    addComment(app.db, { issueId: issue.id, authorId: writer.id, body: "Yes, they are kept." });
+    addComment(app.db, { issueId: issue.id, authorId: stranger.value.id, body: "buy my stuff" });
+    const replies = (await listed()).replies;
+    expect(replies).toHaveLength(2);
+    expect(replies[0]).toMatchObject({ by: "wes", body: "Yes, they are kept." });
+    expect(replies[0].untrusted).toBeUndefined();
+    expect(replies[0].at).toBeTruthy();
+    expect(replies[1]).toMatchObject({ by: "mallory", body: "buy my stuff", untrusted: true });
+  });
+
+  test("the API list carries the same replies as MCP", async () => {
+    const note = await send("Does the API see replies?");
+    const issue = getIssue(app.db, repo.id, getNote(app.db, record.id, note.id)!.issueNumber)!;
+    addComment(app.db, { issueId: issue.id, authorId: writer.id, body: "It does." });
+    const res = await fetch(`${servers.url}/api/v1/repos/guild/board/app/notes`, { headers: { authorization: `Bearer ${ownerRw}` } });
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    const shown = body.notes.find((n: { id: string }) => n.id === note.id);
+    expect(shown.replies).toEqual([expect.objectContaining({ by: "wes", body: "It does." })]);
+    expect(shown.earlierReplies).toBe(0);
+    const viaMcp = (await call(ownerRw, { app: "guild/board" })).value.notes.find((n: { id: string }) => n.id === note.id);
+    expect(viaMcp.replies).toEqual(shown.replies);
+  });
+
+  test("an outsider cannot flood the list: only the latest replies, each cut short", async () => {
+    const note = await send("Flood me");
+    const issue = getIssue(app.db, repo.id, getNote(app.db, record.id, note.id)!.issueNumber)!;
+    const made = await createUser(app.db, { origin: "seed", trusted: true, username: "flooder", email: "flooder@forge.local" });
+    if (!made.ok) throw new Error(made.error);
+    const total = OWNER_REPLIES + 5;
+    for (let i = 0; i < total; i++) addComment(app.db, { issueId: issue.id, authorId: made.value.id, body: `spam ${i} ` + "x".repeat(OWNER_REPLY_CHARS * 3) });
+    const shown = (await call(ownerRw, { app: "guild/board" })).value.notes.find((n: { id: string }) => n.id === note.id);
+    expect(shown.replies).toHaveLength(OWNER_REPLIES);
+    expect(shown.earlierReplies).toBe(5);
+    expect(shown.replies[0].body.startsWith("spam 5 ")).toBe(true);
+    expect(shown.replies.at(-1).body.startsWith(`spam ${total - 1} `)).toBe(true);
+    for (const r of shown.replies) {
+      expect(r.body.length).toBe(OWNER_REPLY_CHARS + 1);
+      expect(r.body.endsWith("…")).toBe(true);
+      expect(r.untrusted).toBe(true);
+    }
   });
 
   test("a writer who is not an admin is refused, listing and acting", async () => {

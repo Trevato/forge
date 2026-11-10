@@ -111,7 +111,8 @@ Under the box, four starter sentences are plain links (no script):
   `POST /:owner/:name/app/notes` on the forge's origin (`web/studio/notes.ts`). The same moderation is an API for
   agents and scripts (`http/api/app_notes.ts`): `GET /api/v1/repos/:owner/:name/app/notes`
   answers `{ notes, banned }`, and `POST …/app/notes/:id/hide`, `…/ban` and
-  `…/unban` each answer the note. They need an `rw` token (or a same-origin
+  `…/unban` each answer the note; each note carries its issue's `replies`
+  (see docs/features/notes.md). They need an `rw` token (or a same-origin
   session) and admin rights on the repository; anyone else gets `forbidden`.
   Limits count the socket's client (`http/peer.ts`, with its trusted-proxy
   rule), never a header the client wrote, and all three are checked before any
