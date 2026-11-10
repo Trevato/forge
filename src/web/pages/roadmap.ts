@@ -32,6 +32,7 @@ function needs(base: string, rows: readonly NeedsYou[]): Html | null {
       ${rows.map((r) =>
         row({
           title: r.text,
+          nav: true,
           href: `${base}/${r.pull ? "pulls" : "issues"}/${r.number}`,
           trail: html`${r.action}`,
         }),
@@ -47,6 +48,7 @@ function issueRow(base: string, i: RoadmapIssue): Html {
   return row({
     ...(i.assignee === null ? {} : { lead: avatar(i.assignee) }),
     title: html`#${i.number} ${i.title}${i.moved ? html`<span class="rm-moved">moved</span>` : null}`,
+    nav: true,
     href: `${base}/${i.pull === undefined ? "issues" : "pulls"}/${i.pull ?? i.number}`,
     ...(bits.length === 0 ? {} : { meta: html`${bits.join(" · ")}` }),
   });
