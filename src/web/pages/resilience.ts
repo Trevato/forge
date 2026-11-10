@@ -37,7 +37,7 @@ export function backupsLineHtml(ctx: Ctx): Html {
 export function nightlyHtml(ctx: Ctx): Html {
   const lines = nightlyLines(ctx.app.config.dataDir);
   return html`<ul id="nightly" class="muted">
-    ${JOBS.map((job, i) => html`<li>${lines[i] ?? ""} <a href="${runPath(job.name)}">Output</a></li>`)}
+    ${JOBS.map((job, i) => html`<li data-nav tabindex="-1">${lines[i] ?? ""} <a href="${runPath(job.name)}">Output</a></li>`)}
     ${lines.slice(JOBS.length).map((line) => html`<li>${line}</li>`)}
   </ul>`;
 }
