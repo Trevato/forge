@@ -116,3 +116,17 @@ test("focus lands in the palette input; Escape closes it and focus returns to wh
   expect(shellJs).toMatch(/var was = document\.activeElement;[\s\S]*?was\.focus\(\)/);
   expect(shellJs).toMatch(/if \(e\.key !== 'Escape'\) return;[\s\S]*?close\(\);/);
 });
+
+test("/search?q=… on a phone is the results page: no auto-open marker, its form and its rows", async () => {
+  const results = await get("/search?q=app-1");
+  expect(results).not.toContain("data-palette-auto");
+  expect(results).toContain("data-search-input");
+  expect(results).toContain('name="q"');
+  expect(results).toContain('class="row');
+  // The bare page is the only one that asks for the sheet.
+  expect(await get("/search")).toContain("data-palette-auto");
+  // So at phone width the sheet opens for the bare page alone.
+  expect(opensAsSheet(false, 390)).toBe(false);
+  expect(opensAsSheet(true, 390)).toBe(true);
+  expect(opensAsSheet(true, 1280)).toBe(false);
+});
