@@ -15,7 +15,7 @@ import { addSubscription } from "../src/core/subscriptions.ts";
 import { checkUpstream } from "../src/actions/upstream_follow.ts";
 import { getRepoById } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
-import { provideMirrorOutboundForTest } from "../src/origins/git-mirror.ts";
+import { mirrorOutboundForTest, provideMirrorOutboundForTest } from "../src/origins/git-mirror.ts";
 import { finishWords, OWNER, prepareOwner } from "../src/packs/up.ts";
 import { deployCommands } from "../src/packs/words.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -203,6 +203,9 @@ describe("the one command, against a fake source", () => {
     const dir = repoDir(app.reposRoot, OWNER, a.name);
     // The staged copy is what the check's fetch would have brought.
     git(dir, "fetch", "-q", "--no-tags", src, `+${tip}:refs/upstream-follow/${branch}`);
+    // Put back what was found, not `{}`: the preload's loopback allowance is
+    // what the next file in this shard mirrors from (#10507).
+    const found = mirrorOutboundForTest();
     provideMirrorOutboundForTest({ allow: ["127.0.0.1"] });
     try {
       const f = getFollow(app.db, repo.id)!;
@@ -214,7 +217,7 @@ describe("the one command, against a fake source", () => {
       expect(getFollow(app.db, repo.id)!.behind).toBe(1);
       expect(getFollow(app.db, repo.id)!.tip).toBe(tip);
     } finally {
-      provideMirrorOutboundForTest({});
+      provideMirrorOutboundForTest(found);
       server.stop(true);
     }
   });

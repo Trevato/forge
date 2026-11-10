@@ -410,6 +410,15 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     }
   };
   const verdict = async (pull: Pull, body: string, state = "changes_requested") => {
+    // A review is news to the builder only when written after its last run
+    // began (`news.ts`, strictly later, to the millisecond). Claimed a moment
+    // ago by `settleFeedback`, that run's start can share this millisecond, or
+    // sit one ahead of it as SQLite rounds its clock: the round then reads as
+    // nothing new and queues no follow-up (#10486). Real rounds are minutes apart.
+    const begun = listRuns(app.db, repo.id, { issueId: pull.id })
+      .map((r) => r.startedAt ?? "")
+      .reduce((a, b) => (a > b ? a : b), "");
+    while (new Date().toISOString() <= begun) await Bun.sleep(1);
     await submitReview(app, sentinel, fresh(), pull, {
       state: state as "changes_requested",
       body,

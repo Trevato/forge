@@ -179,12 +179,20 @@ export function dataInTemp(data: string): boolean {
 
 function tempDenied(data: string, tmpDir: string | undefined): string[] {
   const temp = tmpdir();
-  // The run's own temp directory is in it (`runTmpDir`): everything else there is denied.
-  if (tmpDir !== undefined && !inside(data, tmpDir) && inside(temp, tmpDir)) return others(temp, basename(tmpDir));
-  if (!dataInTemp(data)) return [temp];
+  const own = tmpDir !== undefined && !inside(data, tmpDir) && inside(temp, tmpDir) ? basename(tmpDir) : undefined;
+  if (!dataInTemp(data)) {
+    // The run's own temp directory is in it (`runTmpDir`): everything else there is denied.
+    return own === undefined ? [temp] : others(temp, own);
+  }
+  // The data directory is in it too, so listing the whole would deny the
+  // agent's own crew directory with it (a check's long temp, #10541): the
+  // forge's own pieces are denied by name, and every other run's temp.
   return [
     join(temp, `claude-${process.getuid?.() ?? 0}`),
-    ...others(temp, "").filter((path) => basename(path).startsWith("fc-")),
+    ...others(temp, "").filter((path) => {
+      const name = basename(path);
+      return name.startsWith("fc-") || (name.startsWith(RUN_TMP_PREFIX) && name !== own);
+    }),
   ];
 }
 

@@ -28,7 +28,7 @@ import { forgetProviders } from "../src/origins/providers/index.ts";
 import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { advance, createJob, settled } from "../src/origins/jobs.ts";
 import { icon } from "../src/web/ui.ts";
-import { quietLogs, withoutEnv } from "./helpers/globals.ts";
+import { mirrorOutbound, quietLogs, withoutEnv } from "./helpers/globals.ts";
 import {
   newFakeOAuth,
   newFakeState,
@@ -41,6 +41,11 @@ import { spriteAsset } from "../src/web/asset.ts";
 import { adminCookie, seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
+// Every mirror here fetches from a loopback origin. Say so in this file rather
+// than lean on the preload: a file before this one in the same shard that left
+// the vet tightened refused every fetch, and the job failed after its retries
+// (#10507).
+mirrorOutbound({ allow: ["127.0.0.1", "::1"] });
 
 // Every test here drives a real git fetch and renders real pages; on a loaded
 // check machine the 5 s default measures the machine, not the code.
@@ -483,7 +488,7 @@ describe("origins on the web", () => {
 
     const jobId = jobPath.split("/").pop()!;
     const done = await settled(jobId);
-    expect(done?.stage).toBe("done");
+    expect({ stage: done?.stage, error: done?.error }).toEqual({ stage: "done", error: undefined });
     expect(getRepo(app.db, "alice", "widgets")).toBeDefined();
 
     // Finished: no self-refresh loop, a redirect to the mirror instead.
