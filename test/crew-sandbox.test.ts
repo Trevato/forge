@@ -43,6 +43,7 @@ import {
   dataInTemp,
   SandboxListingError,
   sandboxAvailable,
+  runTmpDir,
   sandboxPolicy,
   sweepRunTmp,
 } from "../src/crew/sandbox.ts";
@@ -575,4 +576,37 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","total
     expect(r.branch).not.toContain("hook relay failed");
     expect(r.branch).not.toContain("forbidden");
   }, 60_000);
+});
+
+describe("a run's temp directory leaves Claude Code's sockets room to bind", () => {
+  const child = "/data/children/cell-3ea623d0-14ce-43f3-a6fd-10385eb629a6";
+  const linux = { linux: true, temp: "/tmp" };
+
+  test("a forge's own data keeps it under the agent", () => {
+    expect(runTmpDir("/data", "mason", "01m71kw4dfp4z8arr359fkygy5", linux)).toBe("/data/crew/mason/.t/arr359fkygy5");
+  });
+
+  test("a child forge's long data path moves it to the temp directory, short enough for a socket", () => {
+    // scottishbob, 2026-11-10: "Failed to create bridge sockets after 5 attempts".
+    const dir = runTmpDir(child, "scottishbot", "01m71kw4dfp4z8arr359fkygy5", linux);
+    expect(dir).toBe("/tmp/fr-arr359fkygy5");
+    expect(`${dir}/claude-socks-0123456789abcdef.sock`.length).toBeLessThanOrEqual(107);
+    expect(join(child, "crew/scottishbot/.t/arr359fkygy5/claude-socks-0123456789abcdef.sock").length).toBeGreaterThan(107);
+  });
+
+  test("off Linux the socket rule does not apply and the place does not move", () => {
+    expect(runTmpDir(child, "scottishbot", "01m71kw4dfp4z8arr359fkygy5", { linux: false, temp: "/tmp" }).startsWith(join(child, "crew/scottishbot/.t/"))).toBe(true);
+  });
+});
+
+test.skipIf(process.platform !== "linux")("a child forge's run reads and writes its own temp directory in the machine's, and nothing else there", () => {
+  const data = join(tmpdir(), `forge-long-${Date.now()}`, "children", "cell-3ea623d0-14ce-43f3-a6fd-10385eb629a6");
+  mkdirSync(join(data, "crew", "scottishbot"), { recursive: true });
+  const neighbour = join(tmpdir(), `fc-neighbour-${Date.now()}`);
+  mkdirSync(neighbour, { recursive: true });
+  const p = sandboxPolicy({ dataDir: data, agentName: "scottishbot", urls: [], runId: "01m71kw4dfp4z8arr359fkygy5" });
+  expect(p.tmpDir).toBe(join(tmpdir(), "fr-arr359fkygy5"));
+  expect(p.denyRead).not.toContain(p.tmpDir);
+  expect(p.denyRead).toContain(neighbour);
+  expect(p.denyRead).toContain(join(data, "forge.db"));
 });
