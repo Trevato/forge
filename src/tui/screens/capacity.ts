@@ -15,6 +15,7 @@ import type { Session } from "../session.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
+import { egressReportedLine } from "../../system/egress_line.ts";
 import { ListState, confirmScreen, drawList, later, promptScreen, type ListRow } from "./common.ts";
 
 /** Whether the palette offers the screen: a forge admin who is a person. */
@@ -67,7 +68,8 @@ export function capacityScreen(f: Session, ctx: Ctx): Screen {
       };
     });
     // After the guards, so the cursor (bounded by the settings) never lands on it.
-    return [...guards, selfSwapRow(listed.value.selfSwap)];
+    const egress = egressReportedLine(f.app.db);
+    return [...guards, selfSwapRow(listed.value.selfSwap), ...(egress === null ? [] : [{ title: egress, tone: "attn" as const }])];
   };
 
   const plan = (row: CapacityRow, typed: string): void => {

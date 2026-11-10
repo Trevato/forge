@@ -37,6 +37,8 @@
  * accent token such as `--accent-2`; only `--accent` and `--accent-fg` exist).
  * They match markup and style, never a paragraph's words. Named in docs/design/areas/quiet.md.
  *
+ * `banner` (#10699) refuses a standing alert in the home and board builders; see `banner()`.
+ *
  * A red names the file:line, the literal and what to use instead, so one pass
  * fixes it; run `bun scripts/design-lint.ts` before pushing. A new class is named
  * in its own `docs/design/areas/<area>.md` rather than in DESIGN.md, which
@@ -410,6 +412,30 @@ export function scanQuiet(root: string): Record<string, QuietFinding[]> {
   return out;
 }
 
+/**
+ * The calm rule (#10699): a healthy forge's home and board carry no standing
+ * alert. `role="alert"`, a `.banner` or a `.notice-danger` in those builders is
+ * refused; a setting that is off is one line on its own page, never a banner
+ * over the board. The only opt-out is a transient flash: the same tag carries
+ * `data-flash`. Zero is the ceiling, so there is no debt list.
+ */
+export const BANNER_FILES = /(^|\/)src\/web\/(pages\/(board|boards-view)\.ts|studio\/(home[\w-]*|alarm_lines)\.ts)$/;
+export type BannerFinding = { line: number; text: string };
+export function banner(text: string): BannerFinding[] {
+  const code = blanked(text);
+  const out: BannerFinding[] = [];
+  for (const m of code.matchAll(/<[a-z][^<>]*?(?:\brole="alert"|\bclass="[^"]*\b(?:banner|notice-danger)\b[^"]*")[^<>]*>/gi)) {
+    if (/\bdata-flash\b/.test(m[0])) continue;
+    out.push({ line: code.slice(0, m.index!).split("\n").length, text: m[0].slice(0, 80) });
+  }
+  return out;
+}
+export function scanBanner(root: string): string[] {
+  return sourceFiles(root)
+    .filter((f) => BANNER_FILES.test(f))
+    .flatMap((f) => banner(readFileSync(f, "utf8")).map((b) => `${relative(root, f)}:${b.line}  ${b.text}  →  a standing alert on home or the board: say it as one line on its own settings page and in the system page (a transient flash carries data-flash)`));
+}
+
 const BASELINE = "docs/design/baseline.json";
 const DESIGN = "docs/DESIGN.md";
 const SECTIONS = "docs/design/sections";
@@ -426,7 +452,7 @@ if (import.meta.main) {
   } else {
     const base: Baseline = JSON.parse(readFileSync(join(root, BASELINE), "utf8"));
     const debt: QuietDebt = JSON.parse(readFileSync(join(root, QUIET_DEBT), "utf8"));
-    const problems = [...compare(base, now, designText(root), areaFiles(root)), ...compareQuiet(debt, scanQuiet(root))];
+    const problems = [...compare(base, now, designText(root), areaFiles(root)), ...compareQuiet(debt, scanQuiet(root)), ...scanBanner(root)];
     for (const p of problems) console.error(p);
     if (problems.length) process.exit(1);
     console.log("design: no colour, size or component added outside the system");

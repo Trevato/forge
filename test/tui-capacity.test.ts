@@ -15,6 +15,7 @@ import { CAPACITY_KEYS, capacityDefault, capacityValue } from "../src/core/capac
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { capacityScreen } from "../src/tui/screens/capacity.ts";
+import { EGRESS_REPORTED } from "../src/system/egress_line.ts";
 import { handover } from "../src/release/swap.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -31,8 +32,8 @@ let bot: User;
 const identity = (user?: User) => ({ sshUsername: user?.username ?? "git", remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user });
 const crew = () => capacityValue(app.db, "crew.concurrency");
 
-function boot(user: User) {
-  const { app: tui, session } = createForgeApp(app, identity(user), { terminal: headlessTerminal(140, 40), exitHooks: false });
+function boot(user: User, rows = 40) {
+  const { app: tui, session } = createForgeApp(app, identity(user), { terminal: headlessTerminal(140, rows), exitHooks: false });
   tui.start();
   tui.ctx.push(capacityScreen(session, tui.ctx));
   const press = async (...keys: string[]) => {
@@ -84,6 +85,26 @@ describe("tui capacity", () => {
     expect(h.text()).toContain("Merge queue candidates at once");
     expect(h.text()).not.toContain("read-only");
     h.stop();
+  });
+
+  test("egress in report mode is one row after the guards; enforced, there is none (#10699)", async () => {
+    const egressShown = async () => {
+      const h = boot(carol, 80);
+      await h.press();
+      const text = h.text();
+      h.stop();
+      expect(text).toContain("Crew runs at once");
+      return text.includes(EGRESS_REPORTED);
+    };
+    try {
+      expect(await egressShown()).toBe(false);
+      expect(changeCapacity(app, carol, "cells.egress", "report").ok).toBe(true);
+      expect(await egressShown()).toBe(true);
+      expect(changeCapacity(app, carol, "cells.egress", "enforce").ok).toBe(true);
+      expect(await egressShown()).toBe(false);
+    } finally {
+      changeCapacity(app, carol, "cells.egress", null);
+    }
   });
 
   test("a crew concurrency below its ceiling is marked, and not at it", async () => {

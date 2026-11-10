@@ -8,6 +8,7 @@
 
 import { DERIVED_WORDS, changeCapacity, edgeOffDryRun, listCapacity, type CapacityRow } from "../../actions/capacity.ts";
 import { CAPACITY, belowCeiling, type CapacityKey } from "../../core/capacity.ts";
+import { EGRESS_REPORTED } from "../../system/egress_line.ts";
 import { bytes } from "../../system/format.ts";
 import { egressRowsFor } from "../../spawn/process_counters.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -219,13 +220,7 @@ export function capacityPage(ctx: Ctx): Response {
     </p>
     ${when(
       reported,
-      () => html`<p class="muted small mb" id="egress-reported">
-        Egress is reported, not enforced: every new app,
-        preview, terminal and check cell may reach any public host on ports
-        80 and 443, declared or not. Private, loopback and cluster addresses,
-        and every other port, stay refused. Set it back to enforce once each
-        app's reported hosts are in its forge.json.
-      </p>`,
+      () => html`<p class="muted small mb" id="egress-reported">${EGRESS_REPORTED}</p>`,
     )}
     ${block("Capacity", html`<ul class="list setting-list">${rows}</ul>`)}
     ${block(

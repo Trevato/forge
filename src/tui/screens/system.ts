@@ -34,6 +34,7 @@ import { dialog } from "../ui/widgets.ts";
 import { Scroll, confirmScreen, drawLines, hitScroll, later, pickerScreen } from "./common.ts";
 import type { PaletteEntry } from "./entries.ts";
 import { readHealth } from "../../actions/health.ts";
+import { egressReportedLine } from "../../system/egress_line.ts";
 import { featureHealth } from "../../system/feature_health.ts";
 import { readerPaces } from "../../system/telemetry_reads.ts";
 import { live as liveMachine } from "../../system/live.ts";
@@ -308,6 +309,12 @@ export function memoryScreen(session: Session, ctx: Ctx): Screen {
   };
 }
 
+/** The egress fault, one line, as /system says it; nothing when egress is enforced. */
+export function egressLines(session: Session): string[] {
+  const said = egressReportedLine(session.db);
+  return said === null ? [] : [said];
+}
+
 /** The machine, as /system says it, and which agents may read it: the owner's, a person (#1789). */
 export const entry: PaletteEntry = {
   id: "system",
@@ -317,6 +324,7 @@ export const entry: PaletteEntry = {
   offered: (session) => session.user?.isAdmin === true && session.user.kind !== "agent",
   run: (session, ctx) => ctx.push(systemScreen(ctx, [
     ...forgeLines(readHealth(session.app, session.user)),
+    ...egressLines(session),
     "",
     ...systemLines(liveMachine().read()),
   ], session)),

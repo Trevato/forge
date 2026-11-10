@@ -27,7 +27,7 @@ export function cachedAlarms(db: Database, now: Date, ceilingUsd: number | null)
 
 export function alarmLines(alarms: readonly FiredAlarm[]): Html {
   if (alarms.length === 0) return html``;
-  return html`<div class="stack" role="alert">
+  return html`<div class="stack">
     ${alarms.map((a) => html`<p class="small"><a href="${a.href}">${a.says}</a></p>`)}
   </div>`;
 }

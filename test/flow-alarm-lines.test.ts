@@ -56,7 +56,7 @@ describe("alarm lines", () => {
       for (const path of ["/boards", "/"]) {
         const body = await (await fetch(servers.url + path, { headers })).text();
         expect(body.includes("nothing has gone live"), `${path} ${String(merged)}`).toBe(want);
-        expect(body.includes('role="alert"')).toBe(want);
+        expect(body.includes('role="alert"'), `${path} ${String(merged)} draws a line, not an alert`).toBe(false);
       }
       await servers.stop?.();
     }

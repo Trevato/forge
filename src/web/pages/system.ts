@@ -38,6 +38,7 @@ import { RECENT_BYTES, recentEncodings } from "../../http/compress.ts";
 import { KEPT_PAGE_BYTES, keptPageStats } from "./kept_page.ts";
 import { COLUMN_BYTES, PARTS_BYTES, keptPartsStats, treeCacheStats } from "./tree_cache.ts";
 import { featureHealth, type FeatureHealth } from "../../system/feature_health.ts";
+import { egressReportedLine } from "../../system/egress_line.ts";
 import { badge, chartBox, meter, pill, row } from "../ui.ts";
 
 /** A group's memory, and a cell's beside its cap and who holds the cap. */
@@ -266,6 +267,9 @@ export function systemPage(ctx: Ctx): Response {
     pids.by === "kernel"
       ? html`<p class="small" id="cell-pids" data-by="kernel">Each cell's processes are capped by the kernel at ${PROCESSES_MAX} (its cgroup's <code>pids.max</code>; not a crew run's): a fork past it fails inside that cell.</p>`
       : html`<p class="small" id="cell-pids" data-by="watch">Each cell's processes are counted once a second and the cell stopped past ${PROCESSES_MAX}; the kernel does not cap them (${pids.reason}).</p>`;
+  const egressSaid = egressReportedLine(ctx.app.db);
+  const egressLine: Html | null =
+    egressSaid === null ? null : html`<p class="small" id="egress-reported">${egressSaid} <a href="/settings/capacity">Capacity</a></p>`;
   const memory = memorySection(ctx);
   const stalls = timePhase(ctx.request, "stalls", () => stallHour(loopWatch.tally(performance.now())));
   const rendering = performance.now();
@@ -287,6 +291,7 @@ export function systemPage(ctx: Ctx): Response {
         <ul class="list" id="mem">${at("mem")}</ul>
         ${caps}
         ${processCaps}
+        ${egressLine}
         <p class="small mono" id="temps">${at("temps")}</p></section>
     <section class="settings-block"><h2>Disks and network</h2>
       <ul class="list" id="sys-disks">${at("sys-disks")}</ul></section>

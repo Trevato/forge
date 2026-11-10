@@ -17,6 +17,8 @@ import { setTelemetryGrant } from "../src/actions/telemetry.ts";
 import { hasGrant } from "../src/core/telemetry.ts";
 import { countRead, resetTelemetryReads } from "../src/system/telemetry_reads.ts";
 import { forgeLines, historyLines, readerLines, memoryLines, memoryScreen, systemScreen } from "../src/tui/screens/system.ts";
+import { changeCapacity } from "../src/actions/capacity.ts";
+import { EGRESS_REPORTED } from "../src/system/egress_line.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -277,6 +279,22 @@ describe("tui system: the forge's own state (#7296)", () => {
     const lines = forgeLines(readHealth(app, carol));
     expect(lines.length).toBe(2);
     expect(lines[1]).toBe("rollout blocked: quota refused · 1 incident: oom:web: killed");
+  });
+
+  test("egress in report mode is one line on the System screen; enforced, nothing (#10699)", async () => {
+    await seed({});
+    try {
+      expect(await systemText(carol)).not.toContain(EGRESS_REPORTED.slice(0, 40));
+      expect(changeCapacity(app, carol, "cells.egress", "report").ok).toBe(true);
+      const text = await systemText(carol);
+      expect(text).toContain("forge 9.8.7 · 0123456 · serving");
+      // The dialog clips the sentence at its width; its opening words are one row.
+      expect(text.split(EGRESS_REPORTED.slice(0, 40)).length).toBe(2);
+      expect(changeCapacity(app, carol, "cells.egress", "enforce").ok).toBe(true);
+      expect(await systemText(carol)).not.toContain(EGRESS_REPORTED.slice(0, 40));
+    } finally {
+      changeCapacity(app, carol, "cells.egress", null);
+    }
   });
 
   test("a stranger's answer, as MCP gives it, never has a second line", async () => {
