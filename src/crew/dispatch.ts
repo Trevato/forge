@@ -96,6 +96,7 @@ import {
 } from "./guard.ts";
 import { noteProtection } from "../kernel/protection.ts";
 import { dataInTemp, sandboxAvailable, sweepRunTmp } from "./sandbox.ts";
+import { sandboxCause } from "./sandbox_cause.ts";
 import { mayDirectCrew } from "./direct.ts";
 import {
   AUTONOMY_TICK_MS,
@@ -230,6 +231,7 @@ export async function startCrew(
     );
   if (!sandbox.ok)
     log.warn("agent sandbox not available here; runs are unrestricted", {
+      cause: sandboxCause(sandbox.reason).words,
       reason: sandbox.reason,
     });
   const ready: CrewOptions = {

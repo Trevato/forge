@@ -8,7 +8,9 @@
  * shape, so dropping `filesystem.denyRead` or flipping `enabled` fails here.
  * A sandbox cannot be made inside a sandbox, so where one cannot be made (a
  * crew run, a container that refuses user namespaces) the test is skipped,
- * naming itself and the reason on the console; the forge's check runs it.
+ * naming itself and one cause on the console (`sandboxCause`: user
+ * namespaces refused, a mount denied, a missing binary, or the probe's own
+ * text); the forge's check runs it.
  *
  * Outside localhost is checked twice: directly (the sandbox has a network of
  * its own, so it must fail) and through the sandbox's proxy, which is the
@@ -31,19 +33,25 @@ import { join } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
 import { claudeSettings } from "../src/crew/claude.ts";
 import { sandboxAvailable, sandboxPolicy } from "../src/crew/sandbox.ts";
+import { sandboxCause, skipReason } from "../src/crew/sandbox_cause.ts";
 import { runtimeSettings, withoutParentProxy } from "./helpers/srt.ts";
 
 const probe = await sandboxAvailable();
 const srt = join(import.meta.dir, "../node_modules/.bin/srt");
-const nestedReason = !probe.ok
-  ? `no sandbox can be made here (nested in a crew sandbox or user namespaces refused): ${probe.reason}`
-  : undefined;
+// One named cause (src/crew/sandbox_cause.ts), so the skip line tells a host
+// that cannot sandbox from a hole in the gate (#10745).
+const nestedReason = !probe.ok ? skipReason(sandboxCause(probe.reason)) : undefined;
 if (nestedReason !== undefined)
   console.warn(`skipped: test/crew-sandbox-real.test.ts: ${nestedReason}`);
-else if (!existsSync(rgPath) || !existsSync(srt))
-  throw new Error(
-    "a sandbox can be made here but its runtime is missing (srt or @vscode/ripgrep's rg): run bun install",
-  );
+else
+  for (const [binary, path] of [
+    ["srt", srt],
+    ["rg", rgPath],
+  ] as const)
+    if (!existsSync(path))
+      throw new Error(
+        `a sandbox can be made here but its runtime is not: ${sandboxCause(`missing binary: ${binary}`).words} (${path}): run bun install`,
+      );
 
 const CANARY = "the-canary-must-not-be-read";
 
