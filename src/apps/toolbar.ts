@@ -188,20 +188,24 @@ export const toolbarJs = `(function () {
       st.style.cssText = "opacity:.85";
       row.appendChild(t);
       row.appendChild(st);
-      try {
-        var u = new URL(n.url);
-        if (u.origin === forgeOrigin) {
-          var al = document.createElement("a");
-          al.textContent = "See it";
-          al.href = u.href;
-          al.target = "_blank";
-          al.rel = "noopener";
-          al.style.cssText = "color:#8ab4ff";
-          row.appendChild(al);
-        }
-      } catch (e) {}
+      var al = n.url && link(n.url, "See it");
+      if (al) row.appendChild(al);
       mine.appendChild(row);
     });
+  }
+  function link(u, text) {
+    try {
+      var l = new URL(u), el = document.createElement("a");
+      if (l.origin !== forgeOrigin) return null;
+      el.textContent = text; el.href = l.href; el.target = "_blank"; el.rel = "noopener"; el.style.color = "#8ab4ff";
+      return el;
+    } catch (e) { return null; }
+  }
+  function filed(n) {
+    if (!n || typeof n.number !== "number") return;
+    var t = "Filed as #" + n.number, a = n.url && link(n.url, t), r = n.repoUrl && link(n.repoUrl, "The repository");
+    tellSay.append(" ", a || t);
+    if (r) tellSay.append(" ", r);
   }
   function refresh(sent) {
     call("/__forge/notes", { credentials: "same-origin", cache: "no-store" })
@@ -292,6 +296,7 @@ export const toolbarJs = `(function () {
           tellText.value = "";
           tellPic.checked = false;
           tellSay.textContent = wantPicture && x.pic !== true ? "Sent, without the picture. The builders will see it." : "Sent. The builders will see it.";
+          filed(a.j && a.j.note);
           refresh(true);
         }
         else tellSay.textContent = a.j && a.j.message ? a.j.message : ${JSON.stringify(NOTE_FAILED)};

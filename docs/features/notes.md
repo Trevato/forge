@@ -24,3 +24,7 @@ Nothing waits for you to accept a note. The planner gives each one a verdict and
 An overrule is `POST /notes/:id/overrule` (`do=build|decline`), kept as the setting `note.<thought id>` on you; the planner's own placement is never rewritten, only added to.
 
 The terminal has the same door: the palette's "Notes" (`src/tui/screens/thoughtnotes.ts`) writes with `n`, lists your own notes with the same one-line state, and `b` takes the tap the line offers. An overrule is once per note and only what the line offers; a repeat or a stale form does nothing. "Snoozed" is judged per idea in a dump, and "backlog" is not a snooze word.
+
+## Notes from an app's forge button
+
+A note sent from an app's forge button (or the terminal's "Tell the builders") files a from-app issue, and the sender is told its number at once: "Filed as #N". Anyone the repository would show the issue to (`canRead`, so a signed-in reader of a private repository too, not only a public app on a public repository) also gets the issue's link and the repository's; everyone else gets the number and no link. The list shows `#N` beside each note. The browser button links only to the forge's own origin. In the terminal (`src/tui/screens/notes.ts`) the sender is the SSH user: the confirmation reads "Sent as #N, owner/repo/issues/N" and the list and moderation screens carry `#N`; the terminal has no clickable link.

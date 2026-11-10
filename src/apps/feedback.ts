@@ -183,6 +183,7 @@ async function send(ask: FeedbackAsk, door: Door): Promise<Response> {
     ask.app, ask.record, door.repo, ask.env, ask.forgeUrl, sender,
     { text: typeof body.text === "string" ? body.text : "", page, viewport },
     ask.source,
+    door.viewer,
   );
   if (!sent.ok) {
     const r = sent.error;
@@ -232,7 +233,7 @@ async function picture(ask: FeedbackAsk, door: Door): Promise<Response> {
 
 function list(ask: FeedbackAsk, door: Door, proven: boolean): Response {
   const { sender, fresh } = senderOf(ask, door);
-  const notes = notesFor(ask.app, ask.record, door.repo, ask.forgeUrl, sender);
+  const notes = notesFor(ask.app, ask.record, door.repo, ask.forgeUrl, sender, false, door.viewer);
   return json(
     200,
     { name: sender.name, notes, admin: proven && door.viewer !== undefined && canAdmin(ask.app.db, door.repo, door.viewer) },

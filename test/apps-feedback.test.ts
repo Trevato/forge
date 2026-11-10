@@ -342,18 +342,32 @@ describe("the forge button takes notes from anyone", () => {
     expect(await Bun.file(join(import.meta.dir, "../src/actions/app_notes.ts")).text()).not.toContain("x-forwarded-for");
   });
 
+  test("the button shows 'Filed as #N' linked, at once, only to forge-origin links", () => {
+    expect(toolbarJs).toContain('"Filed as #" + n.number');
+    expect(toolbarJs).toContain("filed(a.j && a.j.note);");
+    expect(toolbarJs).toContain("n.repoUrl && link(n.repoUrl");
+    // A link is built only after its origin is checked against the forge's.
+    expect(toolbarJs).toMatch(/if \(l\.origin !== forgeOrigin\) return null;/);
+  });
+
   test("a private app takes notes from a signed-in reader, as themselves, and from no one else", async () => {
     const reader = await grantedCookie(app, servers.url, alice, getAppBySlug(app.db, "diary")!);
     const first = await page("diary", reader);
     const res = await postAs("diary", reader, first.proof, "A note on the diary");
     expect(res.status).toBe(201);
-    expect(((await res.json()) as { name: string }).name).toBe("@alice");
+    const sentJson = (await res.json()) as { name: string; note: { number: number; url: string; repoUrl: string } };
+    expect(sentJson.name).toBe("@alice");
+    // A reader of the repository is given the number, the issue's link and the repository's (#10560).
+    expect(sentJson.note.number).toBeGreaterThan(0);
+    expect(sentJson.note.url).toBe(`${servers.url}/alice/diary/issues/${sentJson.note.number}`);
+    expect(sentJson.note.repoUrl).toBe(`${servers.url}/alice/diary`);
     const repo = getRepo(app.db, "alice", "diary")!;
     const issue = app.db.query<{ body: string }, [string]>("SELECT body FROM issue WHERE repo_id = ?1 ORDER BY number DESC").get(repo.id)!;
     expect(issue.body).toContain("by @alice.");
     expect(issue.body).toContain("Untrusted data");
-    const mine = (await (await at("diary", "/__forge/notes", { headers: withProof(res.headers.get("x-forge-proof")!) }, reader)).json()) as { notes: unknown[]; admin: boolean };
+    const mine = (await (await at("diary", "/__forge/notes", { headers: withProof(res.headers.get("x-forge-proof")!) }, reader)).json()) as { notes: { number: number; url?: string; repoUrl?: string }[]; admin: boolean };
     expect(mine.notes.length).toBe(1);
+    expect(mine.notes[0]).toMatchObject({ number: sentJson.note.number, url: sentJson.note.url, repoUrl: sentJson.note.repoUrl });
     expect(mine.admin).toBe(true);
     expect((await at("diary", "/__forge/notes")).status).toBe(404);
   });

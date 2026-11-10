@@ -13,7 +13,7 @@ import { createLabel, getIssue, getLabel, type Issue } from "../core/issues.ts";
 import { mergedPullClosing } from "../core/pulls.ts";
 import { releaseName, releaseOfPull } from "../release/record.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
-import { canAdmin, type Repo } from "../core/repos.ts";
+import { canAdmin, canRead, type Repo } from "../core/repos.ts";
 import { plainText } from "../core/reports.ts";
 import { listActiveRuns, workingAgentRuns } from "../core/runs.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
@@ -98,7 +98,10 @@ export interface NoteView {
   readonly by: string;
   readonly at: string;
   readonly status: NoteStatus;
+  /** The issue's number: shown to everyone, linked only to a reader of the repository. */
+  readonly number: number;
   readonly url?: string;
+  readonly repoUrl?: string;
 }
 
 /** Where a note stands, read from the issue as it moves. */
@@ -129,24 +132,31 @@ export function statusOf(app: App, repo: Repo, number: number): { status: NoteSt
   return { title: issue.title, status: { state: "queued", label: "In the queue for a builder" } };
 }
 
-function view(app: App, record: AppRecord, repo: Repo, forgeUrl: string | undefined, note: AppNote): NoteView | undefined {
+function view(app: App, repo: Repo, forgeUrl: string | undefined, viewer: User | undefined, note: AppNote): NoteView | undefined {
   const found = statusOf(app, repo, note.issueNumber);
   if (found === undefined) return undefined;
-  const open = forgeUrl !== undefined && record.access === "public" && repo.visibility === "public";
+  // A link only to someone the repository would show the issue to.
+  const open = forgeUrl !== undefined && canRead(app.db, repo, viewer);
   return {
     id: note.id,
     text: found.title.startsWith(FROM_APP_TITLE) ? found.title.slice(FROM_APP_TITLE.length) : found.title,
     by: note.name,
     at: note.createdAt,
     status: found.status,
-    ...(open ? { url: new URL(`/${repo.ownerName}/${repo.name}/issues/${note.issueNumber}`, forgeUrl).href } : {}),
+    number: note.issueNumber,
+    ...(open
+      ? {
+          url: new URL(`/${repo.ownerName}/${repo.name}/issues/${note.issueNumber}`, forgeUrl).href,
+          repoUrl: new URL(`/${repo.ownerName}/${repo.name}`, forgeUrl).href,
+        }
+      : {}),
   };
 }
 
 /** A sender's own notes; an admin of the repository may ask for every sender's. */
-export function notesFor(app: App, record: AppRecord, repo: Repo, forgeUrl: string | undefined, sender: Sender, everyone = false): NoteView[] {
+export function notesFor(app: App, record: AppRecord, repo: Repo, forgeUrl: string | undefined, sender: Sender, everyone = false, viewer?: User): NoteView[] {
   const rows = everyone ? notesOfApp(app.db, record.id) : notesOf(app.db, record.id, sender.key);
-  return rows.map((n) => view(app, record, repo, forgeUrl, n)).filter((n): n is NoteView => n !== undefined);
+  return rows.map((n) => view(app, repo, forgeUrl, viewer, n)).filter((n): n is NoteView => n !== undefined);
 }
 
 function titleOf(text: string): string {
@@ -188,6 +198,7 @@ export async function sendNote(
   sender: Sender,
   input: NoteInput,
   source: string,
+  viewer?: User,
 ): Promise<Result<NoteView, Refusal>> {
   const text = plainText(input.text).trim();
   if (text === "") return err({ error: "empty", message: NOTE_EMPTY });
@@ -244,7 +255,7 @@ export async function sendNote(
     void import("../crew/first_look.ts").then((m) => m.firstLook(app, owner, repo, opened.value, facts, who))
       .catch((error) => app.log.warn("first look could not start", { error: String(error) }));
   }
-  return ok(view(app, record, repo, forgeUrl, note)!);
+  return ok(view(app, repo, forgeUrl, viewer, note)!);
 }
 
 /**

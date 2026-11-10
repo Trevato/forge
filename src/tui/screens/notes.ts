@@ -71,8 +71,8 @@ export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
             hint: "enter sends",
             onSubmit: (said) =>
               ctx.track((async () => {
-                const sent = await sendNote(f.app, record, repo, "production", undefined, sender, { text: said, page: "", viewport: "unknown" }, `ssh:${user.id}`);
-                if (sent.ok) ctx.toast("Sent. The builders will see it.", "success");
+                const sent = await sendNote(f.app, record, repo, "production", undefined, sender, { text: said, page: "", viewport: "unknown" }, `ssh:${user.id}`, user);
+                if (sent.ok) ctx.toast(`Sent as #${sent.value.number}, ${name}/issues/${sent.value.number}. The builders will see it.`, "success");
                 else ctx.toast(sent.error.message, "danger");
               })()),
           }),
@@ -83,20 +83,20 @@ export function noteCommands(f: Session, ctx: Ctx, parent: () => Screen, repo: R
       title: `${name} — Notes from the app`,
       hint: admin ? "every sender's; hide or ban" : "yours, with their status",
       run: () => {
-        const notes = notesFor(f.app, record, repo, undefined, sender, admin);
+        const notes = notesFor(f.app, record, repo, undefined, sender, admin, user);
         if (notes.length === 0) return ctx.toast("No notes yet.");
         ctx.push(
           pickerScreen(ctx, parent(), {
             title: "Notes from the app",
-            items: notes.map((n) => ({ id: n.id, label: n.text, hint: `${n.status.label} — ${n.by}` })),
+            items: notes.map((n) => ({ id: n.id, label: `#${n.number} ${n.text}`, hint: `${n.status.label} — ${n.by}` })),
             onPick: ([id]) => {
               const picked = notes.find((n) => n.id === id);
               if (picked === undefined) return;
-              if (!admin) return ctx.toast(`${picked.status.label}.`);
+              if (!admin) return ctx.toast(`#${picked.number}: ${picked.status.label}.`);
               ctx.push(
                 confirmScreen(ctx, parent(), {
                   title: "Moderate this note",
-                  body: [`${picked.by}: ${picked.text}`, picked.status.label],
+                  body: [`#${picked.number} ${picked.by}: ${picked.text}`, picked.status.label],
                   actions: [{ label: "Keep", variant: "ghost" }, { label: "Hide" }, { label: "Ban sender", variant: "danger" }],
                   onChoose: (i) => {
                     if (i < 1) return;
