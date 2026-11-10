@@ -10,8 +10,23 @@
 
 import type { Change } from "./pin_edits.ts";
 
-const SURFACE = /^src\/(actions|web|http|tui)\/.+\.ts$/;
-const TRY = /^Try:\s*\S[^\n]{9,}/im;
+const SURFACE = /^src\/(actions|web|http|tui|feed|view|cli|boards|search|display|story|devices)\/.+\.ts$/;
+const TRY = /^Try:\s*\S[^\n]{9,}$/;
+// A Try line that says nothing was tried, or nothing can be, is no line. A
+// single word is hollow only when it is the whole clause (`Try: todo list…`
+// is a real line about a todo page); the two confessions are hollow at the start.
+const HOLLOW =
+  /^Try:\s*(?:(?:n\/?a|none|nothing|tbd|todo|untested|not applicable|see (?:the )?(?:diff|code))(?=\s*(?:[,.;:\u2014]|$))|did not\b|didn't\b|not tried\b)/i;
+
+/** The `Try:` lines of a message, one string each: each is judged alone. */
+function tryLines(message: string): string[] {
+  return message.split("\n").map((l) => l.trim()).filter((l) => /^Try:/i.test(l));
+}
+
+/** True when some line of the message is a real Try line. */
+function hasRealTry(message: string): boolean {
+  return tryLines(message).some((l) => TRY.test(l) && !HOLLOW.test(l));
+}
 
 /** The reachable files a pull adds or edits (a deletion has nothing to try). */
 export function surfaceChanged(changes: readonly Change[]): string[] {
@@ -22,9 +37,9 @@ export function surfaceChanged(changes: readonly Change[]): string[] {
 export function tryItProblems(changes: readonly Change[], messages: readonly string[]): string[] {
   const touched = surfaceChanged(changes);
   if (touched.length === 0) return [];
-  if (messages.some((m) => TRY.test(m))) return [];
+  if (messages.some(hasRealTry)) return [];
   const shown = touched.slice(0, 3).join(", ") + (touched.length > 3 ? ` and ${touched.length - 3} more` : "");
   return [
-    `rule "say how to try it on the preview": this pull changes ${shown} but no commit message has a "Try: <what to open or call on the preview>" line (10+ characters)`,
+    `rule "say how to try it on the preview": this pull changes ${shown} but no commit message has a "Try: <what to open or call on the preview>" line (10+ characters) that names something to open or call, not "n/a" or "not tried"`,
   ];
 }
