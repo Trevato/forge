@@ -1439,7 +1439,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         body: html`${repoHeader(ctx, repo, "map")}
           <div class="page-head mt">
             <h1>Roadmap</h1>
-            <p class="muted small"><a href="${base}/map?view=graph">The graph</a></p>
+            <p class="muted small"><a href="${base}/map?view=graph">The graph</a> · <a href="${base}/space">The space</a></p>
           </div>
           <div
             class="rm"
@@ -1500,6 +1500,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
       <p class="muted">
         What waits for what. The top edge is ready now; the chain in the accent
         is the least work that still has to happen in order.
+        <a href="${repoBase(repo)}/space">The same work as a space to move through</a>.
         <a href="${repoBase(repo)}/milestones">How far each milestone is</a>.
         <a href="${repoBase(repo)}/next">Next up</a> is the one ranked list the crew builds from.
       </p>

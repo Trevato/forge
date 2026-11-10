@@ -20,6 +20,7 @@ import { packsCommand } from "./screens/packs.ts";
 import { shellsScreen } from "./screens/shells.ts";
 import { forkTreeScreen } from "./screens/fork_tree.ts";
 import { roadmapScreen } from "./screens/roadmap.ts";
+import { spaceScreen } from "./screens/space.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
 import type { Command, PaletteItem, PaletteSearch } from "./app/palette.ts";
 import { G } from "./term/screen.ts";
@@ -140,6 +141,11 @@ const REPO_VERBS: readonly {
     id: "roadmap",
     title: "Roadmap of a repository",
     open: (f, ctx, repo) => roadmapScreen(f, ctx, repo),
+  },
+  {
+    id: "space",
+    title: "Space of a repository",
+    open: (f, ctx, repo) => spaceScreen(f, ctx, repo),
   },
   {
     id: "pulls",
