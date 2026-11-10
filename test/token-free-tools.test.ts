@@ -56,6 +56,31 @@ describe("token-free MCP tools", () => {
       .map((a: any) => a.mcp);
     expect(open.sort()).toEqual([...TOKEN_FREE_TOOLS].sort());
   });
+
+  test("every MCP tool /llms.txt offers without an account answers without a token", async () => {
+    const text = await (await fetch(`${base}/llms.txt`)).text();
+    // The sections a caller with no account reads: "(no account)" ones and "any page".
+    const sections = text
+      .split(/^## /m)
+      .filter((s) => /^[^\n]*(\(no account\)|any page)/.test(s));
+    expect(sections.length).toBeGreaterThanOrEqual(3);
+    const free: string[] = [];
+    const gated: string[] = [];
+    for (const line of sections.flatMap((s) => s.split("\n"))) {
+      for (const m of line.matchAll(/(?:the tool|name|MCP) "([a-z_]+)"/g)) {
+        (/with an account|needs a token/.test(line) ? gated : free).push(m[1]!);
+      }
+    }
+    expect(free).toContain(REPORT_TOOL.name);
+    expect(gated.sort()).toEqual(["explore", "here", "search"]);
+    for (const name of free) {
+      expect({ name, status: (await call(name)).status }).not.toEqual({ name, status: 401 });
+    }
+    // The gate itself is unchanged: the ones marked as needing an account still answer 401.
+    for (const name of gated) {
+      expect((await call(name)).status).toBe(401);
+    }
+  });
 });
 
 test("the gate's handlers and the token-free list have the same names", () => {

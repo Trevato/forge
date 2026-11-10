@@ -437,7 +437,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "",
       "## What you can do on any page",
       "",
-      `- GET ${o}/api/v1/here?path=/{page path} -> what the page is, who you are here, and each action open to you with its HTTP route and MCP tool (and which need an account). Every page links to it: rel="alternate" type="application/json". On an app's own pages the forge's link is the one titled "this app's repository on its forge"; follow that one. MCP: the tool "here" with the page URL.`,
+      `- GET ${o}/api/v1/here?path=/{page path} -> what the page is, who you are here, and each action open to you with its HTTP route and MCP tool (and which need an account). Every page links to it: rel="alternate" type="application/json". On an app's own pages the forge's link is the one titled "this app's repository on its forge"; follow that one. (MCP "here", with the page URL: with an account.)`,
       "",
       ...(tell === undefined
         ? []
