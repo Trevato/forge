@@ -76,8 +76,7 @@ test("the keys script: : opens the combobox prompt, announces the lead, says whe
   const page = await (await fetch(`${f.base}/`)).text();
   const path = /src="([^"]*\.js[^"]*)"/.exec(page.slice(page.indexOf("<body")))![1]!;
   const js = await (await fetch(`${f.base}${path}`)).text();
-  expect(js).toContain("e.key === ':'");
-  expect(js).toMatch(/e\.key === ':'\) \{ seq\.length = 0; e\.preventDefault\(\); openGoto\(\)/);
+  expect(js).toContain("[':'], function (e) { e.preventDefault(); openGoto(); }");
   expect(js).toContain("function goMatch(pages, q)");
   for (const a of ["'combobox'", "'aria-controls', 'goto-list'", "aria-activedescendant", "'listbox'", "'option'"]) expect(js).toContain(a);
   expect(js).not.toContain("data-goto");

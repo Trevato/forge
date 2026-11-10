@@ -1563,27 +1563,20 @@ const shellCore = /* js */ `
     var t = e.target;
     // Inside an open dialog the dialog owns the keys; none of these apply.
     if (t && t.closest && t.closest('dialog[open]')) return;
-    // The palette is one chord away from anywhere, a field included.
-    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
-      e.preventDefault();
-      openPalette();
-      return;
+    // Chords answer from the same table, ahead of the field guard: the palette
+    // is one chord away from anywhere, a field included, and Cmd/Ctrl+Enter
+    // sends the form a box belongs to.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+      var chord = rowForKey('Mod+' + (e.key === 'K' ? 'k' : e.key));
+      if (chord) { chord[3](e); return; }
     }
     if (t && t.matches && t.matches('input, textarea, select, [contenteditable]')) {
       if (e.key === 'Escape') { e.preventDefault(); t.blur(); }
-      // Cmd/Ctrl+Enter sends the form a box belongs to, and only a form that
-      // asked for it (\`data-submit-key\`): the button's own submit, with its
-      // validation. Plain Enter stays a newline.
-      else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && t.form && t.form.hasAttribute('data-submit-key')) {
-        e.preventDefault();
-        if (t.form.requestSubmit) t.form.requestSubmit(); else t.form.submit();
-      }
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 'Escape' && e.defaultPrevented) return;
-    if (e.key === 'Escape' && escClosedHints) { escClosedHints = false; e.preventDefault(); return; }
-    if (e.key === 'Escape' && leaveToList()) { e.preventDefault(); return; }
+    var row = rowForKey(e.key);
+    if (e.key === 'Escape') { if (row) row[3](e); return; }
     if (Date.now() - last > 1000) seq.length = 0;
     last = Date.now();
     seq.push(e.key);
@@ -1603,39 +1596,53 @@ const shellCore = /* js */ `
       var gp = gotoPages().filter(function (p) { return p[3] !== '' && p[3] === e.key; })[0];
       if (gp) { seq.length = 0; e.preventDefault(); location.assign(gp[1]); return; }
     }
-    if (e.key === 'j') { seq.length = 0; e.preventDefault(); move(1); }
-    else if (e.key === 'k') { seq.length = 0; e.preventDefault(); move(-1); }
-    else if (e.key === 'o' || e.key === 'Enter') { seq.length = 0; openFocused(); }
-    else if (e.key === 'c') {
-      if (focusBox()) { seq.length = 0; e.preventDefault(); } else openNewIssue(e);
-    } else if (e.key === 'C') openNewIssue(e);
-    else if (e.key === '/') {
-      var box = doc.querySelector('[data-search-input]');
-      if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
-    } else if (e.key === '?') {
-      seq.length = 0; e.preventDefault();
-      // One press, one sheet: the help opens at once (Option still lays the keys over the page).
-      hints(false); openHelp();
-    }
-    else if (e.key === ':') { seq.length = 0; e.preventDefault(); openGoto(); }
+    if (row) { seq.length = 0; row[3](e); }
   });
 
   // ---- help overlay, generated from the shortcuts actually on the page ----
+  // One table: the sheet lists its rows and the keydown handler runs them.
+  // A row is [shown, what it does, the e.key values it answers, its action];
+  // a chord is written 'Mod+<key>' (Cmd or Ctrl) and is read ahead of the field guard.
+  function submitBox(f) { if (f.requestSubmit) f.requestSubmit(); else f.submit(); }
   var STATIC_KEYS = [
-    ['j / k', 'Move between rows'], ['o or Enter', 'Open the focused row'],
-    ['/', 'Focus search'], ['Cmd/Ctrl K', 'Jump to anywhere'], [':', 'Go to a page by name'], ['?', 'This help'],
-    ['Esc', 'Leave a box, close a menu or dialog'],
+    ['j / k', 'Move between rows', ['j', 'k'], function (e) { e.preventDefault(); move(e.key === 'j' ? 1 : -1); }],
+    ['o or Enter', 'Open the focused row', ['o', 'Enter'], openFocused],
+    ['/', 'Focus search', ['/'], function (e) {
+      var box = doc.querySelector('[data-search-input]');
+      if (box) { e.preventDefault(); box.focus(); box.select(); }
+    }],
+    ['Cmd/Ctrl K', 'Jump to anywhere', ['Mod+k'], function (e) { e.preventDefault(); openPalette(); }],
+    [':', 'Go to a page by name', [':'], function (e) { e.preventDefault(); openGoto(); }],
+    ['?', 'This help', ['?'], function (e) { e.preventDefault(); hints(false); openHelp(); }],
+    ['Esc', 'Leave a box, close a menu or dialog', ['Escape'], function (e) {
+      if (e.defaultPrevented) return;
+      if (escClosedHints) { escClosedHints = false; e.preventDefault(); return; }
+      if (leaveToList()) e.preventDefault();
+    }],
   ];
+  // The keys a page row may answer: only these cost a look at the page.
+  var PAGE_KEYS = ['c', 'C', 'Mod+Enter'];
+  function answers(r, k) { return r[2].indexOf(k) >= 0; }
+  function rowForKey(k) {
+    var row = STATIC_KEYS.filter(function (r) { return answers(r, k); })[0];
+    if (row || PAGE_KEYS.indexOf(k) < 0) return row;
+    return pageKeys().filter(function (r) { return answers(r, k); })[0];
+  }
   // The rows a page earns by what it carries: a box to type in, a form
   // that sends on Cmd/Ctrl+Enter.
   function pageKeys() {
     var out = [];
-    if (pageBox() && !doc.querySelector('[data-shortcut="c"]')) out.push(['c', doc.querySelector('[data-box]').getAttribute('data-box') || 'Write here']);
+    if (pageBox() && !doc.querySelector('[data-shortcut="c"]')) out.push(['c', doc.querySelector('[data-box]').getAttribute('data-box') || 'Write here', ['c'], function (e) { if (focusBox()) e.preventDefault(); else openNewIssue(e); }]);
     // A page that keeps c for its own box shows Shift C alone; any other
     // page opens the new issue on either.
     var ownC = pageBox() || doc.querySelector('[data-shortcut="c"]');
-    out.push([ownC ? 'Shift C' : 'c / Shift C', 'New issue from this page']);
-    if (doc.querySelector('form[data-submit-key]')) out.push(['Cmd/Ctrl Enter', 'Submit the box you are typing in']);
+    out.push(ownC ? ['Shift C', 'New issue from this page', ['C'], openNewIssue] : ['c / Shift C', 'New issue from this page', ['c', 'C'], openNewIssue]);
+    // Only a form that asked for it (\`data-submit-key\`) is sent: the button's own
+    // submit, with its validation. Plain Enter stays a newline.
+    if (doc.querySelector('form[data-submit-key]')) out.push(['Cmd/Ctrl Enter', 'Submit the box you are typing in', ['Mod+Enter'], function (e) {
+      var f = e.target && e.target.form;
+      if (f && f.hasAttribute('data-submit-key')) { e.preventDefault(); submitBox(f); }
+    }]);
     return out;
   }
   // Built with DOM nodes, never innerHTML: every string below is page text,
