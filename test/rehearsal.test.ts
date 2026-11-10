@@ -1,7 +1,6 @@
 /**
  * The roll rehearsal (#873): its plain parts. The two short real rolls of
- * two forge processes on one data directory are `rehearsal-real.test.ts`,
- * out of the gate while #7632 is open.
+ * two forge processes on one data directory are `rehearsal-real.test.ts`.
  */
 
 import { describe, expect, test } from "bun:test";

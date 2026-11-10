@@ -20,7 +20,8 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { Socket } from "bun";
-import { neverGrantable } from "../core/egress_grants.ts";
+import { neverGrantable, PAYMENT_HOSTS } from "../core/egress_grants.ts";
+import { during } from "../perf/jobs.ts";
 
 export interface EgressPolicy {
   /** Host names from `forge.json` `egress`: exact, or `*.example.com`. */
@@ -415,7 +416,10 @@ export async function decide(
   // ports alone; any other port, and any private address (below), is
   // refused in both modes.
   if (!declared && literalPrivate) return { ok: false, why: askAdmin, policy: { private: true } };
-  if (!declared && (policy.report === undefined || !WEB_PORTS.includes(port)))
+  // A payment host is never let through by report mode: only an app that
+  // names it reaches it, whatever the admin's setting (#11142).
+  const payment = PAYMENT_HOSTS.includes(`${name}:${port}`);
+  if (!declared && (policy.report === undefined || payment || !WEB_PORTS.includes(port)))
     return {
       ok: false,
       why: `${name}:${port} is not in this repository's egress (forge.json "egress")`,
@@ -821,7 +825,7 @@ export function startEgress(
   // that stopped sending) is cut, so it cannot hold an upstream open.
   const idleMs = policy.idleMs ?? IDLE_MS;
   const sweep = setInterval(
-    () => {
+    () => during("egress-idle", () => {
       const now = Date.now();
       for (const client of live)
         if (now - client.data.last > idleMs) {
@@ -830,7 +834,7 @@ export function startEgress(
           client.terminate();
           live.delete(client);
         }
-    },
+    }),
     Math.max(50, Math.min(5_000, idleMs / 2)),
   );
   sweep.unref();

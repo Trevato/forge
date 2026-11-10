@@ -25,7 +25,7 @@ import {
   type SelfSource,
 } from "../src/spawn/usage.ts";
 import { childLines, selfLines } from "../src/tui/screens/system.ts";
-import { childrenSection, selfSection } from "../src/web/pages/system.ts";
+import { childrenSection, selfHelp, selfSection } from "../src/web/pages/system.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
@@ -117,7 +117,9 @@ describe("selfUse", () => {
     expect(page).toContain("1.5 of 2 cores");
     expect(page).toContain("512 MiB of 10 GiB");
     expect(page).toContain("This forge's size: medium</h2>");
-    expect(page).toContain('<p class="small muted">Set by the forge that made this one. Disk is measured every 30 seconds.</p>');
+    // The note moved behind the page's `?` (#11111): the section is the figures alone.
+    expect(page).not.toContain("Disk is measured");
+    expect(selfHelp(second)!.text).toContain("Size is set by the forge that made this one. Disk is measured every 30 seconds.");
     expect(page).not.toContain("memory.current");
   });
 
@@ -128,7 +130,7 @@ describe("selfUse", () => {
     // 2 s of CPU over 4 s = 0.5 cores.
     expect(s.use.cores).toBe(0.5);
     expect(selfLines(s)[1]).toBe("  memory 300 MiB of 2 GiB (this process alone)");
-    expect(selfSection(s).text).toContain("Memory and CPU count this process alone.");
+    expect(selfHelp(s)!.text).toContain("Memory and CPU count this process alone.");
   });
 });
 

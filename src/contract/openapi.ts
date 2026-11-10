@@ -13,6 +13,7 @@
 
 import type { QueryType, Route } from "./openapi/shared.ts";
 import { OAUTH_SCOPES, type OAuthScope } from "../core/oauth.ts";
+import { tagList, tagOf } from "./tags.ts";
 import * as each from "./openapi/routes/index.ts";
 
 /** What each OAuth scope grants; a scope added to OAUTH_SCOPES without a line here fails the type check. */
@@ -72,6 +73,7 @@ export function openapi(origin: string, version: string): Record<string, unknown
     }));
     (paths[r.path] ??= {})[r.method] = {
       operationId: operationId(r),
+      tags: [tagOf(r.path)],
       summary: r.summary,
       "x-role": r.role,
       parameters: [...params, ...query],
@@ -131,6 +133,7 @@ export function openapi(origin: string, version: string): Record<string, unknown
         "The routes the forge names to an agent. `not_found` means missing or not yours to see. Every 429 and 503 carries an integer `Retry-After` and `retryAfter` (the same seconds) in a JSON body.",
     },
     servers: [{ url: origin }],
+    tags: tagList(ROUTES.map((r) => tagOf(r.path))),
     // The default: a bearer token. Open routes say `security: []`.
     security: [{ token: [] }],
     paths,

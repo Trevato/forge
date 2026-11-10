@@ -50,7 +50,7 @@ import { canAdmin, canWrite, DECISIONS_BY, getRepoById, type Repo } from "../../
 import type { TreeEntry } from "../../git/read.ts";
 import { parseUnifiedDiff, type Diff } from "../../git/diff.ts";
 import { renderDiff as renderPatch } from "../ui/diff.ts";
-import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
+import { fileKind, isEnvExample, kindByName, NO_BYTES } from "../../web/render/kinds.ts";
 import { downloadHref } from "../../web/pages/media.ts";
 import { isModelPath, modelFacts } from "../../web/render/model-facts.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
@@ -59,10 +59,14 @@ import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
 import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
 import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
+import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
+import { parseOpenApi } from "../../web/render/openapi.ts";
 import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
+import { RECORD_CAP, parseLcov, worstFirst, type Ratio } from "../../web/render/lcov.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { fileSize } from "../../web/ui.ts";
 import { parseEml } from "../../web/render/eml-parse.ts";
+import { parseEnv, ROW_CAP as ENV_ROW_CAP } from "../../web/render/env.ts";
 import { CARD_CAP, parseVcf } from "../../web/render/vcf-parse.ts";
 import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
 import { isJsonlPath, kindView, type KindLines } from "./workspace_kinds.ts";
@@ -368,6 +372,21 @@ function vcfTable(source: string): Table | null {
   };
 }
 
+/** The variables of a `.env.example` as a table; null when it holds none. Shares the web's parser. */
+function envTable(source: string): Table | null {
+  const doc = parseEnv(source);
+  if (doc.total === 0) return null;
+  const dash = (v: string): string => (v === "" ? "—" : v);
+  const rows: string[][] = [];
+  let last = "";
+  for (const r of doc.rows.slice(0, ENV_ROW_CAP)) {
+    if (r.group !== "" && r.group !== last) rows.push([`# ${r.group}`, "", ""]);
+    last = r.group;
+    rows.push([r.name, dash(r.value), dash(r.comment)]);
+  }
+  return { header: ["Name", "Example", "Comment"], rows, more: doc.total - doc.rows.length, delimiter: ",", columns: 3 };
+}
+
 /** `.eml`: a message, drawn as rows of its headers, body and attachments. */
 function isEmlPath(path: string): boolean {
   return /\.eml$/i.test(path);
@@ -415,6 +434,55 @@ function sarifTable(source: string): Table | string {
   );
   const rows = all.slice(0, RESULT_CAP);
   return { header: ["Level", "Rule", "Location", "Message", "Tool"], rows, more: all.length - rows.length, delimiter: ",", columns: 5 };
+}
+
+/** `lcov.info` / `.lcov`: a coverage tracefile, drawn as a table per source file, worst line coverage first. */
+function isLcovPath(path: string): boolean {
+  return kindByName(path) === "lcov";
+}
+
+/** The coverage of an lcov file as a table; the reason, as the page words it, when it is not lcov. Shares the web's parser. */
+function lcovTable(source: string): Table | string {
+  const parsed = parseLcov(source);
+  if ("error" in parsed) return `not drawn as coverage: ${parsed.error}`;
+  const pct = (r: Ratio | undefined): string => (r === undefined || r.found === 0 ? "-" : `${r.hit}/${r.found} ${(Math.floor((r.hit / r.found) * 1000) / 10).toFixed(1)}%`);
+  const sorted = worstFirst(parsed.records);
+  const rows = sorted.slice(0, RECORD_CAP).map((r) => [r.file, pct(r.lines), pct(r.functions), pct(r.branches)]);
+  return { header: ["File", "Lines", "Functions", "Branches"], rows, more: sorted.length - rows.length, delimiter: ",", columns: 4 };
+}
+
+/** An OpenAPI document by file name; whether its content is one is `openapiTable`'s to say. */
+function isOpenApiPath(path: string): boolean {
+  return kindByName(path) === "openapi";
+}
+
+/**
+ * The operations of an OpenAPI document as a table, tag by tag; null when the file is not one,
+ * the reason when it is but cannot be drawn. Shares the web's parser.
+ */
+function openapiTable(text: string, path: string): Table | string | null {
+  const parsed = parseOpenApi(text, path);
+  if (parsed === "not") return null;
+  if ("error" in parsed) return `not drawn as an API: ${parsed.error}`;
+  const rows = parsed.groups.flatMap((g) => g.ops.map((o) => [g.tag === "" ? "-" : g.tag, o.method, o.path, o.deprecated ? `${o.summary} (deprecated)`.trim() : o.summary]));
+  return { header: ["Tag", "Method", "Path", "Summary"], rows, more: parsed.more, delimiter: ",", columns: 4 };
+}
+
+/** A JUnit report, by the web's own rule (file name, or root element). */
+function isJunitPath(path: string, source: Uint8Array): boolean {
+  return /\.xml$/i.test(path) && fileKind(path, source.subarray(0, 4096)) === "junit";
+}
+
+/** A JUnit report as a table: a totals row, then each failing case with its message; the reason when it is not drawn. Shares the web's parser. */
+function junitTable(source: string): Table | string {
+  const parsed = parseJunit(source);
+  if ("error" in parsed) return `not drawn as test results: ${parsed.error}`;
+  const t = parsed.totals;
+  const bad = parsed.suites.flatMap((s) =>
+    s.cases.filter((c) => c.status === "failed" || c.status === "error").map((c) => [c.status === "error" ? "error" : "failed", (c.classname === "" ? c.name : `${c.classname} › ${c.name}`) || "(unnamed)", c.message.replace(/\s+/g, " ")]),
+  );
+  const rows = [["total", `${t.tests} tests`, `${t.failures + t.errors} of ${t.tests} tests fail · ${t.skipped} skipped`], ...bad.slice(0, CASE_CAP)];
+  return { header: ["Result", "Case", "Message"], rows, more: bad.length - Math.min(bad.length, CASE_CAP), delimiter: ",", columns: 3 };
 }
 
 /** `.gcode`: a sliced print, drawn as a table of its facts (layers, box, filament, time). Shares the web's parser. */
@@ -619,6 +687,7 @@ class Tab {
         this.lines = kind.lines;
       }
     }
+    const api = isOpenApiPath(this.path) ? openapiTable(text, this.path) : null;
     if (isSubtitlePath(this.path)) {
       const subs = subtitleTable(new TextDecoder().decode(source));
       this.table = subs.table;
@@ -630,6 +699,9 @@ class Tab {
     } else if (isVcfPath(this.path)) {
       this.table = vcfTable(new TextDecoder().decode(source));
       if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isEnvExample(this.path)) {
+      this.table = envTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isEmlPath(this.path)) {
       this.table = emlTable(source);
       if (this.table !== null) this.grid = layoutTable(this.table);
@@ -640,6 +712,20 @@ class Tab {
       const findings = sarifTable(new TextDecoder().decode(source));
       this.table = typeof findings === "string" ? null : findings;
       this.fault = typeof findings === "string" ? findings : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isLcovPath(this.path)) {
+      const coverage = lcovTable(new TextDecoder().decode(source));
+      this.table = typeof coverage === "string" ? null : coverage;
+      this.fault = typeof coverage === "string" ? coverage : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (api !== null) {
+      this.table = typeof api === "string" ? null : api;
+      this.fault = typeof api === "string" ? api : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isJunitPath(this.path, source)) {
+      const results = junitTable(new TextDecoder().decode(source));
+      this.table = typeof results === "string" ? null : results;
+      this.fault = typeof results === "string" ? results : "";
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGcodePath(this.path)) {
       this.table = gcodeTable(new TextDecoder().decode(source));
@@ -2755,7 +2841,9 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path))
+                    ? t.raw !== null && isJunitPath(t.path, t.raw)
+                      ? plural(t.table.rows.length - 1 + t.table.more, "failing case")
+                      : tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path), isLcovPath(t.path), isOpenApiPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -3089,9 +3177,9 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false, people = false, features = false, jsonl = false, findings = false, files = false, operations = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : "row")}${
+  return `${plural(rows, subs ? "cue" : events ? "event" : people ? "contact" : facts ? "fact" : features ? "feature" : findings ? "finding" : files ? "file" : operations ? "operation" : "row")}${
     unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
   }${
     table.more > 0

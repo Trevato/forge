@@ -23,7 +23,7 @@ import { hostedPlacement, parentOrigin, childPublicUrl, type BodyStore, type Pla
 import { SIZE_IO, SIZES, type Size } from "./sizes.ts";
 import { floorRefusal } from "./disk_floor.ts";
 import { CGROUP_DIR_ENV, SIZE_ENV } from "./usage.ts";
-import { childModelHosts, childRegistryHosts } from "../core/capacity.ts";
+import { childModelHosts, childPaymentHosts, childRegistryHosts } from "../core/capacity.ts";
 import { liveChildDisk, type ChildDisk } from "./disk_mount.ts";
 
 export const CELL_PREFIX = "cell-";
@@ -120,6 +120,8 @@ export function cellSpecFor(input: {
   modelHosts?: readonly string[];
   /** The package registry an admin let children reach (`children.registryEgress`); none by default. */
   registryHosts?: readonly string[];
+  /** The payment hosts children may reach (`children.paymentEgress`): a ceiling only an app declaring the host passes. */
+  paymentHosts?: readonly string[];
   /**
    * The child's writable space as found (`spawn/disk_mount.ts`). A filesystem
    * of its own is named among the binds by its real path (bwrap binds
@@ -140,7 +142,7 @@ export function cellSpecFor(input: {
     hide: [input.parentDataDir, input.parentHome ?? process.env["HOME"] ?? "", tmpdir()].filter((path) => path !== ""),
     // The forge's own code may live under the parent's data (a release checkout).
     reveal: [CODE],
-    egress: [...(input.modelHosts ?? []), ...(input.registryHosts ?? [])],
+    egress: [...(input.modelHosts ?? []), ...(input.registryHosts ?? []), ...(input.paymentHosts ?? [])],
     // A child's cell is held to this list whatever cells.egress says: report
     // mode is for apps still declaring hosts, not for a whole forge.
     egressMode: "enforce",
@@ -262,6 +264,7 @@ export function launchSpecFor(
     name: input.name,
     modelHosts: childModelHosts(parent.db),
     registryHosts: childRegistryHosts(parent.db),
+    paymentHosts: childPaymentHosts(parent.db),
     disk: liveChildDisk(parent.config.dataDir, input.bodyId, mountinfo),
   });
 }

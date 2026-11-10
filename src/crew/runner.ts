@@ -2355,7 +2355,8 @@ function redactResult<T extends { result: string }>(r: T): T {
 export function credentialEnv(picked: Pick, dataDir?: string): Record<string, string> {
   if (picked.kind === "ready") return credentialEnvOf(picked);
   // A forge its parent funds (#10484): with no account of its own, the crew calls the model through the parent.
-  const lent = picked.kind === "env" && dataDir !== undefined ? fundedEnv(dataDir) : undefined;
+  // "none" reaches here only under an owner's grant (an org's, #10991), which is the forge's account too.
+  const lent = (picked.kind === "env" || picked.kind === "none") && dataDir !== undefined ? fundedEnv(dataDir) : undefined;
   if (lent !== undefined) return lent;
   const own: Record<string, string> = {};
   for (const name of [

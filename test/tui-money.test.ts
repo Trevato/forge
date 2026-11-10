@@ -87,11 +87,24 @@ describe("the terminal's money screen", () => {
     // Box 300 × 9.5 / 30 = 95.00 against 10 h × $0.10 = 1.00 of revenue.
     expect(rows[0]).toEqual({ title: "This month (2026-11)", meta: "cost $95.00 · revenue $1.00 · gap -$94.00" });
     expect(rows[1]).toEqual({ title: "Today (2026-11-10)", meta: "cost $5.00 · revenue $0.00 · gap -$5.00" });
-    expect(rows[2]).toEqual({ title: "Economics slider", meta: "62" });
+    expect(rows[2]).toEqual({ title: "Economics slider", meta: "responsive" });
     // Thirty days, newest first.
     expect(rows).toHaveLength(3 + 30);
     expect(rows[3]!.title).toBe("2026-11-10");
     expect(rows[32]!.title).toBe("2026-10-12");
+  });
+
+  test("the slider row says the board's word for each position (#11102)", () => {
+    const m = readForgeMoney(app, admin, NOW);
+    if (!m.ok) throw new Error(m.error);
+    const word = (position: number): string | undefined => forgeMoneyRows({ ...m.value, position })[2]?.meta;
+    expect([word(0), word(20), word(50), word(80), word(100)]).toEqual([
+      "cheapest",
+      "lean",
+      "balanced",
+      "responsive",
+      "most responsive",
+    ]);
   });
 
   test("an app's rows: its month, where it was awake, its share of the server", () => {

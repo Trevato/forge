@@ -1,6 +1,6 @@
 # Main-thread stalls by route (#9016)
 
-The forge counts every wake of its event loop more than 250 ms late as a
+The forge counts every wake of its event loop more than 200 ms late as a
 stall, and charges it in full to each route pattern whose request ran across
 it (`none` when no request did) — the same reading as the `event loop blocked`
 log lines (`src/perf/loop.ts`), so a fix's before and after reads from the
@@ -12,7 +12,14 @@ palette entry):
 - **`/system`**, the "Main-thread stalls, last hour" card: route, stall ms and
   count for the top 10 routes, most first, plus `/api/v1/telemetry/flow`
   always (0 when it stalled nothing). As of the page's load.
-- **The terminal**: `:` → "Main-thread stalls", the same rows.
+- **`/system`**, inside that card, "Worst single stalls" (#11069), drawn only
+  when the hour had one: the five worst single stalls, each with what ran (the route pattern, `job:<name>` for a job
+  marked with `jobWatch.during`, or `unknown`), its ms and when. Kept in a
+  fixed ring of 256 (`src/perf/stall_blame.ts`).
+- **`/healthz`** with `Accept: application/json`: beside `loopLagMs`,
+  `loopWorstWhat` names the worst stall of the same 10 s (null when none).
+- **The terminal**: `:` → "Main-thread stalls", the same rows, then the same
+  worst single stalls (what ran, ms, when in UTC) when the hour had one.
 - **`GET /metrics`** (an admin `ro` token): `forge_loop_stall_milliseconds_total`
   and `forge_loop_stalls_total` by `route` since the process started, and the
   last hour as `forge_loop_stall_hour_milliseconds` / `forge_loop_stall_hour_count`

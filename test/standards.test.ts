@@ -232,7 +232,7 @@ describe("what the open web expects", () => {
       expect(res.headers.get("content-security-policy")).not.toBeNull();
       const j = (await res.json()) as Record<string, unknown>;
       expect(Object.keys(j).sort()).toEqual(["commit", "here", "llms", "mcp", "name", "oauth", "openapi", "version"]);
-      expect(j["openapi"]).toBe(`${base}/api/v1/openapi.json`);
+      expect(j["openapi"]).toBe(`${base}/contract/openapi.json`);
       expect(j["mcp"]).toBe(`${base}/mcp`);
       expect(j["oauth"]).toBe(`${base}/.well-known/oauth-protected-resource`);
       expect(j["llms"]).toBe(`${base}/llms.txt`);

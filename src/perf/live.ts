@@ -6,6 +6,7 @@ import { jobWatch } from "./jobs.ts";
 import { createLoopWatch } from "./loop.ts";
 import { createCaptureStore } from "./capture.ts";
 import { createReadLedger } from "./reads.ts";
+import { createStallBlame } from "./stall_blame.ts";
 import { createPerfRecord } from "./record.ts";
 
 export const perfRecord = createPerfRecord();
@@ -17,3 +18,5 @@ export const bootStall = createBootStall();
 /** What was read from repositories (`reads.ts`), and the one bounded capture an admin may run (`capture.ts`). */
 export const readLedger = createReadLedger();
 export const captureStore = createCaptureStore();
+/** Each stall over 200 ms with what ran (#11069): the last hour's worst on /system, the last 10 s's on `/healthz`. */
+export const stallBlame = createStallBlame();

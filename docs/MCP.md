@@ -57,8 +57,8 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `apps` | — | Apps you can see: live or not, where served, how each runs, what works | 343 |
 | `archive` | — | Archive or wake a repository (`archived`) | 332 |
 | `asked` | — | What people asked the crew for: unmerged by default, oldest first | 372 |
-| `asks` | — | What waits on you, most important first; saved filter applies | 457 |
-| `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 486 |
+| `asks` | — | What waits on you, most important first; saved filter applies | 453 |
+| `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 535 |
 | `asks_decide` | — | Answer a hand-over: the decider (`parked:<id>`), or `give_back` to its builder (`handover:`/`assigned:<id>`) | 270 |
 | `asks_proposal` | — | Act on a wave proposal: `approve`, `redirect` (`words`), `later` (`again`) | 315 |
 | `asks_undecide` | — | Put a set-aside card back on your board, within a day | 208 |
@@ -139,7 +139,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `map` | — | An app's plan: ready or waiting, critical path, crew, parkedTwice; `done` adds closed; `first: N` ranks N first | 375 |
 | `merge` | — | Land a pull, as its page's Merge button does; a person's only | 319 |
 | `migrate` | — | Bring a repo in by public `url` (`name`, `crew`), history and all | 269 |
-| `milestones` | — | How far each ask is | 385 |
+| `milestones` | — | How far each ask is | 391 |
 | `mint_invite` | — | Mint a one-use invite link, shown once, valid `days` (1–30, default 7) | 225 |
 | `mirror_now` | — | Admin: bring the snapshot mirror level now | 129 |
 | `mirror_set` | — | Admin: set or forget the snapshot mirror | 296 |
@@ -149,7 +149,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `next_steps` | — | On a spawned forge, its owner's first three steps, each done or not | 207 |
 | `next_up` | — | The ranked list the crew builds from; `issue` + `to` (top, not-now, after:N) moves one | 349 |
 | `notify` | — | Read, set or clear your phone notify URL | 146 |
-| `now` | — | What the crew does across your apps: who, on what, since when, cost; what awaits review | 251 |
+| `now` | — | What the crew does across your apps: who, on what, since when, cost; what awaits review | 252 |
 | `open_pull` | — | Open a pull request, from a branch or from your fork | 327 |
 | `org_create` | — | Make an organization | 151 |
 | `org_teams` | `create`, `add_member`, `members`, `metrics`, `remove_member`, `remove` | An org's teams: create, add member with a role, list members, remove | 669 |
@@ -175,7 +175,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `read_file` | — | Read a file or list a directory at a ref (default branch); over 5 MB answers tooLarge | 307 |
 | `release_hold` | — | Hold or release the release keeper's cuts (admin) | 202 |
 | `release_keeper` | — | The release keeper's releases, holds and what blocks the next cut | 192 |
-| `releases` | — | Kept releases, newest first | 201 |
+| `releases` | — | Kept releases, newest first | 253 |
 | `repo` | — | One repository you can read, as GET /api/v1/repos/:owner/:name | 223 |
 | `repo_labels` | — | Repo labels: list (default), create, update, remove (admin token) | 351 |
 | `repo_settings` | — | Read, change or move (newOwner) a repo: PATCH /api/v1/repos/:owner/:name (admin); mirrorPacks mirrors the packs' upstreams | 444 |
@@ -186,8 +186,8 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `rollback` | — | Plan, then apply, a rollback to a kept release (admin) | 209 |
 | `run_log` | — | A run's log, or its last `tail` lines, as GET /api/v1/repos/:owner/:name/runs/:id/log | 332 |
 | `runs` | `agent`, `deploy`, `check` | A repository's runs, newest first: id, kind, state, number, start, end | 482 |
-| `say` | `list`, `new`, `rename`, `archive`, `restore` | Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action) | 448 |
-| `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 232 |
+| `say` | `list`, `new`, `rename`, `archive`, `restore`, `build`, `build_state`, `build_diff`, `build_restore`, `build_publish` | Say something on an issue or pull; with no repo, to the forge's own agent, and manage its conversations (action) | 585 |
+| `scorecard` | — | Crew scorecard (forge admin): per agent, all time and 30 days | 237 |
 | `seal` | `private` | Seal or unseal an issue or pull: a sealed one is seen only by writers and crew | 297 |
 | `search` | `all`, `issues`, `repos`, `code` | Find issues, pulls, repositories and code you can read; `kind` and `repo` narrow | 378 |
 | `secrets` | — | Admin: list\|set\|remove sealed secrets | 248 |
@@ -482,15 +482,22 @@ answers
 
 ## Cards, the contract and the plugins (#1116)
 
-- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `waves` (one wave), `map`, `feed`, `pull`, `pulls` and `asked` name a `ui://` resource in
+- **Cards.** `apps`, `new_app`, `now`, `asks`, `milestones`, `releases`, `waves` (one wave), `map`, `feed`, `pull`, `pulls` and `asked` name a `ui://` resource in
   `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
-  `decision`, `wave`, `map`, `feed`, `pull`, `pulls`, `asked`. The Plan card (`map`) shows one row per pillar with
+  `asks`, `release`, `wave`, `map`, `feed`, `pull`, `pulls`, `asked`. The Plan card (`map`) shows one row per pillar with
   its ready, working and waiting counts, and the first five ready issues linked
-  to their pages; it has no actions. The decision card's rows link to the pull or issue
+  to their pages; it has no actions. The asks card (`ui://forge/asks`, drawn by `asks`) is one row per waiting decision:
+  what, which repository, how long it has waited, and its one button on the row itself.
+  **Ship** is for a green or agent change, **Decide** for one parked issue and **Decline** otherwise.
+  A proposal, a pause and a row of several parked issues have no button.
+  The buttons call `asks_act` or `asks_decide`, which check the same permission as the page's buttons.
+  Your saved filter applies to it as to the answer; an empty inbox is one line, `Nothing waits on you.`
+  The rows link to the pull or issue
   they are about (a paused repository's row has none).
   The Apps card (`apps`) links each `owner/name` row to the app's page on the forge and adds a
   linked production row when the app has an http(s) URL; the `new_app` card links its
   Production row the same way. Any other address stays plain text, never a link.
+  The Releases card (`releases`, `ui://forge/release`) is one row per kept release, newest first: its version (else its short sha), how long ago it landed, the pull that landed it (as the releases page names it) and one word, `proven` (the keeper verified it), `unproven` (preflight failed, the keeper never cut it or is still verifying it) or `rolled back` (the keeper rolled it back). The keeper's row is looked up by sha, however old. The rows are the `items` of the tool's text, which carry the same `proof` and `pull`; `releases` with `shipped` has no card.
   The Forks card (`fork_tree`, `ui://forge/forks`) is one row per repository you may read, nested by a `depth` field the card pads (not leading spaces, which HTML collapses); the value says how it follows: `follows on its own`, `takes updates`, `offers updates` (the card's own wording for the `offers` mode) or `off`.
   `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the
@@ -499,10 +506,8 @@ answers
   buttons ask the host to call a tool (`asks_act`, `say`, `stop`, `tell`); the
   host decides, and every call is checked as any other. A card with a
   words action shows one text field: **Tell <app>** (app card) sends the
-  words to `tell` as `text` with `repo` and `context.said`; **Redirect**
-  (decision card) sends them to `say` with the first ask's `repo`, `number`
-  and `text`. Empty words send nothing. `asks` rows carry `repo`
-  (`owner/name`) beside `number` for this.
+  words to `tell` as `text` with `repo` and `context.said`.
+  Empty words send nothing.
 - **The manifest's shape.** `GET /api/v1/here?path=/owner/name` (or the
   `here` tool with the page URL) answers `{ here, you, can, mcp, docs }`.
   `you.as` is `anonymous`, `reader`, `writer`, `owner` or `agent`; `can` is
@@ -546,9 +551,8 @@ answers
   entries: `forge` sends no Authorization header, so Claude Code signs in
   through the OAuth flow (the default); `forge-token` sends `FORGE_TOKEN` as a
   bearer, for scripts.
-  Install it without a clone: `/plugin marketplace add <FORGE_URL>/trevato/forge.git`
-  (the clone URL as the forge prints it), then `/plugin install forge@forge`
-  (the root `.claude-plugin/marketplace.json` names the marketplace `forge`).
+  Install it without a clone: `claude plugin marketplace add <FORGE_URL>/plugins/claude-code/marketplace.json && claude plugin install forge@forge`
+  (the forge serves that manifest, marketplace `forge`).
   From a clone, `claude --plugin-dir plugins/claude-code` is the local way.
 
 `flow` with `{ kind: "drift" }` (#10861) is another: `{ drifting: [{ repo, number, landings, hours }] }`,

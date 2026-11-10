@@ -19,6 +19,7 @@ import { geojson } from "../src/web/render/geojson.ts";
 import { subtitles } from "../src/web/render/subtitles.ts";
 import { patch } from "../src/web/render/patch.ts";
 import { notebook } from "../src/web/render/notebook.ts";
+import { lcov } from "../src/web/render/lcov.ts";
 import { sarif } from "../src/web/render/sarif.ts";
 import { gcode } from "../src/web/render/gcode.ts";
 import { config } from "../src/web/render/config.ts";
@@ -114,6 +115,11 @@ const SAMPLES: Record<string, { path: string; render: Renderer; files: readonly 
     path: "scan.sarif",
     render: sarif,
     files: ['{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"T"}},"results":[{"ruleId":"R","level":"error","message":{"text":"m"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"src/a.ts"},"region":{"startLine":3}}}]}]}]}'],
+  },
+  lcov: {
+    path: "lcov.info",
+    render: lcov,
+    files: ["TN:\nSF:src/a.ts\nFNF:2\nFNH:1\nDA:1,1\nDA:2,0\nLF:2\nLH:1\nBRF:4\nBRH:2\nend_of_record\n"],
   },
   srt: {
     path: "talk.srt",

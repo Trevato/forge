@@ -228,8 +228,8 @@ describe("the repository is a Claude Code marketplace", () => {
   test("both docs show the two commands and the install", () => {
     for (const p of ["plugins/claude-code/README.md", "docs/MCP.md"]) {
       const t = read(p);
-      expect(t).toContain("/plugin marketplace add");
-      expect(t).toContain("/plugin install forge@forge");
+      expect(t).toContain("claude plugin marketplace add");
+      expect(t).toContain("claude plugin install forge@forge");
       expect(t).toContain("--plugin-dir plugins/claude-code");
     }
   });

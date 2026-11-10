@@ -1078,6 +1078,8 @@ export function askLinesFor(
   /** For a wave proposal: what it says, as plain text (the reader escapes it). */
   proposal?: { id: string; title: string; why: string; issues: string[] };
   items: string[];
+  /** When the oldest ask in the row began to wait (ISO), for how long it has waited. */
+  since: string;
   /** The decision, its options and what happens if nobody acts (`ASK_WORDS`). */
   words: AskWords;
   /** Why it ranks where it does; rows come most consequential first. */
@@ -1098,6 +1100,7 @@ export function askLinesFor(
       repoId: row.repo.id,
       repo: `${row.repo.ownerName}/${row.repo.name}`,
       items: row.items.map((c) => c.id),
+      since: row.items.reduce((a, c) => (c.since < a ? c.since : a), row.items[0]!.since),
       words: ASK_WORDS[row.kind],
       consequence: row.consequence,
       waitingFor: row.items[0]!.waiting,

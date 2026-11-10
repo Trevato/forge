@@ -44,8 +44,9 @@ import { notFound } from "../http/respond.ts";
 import { SHARE_TARGET } from "./share_target.ts";
 import { SITE_LINE } from "./site_line.ts";
 import { mcpToolsSection } from "./llms_tools.ts";
-import { apiCatalog, DISCOVERY, HARNESS_PLUGINS, mcpCard, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
+import { apiCatalog, DISCOVERY, mcpCard, offeredPlugins, mcpPointers, offeredPluginRepo, pluginSource } from "../core/mcp_card.ts";
 import { forgeDocument } from "../core/standards_index.ts";
+import { TAGS } from "../contract/served.ts";
 import { running } from "../kernel/version.ts";
 import { timePhase, timePhaseAsync } from "../core/route_timing.ts";
 import { shippedReleases, type Shipped } from "../release/shipped.ts";
@@ -411,6 +412,15 @@ export function llmsBody(ctx: Ctx): { body: string; etag: string } {
 }
 
 /** The llms.txt document for one origin. */
+/** One llms.txt line per plugin on offer; a cloned one names its source, a served one says so. */
+function pluginLines(o: string, plugins: string | undefined): string[] {
+  const lines = offeredPlugins(plugins).map((p) => {
+    const where = p.cloned && plugins !== undefined ? `source ${pluginSource(o, plugins)}, ` : "served by this forge, ";
+    return `- ${p.label} plugin (${where}path ${p.path}; ${p.setup}): \`${p.install(o, plugins ?? "")}\``;
+  });
+  return plugins === undefined ? [...lines, "- Claude Code plugin: not offered here (no public source)"] : lines;
+}
+
 function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: string, repos: LlmsListing, signedIn: boolean, plugins: string | undefined): string {
   const mcp = mcpPointers(o);
   return (
@@ -445,11 +455,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "## Use it from your harness",
       "",
       `- MCP endpoint: ${mcp.url} (streamable HTTP; OAuth metadata at ${mcp.oauth}). Or send a token as Authorization: Bearer.`,
-      ...(plugins !== undefined
-        ? HARNESS_PLUGINS.map(
-            (p) => `- ${p.label} plugin (source ${pluginSource(o, plugins)}, path ${p.path}; ${p.setup}): \`${p.install(o, plugins)}\``,
-          )
-        : ["- Harness plugins: not offered here (no public source)"]),
+      ...pluginLines(o, plugins),
       "",
       "## What you can do on any page",
       "",
@@ -474,7 +480,7 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       `- MCP: ${mcp.url} (OAuth discovery: ${mcp.oauth}; server card, a draft format: ${o}${DISCOVERY.card})`,
       `- API: ${o}${DISCOVERY.api} (the root lists the other URLs), Authorization: Bearer <token>`,
       `- API catalog (RFC 9727, one linkset of the above): ${o}${DISCOVERY.catalog}`,
-      `- OpenAPI: GET ${o}${DISCOVERY.api}/openapi.json (redirects to ${o}${DISCOVERY.openapi})`,
+      `- OpenAPI: GET ${o}${DISCOVERY.openapi}, or one slice with ?tag= (${TAGS.join(", ")})`,
       "",
       ...mcpToolsSection(o, signedIn),
       "## Public repositories",

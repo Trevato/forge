@@ -90,10 +90,17 @@ export function startDraining(log: Log, why: string, fields: Record<string, numb
  *
  * Given `loopLagMs` (the caller asked for JSON), the 200 is
  * `{"ok":true,"loopLagMs":n}`: the worst event-loop lag of the last 10 s
- * (`perf/loop_worst.ts`, #10288). Otherwise it stays the plain `ok` a
- * probe and a stranger hear (#2917).
+ * (`perf/loop_worst.ts`, #10288), with `loopWorstWhat`: the route pattern,
+ * `job:<name>` or `unknown` the worst stall over 200 ms in those 10 s was
+ * blamed on, null when there was none (`perf/stall_blame.ts`, #11069).
+ * Otherwise it stays the plain `ok` a probe and a stranger hear (#2917).
  */
-export function liveResponse(ping: () => unknown, log: Log, loopLagMs?: number): Response {
+export function liveResponse(
+  ping: () => unknown,
+  log: Log,
+  loopLagMs?: number,
+  loopWorstWhat: string | null = null,
+): Response {
   try {
     ping();
   } catch (error) {
@@ -107,7 +114,10 @@ export function liveResponse(ping: () => unknown, log: Log, loopLagMs?: number):
   if (databaseDown) log.info("forge alive again: the database answers");
   databaseDown = false;
   if (loopLagMs !== undefined && Number.isFinite(loopLagMs))
-    return Response.json({ ok: true, loopLagMs: Math.round(loopLagMs * 10) / 10 }, { status: 200 });
+    return Response.json(
+      { ok: true, loopLagMs: Math.round(loopLagMs * 10) / 10, loopWorstWhat },
+      { status: 200 },
+    );
   return new Response("ok", { status: 200 });
 }
 

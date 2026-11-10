@@ -7,15 +7,13 @@
  */
 
 import { BUILD_WORDS, buildState, publishBuild, restoreVersion, startBuild, versionDiff, type BuildError } from "../../actions/build.ts";
+import { BUILD_ID as ID, promptRefusal, templateRefusal, versionRefusal } from "../../actions/build_input.ts";
 import { TALK_WORDS } from "../../actions/talk.ts";
-import { WORDS_MAX } from "../../core/fence.ts";
 import { apiError, boundedBody, json, tryAgain, unauthorized } from "../respond.ts";
 import type { Router } from "../router.ts";
 import type { Handler } from "../context.ts";
 import { mayChange } from "./conversation_talk.ts";
 
-const ID = /^[0-9a-z]{1,40}$/;
-const TEMPLATE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const STATUS: Readonly<Record<BuildError, number>> = { unauthorized: 401, not_found: 404, no_name: 422, no_version: 404, nothing_to_publish: 409, moved: 409, bad_template: 422, rate_limited: 422, too_many_builds: 422, failed: 422 };
 
 /** Both build limits are per hour: say so with the 429 (#10762). */
@@ -32,9 +30,11 @@ export function conversationBuildRoutes(router: Router<Handler>): void {
     const input = await boundedBody(ctx.request, 20_000);
     if (input === "too_large") return apiError("too_large", 413, "at most 20000 bytes");
     const prompt = input["prompt"];
-    if (typeof prompt !== "string" || prompt.trim() === "" || prompt.length > WORDS_MAX) return apiError("invalid_prompt", 422, `prompt is a string of 1 to ${WORDS_MAX} characters`);
+    const badPrompt = promptRefusal(prompt);
+    if (badPrompt !== undefined || typeof prompt !== "string") return apiError("invalid_prompt", 422, badPrompt ?? "");
     const template = input["template"];
-    if (template !== undefined && (typeof template !== "string" || !TEMPLATE.test(template))) return apiError("invalid_template", 422, "template is owner/name");
+    const badTemplate = templateRefusal(template);
+    if (badTemplate !== undefined || (template !== undefined && typeof template !== "string")) return apiError("invalid_template", 422, badTemplate ?? "");
     const started = await startBuild(ctx.app, user, { prompt, ...(template === undefined ? {} : { template }) });
     if (!started.ok) return fail(started.error);
     const { build, repo, said } = started.value;
@@ -68,7 +68,8 @@ export function conversationBuildRoutes(router: Router<Handler>): void {
     if (input === "too_large") return apiError("too_large", 413, "at most 1000 bytes");
     const n = input["version"];
     if (id === undefined) return fail("not_found");
-    if (typeof n !== "number" || !Number.isInteger(n) || n < 1) return apiError("invalid_version", 422, "version is the number of a version, from 1");
+    const badVersion = versionRefusal(n);
+    if (badVersion !== undefined || typeof n !== "number") return apiError("invalid_version", 422, badVersion ?? "");
     const restored = await restoreVersion(ctx.app, user, id, n);
     return restored.ok ? json({ version: restored.value }, 201) : fail(restored.error);
   });

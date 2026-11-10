@@ -225,12 +225,16 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fg-s5 { fill: var(--series-5); color: var(--series-5); }
 .fg-s6 { fill: var(--series-6); color: var(--series-6); }
 .fg-s7 { fill: var(--series-7); color: var(--series-7); }
-/* The money line (studio/money_line.ts, #510): the gap in the text colour,
-   its sign the +/- it carries, and the warning tint for a loss alone — the
-   accent stays for the slider's link. Two rows of 24px, the first wrapping
-   once on a phone, so the reserved height is the real one; the chart a
-   fixed box, so nothing shifts when the figures arrive. */
+/* The money line (studio/money_line.ts, #510, #11056, #11102): the
+   slider's word ("spend: balanced") is the board's one link to Settings →
+   Economics, in the accent; the gap takes the warning tint for a loss and
+   the text colour otherwise. The accent on --bg holds 4.5:1 in every theme
+   (test/themes.test.ts), so the small text reads. The word never breaks
+   inside itself, so the line wraps between its parts. Two rows of 24px,
+   the first wrapping once on a phone, so the reserved height is the real
+   one; the chart a fixed box, so nothing shifts when the figures arrive. */
 .money-gap[data-sign="down"] { color: var(--attn); }
+.money-spend { color: var(--accent); white-space: nowrap; }
 .money-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
 .money-line > p { margin: 0; line-height: 24px; min-height: 48px; }
 .money-line > p > span { display: block; }

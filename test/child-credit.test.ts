@@ -195,6 +195,9 @@ describe("a parent funds a child's crew", () => {
     expect(env).toEqual({ ANTHROPIC_BASE_URL: parentLocal(door.port), ANTHROPIC_API_KEY: f.token });
     expect(JSON.stringify(env)).not.toContain(PARENT_KEY);
 
+    // An org's grant (picked "none") reaches the same lent door (#10991).
+    expect(credentialEnv({ kind: "none" }, childDir)).toEqual(env);
+
     const first = await run(env);
     expect(first.status).toBe(200);
     expect(((await first.json()) as { model: string }).model).toBe("claude-sonnet-4-5");

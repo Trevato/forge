@@ -10,6 +10,7 @@ import { archive } from "./archive-view.ts";
 import { audio } from "./audio.ts";
 import { config } from "./config.ts";
 import { isFormConfig } from "./config-format.ts";
+import { envView } from "./env.ts";
 import { eml } from "./eml.ts";
 import { csv } from "./csv.ts";
 import { geojson } from "./geojson.ts";
@@ -17,6 +18,7 @@ import { gcode } from "./gcode.ts";
 import { gpx } from "./gpx.ts";
 import { font } from "./font.ts";
 import { ics } from "./ics.ts";
+import { junit } from "./junit.ts";
 import { vcf } from "./vcf.ts";
 import { htmlPreview } from "./html_preview.ts";
 import { image } from "./image.ts";
@@ -27,6 +29,8 @@ import { model3d } from "./model3d.ts";
 import { notebook } from "./notebook.ts";
 import { patch } from "./patch.ts";
 import { pdf } from "./pdf.ts";
+import { openapi } from "./openapi.ts";
+import { lcov } from "./lcov.ts";
 import { sarif } from "./sarif.ts";
 import { sqlite } from "./sqlite.ts";
 import { subtitles } from "./subtitles.ts";
@@ -93,6 +97,10 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   calendar: ics,
   contacts: vcf,
   sarif,
+  lcov,
+  junit,
+  env: envView,
+  openapi,
   mail: eml,
   archive,
   font,

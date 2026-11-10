@@ -38,6 +38,10 @@ export type FileKind =
   | "mail"
   | "gcode"
   | "sarif"
+  | "lcov"
+  | "junit"
+  | "env"
+  | "openapi"
   | "text"
   | "binary";
 
@@ -74,6 +78,10 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   mail: 5 * MB,
   gcode: 50 * MB,
   sarif: 5 * MB,
+  lcov: 5 * MB,
+  junit: 5 * MB,
+  env: 1 * MB,
+  openapi: 1 * MB,
   text: 1 * MB,
   binary: 0,
 };
@@ -196,7 +204,18 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   gcode: "gcode",
   gco: "gcode",
   sarif: "sarif",
+  lcov: "lcov",
 };
+
+/** The three example names; a plain `.env` is never one. */
+export const isEnvExample = (path: string): boolean =>
+  /^\.env\.(example|sample|template)$/i.test(path.slice(path.lastIndexOf("/") + 1));
+
+/** `openapi.json|yaml|yml` and `*.openapi.*`: the name of an OpenAPI document; its content decides whether it is drawn as one. */
+const isOpenApiName = (path: string): boolean => /(^|\/|\.)openapi\.(json|ya?ml)$/i.test(path);
+
+/** `lcov.info`: the name `lcov` and `bun test` write, whatever its extension. */
+const isLcovName = (path: string): boolean => /(^|\/)lcov\.info$/i.test(path);
 
 /**
  * Archives: the extension names the kind and the bytes confirm it. Their
@@ -228,6 +247,20 @@ const extension = (path: string): string => {
   return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
 };
 
+/**
+ * A JUnit report is an `.xml` file named `*.junit.xml` or `TEST-*.xml`, or
+ * whose root element (past the prolog and comments) is `<testsuites>` or
+ * `<testsuite>`. Any other `.xml` stays source.
+ */
+function isJunit(path: string, head: Uint8Array): boolean {
+  if (extension(path) !== "xml") return false;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  if (/\.junit\.xml$/i.test(name) || /^TEST-.+\.xml$/.test(name)) return true;
+  const text = new TextDecoder().decode(head).replace(/^\uFEFF/, "").replace(/<\?[\s\S]*?\?>|<!--[\s\S]*?-->/g, "");
+  const root = /<([A-Za-z_][\w.:-]*)/.exec(text);
+  return root?.[1] === "testsuites" || root?.[1] === "testsuite";
+}
+
 /** Git's own heuristic: a NUL in the first 8 KB means binary. */
 const looksBinary = (head: Uint8Array): boolean => head.subarray(0, 8000).includes(0);
 
@@ -249,8 +282,15 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (media !== undefined) return media.kind;
   if (isArchive(path, head)) return "archive";
   if (looksBinary(head)) return "binary";
+  if (isLcovName(path)) return "lcov";
+  if (isEnvExample(path)) return "env";
+  if (isJunit(path, head)) return "junit";
+  if (isOpenApiName(path)) return "openapi";
   return TEXTUAL[extension(path)] ?? "text";
 }
+
+/** Kinds whose renderer links paths to files in the repository, so the page reads the ref's file list. */
+export const needsPaths = (kind: FileKind): boolean => kind === "sarif" || kind === "lcov";
 
 /**
  * What a file's name says it is, for a file too large to have been read:
@@ -259,6 +299,9 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
  */
 export function kindByName(path: string): FileKind {
   const ext = extension(path);
+  if (isLcovName(path)) return "lcov";
+  if (isEnvExample(path)) return "env";
+  if (isOpenApiName(path)) return "openapi";
   return MEDIA[ext]?.kind ?? TEXTUAL[ext] ?? "text";
 }
 

@@ -38,3 +38,36 @@ describe("fixed tokens: colours every theme shares (#2697)", () => {
     expect(css).toContain(".fg-s0 { fill: var(--series-0); color: var(--series-0); }");
   });
 });
+
+/**
+ * WCAG 2.2 contrast (§1.4.3): relative luminance of sRGB with the 0.04045
+ * knee, then (L1 + 0.05) / (L2 + 0.05). By hand, Porcelain's #2563eb on
+ * #fafafa: L = 0.1532 and 0.9560, so 1.0060 / 0.2032 ≈ 4.95, the lowest of
+ * the six and above the 4.5 that small text needs.
+ */
+function luminance(hex: string): number {
+  const n = Number.parseInt(hex.slice(1), 16);
+  const lin = (c: number): number => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+}
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+describe("the accent as text", () => {
+  test("black on white is 21:1, a colour on itself 1:1, Porcelain's accent 4.95", () => {
+    expect(contrast("#2563eb", "#fafafa")).toBeCloseTo(4.95, 2);
+    expect(contrast("#000000", "#ffffff")).toBeCloseTo(21, 5);
+    expect(contrast("#2563eb", "#2563eb")).toBe(1);
+  });
+
+  // The board's "spend: balanced" link is small text in the accent (#11056, #11102): it must read on the ground.
+  test.each(THEME_NAMES)("%s: the accent on the ground holds 4.5:1", (name) => {
+    const t = THEMES[name].tokens;
+    expect(contrast(t.accent, t.bg)).toBeGreaterThanOrEqual(4.5);
+  });
+});

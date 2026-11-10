@@ -91,7 +91,7 @@ import { csvJs, isCsvPath } from "../render/csv.ts";
 import { fontJs } from "../render/font.ts";
 import { INLINE_MAX, keepGcode, keptGcode, layerCount } from "../render/gcode.ts";
 import { hasTable } from "../render/sqlite.ts";
-import { fileKind, HEAD_BYTES, kindByName, RENDER_CAP } from "../render/kinds.ts";
+import { fileKind, HEAD_BYTES, kindByName, needsPaths, RENDER_CAP } from "../render/kinds.ts";
 import { RENDERERS, rendererFor } from "../render/renderers.ts";
 import { downloadHref, mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
@@ -1773,7 +1773,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     rows = await rowsOffThread(shown.body, path, all ? MAX_RENDER_LINES : FIRST_LINES);
     if (rows !== undefined) notePhase(ctx.request, "highlight", performance.now() - began);
   }
-  const exists = kindByName(path) === "sarif" ? await pathsAt(scope, ref) : undefined;
+  const exists = needsPaths(kindByName(path)) ? await pathsAt(scope, ref) : undefined;
   const pane = renderBlob(scope, {
     ...(rows !== undefined ? { rows } : {}),
     ...(exists !== undefined ? { exists } : {}),

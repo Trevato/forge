@@ -1,18 +1,22 @@
 /**
  * The money line (#510): "This month · cost $359.34 · revenue $412.00 ·
- * +$52.66", the slider's position beside it, and thirty days of daily cost
- * and revenue drawn as a server-rendered SVG — two polylines with the gap
- * shaded between them, no chart library. The board shows the forge's; an
- * app's card shows the same three numbers (`moneyRows`).
+ * +$52.66 · spend: balanced", the slider's position in words beside it,
+ * and thirty days of daily cost and revenue drawn as a server-rendered SVG
+ * — two polylines with the gap shaded between them, no chart library. The
+ * board shows the forge's; an app's card shows the same three numbers
+ * (`moneyRows`).
  *
  * The slot is the same height whatever the numbers, zeros included: the
- * line is two rows (the month; today and the slider), each reserved in the
+ * line is two rows (the month and the slider; today), each reserved in the
  * CSS, and the SVG has a fixed width and height, so nothing moves when the
- * figures arrive (no layout shift). The gap is the text colour with its
- * sign; a loss alone takes the warning tint. The accent is the link's.
+ * figures arrive (no layout shift). On the board the slider's word is the
+ * one link to Settings → Economics, where it is set (#11102); the gap beside
+ * it takes the warning tint for a loss and the text colour otherwise — the
+ * accent stays on something you can press (docs/DESIGN.md §5).
  */
 
 import type { AppMoney, ForgeMoney, MoneyDay, MoneyLine } from "../../actions/money.ts";
+import { positionWord } from "../../core/slider.ts";
 import { html, type Html } from "../html.ts";
 
 /** US dollars to the cent, as on a statement. */
@@ -24,7 +28,11 @@ export function signed(n: number): string {
   return c > 0 ? `+${dollars(n)}` : c < 0 ? `-${dollars(n)}` : dollars(0);
 }
 
-/** "up" for a profit, "down" for a loss, "even" at zero; only "down" is tinted. */
+/**
+ * "up" for a profit, "down" for a loss, "even" at zero. A loss is in the
+ * warning tint everywhere; on the board, where the gap is a link, a profit
+ * takes the accent.
+ */
 export function gapSign(n: number): "up" | "down" | "even" {
   const c = Math.round(n * 100);
   return c > 0 ? "up" : c < 0 ? "down" : "even";
@@ -32,10 +40,18 @@ export function gapSign(n: number): "up" | "down" | "even" {
 
 const gap = (n: number): Html => html`<span class="money-gap num" data-sign="${gapSign(n)}">${signed(n)}</span>`;
 
-/** The three numbers, inline. */
-function figures(m: MoneyLine): Html {
-  return html`cost <span class="num">${dollars(m.cost)}</span> · revenue
-    <span class="num">${dollars(m.revenue)}</span> · gap ${gap(m.gap)}`;
+/**
+ * The board's month, in one line (#11056, #11102): "This month · cost
+ * $359.34 · revenue $412.00 · +$52.66 · spend: balanced", the gap read
+ * against the slider's position in words, and that word the board's one
+ * link to Settings → Economics, where it is set. Its accessible name says
+ * what the word is and where it goes.
+ */
+export function monthLine(m: MoneyLine, position: number): Html {
+  const word = positionWord(position);
+  return html`This month · cost <span class="num">${dollars(m.cost)}</span> · revenue
+    <span class="num">${dollars(m.revenue)}</span> · ${gap(m.gap)} ·
+    <a class="money-spend" href="/settings/economics" aria-label="Spend slider: ${word}, open Economics settings">spend: ${word}</a>`;
 }
 
 // ---- the chart ----
@@ -88,15 +104,15 @@ export function moneyChart(days: readonly MoneyDay[]): Html {
 
 // ---- the board's line ----
 
-/** The forge's line for the board, with the slider's position and the chart. */
+/**
+ * The forge's line for the board: the month with the slider's word, today's
+ * gap, and the chart.
+ */
 export function forgeMoneyLine(m: ForgeMoney): Html {
   return html`<section class="money-line" id="money" aria-label="Money">
     <p class="num">
-      <span>This month: ${figures(m.thisMonth)}</span>
-      <span
-        ><span class="muted">Today: gap ${signed(m.today.gap)}</span> ·
-        <a href="/settings/economics">Economics slider: ${m.position}</a></span
-      >
+      <span>${monthLine(m.thisMonth, m.position)}</span>
+      <span class="muted">Today: gap ${signed(m.today.gap)}</span>
     </p>
     ${moneyChart(m.days)}
   </section>`;

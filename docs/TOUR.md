@@ -392,7 +392,7 @@ measured slow.
 
 ## Search
 
-`/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. `GET /api/v1/search` applies the same budget and reports the cut as `moreCode`; `code=all` lifts it. MCP `search` does the same, and its `all` argument lifts it. The terminal palette greps everything.
+`/search` answers repositories and issues in full, and greps code repository by repository. A first search starts no new `git grep` after 30 ms (`codeBudgetMs` in the forge config; a soft stop, since the grep in flight still finishes, one batch of four) and shows what it has with one link, **More code results** (`?code=all`), that greps the rest. `GET /api/v1/search` applies the same budget and reports the cut as `moreCode`; `code=all` lifts it. MCP `search` does the same, and its `all` argument lifts it. The terminal palette greps everything. A one-letter query greps no code at all (`MIN_CODE_QUERY`, 2 characters): it would match every line, so the page, the API's `note` and MCP say code is searched for 2 or more characters when code was asked for (`kind=all` or `code`), and repositories and issues still answer it. The terminal palette shares the rule — one letter greps nothing and takes no guest slot — but prints no note: its sections simply show no code.
 
 The here-manifest (`GET /api/v1/here?path=…`) reads the same for guests and
 members. On `/explore` and `/search` it names the page's own read, `?q=` carried

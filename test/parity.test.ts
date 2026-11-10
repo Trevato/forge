@@ -184,6 +184,7 @@ describe("parity: full control through actions and the API", () => {
     expect(profile.json.email).toBeUndefined();
     expect(typeof profile.json.createdAt).toBe("string");
     expect((await call("GET", "/api/v1/users/nobody")).status).toBe(404);
+    const updatedBefore = kinds().filter((k) => k === "user.updated").length;
 
     // An rw token is not the account; an admin token or the session is.
     expect(
@@ -219,7 +220,7 @@ describe("parity: full control through actions and the API", () => {
         })
       ).json.error,
     ).toBe("invalid_email");
-    expect(kinds().filter((k) => k === "user.updated")).toHaveLength(2);
+    expect(kinds().filter((k) => k === "user.updated")).toHaveLength(updatedBefore + 2);
   });
 
   test("changing the password needs the current one and never an rw token", async () => {
@@ -368,10 +369,21 @@ describe("parity: full control through actions and the API", () => {
   // ── labels ───────────────────────────────────────────────────────────
 
   test("labels: admin-managed, writer-assigned, visible to readers, filterable", async () => {
+    // A repository of its own, so no other test's labels or issues show here.
+    // Alice may have changed her email in another test: taken as proven.
+    proveAll(app);
+    expect(
+      (
+        await call("POST", "/api/v1/repos", {
+          token: aliceRw,
+          body: { name: "labeled", visibility: "public" },
+        })
+      ).status,
+    ).toBe(201);
     // Creating a label is repo administration.
     expect(
       (
-        await call("POST", "/api/v1/repos/alice/pub/labels", {
+        await call("POST", "/api/v1/repos/alice/labeled/labels", {
           token: aliceRw,
           body: { name: "bug", color: "ff0000" },
         })
@@ -379,33 +391,33 @@ describe("parity: full control through actions and the API", () => {
     ).toBe(403);
     expect(
       (
-        await call("POST", "/api/v1/repos/alice/pub/labels", {
+        await call("POST", "/api/v1/repos/alice/labeled/labels", {
           token: bobRw,
           body: { name: "bug", color: "ff0000" },
         })
       ).status,
     ).toBe(403);
-    const bug = await call("POST", "/api/v1/repos/alice/pub/labels", {
+    const bug = await call("POST", "/api/v1/repos/alice/labeled/labels", {
       token: aliceAdmin,
       body: { name: "bug", color: "ff0000" },
     });
     expect(bug.status).toBe(201);
-    const queue = await call("POST", "/api/v1/repos/alice/pub/labels", {
+    const queue = await call("POST", "/api/v1/repos/alice/labeled/labels", {
       token: aliceAdmin,
       body: { name: "queue", color: "00ff00" },
     });
     expect(queue.status).toBe(201);
     expect(
-      ((await call("GET", "/api/v1/repos/alice/pub/labels")).json.items as Json[]).map(
+      ((await call("GET", "/api/v1/repos/alice/labeled/labels")).json.items as Json[]).map(
         (l) => l.name,
       ),
     ).toEqual(["bug", "queue"]);
 
-    const one = await call("POST", "/api/v1/repos/alice/pub/issues", {
+    const one = await call("POST", "/api/v1/repos/alice/labeled/issues", {
       token: bobRw,
       body: { title: "first issue" },
     });
-    const two = await call("POST", "/api/v1/repos/alice/pub/issues", {
+    const two = await call("POST", "/api/v1/repos/alice/labeled/issues", {
       token: aliceRw,
       body: { title: "second issue" },
     });
@@ -416,7 +428,7 @@ describe("parity: full control through actions and the API", () => {
     // Bob can read (and even authored #1) but is not a writer: forbidden.
     expect(
       (
-        await call("PUT", `/api/v1/repos/alice/pub/issues/${n1}/labels`, {
+        await call("PUT", `/api/v1/repos/alice/labeled/issues/${n1}/labels`, {
           token: bobRw,
           body: { labels: ["bug"] },
         })
@@ -425,7 +437,7 @@ describe("parity: full control through actions and the API", () => {
     // A read-only token fails the scope floor before anything else.
     expect(
       (
-        await call("PUT", `/api/v1/repos/alice/pub/issues/${n1}/labels`, {
+        await call("PUT", `/api/v1/repos/alice/labeled/issues/${n1}/labels`, {
           token: aliceRo,
           body: { labels: ["bug"] },
         })
@@ -434,7 +446,7 @@ describe("parity: full control through actions and the API", () => {
     // Unknown labels reject the whole set.
     const unknown = await call(
       "PUT",
-      `/api/v1/repos/alice/pub/issues/${n1}/labels`,
+      `/api/v1/repos/alice/labeled/issues/${n1}/labels`,
       {
         token: aliceRw,
         body: { labels: ["bug", "ghost"] },
@@ -443,13 +455,13 @@ describe("parity: full control through actions and the API", () => {
     expect(unknown.status).toBe(422);
     expect(unknown.json.error).toBe("unknown_label");
     expect(
-      (await call("GET", `/api/v1/repos/alice/pub/issues/${n1}`)).json.labels,
+      (await call("GET", `/api/v1/repos/alice/labeled/issues/${n1}`)).json.labels,
     ).toEqual([]);
 
     // By name and by id, case-insensitive, de-duplicated.
     const set = await call(
       "PUT",
-      `/api/v1/repos/alice/pub/issues/${n1}/labels`,
+      `/api/v1/repos/alice/labeled/issues/${n1}/labels`,
       {
         token: aliceRw,
         body: { labels: ["BUG", bug.json.id, "queue"] },
@@ -457,16 +469,16 @@ describe("parity: full control through actions and the API", () => {
     );
     expect(set.status).toBe(200);
     expect(set.list.map((l) => l.name)).toEqual(["bug", "queue"]);
-    await call("PUT", `/api/v1/repos/alice/pub/issues/${n2}/labels`, {
+    await call("PUT", `/api/v1/repos/alice/labeled/issues/${n2}/labels`, {
       token: aliceRw,
       body: { labels: ["queue"] },
     });
 
-    const bugs = await call("GET", "/api/v1/repos/alice/pub/issues?label=bug");
+    const bugs = await call("GET", "/api/v1/repos/alice/labeled/issues?label=bug");
     expect((bugs.json.items as Json[]).map((i) => i.number)).toEqual([n1]);
     const queued = await call(
       "GET",
-      "/api/v1/repos/alice/pub/issues?label=queue",
+      "/api/v1/repos/alice/labeled/issues?label=queue",
     );
     expect((queued.json.items as Json[]).map((i) => i.number)).toEqual([
       n2,
@@ -477,7 +489,7 @@ describe("parity: full control through actions and the API", () => {
     ).toEqual(["queue"]);
     const byBob = await call(
       "GET",
-      "/api/v1/repos/alice/pub/issues?author=bob",
+      "/api/v1/repos/alice/labeled/issues?author=bob",
     );
     expect((byBob.json.items as Json[]).map((i) => i.number)).toEqual([n1]);
 
@@ -486,7 +498,7 @@ describe("parity: full control through actions and the API", () => {
       (
         await call(
           "DELETE",
-          `/api/v1/repos/alice/pub/labels/${queue.json.id}`,
+          `/api/v1/repos/alice/labeled/labels/${queue.json.id}`,
           {
             token: aliceAdmin,
           },
@@ -495,7 +507,7 @@ describe("parity: full control through actions and the API", () => {
     ).toBe(204);
     expect(
       (
-        (await call("GET", `/api/v1/repos/alice/pub/issues/${n2}`)).json
+        (await call("GET", `/api/v1/repos/alice/labeled/issues/${n2}`)).json
           .labels as Json[]
       ).length,
     ).toBe(0);
@@ -513,6 +525,14 @@ describe("parity: full control through actions and the API", () => {
     });
     expect(pr.status).toBe(201);
     const n = pr.json.number as number;
+    expect(
+      (
+        await call("POST", "/api/v1/repos/alice/pub/labels", {
+          token: aliceAdmin,
+          body: { name: "bug", color: "ff0000" },
+        })
+      ).status,
+    ).toBe(201);
 
     // The pull number works on the labels endpoint (one table).
     const labeled = await call(
@@ -855,11 +875,13 @@ describe("parity: full control through actions and the API", () => {
 
     const myOrgs = await call("GET", "/api/v1/user/orgs", { token: aliceRo });
     const orgItems = (r: { json: Json }) => (r.json.items ?? []) as Json[];
-    expect(orgItems(myOrgs).map((o) => o.username)).toEqual(["acme"]);
+    expect(orgItems(myOrgs).map((o) => o.username)).toContain("acme");
     expect(myOrgs.json.next_cursor).toBeNull();
     expect(
-      orgItems(await call("GET", "/api/v1/user/orgs", { token: bobRw })),
-    ).toEqual([]);
+      orgItems(await call("GET", "/api/v1/user/orgs", { token: bobRw })).map(
+        (o) => o.username,
+      ),
+    ).not.toContain("acme");
     for (const kind of [
       "team.created",
       "team.deleted",
@@ -870,49 +892,63 @@ describe("parity: full control through actions and the API", () => {
   });
 
   test("teams and members page as { items, next_cursor }", async () => {
-    await call("POST", "/api/v1/orgs/acme/teams", {
+    // An org of its own: Owners, devs and zeta, nothing another test made.
+    proveAll(app);
+    expect(
+      (await call("POST", "/api/v1/orgs", { token: aliceRw, body: { name: "paging" } }))
+        .status,
+    ).toBe(201);
+    expect(
+      (
+        await call("POST", "/api/v1/orgs/paging/teams", {
+          token: aliceAdmin,
+          body: { name: "devs", permission: "write" },
+        })
+      ).status,
+    ).toBe(201);
+    await call("POST", "/api/v1/orgs/paging/teams", {
       token: aliceAdmin,
       body: { name: "zeta", permission: "read" },
     });
-    const all = await call("GET", "/api/v1/orgs/acme/teams", { token: aliceAdmin });
+    const all = await call("GET", "/api/v1/orgs/paging/teams", { token: aliceAdmin });
     const names = (all.json.items as Json[]).map((t) => t.name as string);
     expect(names.length).toBeGreaterThanOrEqual(3);
     expect(all.json.next_cursor).toBeNull();
-    const first = await call("GET", "/api/v1/orgs/acme/teams?limit=2", { token: aliceAdmin });
+    const first = await call("GET", "/api/v1/orgs/paging/teams?limit=2", { token: aliceAdmin });
     expect((first.json.items as Json[]).map((t) => t.name)).toEqual(names.slice(0, 2));
     expect(first.json.next_cursor).toBe(names[1]!);
     const second = await call(
       "GET",
-      `/api/v1/orgs/acme/teams?limit=200&cursor=${names[1]}`,
+      `/api/v1/orgs/paging/teams?limit=200&cursor=${names[1]}`,
       { token: aliceAdmin },
     );
     expect((second.json.items as Json[]).map((t) => t.name)).toEqual(names.slice(2));
     expect(second.json.next_cursor).toBeNull();
 
     for (const user of ["bob", "carol"])
-      await call("POST", "/api/v1/orgs/acme/teams/devs/members", {
+      await call("POST", "/api/v1/orgs/paging/teams/devs/members", {
         token: aliceAdmin,
         body: { user },
       });
-    const m1 = await call("GET", "/api/v1/orgs/acme/teams/devs/members?limit=1", {
+    const m1 = await call("GET", "/api/v1/orgs/paging/teams/devs/members?limit=1", {
       token: aliceAdmin,
     });
     expect((m1.json.items as Json[]).map((m) => m.username)).toEqual(["bob"]);
     expect(m1.json.next_cursor).toBe("bob");
-    const m2 = await call("GET", "/api/v1/orgs/acme/teams/devs/members?limit=1&cursor=bob", {
+    const m2 = await call("GET", "/api/v1/orgs/paging/teams/devs/members?limit=1&cursor=bob", {
       token: aliceAdmin,
     });
     expect((m2.json.items as Json[]).map((m) => m.username)).toEqual(["carol"]);
     expect(m2.json.next_cursor).toBeNull();
 
     // A member of a private team is not shown to an outsider.
-    const outsider = await call("GET", "/api/v1/orgs/acme/teams/zeta/members", { token: bobRw });
+    const outsider = await call("GET", "/api/v1/orgs/paging/teams/zeta/members", { token: bobRw });
     expect(outsider.status).toBe(404);
     expect(outsider.json.items).toBeUndefined();
 
     for (const path of ["teams", "teams/devs/members"])
       for (const bad of ["0", "201", "-1", "abc", "1.5"]) {
-        const res = await call("GET", `/api/v1/orgs/acme/${path}?limit=${bad}`, {
+        const res = await call("GET", `/api/v1/orgs/paging/${path}?limit=${bad}`, {
           token: aliceAdmin,
         });
         expect(res.status).toBe(422);
@@ -922,7 +958,7 @@ describe("parity: full control through actions and the API", () => {
     // The cursor is only compared: any 1..160 characters, nothing else.
     for (const path of ["teams", "teams/devs/members"])
       for (const bad of ["", "x".repeat(161)]) {
-        const res = await call("GET", `/api/v1/orgs/acme/${path}?cursor=${bad}`, {
+        const res = await call("GET", `/api/v1/orgs/paging/${path}?cursor=${bad}`, {
           token: aliceAdmin,
         });
         expect(res.status).toBe(422);
@@ -930,21 +966,21 @@ describe("parity: full control through actions and the API", () => {
       }
 
     // A name with a control character pages on: its own cursor is accepted.
-    const odd = await call("POST", "/api/v1/orgs/acme/teams", {
+    const odd = await call("POST", "/api/v1/orgs/paging/teams", {
       token: aliceAdmin,
       body: { name: "a\u0001b", permission: "read" },
     });
     expect(odd.status).toBe(201);
     {
-      const list = await call("GET", "/api/v1/orgs/acme/teams", { token: aliceAdmin });
+      const list = await call("GET", "/api/v1/orgs/paging/teams", { token: aliceAdmin });
       const at = (list.json.items as Json[]).findIndex((t) => t.name === "a\u0001b");
-      const page = await call("GET", `/api/v1/orgs/acme/teams?limit=${at + 1}`, {
+      const page = await call("GET", `/api/v1/orgs/paging/teams?limit=${at + 1}`, {
         token: aliceAdmin,
       });
       expect(page.json.next_cursor).toBe("a\u0001b");
       const next = await call(
         "GET",
-        `/api/v1/orgs/acme/teams?cursor=${encodeURIComponent("a\u0001b")}`,
+        `/api/v1/orgs/paging/teams?cursor=${encodeURIComponent("a\u0001b")}`,
         { token: aliceAdmin },
       );
       expect(next.status).toBe(200);
@@ -952,21 +988,34 @@ describe("parity: full control through actions and the API", () => {
 
     // The default page is 50.
     for (let i = 0; i < 50; i++)
-      await call("POST", "/api/v1/orgs/acme/teams", {
+      await call("POST", "/api/v1/orgs/paging/teams", {
         token: aliceAdmin,
         body: { name: `p${String(i).padStart(2, "0")}`, permission: "read" },
       });
-    const dflt = await call("GET", "/api/v1/orgs/acme/teams", { token: aliceAdmin });
+    const dflt = await call("GET", "/api/v1/orgs/paging/teams", { token: aliceAdmin });
     expect((dflt.json.items as Json[]).length).toBe(50);
     expect(dflt.json.next_cursor).not.toBeNull();
   });
 
   test("a team member sees the org's private repos in listings", async () => {
+    proveAll(app);
+    expect(
+      (await call("POST", "/api/v1/orgs", { token: aliceRw, body: { name: "corp" } }))
+        .status,
+    ).toBe(201);
+    expect(
+      (
+        await call("POST", "/api/v1/orgs/corp/teams", {
+          token: aliceAdmin,
+          body: { name: "devs", permission: "write" },
+        })
+      ).status,
+    ).toBe(201);
     await call("POST", "/api/v1/repos", {
       token: aliceRw,
-      body: { owner: "acme", name: "internal", visibility: "private" },
+      body: { owner: "corp", name: "internal", visibility: "private" },
     });
-    await call("POST", "/api/v1/orgs/acme/teams/devs/members", {
+    await call("POST", "/api/v1/orgs/corp/teams/devs/members", {
       token: aliceAdmin,
       body: { user: "bob" },
     });
@@ -974,9 +1023,9 @@ describe("parity: full control through actions and the API", () => {
     const names = (bobSees.json.items as Json[]).map(
       (r) => `${r.ownerName}/${r.name}`,
     );
-    expect(names).toContain("acme/internal");
+    expect(names).toContain("corp/internal");
     expect(names).not.toContain("alice/secret");
-    const carolSees = await call("GET", "/api/v1/users/acme/repos");
+    const carolSees = await call("GET", "/api/v1/users/corp/repos");
     expect((carolSees.json.items as Json[]).length).toBe(0);
   });
 

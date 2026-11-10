@@ -8,9 +8,12 @@ import { holds, weakEtag } from "../http/etag.ts";
 import type { Handler } from "../http/context.ts";
 import type { Router } from "../http/router.ts";
 import { running } from "../kernel/version.ts";
-import { openapi } from "./openapi.ts";
+import { openapi, ROUTES } from "./openapi.ts";
+import { tagList, tagOf } from "./tags.ts";
 
 const MAX = 8;
+/** The tags the document lists. */
+export const TAGS: readonly string[] = tagList(ROUTES.map((r) => tagOf(r.path))).map((t) => t.name);
 const built = new Map<string, { text: string; etag: string }>();
 
 /**
@@ -30,9 +33,40 @@ export function openapiText(origin: string, version: string): { text: string; et
   return hit;
 }
 
+/**
+ * One tag's slice: the same document with only the paths (and operations)
+ * carrying the tag, and the tag list cut to it. Info, servers, security and
+ * components are unchanged. Built per (origin, version, tag); the tag has
+ * been checked against the list, so the cache is bounded by it.
+ */
+export function openapiSliceText(origin: string, version: string, tag: string): { text: string; etag: string } {
+  const key = `${version}\n${origin}\n${tag}`;
+  let hit = built.get(key);
+  if (!hit) {
+    const doc = openapi(origin, version) as { paths: Record<string, Record<string, { tags: string[] }>>; tags: { name: string }[] };
+    const paths: typeof doc.paths = {};
+    for (const [path, ops] of Object.entries(doc.paths)) {
+      const kept = Object.entries(ops).filter(([, op]) => op.tags.includes(tag));
+      if (kept.length > 0) paths[path] = Object.fromEntries(kept);
+    }
+    const text = JSON.stringify({ ...doc, tags: doc.tags.filter((t) => t.name === tag), paths });
+    hit = { text, etag: weakEtag(text) };
+    if (built.size >= MAX * 4) built.delete(built.keys().next().value as string);
+    built.set(key, hit);
+  }
+  return hit;
+}
+
 export function openapiRoute(router: Router<Handler>): void {
   router.add("GET", "/contract/openapi.json", (ctx) => {
-    const hit = openapiText(ctx.url.origin, running().version);
+    const tag = ctx.url.searchParams.get("tag");
+    if (tag !== null && !TAGS.includes(tag)) {
+      return Response.json(
+        { error: "invalid_query", message: `unknown tag; the tags are ${TAGS.join(", ")}` },
+        { status: 400, headers: { "cache-control": "no-store" } },
+      );
+    }
+    const hit = tag === null ? openapiText(ctx.url.origin, running().version) : openapiSliceText(ctx.url.origin, running().version, tag);
     const headers = { "cache-control": "public, max-age=300", etag: hit.etag, vary: "accept-encoding" };
     if (holds(ctx.request, hit.etag)) return new Response(null, { status: 304, headers });
     const type = { "content-type": "application/json", ...headers };

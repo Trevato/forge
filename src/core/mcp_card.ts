@@ -7,6 +7,7 @@
  * later standard's field names; when one settles, the card follows it.
  */
 import type { Database } from "bun:sqlite";
+import { claudeInstall, opencodeInstall, pluginSource } from "./plugin_install.ts";
 import { running, type Running } from "../kernel/version.ts";
 import { forgeSource } from "../settings/forge_source.ts";
 import { repoVisibility } from "./repos.ts";
@@ -62,6 +63,8 @@ export interface HarnessPlugin {
   readonly harness: string;
   readonly label: string;
   readonly path: string;
+  /** True when the install clones the source repository (so it needs one offered); false when this forge serves the file itself. */
+  readonly cloned: boolean;
   /** The one line, given the origin it was read from and the source repository; it works in an empty directory. */
   readonly install: (origin: string, repo: string) => string;
   /** What to set before it runs. */
@@ -84,20 +87,7 @@ export function offeredPluginRepo(db: Database, fromEnv: string | undefined, ups
   return upstream;
 }
 
-/** Where a plugin repository lives: `owner/name` is on this forge's origin, a full URL is its own. */
-function pluginBase(origin: string, repo: string): string {
-  return repo.startsWith("https://") ? repo : `${origin}/${repo}`;
-}
-
-/** The two Claude Code lines that install the plugin from the marketplace. */
-export function marketplaceLines(origin: string, repo: string): { add: string; install: string } {
-  return { add: `/plugin marketplace add ${pluginSource(origin, repo)}`, install: "/plugin install forge@forge" };
-}
-
-/** The clone URL of that repository on this forge's origin. */
-export function pluginSource(origin: string, repo: string): string {
-  return `${pluginBase(origin, repo)}.git`;
-}
+export { pluginSource };
 
 /** The one list the card and /llms.txt both read, so they cannot drift. */
 export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
@@ -105,19 +95,24 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     harness: "claude-code",
     label: "Claude Code",
     path: "plugins/claude-code",
-    install: (o, r) =>
-      `git clone --depth 1 --filter=blob:none --sparse ${pluginSource(o, r)} forge-plugin && git -C forge-plugin sparse-checkout set plugins/claude-code && claude --plugin-dir forge-plugin/plugins/claude-code`,
+    cloned: true,
+    install: (o) => claudeInstall(o),
     setup: "set FORGE_URL, then sign in through /mcp with the forge server; or also set FORGE_TOKEN and use the forge-token server",
   },
   {
     harness: "opencode",
     label: "OpenCode",
     path: "plugins/opencode/forge.ts",
-    install: (o, r) =>
-      `mkdir -p .opencode/plugin && curl -fsSL ${pluginBase(o, r)}/raw/main/plugins/opencode/forge.ts -o .opencode/plugin/forge.ts`,
+    cloned: false,
+    install: (o) => opencodeInstall(o),
     setup: "set FORGE_URL and FORGE_TOKEN",
   },
 ];
+
+/** The plugins this forge can offer: the ones it serves itself always, the cloned ones only while a public source exists. */
+export function offeredPlugins(repo: string | undefined): readonly HarnessPlugin[] {
+  return HARNESS_PLUGINS.filter((p) => !p.cloned || repo !== undefined);
+}
 
 /**
  * The server card. The format is still a draft, so only what we can keep
@@ -136,11 +131,11 @@ export function mcpCard(origin: string, repo: string | undefined, now: Running =
     documentation: `${origin}${DISCOVERY.docs}`,
     openapi: `${origin}${DISCOVERY.openapi}`,
     tokenFreeTools: [...TOKEN_FREE_TOOLS],
-    plugins: (repo === undefined ? [] : HARNESS_PLUGINS).map((p) => ({
+    plugins: offeredPlugins(repo).map((p) => ({
       harness: p.harness,
       path: p.path,
-      source: pluginSource(origin, repo!),
-      install: p.install(origin, repo!),
+      ...(repo !== undefined ? { source: pluginSource(origin, repo) } : {}),
+      install: p.install(origin, repo ?? ""),
     })),
   };
 }

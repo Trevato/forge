@@ -39,6 +39,7 @@ import { countRows, type DrillCounts } from "./counts.ts";
 import { pack, partPath, PART_BYTES, type PackedFile } from "./parts.ts";
 import type { Store } from "./store.ts";
 import { unwrapKey, wrapKey, WRAPPED_KEY } from "./wrap.ts";
+import { during } from "../perf/jobs.ts";
 
 const log = createLog("snapshot");
 
@@ -291,7 +292,7 @@ export async function takeSnapshot(
       elapsedMs: Date.now() - started,
     });
   };
-  const ticker = setInterval(say, everyMs);
+  const ticker = setInterval(() => during("snapshot-report", say), everyMs);
   const pending = new Set<Promise<void>>();
   const before = forge.resume ? await readJournal(store, prefix) : new Map<string, Landed>();
   const journal = new Map<string, Landed>();
@@ -308,9 +309,9 @@ export async function takeSnapshot(
   };
   // A release kills the process without running a `finally`: what landed must
   // already be written, so a changed journal goes out on a clock too.
-  const journalTicker = setInterval(() => {
+  const journalTicker = setInterval(() => during("snapshot-journal", () => {
     if (unwritten) writeJournal();
-  }, forge.journalEveryMs ?? JOURNAL_MS);
+  }), forge.journalEveryMs ?? JOURNAL_MS);
   const remember = (path: string, l: Landed): void => {
     journal.set(path, l);
     unwritten = true;

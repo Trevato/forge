@@ -14,6 +14,10 @@
  * owners, on the speed card and the terminal line; a signed-in forge admin
  * also gets them on the relayed answer as `forge-stall` (`stallTiming`).
  *
+ * Every reading here is taken on the server side, whoever asked: the
+ * relayed answer's `forge-*` entries go only to the app's writers and the
+ * forge's admins (#11112), and nothing here reads them back from a header.
+ *
  * Process memory, not the database: one O(1) compare per relay, at most
  * `KEEP_APPS` apps (the oldest reading goes first), gone on restart. The
  * stalls are read only when the forge waited, and at most `HELD_NAMES` kept.

@@ -1,7 +1,8 @@
 /**
  * The worst event-loop lag of the last 10 s (#10288): the window by hand,
- * then a real 150 ms block seen as `lag;dur` on the next response and as
- * `loopLagMs` on `/healthz`, and gone once the injected clock steps 10 s.
+ * then a real 150 ms block seen as `lag;dur` on an admin's next response and
+ * as `loopLagMs` on `/healthz`, and gone once the injected clock steps 10 s.
+ * A stranger's response and a signed-in non-admin's carry no `lag` (#11112).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -11,6 +12,9 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { withLag } from "../src/core/route_timing.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { createUser } from "../src/core/users.ts";
+import { adminCookie } from "./helpers/admin.ts";
 import { createLoopWorst, startLoopWorst, stopLoopWorst } from "../src/perf/loop_worst.ts";
 
 function blockFor(ms: number): void {
@@ -82,6 +86,11 @@ describe("on every response", () => {
   let app: App;
   let servers: Servers;
   let skew = 0;
+  let admin: string;
+  let member: string;
+  /** A matched route (the session is read there), as the cookie's holder. */
+  const page = (cookie?: string) =>
+    fetch(`${servers.url}/nobody/nothing`, cookie === undefined ? {} : { headers: { cookie } });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-loop-worst-"));
@@ -91,6 +100,10 @@ describe("on every response", () => {
     stopLoopWorst();
     startLoopWorst({ clock: () => performance.now() + skew, everyMs: 5 });
     servers = await serve(app);
+    admin = await adminCookie(app, { username: "alice", email: "alice@forge.local" });
+    const made = await createUser(app.db, { origin: "seed", trusted: true, username: "carol", email: "carol@forge.local", password: "a-good-passphrase" });
+    if (!made.ok) throw new Error(made.error);
+    member = `forge_session=${createSession(app.db, made.value.id).token}`;
   });
 
   afterAll(async () => {
@@ -104,11 +117,18 @@ describe("on every response", () => {
     blockFor(150);
     // The overdue wake runs before this one: timers fire in due order.
     await new Promise((r) => setTimeout(r, 0));
-    const res = await fetch(`${servers.url}/nope`);
+    const res = await page(admin);
     await res.text();
     const header = res.headers.get("server-timing");
     expect(header).toContain("app;dur=");
     expect(lagOf(header)).toBeGreaterThanOrEqual(140);
+    // The same lag, untold to a stranger and to a signed-in non-admin.
+    for (const cookie of [undefined, member]) {
+      const other = await page(cookie);
+      await other.text();
+      expect(other.headers.get("server-timing")).toContain("app;dur=");
+      expect(lagOf(other.headers.get("server-timing"))).toBeNull();
+    }
 
     const health = await fetch(`${servers.url}/healthz`, { headers: { accept: "application/json" } });
     const body = (await health.json()) as { ok: boolean; loopLagMs: number };
@@ -121,7 +141,7 @@ describe("on every response", () => {
     stopLoopWorst();
     startLoopWorst({ clock: () => performance.now() + skew, everyMs: 60_000 });
     skew += 10_000;
-    const later = await fetch(`${servers.url}/nope`);
+    const later = await page(admin);
     await later.text();
     expect(lagOf(later.headers.get("server-timing"))).toBe(0);
   });

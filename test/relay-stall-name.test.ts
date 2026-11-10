@@ -2,7 +2,8 @@
  * A relayed wait the forge held says what held it (#11000): the stall's
  * route pattern or `job:<name>`, the longest first, on the app's speed card
  * and terminal line; a signed-in forge admin also gets `forge-stall` on the
- * relayed answer, and nobody else does.
+ * relayed answer, and nobody else does: a visitor and a reader who may not
+ * write the app get no `forge-` entry at all (#11112).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -199,9 +200,8 @@ describe("forge-stall on the relayed answer", () => {
         const res = await asViewer(who);
         expect(res.status).toBe(200);
         const header = res.headers.get("server-timing") ?? "";
-        // The wait was the forge's (forge-lag is there) but the stall is not told.
-        expect(header).toContain("forge-lag;dur=");
-        expect(header).not.toContain("forge-stall");
+        // The wait was the forge's, but neither it nor the stall is told (#11112).
+        expect(header).not.toContain("forge-");
         expect(header).not.toContain("job:");
       }
     }

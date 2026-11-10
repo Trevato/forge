@@ -21,6 +21,7 @@ import {
   cleanQuery,
   searchKind,
   grepRepos,
+  greppable,
   searchLocalIssues,
   matchOneRepo,
   searchLocalRepos,
@@ -185,7 +186,8 @@ export async function search(
 
   const codeAt = performance.now();
   const code =
-    wants("code") && input.withCode !== false
+    // A one-letter query greps nothing: it would match every line (#11120).
+    wants("code") && input.withCode !== false && greppable(q)
       ? await grepRepos(
           app.reposRoot,
           visible,

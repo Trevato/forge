@@ -16,12 +16,13 @@
  * stall nothing named ran across.
  */
 
-export const LIMIT_MS = 250;
+/** A wake later than this is a stall, ms (#11069: 200, so a stall the probes would feel is named). */
+export const LIMIT_MS = 200;
 const RECENT = 256;
 /** The window `StallTally.hour` covers, in ms. */
 export const HOUR_MS = 3_600_000;
-/** Stalls kept for the hour: a stall is over 250 ms, so 14,400 fill an hour solid. */
-const HOUR_KEPT = 14_400;
+/** Stalls kept for the hour: a stall is over 200 ms, so 18,000 fill an hour solid. */
+const HOUR_KEPT = 18_000;
 /** The route a stall is counted against when no request ran across it. */
 export const NO_REQUEST = "none";
 /** The prefix a background job's name is tallied under, apart from routes. */

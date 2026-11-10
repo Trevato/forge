@@ -8,8 +8,8 @@ import { search } from "../src/actions/search.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve } from "../src/http/server.ts";
-import { grepCount } from "../src/core/search.ts";
-import { warmSearch } from "../src/search/warm.ts";
+import { MIN_CODE_QUERY, grepCount } from "../src/core/search.ts";
+import { WARM_QUERY, warmSearch } from "../src/search/warm.ts";
 
 let dir = "";
 let app: ReturnType<typeof createApp>;
@@ -39,11 +39,13 @@ test("a warm fills the grep cache: a budgeted visit then finds every repository'
     for (let i = 0; i < 4; i++) {
       await post("/api/v1/repos", { name: `w${i}`, visibility: "public" });
       await post(`/api/v1/repos/alice/w${i}/contents`, {
-        branch: "main", message: "c", files: [{ path: "a.txt", content: "a\n" }],
+        branch: "main", message: "c", files: [{ path: "a.txt", content: "an\n" }],
       });
     }
     // Unwarmed, this budgeted visit would grep all four itself.
-    const budgeted = () => search(app, undefined, { q: "a", kind: "code", codeBudgetMs: 5_000 });
+    const budgeted = () => search(app, undefined, { q: WARM_QUERY, kind: "code", codeBudgetMs: 5_000 });
+    // The default warm greps: its query is long enough (#11120).
+    expect([...WARM_QUERY].length).toBeGreaterThanOrEqual(MIN_CODE_QUERY);
     const before = grepCount();
     await warmSearch(app);
     expect(grepCount() - before).toBeGreaterThanOrEqual(4);

@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "crew" | "board" | "forks";
+export type CardKind = "app" | "run" | "asks" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "scorecard" | "crew" | "board" | "forks" | "milestones" | "release";
 
 export interface CardRow {
   readonly label: string;
@@ -20,6 +20,8 @@ export interface CardRow {
   readonly link?: string;
   /** How many steps the row is nested (a tree): the card pads the label by this much. */
   readonly depth?: number;
+  /** The row's own buttons: what the person can do with this one row. */
+  readonly actions?: readonly CardAction[];
 }
 export interface CardAction {
   readonly label: string;
@@ -42,15 +44,17 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "crew", "board", "forks"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "asks", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "scorecard", "crew", "board", "forks", "milestones", "release"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   apps: "app",
-  now: "run",
+  now: "crew",
   runs: "run",
-  asks: "decision",
-  milestones: "wave",
+  asks: "asks",
+  milestones: "milestones",
+  releases: "release",
+  asks_act: "asks",
   waves: "wave",
   map: "map",
   feed: "feed",
@@ -61,7 +65,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   asked: "asked",
   issue: "issue",
   flow: "flow",
-  scorecard: "crew",
+  scorecard: "scorecard",
   boards: "board",
   fork_tree: "forks",
 };
@@ -69,7 +73,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   app: "Apps",
   run: "Working now",
-  decision: "Waiting on you",
+  asks: "Waiting on you",
   wave: "Wave",
   map: "Plan",
   feed: "Feed",
@@ -79,9 +83,12 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   asked: "Asked",
   issue: "Issue",
   flow: "Flow",
-  crew: "Crew",
+  scorecard: "Crew",
+  crew: "Working now",
   board: "Board",
   forks: "Forks",
+  milestones: "Milestones",
+  release: "Releases",
 };
 
 type Obj = Record<string, unknown>;
@@ -95,6 +102,9 @@ const FEED_LIMIT = 10;
 const PULLS_LIMIT = 20;
 const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
+const RELEASE_ROWS = 20;
+/** A waiting row's words are cut to this many characters. */
+const SAYS_WORDS = 160;
 /** A board card shows this many panels, then counts the rest. */
 const BOARD_PANELS = 8;
 /** A forks card shows this many nodes, then counts the rest. */
@@ -207,7 +217,41 @@ export function cardFor(
     if (v["truncated"] === true) rows.push({ label: "Truncated", value: "more forks exist than the tool returned; ask with a larger limit or a smaller depth" });
     return { kind, title: CARD_TITLE[kind], status: `${nodes.length} repositor${nodes.length === 1 ? "y" : "ies"} · from ${text(v["root"])}`, rows, actions };
   }
+  if (tool === "asks_act") {
+    // Only a done bulk action has a card: its receipt, and the undo that takes it back.
+    // A plan (`dryRun`) or a `listen` has no `receipt`.
+    const v = obj(value);
+    const operation = text(v["id"]);
+    if (text(v["receipt"]) === "" || operation === "") return undefined;
+    rows.push({ label: "Receipt", value: text(v["receipt"]) });
+    if (v["undoOf"] == null && v["undoneBy"] == null)
+      actions.push({ label: "Undo", tool: "asks_act", args: { action: "undo", operation } });
+    return { kind, title: "Asks decided", status: text(v["receipt"]), rows, actions };
+  }
   if (kind === "crew") {
+    // `now` answers crewNow's rows; a waiting row has `run: null` and its words in `says`.
+    const crew = list(value).map(obj);
+    status = crew.length === 0 ? "nothing running" : `${crew.length} going`;
+    for (const r of crew.slice(0, LIMIT)) {
+      const cost = Number(r["costUsd"]) > 0 ? ` · $${Number(r["costUsd"]).toFixed(2)}` : "";
+      const since = text(r["since"]) === "" ? "" : ` · ${timeAgo(text(r["since"]))}`;
+      const says = r["run"] === null ? text(r["says"]).replace(/\s+/g, " ").trim() : "";
+      const words = says === "" ? "" : ` — ${says.length > SAYS_WORDS ? `${says.slice(0, SAYS_WORDS - 1)}…` : says}`;
+      rows.push({
+        label: `${text(r["who"])} on ${text(r["app"])}`,
+        value: `${text(r["on"]) === "" ? "" : `${text(r["on"])} — `}${text(r["state"])}${since}${cost}${words}`,
+        ...(web(origin) && slugOf(text(r["app"])) && RUN_ID.test(text(r["run"]))
+          ? { link: `${origin}/${text(r["app"])}/runs/${text(r["run"])}` }
+          : {}),
+      });
+      if (r["run"] && actions.length < 3)
+        actions.push({ label: `Stop ${text(r["who"])}`, tool: "stop", args: { repo: text(r["app"]), run: text(r["run"]) } });
+    }
+    // The card shows LIMIT rows; the rest are counted, never dropped silently.
+    if (crew.length > LIMIT) rows.push({ label: "More", value: `+${crew.length - LIMIT} more` });
+    return { kind, title: CARD_TITLE[kind], status, rows, actions };
+  }
+  if (kind === "scorecard") {
     // `scorecard` answers `{ agents: [{ username, all, recent }], keeperDays: [{ landed }] }`.
     const v = obj(value);
     if (!Array.isArray(v["agents"])) return undefined;
@@ -290,6 +334,23 @@ export function cardFor(
         ...(web(origin) && slugOf(slug) && /^[1-9]\d*$/.test(number) && here(origin, path)
           ? { link: origin + path }
           : {}),
+      });
+    }
+    return { kind, title: CARD_TITLE[kind], status, rows, actions };
+  }
+  if (kind === "release") {
+    // `releases` answers `{ items: [{ sha, version, pull?, landed, proof, live? }] }`; the shipped list has no `items`, so no card.
+    const items = list(obj(value)["items"]).map(obj);
+    if (!Array.isArray(obj(value)["items"])) return undefined;
+    const count = (w: string): number => items.filter((i) => i["proof"] === w).length;
+    status = `${items.length} kept · ${count("proven")} proven · ${count("unproven")} unproven · ${count("rolled back")} rolled back`;
+    for (const i of items.slice(0, RELEASE_ROWS)) {
+      const p = obj(i["pull"]);
+      const pull = text(p["number"]) === "" ? "" : `#${text(p["number"])} · `;
+      const at = text(i["landed"]);
+      rows.push({
+        label: text(i["version"]) || text(i["sha"]),
+        value: `${at === "" ? "" : `${timeAgo(at)} · `}${pull}${text(i["proof"])}`,
       });
     }
     return { kind, title: CARD_TITLE[kind], status, rows, actions };
@@ -378,9 +439,10 @@ export function cardFor(
     status = runs.length === 0 ? "nothing running" : `${runs.length} going`;
     for (const r of runs.slice(0, LIMIT)) {
       const cost = Number(r["costUsd"]) > 0 ? ` · $${Number(r["costUsd"]).toFixed(2)}` : "";
+      const since = text(r["since"]) === "" ? "" : ` · ${timeAgo(text(r["since"]))}`;
       rows.push({
         label: `${text(r["who"])} on ${text(r["app"])}`,
-        value: `${text(r["on"])} — ${text(r["state"])}${cost}`,
+        value: `${text(r["on"]) === "" ? "" : `${text(r["on"])} — `}${text(r["state"])}${since}${cost}`,
         ...(web(origin) && /^[^/]+\/[^/]+$/.test(text(r["app"])) && RUN_ID.test(text(r["run"]))
           ? { link: `${origin}/${text(r["app"])}/runs/${text(r["run"])}` }
           : {}),
@@ -388,36 +450,35 @@ export function cardFor(
       if (r["run"] && actions.length < 3)
         actions.push({ label: `Stop ${text(r["who"])}`, tool: "stop", args: { repo: text(r["app"]), run: text(r["run"]) } });
     }
-  } else if (kind === "decision") {
+  } else if (kind === "asks") {
     const asks = list(obj(value)["rows"]).map(obj);
-    status = asks.length === 0 ? "nothing waits" : `${asks.length} waiting`;
+    status = asks.length === 0 ? "Nothing waits on you." : `${asks.length} waiting`;
     for (const a of asks.slice(0, LIMIT)) {
       const words = obj(a["words"]);
       const repo = text(a["repo"]);
       const number = Number(a["number"]);
       const page = a["numberOf"] === "pull" ? "pulls" : a["numberOf"] === "issue" ? "issues" : "";
+      const at = text(a["link"]);
+      const waited = text(a["since"]) === "" ? "" : `waiting ${timeAgo(text(a["since"]))}`.replace(" ago", "");
+      const what = `${text(words["decision"])} ${list(words["options"]).map(text).join(" / ")}`.trim();
+      const items = list(a["items"]).map(text);
+      const kindOf = text(a["kind"]);
+      // No `dryRun`: the press is the dry run `asks_act` defaults to, and the
+      // host shows what would change before anything ships or closes. The
+      // tools check the same permission the page's buttons do.
+      const one: CardAction | undefined =
+        items.length === 0 || kindOf === "proposal" || kindOf === "paused" ? undefined
+        : kindOf === "look" || kindOf === "review" ? { label: "Ship", tool: "asks_act", args: { action: "ship", items } }
+        : kindOf === "parked" ? (items.length === 1 ? { label: "Decide", tool: "asks_decide", args: { item: items[0] } } : undefined)
+        : { label: "Decline", tool: "asks_act", args: { action: "close", items } };
       rows.push({
         label: text(a["line"]),
-        value: `${text(words["decision"])} ${list(words["options"]).map(text).join(" / ")}`.trim(),
+        value: [waited, what].filter((x) => x !== "").join(" · "),
         ...(web(origin) && slugOf(repo) && Number.isInteger(number) && number > 0 && page !== ""
           ? { link: `${origin}/${repo}/${page}/${number}` }
-          : {}),
+          : web(origin) && here(origin, at) ? { link: origin + at } : {}),
+        ...(one === undefined ? {} : { actions: [one] }),
       });
-    }
-    const first = asks[0];
-    if (first !== undefined) {
-      const items = list(first["items"]).map(text);
-      const kindOf = text(first["kind"]);
-      // No `dryRun`: the press is the dry run `asks_act` defaults to, and the
-      // host shows what would change before anything ships or closes. Redirect
-      // sends the typed words to `say` on the row's own pull or issue.
-      if (kindOf === "look" || kindOf === "review")
-        actions.push({ label: "Approve", tool: "asks_act", args: { action: "ship", items } });
-      actions.push({ label: "Decline", tool: "asks_act", args: { action: "close", items } });
-      const repo = text(first["repo"]);
-      const number = Number(first["number"]);
-      if (repo !== "" && Number.isInteger(number) && number > 0)
-        actions.push({ label: "Redirect", tool: "say", args: { repo, number }, words: true });
     }
   } else if (kind === "map") {
     const v = obj(value);
@@ -486,6 +547,8 @@ export function cardFor(
         });
     }
   } else {
+    // One milestone opened (`issue`) answers without `limbs`: plain JSON.
+    if (!Array.isArray(obj(value)["limbs"]) || "buildingNow" in obj(value)) return undefined;
     const limbs = list(obj(value)["limbs"]).map(obj);
     const repo = obj(obj(value)["repo"]);
     const slug = `${text(repo["owner"])}/${text(repo["name"])}`;
@@ -513,6 +576,21 @@ export const SHELL_JS = `
 const root = document.getElementById("card");
 const el = (tag, text, cls) => { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; return e; };
 let n = 0;
+let field = null;
+function button(a) {
+  const b = el("button", a.label);
+  b.onclick = () => {
+    let args = a.args;
+    if (a.words) {
+      const said = field.value.trim();
+      if (said === "") { field.focus(); return; }
+      args = { ...a.args, text: said };
+      if (a.args.context && typeof a.args.context === "object") args.context = { ...a.args.context, said };
+    }
+    parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "tools/call", params: { name: a.tool, arguments: args } }, "*");
+  };
+  return b;
+}
 function draw(card) {
   root.replaceChildren(el("h2", card.title), el("p", card.status, "status"));
   const dl = document.createElement("dl");
@@ -520,25 +598,14 @@ function draw(card) {
     const dt = el("dt", r.label);
     if (r.depth > 0) dt.style.paddingInlineStart = Math.min(8, r.depth) * 1.25 + "em";
     if (r.link && (r.link.startsWith("https://") || r.link.startsWith("http://"))) { const a = el("a", r.label); a.href = r.link; a.target = "_blank"; a.rel = "noopener noreferrer"; a.onclick = (ev) => { ev.preventDefault(); parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "ui/open-link", params: { url: r.link } }, "*"); }; dt.replaceChildren(a); }
-    dl.append(dt, el("dd", r.value));
+    const dd = el("dd", r.value);
+    for (const a of r.actions || []) dd.append(button(a));
+    dl.append(dt, dd);
   }
   root.append(dl);
-  const field = card.actions.some((a) => a.words) ? document.createElement("input") : null;
+  field = card.actions.some((a) => a.words) ? document.createElement("input") : null;
   if (field) { field.type = "text"; field.maxLength = 2000; field.placeholder = "Your words"; field.setAttribute("aria-label", "Your words"); root.append(field); }
-  for (const a of card.actions) {
-    const b = el("button", a.label);
-    b.onclick = () => {
-      let args = a.args;
-      if (a.words) {
-        const said = field.value.trim();
-        if (said === "") { field.focus(); return; }
-        args = { ...a.args, text: said };
-        if (a.args.context && typeof a.args.context === "object") args.context = { ...a.args.context, said };
-      }
-      parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "tools/call", params: { name: a.tool, arguments: args } }, "*");
-    };
-    root.append(b);
-  }
+  for (const a of card.actions) root.append(button(a));
 }
 addEventListener("message", (e) => {
   if (e.source !== parent) return;

@@ -32,78 +32,7 @@ export type Exclusion = {
   issue: number;
 };
 
-export const EXCLUDED: readonly Exclusion[] = [
-  { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/apps-open-host.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  {
-    file: "test/apps-sleep.test.ts",
-    reason: "red alone under --randomize (2026-11-10): an environment nobody asks for sleeps, and the next request wakes it — times out at 30s",
-    issue: 11049,
-  },
-  {
-    file: "test/board-windows.test.ts",
-    reason: "red alone under --randomize (2026-11-10): the batch agrees with each account read alone — order-dependent",
-    issue: 11049,
-  },
-  {
-    file: "test/crew-interrupted.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  {
-    file: "test/parity.test.ts",
-    reason: "red alone under --randomize (2026-11-10): a pull reopened, team listings and profile edits depend on earlier tests' state",
-    issue: 11049,
-  },
-  {
-    file: "test/probe.test.ts",
-    reason: "red alone under --randomize (2026-11-10): a scaffolded app obeys every cell: verdict mismatch, not ok",
-    issue: 11049,
-  },
-  {
-    file: "test/probes.test.ts",
-    reason: "red alone under --randomize (2026-11-10): the first clean probe after closes the issue: verdict down, not ok",
-    issue: 11049,
-  },
-  { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/public-url.test.ts",
-    reason: "red alone under --randomize (2026-11-10): clone URLs name the public address: create answers 401 when run before signup",
-    issue: 11049,
-  },
-  {
-    file: "test/rehearsal-real.test.ts",
-    reason: "red on main@accaa65 under the gate: the second real roll's old forge does not come up",
-    issue: 7632,
-  },
-  { file: "test/scaffold.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/snapshot-destination.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  {
-    file: "test/snapshot.test.ts",
-    reason: "red alone under --randomize (2026-11-10): retention, restore and upload tests share one store and depend on order",
-    issue: 11049,
-  },
-  { file: "test/ssh-app.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/ssh-port-taken.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/ssh.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/tui-asked.test.ts",
-    reason: "red alone under --randomize (2026-11-10): the asked screen lists asks other tests filed — order-dependent",
-    issue: 11049,
-  },
-];
+export const EXCLUDED: readonly Exclusion[] = [];
 
 /**
  * Everything wrong with the quarantine, against the test files that exist:
@@ -185,8 +114,8 @@ export async function treeGate(tree: string, key: string): Promise<string[]> {
  * What the check prints when the quarantine is wrong: every problem, then
  * one last line naming the files to fix. Empty when it is right.
  */
-export function gateRefusal(present: readonly string[]): string[] {
-  const problems = auditGate(present, EXCLUDED);
+export function gateRefusal(present: readonly string[], excluded: readonly Exclusion[] = EXCLUDED): string[] {
+  const problems = auditGate(present, excluded);
   if (problems.length === 0) return [];
   const named = [
     ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),

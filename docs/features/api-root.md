@@ -13,7 +13,7 @@ curl -i https://forge.example/api/v1
   "name": "forge",
   "version": "0.7.480",
   "commit": "1bda42c9…",
-  "openapi": "https://forge.example/api/v1/openapi.json",
+  "openapi": "https://forge.example/contract/openapi.json",
   "mcp": "https://forge.example/mcp",
   "oauth": "https://forge.example/.well-known/oauth-protected-resource",
   "llms": "https://forge.example/llms.txt",

@@ -124,7 +124,9 @@ describe("the asked screen", () => {
   });
 
   test("asks are unshipped, oldest first, with their address, and an unreadable repository's is absent", () => {
-    const { asks } = askedLines(app.db, alice);
+    // Only the asks this file filed up front: other tests file their own.
+    const filed = new Set(["Newer ask for the lobby", "Older ask for the lobby", "Already shipped ask", "Secret ask in the vault"]);
+    const asks = askedLines(app.db, alice).asks.filter((a) => filed.has(a.title));
     expect(asks.map((a) => a.title)).toEqual(["Older ask for the lobby", "Newer ask for the lobby"]);
     expect(asks[0]!.secondary).toContain("alice/lobby #");
     expect(asks[0]!.secondary).toContain("alice");

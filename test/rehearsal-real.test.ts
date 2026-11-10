@@ -4,10 +4,7 @@
  * signalled refuses the requests routers still send it; one that lingers
  * past a probe period refuses none.
  *
- * Out of the gate (`scripts/gate.ts` EXCLUDED) under #7632: under the gate
- * on main@accaa65 the second roll's old forge does not come up, and every
- * proof went red on it, so nothing landed. The nightly outside-gate run
- * still runs it; it rejoins with #7632.
+ * In the gate (#11098); `scripts/flake-hunt.ts admit` is how it is proven.
  */
 
 import { describe, expect, test } from "bun:test";

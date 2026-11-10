@@ -10,7 +10,7 @@
 
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
-import { cleanQuery } from "../core/search.ts";
+import { greppable } from "../core/search.ts";
 import { guestCodeSearch } from "../http/strangers.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { nearRepos } from "../core/near_repos.ts";
@@ -81,6 +81,7 @@ import { noteRead, telemetryReader } from "../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../system/telemetry.ts";
 import { apiScreen } from "./screens/api.ts";
 import { changelogScreen } from "./screens/changelog.ts";
+import { docsScreen } from "./screens/docs.ts";
 import { keeperScreen } from "./screens/keeper.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
@@ -514,6 +515,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
       hint: "the forge's endpoints; run a GET",
       run: () => ctx.push(apiScreen(session, ctx)),
     });
+    // The forge's documentation, as /docs lists it: for anyone.
+    commands.push({
+      id: "docs",
+      title: "Docs",
+      hint: "the forge's documentation; Enter reads one",
+      run: () => ctx.push(docsScreen(ctx)),
+    });
     // The last releases with their pulls, as /changelog shows them: for anyone.
     commands.push({
       id: "changelog",
@@ -658,7 +666,8 @@ export function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
     // A guest is a stranger with a key: its search greps code under the same
     // limits as the page's and the API's (`http/strangers.ts`), counted
     // under its peer address. Refused, everything but the code is searched.
-    const greps = session.user === undefined && cleanQuery(query) !== "";
+    // A one-letter query greps nothing (#11120), so it takes no slot either.
+    const greps = session.user === undefined && greppable(query);
     const held = greps
       ? guestCodeSearch(session.app, session.identity.remoteAddress)
       : undefined;

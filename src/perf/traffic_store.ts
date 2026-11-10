@@ -31,6 +31,7 @@ import {
   type TrafficTops,
   type TrafficTotals,
 } from "./traffic.ts";
+import { during } from "./jobs.ts";
 
 const MINUTE_MS = 60_000;
 const HOUR_MINUTES = 60;
@@ -141,14 +142,14 @@ export function createTrafficWriter(
     trimmedHour = hour;
     ledger.markWritten(snaps.map((s) => s.minute));
   };
-  const tick = setInterval(() => {
+  const tick = setInterval(() => during("traffic", () => {
     try {
       flush();
     } catch (error) {
       // The minutes stay in the ledger; the next tick writes them.
       log.warn("could not write traffic history", { error: String(error) });
     }
-  }, flushMs);
+  }), flushMs);
   tick.unref();
   return {
     flush,

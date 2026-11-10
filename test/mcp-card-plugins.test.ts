@@ -64,10 +64,9 @@ test("card and llms.txt name both plugins, their install lines, and paths that e
     expect(p.install).not.toMatch(/\bcp /);
   }
   const claude = card.plugins.find((p: any) => p.harness === "claude-code");
-  expect(claude.install).toContain("--sparse");
-  expect(claude.install).toContain("--plugin-dir forge-plugin/plugins/claude-code");
+  expect(claude.install).toBe(`claude plugin marketplace add ${servers.url}/plugins/claude-code/marketplace.json && claude plugin install forge@forge`);
   const oc = card.plugins.find((p: any) => p.harness === "opencode");
-  expect(oc.install).toContain(`curl -fsSL ${servers.url}/trevato/forge/raw/main/plugins/opencode/forge.ts`);
+  expect(oc.install).toContain(`${servers.url}/plugins/opencode/forge.ts`);
   for (const p of card.plugins) expect(existsSync(join(import.meta.dir, "..", p.path))).toBe(true);
   expect(card.name).toBe("forge");
 });
@@ -113,10 +112,10 @@ test("the upstream stands in while the own repository is private or unset, and w
   await setVisibility("public");
   expect(offeredPluginRepo(app.db, "trevato/forge", UPSTREAM_REPO)).toBe("trevato/forge");
   await setVisibility("private");
-  // Neither source: no repository, which llms.txt prints as the "not offered" line.
+  // Neither source: the cloned plugin is not offered; the one this forge serves still is.
   expect(offeredPluginRepo(bare.db, undefined, undefined)).toBeUndefined();
   expect(offeredPluginRepo(app.db, "trevato/forge", undefined)).toBeUndefined();
   const { mcpCard } = await import("../src/core/mcp_card.ts");
-  expect(mcpCard("http://x.test", undefined).plugins).toEqual([]);
+  expect(mcpCard("http://x.test", undefined).plugins.map((p: any) => p.harness)).toEqual(["opencode"]);
   bare.close();
 });
