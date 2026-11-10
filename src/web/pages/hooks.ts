@@ -84,6 +84,7 @@ export function hooksPage(ctx: Ctx): Response {
           ${hooks.map((hook) => {
             const deliveries = recent.get(hook.id) ?? [];
             return row({
+              nav: true,
               title: html`<span class="mono">${hook.url}</span>`,
               titleAttr: hook.url,
               meta: html`<span class="mono">${hook.kinds}</span> · ${dot(hook.active ? "success" : "attn")}${hook.active
