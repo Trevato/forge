@@ -175,6 +175,8 @@ const ORDER: readonly PaneId[] = ["repos", "onyou", "machine"];
 export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let repos: Repo[] = [];
   let all: Repo[] = [];
+  /** What a typed filter found past `all`, for the query it was read for. */
+  let found: { query: string; repos: Repo[] } | undefined;
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
@@ -341,6 +343,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     everyday = everydayHead();
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
+    found = undefined;
     onYou = assignedToMe();
     onYouSteps = new Map(
       onYou.flatMap((item) => {
@@ -854,9 +857,26 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** Yours with an empty filter; anything you can see once you type —
    * the one way to find someone else's repository from here. */
   const shown = (): Repo[] =>
-    exploring() ? [] : (filter.query !== "" ? all : repos).filter((repo) =>
+    exploring() ? [] : (filter.query !== "" ? typedPool() : repos).filter((repo) =>
       filter.matches(`${repo.ownerName}/${repo.name} ${repo.description}`),
     );
+
+  /**
+   * Everything a typed filter can reach: the newest 200 already read, and
+   * whatever the forge's own search finds among every visible repository
+   * past them, read once per query so drawing stays a filter.
+   */
+  const typedPool = (): Repo[] => {
+    const query = filter.query.trim();
+    if (found === undefined || found.query !== query) {
+      const seen = new Set(all.map((r) => r.id));
+      found = {
+        query,
+        repos: launcherSearch(f.db, f.user, query).filter((r) => !seen.has(r.id)),
+      };
+    }
+    return found.repos.length === 0 ? all : [...all, ...found.repos];
+  };
 
   /**
    * The panes the last frame drew, which is what `tab` can reach — a focus
@@ -1576,4 +1596,23 @@ function note(s: Surface, r: Rect, c: Tokens, lines: readonly string[]): void {
         r.x + r.w,
       ),
     );
+}
+
+/**
+ * The repositories a typed launcher filter finds among every one the viewer
+ * can see: the listing's own visibility rule and its owner/name match, so
+ * nothing past the first page is out of reach. `owner/name` is split, since
+ * the match reads the two columns apart.
+ */
+export function launcherSearch(
+  db: Parameters<typeof listReposVisibleTo>[0],
+  viewer: Parameters<typeof listReposVisibleTo>[1],
+  query: string,
+): Repo[] {
+  const q = query.trim();
+  if (q === "") return [];
+  const slash = q.indexOf("/");
+  if (slash > 0 && slash < q.length - 1)
+    return listReposVisibleTo(db, viewer, { owner: q.slice(0, slash), query: q.slice(slash + 1), limit: 200 });
+  return listReposVisibleTo(db, viewer, { query: q.replace(/\//g, ""), limit: 200 });
 }
