@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
+import { createRun } from "../src/core/runs.ts";
 import { createApp, type App } from "../src/app.ts";
 import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { createSession } from "../src/core/sessions.ts";
@@ -211,15 +212,15 @@ describe("the first login to a spawned forge", () => {
     expect(home.split("Make your everyday account").length - 1).toBe(1);
     // The planner and the direction it was given, under the studio's noun.
     // No run has started (no model key), so it does not claim work under way.
-    expect(home).toContain("Your crew has its direction:");
-    expect(home).not.toContain("already at work");
-    expect(home).toContain("atlas");
-    expect(home).toMatch(/href="\/marias\/bakery\/issues\/\d+"[^>]*>[\s\S]*?Run Maria/);
+    expect(home).toContain("atlas is ready to work toward Run Maria");
+    expect(home).not.toContain("Direction: Run");
+    expect(home).not.toMatch(/Your (crew|apps)[^<]*:/);
+    expect(home).toMatch(/href="\/marias\/bakery\/issues\/\d+"[^>]*>[\s\S]*?atlas is ready/);
     for (const old of ["next-step", "next-crew"]) expect(home).not.toContain(`class="${old}`);
     expect(home).not.toMatch(/class="next-step/);
     // A pending step's body is a block of its own, never inside the row's
     // one-line, clipped `.row-meta`.
-    expect(home).not.toContain("row-meta");
+    expect(home).not.toMatch(/data-step[\s\S]{0,400}row-meta/);
     expect(home).toMatch(/<div class="step-body">\s*<p class="muted small">/);
     // Each app with its way in.
     expect(home).toContain('href="/marias/bakery"');
@@ -239,9 +240,38 @@ describe("the first login to a spawned forge", () => {
     // It can read the client's own apps, and the crew line reads for it too.
     expect(home).toContain('href="/marias/bakery"');
     expect(home).not.toContain("Your apps arrive here");
-    expect(home).toContain("Your crew has its direction:");
+    expect(home).toContain("atlas is ready to work toward Run Maria");
     // The admin's card moves along with it.
     expect(steps(await page(owner)).everyday).toBe("yes");
+  });
+
+  test("each app is one line: the crew member on it and what they do now, or that nobody is", async () => {
+    const maria = getUserByName(child.db, "maria")!;
+    const bakery = child.db
+      .query<{ id: string; direction_issue_id: string }, []>(
+        "SELECT id, direction_issue_id FROM repo WHERE name = 'bakery'",
+      )
+      .get()!;
+    const spare = await createRepo(child, maria, { name: "spare", owner: "marias" });
+    if (!spare.ok) throw new Error("spare");
+    const atlasId = getUserByName(child.db, "atlas")!.id;
+    const run = createRun(child.db, {
+      repoId: bakery.id,
+      kind: "agent",
+      issueId: bakery.direction_issue_id,
+      reason: "work",
+    });
+    child.db.query("UPDATE run SET state = 'running' WHERE id = ?1").run(run.id);
+    const home = await page(owner);
+    expect(home).toMatch(/class="row-title"[^>]*>bakery<\/span\s*>\s*<span class="row-meta">atlas is working toward Run Maria(?:'|&#39;|&#x27;)s bakery\.?</);
+    expect(home.slice(home.indexOf("id=\"next-steps\""), home.indexOf("</section>"))).not.toContain("Direction:");
+    expect(home).toMatch(/class="row-title"[^>]*>spare<\/span\s*>\s*<span class="row-meta">nobody is on it yet</);
+    // A direction closed or unassigned is nobody on it, too.
+    child.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(bakery.direction_issue_id);
+    expect(await page(owner)).toMatch(/class="row-title"[^>]*>bakery<\/span\s*>\s*<span class="row-meta">nobody is on it yet</);
+    child.db.query("UPDATE issue SET state = 'open', assignee_id = NULL WHERE id = ?1").run(bakery.direction_issue_id);
+    expect(await page(owner)).toMatch(/class="row-title"[^>]*>bakery<\/span\s*>\s*<span class="row-meta">nobody is on it yet</);
+    child.db.query("UPDATE issue SET assignee_id = ?2 WHERE id = ?1").run(bakery.direction_issue_id, atlasId);
   });
 
   test("the everyday account tells the crew something: the third step", async () => {

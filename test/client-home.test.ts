@@ -452,6 +452,7 @@ describe("a client's first screen", () => {
     app.start();
     await settleApp(app);
     expect(app.screen.toText()).toContain("bakery: Its agents are waiting for something to do.");
+    expect(app.screen.toText()).toMatch(/Atlas is ready to work toward Run Maria/);
     expect(app.screen.toText()).not.toContain("Shipped per hour");
     app.stop();
   });

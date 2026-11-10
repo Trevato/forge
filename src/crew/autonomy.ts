@@ -1228,7 +1228,7 @@ export function startSweep(
 
 /** The label every direction issue's title starts with. Read elsewhere to
  * find a repository's standing direction — keep it exactly as it is. */
-const DIRECTION_PREFIX = "Direction: ";
+export const DIRECTION_PREFIX = "Direction: ";
 /** How much of the direction fits in the title, capped so the title
  * (prefix included) never exceeds `MAX_TITLE`. */
 const DIRECTION_TITLE_LIMIT = Math.min(120, MAX_TITLE - DIRECTION_PREFIX.length);

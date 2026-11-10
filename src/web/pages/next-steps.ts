@@ -10,13 +10,13 @@
  * all three are done.
  */
 
-import { getIssueById } from "../../core/issues.ts";
+import { appCrew } from "../../core/app-crew.ts";
 import {
   nextStepsFor,
   spawnedRepos,
   type NextStep,
 } from "../../core/next-steps.ts";
-import { getUserById, type User } from "../../core/users.ts";
+import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
@@ -25,40 +25,16 @@ import { tellHref } from "../studio/nouns.ts";
 import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
 
-/** One line per app whose crew has its direction: who, on what, and how far. */
-function crewAtWork(
-  ctx: Ctx,
-  repos: Awaited<ReturnType<typeof spawnedRepos>>,
-): { lines: Html[]; busy: boolean } {
-  const lines: Html[] = [];
-  let busy = false;
-  for (const repo of repos) {
-    if (repo.directionIssueId === null) continue;
-    const issue = getIssueById(ctx.app.db, repo.directionIssueId);
-    if (!issue || issue.state !== "open" || issue.assigneeId === null) continue;
-    const agent = getUserById(ctx.app.db, issue.assigneeId);
-    if (!agent) continue;
-    const run = ctx.app.db
-      .query<
-        { state: string },
-        [string]
-      >("SELECT state FROM run WHERE issue_id = ?1 AND kind = 'agent' ORDER BY created_at DESC LIMIT 1")
-      .get(issue.id);
-    if (run?.state === "running" || run?.state === "queued") busy = true;
-    const doing =
-      run?.state === "running"
-        ? "is working on"
-        : run?.state === "queued"
-          ? "is about to start on"
-          : "has been given";
-    lines.push(
-      row({
-        href: tellHref(`/${repo.ownerName}/${repo.name}`, issue.number),
-        title: html`<b>${agent.username}</b> ${doing} ${issue.title}`,
-      }),
-    );
-  }
-  return { lines, busy };
+/** One line per app: the app is the row's title, the crew member and what they are doing its meta. */
+function crewAtWork(ctx: Ctx, repos: Awaited<ReturnType<typeof spawnedRepos>>): Html[] {
+  return appCrew(ctx.app.db, repos).map((c) => {
+    const href = `/${c.repo.ownerName}/${c.repo.name}`;
+    return row({
+      href: c.issueNumber === null ? href : tellHref(href, c.issueNumber),
+      title: c.repo.name,
+      meta: html`${c.says}`,
+    });
+  });
 }
 
 /** One step: its row (title, "Done" trail; the primary one in bold), then its
@@ -120,16 +96,7 @@ export async function nextStepsCard(
   };
   return html`<section id="next-steps">
     <h2>Your next steps</h2>
-    ${crew.lines.length > 0
-      ? html`<p>
-            ${crew.busy
-              ? "Your crew is already at work:"
-              : "Your crew has its direction:"}
-          </p>
-          <ul class="list">
-            ${crew.lines}
-          </ul>`
-      : null}
+    ${crew.length > 0 ? html`<ul class="list">${crew}</ul>` : null}
     ${steps.map((s) => stepBlock(s, s.key === primary, bodies[s.key]))}
   </section>`;
 }

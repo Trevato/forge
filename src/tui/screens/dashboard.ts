@@ -23,6 +23,7 @@ import { ownerWaits, waitLine, withMore } from "../../actions/owner_waits.ts";
 import { forgeHealth } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
 import { clientAppRows, clientDoings, clientFinished, doingLine, finishedLine } from "../../core/client-apps.ts";
+import { appCrew } from "../../core/app-crew.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { lastVisit } from "../../core/home_visit.ts";
@@ -281,6 +282,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     clientLive = new Map(apps.flatMap((a) => (a.live === undefined ? [] : [[a.repo.id, a.live] as const])));
     const now = new Date();
     const ids = apps.map((a) => a.repo.id);
+    const crewOf = new Map(appCrew(f.app.db, apps.map((a) => a.repo)).map((c) => [c.repo.id, c] as const));
     const doings = clientDoings(f.app.db, ids);
     const finished = clientFinished(f.app.db, ids);
     clientLines =
@@ -295,7 +297,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               .join(" ");
             const mark = a.live === undefined ? "" : " (running, o opens it)";
             const line = `${a.repo.name}${mark}: ${agentsLine(a.working, a.queued)}`;
-            return doing === "" ? line : `${line} ${doing}`;
+            const crew = crewOf.get(a.repo.id)!.says;
+            return `${line}${doing === "" ? "" : ` ${doing}`} ${crew[0]!.toUpperCase()}${crew.slice(1)}.`;
           });
     ctx.invalidate();
   };
