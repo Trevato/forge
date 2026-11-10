@@ -9,8 +9,8 @@
 import type { Ctx } from "../../http/context.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { pageHead } from "../chrome.ts";
-import { html } from "../html.ts";
-import { btn, field as formField } from "../ui.ts";
+import { html, type Html } from "../html.ts";
+import { btn, disclosure, field as formField } from "../ui.ts";
 import { page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { llmsBody } from "../standards.ts";
@@ -39,6 +39,28 @@ function withoutTitle(body: string): string {
   return body.replace(/^# .*\n+/, "");
 }
 
+/** The guide's first "Start here" bullet, the path with no account, as its first three sentences:
+ * the curl that makes the app, the clone and push, the claim link for the person. The page's steps
+ * are the guide's own words, so the two never drift. */
+export function firstSteps(body: string): string[] {
+  const start = body.indexOf("## Start here");
+  if (start < 0) return [];
+  const bullet = body.slice(start).split("\n").find((l) => l.startsWith("- "));
+  if (!bullet) return [];
+  const action = bullet.slice(bullet.indexOf(": ") + 2);
+  return action.split(/\. (?=[A-Z])/).slice(0, 3).map((s) => s.trim().replace(/\.$/, ""));
+}
+
+/** One step's words, each `code span` drawn as code and everything escaped. */
+function stepLine(step: string): Html {
+  return html`${step.split(/`([^`]*)`/).map((part, i) => (i % 2 === 1 ? html`<code>${part}</code>` : part))}`;
+}
+
+/** The whole guide as the page draws it inside the disclosure: the text less its title, each address a link. */
+export function guideHtml(body: string): Html {
+  return renderMarkdown(linkAddresses(withoutTitle(body)));
+}
+
 export function agentsPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const { body } = llmsBody(ctx);
@@ -48,17 +70,16 @@ export function agentsPage(ctx: Ctx): Response {
     description:
       "What this forge is and how an AI assistant can help you use it: build one of its public apps, report a problem, or get a forge of your own.",
     body: html`${pageHead("For AI assistants", {
-        sub: html`What this forge is, and the steps an assistant can take for you, or tell you to take. The same
-          words as plain text: <a href="/llms.txt">/llms.txt</a>.`,
+        sub: html`What this forge is. Plain text: <a href="/llms.txt">/llms.txt</a>`,
       })}
       <section class="stack" aria-labelledby="agent-forge-h">
         <h2 id="agent-forge-h">Get a forge of your own</h2>
-        <p class="muted small">Free within limits while hosting is not sold. It sleeps when idle and wakes on its next visit; bring your own model credential or its crew stays off.</p>
         <form method="post" action="/forges/new" class="stack" id="agent-forge">
           ${formField({ label: "Name", name: "name", required: true })}
           ${btn("Make my forge", { variant: "primary" })}
         </form>
       </section>
-      <article class="prose prose-page" id="agents-guide">${renderMarkdown(linkAddresses(withoutTitle(body)))}</article>`,
+      <div class="prose break"><ol id="agent-steps" aria-label="Build an app with no account">${firstSteps(body).map((step) => html`<li>${stepLine(step)}</li>`)}</ol></div>
+      ${disclosure("? Full guide", html`<article class="prose prose-page" id="agents-guide">${guideHtml(body)}</article>`, { id: "agents-more" })}`,
   }));
 }
