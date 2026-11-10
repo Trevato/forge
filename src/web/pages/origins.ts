@@ -898,6 +898,7 @@ function frozenCard({ frozen, repos }: ReturnType<typeof readFrozen>): Html | nu
     return [
       row({
         href: `/${repo.ownerName}/${repo.name}#frozen`,
+        nav: true,
         lead: icon("repo"),
         title: `${repo.ownerName}/${repo.name}`,
         meta: html`mirrors <span class="mono">${m.fullName}</span>${host === ""
