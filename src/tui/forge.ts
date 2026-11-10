@@ -465,6 +465,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               forgeCeiling(session.app.config),
               readVerified(session.app, flowReader.kind === "owner"),
               keeper,
+              session.app.config.dataDir,
             ), keeper.ask && user ? { ask: keeper.ask, answer: () => answerKeeper(session.app, keeper.ask!.id, user.id) } : undefined));
         },
       });

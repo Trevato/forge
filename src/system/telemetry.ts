@@ -117,7 +117,7 @@ function flowBody(x: {
     // Declined build runs of the last 24 h by reason, each with the runs behind it.
     declines: readDeclines(app.db, now, reader.kind === "agent"),
     // The four alarms (#5930) that are firing now; empty when none is.
-    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent" }),
+    alarms: firedAlarms(app.db, now, { publicOnly: reader.kind === "agent", dataDir: app.config.dataDir }),
     // Review runs in flight per reviewer, cut to public repositories for an agent (#4733).
     reviewing: { says: reviewingSays(busy), reviewers: busy },
     conflicted: { says: conflictedSays(conflicted, now.getTime()), pulls: conflicted },

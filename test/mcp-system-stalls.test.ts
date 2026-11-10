@@ -34,8 +34,10 @@ afterAll(async () => {
 });
 
 test("a stall under a named job is read through system, at most 10, most ms first", async () => {
+  // Let every request other tests in this process finished fall outside the 300 ms window, so only the job ran across it.
+  await Bun.sleep(320);
   during("test-job-10907", () => 1);
-  loopWatch.stalled(5_000, performance.now());
+  loopWatch.stalled(300, performance.now());
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
@@ -44,7 +46,7 @@ test("a stall under a named job is read through system, at most 10, most ms firs
   const body = (await res.json()) as any;
   const out = JSON.parse(body.result.content[0].text);
   expect(out.stalls.length).toBeLessThanOrEqual(10);
-  expect(out.stalls).toContainEqual({ cause: "job:test-job-10907", ms: 5000, count: 1 });
+  expect(out.stalls).toContainEqual({ cause: "job:test-job-10907", ms: 300, count: 1 });
   const ms = out.stalls.map((s: any) => s.ms);
   expect(ms).toEqual([...ms].sort((a, b) => b - a));
 });

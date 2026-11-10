@@ -74,6 +74,8 @@ export function flowLines(
   verified?: readonly VerifiedRow[],
   /** The keeper's cause and last act (`readKeeper`, already cut to what the reader may see). */
   keeper?: KeeperRead,
+  /** Where the backup outcome files are kept; without it the off-box backup alarm cannot be read (the terminal passes the app's). */
+  dataDir: string | null = null,
 ): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
@@ -100,7 +102,7 @@ export function flowLines(
     "",
     ...wrap(vitalsLine(vitalsFor(readVitals(db, now, agent !== undefined), agent === undefined)), inner),
     ...(agent === undefined ? clogLines(readClog(db, now), now.getTime()).flatMap((l) => wrap(l, inner)) : []),
-    ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd }).flatMap((a) => wrap(a.says, inner)),
+    ...firedAlarms(db, now, { publicOnly: agent !== undefined, ceilingUsd, dataDir }).flatMap((a) => wrap(a.says, inner)),
     "",
     ...wrap(parkedSays(fig.parked), inner),
     "",

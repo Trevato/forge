@@ -406,7 +406,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             ...weekBlock(f.app, now),
             ...kpiLines(readKpis(f.db, now, { ...kpiForge(f.app), idle: () => idleReason(f.app, now) }), commit === null ? null : { sha: commit, since: ago(BOOTED) }),
             vitalsLine(readVitals(f.db, now)),
-            ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config) }).map((a) => a.says),
+            ...firedAlarms(f.db, now, { ceilingUsd: forgeCeiling(f.app.config), dataDir: f.app.config.dataDir }).map((a) => a.says),
             ...(cleared === undefined ? [] : [cleared]),
           ];
     // "Yours" is ownership plus the orgs you are on a team of; typing in the

@@ -160,15 +160,15 @@ describe("landing past a broken gate", () => {
     expect(landingStopped(app.db, repo.id)).toBeUndefined();
     gate(t + 2, "red", ["the gate > is broken", "other"]);
     expect(landingStopped(app.db, repo.id)?.gates).toBe(3);
-    const alarm = firedAlarms(app.db, new Date()).find((a) => a.key === "landing_stopped");
+    const alarm = firedAlarms(app.db, new Date(), { dataDir: null }).find((a) => a.key === "landing_stopped");
     expect(alarm?.says).toStartWith("Landing has stopped:");
     expect(alarm?.says.split(". ").length).toBe(1);
   });
 
   test("the alarm is the owner's: a public-only reader never sees it", () => {
     stop();
-    expect(firedAlarms(app.db, new Date()).some((a) => a.key === "landing_stopped")).toBe(true);
-    expect(firedAlarms(app.db, new Date(), { publicOnly: true }).some((a) => a.key === "landing_stopped")).toBe(false);
+    expect(firedAlarms(app.db, new Date(), { dataDir: null }).some((a) => a.key === "landing_stopped")).toBe(true);
+    expect(firedAlarms(app.db, new Date(), { dataDir: null, publicOnly: true }).some((a) => a.key === "landing_stopped")).toBe(false);
   });
 
   test("three red gates of different causes, or mixed with a green, are not a stop", () => {
@@ -191,7 +191,7 @@ describe("landing past a broken gate", () => {
     await green(next);
     expect((await mergePull(app, owner, repo, next, "squash")).ok).toBe(true);
     expect(landingStopped(app.db, repo.id)).toBeUndefined();
-    expect(firedAlarms(app.db, new Date()).some((a) => a.key === "landing_stopped")).toBe(false);
+    expect(firedAlarms(app.db, new Date(), { dataDir: null }).some((a) => a.key === "landing_stopped")).toBe(false);
   });
 
   test("core: refused while landing is running, for an outsider, an agent, a short reason; then it lands and records", async () => {

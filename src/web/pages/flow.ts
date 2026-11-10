@@ -7,6 +7,8 @@
  * `tui/screens/valves.ts`, on the same `readPipes` and the same actions.
  */
 
+import { retryBackup } from "../../actions/backup_retry.ts";
+import { alarmBackup, type BackupAlarm } from "../../flow/alarm_backup.ts";
 import { acceptSuggestion, turnValveFor, type ValveError } from "../../actions/valves.ts";
 import type { Ctx } from "../../http/context.ts";
 import { readPipes, type ValveRow } from "../../flow/pipes.ts";
@@ -74,6 +76,16 @@ function valveRow(v: ValveRow) {
   });
 }
 
+/** The overdue off-box backup as one row: the sentence (with the last failure's cause) and the one action that retries. Nothing when none is overdue. */
+export function backupRow(alarm: BackupAlarm) {
+  if (!alarm.fired) return html``;
+  return html`<ul class="list mb">${row({
+    lead: icon("alert"),
+    title: html`${alarm.says}`,
+    meta: html`<form method="post" action="/flow/backup/retry">${btn("Retry the backup now", { type: "submit", variant: "primary", size: "sm" })}</form>`,
+  })}</ul>`;
+}
+
 // GET /flow
 export function flowPage(ctx: Ctx): Response {
   if (ctx.url.search !== "") return new Response(null, { status: 301, headers: { location: `/boards${ctx.url.search}` } });
@@ -84,6 +96,7 @@ export function flowPage(ctx: Ctx): Response {
   const p = readPipes(ctx.app.db, user.id);
   const body = html`<div class="page-head"><h1>Flow</h1>${btn("Boards", { href: "/boards", variant: "ghost" })}</div>
     <p class="mb">Money flows from the left to shipped on the right, as wide as this week's real spend. Every repository has a valve: drag it to give the repository a share of the week, all the way down to shut. The crew does exactly what the valves say, from the next tick, and nothing but you turns one.</p>
+    ${backupRow(alarmBackup(ctx.app.config.dataDir, new Date()))}
     ${pipesSvg(p)}
     <p class="muted small">${money(p.usd)} spent in the last 7 days; ${plural(p.shipped, "pull")} shipped.</p>
     ${p.valves.length === 0
@@ -120,4 +133,14 @@ export async function suggestionTake(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   return done(ctx, acceptSuggestion(ctx.app, ctx.auth.user, field(form, "repo")));
+}
+
+// POST /flow/backup/retry: one snapshot now, through the service's own queue, so two never run at once.
+export async function backupRetry(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const retried = await retryBackup(ctx.app, ctx.auth.user);
+  if (retried.refused) return notFoundPage(ctx);
+  return flashTo(ctx, "/flow", retried.cleared ? { message: retried.says } : { tone: "danger", message: retried.says });
 }

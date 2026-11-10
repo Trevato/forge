@@ -344,7 +344,7 @@ export async function studioHome(
   const waiting = await homeRegion(ctx.app.db, ctx.request, user.id, "waiting", homeVariant(ctx.url), access, draws.waiting);
   const held = timePhase(ctx.request, "held", () => heldLine(ctx, user));
   const alarms = user.isAdmin
-    ? alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))
+    ? alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config), ctx.app.config.dataDir))
     : null;
   const visitedAt = Date.now();
   const before = timePhase(ctx.request, "visit", () =>

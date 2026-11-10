@@ -115,7 +115,7 @@ describe("silence raises one alarm", () => {
   test("two silent runs are one alarm, naming the one silent longest; the shown state is on the API row", async () => {
     const older = runOn(held("g"), "running", 3 * SILENT_MS);
     runOn(held("h"), "running", 2 * SILENT_MS);
-    const silent = firedAlarms(app.db, new Date()).filter((a) => a.key === "silent");
+    const silent = firedAlarms(app.db, new Date(), { dataDir: null }).filter((a) => a.key === "silent");
     expect(silent).toHaveLength(1);
     expect(silent[0]!.href).toEndWith(`/runs/${older.id}`);
     const token = createToken(app.db, alice.id, "t", "ro").token;
@@ -137,7 +137,7 @@ describe("the same issue repeating runs is stopped", () => {
     expect(queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id)).toBeUndefined();
     expect(listComments(app.db, issue.id).filter((c) => c.body === REPEAT_NOTE)).toHaveLength(1);
     expect(getIssueById(app.db, issue.id)!.assigneeId).toBeNull();
-    expect(firedAlarms(app.db, new Date()).filter((a) => a.key === "repeat")).toHaveLength(1);
+    expect(firedAlarms(app.db, new Date(), { dataDir: null }).filter((a) => a.key === "repeat")).toHaveLength(1);
   });
   test("runs spread beyond ten minutes do not trip it; a reader's word does not lift it, a writer's does", async () => {
     const slow = held("Slow");

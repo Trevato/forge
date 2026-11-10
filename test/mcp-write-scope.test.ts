@@ -99,6 +99,8 @@ describe("a token that may only read cannot write through any tool", () => {
   /** Minimal arguments that make the call a real write, not a plan or a list. */
   const writing = (t: ReturnType<typeof toolRegistry>[number]) => {
     if (t.name in ADMIN_ARGS) return ADMIN_ARGS[t.name]!;
+    // `flow` reads unless it is asked to update a drifting pull (#10959).
+    if (t.name === "flow") return { action: "update", kind: "drift", repo: "alice/game", pull: 1 };
     const args: Record<string, unknown> = { dryRun: false, action: "x" };
     if (t.readsWithout !== undefined) args[[t.readsWithout].flat()[0]!] = "x";
     return args;

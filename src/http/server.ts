@@ -310,7 +310,7 @@ import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
-import { flowPage, suggestionTake, valveSet } from "../web/pages/flow.ts";
+import { backupRetry, flowPage, suggestionTake, valveSet } from "../web/pages/flow.ts";
 import { heldApply, heldPage, liftHoldSubmit } from "../web/pages/gate.ts";
 import {
   assigneeSubmit,
@@ -937,6 +937,7 @@ export function buildRouter(): Router<Handler> {
   // /flow is the week's valves (#8698); a query string is an old pipeline drill, which went to /boards.
   router.add("GET", "/flow", flowPage);
   router.add("POST", "/flow/valve", valveSet);
+  router.add("POST", "/flow/backup/retry", backupRetry);
   router.add("POST", "/flow/suggestion", suggestionTake);
   router.add("GET", "/system", systemPage);
   router.add("GET", "/system/stream", systemStream);

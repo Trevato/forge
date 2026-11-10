@@ -299,7 +299,7 @@ export function alarmLines(
   fired?: readonly FiredAlarm[],
 ): { id: string; line: string; items: readonly string[]; link: string }[] {
   if (!user.isAdmin || user.kind !== "user") return [];
-  const alarms = fired ?? [...firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config) }), ...reachAlarms(app)];
+  const alarms = fired ?? [...firedAlarms(app.db, new Date(now), { ceilingUsd: forgeCeiling(app.config), dataDir: app.config.dataDir }), ...reachAlarms(app)];
   return alarms.map((a) => {
     const id = `alarm:${a.key}@${a.since}`;
     return { id, line: a.says, items: [id], link: a.href };
