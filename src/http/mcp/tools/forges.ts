@@ -3,9 +3,9 @@ import { good, bad, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "forges",
-  doc: "an admin's list of the forges sent from here: name, address, whom for, apps, claimed or not, last activity, whether each public address answers",
+  doc: "an admin's list of the forges sent from here: name, address, whom for, apps, claimed, last activity, reachable, size, use",
   description:
-    "Forges sent from here (admin): name, address, apps, claimed, spendTodayUsd, ceilingUsd.",
+    "Forges sent from here (admin): name, address, apps, claimed, spendTodayUsd, ceilingUsd, size, use.",
   inputSchema: { type: "object", properties: {} },
   writes: false,
   async run(ctx, user) {
