@@ -19,7 +19,7 @@
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
 import type { Ctx } from "../../http/context.ts";
-import { memoryCapHolder } from "../../apps/contain.ts";
+import { memoryCapHolder, PROCESSES_MAX, processCapHolder } from "../../apps/contain.ts";
 import { bytes, spark, span } from "../../system/format.ts";
 import { eventStream } from "../../http/sse.ts";
 import type { SystemView } from "../../system/view.ts";
@@ -257,11 +257,15 @@ export function systemPage(ctx: Ctx): Response {
   const reader = timePhase(ctx.request, "reader", () => telemetryReader(ctx.app, ctx.auth.user!));
   if (reader?.kind !== "owner") return notFoundPage(ctx);
   const v = timePhase(ctx.request, "sample", () => live().read());
-  const holder = timePhase(ctx.request, "caps", () => memoryCapHolder());
+  const [holder, pids] = timePhase(ctx.request, "caps", () => [memoryCapHolder(), processCapHolder()] as const);
   const caps: Html =
     holder.by === "kernel"
       ? html`<p class="small" id="cell-caps" data-by="kernel">Each cell's memory is capped by the kernel (its own cgroup's <code>memory.max</code>): a cell over it is killed alone.</p>`
       : html`<p class="small" id="cell-caps" data-by="watch">Each cell's memory is watched once a second and the cell stopped over its cap; the kernel does not cap it (${holder.reason}).</p>`;
+  const processCaps: Html =
+    pids.by === "kernel"
+      ? html`<p class="small" id="cell-pids" data-by="kernel">Each cell's processes are capped by the kernel at ${PROCESSES_MAX} (its cgroup's <code>pids.max</code>; not a crew run's): a fork past it fails inside that cell.</p>`
+      : html`<p class="small" id="cell-pids" data-by="watch">Each cell's processes are counted once a second and the cell stopped past ${PROCESSES_MAX}; the kernel does not cap them (${pids.reason}).</p>`;
   const memory = memorySection(ctx);
   const stalls = timePhase(ctx.request, "stalls", () => stallHour(loopWatch.tally(performance.now())));
   const rendering = performance.now();
@@ -282,6 +286,7 @@ export function systemPage(ctx: Ctx): Response {
         <ul class="list" id="cores" aria-label="Per-core CPU, percent, with its last readings">${at("cores")}</ul>
         <ul class="list" id="mem">${at("mem")}</ul>
         ${caps}
+        ${processCaps}
         <p class="small mono" id="temps">${at("temps")}</p></section>
     <section class="settings-block"><h2>Disks and network</h2>
       <ul class="list" id="sys-disks">${at("sys-disks")}</ul></section>

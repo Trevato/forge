@@ -20,6 +20,7 @@
  *                    cpu.weight and io.weight 1000 against the cells' 100
  *   R/cells/c<n>/    one per cell: memory.max, memory.swap.max = 0,
  *                    memory.oom.group = 1 (the whole cell dies together);
+ *                    pids.max the watch's process limit (#10518);
  *                    a step's cpu.weight and io.weight 10, below an app's
  *                    100, and cpu.max its declared cores (`apps/background.ts`)
  *   R/cells/c<n>/    one per crew run, too: no memory cap, weight 10 and
@@ -174,16 +175,18 @@ export function prepare(
     const cells = join(root, "cells");
     mkdirSync(cells, { recursive: true });
     writeFileSync(join(cells, "cgroup.subtree_control"), "+memory");
-    // The forge outweighs every cell, and a step weighs less than an app
-    // (#3319). Asked for, never required: without the controller, nice and
-    // SCHED_BATCH still hold.
-    for (const controller of ["cpu", "io"]) {
+    // A cell's process count is the kernel's too (`pids.max`, #10518), and
+    // the forge outweighs every cell, a step less than an app (#3319).
+    // Asked for, never required: without pids the watch still counts every
+    // tick; without cpu or io, nice and SCHED_BATCH still hold.
+    for (const controller of ["pids", "cpu", "io"]) {
       if (!words(read(join(root, "cgroup.controllers"))).includes(controller)) continue;
       try {
         for (const dir of [root, cells])
           if (!words(read(join(dir, "cgroup.subtree_control"))).includes(controller))
             writeFileSync(join(dir, "cgroup.subtree_control"), `+${controller}`);
-        writeFileSync(join(root, "forge", `${controller}.weight`), `${controller === "io" ? "default " : ""}${FORGE_WEIGHT}`);
+        if (controller !== "pids")
+          writeFileSync(join(root, "forge", `${controller}.weight`), `${controller === "io" ? "default " : ""}${FORGE_WEIGHT}`);
       } catch {
         // not delegated here, or the forge's leaf is elsewhere: the memory cap still holds
       }
@@ -225,15 +228,27 @@ function removeDir(dir: string, tries = 10): void {
 }
 
 /**
+ * Whether cells get the pids controller here: `R/cells` lists it in its
+ * `cgroup.subtree_control`, as cgroupfs reads it back. Then each cell's
+ * `pids.max` is the kernel's; otherwise the watch alone counts processes.
+ */
+export function pidsDelegated(at: CgroupHost): boolean {
+  return at.ok && words(read(join(at.root, "cells", "cgroup.subtree_control"))).includes("pids");
+}
+
+/**
  * A cgroup of its own for one cell, capped at `memoryMiB` (`undefined`: no
  * cap, for a crew run); `undefined` where the host has none. `share` is its
  * `cpu.weight`, `io.weight` and `cpu.max` where those controllers reach it;
- * unset leaves the defaults, 100 and no quota.
+ * unset leaves the defaults, 100 and no quota. `processes` is its
+ * `pids.max` where the pids controller reaches it (`pidsDelegated`); unset
+ * or not a positive integer, no kernel cap.
  */
 export function openCellCgroup(
   memoryMiB: number | undefined,
   at: CgroupHost = cgroupHost(),
   share?: CpuShare,
+  processes?: number,
 ): CellCgroup | undefined {
   if (!at.ok) return undefined;
   const dir = join(at.root, "cells", `c${nextCell++}-${process.pid}`);
@@ -270,6 +285,13 @@ export function openCellCgroup(
       } catch {
         // no cpu or io controller here: nice and SCHED_BATCH still hold
       }
+    }
+  }
+  if (processes !== undefined && Number.isInteger(processes) && processes > 0 && pidsDelegated(at)) {
+    try {
+      writeFileSync(join(dir, "pids.max"), String(processes));
+    } catch {
+      // no pids controller here: the watch still counts the cell's processes
     }
   }
   return {

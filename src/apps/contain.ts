@@ -38,7 +38,7 @@ import { dirname, join } from "node:path";
 import { portInsteadOfSocket } from "../git/hook-address.ts";
 import { relay, startEgress, upstreamProxy, type Egress } from "./egress.ts";
 import { BACKGROUND_CPU_WEIGHT } from "./background.ts";
-import { cgroupHost, enterArgv, openCellCgroup } from "./cgroup.ts";
+import { cgroupHost, enterArgv, openCellCgroup, pidsDelegated, type CellCgroup, type CgroupHost } from "./cgroup.ts";
 
 /** `ceiling`: a declaration was cut to the machine's maximum; `declared`: forge.json's own; `default`: neither. */
 export type CeilingFrom = "env" | "pod" | "default";
@@ -441,6 +441,23 @@ export function cellMounts(
   return { hide, blank, reveal };
 }
 
+/**
+ * A cell's own cgroup on `at`: its memory cap, its share of the cores, and
+ * `pids.max` at the watch's process limit where pids is delegated (#10518).
+ */
+export function cellCgroup(spec: CellSpec, at: CgroupHost = cgroupHost()): CellCgroup | undefined {
+  return openCellCgroup(
+    spec.limits.memoryMiB,
+    at,
+    spec.background === true
+      ? { weight: BACKGROUND_CPU_WEIGHT, cpus: spec.limits.cpus }
+      : spec.cpuQuota === true
+        ? { weight: 100, cpus: spec.limits.cpus }
+        : undefined,
+    PROCESSES_MAX,
+  );
+}
+
 /** Make a cell: its sockets, its proxy, its relays. `close()` undoes it. */
 export function openCell(
   spec: CellSpec,
@@ -486,15 +503,7 @@ export function openCell(
   // small and bounded, and the ones that only exist to hide are read-only.
   const SMALL = String(1 << 20);
 
-  const cgroup = openCellCgroup(
-    spec.limits.memoryMiB,
-    cgroupHost(),
-    spec.background === true
-      ? { weight: BACKGROUND_CPU_WEIGHT, cpus: spec.limits.cpus }
-      : spec.cpuQuota === true
-        ? { weight: 100, cpus: spec.limits.cpus }
-        : undefined,
-  );
+  const cgroup = cellCgroup(spec);
   const argv = (command: string): string[] => {
     const inner = bwrapArgv(command);
     return cgroup === undefined ? inner : enterArgv(join(cgroup.dir, "cgroup.procs"), inner);
@@ -702,7 +711,8 @@ function readMountinfo(): string {
 
 /** How often the process table is read, and over how long CPU is averaged. */
 export const WATCH = { tickMs: 1_000, cpuWindowMs: 30_000, diskEveryTicks: 15 };
-const PROCESSES_MAX = 512;
+/** A cell's process limit: the watch's every tick, and the kernel's `pids.max` where pids is delegated. */
+export const PROCESSES_MAX = 512;
 const CLK_TCK = 100;
 const DISK_WALK_MAX = 200_000;
 
@@ -735,6 +745,14 @@ export interface MemoryCap {
 export function memoryCapHolder(): { by: "kernel" } | { by: "watch"; reason: string } {
   const host = cgroupHost();
   return host.ok ? { by: "kernel" } : { by: "watch", reason: host.reason };
+}
+
+/** Whether cells' process counts are the kernel's here (`pids.max`), or why they are watched only. */
+export function processCapHolder(host: CgroupHost = cgroupHost()): { by: "kernel" } | { by: "watch"; reason: string } {
+  if (!host.ok) return { by: "watch", reason: host.reason };
+  return pidsDelegated(host)
+    ? { by: "kernel" }
+    : { by: "watch", reason: "the pids controller is not delegated to the cells" };
 }
 
 /** One labelled cell as its watch last read it: cumulative CPU and resident memory. */

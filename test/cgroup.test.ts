@@ -22,7 +22,7 @@ import {
   openCellCgroup,
   prepare,
 } from "../src/apps/cgroup.ts";
-import { cellsAvailable, type CellSpec } from "../src/apps/contain.ts";
+import { cellCgroup, cellsAvailable, processCapHolder, PROCESSES_MAX, type CellSpec } from "../src/apps/contain.ts";
 import { childEnv, runStep } from "../src/apps/process.ts";
 import type { Proc, Raw } from "../src/system/proc.ts";
 import { buildSystem } from "../src/system/view.ts";
@@ -88,8 +88,9 @@ describe("the layout, on a directory shaped like cgroupfs", () => {
     expect(host).toEqual({ ok: true, root: dir });
     // One pid a write: the last one written is what the plain file holds.
     expect(readFileSync(join(dir, "forge", "cgroup.procs"), "utf8")).toBe("12");
-    expect(readFileSync(join(dir, "cgroup.subtree_control"), "utf8")).toBe("+memory");
-    expect(readFileSync(join(dir, "cells", "cgroup.subtree_control"), "utf8")).toBe("+memory");
+    // The fake holds the last write; cgroupfs adds each: memory, then pids.
+    expect(readFileSync(join(dir, "cgroup.subtree_control"), "utf8")).toBe("+pids");
+    expect(readFileSync(join(dir, "cells", "cgroup.subtree_control"), "utf8")).toBe("+pids");
     expect(existsSync(join(dir, "cells", `c7-${gone}`))).toBe(false);
     expect(existsSync(join(dir, "cells", `c8-${process.pid}`))).toBe(true);
     // Already laid out (cgroupfs reads back `memory`): nothing moves again.
@@ -119,6 +120,54 @@ describe("the layout, on a directory shaped like cgroupfs", () => {
     expect(existsSync(join(app.dir, "cpu.weight"))).toBe(false);
     expect(existsSync(join(app.dir, "cpu.max"))).toBe(false);
     expect(app.cpuCapped).toBe(false);
+  });
+
+  const spec = (dir: string): CellSpec => ({
+    dir,
+    writable: [],
+    home: join(dir, ".home"),
+    hide: [],
+    egress: [],
+    reach: [],
+    limits: { memoryMiB: 64, cpus: 2, diskMiB: 512 },
+  });
+
+  test("where pids is delegated, a cell's process count is the kernel's: pids.max at the watch's limit, and /system says so", () => {
+    const dir = fake("pids", "memory pids\n");
+    const host = prepare({ ok: true, root: dir });
+    expect(host.ok).toBe(true);
+    expect(existsSync(join(dir, "forge", "pids.weight"))).toBe(false);
+    // cgroupfs reads back every controller enabled, without the `+`.
+    writeFileSync(join(dir, "cells", "cgroup.subtree_control"), "memory pids\n");
+    expect(processCapHolder(host)).toEqual({ by: "kernel" });
+    // What openCell opens: its own spec, the watch's limit as pids.max.
+    const cell = cellCgroup(spec(join(dir, "app")), host)!;
+    expect(readFileSync(join(cell.dir, "memory.max"), "utf8")).toBe(String(64 * 1024 * 1024));
+    expect(readFileSync(join(cell.dir, "pids.max"), "utf8")).toBe(String(PROCESSES_MAX));
+    expect(PROCESSES_MAX).toBe(512);
+    // Not asked for (a crew run), or not a positive integer: no file.
+    for (const processes of [undefined, 0, -1, 1.5, Number.NaN]) {
+      const run = openCellCgroup(undefined, host, { weight: 10, cpus: 4 }, processes)!;
+      expect(existsSync(join(run.dir, "pids.max"))).toBe(false);
+    }
+  });
+
+  test("no pids controller: the cell still opens with its memory cap, no pids.max, and /system says the watch counts", () => {
+    const dir = fake("nopids", "memory\n");
+    const host = prepare({ ok: true, root: dir });
+    expect(host.ok).toBe(true);
+    // Memory is still what the cells are given.
+    expect(readFileSync(join(dir, "cgroup.subtree_control"), "utf8")).toBe("+memory");
+    expect(readFileSync(join(dir, "cells", "cgroup.subtree_control"), "utf8")).toBe("+memory");
+    const cell = cellCgroup(spec(join(dir, "app")), host)!;
+    expect(cell).toBeDefined();
+    expect(readFileSync(join(cell.dir, "memory.max"), "utf8")).toBe(String(64 * 1024 * 1024));
+    expect(existsSync(join(cell.dir, "pids.max"))).toBe(false);
+    const holder = processCapHolder(host);
+    expect(holder.by).toBe("watch");
+    if (holder.by === "watch") expect(holder.reason).toContain("pids controller");
+    // No cgroup at all: the host's own reason.
+    expect(processCapHolder({ ok: false, reason: "FORGE_CELL_CGROUP=off" })).toEqual({ by: "watch", reason: "FORGE_CELL_CGROUP=off" });
   });
 
   test("a crew run's cell has no memory cap, weighs 10 and is held to its cores", () => {
