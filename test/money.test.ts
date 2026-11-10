@@ -202,7 +202,9 @@ describe("money line", () => {
     const html = await page(await login("alice"), "/board");
     expect(html).toContain('class="money-line"');
     expect(html).toContain("This month");
-    expect(html).toContain('<a href="/settings/economics">Economics slider: 62</a>');
+    expect(html).toContain("Economics slider: 62");
+    const line = html.match(/<section class="money-line"[\s\S]*?<\/section>/)?.[0] ?? "";
+    expect(line.match(/href="\/settings\/economics"/g)?.length).toBe(1);
     expect(html).toContain('<svg\n    class="money-chart"');
     expect(html).toMatch(/class="money-gap num" data-sign="(up|down|even)"/);
     const theirs = await page(await login("bob"), "/board");
@@ -329,7 +331,7 @@ describe("money line on an empty forge", () => {
       expect(m.value.thisMonth).toEqual({ cost: 0, revenue: 0, gap: 0 });
       expect(m.value.days).toHaveLength(DAYS);
       const line = forgeMoneyLine(m.value).text;
-      expect(line).toContain('data-sign="even">$0.00');
+      expect(line).toContain('data-sign="even" href="/settings/economics" aria-label="Month gap $0.00, open Economics settings">$0.00</a>');
       expect(line).toContain('width="240"');
       expect(line).toContain('height="48"');
     } finally {

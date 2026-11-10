@@ -225,12 +225,15 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fg-s5 { fill: var(--series-5); color: var(--series-5); }
 .fg-s6 { fill: var(--series-6); color: var(--series-6); }
 .fg-s7 { fill: var(--series-7); color: var(--series-7); }
-/* The money line (studio/money_line.ts, #510): the gap in the text colour,
-   its sign the +/- it carries, and the warning tint for a loss alone — the
-   accent stays for the slider's link. Two rows of 24px, the first wrapping
-   once on a phone, so the reserved height is the real one; the chart a
-   fixed box, so nothing shifts when the figures arrive. */
+/* The money line (studio/money_line.ts, #510, #11056): the board's gap is
+   its one link to Settings → Economics, so a profit takes the accent; a
+   loss takes the warning tint, an even month the text colour. The accent
+   on --bg holds 4.5:1 in every theme (test/themes.test.ts), so the small
+   figure reads. Two rows of 24px, the first wrapping once on a phone, so
+   the reserved height is the real one; the chart a fixed box, so nothing
+   shifts when the figures arrive. */
 .money-gap[data-sign="down"] { color: var(--attn); }
+a.money-gap[data-sign="up"] { color: var(--accent); }
 .money-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
 .money-line > p { margin: 0; line-height: 24px; min-height: 48px; }
 .money-line > p > span { display: block; }
