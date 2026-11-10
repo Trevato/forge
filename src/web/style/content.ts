@@ -342,6 +342,7 @@ form.inline { display: inline; margin-left: auto; }
 .bar > .menu { flex: 0 1 auto; min-width: 0; max-width: 100%; }
 .bar > .menu > summary { max-width: 100%; min-width: 0; }
 .bar > .menu > summary .truncate { min-width: 0; }
+.prose img { max-width: 100%; height: auto; }
 .prose pre, .prose table { max-width: 100%; overflow-x: auto; }
 .prose table { display: block; }
 

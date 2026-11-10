@@ -84,7 +84,7 @@ import { creditLine } from "../credit_line.ts";
 import { type CodeRows, rowsMarkup } from "../code_rows.ts";
 import { gcodeOffThread, rowsOffThread } from "../code_rows_pool.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
-import { renderMarkdown } from "../markdown.ts";
+import { renderMarkdown, type MarkdownRepo } from "../markdown.ts";
 import { overSize } from "../render/archive.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
 import { fontJs } from "../render/font.ts";
@@ -629,6 +629,18 @@ export function clearReadmeCache(): void {
 }
 
 /**
+ * Where a README's relative addresses point: its own repository at its own
+ * ref, read off the blob base the caller already passes. Nothing for the
+ * origins browser, which has no media route.
+ */
+function readmeRepo(whole: string | undefined, dir: string): MarkdownRepo | undefined {
+  if (whole === undefined) return undefined;
+  const at = whole.lastIndexOf("/blob/");
+  if (at <= 0 || whole.startsWith("/origins/")) return undefined;
+  return { base: whole.slice(0, at), ref: whole.slice(at + 6), dir };
+}
+
+/**
  * The README under a directory listing, read through whichever source is
  * answering. It is found in the entries we already have rather than by asking
  * for the tree again — `RepoSource.readme` only knows the root, and a README
@@ -648,7 +660,7 @@ export async function readmeFor(
   );
   if (!readme) return html``;
   const baseKey = readmeKey(source, readme);
-  const key = baseKey === null || whole === undefined ? baseKey : `${baseKey}:${whole}`;
+  const key = baseKey === null || whole === undefined ? baseKey : `${baseKey}:${whole}:${prefix}`;
   const cached = key === null ? undefined : readmeCache.get(key);
   if (key !== null && cached) {
     readmeCache.delete(key);
@@ -663,7 +675,7 @@ export async function readmeFor(
   const cut = whole === undefined ? null : cutAtBlock(full, README_HOME_BYTES);
   const text = cut ?? full;
   const rendered = /\.(md|markdown)$/i.test(readme.name)
-    ? renderMarkdown(text)
+    ? renderMarkdown(text, readmeRepo(whole, prefix))
     : html`<pre>${text}</pre>`;
   const more =
     cut === null
@@ -1173,6 +1185,7 @@ export function renderBlob(
           media: mediaHref(base, o.ref, o.path),
           download: downloadHref(base, o.ref, o.path),
           pathHref: `${base}/blob/${encoded}/${o.path}`,
+          repo: { base, ref: encoded },
           all: o.all === true,
           ...(o.table !== undefined ? { table: o.table } : {}),
           ...(o.layer !== undefined ? { layer: o.layer } : {}),

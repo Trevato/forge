@@ -45,6 +45,8 @@ export interface RenderInput {
   readonly download: string;
   /** The file page's own address, for a link back to it (`?all=1`). */
   readonly pathHref?: string;
+  /** The repository base and ref (as written in a URL), so a relative address resolves. */
+  readonly repo?: { readonly base: string; readonly ref: string };
   /** `?all=1`: draw past the default window, up to the renderer's cap. */
   readonly all?: boolean;
   /** `?table=<name>`: unchecked text; a renderer matches it against its own list. */
