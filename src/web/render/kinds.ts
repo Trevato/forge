@@ -38,6 +38,7 @@ export type FileKind =
   | "mail"
   | "gcode"
   | "sarif"
+  | "junit"
   | "text"
   | "binary";
 
@@ -74,6 +75,7 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   mail: 5 * MB,
   gcode: 50 * MB,
   sarif: 5 * MB,
+  junit: 5 * MB,
   text: 1 * MB,
   binary: 0,
 };
@@ -228,6 +230,20 @@ const extension = (path: string): string => {
   return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
 };
 
+/**
+ * A JUnit report is an `.xml` file named `*.junit.xml` or `TEST-*.xml`, or
+ * whose root element (past the prolog and comments) is `<testsuites>` or
+ * `<testsuite>`. Any other `.xml` stays source.
+ */
+function isJunit(path: string, head: Uint8Array): boolean {
+  if (extension(path) !== "xml") return false;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  if (/\.junit\.xml$/i.test(name) || /^TEST-.+\.xml$/.test(name)) return true;
+  const text = new TextDecoder().decode(head).replace(/^\uFEFF/, "").replace(/<\?[\s\S]*?\?>|<!--[\s\S]*?-->/g, "");
+  const root = /<([A-Za-z_][\w.:-]*)/.exec(text);
+  return root?.[1] === "testsuites" || root?.[1] === "testsuite";
+}
+
 /** Git's own heuristic: a NUL in the first 8 KB means binary. */
 const looksBinary = (head: Uint8Array): boolean => head.subarray(0, 8000).includes(0);
 
@@ -249,6 +265,7 @@ export function fileKind(path: string, head: Uint8Array): FileKind {
   if (media !== undefined) return media.kind;
   if (isArchive(path, head)) return "archive";
   if (looksBinary(head)) return "binary";
+  if (isJunit(path, head)) return "junit";
   return TEXTUAL[extension(path)] ?? "text";
 }
 

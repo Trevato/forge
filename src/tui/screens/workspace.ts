@@ -59,6 +59,7 @@ import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
 import { parseGeoJson, propertyRows } from "../../web/render/geojson.ts";
 import { gcodeFacts, parseGcode } from "../../web/render/gcode.ts";
 import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
+import { CASE_CAP, parseJunit } from "../../web/render/junit.ts";
 import { RESULT_CAP, parseSarif } from "../../web/render/sarif.ts";
 import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
 import { fileSize } from "../../web/ui.ts";
@@ -417,6 +418,23 @@ function sarifTable(source: string): Table | string {
   return { header: ["Level", "Rule", "Location", "Message", "Tool"], rows, more: all.length - rows.length, delimiter: ",", columns: 5 };
 }
 
+/** A JUnit report, by the web's own rule (file name, or root element). */
+function isJunitPath(path: string, source: Uint8Array): boolean {
+  return /\.xml$/i.test(path) && fileKind(path, source.subarray(0, 4096)) === "junit";
+}
+
+/** A JUnit report as a table: a totals row, then each failing case with its message; the reason when it is not drawn. Shares the web's parser. */
+function junitTable(source: string): Table | string {
+  const parsed = parseJunit(source);
+  if ("error" in parsed) return `not drawn as test results: ${parsed.error}`;
+  const t = parsed.totals;
+  const bad = parsed.suites.flatMap((s) =>
+    s.cases.filter((c) => c.status === "failed" || c.status === "error").map((c) => [c.status === "error" ? "error" : "failed", (c.classname === "" ? c.name : `${c.classname} › ${c.name}`) || "(unnamed)", c.message.replace(/\s+/g, " ")]),
+  );
+  const rows = [["total", `${t.tests} tests`, `${t.failures + t.errors} of ${t.tests} tests fail · ${t.skipped} skipped`], ...bad.slice(0, CASE_CAP)];
+  return { header: ["Result", "Case", "Message"], rows, more: bad.length - Math.min(bad.length, CASE_CAP), delimiter: ",", columns: 3 };
+}
+
 /** `.gcode`: a sliced print, drawn as a table of its facts (layers, box, filament, time). Shares the web's parser. */
 function isGcodePath(path: string): boolean {
   return /\.(gcode|gco)$/i.test(path);
@@ -640,6 +658,11 @@ class Tab {
       const findings = sarifTable(new TextDecoder().decode(source));
       this.table = typeof findings === "string" ? null : findings;
       this.fault = typeof findings === "string" ? findings : "";
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isJunitPath(this.path, source)) {
+      const results = junitTable(new TextDecoder().decode(source));
+      this.table = typeof results === "string" ? null : results;
+      this.fault = typeof results === "string" ? results : "";
       if (this.table !== null) this.grid = layoutTable(this.table);
     } else if (isGcodePath(this.path)) {
       this.table = gcodeTable(new TextDecoder().decode(source));
@@ -2755,7 +2778,9 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path))
+                    ? t.raw !== null && isJunitPath(t.path, t.raw)
+                      ? plural(t.table.rows.length - 1 + t.table.more, "failing case")
+                      : tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path), isVcfPath(t.path), isGeoJsonPath(t.path), isJsonlPath(t.path), isSarifPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",

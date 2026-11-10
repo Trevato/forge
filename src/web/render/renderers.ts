@@ -17,6 +17,7 @@ import { gcode } from "./gcode.ts";
 import { gpx } from "./gpx.ts";
 import { font } from "./font.ts";
 import { ics } from "./ics.ts";
+import { junit } from "./junit.ts";
 import { vcf } from "./vcf.ts";
 import { htmlPreview } from "./html_preview.ts";
 import { image } from "./image.ts";
@@ -93,6 +94,7 @@ export const RENDERERS: Partial<Readonly<Record<FileKind, Renderer>>> = {
   calendar: ics,
   contacts: vcf,
   sarif,
+  junit,
   mail: eml,
   archive,
   font,

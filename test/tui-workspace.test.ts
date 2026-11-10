@@ -567,6 +567,40 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a JUnit report opens as its totals and failing cases, sharing the web parser", async () => {
+    const made = await createRepo(forge, alice, { name: "junitrepo", visibility: "public", description: "tests" });
+    if (!made.ok) throw new Error("repo failed");
+    const xml = '<testsuite name="s"><testcase classname="m.A" name="ok"/><testcase classname="m.A" name="bad"><failure message="expected 1 got 2"/></testcase></testsuite>';
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "TEST-a.xml", content: xml }, { path: "TEST-b.xml", content: "<nope" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "junitrepo");
+      await openFile(h, "TEST-a.xml");
+      expect(h.text()).toContain("1 of 2 tests fail");
+      expect(h.text()).toContain("m.A › bad");
+      expect(h.text()).toContain("expected 1 got 2");
+      expect(h.text()).toContain("1 failing case");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a JUnit-named file that is not a report opens as source and says why", async () => {
+    const made = await createRepo(forge, alice, { name: "badjunit", visibility: "public", description: "tests" });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, { message: "seed", files: [{ path: "TEST-b.xml", content: "<root/>" }] });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "badjunit");
+      await openFile(h, "TEST-b.xml");
+      expect(h.text()).toContain("not drawn as test results");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("a .gcode opens as its facts, sharing the web parser, and s flips to the source", async () => {
     const made = await createRepo(forge, alice, { name: "prints3d", visibility: "public", description: "slices" });
     if (!made.ok) throw new Error("repo failed");

@@ -35,3 +35,7 @@ A .zip, .tar or .tar.gz is drawn by `src/web/render/archive-view.ts` as the exis
 ## SARIF findings (.sarif)
 
 `src/web/render/sarif.ts` draws one existing `.table` (`data-dense`) per run under an `h3` with the tool's name, with the level counts as a plain line above. `.sarif-view` is only a hook on the wrapper and has no rule. How it works: `docs/features/file-sarif.md`.
+
+## JUnit results (.junit.xml, TEST-*.xml)
+
+`src/web/render/junit.ts` draws the totals as a plain line, opened by one sentence of what the file is, then per suite an `h3`, one existing `.table` (`data-dense`) of its failing cases with each body in a `pre` below, and the passing cases inside one native `details`. `.junit-view` is only a hook on the wrapper and has no rule. The XML reader is its own: no DOCTYPE, no entity but the five predefined, at most 2,000 cases drawn (failing first). How it works: `docs/features/file-junit.md`.
