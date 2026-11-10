@@ -58,7 +58,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `archive` | — | Archive or wake a repository (`archived`) | 332 |
 | `asked` | — | What people asked the crew for: unmerged by default, oldest first | 372 |
 | `asks` | — | What waits on you, most important first; saved filter applies | 457 |
-| `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 486 |
+| `asks_act` | `dismiss`, `decline`, `mute`, `listen`, `undo`, `ship`, `close`, `replan` | Decide asks (`items`): dismiss, ship, close (`reason`), mute, replan; `listen` (`repo`) unmutes; `undo` (`operation`) | 539 |
 | `asks_decide` | — | Answer a hand-over: the decider (`parked:<id>`), or `give_back` to its builder (`handover:`/`assigned:<id>`) | 270 |
 | `asks_proposal` | — | Act on a wave proposal: `approve`, `redirect` (`words`), `later` (`again`) | 315 |
 | `asks_undecide` | — | Put a set-aside card back on your board, within a day | 208 |
@@ -139,7 +139,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `map` | — | An app's plan: ready or waiting, critical path, crew, parkedTwice; `done` adds closed; `first: N` ranks N first | 375 |
 | `merge` | — | Land a pull, as its page's Merge button does; a person's only | 319 |
 | `migrate` | — | Bring a repo in by public `url` (`name`, `crew`), history and all | 269 |
-| `milestones` | — | How far each ask is | 385 |
+| `milestones` | — | How far each ask is | 391 |
 | `mint_invite` | — | Mint a one-use invite link, shown once, valid `days` (1–30, default 7) | 225 |
 | `mirror_now` | — | Admin: bring the snapshot mirror level now | 129 |
 | `mirror_set` | — | Admin: set or forget the snapshot mirror | 296 |

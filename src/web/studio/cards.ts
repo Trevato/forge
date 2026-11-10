@@ -11,7 +11,7 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "crew" | "board" | "forks";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "crew" | "board" | "forks" | "milestones";
 
 export interface CardRow {
   readonly label: string;
@@ -42,7 +42,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "crew", "board", "forks"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "crew", "board", "forks", "milestones"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -50,7 +50,8 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   now: "run",
   runs: "run",
   asks: "decision",
-  milestones: "wave",
+  milestones: "milestones",
+  asks_act: "decision",
   waves: "wave",
   map: "map",
   feed: "feed",
@@ -82,6 +83,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   crew: "Crew",
   board: "Board",
   forks: "Forks",
+  milestones: "Milestones",
 };
 
 type Obj = Record<string, unknown>;
@@ -206,6 +208,17 @@ export function cardFor(
     if (left > 0) rows.push({ label: "More", value: `${left} more not shown` });
     if (v["truncated"] === true) rows.push({ label: "Truncated", value: "more forks exist than the tool returned; ask with a larger limit or a smaller depth" });
     return { kind, title: CARD_TITLE[kind], status: `${nodes.length} repositor${nodes.length === 1 ? "y" : "ies"} · from ${text(v["root"])}`, rows, actions };
+  }
+  if (tool === "asks_act") {
+    // Only a done bulk action has a card: its receipt, and the undo that takes it back.
+    // A plan (`dryRun`) or a `listen` has no `receipt`.
+    const v = obj(value);
+    const operation = text(v["id"]);
+    if (text(v["receipt"]) === "" || operation === "") return undefined;
+    rows.push({ label: "Receipt", value: text(v["receipt"]) });
+    if (v["undoOf"] == null && v["undoneBy"] == null)
+      actions.push({ label: "Undo", tool: "asks_act", args: { action: "undo", operation } });
+    return { kind, title: "Asks decided", status: text(v["receipt"]), rows, actions };
   }
   if (kind === "crew") {
     // `scorecard` answers `{ agents: [{ username, all, recent }], keeperDays: [{ landed }] }`.
@@ -378,9 +391,10 @@ export function cardFor(
     status = runs.length === 0 ? "nothing running" : `${runs.length} going`;
     for (const r of runs.slice(0, LIMIT)) {
       const cost = Number(r["costUsd"]) > 0 ? ` · $${Number(r["costUsd"]).toFixed(2)}` : "";
+      const since = text(r["since"]) === "" ? "" : ` · ${timeAgo(text(r["since"]))}`;
       rows.push({
         label: `${text(r["who"])} on ${text(r["app"])}`,
-        value: `${text(r["on"])} — ${text(r["state"])}${cost}`,
+        value: `${text(r["on"]) === "" ? "" : `${text(r["on"])} — `}${text(r["state"])}${since}${cost}`,
         ...(web(origin) && /^[^/]+\/[^/]+$/.test(text(r["app"])) && RUN_ID.test(text(r["run"]))
           ? { link: `${origin}/${text(r["app"])}/runs/${text(r["run"])}` }
           : {}),
@@ -396,12 +410,13 @@ export function cardFor(
       const repo = text(a["repo"]);
       const number = Number(a["number"]);
       const page = a["numberOf"] === "pull" ? "pulls" : a["numberOf"] === "issue" ? "issues" : "";
+      const at = text(a["link"]);
       rows.push({
         label: text(a["line"]),
         value: `${text(words["decision"])} ${list(words["options"]).map(text).join(" / ")}`.trim(),
         ...(web(origin) && slugOf(repo) && Number.isInteger(number) && number > 0 && page !== ""
           ? { link: `${origin}/${repo}/${page}/${number}` }
-          : {}),
+          : web(origin) && here(origin, at) ? { link: origin + at } : {}),
       });
     }
     const first = asks[0];
@@ -414,6 +429,7 @@ export function cardFor(
       if (kindOf === "look" || kindOf === "review")
         actions.push({ label: "Approve", tool: "asks_act", args: { action: "ship", items } });
       actions.push({ label: "Decline", tool: "asks_act", args: { action: "close", items } });
+      actions.push({ label: "Dismiss", tool: "asks_act", args: { action: "dismiss", items } });
       const repo = text(first["repo"]);
       const number = Number(first["number"]);
       if (repo !== "" && Number.isInteger(number) && number > 0)
@@ -486,6 +502,8 @@ export function cardFor(
         });
     }
   } else {
+    // One milestone opened (`issue`) answers without `limbs`: plain JSON.
+    if (!Array.isArray(obj(value)["limbs"]) || "buildingNow" in obj(value)) return undefined;
     const limbs = list(obj(value)["limbs"]).map(obj);
     const repo = obj(obj(value)["repo"]);
     const slug = `${text(repo["owner"])}/${text(repo["name"])}`;
