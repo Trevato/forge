@@ -50,6 +50,7 @@ import {
 } from "../../core/subscriptions.ts";
 import { readSpend } from "../../actions/spend.ts";
 import { spendView } from "./spend.ts";
+import { narrowedGraphHref } from "../fleet-graph.ts";
 import type { HandContext } from "../../crew/handover.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
@@ -506,9 +507,9 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
   // The crew spends on every repository, app or not: the whole of the
   // viewer's own unless `?apps=` narrows the board.
   const apps = ctx.url.searchParams.get("apps");
-  const ids = apps
-    ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)).map((r) => r.id)
-    : returnsRepos(ctx.app, user).map((r) => r.id);
+  // One list for the money and the graph's link, so the two never disagree.
+  const owned = apps ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)) : [];
+  const ids = apps ? owned.map((r) => r.id) : returnsRepos(ctx.app, user).map((r) => r.id);
   if (ids.length === 0) return null;
   const now = Date.now();
   const r = tokenReturns(ctx.app.db, ids, {
@@ -518,7 +519,13 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
   if (r.spent.runs === 0) return null;
   const ask = readThroughput(ctx.app.db, [], new Date(now)).medianAskToLiveMs;
   const href = `/board/returns${apps ? `?apps=${encodeURIComponent(apps)}` : ""}`;
-  return html`<a class="muted small" id="returns-line" href="${href}"
+  // The graph of the same money, narrowed as the board is (#578).
+  const graph = narrowedGraphHref(
+    apps !== null && apps !== "",
+    owned.map((r) => `${r.ownerName}/${r.name}`),
+  );
+  return html`<span id="returns"
+    ><a class="muted small" id="returns-line" href="${href}"
     >Tokens, ${ASKS_WINDOW_DAYS} days: <b>${usd(r.spent.usd)}</b> → <b>${r.landed}</b> landed
     ${r.onLanded.perChange.changes === 0
       ? null
@@ -527,6 +534,7 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
     · <b>${usd(r.landedNothing.open.usd)}</b> still open${
       ask === null ? null : html` · median ask→live <b>${hoursSpan(ask)}</b> (24 h)`
     }</a
+    >${graph === null ? null : html`<a id="returns-graph" href="${graph}">Fleet graph</a>`}</span
   >`;
 }
 

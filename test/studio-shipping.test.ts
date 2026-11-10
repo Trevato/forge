@@ -219,6 +219,7 @@ describe("a stranger sees the app, not the owner's books", () => {
       expect(page).not.toContain("keeper");
       expect(page).not.toContain(">Decided<");
       expect(page).not.toContain(">On its own<");
+      expect(page).not.toContain("/fleet/graph");
       expect(page).not.toContain(">Slots<");
       expect(page).not.toContain("Nobody yet");
       // The app itself is still there: what it is, that it shipped, a way in.
@@ -235,6 +236,8 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(owner).toContain("$42.50");
     expect(owner).toContain("keeper");
     expect(owner).toContain(">On its own<");
+    // One click from the app's spend to the fleet graph, scoped to this app (#578).
+    expect(owner).toContain('href="/fleet/graph?repo=alice%2Fbeacon"');
     expect(owner).toContain(">Decided<");
     // Three served deploys this week — 2.0s, 4.0s and 6.0s — median 4.0s;
     // the fourth, never served, does not drag it toward zero.

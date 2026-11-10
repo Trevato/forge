@@ -10,6 +10,7 @@
  */
 
 import { appCardPath } from "../og/path.ts";
+import { fleetGraphHref } from "../fleet-graph.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { egressSetting } from "../../core/capacity.ts";
 import { egressNote } from "./egress.ts";
@@ -444,6 +445,11 @@ export async function studioApp(
           head: html`${icon("play")}
             <h2>On its own</h2>
             <span class="spacer"></span>
+            ${btn("Graph", {
+              href: fleetGraphHref([`${repo.ownerName}/${repo.name}`]),
+              size: "sm",
+              variant: "secondary",
+            })}
             ${btn("Change", { href: `${base}/settings`, size: "sm" })}`,
           extra: "about",
         },

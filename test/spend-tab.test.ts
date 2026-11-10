@@ -111,5 +111,8 @@ test("a forge admin sees the seeded run's dollars by credential and by app", asy
   expect(body).toContain("work-plan");
   expect(body).toContain("bob/ledger-app");
   expect(body).toContain("$12.34");
+  // The graph is one click away, whole or already narrowed to an app (#578).
+  expect(body).toContain('<p><a href="/fleet/graph">Fleet graph</a></p>');
+  expect(body).toContain('<a href="/fleet/graph?repo=bob%2Fledger-app" title="This app on the fleet graph">bob/ledger-app</a>');
   expect(res.headers.get("server-timing") ?? "").toMatch(/(^|, )spend;dur=\d+\.\d/);
 });

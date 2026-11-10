@@ -10,6 +10,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { enableApp } from "../src/actions/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
@@ -308,6 +309,19 @@ describe("what the tokens bought", () => {
     expect(line).toContain("<b>$2.40</b> closed with nothing");
     expect(line).toContain("<b>$0.10</b> still open");
     expect(line).not.toContain("landed nothing");
+    // The spend line's way to the fleet graph: the viewer's whole selection,
+    // the graph's own default, when nothing narrows the board (#578).
+    expect(board).toContain('<a id="returns-graph" href="/fleet/graph">Fleet graph</a>');
+    // Narrowed to something holding none of her money (mill is no app, so
+    // not on the board): no line and no graph link, never the whole fleet.
+    const narrowed = await (await get("/board?apps=alice/mill", { cookie: aliceCookie })).text();
+    expect(narrowed).not.toContain('id="returns-line"');
+    expect(narrowed).not.toContain('id="returns-graph"');
+    // Once mill is an app the narrowed board carries it, and the graph only it.
+    const enabled = enableApp(app, alice, repo, { slug: "mill" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const asked = await (await get("/board?apps=alice/mill", { cookie: aliceCookie })).text();
+    expect(asked).toContain('<a id="returns-graph" href="/fleet/graph?repo=alice%2Fmill">Fleet graph</a>');
     const page = (
       await (await get("/board/returns", { cookie: aliceCookie })).text()
     ).replace(/\s+/g, " ");
