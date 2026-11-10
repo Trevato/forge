@@ -23,7 +23,7 @@ describe("oneShot", () => {
     admin = a.value.id;
     member = b.value.id;
     const bin = join(dir, "claude");
-    writeFileSync(bin, `#!/bin/sh\necho "$@" > "${dir}/args.txt"\nIFS= read -r first\necho '{"type":"system","subtype":"init","session_id":"s1","model":"fake"}'\necho '{"type":"result","subtype":"success","is_error":false,"result":"{}","total_cost_usd":0.02,"num_turns":1,"session_id":"s1","terminal_reason":"completed","usage":{"input_tokens":1,"output_tokens":1}}'\n`);
+    writeFileSync(bin, `#!/bin/sh\necho "$@" > "${dir}/args.txt"\npwd > "${dir}/cwd.txt"\nIFS= read -r first\necho '{"type":"system","subtype":"init","session_id":"s1","model":"fake"}'\necho '{"type":"result","subtype":"success","is_error":false,"result":"{}","total_cost_usd":0.02,"num_turns":1,"session_id":"s1","terminal_reason":"completed","usage":{"input_tokens":1,"output_tokens":1}}'\n`);
     chmodSync(bin, 0o755);
   });
   afterAll(async () => {
@@ -69,5 +69,24 @@ describe("oneShot", () => {
     writeFileSync(join(dir, "args.txt"), "untouched");
     expect(await oneShot(app, admin, "s", "p")).toEqual({ ok: false, error: "resting" });
     expect(args()).toBe("untouched");
+  });
+  test("the run has no tools, the forge's cwd and sandbox, and a different model changes only the model", async () => {
+    on();
+    setAccountCeiling(app.db, admin, 100, 100, admin, new Date());
+    await oneShot(app, admin, "s", "p", "model-a");
+    const a = args();
+    const cwd = readFileSync(join(dir, "cwd.txt"), "utf8").trim();
+    await oneShot(app, admin, "s", "p", "model-b");
+    const b = args();
+    expect(a).toContain("--model model-a");
+    expect(b).toContain("--model model-b");
+    expect(a.replace("model-a", "M")).toBe(b.replace("model-b", "M"));
+    // No MCP server and nothing allowed; every built-in tool is denied.
+    expect(a).toContain("--strict-mcp-config");
+    expect(a).toContain('"mcpServers":{}');
+    expect(a).toContain('"allow":[]');
+    expect(a).toContain('"deny":[');
+    // The forge's own scratch directory, never a repository.
+    expect(cwd.endsWith("conversation-cwd")).toBe(true);
   });
 });

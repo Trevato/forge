@@ -18,6 +18,7 @@ import { plainText } from "../core/reports.ts";
 import { listActiveRuns, workingAgentRuns } from "../core/runs.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
 import { crewWithRole } from "../core/agents.ts";
+import { fence } from "../crew/fence.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
 import { NOTE_EMPTY } from "../apps/note_words.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -148,13 +149,6 @@ export function notesFor(app: App, record: AppRecord, repo: Repo, forgeUrl: stri
   return rows.map((n) => view(app, record, repo, forgeUrl, n)).filter((n): n is NoteView => n !== undefined);
 }
 
-/** The longest run of backticks in `text`, so the fence can be longer. */
-function fence(text: string): string {
-  const longest = Math.max(2, ...(text.match(/`+/g) ?? []).map((r) => r.length));
-  const bar = "`".repeat(longest + 1);
-  return `${bar}\n${text}\n${bar}`;
-}
-
 function titleOf(text: string): string {
   const line = text.split("\n").find((l) => l.trim() !== "")?.replace(/\s+/g, " ").trim() ?? "";
   return FROM_APP_TITLE + (line.length > 80 ? `${line.slice(0, 77)}...` : line);
@@ -242,7 +236,14 @@ export async function sendNote(
     visitor: sender.key,
     name: sender.name,
   });
-  if (sender.person) assignOnArrival(app, owner, repo, opened.value);
+  if (sender.person) {
+    const who = assignOnArrival(app, owner, repo, opened.value);
+    // Not awaited: the sender's answer does not wait for the model.
+    // Loaded on use: the first look reaches the model runner, which would otherwise close an import cycle.
+    const facts = { slug: record.slug, env, text, page: input.page };
+    void import("../crew/first_look.ts").then((m) => m.firstLook(app, owner, repo, opened.value, facts, who))
+      .catch((error) => app.log.warn("first look could not start", { error: String(error) }));
+  }
   return ok(view(app, record, repo, forgeUrl, note)!);
 }
 
@@ -253,12 +254,13 @@ export async function sendNote(
  * an archived repo), it stays unassigned and the flow alarm names it at 15
  * minutes.
  */
-function assignOnArrival(app: App, owner: User, repo: Repo, issue: Issue): void {
+function assignOnArrival(app: App, owner: User, repo: Repo, issue: Issue): User | undefined {
   const busy = new Set(listActiveRuns(app.db, [repo.id]).flatMap((r) => (r.actorId === null ? [] : [r.actorId])));
   const free = (crewWithRole(app.db, [repo.id], "builder").get(repo.id) ?? []).find((a) => !busy.has(a.user.id));
-  if (free === undefined) return;
+  if (free === undefined) return undefined;
   const done = assignIssue(app, owner, repo, issue, free.user);
   if (!done.ok) console.error(`app note: issue #${issue.number} could not be assigned to ${free.user.username}: ${done.error}`);
+  return done.ok ? free.user : undefined;
 }
 
 /** The owner's: hide a note (closing its issue), or ban its sender too. */
