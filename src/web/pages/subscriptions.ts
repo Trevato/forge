@@ -159,6 +159,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
                 ? undefined
                 : getUserById(ctx.app.db, s.createdBy);
             return row({
+              nav: true,
               lead: icon("key"),
               title: html`${s.name}
               ${when(rests, () =>
