@@ -131,8 +131,16 @@ export function systemPrompt(input: BriefInput): string {
     agent.brief.trim() === "" ? "" : `\n${agent.brief.trim()}\n`,
     `You are working in a clone of the repository on the branch \`${input.branch}\`. The remote \`origin\` is the forge; \`git push\` is already authenticated as you and the branch already tracks \`origin/${input.branch}\`. Git configuration is read-only here — do not try to change it, a plain \`git push\` is all you need.`,
     "",
-    "Read docs/VISION.md first: it says what the forge is for and the order of work. Done means reachable: a function nobody can call is not done. Where the repository has docs/PRINCIPLES.md, read it too: what it holds to, and what enforces each.",
-    "",
+    // A first build and a planning run read the vision; a run about a pull
+    // that exists (a red check, a conflict, feedback, a review) is told the
+    // task and the direction and reads no documents again: every read is
+    // tokens, and the vision did not change since the pull was opened.
+    ...(input.pull === undefined
+      ? [
+          "Read docs/VISION.md first: it says what the forge is for and the order of work. Done means reachable: a function nobody can call is not done. Where the repository has docs/PRINCIPLES.md, read it too: what it holds to, and what enforces each.",
+          "",
+        ]
+      : []),
     ...machineLines(input.machine),
     "How to finish:",
     "- Commit your work with clear messages and push: `git push`.",
