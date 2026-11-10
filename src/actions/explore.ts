@@ -283,6 +283,9 @@ export function exploreLine(query: ExploreQuery): string {
     .join(" ");
 }
 
+/** The one fork action an app row offers: the page's button and the MCP row's `action` say these words. */
+export const MAKE_IT_YOURS = { do: "make_it_yours", label: "Make it yours" } as const;
+
 export interface ExploreRow {
   readonly kind: ExploreKind;
   readonly name: string;
@@ -310,6 +313,8 @@ export interface ExploreRow {
    * private one they enter as its own. The same rules Make it yours checks.
    */
   readonly copyable?: boolean;
+  /** Present exactly when `copyable`: the action name (an MCP tool) and label the page shows. */
+  readonly action?: typeof MAKE_IT_YOURS;
 }
 
 /**
@@ -512,6 +517,7 @@ function rank(
   const appRows: ExploreRow[] = appRepos.map((repo) => {
     const s = told(repo);
     const liked = likes.get(repo.id) ?? 0;
+    const canCopy = copyable(repo);
     return {
       kind: "app",
       name: `${repo.ownerName}/${repo.name}`,
@@ -527,7 +533,8 @@ function rank(
       shippedAt: s.shippedAt,
       score: frontScore(s, now, weights) + LIKE_WEIGHT * Math.log1p(liked),
       repo: { owner: repo.ownerName, name: repo.name },
-      copyable: copyable(repo),
+      copyable: canCopy,
+      ...(canCopy ? { action: MAKE_IT_YOURS } : {}),
     };
   });
 

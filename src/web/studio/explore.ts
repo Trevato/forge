@@ -13,6 +13,7 @@ import {
   exploreParams,
   exploreNote,
   exploreSuggestion,
+  MAKE_IT_YOURS,
   readExploreLine,
   type ExploreQuery,
   type ExploreRow,
@@ -71,9 +72,9 @@ function rowHtml(row: ExploreRow, signedIn: boolean): Html {
           trail: signedIn
             ? html`<form method="post" action="/${row.repo.owner}/${row.repo.name}/make-it-yours" data-make-it-yours>
                 <input type="hidden" name="receipt" value="1" />
-                ${btn("Make it yours", { size: "sm", icon: "fork" })}
+                ${btn(MAKE_IT_YOURS.label, { size: "sm", icon: "fork" })}
               </form>`
-            : btn("Make it yours", {
+            : btn(MAKE_IT_YOURS.label, {
                 href: `/${row.repo.owner}/${row.repo.name}/make-it-yours?receipt=1`,
                 size: "sm",
                 icon: "fork",
