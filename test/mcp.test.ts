@@ -159,10 +159,10 @@ describe("the forge over MCP", () => {
     const stream = await fetch(`${base}/mcp`, { headers: { accept: "text/event-stream" } });
     expect(stream.status).toBe(405);
     expect(stream.headers.get("allow")).toBe("POST");
-    expect(await stream.text()).toBe("");
+    expect(await stream.text()).toContain("JSON-RPC over POST");
     const bare = await fetch(`${base}/mcp`);
     expect(bare.status).toBe(405);
-    expect(await bare.text()).toBe("");
+    expect(await bare.text()).toContain("MCP endpoint");
     const anon = await (await fetch(`${base}/mcp`, { headers: { accept: "text/html" } })).text();
     expect(anon).toContain('href="/signin"');
     expect(anon).not.toContain('href="/settings/tokens">Settings');

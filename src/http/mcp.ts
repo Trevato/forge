@@ -424,11 +424,24 @@ export function mcpRoutes(router: Router<Handler>): void {
   // No server-to-client stream is offered: nothing to hold open, nothing
   // for a proxy to cut.
   // A browser (Accept names text/html) is told what this is; every other
-  // Accept, an MCP client's event-stream included, gets the bare 405.
+  // Accept, an MCP client's event-stream included, gets the 405 with a
+  // short text/plain explanation of how to connect.
   router.add("GET", "/mcp", (ctx) => {
-    if (!(ctx.request.headers.get("accept") ?? "").toLowerCase().includes("text/html"))
-      return NOT_HERE("POST");
     const origin = ctx.url.origin;
+    if (!(ctx.request.headers.get("accept") ?? "").toLowerCase().includes("text/html"))
+      return new Response(
+        [
+          "This is the forge's MCP endpoint.",
+          `It speaks JSON-RPC over POST: send POST ${origin}/mcp with Authorization: Bearer <token>.`,
+          `OAuth discovery: ${origin}/.well-known/oauth-protected-resource`,
+          "Docs: docs/MCP.md, and /llms.txt for what an agent can do here.",
+          "",
+        ].join("\n"),
+        {
+          status: 405,
+          headers: { allow: "POST", "content-type": "text/plain; charset=utf-8" },
+        },
+      );
     const res = page(
       {
         ctx,
