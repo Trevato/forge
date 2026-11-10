@@ -114,7 +114,7 @@ bytes in `tools/list`. After changing a tool run `bun scripts/mcp-table.ts`;
 | `forge_view` | — | The forge as one picture: counts, apps, runs with stations, health | 189 |
 | `forges` | — | Forges sent from here (admin): name, address, apps, claimed, stage, resend, spendTodayUsd, ceilingUsd, size, use | 231 |
 | `fork` | — | Fork a repository into your account; for a guest, a copy to send changes back from | 232 |
-| `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 347 |
+| `fork_tree` | — | The fork tree around a repo: ancestors, siblings and descendants you may read | 397 |
 | `forks` | — | A repo's forks you may see, paged by limit and cursor (next_cursor), each with commits ahead and behind | 345 |
 | `front_page` | — | The stranger's front page; admin sets `pinned`/`hidden`/`weights` | 457 |
 | `health` | — | How this forge is: version, commit, draining or not, rollout, incidents | 190 |
@@ -491,6 +491,7 @@ answers
   The Apps card (`apps`) links each `owner/name` row to the app's page on the forge and adds a
   linked production row when the app has an http(s) URL; the `new_app` card links its
   Production row the same way. Any other address stays plain text, never a link.
+  The Forks card (`fork_tree`, `ui://forge/forks`) is one row per repository you may read, nested by a `depth` field the card pads (not leading spaces, which HTML collapses); the value says how it follows: `follows on its own`, `takes updates`, `offers updates` (the card's own wording for the `offers` mode) or `off`.
   `resources/list` and `resources/read` serve one small
   sandboxed page, which draws the `structuredContent.card` model that the
   tool result carries, with `textContent` only. The model is built in

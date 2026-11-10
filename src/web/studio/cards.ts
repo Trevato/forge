@@ -11,13 +11,15 @@ import { html, raw } from "../html.ts";
 import { timeAgo } from "../ui.ts";
 import { span, STAGE_LABEL, verdict, type PipelineKey, type PipelineStage } from "../../flow/pipeline.ts";
 
-export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "crew" | "board";
+export type CardKind = "app" | "run" | "decision" | "wave" | "map" | "feed" | "pull" | "pulls" | "asked" | "explore" | "issue" | "flow" | "crew" | "board" | "forks";
 
 export interface CardRow {
   readonly label: string;
   readonly value: string;
   /** An absolute http(s) address the row's label links to. */
   readonly link?: string;
+  /** How many steps the row is nested (a tree): the card pads the label by this much. */
+  readonly depth?: number;
 }
 export interface CardAction {
   readonly label: string;
@@ -40,7 +42,7 @@ const here = (origin: string, path: string): boolean => origin !== "" && /^\/(?!
 
 export const CARD_MIME = "text/html;profile=mcp-app";
 export const CARD_URI = (kind: CardKind): string => `ui://forge/${kind}`;
-export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "crew", "board"];
+export const CARD_KINDS: readonly CardKind[] = ["app", "run", "decision", "wave", "map", "feed", "pull", "pulls", "asked", "explore", "issue", "flow", "crew", "board", "forks"];
 
 /** The tool whose answer each card draws. */
 export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
@@ -61,6 +63,7 @@ export const CARD_OF_TOOL: Readonly<Record<string, CardKind>> = {
   flow: "flow",
   scorecard: "crew",
   boards: "board",
+  fork_tree: "forks",
 };
 
 const CARD_TITLE: Readonly<Record<CardKind, string>> = {
@@ -78,6 +81,7 @@ const CARD_TITLE: Readonly<Record<CardKind, string>> = {
   flow: "Flow",
   crew: "Crew",
   board: "Board",
+  forks: "Forks",
 };
 
 type Obj = Record<string, unknown>;
@@ -93,6 +97,15 @@ const ASKED_WORDS = 80;
 const ASKED_LIMIT = 20;
 /** A board card shows this many panels, then counts the rest. */
 const BOARD_PANELS = 8;
+/** A forks card shows this many nodes, then counts the rest. */
+const FORK_ROWS = 30;
+/** How a fork follows its parent, in plain words. */
+const FOLLOW_WORDS: Readonly<Record<string, string>> = {
+  autonomous: "follows on its own",
+  "take-updates": "takes updates",
+  offers: "offers updates",
+  "dont-follow": "off",
+};
 /** The forge's id shape (src/kernel/id.ts): 26 lowercase Crockford base32 characters. */
 const RUN_ID = /^[0-9a-hjkmnp-tv-z]{26}$/;
 
@@ -173,6 +186,26 @@ export function cardFor(
       rows.push({ label: text(p["title"]), value: values[i] ?? "no data" });
     if (panels.length > BOARD_PANELS) rows.push({ label: "More", value: `${panels.length - BOARD_PANELS} more` });
     return { kind, title: text(v["title"]), status: `${panels.length} panel${panels.length === 1 ? "" : "s"} · ${text(v["range"])}`, rows, actions };
+  }
+  if (kind === "forks") {
+    // `fork_tree` answers `{ root, nodes: [{ repo, parent, depth, follow }], truncated }`; a repo with no readable tree has no card.
+    const v = obj(value);
+    if (text(v["root"]) === "" || !Array.isArray(v["nodes"])) return undefined;
+    const nodes = v["nodes"].map(obj);
+    for (const n of nodes.slice(0, FORK_ROWS)) {
+      const repo = text(n["repo"]);
+      const depth = Math.min(8, Math.max(0, Math.floor(Number(n["depth"]) || 0)));
+      rows.push({
+        label: repo,
+        ...(depth > 0 ? { depth } : {}),
+        value: FOLLOW_WORDS[text(n["follow"])] ?? "off",
+        ...(web(origin) && slugOf(repo) ? { link: `${origin}/${repo}` } : {}),
+      });
+    }
+    const left = nodes.length - FORK_ROWS;
+    if (left > 0) rows.push({ label: "More", value: `${left} more not shown` });
+    if (v["truncated"] === true) rows.push({ label: "Truncated", value: "more forks exist than the tool returned; ask with a larger limit or a smaller depth" });
+    return { kind, title: CARD_TITLE[kind], status: `${nodes.length} repositor${nodes.length === 1 ? "y" : "ies"} · from ${text(v["root"])}`, rows, actions };
   }
   if (kind === "crew") {
     // `scorecard` answers `{ agents: [{ username, all, recent }], keeperDays: [{ landed }] }`.
@@ -485,6 +518,7 @@ function draw(card) {
   const dl = document.createElement("dl");
   for (const r of card.rows) {
     const dt = el("dt", r.label);
+    if (r.depth > 0) dt.style.paddingInlineStart = Math.min(8, r.depth) * 1.25 + "em";
     if (r.link && (r.link.startsWith("https://") || r.link.startsWith("http://"))) { const a = el("a", r.label); a.href = r.link; a.target = "_blank"; a.rel = "noopener noreferrer"; a.onclick = (ev) => { ev.preventDefault(); parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "ui/open-link", params: { url: r.link } }, "*"); }; dt.replaceChildren(a); }
     dl.append(dt, el("dd", r.value));
   }
