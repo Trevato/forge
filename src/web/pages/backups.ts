@@ -346,7 +346,7 @@ async function movingPart(
         ${when(
           svc.progress(),
           (p) =>
-            html`<p class="break">
+            html`<p class="break" role="status" aria-live="polite">
               ${badge("Running", { icon: "clock", variant: "secondary" })} A snapshot is being taken: ${p.objects} objects,
               ${fileSize(p.bytes)} so far, ${Math.round(p.elapsedMs / 1000)} s
               in.
