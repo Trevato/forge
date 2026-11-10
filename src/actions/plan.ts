@@ -29,6 +29,7 @@ import { transact } from "../kernel/db.ts";
 import { id as newId } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
+import { lookAlikes } from "./look_alike.ts";
 import { SELF_WAIT } from "./plan_words.ts";
 import { followLink } from "./pillars.ts";
 
@@ -146,6 +147,15 @@ export function parsePlan(raw: unknown): Result<PlanItem[], PlanError> {
       ...(later ? { later: why } : {}),
     });
   }
+  // One change on several things is one issue with a checklist, never a run
+  // each (#10403–#10432): every run pays the same set-up, and the pulls fight
+  // over the same files.
+  const alike = lookAlikes(items, (item) => item.title)[0];
+  if (alike !== undefined)
+    return refuse(
+      "look_alike",
+      `${alike.map((item) => `"${item.key}"`).join(", ")} are one change on ${alike.length} things: open one issue for it whose body lists each as a checkbox, not one issue each`,
+    );
   return ok(items);
 }
 

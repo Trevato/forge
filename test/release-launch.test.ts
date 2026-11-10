@@ -14,6 +14,7 @@ import type { Subprocess } from "bun";
 import {
   keepGood,
   lastGood,
+  lastWords,
   launch,
   markRollbackPaged,
   READY_GRACE_MS,
@@ -53,6 +54,8 @@ Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.PORT), fetch(req) {
 `;
 const THROWS = `throw new Error("(test fixture) a release whose main throws at import, as 0.7.166's did");\n`;
 const HANGS = `setInterval(() => {}, 1_000);\n`;
+const REFUSES = `console.error("FORGE_DRAIN_LINGER_S: whole seconds from 0 to 60, not \\"x\\""); process.exit(1);\n`;
+const SAYS_THEN_HANGS = `console.error("waiting on the database"); setInterval(() => {}, 1_000);\n`;
 
 async function freePort(): Promise<number> {
   const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("") });
@@ -104,7 +107,8 @@ test("a version whose main throws at import is undone at once: the last good one
   expect(await healthAt(launched.port)).toMatchObject({ version: "0.7.162", commit: "a".repeat(40) });
   expect(rolledBack(data)).toMatchObject({ from: "0.7.166", to: "0.7.162", paged: false });
   expect(rollbackNeed(data)?.sentence).toBe(
-    "Release 0.7.166 did not become ready (it exited with 1 before it was ready); rolled back to 0.7.162.",
+    "Release 0.7.166 did not become ready (it exited with 1 before it was ready); rolled back to 0.7.162." +
+      " It said: error: (test fixture) a release whose main throws at import, as 0.7.166's did",
   );
   expect(lastGood(data)?.version).toBe("0.7.162");
 });
@@ -117,6 +121,43 @@ test("a version that never becomes ready is undone when the grace runs out, well
   expect(launched.ran).toBe("rollback");
   expect(launched.line).toBe("0.7.167: not ready within 2s; rolled back to 0.7.162");
   expect(await healthAt(launched.port)).toMatchObject({ version: "0.7.162" });
+});
+
+test("a release that refuses its config and exits is recorded with the line it wrote (#10249)", async () => {
+  const data = join(root, "data-refuses");
+  keepGood(data, tree(SERVES), "0.7.479", null);
+  expect((await run(data, tree(REFUSES), "0.7.481")).ran).toBe("rollback");
+  expect(rolledBack(data)).toMatchObject({
+    from: "0.7.481",
+    why: "it exited with 1 before it was ready",
+    said: 'FORGE_DRAIN_LINGER_S: whole seconds from 0 to 60, not "x"',
+  });
+});
+
+test("a release that hangs is recorded with the last line it wrote before the grace ran out", async () => {
+  const data = join(root, "data-says-hangs");
+  keepGood(data, tree(SERVES), "0.7.162", null);
+  await run(data, tree(SAYS_THEN_HANGS), "0.7.168", 500);
+  expect(rolledBack(data)).toMatchObject({ why: "not ready within 1s", said: "waiting on the database" });
+});
+
+test("last words are the last error line, past the stack, the excerpt and the banner, and clamped", () => {
+  const bun = [
+    "2026-11-09T15:44:50.000Z INFO  [forge] reconciled repos=3",
+    "1 | throw new Error(\"x\");",
+    "          ^",
+    "\x1b[31mSQLiteError\x1b[0m: database is locked",
+    "      at migrate (/app/src/core/schema.ts:40:3)",
+    "",
+    "Bun v1.3.14 (Linux x64 baseline)",
+    "",
+  ].join("\n");
+  expect(lastWords(bun)).toBe("SQLiteError: database is locked");
+  expect(lastWords("starting\nPORT must be a port number\n")).toBe("PORT must be a port number");
+  expect(lastWords("\n\n")).toBeNull();
+  const long = lastWords(`error: ${"y".repeat(400)}`);
+  expect(long?.length).toBe(200);
+  expect(long?.endsWith("…")).toBe(true);
 });
 
 test("with nothing kept, or only itself, there is nothing to roll back to", async () => {

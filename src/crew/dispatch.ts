@@ -48,6 +48,7 @@ import { noteHeld, type HoldCause } from "../runs/held.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { bugsFirst } from "../flow/bugs.ts";
 import { byDials } from "./team_share.ts";
+import { peopleFirst } from "./people_first.ts";
 import { inMaintenance } from "../maintenance/state.ts";
 import { gateQueue } from "../flow/valve_gate.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
@@ -1521,11 +1522,17 @@ const notedBy = new WeakMap<App, Set<string>>();
 
 /**
  * The order queued agent runs are started in: the team dials first, then bugs
- * ahead of everything (#8709), then the valves a person turned. A bug outranks the dials by policy: the clock
- * is a promise, the dials a share of the rest.
+ * ahead of everything (#8709), then a person's ask ahead of the bugs
+ * (`people_first.ts`, #10365), then the valves a person turned. A bug
+ * outranks the dials by policy: the clock is a promise, the dials a share of
+ * the rest. A person outranks the bug: they are waiting, and the crew is not.
  */
 export function startOrder(app: App): ReturnType<typeof gateQueue> {
-  return gateQueue(app.db, bugsFirst(app.db, byDials(app.db, listQueued(app.db, "agent", 50))));
+  const queued = listQueued(app.db, "agent", 50);
+  return gateQueue(
+    app.db,
+    peopleFirst(app.db, bugsFirst(app.db, byDials(app.db, queued)), (run) => assignedByPerson(app, run)),
+  );
 }
 
 /** Take queued runs, oldest first, up to the limit — one per issue at a time. */

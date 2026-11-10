@@ -234,6 +234,7 @@ function reportRow(base: string, report: Report): Html {
     `${base}/reports/${report.id}/${verb}`;
   return row({
     title: report.title,
+    nav: true,
     meta: html`From outside, ${filerWords(report.filedBy)}, not checked · ${time(report.createdAt)}`,
     fold: {
       id: `report-${report.id}`,

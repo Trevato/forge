@@ -52,6 +52,12 @@ describe("the repo-wide rule tests in the fast tier", () => {
     expect(fast.files).toContain("test/x.test.ts");
   });
 
+  test("a pull adding only a new module runs the tree scans: unreached, header width, boot (#10252)", () => {
+    const fast = plan(["src/spawn/new.ts"]);
+    for (const rule of ["test/unreached.test.ts", "test/header-width.test.ts", "test/release-boot.test.ts", "test/hollow.test.ts"])
+      expect(fast.why.get(rule)).toBe("repo-wide rule");
+  });
+
   test("a doc-only pull runs them too: the README budget is one", () => {
     expect(plan(["README.md"]).files).toEqual(expect.arrayContaining([...RULE_TESTS]));
   });

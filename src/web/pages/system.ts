@@ -137,8 +137,16 @@ export function cachesSection(rows: readonly CacheRow[]): Html {
 export function featuresSection(rows: readonly FeatureHealth[]): Html {
   if (rows.length === 0) return html``;
   return html`<section class="settings-block" id="sys-features"><h2>Features from apps</h2>
-    <ul class="list" aria-label="Absorbed features and their health">${rows.map((r) => html`<li data-feature="${r.slug}" data-healthy="${String(r.healthy)}"><strong>${r.name}</strong> ${r.healthy ? html`<span class="small muted">${r.state}</span>` : badge(r.state, { tone: "danger" })}
-      <span class="small muted mono">${[r.commit, r.since].filter((x) => x !== null).join(" · ")}</span>${r.problem === null ? null : html` <span class="small muted">${r.problem}</span>`}</li>`)}</ul>
+    <ul class="list" aria-label="Absorbed features and their health">${rows.map((r) =>
+      row({
+        href: `/${r.repo}`,
+        nav: true,
+        title: r.name,
+        meta: html`${r.healthy ? html`<span class="small muted">${r.state}</span>` : badge(r.state, { tone: "danger" })}
+          <span class="small muted mono">${[r.commit, r.since].filter((x) => x !== null).join(" · ")}</span>${r.problem === null ? null : html` <span class="small muted">${r.problem}</span>`}`,
+        data: { feature: r.slug, healthy: String(r.healthy) },
+      }),
+    )}</ul>
     <p class="small"><a href="/settings/features">Settings › Features</a></p></section>`;
 }
 

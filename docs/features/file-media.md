@@ -65,15 +65,19 @@ media type, for `<img>`, `<video>`, `<audio>`, `<object>` and `fetch()`.
 ## The kind registry
 
 `fileKind(path, firstBytes)` answers `image | svg | pdf | audio | video |
-csv | model3d | config | markdown | text | binary`. `RENDER_CAP` is the
+csv | model3d | config | markdown | patch | text | binary`. `RENDER_CAP` is the
 largest file each kind draws inline; over it, the page offers Download.
 
 `kinds.ts` is plain data with no web dependency: the editor and the
 terminal ask it whether a path is Markdown, as the blob page does.
 
-`renderBlob` asks `render/renderers.ts`. A kind in `RENDERERS` is drawn by
-its module; a kind with none yet keeps the source or binary view it always
-had. Where a renderer exists the header offers `Rendered | Source`; every
+`renderBlob` asks `rendererFor` in `render/renderers.ts`. A kind in
+`RENDERERS` is drawn by its module; a kind with none yet keeps the source or
+binary view it always had. A file too large for the page to read is drawn
+only by a media kind (`MEDIA_KINDS`), whose renderer never reads the body
+(the browser fetches the media route), and only up to that kind's cap. A
+page with no media route (a live browse of another forge, `/origins/…`)
+draws no media kind. Where a renderer exists the header offers `Rendered | Source`; every
 file's header has the **Raw** and **Download** buttons.
 
 ## Audio and video (#7333)
@@ -108,7 +112,13 @@ QuickTime files are inside, for browsers that refuse `video/quicktime`.
   mirrored origin), the extension decides (`claimedMedia`) and the media
   route confirms the bytes, serving a contradicted file as
   `application/octet-stream`, and the player shows the note.
-- **Text kinds** (markdown, csv, config, text) and binary keep the page's
+- **Patch** (`.patch`, `.diff`; `render/patch.ts`): text drawn with the pull
+  page's own diff (`parseUnifiedDiff` into `renderDiff`). A `git format-patch`
+  mail header (From, Subject, Date) shows above it as a plain list of rows.
+  Text with no `diff --git` file in it (a plain `diff -u`, notes) is not
+  parsed and falls back to the text view. The terminal's file view draws the
+  same parse with its pull diff (`tui/ui/diff.ts`); `v` shows the source.
+- **Text kinds** (markdown, csv, config, patch, text) and binary keep the page's
   1 MB ceiling: over it the page says "over the render cap" and offers
   Download.
 - Over `RENDER_CAP` (500 MB audio, 4 GB video) the page offers Download.
@@ -120,6 +130,55 @@ path, size, body, and `media`, the media route's address; HTML out), and
 name it once in `RENDERERS` (`render/renderers.ts`); `rendererFor` picks it. Point any element
 that needs the bytes at `input.media`, never at an inline copy, so
 repository content only ever runs under the media route's sandbox. `render/markdown.ts` is the example.
+
+## 3D models
+
+An `.stl` (ASCII or binary), `.obj`, `.glb` or `.gltf` file's page shows the
+part, ready to turn (`src/web/render/model3d.ts`, #7335).
+
+- **Turn it:** drag to orbit, scroll or pinch to zoom, right-drag or two
+  fingers to pan; with the view focused, the arrow keys pan.
+- **The head** says the triangle count and the bounding box in millimetres,
+  in the file's own axes. STL and OBJ units are taken as millimetres; glTF
+  is metres by its spec, so its box is multiplied by 1000.
+- **Wireframe** and **Axes** toggle in the head. The camera fits the part,
+  a grid sits under it, and every part wears one neutral material. An STL
+  is stood Z-up, the way a printer reads it.
+- **Rendered | Source** stays, and **Raw** and **Download** are on every
+  file's bar. Up to 100 MB (`RENDER_CAP.model3d`) a part is drawn, even one
+  too large for the page to read whole; over it, the page offers Download.
+- **On a live browse of another forge** (`/origins/…`) there is no media
+  route to fetch from, so a model keeps its source or binary view there.
+- **Without JavaScript or WebGL** the frame keeps its note and Download
+  button. A file that is not its format says why in the head and keeps them
+  too.
+- **Where the work happens:** the server renders only the frame. The bytes
+  come from the media route with `fetch()`, and STL and OBJ are parsed in
+  the browser by `render/mesh.ts`; glTF goes through three.js's loader. A
+  `.gltf` whose buffers are separate files finds them beside it on the media
+  route. Only those are fetched: every URI a glTF names goes through
+  `withinModelDir` (`render/gltf-uri.ts`), and one that is not same-origin
+  with a path under the model's own directory (`../`, an encoded dot or
+  slash, an absolute path, another host, `data:` or `blob:`) is sent to
+  `about:blank` and never requested, so a public model cannot make its
+  readers' browsers call anything else on the forge.
+- **In the terminal** there is no 3D screen, by design: a terminal cannot draw
+  the part, so the file view of a binary or too-large model says
+  what the page shows: `3D model · STL` over `12 triangles · 20 × 20 × 20 mm`,
+  and under it `Download: <forge>/<owner>/<repo>/media/<ref>/<path>?download=1`
+  (`render/model-facts.ts`, the same parsers). Up to 2 MB (`FACTS_CAP`) the
+  bytes are read; over it, the model is named and sized. A glTF's facts come
+  from its JSON (vertex counts, position bounds in metres, before node
+  transforms). An ASCII STL or OBJ is text, so it opens as its source, as
+  the web's Source view does.
+- **Loaded only where needed:** three.js 0.186.1 is vendored, unedited, with
+  its MIT licence, in `src/web/render/vendor/three/` (its README lists the
+  files and their hashes). `model3d-client.ts` is bundled with it into
+  `/assets/model3d-<hash>.js` (648 KB, 166 KB gzipped, immutable), named by
+  a hash of its sources so the page knows the address without a build. The
+  frame names it in `data-module`, and the shell loads it with its own nonce
+  only when a figure asks, on a full load or when the code browser swaps the
+  file in.
 
 ## Images and SVG (#7331)
 

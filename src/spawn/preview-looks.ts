@@ -38,6 +38,25 @@ export const PREVIEW_PULL_FILES = `${PREVIEW_PULL_PAGE}/files`;
 export const PREVIEW_APP = "hello";
 export const PREVIEW_APP_PAGE = `/${PREVIEW_ADMIN}/${PREVIEW_APP}`;
 
+/**
+ * The recently moved repository (#10195): made by the admin as `moved`, then
+ * moved to the first seeded fork owner through the action a person uses, so
+ * its head draws "Moved from preview-admin/moved on <date>". The seed refuses
+ * to finish unless the page answers 200 and holds the line.
+ */
+export const PREVIEW_MOVED = "moved";
+export const PREVIEW_MOVED_OWNER = "preview-ada";
+export const PREVIEW_MOVED_PAGE = `/${PREVIEW_MOVED_OWNER}/${PREVIEW_MOVED}`;
+
+/**
+ * The sample's Settings scrolled to "Move to another owner" by the fragment
+ * (#10194): the owner field, button and refusal sentences must fit a 390 px
+ * phone. The seed refuses to finish unless the page answers 200 and holds
+ * `id="move"`. The path is the page's own; no route is added.
+ */
+export const PREVIEW_MOVE_PAGE = `${PREVIEW_REPO_HOME}/settings`;
+export const PREVIEW_MOVE_LOOK = `${PREVIEW_MOVE_PAGE}#move`;
+
 /** The Iterations page of the seeded fork family (#9182). */
 export const PREVIEW_ITERATIONS_PAGE = `${PREVIEW_REPO_HOME}/iterations`;
 /**
@@ -131,6 +150,8 @@ export const PREVIEW_OWNER_LOOKS: readonly OwnerLook[] = [
   "/flow",
   PREVIEW_REPO_HOME,
   PREVIEW_APP_PAGE,
+  PREVIEW_MOVED_PAGE,
+  PREVIEW_MOVE_LOOK,
   PREVIEW_PULL_PAGE,
   PREVIEW_PULL_FILES,
   PREVIEW_ITERATIONS_PAGE,

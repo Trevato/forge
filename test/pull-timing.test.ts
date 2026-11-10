@@ -14,6 +14,7 @@ import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { PULL_PAGE_PHASES } from "./helpers/pull-phases.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -105,7 +106,7 @@ test("a pull names its read phases and render after app, summing to no more than
   const res = await fetch(`${servers.url}/alice/r/pulls/${number}`, { headers: { cookie } });
   expect(res.status).toBe(200);
   await res.arrayBuffer();
-  const parts = (res.headers.get("server-timing") ?? "").split(", ");
+  const parts = requestTiming(res).split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
   const after = names.slice(names.indexOf("app") + 1);
   expect(after).toEqual([...PULL_PAGE_PHASES]);
@@ -124,7 +125,7 @@ test("a pull's Files page names session, diff, checks, reviews and render, in th
   const html = await res.text();
   expect(html).toContain("m39.ts");
   expect(html).not.toContain("<b>1</b>");
-  const parts = (res.headers.get("server-timing") ?? "").split(", ");
+  const parts = requestTiming(res).split(", ");
   const names = parts.map((p) => p.split(";")[0]!);
   expect(names.slice(names.indexOf("app") + 1)).toEqual(["session", "diff", "diff-git", "diff-parse", "diff-highlight", "git", "checks", "reviews", "render"]);
 });

@@ -12,9 +12,9 @@ One bounded `git log` read, cached per head oid; Server-Timing names `releases` 
 
 The list is a live region (`pull.merged`, `app.serving`): it swaps in place without a reload. MCP `releases` with `{shipped: true}` answers the same list to anyone. The "no release" alarm reads the same record (`release/landings.ts`), refreshed each minute, and is silent until a read has happened. The older `Release <version>: …` commit read (`release/changelog.ts`) now serves only the terminal's Changelog screen.
 
-## Credit (#9181)
+## Credit (#9181, #10259)
 
-A squash keeps the people behind its commits: the landed message carries every distinct `Co-authored-by` its commits carried and each commit's author, except the crew's agents (`@agents.invalid`), once per address. `/changelog` then shows "· with Jay Moran" on a row for everyone credited on the landed commit beyond whoever landed it (`creditsOf` in `git/coauthors.ts`, one git read, kept per commit); a landing with no one else shows nothing. Only the forge's own repository is read. `GET /api/v1/changelog` carries the same names as `with` on a landing that has them. The terminal's Changelog screen is the release-commit view and does not list landings, so it shows no credit.
+A squash keeps the people behind its commits: the landed message carries every distinct `Co-authored-by` its commits carried and each commit's author, except the crew's agents (`@agents.invalid`), once per address. `/changelog` then shows "With Jay Moran" on a row for everyone credited on the landed commit beyond whoever landed it (`creditsOf` in `git/coauthors.ts`, one git read, kept per commit); a landing with no one else shows nothing. Only the forge's own repository is read. A row also says who built it: "By Scout" is the author of the landed commit, "With Claude Sonnet 5.5" the names in its trailers (less the committer and the author), both as plain facts under the title, from the same one git read (`buildersOf`). At most the newest 80 landings of the forge's own repository are asked of git, and at most 500 commits are remembered, oldest dropped first. `GET /api/v1/changelog` carries `by` and `with` on a landing that has them. In the terminal, Enter on a release lists its pulls, and a pull the forge landed shows "by Scout, with Claude Sonnet 5.5" beside it. 
 
 ## For agents
 

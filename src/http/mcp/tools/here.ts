@@ -7,7 +7,7 @@ export const tool: Tool = {
   name: "here",
   description:
     "What you may do on a forge page; given an app's link, what its /__forge/ door shows.",
-  doc: "`{ url }`: on a forge page, what you may do there as who you are, each action with its route and tool; on the link of one of this forge's app hosts, what its `/__forge/` door shows: `{ app, repo, environment, pull: { number, title } or null, working: [names], links: { home, repo, report } }`; a foreign host, or a private app you may not enter, is refused like a missing page",
+  doc: "`{ url }`: on a forge page, what you may do there as who you are, each action with its route and tool; on the link of one of this forge's app hosts, what its `/__forge/` door shows: `{ app, repo, audience: { level, who, sentence } (only when you may read the repository), environment, pull: { number, title } or null, working: [names], links: { home, repo, report } }`; a foreign host, or a private app you may not enter, is refused like a missing page",
   inputSchema: {
     type: "object",
     properties: { url: { type: "string", maxLength: 2000 } },

@@ -127,8 +127,8 @@ select.input {
 .field > label {
   display: block; font-size: 13px; font-weight: 550; margin: 0 0 6px; color: var(--fg);
 }
-.field .hint { display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 6px; }
-.field .error { display: block; font-size: 12.5px; color: var(--danger); margin-top: 6px; font-weight: 500; }
+.field .hint { display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 6px; overflow-wrap: anywhere; }
+.field .error { display: block; font-size: 12.5px; color: var(--danger); margin-top: 6px; font-weight: 500; overflow-wrap: anywhere; }
 .field[data-invalid] > label { color: var(--danger); }
 /* A group of checks is one field: the legend reads as a label, no frame. */
 fieldset.field { border: 0; padding: 0; min-width: 0; }
@@ -583,6 +583,11 @@ details[open] > summary.row > .row-lead { transform: rotate(90deg); }
 .table[data-dense] td, .table[data-dense] th { padding: 5px 10px; }
 .table .num { text-align: right; }
 .table-scroll { overflow-x: auto; scrollbar-width: thin; }
+/* The data browser: a cell's JSON keeps its shape, and the sorted column is marked by its aria-sort. */
+.table td pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: inherit; }
+.table[data-sortable] th[aria-sort] a { color: var(--fg); }
+.table[data-sortable] th[aria-sort="ascending"] a::after { content: " \\2191"; color: var(--muted-fg); }
+.table[data-sortable] th[aria-sort="descending"] a::after { content: " \\2193"; color: var(--muted-fg); }
 /* The row's name stays in view while a narrow screen scrolls the figures. */
 .table[data-sticky-lead] th:first-child,
 .table[data-sticky-lead] td:first-child {

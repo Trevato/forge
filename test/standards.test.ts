@@ -278,7 +278,7 @@ describe("what the open web expects", () => {
     expect(section).toContain(`${base}/.well-known/oauth-protected-resource`);
     expect(section).toContain("streamable HTTP");
     // trevato/forge is not here, so no install line is printed that could not work.
-    expect(section).toContain("Harness plugins: not offered on this forge (their source is private)");
+    expect(section).toContain("Harness plugins: not offered here (no public source)");
     expect(section).not.toContain("needs that repository to be public");
   });
 

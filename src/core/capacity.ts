@@ -102,9 +102,9 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
   "children.modelEgress": {
     label: "Model provider a child forge cell may reach",
     env: "FORGE_CHILDREN_MODEL_EGRESS",
-    kind: { type: "choice", values: ["off", "openrouter"] },
+    kind: { type: "choice", values: ["off", "openrouter", "anthropic", "both"] },
     fallback: "off",
-    help: "off keeps a child forge's cell to its parent alone; openrouter also lets it reach openrouter.ai on 443, so the child's crew can call its model on the child's own key. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
+    help: "off keeps a child forge's cell to its parent alone; openrouter also lets it reach openrouter.ai on 443, anthropic api.anthropic.com on 443, both the two, so the child's crew can call its model on the child's own key. Nothing else opens, and the cell enforces this even when cells.egress is report. Takes effect on the next child cell started.",
   },
   "children.registryEgress": {
     label: "Package registry a child forge cell may reach",
@@ -382,8 +382,16 @@ export function egressSetting(db: Database): "enforce" | "report" {
 
 /** The model provider hosts a child forge's cell may reach now: none unless an admin chose one. */
 export function childModelHosts(db: Database): readonly string[] {
-  return capacityValue(db, "children.modelEgress") === "openrouter" ? ["openrouter.ai:443"] : [];
+  return MODEL_HOSTS[capacityValue(db, "children.modelEgress")] ?? [];
 }
+
+// A child's own key is an OpenRouter key or an Anthropic one (scottishbob,
+// 2026-11-10: his Anthropic key was refused at api.anthropic.com).
+const MODEL_HOSTS: Readonly<Record<string, readonly string[]>> = {
+  openrouter: ["openrouter.ai:443"],
+  anthropic: ["api.anthropic.com:443"],
+  both: ["openrouter.ai:443", "api.anthropic.com:443"],
+};
 
 /** The package registry a child forge cell may reach (`children.registryEgress`); none by default. */
 export function childRegistryHosts(db: Database): readonly string[] {

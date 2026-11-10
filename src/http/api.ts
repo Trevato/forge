@@ -242,6 +242,7 @@ import {
 import { forReader } from "../crew/handover.ts";
 import { globalMapJson } from "../web/pages/global-map.ts";
 import { mapJson, marksFor, withoutDone } from "../web/pages/map.ts";
+import { roadmapOf } from "../web/roadmap.ts";
 import { cachedMap } from "../web/map_snapshot.ts";
 import { scopeKey } from "../web/map_cache.ts";
 import {
@@ -351,6 +352,8 @@ import { boardRoutes } from "./api/boards.ts";
 import { displayRoutes } from "./api/displays.ts";
 import { followingRoutes } from "./api/following.ts";
 import { labelsRoutes } from "./api/labels.ts";
+import { dataRoutes } from "./api/data.ts";
+import { statementRoutes } from "./api/statement.ts";
 import { visionRoutes } from "./api/vision.ts";
 import { businessPlanRoutes } from "./api/business_plan.ts";
 import { tokenRoutes } from "./api/tokens.ts";
@@ -1664,7 +1667,11 @@ export function apiRoutes(router: Router<Handler>): void {
       const shown = showProvenance(ctx.app, ctx.auth.user, repo, input.showProvenance);
       if (!shown.ok) return respondAccess(shown.error, 422);
     }
-    return json(repoJson(ctx, updated.value));
+    // The line about who can see it moves with the setting, in this answer.
+    return json({
+      ...repoJson(ctx, updated.value),
+      audience: audienceFor(ctx.app.db, updated.value, ctx.auth.user),
+    });
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name", async (ctx) => {
@@ -2088,6 +2095,8 @@ export function apiRoutes(router: Router<Handler>): void {
 
   labelsRoutes(router);
   visionRoutes(router);
+  dataRoutes(router);
+  statementRoutes(router);
   businessPlanRoutes(router);
   router.add(
     "PUT",
@@ -2363,6 +2372,25 @@ export function apiRoutes(router: Router<Handler>): void {
       return new Response(null, { status: 304, headers });
     }
     return new Response(text, { headers: { "content-type": "application/json", ...headers } });
+  });
+  // The roadmap (#10303): the pillars in order, what is building, what landed,
+  // what is next and when each finishes. The page's own model; 404 where the
+  // repository names no pillars.
+  router.add("GET", "/api/v1/repos/:owner/:name/roadmap", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+    const road = timePhase(ctx.request, "render", () =>
+      roadmapOf(ctx.app.db, repo, ctx.auth.user),
+    );
+    if (road === undefined) return notFound();
+    return new Response(JSON.stringify(road), {
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "private, no-cache",
+        vary: "authorization, cookie",
+      },
+    });
   });
   // What people asked of the crew in the repositories the caller can write —
   // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).
@@ -3355,6 +3383,8 @@ export function apiRoutes(router: Router<Handler>): void {
     const line = ctx.url.searchParams.get("q") ?? "";
     const { query, unknown } = readExploreLine(line);
     const suggest = exploreSuggestion(line);
+    if (unknown.length > 0)
+      return json({ error: "unknown_filter", message: exploreNote(unknown), ...(suggest === undefined ? {} : { suggest: suggest.line }) }, 422);
     const mine = runRepos(ctx.app, ctx.auth);
     // A run token is shown only the rows of its own repositories; the cut
     // and the cursor are made from those rows alone.

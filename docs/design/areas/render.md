@@ -8,3 +8,20 @@ No script, no pdf.js.
 - `.pdf-fallback` — inside the object, shown only when the viewer cannot draw: an "Open the PDF" link and a `.btn` Download (`?download=1`).
 
 The header shows the size (`1.2 MB · PDF`) through `Rendered.summary`. Both themes use tokens only.
+
+## Terminal log (.log, .ansi)
+
+`src/web/render/log.ts` draws a log that holds escape codes inside the existing `.card.code` table, so it looks like any code file. Colour comes only from fixed classes (`src/web/style/content.ts`), tokens only, both themes:
+
+- `.ansi-red` `--danger`, `.ansi-green` `--success`, `.ansi-yellow` `--attn`, `.ansi-blue` `--tok-number`, `.ansi-magenta` `--merged`, `.ansi-cyan` `--tok-property`, `.ansi-gray` (black) `--tok-comment`. White is the page's own ink.
+- `.ansi-b` bold, `.ansi-u` underline.
+
+Backgrounds, 256-colour above 15 and truecolour are dropped; so are cursor moves and OSC. A log with no escape code keeps the plain source view.
+
+## Archive listing
+
+A .zip, .tar or .tar.gz is drawn by `src/web/render/archive-view.ts` as the existing `.table` alone, with no `.card` around it (path, size, modified; `data-dense`), and a `tfoot` for the count and unpacked size. No new class: `.archive-view` is only a hook on the table and has no rule. How it works: `docs/features/archive-listing.md`. A list that cannot be read falls back to the Download card with the reason as its one sentence.
+
+## GPS track (.gpx)
+
+`src/web/render/gpx.ts` draws the route as one inline SVG in `.gpx-view`: no fixed width or height, `max-width: 100%` and `height: auto` (tokens only, `currentColor` stroke, no accent), so it fits a 360px phone. Its facts (track, distance, climb, points) are the existing `.status-rows` / `.status-row`, with no box. How it works: `docs/features/gpx.md`.

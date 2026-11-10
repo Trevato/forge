@@ -1,6 +1,6 @@
 /**
  * A run picks its model from the work (#7570): P0 or `opus`-labelled work,
- * a planner's run and a pull sent back twice run on Opus; the rest on the
+ * a planner's pass handed work and a pull sent back twice run on Opus; a planner's plain pass on Sonnet; the rest on the
  * agent's own model. The run row records which and why, and the scorecard
  * reads spend and landed pulls per model per day.
  */
@@ -30,6 +30,7 @@ const plain = {
   p0: false,
   labelled: false,
   bouncedRounds: 0,
+  handed: false,
 };
 
 describe("which model a run uses", () => {
@@ -42,7 +43,8 @@ describe("which model a run uses", () => {
   test("P0, the opus label, the planner and a twice-bounced pull use opus", () => {
     expect(chooseModel({ ...plain, p0: true })).toEqual({ model: "opus", reason: "p0" });
     expect(chooseModel({ ...plain, labelled: true }).reason).toBe("label:opus");
-    expect(chooseModel({ ...plain, role: "planner" }).reason).toBe("planner");
+    expect(chooseModel({ ...plain, role: "planner", handed: true })).toEqual({ model: "opus", reason: "planner:handed" });
+    expect(chooseModel({ ...plain, role: "planner", agentModel: "opus" })).toEqual({ model: "sonnet", reason: "planner" });
     expect(chooseModel({ ...plain, bouncedRounds: 2 })).toEqual({
       model: "opus",
       reason: "bounced:2",

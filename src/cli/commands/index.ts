@@ -21,6 +21,7 @@ import { command as tell } from "./tell.ts";
 import { command as talk } from "./talk.ts";
 import { command as newApp } from "./new.ts";
 import { command as ship } from "./ship.ts";
+import { command as data } from "./data.ts";
 import type { Command } from "./types.ts";
 
 export const commands: readonly Command[] = [
@@ -43,4 +44,5 @@ export const commands: readonly Command[] = [
   talk,
   newApp,
   ship,
+  data,
 ];

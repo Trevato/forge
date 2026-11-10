@@ -25,6 +25,7 @@ import { runGitCapture } from "../src/git/env.ts";
 import { unionMergeFile } from "../src/git/union-merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { startStandInCrew, stopStandInCrew, type StandInCrew } from "./helpers/crew-standin.ts";
+import { mergesCleanNow } from "../src/crew/clean_now.ts";
 
 describe("the crew, with a pull that does not merge", () => {
   let standIn: StandInCrew;
@@ -168,4 +169,15 @@ describe("the crew, with a pull that does not merge", () => {
     expect(onlyListDocs([])).toBe(false);
     expect(await unionMergeFile(repoDir(app.reposRoot, alice.username, repo.name), "x", "y", "z", "docs/MCP.md")).toBeUndefined();
   });
+
+  test("a bring-up-to-date run that finds main merges clean by now has nothing for an agent", async () => {
+    const clash = await conflicted("src/clean.ts");
+    expect(await mergesCleanNow(app, repo, clash)).toBe(false);
+    const branch = `clean-${++n}`;
+    await commit(branch, "docs/clean.md", "- theirs\n");
+    const o = await openPull(app, bot, repo, { title: branch, baseBranch: "main", headBranch: branch });
+    if (!o.ok) throw new Error(String(o.error));
+    expect(await mergesCleanNow(app, repo, getPull(app.db, repo.id, o.value.number)!)).toBe(true);
+  });
+
 });

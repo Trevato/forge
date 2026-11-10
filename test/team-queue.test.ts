@@ -113,7 +113,7 @@ describe("pulls waiting on a team", () => {
   test("the web page escapes the title, links the pull and says so when a team has nothing", async () => {
     const first = await pullNaming("<b>First</b>", ["design"]);
     servers = await serve(app);
-    const res = await fetch(`${servers.url}/settings/teams`, {
+    const res = await fetch(`${servers.url}/settings/teams/design`, {
       headers: { cookie: `forge_session=${createSession(app.db, alice.id).token}` },
     });
     const body = await res.text();
@@ -122,7 +122,10 @@ describe("pulls waiting on a team", () => {
     expect(body).toContain("&lt;b&gt;First&lt;/b&gt;");
     expect(body).not.toContain("<b>First</b>");
     expect(body).toContain(`/alice/garden/pulls/${first.number}`);
-    expect(body).toContain("Nothing is waiting on this team.");
+    const empty = await fetch(`${servers.url}/settings/teams/security`, {
+      headers: { cookie: `forge_session=${createSession(app.db, alice.id).token}` },
+    });
+    expect(await empty.text()).toContain("Nothing is waiting on this team.");
     expect(body).not.toContain("<h3>Waiting on this team");
   });
 

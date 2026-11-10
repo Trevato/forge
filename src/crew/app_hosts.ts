@@ -12,12 +12,14 @@
 import type { App } from "../app.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
-import { getAppByRepo } from "../core/apps.ts";
+import { type AppAccess, getAppByRepo } from "../core/apps.ts";
 import { LIST_LIMIT_MAX } from "../core/issues.ts";
 import { listPulls } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 
 export interface OwnApp {
+  /** Who may open it: a private app's door answers a signed-out request 404 by design (#10365). */
+  readonly access: AppAccess;
   /** Production: the verified domain when there is one, else the slug's host. */
   readonly production: string;
   /** One preview per open pull, by number. */
@@ -39,7 +41,7 @@ export function ownApp(app: App, repo: Repo): OwnApp | undefined {
       url: runtime.urlFor(record, previewEnv(pull.number)),
     }))
     .sort((a, b) => a.number - b.number);
-  return { production, previews };
+  return { access: record.access, production, previews };
 }
 
 /** Every URL of `own`, for the sandbox to allow. */

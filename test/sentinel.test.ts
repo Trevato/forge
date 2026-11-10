@@ -840,6 +840,40 @@ describe("a degraded incident whose issue closed as done", () => {
     expect(r.filed).toBe(1);
     expect(issues("open").length).toBe(1);
   });
+
+  test("an incident that ended before its issue closed is not refiled as the day slides past its first span (#10291)", () => {
+    const t = T0 + 40 * DAY;
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'done', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
+    // Two spans of one cause: the morning's, and the evening's; both ended.
+    span("backup", t - 12 * HOUR, 60);
+    span("backup", t - 4 * HOUR, 180);
+    expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
+    // The fix lands after the evening span ended.
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'done', closed_at = ?1 WHERE state = 'open'").run(new Date(t + HOUR).toISOString());
+    // The morning span slides out of the day: the first-open time moves, and the evening's total still counts.
+    const r = hunt(iapp, "alice/forge", t + 13 * HOUR);
+    expect(r.filed).toBe(0);
+    expect(r.commented).toBe(0);
+    expect(issues("open").length).toBe(0);
+    // A span after the close is a new incident, and is filed.
+    span("backup", t + 14 * HOUR, 30);
+    expect(hunt(iapp, "alice/forge", t + 15 * HOUR).filed).toBe(1);
+  });
+
+  test("one still going on as the day slides past its first span is told to its closed issue, not refiled", () => {
+    const t = T0 + 50 * DAY;
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'done', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
+    span("mirror", t - 12 * HOUR, 60);
+    iapp.db
+      .query("INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES ('mirror', 'It is slow.', '/x', ?1)")
+      .run(t - 4 * HOUR);
+    expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'done', closed_at = ?1 WHERE state = 'open'").run(new Date(t + HOUR).toISOString());
+    const r = hunt(iapp, "alice/forge", t + 13 * HOUR);
+    expect(r.filed).toBe(0);
+    expect(r.commented).toBe(1);
+    expect(issues("open").length).toBe(0);
+  });
 });
 
 // ---- a shared test fixed within the hour (#8185) ----

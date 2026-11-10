@@ -287,8 +287,11 @@ never, a private app never. Every door reads `frontJson` in
 Every repository page says, beside the Private/Public badge, who can see it in
 one sentence ("Private: only you and the crew."), and a writer's click goes to
 Settings. `GET /api/v1/repos/:owner/:name` returns the same words as
-`audience: { level, sentence }`, the MCP `repo` tool carries it too, and the
-terminal's About card (`I`) shows it. It gives counts, never names; site
+`audience: { level, who, sentence }` (`who` is `owner`, `members` or
+`anyone`), and so does a `PATCH` that changes its visibility, in the same
+answer. The MCP `repo` and `here` tools carry it too (`here` on a repository
+page, and on an app's link only for someone who may read the repository), and
+the terminal's About card (`I`) shows the sentence (`docs/features/visibility-line.md`). It gives counts, never names; site
 admins are not counted. All of them read `audienceFor` in `src/core/audience.ts`.
 
 ## Archive

@@ -4,13 +4,14 @@
  * the word count (`src/measure/words.ts`, the one method both modes use).
  * Usage and the table it prints: docs/features/measure-page.md.
  *
- *   bun scripts/measure-page.ts [--root DIR] [--width 1440] [--shots DIR] [--words-only] /path[#id] …
+ *   bun scripts/measure-page.ts [--root DIR] [--width 1440] [--shots DIR] [--words-only | --attention] /path[#id] …
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { childEnv } from "../src/apps/process.ts";
 import { findChromium } from "../src/looks/capture.ts";
+import { attentionLine } from "../src/measure/attention.ts";
 import { wordsOf } from "../src/measure/words.ts";
 
 const args = process.argv.slice(2);
@@ -18,13 +19,14 @@ const take = (flag: string): string | undefined => {
   const at = args.indexOf(flag);
   return at < 0 ? undefined : args.splice(at, 2)[1];
 };
-const wordsOnly = args.includes("--words-only");
+const attention = args.includes("--attention");
+const wordsOnly = args.includes("--words-only") || attention;
 const root = resolve(take("--root") ?? ".");
 const width = Number(take("--width") ?? 1440);
 const shots = take("--shots");
 const paths = args.filter((a) => a.startsWith("/"));
 if (!Number.isInteger(width) || width < 200 || width > 4000 || paths.length === 0) {
-  console.error("usage: bun scripts/measure-page.ts [--root DIR] [--width N] [--shots DIR] [--words-only] /path[#id] …");
+  console.error("usage: bun scripts/measure-page.ts [--root DIR] [--width N] [--shots DIR] [--words-only | --attention] /path[#id] …");
   process.exit(2);
 }
 const binary = findChromium();
@@ -154,7 +156,9 @@ try {
     if (wordsOnly) {
       const [path, id] = split(target);
       const res = await fetch(`${servers.url}${path}`, { headers: { cookie: `forge_session=${token}` } });
-      console.log(JSON.stringify({ path: target, status: res.status, words: wordsOf(await res.text(), id) }));
+      const html = await res.text();
+      if (attention) console.log(attentionLine(target, res.status, html));
+      else console.log(JSON.stringify({ path: target, status: res.status, words: wordsOf(html, id) }));
       continue;
     }
     console.log(JSON.stringify({ path: target, width, ...(await look(target, width, false)) }));

@@ -61,20 +61,26 @@ export async function machinesSettingsPage(ctx: Ctx): Promise<Response> {
   return timePhase(ctx.request, "render", () => render(ctx, repo, config.machines, sessions));
 }
 
+/** One data-nav link per machine, to its shell; none when there are no machines. */
+export function machineRows(repo: Repo, list: readonly Machine[]) {
+  return html`${list.map((m) =>
+    row({
+      lead: icon("terminal"),
+      title: m.name,
+      meta: html`Tools: ${m.tools.length === 0 ? "none" : m.tools.join(", ")} · Reach: ${m.reach.length === 0 ? "the forge only" : "the forge and its apps"}`,
+      href: shellPath(repo, m.name),
+      nav: true,
+      data: { machine: m.name },
+    }),
+  )}`;
+}
+
 function render(ctx: Ctx, repo: Repo, list: readonly Machine[], sessions: readonly SessionRecord[]): Response {
   const machines = html`<section class="settings-block">
     <h2>Machines</h2>
     <p class="muted">A machine is where the crew shell runs; each writer gets a directory and home of their own on it.</p>
     <ul class="list setting-list" id="machines">
-      ${list.map((m) =>
-        row({
-          lead: icon("terminal"),
-          title: m.name,
-          meta: html`Tools: ${m.tools.length === 0 ? "none" : m.tools.join(", ")} · Reach: ${m.reach.length === 0 ? "the forge only" : "the forge and its apps"}`,
-          trail: btn("Open shell", { href: shellPath(repo, m.name), icon: "terminal", size: "sm" }),
-          data: { machine: m.name },
-        }),
-      )}
+      ${machineRows(repo, list)}
     </ul>
   </section>`;
   // The mark is not colour alone: a running shell carries the word in a badge,

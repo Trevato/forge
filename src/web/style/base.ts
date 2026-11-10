@@ -227,8 +227,10 @@ export const utilities = /* css */ `
 }
 
 @media print {
-  .topbar, .foot, .live-news, .sticky-action, .toast { display: none !important; }
+  .topbar, .foot, .live-news, .sticky-action, .toast, [data-print-hide] { display: none !important; }
   .card { box-shadow: none; }
+  /* A page that prints alone (an app's statement) drops the repository's chrome. */
+  body:has([data-print-alone]) :is(.repo-nav, .settings-jump, .settings-nav) { display: none !important; }
 }
 }
 `;

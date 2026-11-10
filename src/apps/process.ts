@@ -20,6 +20,7 @@ import { isFeatureVarName } from "./feature_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
+import { notFoundHint, shellCommand } from "./run_command.ts";
 import { cellInstall, meteredInstall, prefillInstallCache, withLock } from "../checks/install.ts";
 import {
   commandPid,
@@ -562,7 +563,7 @@ export async function startProcess(
             },
             log,
           );
-    const command = `exec ${manifest.run}`;
+    const command = shellCommand(manifest.run);
     const env = appEnv({
       port,
       dataDir: input.dataDir,
@@ -652,7 +653,10 @@ export async function startProcess(
       // The exit can be seen before the pumps deliver its last lines, the
       // address-in-use one among them; a pipe a child holds open is not waited on.
       await Promise.race([drained, Bun.sleep(DRAIN_CAP_MS)]);
-      const tail = recent.length > 0 ? ` — ${failureReason(recent)}` : "";
+      const hint = notFoundHint(recent);
+      const tail =
+        (recent.length > 0 ? ` — ${failureReason(recent)}` : "") +
+        (hint === undefined ? "" : ` (${hint})`);
       return {
         error: { stage: ready.error.stage, message: ready.error.message + tail },
         portTaken: ready.error.exited && recent.some((line) => ADDRESS_IN_USE_RE.test(line)),

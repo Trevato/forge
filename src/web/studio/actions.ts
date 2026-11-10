@@ -8,6 +8,7 @@
  * page that sent them, or JSON when the asks panel asked in place.
  */
 
+import { COMPOSER_FIELDS, claimShare, releaseShare } from "../share_target.ts";
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
@@ -29,6 +30,7 @@ import { teamHoldRefusal } from "../../core/teams_words.ts";
 import { guardedRefusal } from "../../crew/stranger.ts";
 import type { Guarded } from "../../core/pulls.ts";
 import { backTo, field, readForm, type Form } from "../form.ts";
+import { isLocalPath } from "../flash.ts";
 import { html } from "../html.ts";
 import { flashOrJson, flashTo, page } from "../layout.ts";
 import { FORGE_TARGET } from "./feed.ts";
@@ -58,8 +60,9 @@ async function tellFrom(
   repo: Repo,
   form: Form,
   back: string,
+  onTold: () => void = () => {},
 ): Promise<Response> {
-  const text = field(form, "text").trim();
+  const text = field(form, COMPOSER_FIELDS.text).trim();
   // The page the tell was said on; a path that is not ours is no `from`,
   // and so is never somewhere to send the person back to.
   const from = parseFrom(field(form, "from") || undefined) ?? null;
@@ -85,6 +88,7 @@ async function tellFrom(
             ? "Verify your email first."
             : NOT_TOLD_WORDS,
     });
+  onTold();
   const { routed } = told.value;
   // A client's "Ask for something" (named by the form, not guessed from `/`):
   // they asked for something and want nothing more than to know it went.
@@ -177,14 +181,38 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const target = field(form, "app");
+  const target = field(form, COMPOSER_FIELDS.app);
   // The feed's composer asks to come back to the feed; any other box, to home.
-  const home = backTo(form, "/");
+  const asked = field(form, COMPOSER_FIELDS.back);
+  const home = isLocalPath(asked) ? asked : "/";
+  // A shared draft carries a token: the same share sent twice tells once. No
+  // token is an ordinary tell; a token we did not issue is refused. The token is
+  // held while the tell is made (so two at once cannot both go through) and
+  // given back unless the tell was made (so a failed post can be retried).
+  const once = field(form, COMPOSER_FIELDS.once);
+  const userId = ctx.auth.user.id;
+  if (once !== "") {
+    const claim = claimShare(userId, once);
+    if (claim === "bad") return flashOrJson(ctx, home, { tone: "danger", message: "That share could not be sent." }, { href: home });
+    if (claim === "seen") return flashOrJson(ctx, home, { message: "Already sent." }, { href: home });
+  }
+  let told = false;
+  try {
+    const res = await composerTell(ctx, form, target, home, () => (told = true));
+    return res;
+  } finally {
+    if (once !== "" && !told) releaseShare(userId, once);
+  }
+}
+
+async function composerTell(ctx: Ctx, form: Form, target: string, home: string, onTold: () => void): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
   // "the forge" is no app: the words are kept as a thought, exactly as typed.
   if (target === FORGE_TARGET) {
-    if (field(form, "text").trim() === "")
+    if (field(form, COMPOSER_FIELDS.text).trim() === "")
       return flashOrJson(ctx, home, { tone: "danger", message: SAY_SOMETHING_WORDS });
-    const kept = keepThought(ctx.app, ctx.auth.user, field(form, "text"), "composer");
+    const kept = keepThought(ctx.app, ctx.auth.user, field(form, COMPOSER_FIELDS.text), "composer");
+    if (kept.ok) onTold();
     return flashOrJson(
       ctx,
       home,
@@ -201,9 +229,8 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
   const [owner = "", name = "", ...extra] = target.split("/");
   const repo = extra.length === 0 ? getRepo(ctx.app.db, owner, name) : undefined;
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
-  return tellFrom(ctx, repo, form, home);
+  return tellFrom(ctx, repo, form, home, onTold);
 }
-
 
 /** POST /:owner/:name/pulls/:number/ship — land a green change. */
 export async function shipSubmit(ctx: Ctx): Promise<Response> {

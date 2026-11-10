@@ -619,7 +619,7 @@ const failedTokens = new WeakMap<App, RateLimiter>();
 /**
  * A bearer token on a request to a guarded app, read the way the forge's
  * own API reads it. It admits when its person may enter the app; a run's
- * token only on the repository it was minted for. A person who can read
+ * token only on the repository it was minted for; a proposal or via token never. A person who can read
  * the repository but not enter is told so (`hint`); anyone else — a token
  * that cannot read it, an expired one — gets nothing to learn from.
  */
@@ -657,7 +657,10 @@ function bearerAdmission(
   const verified = verifyToken(runtime.app.db, header.slice(7));
   if (!verified.ok) return undefined;
   limiter.refund(key);
-  const { user, run, scope } = verified.value;
+  const { user, run, scope, proposal, via } = verified.value;
+  // A proposal token is a writer's token held by a child forge, and a via
+  // token reaches /mcp alone: neither enters an app as the person who minted it.
+  if (proposal !== undefined || via !== undefined) return undefined;
   const repo = getRepoById(runtime.app.db, target.app.repoId);
   if (repo === undefined) return undefined;
   if (run !== undefined && run.repoId !== repo.id && run.forkId !== repo.id)

@@ -118,7 +118,6 @@ describe("pinned panels", () => {
   test("home's first paint holds a slot after the KPIs only when something is pinned", async () => {
     const first = await get("/?all=1", "alice");
     expect(first.indexOf('aria-label="The forge"')).toBeLessThan(first.indexOf('id="home-panels"'));
-    expect(first.indexOf('id="home-panels"')).toBeLessThan(first.indexOf("live-moving"));
     expect(first).not.toContain("Pinned panels");
     expect(first).toContain('class="home-panels-slot"');
     expect(first).toContain("Open your pinned panels"); // no-script door

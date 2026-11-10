@@ -334,29 +334,18 @@ function hotCandidates(writable: readonly Repo[]): Candidate[] {
   return out;
 }
 
-export function candidatesFor(
+/**
+ * What events say, as candidates: one read of their subjects, one per event.
+ * `repos` holds each event's repository; an event whose repository is not in
+ * it is left out. Shared by the ranked feed and the timeline (`readTimeline`).
+ */
+export function eventCandidates(
   db: Database,
   viewer: User,
   now: number,
-  chips?: Chips,
-  /** False when the caller shows asks itself (the home pins them): they are not read twice. */
-  withAsks = true,
+  events: readonly ForgeEvent[],
+  repos: ReadonlyMap<string, Repo>,
 ): Candidate[] {
-  // A quiet run is counted at the end of the first page, not posted.
-  const { heard, quiet } = heardBy(db, viewer, now);
-  const events = [...heard.filter((e) => !quiet.has(e.id)), ...teamWaitsHeard(db, viewer, heard)];
-  const writable = listReposWritableTo(db, viewer, { limit: 200 });
-  const asks = withAsks ? askLinesFor(db, viewer, chips) : [];
-  const decided = listDecidedIn(
-    db,
-    writable.map((r) => r.id),
-  );
-  const repos = getReposByIds(db, [
-    ...events.map((e) => e.repoId!),
-    ...asks.map((a) => a.repoId),
-  ]);
-  for (const r of writable) repos.set(r.id, r);
-
   const names = new Map<string, string | null>();
   const nameOf = (id: string | null): string | null => {
     if (id === null) return null;
@@ -415,6 +404,33 @@ export function candidatesFor(
         ...(fold === undefined ? {} : { what: `${c.what} · ${foldedWords(fold, now)}` }),
       });
   }
+  return out;
+}
+
+export function candidatesFor(
+  db: Database,
+  viewer: User,
+  now: number,
+  chips?: Chips,
+  /** False when the caller shows asks itself (the home pins them): they are not read twice. */
+  withAsks = true,
+): Candidate[] {
+  // A quiet run is counted at the end of the first page, not posted.
+  const { heard, quiet } = heardBy(db, viewer, now);
+  const events = [...heard.filter((e) => !quiet.has(e.id)), ...teamWaitsHeard(db, viewer, heard)];
+  const writable = listReposWritableTo(db, viewer, { limit: 200 });
+  const asks = withAsks ? askLinesFor(db, viewer, chips) : [];
+  const decided = listDecidedIn(
+    db,
+    writable.map((r) => r.id),
+  );
+  const repos = getReposByIds(db, [
+    ...events.map((e) => e.repoId!),
+    ...asks.map((a) => a.repoId),
+  ]);
+  for (const r of writable) repos.set(r.id, r);
+
+  const out: Candidate[] = eventCandidates(db, viewer, now, events, repos);
   for (const a of asks) {
     const repo = repos.get(a.repoId);
     if (!repo) continue;
@@ -764,12 +780,12 @@ function fromEvent(
         `Webhook to ${host} failed ${failures} times${reason === "" ? "" : `: ${reason}`}`,
         300,
       );
-      // Settings › Webhooks is for admins, and a writer need not be one: the
-      // line links to the repository and says who can redeliver or pause.
+      // Settings › Webhooks is for admins; a writer who is not one lands on a
+      // page that names the admins, so the line links there for everyone.
       return {
         ...common,
         kind: "map",
-        link: base(repo),
+        link: `${base(repo)}/settings/hooks`,
         what: `${what} (a repository admin can redeliver or pause it in Settings › Webhooks)`,
         urgency: 3,
       };

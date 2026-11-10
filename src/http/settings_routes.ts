@@ -12,7 +12,7 @@ import type { Router } from "./router.ts";
 import { parentLinkStart } from "./rp.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
-import { teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
+import { teamPage, teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
 import { economicsPage, economicsSet } from "../web/pages/economics.ts";
@@ -250,6 +250,7 @@ export function settingsRoutes(router: Router<Handler>, knownPatterns: () => rea
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/teams", teamsPage);
   router.add("GET", "/settings/teams/stream", teamsStream);
+  router.add("GET", "/settings/teams/:slug", teamPage);
   router.add("POST", "/settings/teams/:slug", teamSet);
   router.add("GET", "/settings/crew/:username", agentPage);
   router.add("POST", "/settings/crew/:username", agentUpdate);

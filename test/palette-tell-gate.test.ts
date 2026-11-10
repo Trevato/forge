@@ -37,10 +37,10 @@ describe("the tell target's repository read", () => {
     if (!made.ok) throw new Error(made.error);
     http = forgeHttp(app);
     cookie = `forge_session=${createSession(app.db, made.value.id).token}`;
-    // Count the by-name repository lookup, the one `getRepo` issues.
+    // Count the by-name repository row, the one `getRepo` issues; `repoVisibility` reads one column, not the row.
     const query = app.db.query.bind(app.db) as (sql: string) => unknown;
     (app.db as { query: unknown }).query = (sql: string) => {
-      if (sql.includes("user.username = ?1 COLLATE NOCASE AND repo.name = ?2")) reads++;
+      if (sql.includes("SELECT repo.*") && sql.includes("user.username = ?1 COLLATE NOCASE AND repo.name = ?2")) reads++;
       return query(sql);
     };
   });

@@ -19,9 +19,17 @@ export type FileKind =
   | "audio"
   | "video"
   | "csv"
+  | "sqlite"
   | "model3d"
+  | "archive"
+  | "font"
   | "config"
   | "markdown"
+  | "patch"
+  | "log"
+  | "subtitles"
+  | "gpx"
+  | "calendar"
   | "text"
   | "binary";
 
@@ -39,9 +47,18 @@ export const RENDER_CAP: Readonly<Record<FileKind, number>> = {
   audio: 500 * MB,
   video: 4_000 * MB,
   csv: 10 * MB,
+  // Under the source's own 5 MB read ceiling: a larger file is never read.
+  sqlite: 5 * MB,
   model3d: 100 * MB,
+  archive: 50 * MB,
+  font: 20 * MB,
   config: 1 * MB,
   markdown: 1 * MB,
+  patch: 1 * MB,
+  log: 1 * MB,
+  subtitles: 5 * MB,
+  gpx: 20 * MB,
+  calendar: 5 * MB,
   text: 1 * MB,
   binary: 0,
 };
@@ -113,7 +130,14 @@ const MEDIA: Readonly<Record<string, Media>> = {
   m4v: { kind: "video", name: "MPEG-4", type: "video/mp4", magic: ftyp },
   webm: { kind: "video", name: "WebM", type: "video/webm", magic: bytes(0x1a, 0x45, 0xdf, 0xa3) },
   mov: { kind: "video", name: "QuickTime", type: "video/quicktime", magic: quicktime },
+  db: { kind: "sqlite", name: "SQLite", type: "application/vnd.sqlite3", magic: ascii("SQLite format 3\0") },
+  sqlite: { kind: "sqlite", name: "SQLite", type: "application/vnd.sqlite3", magic: ascii("SQLite format 3\0") },
+  sqlite3: { kind: "sqlite", name: "SQLite", type: "application/vnd.sqlite3", magic: ascii("SQLite format 3\0") },
   stl: { kind: "model3d", name: "STL", type: "model/stl" },
+  ttf: { kind: "font", name: "TrueType", type: "font/ttf", magic: bytes(0x00, 0x01, 0x00, 0x00) },
+  otf: { kind: "font", name: "OpenType", type: "font/otf", magic: ascii("OTTO") },
+  woff: { kind: "font", name: "WOFF", type: "font/woff", magic: ascii("wOFF") },
+  woff2: { kind: "font", name: "WOFF2", type: "font/woff2", magic: ascii("wOF2") },
   glb: { kind: "model3d", name: "glTF binary", type: "model/gltf-binary", magic: ascii("glTF") },
 };
 
@@ -121,7 +145,10 @@ const MEDIA: Readonly<Record<string, Media>> = {
 const TEXTUAL: Readonly<Record<string, FileKind>> = {
   csv: "csv",
   tsv: "csv",
+  jsonl: "csv",
+  ndjson: "csv",
   gltf: "model3d",
+  obj: "model3d",
   json: "config",
   jsonc: "config",
   yaml: "config",
@@ -132,6 +159,32 @@ const TEXTUAL: Readonly<Record<string, FileKind>> = {
   md: "markdown",
   markdown: "markdown",
   mdx: "markdown",
+  patch: "patch",
+  diff: "patch",
+  log: "log",
+  ansi: "log",
+  srt: "subtitles",
+  vtt: "subtitles",
+  gpx: "gpx",
+  ics: "calendar",
+};
+
+/**
+ * Archives: the extension names the kind and the bytes confirm it. Their
+ * media type is never an archive type; the media route sends octet-stream.
+ * `gz` counts only as the end of `.tar.gz`.
+ */
+const ARCHIVES: Readonly<Record<string, Magic>> = {
+  zip: bytes(0x50, 0x4b, 0x03, 0x04),
+  tar: ascii("ustar", 257),
+  tgz: bytes(0x1f, 0x8b),
+  gz: bytes(0x1f, 0x8b),
+};
+
+const isArchive = (path: string, head: Uint8Array): boolean => {
+  const ext = extension(path);
+  if (ext === "gz" && !/\.tar\.gz$/i.test(path)) return false;
+  return ARCHIVES[ext]?.(head) === true;
 };
 
 /** For a caller that has only a name: the kind its extension gives. */
@@ -165,8 +218,19 @@ function confirmed(path: string, head: Uint8Array): Media | undefined {
 export function fileKind(path: string, head: Uint8Array): FileKind {
   const media = confirmed(path, head);
   if (media !== undefined) return media.kind;
+  if (isArchive(path, head)) return "archive";
   if (looksBinary(head)) return "binary";
   return TEXTUAL[extension(path)] ?? "text";
+}
+
+/**
+ * What a file's name says it is, for a file too large to have been read:
+ * the bytes are not here to confirm it. Only a renderer that fetches the
+ * media route acts on this, and the media route confirms the type itself.
+ */
+export function kindByName(path: string): FileKind {
+  const ext = extension(path);
+  return MEDIA[ext]?.kind ?? TEXTUAL[ext] ?? "text";
 }
 
 /**
@@ -193,4 +257,7 @@ export function mediaType(path: string, head: Uint8Array): string {
 export const KNOWN_EXTENSIONS: readonly string[] = [
   ...Object.keys(MEDIA),
   ...Object.keys(TEXTUAL),
+  "zip",
+  "tar",
+  "tgz",
 ];

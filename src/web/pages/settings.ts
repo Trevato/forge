@@ -416,7 +416,7 @@ export async function settingsPage(
       </div>
     </form>
   </section>`;
-  const move = html`<section class="settings-block">
+  const move = html`<section class="settings-block" id="move">
     <h2>Move to another owner</h2>
     <form method="get" action="/-/confirm">
       <input type="hidden" name="to" value="${base}/settings/transfer" />
@@ -800,7 +800,12 @@ function appSettingsView(
         </div>
       </form>
   </section>`;
-  if (record === undefined) return form;
+  // What the forge would charge (#508): crew spend counts before the repository runs as an app.
+  const statement = html`<section class="settings-block" id="statement">
+    <h2>Statement</h2>
+    <p><a href="${base}/settings/app/statement">This month's statement</a></p>
+  </section>`;
+  if (record === undefined) return html`${form}<div class="mt">${statement}</div>`;
   const domains = timePhase(ctx.request, "domains", () =>
     listAppDomains(ctx.app, ctx.auth.user, repo),
   );
@@ -810,6 +815,7 @@ function appSettingsView(
   return html`${form}
     ${when(listed?.ok === true, () => html`<div class="mt">${appMembersView(base, values.access, named)}</div>`)}
     <div class="mt">${appVisitorsView(vitals)}</div>
+    <div class="mt">${statement}</div>
     <div class="mt">
       ${appEnvView(base, listAppEnvNames(ctx.app.db, record.id))}
     </div>

@@ -47,12 +47,20 @@ import { stopMirroring } from "../../actions/mirror_target.ts";
 import { getMirrorTarget, mirrorLine } from "../../core/migrate_mirror.ts";
 import { canAdmin, canWrite, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
 import type { TreeEntry } from "../../git/read.ts";
+import { parseUnifiedDiff, type Diff } from "../../git/diff.ts";
+import { renderDiff as renderPatch } from "../ui/diff.ts";
 import { fileKind, NO_BYTES } from "../../web/render/kinds.ts";
+import { downloadHref } from "../../web/pages/media.ts";
+import { isModelPath, modelFacts } from "../../web/render/model-facts.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import { MAX_COLUMNS, parseCsv, type Table } from "../../text/csv.ts";
+import { gpxFacts, parseGpx } from "../../web/render/gpx.ts";
+import { EVENT_CAP, parseIcs } from "../../web/render/ics.ts";
+import { CUE_CAP, parseSubtitles } from "../../web/render/subtitles.ts";
 import { layoutTable, type Grid } from "../ui/grid.ts";
 import type { Ctx, Screen } from "../app/app.ts";
+import { stripAnsi } from "../term/ansi.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
 import {
@@ -79,6 +87,7 @@ import {
 } from "../ui/image.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { renderMarkdown, type Line } from "../ui/markdown.ts";
+import { archiveNote } from "../ui/archive-note.ts";
 import { mediaNote } from "../ui/media-note.ts";
 import { tokColor, type Tokens } from "../ui/theme.ts";
 import { card, emptyState, input, scrollbar } from "../ui/widgets.ts";
@@ -141,6 +150,7 @@ import { labelsCommands } from "./labels.ts";
 import { appEnvCommands } from "./appenv.ts";
 import { autonomyCommands } from "./autonomy.ts";
 import { trafficCommands } from "./trafficview.ts";
+import { statementCommands } from "./statement.ts";
 import { adapterCommands } from "./adapter.ts";
 import { atlasCommands } from "./atlas.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
@@ -250,12 +260,19 @@ function landing(nodes: readonly Node[]): Node | undefined {
  * spans: the pane draws line numbers itself, so they stay pinned while the
  * code scrolls sideways under them.
  */
-function buildLines(
+function isLogPath(path: string): boolean {
+  return /\.(log|ansi)$/i.test(path);
+}
+
+export function buildLines(
   text: string,
   path: string,
   c: Tokens,
 ): { plain: string[]; lines: Span[][] } {
-  const body = text.replace(/\n$/, "");
+  // A terminal log carries escapes; the viewer shows its text, never drives
+  // the terminal or prints "[31m" as if it were the log.
+  const clean = isLogPath(path) && text.includes("\x1b") ? stripAnsi(text) : text;
+  const body = clean.replace(/\n$/, "");
   const plain = body.split("\n").map((l) => expandTabs(l));
   // The first line is handed to the detector too: a `#!/usr/bin/env python3`
   // with no extension, a `.zshrc`, a vim modeline. The name is the strong
@@ -274,11 +291,64 @@ function buildLines(
 type TabMode = "view" | "edit";
 type FindMode = "off" | "find" | "replace";
 /** What a path is, as far as the file pane is concerned. */
-type TabKind = "image" | "markdown" | "code";
+type TabKind = "image" | "markdown" | "patch" | "code";
 
 /** `.csv` and `.tsv`: files that read as a table. */
 function isTablePath(path: string): boolean {
   return /\.[ct]sv$/i.test(path);
+}
+
+/** `.srt` and `.vtt`: a transcript, drawn as the same two-column table. */
+function isSubtitlePath(path: string): boolean {
+  return /\.(srt|vtt)$/i.test(path);
+}
+
+/** The cues of a subtitle file as a table: start time, text. Shares the web's parser. */
+function subtitleTable(source: string): { table: Table; unread: number } {
+  const { cues, failures } = parseSubtitles(source);
+  const shown = cues.slice(0, CUE_CAP);
+  return {
+    unread: failures.length,
+    table: {
+      header: ["Start", "Text"],
+      rows: shown.map((c) => [c.start, c.text]),
+      more: cues.length - shown.length,
+      delimiter: ",",
+      columns: 2,
+    },
+  };
+}
+
+/** `.ics`: a calendar, drawn as a table of its events. */
+function isIcsPath(path: string): boolean {
+  return /\.ics$/i.test(path);
+}
+
+/** The events of a calendar as a table; null when the file is not a calendar. Shares the web's parser. */
+function icsTable(source: string): Table | null {
+  const cal = parseIcs(source);
+  if ("error" in cal) return null;
+  const shown = cal.events.slice(0, EVENT_CAP);
+  return {
+    header: ["Start", "End", "Summary", "Location"],
+    rows: shown.map((e) => [e.start, e.end, e.summary, e.location]),
+    more: cal.events.length - shown.length,
+    delimiter: ",",
+    columns: 4,
+  };
+}
+
+/** `.gpx`: a GPS track, drawn as a table of its facts (track, distance, climb, points). */
+function isGpxPath(path: string): boolean {
+  return /\.gpx$/i.test(path);
+}
+
+/** The facts of a track as a table; null when the file is not a track. Shares the web's parser. */
+function gpxTable(source: string, path: string): Table | null {
+  const parsed = parseGpx(source);
+  if (parsed === undefined) return null;
+  const rows = gpxFacts(parsed, path);
+  return { header: ["Fact", "Value"], rows, more: 0, delimiter: ",", columns: 2 };
 }
 
 /** `README.md`, `NOTES.markdown`, `readme` — the prose a repo opens on. */
@@ -287,10 +357,17 @@ function isMarkdownPath(path: string): boolean {
   return fileKind(name, NO_BYTES) === "markdown" || /^readme(\.|$)/i.test(name);
 }
 
+/** `.patch` and `.diff`: a file the pull page's diff draws. */
+function isPatchPath(path: string): boolean {
+  return fileKind(path.slice(path.lastIndexOf("/") + 1), NO_BYTES) === "patch";
+}
+
 class Tab {
   loading = true;
   /** Non-empty when there is a reason the bytes are not on screen. */
   note = "";
+  noteTitle = "Not shown";
+  noteDetail = "";
   raw: Uint8Array | null = null;
   plain: string[] = [];
   lines: Span[][] = [];
@@ -326,12 +403,16 @@ class Tab {
   /** The rendered document, and the width it was wrapped for. */
   doc: Line[] = [];
   docPlain: string[] = [];
+  /** The parsed diff of a patch file; null when the text is not a git diff. */
+  patch: Diff | null = null;
   docWidth = 0;
   /** `s` on a CSV/TSV: the aligned table, or the source behind it. */
   asTable = true;
   /** The parsed file, when its name says table. Parse errors ride along. */
   table: Table | null = null;
   grid: Grid = { header: "", rows: [] };
+  /** Cues of a subtitle file that could not be read. */
+  unread = 0;
 
   constructor(readonly path: string) {}
 
@@ -341,12 +422,14 @@ class Tab {
 
   get kind(): TabKind {
     if (this.image !== null) return "image";
+    if (isPatchPath(this.path)) return "patch";
     return isMarkdownPath(this.path) ? "markdown" : "code";
   }
 
   /** True when the pane is showing prose rather than the bytes behind it. */
   get reading(): boolean {
-    return this.kind === "markdown" && this.rendered && this.mode === "view";
+    if (!this.rendered || this.mode !== "view") return false;
+    return this.kind === "markdown" || (this.kind === "patch" && this.patch !== null);
   }
 
   /** True when the pane is showing a CSV/TSV as columns. */
@@ -370,7 +453,10 @@ class Tab {
   document(width: number, c: Tokens): void {
     if (this.docWidth === width && this.doc.length > 0) return;
     this.docWidth = width;
-    this.doc = renderMarkdown(this.plain.join("\n"), Math.max(8, width), c);
+    this.doc =
+      this.patch !== null
+        ? renderPatch(this.patch, Math.max(8, width), c)
+        : renderMarkdown(this.plain.join("\n"), Math.max(8, width), c);
     this.docPlain = this.doc.map((line) =>
       line.map((span) => span.text).join(""),
     );
@@ -407,10 +493,27 @@ class Tab {
       this.lines = [];
       return;
     }
-    const built = buildLines(new TextDecoder().decode(source), this.path, c);
+    const text = new TextDecoder().decode(source);
+    const built = buildLines(text, this.path, c);
+    if (isPatchPath(this.path)) {
+      const parsed = parseUnifiedDiff(text);
+      this.patch = parsed.files.length > 0 ? parsed : null;
+    } else this.patch = null;
     this.plain = built.plain;
     this.lines = built.lines;
-    if (isTablePath(this.path)) {
+    this.unread = 0;
+    if (isSubtitlePath(this.path)) {
+      const subs = subtitleTable(new TextDecoder().decode(source));
+      this.table = subs.table;
+      this.unread = subs.unread;
+      this.grid = layoutTable(this.table);
+    } else if (isIcsPath(this.path)) {
+      this.table = icsTable(new TextDecoder().decode(source));
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isGpxPath(this.path)) {
+      this.table = gpxTable(new TextDecoder().decode(source), this.path);
+      if (this.table !== null) this.grid = layoutTable(this.table);
+    } else if (isTablePath(this.path)) {
       // The decoded source, not `plain`: `expandTabs` has eaten every tab there.
       const delimiter = /\.tsv$/i.test(this.path) ? "\t" : undefined;
       this.table = parseCsv(new TextDecoder().decode(source), { delimiter });
@@ -447,6 +550,10 @@ class Tab {
 /** One blob, as the workspace keeps it: text, a picture, or a reason. */
 interface CacheEntry {
   readonly note: string;
+  /** The note's heading; "Not shown" unless the file is something we name. */
+  readonly noteTitle: string;
+  /** A last line under the note: where to get the file. */
+  readonly noteDetail: string;
   readonly raw: Uint8Array | null;
   readonly picture: Uint8Array | null;
 }
@@ -525,6 +632,11 @@ export function workspaceScreen(
   // arriving from a search hit means "show me *that*", not "show me where I
   // was". Everything else is restored.
   let ref = o.ref ?? memory?.ref ?? knownDefaultRef(src) ?? "";
+  /** Where a file downloads from, said in words the terminal can print. */
+  const downloadAt = (path: string): string => {
+    const web = mediaWeb();
+    return web === undefined ? "Download it from its web page." : `Download: ${downloadHref(web, ref, path)}`;
+  };
   let facts: RepoFacts | undefined;
   let roots: Node[] = memory?.roots ?? [];
   let loadedTree = roots.length > 0;
@@ -719,6 +831,15 @@ export function workspaceScreen(
       const read = await src.blob(ref, t.path);
       if (stale(mine)) return;
       let note = "";
+      let noteTitle = "Not shown";
+      let noteDetail = "";
+      // A model is named and measured here, as the page draws it (#7335).
+      const model = (bytes: Uint8Array | null, size: number): void => {
+        const facts = modelFacts(t.path, bytes, size);
+        noteTitle = facts.title;
+        note = facts.facts;
+        noteDetail = downloadAt(t.path);
+      };
       let raw: Uint8Array | null = null;
       let picture: Uint8Array | null = null;
       if (!read.ok)
@@ -727,12 +848,15 @@ export function workspaceScreen(
             ? "No such file at this revision."
             : errorText(read.error);
       else {
-        // Audio and video are not played here; the note says where they are.
+        // Audio and video are not played here, and a model is not drawn
+        // here: each note says what the file is and where it is.
         const media =
           read.value.kind === "text"
             ? undefined
             : mediaNote(t.path, formatSize(read.value.size), mediaWeb(), ref);
-        if (media !== undefined) note = media;
+        if (read.value.kind !== "text" && isModelPath(t.path))
+          model(read.value.kind === "binary" ? read.value.body : null, read.value.size);
+        else if (media !== undefined) note = media;
         else if (read.value.kind === "too_large")
           note = `${formatSize(read.value.size)} — too large to display.`;
         else if (read.value.kind === "binary") {
@@ -740,15 +864,20 @@ export function workspaceScreen(
           // something with. Everything else keeps the honest note: showing
           // bytes as text is how a terminal ends up beeping at you.
           if (looksLikeImage(t.path)) picture = read.value.body;
-          else note = `Binary file, ${formatSize(read.value.size)}.`;
+          else
+            note =
+              archiveNote(t.path, read.value.body, read.value.size, formatSize) ??
+              `Binary file, ${formatSize(read.value.size)}.`;
         } else raw = read.value.body;
       }
-      entry = { note, raw, picture };
+      entry = { note, noteTitle, noteDetail, raw, picture };
       remember(key, entry);
     }
     if (stale(mine)) return;
     t.loading = false;
     t.note = entry.note;
+    t.noteTitle = entry.noteTitle;
+    t.noteDetail = entry.noteDetail;
     t.raw = entry.raw;
     t.image =
       entry.picture === null
@@ -1415,7 +1544,8 @@ export function workspaceScreen(
         binding(["ctrl+c", "ctrl+x", "ctrl+v"], "copy / cut / paste"),
       ];
     const two =
-      t !== undefined && (t.image !== null || isMarkdownPath(t.path));
+      t !== undefined &&
+      (t.image !== null || isMarkdownPath(t.path) || t.patch !== null);
     return [
       ...(t?.table == null
         ? []
@@ -1464,6 +1594,7 @@ export function workspaceScreen(
       ...appEnvCommands(f, ctx, repo),
       ...autonomyCommands(f, ctx, repo),
       ...trafficCommands(f, ctx, repo),
+      ...statementCommands(f, ctx, repo),
       ...adapterCommands(f, ctx, repo),
       ...atlasCommands(f, ctx, repo),
     ],
@@ -2215,7 +2346,7 @@ export function workspaceScreen(
       t.showImage = !t.showImage;
       return;
     }
-    if (t.kind !== "markdown" || t.mode === "edit") {
+    if ((t.kind !== "markdown" && t.kind !== "patch") || t.mode === "edit") {
       ctx.toast("nothing else to show for this file", "attn");
       return;
     }
@@ -2260,7 +2391,11 @@ export function workspaceScreen(
       return;
     }
     if (t.note !== "") {
-      emptyState(s, r, c, { title: "Not shown", body: t.note });
+      emptyState(s, r, c, {
+        title: t.noteTitle,
+        body: t.note,
+        ...(t.noteDetail === "" ? {} : { detail: t.noteDetail }),
+      });
       return;
     }
     if (t.mode === "edit") {
@@ -2459,7 +2594,7 @@ export function workspaceScreen(
               ? ""
               : `${t.path} · ${
                   t.tabular && t.table !== null
-                    ? tableStatus(t.table)
+                    ? tableStatus(t.table, t.unread, isSubtitlePath(t.path), isIcsPath(t.path), isGpxPath(t.path))
                     : `${plural(
                         t.reading ? t.doc.length : t.plain.length,
                         "line",
@@ -2793,9 +2928,11 @@ function drawCode(s: Surface, r: Rect, c: Tokens, t: Tab): void {
 }
 
 /** `80 rows, first 50 shown · 3 more columns`: what the table leaves out. */
-function tableStatus(table: Table): string {
+function tableStatus(table: Table, unread = 0, subs = false, events = false, facts = false): string {
   const rows = table.rows.length + table.more;
-  return `${plural(rows, "row")}${
+  return `${plural(rows, subs ? "cue" : events ? "event" : facts ? "fact" : "row")}${
+    unread > 0 ? ` · ${unread} unreadable, check their arrow lines` : ""
+  }${
     table.more > 0 ? `, first ${table.rows.length} shown` : ""
   }${
     table.columns > MAX_COLUMNS

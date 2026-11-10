@@ -330,7 +330,7 @@ async function openChild(parent: App, ledger: ChildLedger): Promise<App> {
       ? { clientIpHeader: parent.config.clientIpHeader }
       : {}),
   });
-  markHostedChild(child);
+  markHostedChild(child, parent.config.dataDir);
   await firstBoot(child);
   // Its apps run in this process's lanes, awake before the first visit.
   await startChildApps(parent, child, ledger.name);

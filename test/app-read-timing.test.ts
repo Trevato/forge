@@ -8,6 +8,7 @@ import { AppsRuntime } from "../src/apps/runtime.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { tokenFor } from "./helpers/tokens.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers, bearer = "";
@@ -21,7 +22,7 @@ const call = (path: string, init: RequestInit = {}, token = bearer) =>
 async function phases(path: string, token = bearer): Promise<{ status: number; names: string[] }> {
   const res = await call(path, {}, token);
   await res.arrayBuffer();
-  const all = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!);
+  const all = requestTiming(res).split(", ").map((p) => p.split(";")[0]!);
   // The server's own leading `app` (and `db`) entries are not route phases.
   return { status: res.status, names: all.slice(all.indexOf("app") + 1) };
 }

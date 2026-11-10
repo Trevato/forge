@@ -45,6 +45,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { NOBODY_ON_CREW } from "../src/web/studio/words.ts";
 import { servedPhrase } from "../src/web/ui.ts";
+import { ageApp } from "./helpers/history.ts";
 
 describe("a stranger sees the app, not the owner's books", () => {
   let dataDir: string;
@@ -340,6 +341,8 @@ describe("a stranger sees the app, not the owner's books", () => {
     });
     expect(on.ok).toBe(true);
 
+    // An older app: a new one shows only its progress (#10299).
+    ageApp(app.db, lamp.id);
     const empty = await (await get("/alice/lamp", ownerCookie)).text();
     expect(empty).toContain("Autonomous");
     expect(empty).toContain("nobody on the crew");
@@ -1060,10 +1063,10 @@ describe("the studio's crew panel on a forge with no agents yet", () => {
     expect(refused.status).toBe(404);
   });
 
-  test("the app page's 'Add someone' leads unbroken to the door an agent is made through, with nothing dev-only in the way", async () => {
+  test("the app page's way to add a crew member leads unbroken to the door an agent is made through, with nothing dev-only in the way", async () => {
     const appPage = await (await get("/alice/pad", ownerCookie)).text();
-    expect(appPage).toContain("Nobody yet");
-    expect(appPage).toContain('href="/alice/pad/settings">Add someone.');
+    expect(appPage).toContain("Nobody on the crew yet");
+    expect(appPage).toContain('href="/alice/pad/settings#crew"');
 
     const settings = await (
       await get("/alice/pad/settings", ownerCookie)
@@ -2120,8 +2123,10 @@ describe("a one-minute-old app's front door does not lead with a week of zeros (
 
   test("the day-one page a person lands on from New app says one true line, not a week of zeros", async () => {
     const page = await (await get("/alice/newborn")).text();
-    expect(page).toContain("This week");
-    expect(page).toContain("Nothing to show yet");
+    // A new app shows only its progress: no week, no rail (#10299).
+    expect(page).not.toContain("This week");
+    expect(page).not.toContain("Nothing to show yet");
+    expect(page).toContain("Tell the crew");
     // Not a single zero from the old panel, and not the scary ratio: the
     // forge's own cancelled boot is never counted, and two deploys is well
     // under the threshold a ratio needs anyway.
@@ -2133,7 +2138,7 @@ describe("a one-minute-old app's front door does not lead with a week of zeros (
 
   test("a stranger sees the same quiet line, not the owner's zeros", async () => {
     const page = await (await fetch(`${base}/alice/newborn`)).text();
-    expect(page).toContain("Nothing to show yet");
+    expect(page).not.toContain("Nothing to show yet");
     expect(page).not.toMatch(/Shipped<\/dt>\s*<dd>0 pull requests<\/dd>/);
   });
 });

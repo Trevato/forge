@@ -10,11 +10,12 @@
 
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { clientAddress } from "../http/peer.ts";
 import type { App } from "../app.ts";
 import { connectUpstream, offeredProtocols, type AppSocket } from "../apps/proxy.ts";
-import { cellsAvailable, killTree, openCell, type Cell, type CellSpec, type Limits } from "../apps/contain.ts";
+import { cellsAvailable, commandPid, killTree, openCell, type Cell, type CellSpec, type Limits } from "../apps/contain.ts";
 import { childEnv, freePort } from "../apps/process.ts";
 import { childDirOf } from "../actions/spawn.ts";
 import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
@@ -46,6 +47,44 @@ export function crewAtWork(dir: string): boolean {
   }
 }
 
+/**
+ * How long a child forge told to go has to drain and mark its start clean
+ * (`kernel/boots.ts`) before it is killed: its own drain is ten seconds a
+ * budget (`drain.ts`), and an empty one leaves at once.
+ */
+export const STOP_GRACE_MS = 15_000;
+
+/**
+ * Ask a child forge to go the way its platform would, SIGTERM to the forge
+ * inside the cell, and kill the cell only if it is still there after
+ * `graceMs`. A sleep or a parent's release used to SIGKILL it outright, so
+ * every start read unclean (glint: 49 "unclean" exits, none of them a crash).
+ */
+export async function stopGently(child: { readonly pid: number; readonly exited: Promise<unknown> }, graceMs = STOP_GRACE_MS): Promise<void> {
+  const forge = commandPid(child.pid) ?? child.pid;
+  try {
+    process.kill(forge, "SIGTERM");
+  } catch {
+    // already gone
+  }
+  const until = Date.now() + graceMs;
+  let gone = false;
+  void child.exited.then(() => (gone = true));
+  while (!gone && alive(forge) && Date.now() < until) await Bun.sleep(100);
+  // The forge has left (or overstayed): what is left of its cell goes with it.
+  if (!gone) killTree(child.pid);
+  await child.exited;
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** After a child fails to start, requests are answered 503 at once for this long. */
 export const START_BACKOFF_MS = 30_000;
 
@@ -62,7 +101,11 @@ export function cellLimits(size: Size): Limits {
 export function cellSpecFor(input: {
   dir: string;
   parentDataDir: string;
+  /** The parent's own home, where its crew's sessions and model login live; `HOME` unless a test names one. */
+  parentHome?: string;
   parentUrl: string;
+  /** The child's own public address, which its pages and checks call back on; the parent answers it. */
+  url?: string;
   /** The parent's heartbeat door (`beat-door.ts`): the only way to it that needs no public address (a preview's cell has none). */
   parentPort?: number;
   size: Size;
@@ -77,16 +120,22 @@ export function cellSpecFor(input: {
     dir: input.dir,
     writable: [],
     home: join(input.dir, ".home"),
-    // The parent's data is the one thing a child must not see; its own
-    // directory sits under it and is bound back, deepest last.
-    hide: [input.parentDataDir],
+    // The parent's data and home are what a child must not see: the home holds
+    // the parent crew's sessions and model login, and the child runs as the
+    // same user (scottishbob, 2026-11-10). Its own directory sits under the
+    // data and is bound back, deepest last.
+    hide: [input.parentDataDir, input.parentHome ?? process.env["HOME"] ?? "", tmpdir()].filter((path) => path !== ""),
     // The forge's own code may live under the parent's data (a release checkout).
     reveal: [CODE],
     egress: [...(input.modelHosts ?? []), ...(input.registryHosts ?? [])],
     // A child's cell is held to this list whatever cells.egress says: report
     // mode is for apps still declaring hosts, not for a whole forge.
     egressMode: "enforce",
-    reach: input.parentPort === undefined ? [input.parentUrl] : [input.parentUrl, parentLocal(input.parentPort)],
+    reach: [
+      input.parentUrl,
+      ...(input.url === undefined ? [] : [input.url]),
+      ...(input.parentPort === undefined ? [] : [parentLocal(input.parentPort)]),
+    ],
     limits: cellLimits(input.size),
     // A forge is busy in bursts (a check's shards, an install): the kernel
     // holds it to its cores; the watch stopping it killed the check with it.
@@ -193,6 +242,7 @@ function makeRegistry(parent: App): CellChildren {
       dir,
       parentDataDir: parent.config.dataDir,
       parentUrl: parentOrigin(parent.config),
+      url,
       parentPort,
       size: input.size,
       port,
@@ -200,10 +250,12 @@ function makeRegistry(parent: App): CellChildren {
       modelHosts: childModelHosts(parent.db),
       registryHosts: childRegistryHosts(parent.db),
     });
-    const log = (line: string): void => {
+    const heard = childLog((line) => parent.log.info("child forge", { name: input.name, line }));
+    const log = (raw: string): void => {
+      const line = plainLine(raw);
       recent.push(line);
       if (recent.length > 5) recent.shift();
-      parent.log.info("child forge", { name: input.name, line });
+      heard(line);
     };
     let cell: Cell;
     try {
@@ -273,8 +325,7 @@ function makeRegistry(parent: App): CellChildren {
       const child = held.get(bodyId);
       if (child === undefined) return;
       held.delete(bodyId);
-      killTree(child.pid);
-      await child.exited;
+      await stopGently(child);
     },
     get: (bodyId) => held.get(bodyId),
     failure: (bodyId) => failed.get(bodyId)?.why,
@@ -304,6 +355,36 @@ function makeRegistry(parent: App): CellChildren {
       }
       return asleep;
     },
+  };
+}
+
+/** Lines a child forge may write to its parent's log in a minute; past it they are counted, not kept. */
+export const CHILD_LOG_PER_MINUTE = 600;
+
+/** A child's line with no control characters: it cannot move a terminal's cursor or paint over the parent's lines. */
+export const plainLine = (line: string): string => line.replace(/[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g, "?");
+
+/**
+ * The child's lines into the parent's log, at most `perMinute` a minute: a
+ * child is not trusted with the parent's log, so a flood of it costs the
+ * parent one line a minute saying how many were dropped.
+ */
+export function childLog(sink: (line: string) => void, perMinute = CHILD_LOG_PER_MINUTE, now: () => number = Date.now): (line: string) => void {
+  let window = Math.floor(now() / 60_000);
+  let kept = 0;
+  let dropped = 0;
+  return (line) => {
+    const minute = Math.floor(now() / 60_000);
+    if (minute !== window) {
+      if (dropped > 0) sink(`(${dropped} more lines in the last minute were dropped: past ${perMinute} a minute)`);
+      window = minute;
+      kept = 0;
+      dropped = 0;
+    }
+    if (kept < perMinute) {
+      kept++;
+      sink(line);
+    } else dropped++;
   };
 }
 

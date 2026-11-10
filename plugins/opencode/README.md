@@ -1,8 +1,8 @@
 # forge for OpenCode
 
-Copy `forge.ts` into `.opencode/plugin/` (or list this package under `plugin`
+Fetch `forge.ts` into `.opencode/plugin/` (or list this package under `plugin`
 in `opencode.json`), and set `FORGE_URL` and `FORGE_TOKEN` (make the token at `/settings/tokens` on the forge, which shows the line with its own address filled in):
-`mkdir -p .opencode/plugin && cp plugins/opencode/forge.ts .opencode/plugin/ && FORGE_URL=<url> FORGE_TOKEN=<token> opencode`. It registers the
+`mkdir -p .opencode/plugin && curl -fsSo .opencode/plugin/forge.ts <forge>/plugins/opencode/forge.ts && FORGE_URL=<forge> FORGE_TOKEN=<token> opencode`, where `<forge>` is the forge's own origin (it serves this file). It registers the
 forge's MCP server and the `forge` command: `new`, `tell`, `status`, `decide`, `plan`,
 `preview`, `pulls`, `runs`, `log`, `asked`.
 `/forge plan` shows the planner's next wave (the first wave-proposal row of `asks`);

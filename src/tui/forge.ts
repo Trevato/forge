@@ -15,7 +15,9 @@ import { guestCodeSearch } from "../http/strangers.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { sourceFor } from "../view/source.ts";
 import { fleetCommand } from "./screens/fleet.ts";
+import { dataCommand } from "./screens/data.ts";
 import { packsCommand } from "./screens/packs.ts";
+import { roadmapScreen } from "./screens/roadmap.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
 import type { Command, PaletteItem, PaletteSearch } from "./app/palette.ts";
 import { G } from "./term/screen.ts";
@@ -127,6 +129,11 @@ const REPO_VERBS: readonly {
     open: (f, ctx, repo) => heldScreen(f, ctx, repo),
   },
   {
+    id: "roadmap",
+    title: "Roadmap of a repository",
+    open: (f, ctx, repo) => roadmapScreen(f, ctx, repo),
+  },
+  {
     id: "pulls",
     title: "Pull requests in a repository",
     open: (f, ctx, repo) => issuesScreen(f, ctx, local(f, repo), "pull"),
@@ -208,6 +215,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
       },
       packsCommand(session, ctx),
+      ...dataCommand(session, ctx),
       fleetCommand(session, ctx),
       {
         // A person's or an org's page is the web's (#636): the terminal

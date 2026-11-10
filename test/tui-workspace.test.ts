@@ -309,6 +309,146 @@ describe("the terminal workspace", () => {
     }
   });
 
+  test("a .patch opens as the diff a pull shows, v flips to the source, a non-diff stays text", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "patches",
+      visibility: "public",
+      description: "diffs",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    const patch = [
+      "diff --git a/one.txt b/one.txt",
+      "--- a/one.txt",
+      "+++ b/one.txt",
+      "@@ -1,2 +1,2 @@",
+      " keep",
+      "-old line",
+      "+new line",
+      "",
+    ].join("\n");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        { path: "fix.patch", content: patch },
+        { path: "notes.diff", content: "just some notes\n" },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "patches");
+      await openFile(h, "fix.patch");
+      expect(h.text()).toContain("one.txt");
+      expect(h.text()).toContain("new line");
+      expect(h.text()).not.toContain("diff --git");
+      await h.press("v");
+      expect(h.text()).toContain("diff --git a/one.txt b/one.txt");
+      await openFile(h, "notes.diff");
+      expect(h.text()).toContain("just some notes");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .srt opens as a Start/Text table sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "captions",
+      visibility: "public",
+      description: "subtitles",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "talk.srt",
+          content:
+            "1\n00:00:01,500 --> 00:00:03,000\nHello <i>there</i>\n\n2\n00:00:0x --> nope\nBroken\n",
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "captions");
+      await openFile(h, "talk.srt");
+      expect(h.text()).toContain("Start");
+      expect(h.text()).toContain("00:00:01.500 │ Hello there");
+      expect(h.text()).toContain("1 cue");
+      expect(h.text()).toContain("1 unreadable, check their arrow lines");
+      await h.press("s");
+      expect(h.text()).toContain("00:00:01,500 --> 00:00:03,000");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .ics opens as a table of its events sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "calendars",
+      visibility: "public",
+      description: "events",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "team.ics",
+          content:
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20260301T090000Z\r\nSUMMARY:Planning\r\nLOCATION:Room 1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "calendars");
+      await openFile(h, "team.ics");
+      expect(h.text()).toContain("Summary");
+      expect(h.text()).toContain("2026-03-01 09:00 UTC");
+      expect(h.text()).toContain("Planning");
+      expect(h.text()).toContain("1 event");
+      await h.press("s");
+      expect(h.text()).toContain("SUMMARY:Planning");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("a .gpx opens as its facts, sharing the web parser, and s flips to the source", async () => {
+    const made = await createRepo(forge, alice, {
+      name: "tracks",
+      visibility: "public",
+      description: "routes",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        {
+          path: "ride.gpx",
+          content:
+            '<gpx><trk><name>Morning ride</name><trkseg><trkpt lat="10" lon="20"><ele>100</ele></trkpt><trkpt lat="11" lon="20"><ele>150</ele></trkpt></trkseg></trk></gpx>',
+        },
+      ],
+    });
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h, "tracks");
+      await openFile(h, "ride.gpx");
+      expect(h.text()).toContain("Morning ride");
+      expect(h.text()).toContain("111.2 km");
+      expect(h.text()).toContain("50 m");
+      expect(h.text()).toContain("4 facts");
+      await h.press("s");
+      expect(h.text()).toContain("<trkpt");
+    } finally {
+      h.stop();
+    }
+  });
+
   test("tables: search, edit, the caps in the status line, a ; file, and s on a broken one", async () => {
     const made = await createRepo(forge, alice, {
       name: "sheets",

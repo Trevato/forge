@@ -1274,6 +1274,32 @@ export const editorJs = /* js */ `
 })();
 `;
 
+/**
+ * A rendered file whose viewer needs a library (the 3D view) names its
+ * bundle in `data-module`. `loadModules` loads each one once, with the
+ * shell's own nonce, and only when a figure on the page asks: on the first
+ * paint, and when the code browser swaps such a file in. Only a first-party
+ * asset's exact shape is loaded (`/assets/<name>.js`), so nothing a page
+ * carries can point it elsewhere. The module mounts its figures itself.
+ * Its own string so a test can run it against a stand-in document.
+ */
+export const moduleLoaderJs = /* js */ `
+  var shellNonce = doc.currentScript ? doc.currentScript.nonce : '';
+  var modules = {};
+  function loadModules() {
+    doc.querySelectorAll('[data-module]').forEach(function (el) {
+      var src = el.getAttribute('data-module') || '';
+      if (!/^\\/assets\\/[a-z0-9-]+\\.js$/.test(src) || modules[src]) return;
+      modules[src] = true;
+      var s = doc.createElement('script');
+      s.type = 'module';
+      s.nonce = shellNonce;
+      s.src = src;
+      doc.head.appendChild(s);
+    });
+  }
+`;
+
 const shellCore = /* js */ `
 (function () {
   var doc = document;
@@ -1417,6 +1443,11 @@ const shellCore = /* js */ `
     doc.addEventListener('code:swap', function () { anchor = 0; paint(); });
     paint();
   }
+
+  // ---- a heavy viewer, loaded only by the page that shows one ----
+  ${moduleLoaderJs}
+  doc.addEventListener('code:swap', loadModules);
+  loadModules();
 
   // ---- settings: the section list narrows as you type ----
   doc.addEventListener('input', function (e) {

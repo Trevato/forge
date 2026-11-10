@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers;
@@ -25,6 +26,6 @@ test("the forge-wide map names session, graph, render in order", async () => {
   const res = await fetch(`${servers.url}/api/v1/map`);
   await res.arrayBuffer();
   expect(res.status).toBe(200);
-  const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]);
+  const names = requestTiming(res).split(", ").map((p) => p.split(";")[0]);
   expect(names.filter((n) => n !== "app")).toEqual(["session", "graph", "render"]);
 });

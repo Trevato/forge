@@ -41,6 +41,7 @@ import {
   btn,
   card,
   dot,
+  disclosure,
   empty,
   envStateBadge,
   icon,
@@ -246,9 +247,13 @@ export function homeDraws(ctx: Ctx, user: User): Record<HomeRegion, () => Html |
       const ceilingUsd = forgeCeiling(ctx.app.config);
       const kpiTime: KpiTimer = (name, fn) => timePhase(request, name, fn);
       const kpiOpts = { idle: () => idleReason(ctx.app, new Date()), dataDir: ctx.app.config.dataDir, time: kpiTime, ...(ceilingUsd === null ? {} : { ceilingUsd }) };
-      return html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
-        ${homeWeek(ctx.app, user)}
-        ${alarmLines(cachedAlarms(db, new Date(), ceilingUsd))}`;
+      // The figures and the week's pace open in place; alarms need the owner, so they sit under "Needs you".
+      return html`${disclosure(
+          "Figures",
+          html`${timePhase(request, "kpis", () => kpiRow(db, kpiOpts), () => kpiCache(db))}
+            ${homeWeek(ctx.app, user)}`,
+          { small: true, id: "home-figures" },
+        )}`;
     },
     waiting: () => timePhase(request, "waiting", () => waitingLine(db, user), () => waitingCache(db)),
     panels: async () => (await timePhaseAsync(request, "panels", () => pinnedPanels(ctx.app, user), () => panelCache(db))) ?? html``,
@@ -333,13 +338,27 @@ export async function studioHome(
   const kpis = figures
     ? await homeRegion(ctx.app.db, ctx.request, user.id, "kpis", homeVariant(ctx.url), access, homeDraws(ctx, user).kpis)
     : liveLine(ctx);
+  // Three compartments (#10298): what needs the owner, what moved since the last look, what is live.
+  const draws = homeDraws(ctx, user);
+  const waiting = await homeRegion(ctx.app.db, ctx.request, user.id, "waiting", homeVariant(ctx.url), access, draws.waiting);
+  const held = timePhase(ctx.request, "held", () => heldLine(ctx, user));
+  const alarms = user.isAdmin
+    ? alarmLines(cachedAlarms(ctx.app.db, new Date(), forgeCeiling(ctx.app.config)))
+    : null;
+  const visitedAt = Date.now();
+  const before = timePhase(ctx.request, "visit", () =>
+    isNavigation(ctx.request) ? noteVisit(ctx.app.db, user.id, visitedAt) : lastVisit(ctx.app.db, user.id),
+  );
+  const since = timePhase(ctx.request, "since", () => sinceYouWere(ctx.app.db, user, before, visitedAt));
+  const needsYou = html`${waiting}${held}${alarms}`;
   const body = html`<h1 class="sr-only">Home</h1>
     ${tellBox(ctx, user)}
     ${ask} ${address}
-    ${timePhase(ctx.request, "held", () => heldLine(ctx, user))}
+    ${when(String(needsYou).trim() !== "", () => html`<section class="stack stack-tight" id="needs-you" aria-label="Needs you"><h2 class="small muted">Needs you</h2>${needsYou}</section>`)}
+    ${when(String(since).trim() !== "", () => html`<section aria-label="Since you were here">${since}</section>`)}
+    <section aria-label="Live">${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}</section>
     <section class="stack" aria-label="The forge">${kpis}</section>
     ${pinnedSlot(ctx.app.db, user)}
-    ${timePhase(ctx.request, "moving", () => movingRegion(ctx.app.db, user))}
     ${appChips(ctx, user)}
     ${when(
       steps,
@@ -352,7 +371,7 @@ export async function studioHome(
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${refreshJs}\n${registerWorkerJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
-  notePhaseRest(ctx.request, "render", rendering, ["kpis", "moving", "access"]);
+  notePhaseRest(ctx.request, "render", rendering, ["kpis", "moving", "access", "waiting", "held", "visit", "since"]);
   return res;
 }
 

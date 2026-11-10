@@ -6,7 +6,7 @@ import { good, type Tool, REPO_ARG, repoArg, isAnswer } from "../shared.ts";
 
 export const tool: Tool = {
   name: "repo",
-  doc: "`{ repo }`: one repository's description, visibility, autonomy, `audience { level, sentence }` and `provenance` (where a migrated one came from, `null` when hidden), the same as `GET /api/v1/repos/:owner/:name`",
+  doc: "`{ repo }`: one repository's description, visibility, autonomy, `audience { level, who, sentence }` and `provenance` (where a migrated one came from, `null` when hidden), the same as `GET /api/v1/repos/:owner/:name`",
   description:
     "One repository you can read, as GET /api/v1/repos/:owner/:name.",
   inputSchema: {

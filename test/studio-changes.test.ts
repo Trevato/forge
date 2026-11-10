@@ -340,8 +340,11 @@ describe("the studio, continued", () => {
     const all = await (await get("/alice/notes/runs")).text();
     for (const link of [agent, check, deploy]) expect(all).toContain(link);
     expect(all).toContain("Check of abcdef1");
-    expect(all).toContain("abcdef1 · passed");
-    expect(all).toContain("took ");
+    // A row is title, state word and time (#10415): no sha, no duration beside it.
+    expect(all).not.toContain("abcdef1 · passed");
+    expect(all).toContain("<time");
+    const checkId = /runs\/([^"]+)"/.exec(check)![1];
+    expect(await (await get(`/alice/notes/runs/${checkId}`)).text()).toContain("abcdef1");
 
     const only = async (kind: string) =>
       (await get(`/alice/notes/runs?kind=${kind}`)).text();
@@ -683,8 +686,8 @@ describe("the studio, continued", () => {
     const tellHtml = await viaTell.text();
     expect(tellHtml).toContain("Door test: one tell");
     expect(tellHtml).toContain('data-word="told"');
-    // Still waiting, nobody assigned: the one case the line is true (#214).
-    expect(tellHtml).toContain("nobody has it yet");
+    // Still waiting: the state word says so; the page adds no second line (#10415).
+    expect(tellHtml).not.toContain("nobody has it yet");
     // The reply, the close and every Details form post to /issues/:number.
     expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/comments"`);
     expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/assignee"`);
@@ -1319,14 +1322,19 @@ describe("the studio, continued", () => {
       const at = list.indexOf(title);
       return list.slice(at, list.indexOf("</a>", at + 400) + 4);
     };
-    expect(rowOf("Answers the tell")).toContain(`href="/alice/notes/issues/${n}"`);
-    expect(rowOf("Answers the tell")).not.toContain("already done");
-    expect(rowOf("Answers nothing")).not.toContain("for issue");
-    expect(rowOf("A person's branch")).not.toContain("for issue");
+    // The calm pass (#10415): a row is title, word and time; the tell it answers is on the pull.
+    for (const title of ["Answers the tell", "Answers nothing", "A person's branch"]) {
+      expect(rowOf(title.replace("'", "&#39;"))).toContain("<time");
+      expect(rowOf(title.replace("'", "&#39;"))).not.toContain("for issue");
+    }
+    expect(rowOf("Answers the tell")).toContain('data-word=');
+    expect(
+      await (await get(`/alice/notes/pulls/${answering.number}`)).text(),
+    ).toContain(`href="/alice/notes/issues/${n}"`);
 
     setIssueState(app, alice, repo, told.value, "closed");
     const closedList = await (await get("/alice/notes/pulls")).text();
-    expect(closedList).toContain("its issue is already done");
+    expect(closedList).not.toContain("its issue is already done");
     const page = await (
       await get(`/alice/notes/pulls/${answering.number}`)
     ).text();

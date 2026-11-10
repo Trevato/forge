@@ -474,3 +474,22 @@ Flags: none.
 $ forge talk "what is waiting on me?"
 Two pulls are green and wait for your merge: #12 and #15.
 ```
+
+## forge data
+
+The SQLite files you may read, from a shell (so nvim and other editors can use
+them). The forge decides what you see (an admin: its own `forge.db`; a writer
+of an app: that app's databases per environment) and masks secrets, exactly as
+the Data screen and the MCP `data` tool do.
+
+- `forge data` lists the databases.
+- `forge data <app> [env]` lists that app's tables (`env` defaults to production).
+- `forge data <app> [env] --table name [--page n]` prints 50 rows.
+- `forge data <app> [env] "SELECT …"` runs one read-only SELECT (5 s, 1,000 rows); a write is refused with the forge's words and exit 1. SQL is 20 runs a minute per person, shared with the web and terminal; past that it prints "try again in N s" and exits 1.
+
+`--file x.db` picks among several databases of one environment (`app.db` is the default). `--json` prints an array of objects (rows) or of tables. An unknown or unreadable app exits 2; not logged in exits 3.
+
+```console
+$ forge data notes "select name from users" --json
+[{"name":"ann"}]
+```

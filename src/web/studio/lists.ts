@@ -20,11 +20,8 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
-import { stepsOfStored, type PathStep } from "../../flow/path.ts";
-import { canRead, canWrite, type Repo } from "../../core/repos.ts";
-import { FLOW_LABEL } from "../../core/flow_label.ts";
-import { flowButton } from "../flow_button.ts";
-import { stepLink } from "./step_link.ts";
+import { stepsOfStored } from "../../flow/path.ts";
+import { canRead, type Repo } from "../../core/repos.ts";
 import { waitingCount } from "../../actions/reports.ts";
 
 import { listRepoRuns } from "../../actions/runs.ts";
@@ -60,10 +57,9 @@ import {
   time,
 } from "../ui.ts";
 import type { Run, RunState } from "../../core/runs.ts";
-import { actorsFor, durationText, issuesFor, runTitleFrom } from "../pages/runs.ts";
+import { actorsFor, issuesFor, runTitleFrom } from "../pages/runs.ts";
 import { originGlyph } from "../pages/thread.ts";
 import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
-import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { knowMergeClosings, tellWords } from "./tell.ts";
 import {
   pullWords,
@@ -447,18 +443,16 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     .map((issue, i) => ({ issue, info: words[i]! }))
     .filter((r) => shown(r.info.word, f));
 
-  const mayLabel = canWrite(db, repo, ctx.auth.user);
   const list =
     rows.length === 0
       ? empty({
           icon: "issue",
-          title: "Nothing here",
-          note: emptyNote(
+          title: emptyNote(
             f.word,
             "No issue",
             record === undefined
               ? "Nothing open."
-              : "Nothing open. Tell the crew what you want and it shows up here.",
+              : "Nothing open. Tell the crew what you want.",
           ),
         })
       : listCard(
@@ -472,18 +466,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
               meta: html`${wordText(info.word)}${when(
                 issue.originAuthor,
                 (login) => html`${originTag(login, originGlyph(repo))} · `,
-              )}${issue.assigneeName
-                ? html`${issue.assigneeName} · `
-                : null}${time(issue.updatedAt)}`,
-              ...(mayLabel && issue.state === "open"
-                ? {
-                    after: flowButton(
-                      `${base}/issues/${issue.number}/flow`,
-                      (labels.get(issue.id) ?? []).some((l) => l.name.toLowerCase() === FLOW_LABEL),
-                      `${ctx.url.pathname}${ctx.url.search}`,
-                    ),
-                  }
-                : {}),
+              )}${time(issue.updatedAt)}`,
             }),
           ),
           { extra: "bare" },
@@ -575,11 +558,6 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   return response;
 }
 
-/** The pull's step beside its row, as a sibling of the row's link: `after`. */
-function stepAfter(step: PathStep | null | undefined): { after?: Html } {
-  return step == null ? {} : { after: stepLink(step) };
-}
-
 /**
  * A pull's title and branch are the writer's words, so inside `[data-pulls]`
  * a row wraps them (a long word breaks anywhere) in place of the list's
@@ -620,28 +598,29 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   lap("pulls");
   const words = await pullWords(wordCtx, fetched);
   lap("words");
-  const answered = tellsAnswered(db, repo.id, fetched);
-  lap("tells");
   const labels = labelsForIssues(db, fetched.map((pull) => pull.id));
   const repoLabels = listLabels(db, repo.id);
   lap("labels");
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
-    .filter((r) => shown(r.info.word, f));
-  const steps = stepsOfStored(db, repo, rows.map((r) => r.pull));
-  lap("steps");
+    // An open pull is always listed, whatever its word: the tab counts them all.
+    .filter((r) => f.word === undefined || shown(r.info.word, f));
+
+  // Only a stopped pull's row says why: the step's sentence, one clamped line.
+  const stopped = stepsOfStored(
+    db,
+    repo,
+    rows.filter((r) => r.info.word === "stopped").map((r) => r.pull),
+  );
 
   const list =
     rows.length === 0
       ? empty({
           icon: "pull",
-          title: "Nothing here",
-          note: emptyNote(
+          title: emptyNote(
             f.word,
             "No pull request",
-            record === undefined
-              ? "Nothing open."
-              : "Nothing open. A pull request is the crew's proposed edit to your app; the crew opens them as it works.",
+            "Nothing open.",
           ),
         })
       : listCard(
@@ -652,11 +631,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
               lead: wordDot(info.word, info.note),
               title: titled(pull.title, labels.get(pull.id)),
               titleAttr: pull.title,
-              meta: html`${wordText(info.word)}${pull.originAuthor
-                ? originTag(pull.originAuthor, originGlyph(repo))
-                : pull.authorName} ·
-              ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
-              ...stepAfter(steps.get(pull.id)),
+              meta: html`${wordText(info.word)}${when(info.word === "stopped" ? stopped.get(pull.id) : undefined, (step) => html`${noteLine(step.why)} · `)}${time(pull.updatedAt)}`,
             }),
           ),
         );
@@ -746,18 +721,6 @@ function runsHref(
   return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
 }
 
-/** What a queued run waits on, in the words its row says it by: a builder
- * for an agent run, a slot for a check, the deploy lane for a deploy; a run
- * paused on a limit says it resumes later. */
-export function whatRunWaitsOn(run: Run): string {
-  if (run.notBefore !== null) return "paused on a limit, resumes soon";
-  return run.kind === "agent"
-    ? "waiting for a builder"
-    : run.kind === "check"
-      ? "waiting for a check slot"
-      : "waiting for the deploy lane";
-}
-
 /** Whether a run is doing something at this moment — the only runs under
  * Working. A deploy is not counted: the flow report's stages are builders,
  * reviewers and checks, and the tab's count is held to theirs. */
@@ -780,14 +743,6 @@ export function onRunsList(
     return true;
   return inWordFilter(word, filter);
 }
-
-/** A check's state in the words its row names it by. */
-const checkState = (run: Run): string =>
-  run.state === "ok"
-    ? "passed"
-    : run.state === "queued"
-      ? whatRunWaitsOn(run)
-      : run.state;
 
 const RUNS_KIND_WORDS: Record<RunsKind, string> = {
   agent: "Agent runs",
@@ -850,13 +805,10 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     rows.length === 0
       ? empty({
           icon: "bot",
-          title: "Nothing here",
-          note: emptyNote(
+          title: emptyNote(
             filter,
             "No run",
-            kind === undefined || kind === "agent"
-              ? "Nothing open. A run is one go the crew takes at a job; each one shows up here."
-              : `Nothing open. Every ${kind === "deploy" ? "deploy" : "check"} shows up here while it runs.`,
+            "Nothing open.",
           ),
         })
       : listCard(
@@ -874,12 +826,11 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                   : icon(run.kind === "check" ? "check" : "rocket"),
               title: runTitleFrom(run, actors, issues),
               meta:
-                run.kind === "check"
-                  ? html`${run.commitOid.slice(0, 7)} · ${checkState(run)}
-                    ${when(durationText(run), (d) => html` · took ${d}`)} ·
-                    ${time(run.finishedAt ?? run.createdAt)}`
-                  : html`${run.kind === "agent" ? html`${who} · ` : null}${run.state === "queued" ? whatRunWaitsOn(run) : noteLine(info.note)}
-              · ${time(run.finishedAt ?? run.createdAt)}`,
+                run.state === "failed"
+                  ? html`${noteLine(info.note)} · ${time(run.finishedAt ?? run.createdAt)}`
+                  : run.state === "queued" && run.notBefore !== null
+                    ? html`${noteLine("paused on a limit, resumes soon")} · ${time(run.createdAt)}`
+                  : time(run.finishedAt ?? run.createdAt),
               trail: wordBadge(info.word),
             });
           }),

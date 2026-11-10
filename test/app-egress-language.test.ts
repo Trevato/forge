@@ -19,6 +19,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { egressNote } from "../src/web/studio/egress.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { giveHistory } from "./helpers/history.ts";
 
 quietLogs();
 
@@ -39,6 +40,7 @@ beforeAll(async () => {
   repo = r.value;
   const made = createAppRecord(app.db, { repoId: repo.id, slug: "notes", access: "public" });
   if (!made.ok) throw new Error(made.error);
+  giveHistory(app.db, repo.id);
   setCapacity(app.db, "cells.egress", "report", a.value.id);
   noteReached(dataDir, repo.id, "api.example.com", 443);
   noteReached(dataDir, repo.id, "api.example.com", 443);

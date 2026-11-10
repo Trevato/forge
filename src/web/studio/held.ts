@@ -43,8 +43,7 @@ export function heldLine(ctx: Ctx, user: User): Html | null {
             >${hold.held} ${hold.held === 1 ? "issue is" : "issues are"} held
             behind the Later gate</a
           >
-          in ${repo.name}, set by ${hold.by} ${time(hold.since)}. Nothing there
-          starts until you lift it.
+          in ${repo.name}, set by ${hold.by} ${time(hold.since)}
         </p>`,
     )}
   </section>`;

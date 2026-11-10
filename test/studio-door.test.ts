@@ -51,6 +51,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
 import { withScripts } from "./helpers/page-script.ts";
+import { ageApp } from "./helpers/history.ts";
 
 let dataDir: string;
 let app: App;
@@ -430,6 +431,8 @@ describe("every open pull's preview on the studio page", () => {
     const enabled = await enableApp(app, alice, repo, { slug: "widget" });
     if (!enabled.ok) throw new Error(String(enabled.error));
     record = getAppByRepo(app.db, repo.id)!;
+    // An older app: a new one shows only its progress, without the list (#10299).
+    ageApp(app.db, repo.id);
   });
 
   test("an open pull's preview host and open link render; none do once nothing is open", async () => {

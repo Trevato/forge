@@ -13,7 +13,7 @@ import { statfsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { freemem, totalmem } from "node:os";
 import { refusedInternal, type RefusedLedger } from "./internal_refused.ts";
-import { recentErrors, type ErrorLedger, type ErrorLine } from "./log.ts";
+import { recentErrors, redactSecrets, type ErrorLedger, type ErrorLine } from "./log.ts";
 import {
   budgetFailures,
   leaseLapsed,
@@ -32,6 +32,7 @@ import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { proofNeed } from "../release/prove.ts";
+import { running as runningVersion } from "./version.ts";
 import { rollbackNeed } from "../release/launch.ts";
 import { behindStanding } from "../release/behind.ts";
 import { newestDrills } from "../core/domain_drills.ts";
@@ -515,12 +516,13 @@ export function vitals(input: VitalsInput): Vitals {
   if (behind !== undefined) need("mirror", behind.sentence, behind.since, "/settings/backups");
 
   // A release the forge could not prove against its own public URL is a card until a release does.
-  const unproven = proofNeed(input.dataDir);
+  const unproven = proofNeed(input.dataDir, runningVersion().version);
   if (unproven !== undefined) need("release", unproven.sentence, unproven.since, "/board");
 
-  // A roll the image's launcher undid is a card until a later version reads ready.
+  // A roll the image's launcher undid is a card until a later version reads ready. Its sentence
+  // carries the release's own last words (stderr), so anything credential-shaped is masked.
   const undone = rollbackNeed(input.dataDir);
-  if (undone !== undefined) need("release:rolled-back", undone.sentence, undone.since, "/board");
+  if (undone !== undefined) need("release:rolled-back", redactSecrets(undone.sentence), undone.since, "/board");
 
   // Production serving a version older than a release main has had over an hour is a card until they match.
   const lagging = behindStanding(now);

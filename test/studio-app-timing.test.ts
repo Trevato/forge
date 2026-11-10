@@ -10,6 +10,7 @@ import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { ageApp, giveHistory } from "./helpers/history.ts";
 
 quietLogs();
 
@@ -39,6 +40,9 @@ beforeAll(async () => {
   if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
   const enabled = await enableApp(app, u.value, made.value, { slug: "vault" });
   if (!enabled.ok) throw new Error(String(enabled.error));
+  // A new app shows only its progress (#10299); this budget is the full page.
+  ageApp(app.db, made.value.id);
+  giveHistory(app.db, made.value.id);
   servers = await serve(app);
 });
 afterAll(() => {
@@ -69,7 +73,6 @@ test("GET /:owner/:name/app names its phases", async () => {
     "spend",
     "decisions",
     "latency",
-    "history",
     "panels",
     "now",
     "following",

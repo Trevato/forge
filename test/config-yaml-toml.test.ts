@@ -142,7 +142,7 @@ describe("YAML", () => {
   test("the blob page draws the form, and says so for a broken file", () => {
     const input = (text: string) => {
       const body = new TextEncoder().encode(text);
-      return { path: "a.yml", size: body.length, body, media: "/o/r/media/main/a.yml" };
+      return { path: "a.yml", size: body.length, body, media: "/o/r/media/main/a.yml", download: "/o/r/raw/main/a.yml" };
     };
     expect(String(config(input(YAML)).content)).toContain("config-form");
     expect(String(config(input("a: [1\n")).content)).toContain("Not valid YAML");

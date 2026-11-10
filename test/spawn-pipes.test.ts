@@ -32,6 +32,7 @@ const PIPING: Record<string, { sites: string[]; reason: string }> = {
   "src/kernel/data_home.ts": { sites: ["stdout"], reason: "spawnSync buffers stdout; stderr ignored" },
   "src/looks/capture.ts": { sites: ["stderr"], reason: "stderr read in a background loop; stdout ignored" },
   "src/release/devtools.ts": { sites: ["stderr"], reason: "stderr read for the DevTools address, then drained in a background loop; stdout ignored" },
+  "src/release/launch.ts": { sites: ["stderr"], reason: "hear() reads stderr to its end for the release's life, passing every chunk through to ours and keeping the tail until ready; stdout inherited" },
   "src/release/boot.ts": { sites: ["stderr"], reason: "stderr read to its end in a background loop, awaited before the reason is read; stdout ignored" },
   "src/snapshot/boot.ts": { sites: ["stderr"], reason: "stderr read to its end in a background loop, awaited before the exit is read for a lost port; stdout ignored" },
   "src/release/checkout.ts": { sites: ["stdout+stderr"], reason: "stdout and stderr both read via Response.text()" },

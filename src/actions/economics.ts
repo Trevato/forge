@@ -119,6 +119,10 @@ export interface PriceInput {
   ownedSlots?: unknown;
   cloudHourUsd?: unknown;
   storageGbMonthUsd?: unknown;
+  /** List price a customer pays, $/awake-hour (#508). */
+  awakePriceHourUsd?: unknown;
+  /** List price a customer pays, $/GB-month (#508). */
+  storagePriceGbMonthUsd?: unknown;
 }
 
 function readPrices(before: Prices, input: PriceInput): Result<Prices, "bad_price" | "bad_slots"> {
@@ -126,11 +130,19 @@ function readPrices(before: Prices, input: PriceInput): Result<Prices, "bad_pric
   const ownedMonthCents = usd(input.ownedMonthUsd, before.ownedMonthCents);
   const cloudHourCents = usd(input.cloudHourUsd, before.cloudHourCents);
   const storageGbMonthCents = usd(input.storageGbMonthUsd, before.storageGbMonthCents);
-  if (ownedMonthCents === undefined || cloudHourCents === undefined || storageGbMonthCents === undefined)
+  const awakePriceHourCents = usd(input.awakePriceHourUsd, before.awakePriceHourCents);
+  const storagePriceGbMonthCents = usd(input.storagePriceGbMonthUsd, before.storagePriceGbMonthCents);
+  if (
+    ownedMonthCents === undefined ||
+    cloudHourCents === undefined ||
+    storageGbMonthCents === undefined ||
+    awakePriceHourCents === undefined ||
+    storagePriceGbMonthCents === undefined
+  )
     return err("bad_price");
   const ownedSlots = input.ownedSlots === undefined ? before.ownedSlots : parseSlots(input.ownedSlots);
   if (ownedSlots === undefined) return err("bad_slots");
-  return ok({ ownedMonthCents, ownedSlots, cloudHourCents, storageGbMonthCents });
+  return ok({ ownedMonthCents, ownedSlots, cloudHourCents, storageGbMonthCents, awakePriceHourCents, storagePriceGbMonthCents });
 }
 
 /**

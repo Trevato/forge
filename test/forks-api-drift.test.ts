@@ -8,6 +8,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers;
@@ -48,7 +49,7 @@ test("a fork one commit ahead reads ahead 1, behind 0, with the parent named", a
   expect(page.items[0]!.updatedAt).not.toBeNull();
   expect(page.next_cursor).toBeNull();
   expect(page.parent).toBeNull(); // the source itself has no parent
-  const names = (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!).filter((n) => n !== "app");
+  const names = requestTiming(res).split(", ").map((p) => p.split(";")[0]!).filter((n) => n !== "app");
   expect(names).toEqual(["session", "forks", "drift", "render"]);
   const down = await fetch(`${servers.url}/api/v1/repos/bob/app/forks`);
   expect(((await down.json()) as { parent: string | null }).parent).toBe("alice/app");

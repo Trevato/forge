@@ -6,6 +6,7 @@
  */
 
 import { forgeChangelog, type ReleaseEntry } from "../../release/changelog.ts";
+import { readLandings } from "../../release/landings.ts";
 import { sourceFor } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -35,14 +36,20 @@ export function changelogRows(entries: readonly ReleaseEntry[]): ListRow[] {
 
 type Repo = { owner: string; name: string };
 
+/** Who built a pull, in plain words: "by Scout, with Claude Sonnet 5.5"; empty when the commit says nothing. */
+export function creditWords(by: string | undefined, withNames: readonly string[] | undefined): string {
+  const parts = [by === undefined ? "" : `by ${by}`, withNames === undefined || withNames.length === 0 ? "" : `with ${withNames.join(", ")}`];
+  return parts.filter((p) => p !== "").join(", ");
+}
+
 /** One release's pulls, `#N title`; Enter opens the pull as the changelog's Enter once did. */
-function releasePulls(f: Session, ctx: Ctx, repoRef: Repo, entry: ReleaseEntry): Screen {
+function releasePulls(f: Session, ctx: Ctx, repoRef: Repo, entry: ReleaseEntry, credits: ReadonlyMap<number, string>): Screen {
   const state = new ListState();
   return {
     title: entry.version,
     keys: [binding(["j", "k"], "move"), binding(["enter"], "open pull"), binding(["esc", "q"], "back")],
     render(area, s) {
-      const rows = entry.pulls.map((p) => ({ title: `#${p.number} ${p.title}`.trim() }));
+      const rows = entry.pulls.map((p) => ({ title: `#${p.number} ${p.title}`.trim(), meta: credits.get(p.number) ?? "" }));
       if (rows.length === 0) {
         emptyState(s, area, ctx.theme.c, { title: "No pulls", body: "This release carried none." });
         return;
@@ -67,6 +74,7 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
   let entries: ReleaseEntry[] = [];
   let loaded = false;
   let repoRef: Repo | undefined;
+  let credits = new Map<number, string>();
   const shown = (): ReleaseEntry[] => entries.filter((e) => releaseMatches(filter, e));
   return {
     title: "Changelog",
@@ -80,6 +88,15 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
       const read = await forgeChangelog(f.app);
       entries = read?.entries ?? [];
       repoRef = read === undefined ? undefined : { owner: read.repo.ownerName, name: read.repo.name };
+      if (read !== undefined) {
+        const landings = await readLandings(f.app).catch(() => undefined);
+        const repoName = `${read.repo.ownerName}/${read.repo.name}`.toLowerCase();
+        credits = new Map();
+        for (const l of [...(landings?.live ?? []), ...(landings?.onItsWay ?? [])]) {
+          const words = creditWords(l.by, l.with);
+          if (words !== "" && l.repo.toLowerCase() === repoName) credits.set(l.number, words);
+        }
+      }
       state.clamp(entries.length);
       loaded = true;
       ctx.invalidate();
@@ -115,7 +132,7 @@ export function changelogScreen(f: Session, ctx: Ctx): Screen {
       } else if (e.key === "esc" || e.key === "q") ctx.pop();
       else if (e.key === "enter") {
         const entry = shown()[state.index];
-        if (entry !== undefined && repoRef !== undefined) ctx.push(releasePulls(f, ctx, repoRef, entry));
+        if (entry !== undefined && repoRef !== undefined) ctx.push(releasePulls(f, ctx, repoRef, entry, credits));
       } else state.key(e, shown().length);
       return true;
     },

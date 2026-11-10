@@ -7,11 +7,12 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { systemPrompt } from "../src/crew/brief.ts";
 
-const brief = (role: "planner" | "builder", isApp: boolean) =>
+const brief = (role: "planner" | "builder", isApp: boolean, pull?: { number: number }) =>
   systemPrompt({
     agent: { user: { username: "atlas", displayName: "Atlas" }, brief: "" },
     repo: { ownerName: "alice", name: "forge", defaultBranch: "main" },
     issue: { number: 1 },
+    ...(pull === undefined ? {} : { pull }),
     branch: "atlas/1-x",
     forgeUrl: "https://forge.example",
     isApp,
@@ -30,6 +31,13 @@ describe("the vision", () => {
     const text = readFileSync("CLAUDE.md", "utf8");
     expect(text).toContain("Read docs/VISION.md first");
     expect(text).toContain("**Done means reachable**");
+  });
+
+  test("a run about a pull that exists (a red check, a conflict, feedback) is not sent to read the documents again", () => {
+    const text = brief("builder", true, { number: 7 });
+    expect(text).not.toContain("Read docs/VISION.md first");
+    expect(text).not.toContain("docs/PRINCIPLES.md");
+    expect(text).toContain("How to finish:");
   });
 
   test("every role's brief says to read it", () => {

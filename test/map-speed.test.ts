@@ -151,7 +151,7 @@ afterAll(() => {
 
 test("the map of a forge the size of trevato/forge reads in under 300 ms, each step named", async () => {
   const hit = async () => {
-    const res = await fetch(`${servers.url}/keeper/forge/map`, { headers: { cookie: f.strangerCookie } });
+    const res = await fetch(`${servers.url}/keeper/forge/map?view=graph`, { headers: { cookie: f.strangerCookie } });
     await res.text();
     expect(res.status).toBe(200);
     const phases = new Map<string, number>();

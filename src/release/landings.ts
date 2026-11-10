@@ -15,7 +15,7 @@
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { getRepo, type Repo } from "../core/repos.ts";
-import { creditsOf } from "../git/coauthors.ts";
+import { buildersOf, type Builders } from "../git/coauthors.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { running } from "../kernel/version.ts";
@@ -31,7 +31,9 @@ export interface Landing {
   readonly bet?: string;
   /** `account@host` when a trusted source's work folded in (#8937), set by the page that shows it. */
   readonly from?: string;
-  /** Others credited on the landed commit (`Co-authored-by`), beyond whoever landed it. */
+  /** Who built it: the author of the landed commit (a crew member or a person). */
+  readonly by?: string;
+  /** Others credited on the landed commit (`Co-authored-by`: the models, people), beyond whoever landed or wrote it. */
   readonly with?: readonly string[];
 }
 
@@ -211,14 +213,19 @@ async function askLive(app: App, rows: readonly MergedRow[]): Promise<void> {
   kept = { own: named, oids, misses, at, commit };
 }
 
-/** The names credited on the forge's own landed commits, by `repo#number`. */
-async function creditsOfRepo(app: App, own: string, rows: readonly MergedRow[]): Promise<Map<string, readonly string[]>> {
+/** Who built the forge's own landed commits, by `repo#number`. */
+async function buildersOfRepo(app: App, own: string, rows: readonly MergedRow[]): Promise<Map<string, Builders>> {
   const [owner = "", name = ""] = own.split("/");
   const repo = getRepo(app.db, owner, name);
   if (repo === undefined) return new Map();
   const mine = rows.filter((r) => r.repo.toLowerCase() === own.toLowerCase() && r.oid !== "").slice(0, ASKED);
-  const byOid = await creditsOf(repoDir(app.reposRoot, repo.ownerName, repo.name), mine.map((r) => r.oid));
-  return new Map(mine.map((r) => [`${r.repo}#${r.number}`, byOid.get(r.oid) ?? []] as const));
+  const byOid = await buildersOf(repoDir(app.reposRoot, repo.ownerName, repo.name), mine.map((r) => r.oid));
+  const out = new Map<string, Builders>();
+  for (const r of mine) {
+    const b = byOid.get(r.oid);
+    if (b !== undefined) out.set(`${r.repo}#${r.number}`, b);
+  }
+  return out;
 }
 
 /** Every landing, live or on its way, as of the running commit. */
@@ -227,10 +234,11 @@ export async function readLandings(app: App): Promise<Landings> {
   await askLive(app, rows).catch(() => undefined);
   const { live, onItsWay } = split(rows, kept);
   const own = kept?.own;
-  const credits = own === undefined ? new Map<string, readonly string[]>() : await creditsOfRepo(app, own, rows).catch(() => new Map<string, readonly string[]>());
+  const credits = own === undefined ? new Map<string, Builders>() : await buildersOfRepo(app, own, rows).catch(() => new Map<string, Builders>());
   const named = (l: Landing): Landing => {
-    const names = credits.get(`${l.repo}#${l.number}`) ?? [];
-    return names.length === 0 ? l : { ...l, with: names };
+    const b = credits.get(`${l.repo}#${l.number}`);
+    if (b === undefined) return l;
+    return { ...l, ...(b.by === "" ? {} : { by: b.by }), ...(b.with.length === 0 ? {} : { with: b.with }) };
   };
   const { version, commit } = running();
   return { version, commit, own, live: live.map(named), onItsWay: onItsWay.map(named) };

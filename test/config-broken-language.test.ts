@@ -4,7 +4,7 @@ import { config } from "../src/web/render/config.ts";
 
 const input = (path: string, text: string) => {
   const body = new TextEncoder().encode(text);
-  return { path, size: body.length, body, media: `/o/r/media/main/${path}` };
+  return { path, size: body.length, body, media: `/o/r/media/main/${path}`, download: `/o/r/raw/main/${path}` };
 };
 
 test("a broken YAML file is one plain line, then its source with the failing line marked", () => {

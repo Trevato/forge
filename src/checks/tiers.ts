@@ -37,6 +37,14 @@ export const RULE_TESTS: readonly string[] = [
   "test/readme-cap.test.ts",
   // The page audit: docs/design/audit.md names every top-level page.
   "test/design-audit.test.ts",
+  // Scans of the whole tree that no import map can tie to a diff: a new
+  // module, a long comment line or a file read at import landed green on
+  // the fast tier and turned every later pull red (#10252).
+  "test/header-width.test.ts",
+  "test/unreached.test.ts",
+  "test/spawn-pipes.test.ts",
+  "test/hollow.test.ts",
+  "test/release-boot.test.ts",
 ];
 
 /** What a test the times table does not name is assumed to take. */

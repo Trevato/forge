@@ -35,3 +35,15 @@ export function reserveWords(reserve: Reserve): string {
 export function short(reserve: Reserve): boolean {
   return reserve.startable < reserve.target;
 }
+
+/**
+ * Whether the planner is owed a pass: the reserve is down to half its
+ * target. Asked at one below the target, the planner ran every twenty
+ * minutes to open one issue each time, and a pass costs the same to set up
+ * whether it opens one issue or five (2026-11-09: 11 passes in four hours,
+ * most a top-up of one). Half lets the map run down between passes and
+ * fills it back in one; a thin map's three is still asked at two.
+ */
+export function due(reserve: Reserve): boolean {
+  return reserve.startable <= Math.ceil(reserve.target / 2);
+}

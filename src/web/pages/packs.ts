@@ -5,6 +5,7 @@
  */
 
 import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
+import type { Pack } from "../../packs/pack.ts";
 import { catalog, packNamed } from "../../packs/catalog.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
@@ -15,6 +16,17 @@ import { copyField, row } from "../ui.ts";
 
 const plural = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
 
+/** The list of packs as rows; each row is one j/k stop. */
+export const packsList = (packs: readonly Pack[]) =>
+  html`<ul class="list">${packs.map((p) =>
+      row({
+        title: html`<a href="/packs/${p.name}">${p.title}</a>`,
+        meta: html`${p.description} ${plural(p.apps.length, "app")}, ${plural(p.crew.length, "crew member")}.`,
+        trail: html`v${p.version}`,
+        nav: true,
+      }),
+    )}</ul>`;
+
 // GET /packs
 export function packsPage(ctx: Ctx): Response {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
@@ -23,13 +35,7 @@ export function packsPage(ctx: Ctx): Response {
   const body = html`${pageHead("Forge packs", {
       sub: "A whole forge to start from: real apps with their history, and a crew set up to work on them.",
     })}
-    <ul class="list">${packs.map((p) =>
-        row({
-          title: html`<a href="/packs/${p.name}">${p.title}</a>`,
-          meta: html`${p.description} ${plural(p.apps.length, "app")}, ${plural(p.crew.length, "crew member")}.`,
-          trail: html`v${p.version}`,
-        }),
-      )}</ul>`;
+    ${packsList(packs)}`;
   const response = page({ ctx, title: "Forge packs", body });
   notePhase(ctx.request, "render", performance.now() - started);
   return response;

@@ -100,7 +100,7 @@ export function parkPull(
         app.db,
         repo,
         about,
-        `${why} (pull #${pull.number} closed).`,
+        `${why} (pull #${pull.number} closed; its branch \`${pull.headBranch}\` at ${pull.headOid.slice(0, 12)} keeps the work so far).`,
         PLANNER_HINT,
       ),
     );

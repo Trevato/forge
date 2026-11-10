@@ -8,13 +8,15 @@
  */
 
 import { createWebhook, deleteWebhook, pauseWebhook, redeliverWebhook } from "../../actions/repos.ts";
+import { repoAdminNames } from "../../core/repo_admins.ts";
+import { canWrite } from "../../core/repos.ts";
 import { notePhase, timePhase } from "../../core/route_timing.ts";
 import { getWebhook, listWebhooks, pingWebhook, recentDeliveries } from "../../core/webhooks.ts";
 import type { Ctx } from "../../http/context.ts";
-import { repoBase, repoNotFound } from "../chrome.ts";
+import { crumbsFor, loadRepo, pageHead, repoBase, repoNotFound } from "../chrome.ts";
 import { field } from "../form.ts";
 import { html, when } from "../html.ts";
-import { flashTo } from "../layout.ts";
+import { flashTo, page } from "../layout.ts";
 import {
   btn,
   confirmAction,
@@ -25,9 +27,32 @@ import {
 } from "../ui.ts";
 import { adminForm, settingsPageResponse, timedAdminRepo } from "./settings.ts";
 
+/**
+ * A writer who is not an admin follows the feed's failing-webhook line here:
+ * they get a page naming who can act. Anyone else is refused as before.
+ */
+function notAdminPage(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo || !canWrite(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
+  const names = repoAdminNames(ctx.app.db, repo);
+  const who =
+    names.length === 0
+      ? html`a site admin of this forge`
+      : html`${names.map((n, i) => html`${i > 0 ? ", " : ""}<a href="/${n}">${n}</a>`)}`;
+  return page({
+    ctx,
+    title: `Webhooks · ${repo.name}`,
+    crumbs: crumbsFor(repo),
+    body: html`${pageHead("Webhooks", {
+      sub: html`Only a repository admin can redeliver or pause a webhook; this repository's admins are ${who}.`,
+    })}
+    <p class="small"><a href="${repoBase(repo)}">Back to ${repo.name}</a></p>`,
+  });
+}
+
 export function hooksPage(ctx: Ctx): Response {
   const repo = timedAdminRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
+  if (!repo) return notAdminPage(ctx);
   const hooks = timePhase(ctx.request, "hooks", () => listWebhooks(ctx.app.db, repo.id));
   const recent = timePhase(
     ctx.request,

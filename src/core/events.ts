@@ -165,6 +165,10 @@ export function listEventsVisibleTo(
     params.push(options.afterId);
     where += ` AND ${afterEvent(params.length)}`;
   }
+  if (options.beforeId !== undefined) {
+    params.push(options.beforeId);
+    where += ` AND ${beforeEvent(params.length)}`;
+  }
   params.push(options.limit ?? 100);
   return db
     .query<EventRow, (string | number)[]>(

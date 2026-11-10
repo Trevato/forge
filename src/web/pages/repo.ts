@@ -84,10 +84,13 @@ import { type CodeRows, rowsMarkup } from "../code_rows.ts";
 import { rowsOffThread } from "../code_rows_pool.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
+import { overSize } from "../render/archive.ts";
 import { csvJs, isCsvPath } from "../render/csv.ts";
-import { HEAD_BYTES } from "../render/kinds.ts";
+import { fontJs } from "../render/font.ts";
+import { hasTable } from "../render/sqlite.ts";
+import { fileKind, HEAD_BYTES, RENDER_CAP } from "../render/kinds.ts";
 import { RENDERERS, rendererFor } from "../render/renderers.ts";
-import { mediaHref } from "./media.ts";
+import { downloadHref, mediaHref } from "./media.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
 import { recentMove } from "../../core/transfer.ts";
@@ -682,10 +685,6 @@ export async function readmeFor(
  */
 export type BlobView = "source" | "rendered";
 
-/** The file saved under its own name, streamed at any size. */
-const downloadHref = (base: string, ref: string, path: string): string =>
-  `${mediaHref(base, ref, path)}?download=1`;
-
 export function blobView(value: string | null): BlobView {
   return value === "source" ? "source" : "rendered";
 }
@@ -699,6 +698,7 @@ export function blobBody(
   highlighted?: (ms: number) => void,
   all = false,
   ready?: CodeRows,
+  why?: string,
 ): { content: Html; lines: number } {
   const encoded = encodeURIComponent(ref);
   if (blob.kind === "binary") {
@@ -706,8 +706,8 @@ export function blobBody(
       lines: 0,
       content: empty({
         icon: "file",
-        title: "Binary file",
-        note: `${fileSize(blob.size)} — not shown, but you can download it.`,
+        title: why !== undefined ? "Archive" : "Binary file",
+        note: why !== undefined ? `${fileSize(blob.size)} · ${why}` : `${fileSize(blob.size)} — not shown, but you can download it.`,
         action: btn("Download", {
           href: downloadHref(base, ref, path),
           variant: "primary",
@@ -1091,8 +1091,14 @@ export function editAction(scope: RepoScope, ref: string, path: string): Html {
  * a repository on this forge has.
  */
 function blobRenderer(scope: RepoScope, path: string, blob: Blob): ReturnType<typeof rendererFor> {
-  const found = rendererFor(path, blob);
+  const found = rendererFor(path, blob, RENDERERS, { media: scope.kind === "local" });
   return found?.render === RENDERERS.pdf && scope.kind !== "local" ? undefined : found;
+}
+
+/** Why an archive too big to list is not listed, as one sentence. */
+function overCap(path: string, blob: Blob): string | undefined {
+  if (blob.kind !== "binary" || fileKind(path, blob.body.subarray(0, HEAD_BYTES)) !== "archive") return undefined;
+  return blob.size > RENDER_CAP.archive ? overSize(RENDER_CAP.archive) : undefined;
 }
 
 /** Whether the blob page of this file draws a PDF, and so needs `object-src`. */
@@ -1101,6 +1107,15 @@ export function drawsPdf(scope: RepoScope, path: string, blob: Blob, view: BlobV
     view !== "source" &&
     RENDERERS.pdf !== undefined &&
     blobRenderer(scope, path, blob)?.render === RENDERERS.pdf
+  );
+}
+
+/** Whether the blob page of this file sets a font in itself, and so needs `font-src`. */
+export function drawsFont(scope: RepoScope, path: string, blob: Blob, view: BlobView): boolean {
+  return (
+    view !== "source" &&
+    RENDERERS.font !== undefined &&
+    blobRenderer(scope, path, blob)?.render === RENDERERS.font
   );
 }
 
@@ -1121,6 +1136,8 @@ export function renderBlob(
     highlighted?: (ms: number) => void;
     /** Draw every line instead of the first 1,500. */
     all?: boolean;
+    /** `?table=` on a SQLite file. */
+    table?: string;
     /** Rows a worker already built for this file. */
     rows?: CodeRows;
   },
@@ -1137,15 +1154,20 @@ export function renderBlob(
           size: blob.size,
           body: renderer.body,
           media: mediaHref(base, o.ref, o.path),
+          download: downloadHref(base, o.ref, o.path),
           pathHref: `${base}/blob/${encoded}/${o.path}`,
           all: o.all === true,
+          ...(o.table !== undefined ? { table: o.table } : {}),
         })
       : undefined;
   const fellBack = drawn?.fallback;
   const { content, lines, summary } =
     drawn !== undefined && fellBack === undefined
       ? drawn
-      : { ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all, o.rows), summary: undefined };
+      : {
+          ...blobBody(base, o.ref, o.path, blob, o.highlighted, o.all, o.rows, fellBack ?? overCap(o.path, blob)),
+          summary: undefined,
+        };
   const sizeText =
     blob.kind === "too_large" ? "" : sizeWithTokens(blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
@@ -1484,6 +1506,8 @@ export function codePage(
     before?: Html;
     /** The page draws a PDF in an `<object>` (`PageOptions.objectSrc`). */
     objectSrc?: boolean;
+    /** The page sets a font in itself (`PageOptions.fontSrc`). */
+    fontSrc?: boolean;
     /** Script only some files need (the CSV table's sort and filter). */
     extraJs?: string;
   },
@@ -1492,6 +1516,7 @@ export function codePage(
     ctx,
     title: o.title,
     ...(o.objectSrc ? { objectSrc: true } : {}),
+    ...(o.fontSrc ? { fontSrc: true } : {}),
     crumbs: scope.crumbs,
     palette: scope.palette,
     body: html`${o.header ?? scopeHeader(ctx, scope, "code", { compact: true })}
@@ -1628,6 +1653,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ctx.auth.user === undefined && repo.visibility === "public" && FULL_OID.test(ref) && ctx.url.searchParams.get("fragment") !== "1";
   const view = blobView(ctx.url.searchParams.get("view"));
   const all = ctx.url.searchParams.get("all") === "1";
+  const table = ctx.url.searchParams.get("table")?.slice(0, 256) ?? undefined;
   // The whole page as it last went out to a stranger, encoded (`kept_page.ts`).
   const keptKey = kept ? keptPageKey(ctx, repo.id) : undefined;
   const finished = keptKey === undefined ? undefined : keptPage(keptKey);
@@ -1635,9 +1661,11 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     git.done();
     return immutableWhenAddressed(ctx.request, true, repo, ref, finished);
   }
-  const keepFinished = (response: Response) => (keptKey === undefined ? response : keepPage(keptKey, response, true));
+  // A `?table=` that names nothing in the file is a stranger's string: its page is never kept.
+  let keepable = true;
+  const keepFinished = (response: Response) => (keptKey === undefined || !keepable ? response : keepPage(keptKey, response, true));
   if (kept) {
-    const hit = cachedBlobPage(repo.id, ref, path, String(view), all);
+    const hit = cachedBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}`, all);
     if (hit !== undefined) {
       git.done();
       return immutableWhenAddressed(
@@ -1651,7 +1679,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
           explorer: hit.explorer,
           content: hit.content,
           objectSrc: hit.objectSrc,
-          ...(hit.csv ? { extraJs: csvJs } : {}),
+          ...(hit.font ? { fontSrc: true, extraJs: fontJs } : hit.csv ? { extraJs: csvJs } : {}),
         })),
       );
     }
@@ -1663,7 +1691,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const refs = await git.read(() => (kept ? keptRefs(repo.id, () => refSetFrom(scope.source)) : refSetFrom(scope.source)));
   let highlightMs: number | undefined;
   const renderStart = performance.now();
-  const shown = capped(blob.value);
+  const shown = capped(blob.value, path);
+  if (table !== undefined) keepable = shown.kind !== "too_large" && hasTable(shown.body, table);
   // A cold page for a stranger highlights and lays out its rows on a worker (#9630).
   let rows: CodeRows | undefined;
   if (kept && shown.kind === "text" && (view === "source" || !blobRenderer(scope, path, shown))) {
@@ -1680,6 +1709,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     view,
     highlighted: (ms) => (highlightMs = (highlightMs ?? 0) + ms),
     all,
+    ...(table !== undefined ? { table } : {}),
   });
   if (highlightMs !== undefined) notePhase(ctx.request, "highlight", highlightMs);
   const paneMs = performance.now() - renderStart - (highlightMs ?? 0);
@@ -1707,12 +1737,14 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     ),
   });
   const objectSrc = drawsPdf(scope, path, shown, view);
-  if (kept)
-    keepBlobPage(repo.id, ref, path, String(view), all, {
+  const font = drawsFont(scope, path, shown, view);
+  if (kept && keepable)
+    keepBlobPage(repo.id, ref, path, `${view}\0${table ?? ""}`, all, {
       title: `${filename} · ${repo.name}`,
       explorer: explorerHtml,
       content: pane,
       objectSrc,
+      font,
       csv: isCsvPath(path),
     });
   const response = await keepFinished(codePage(ctx, scope, {
@@ -1721,7 +1753,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
     explorer: explorerHtml,
     content: pane,
     objectSrc,
-    ...(isCsvPath(path) ? { extraJs: csvJs } : {}),
+    ...(font ? { fontSrc: true, extraJs: fontJs } : isCsvPath(path) ? { extraJs: csvJs } : {}),
   }));
   notePhase(ctx.request, "render", paneMs + performance.now() - pageStart);
   return immutableWhenAddressed(ctx.request, ctx.auth.user === undefined, repo, ref, response);
@@ -1754,7 +1786,10 @@ export async function pathsJson(ctx: Ctx): Promise<Response> {
  * The page's own render ceiling, under the source's fetch ceiling. A body
  * over it is dropped and only its head kept, so a media kind is still drawn.
  */
-export function capped(blob: Blob): Blob {
+export function capped(blob: Blob, path = ""): Blob {
+  // A SQLite file is read whole, up to its own cap, because the database is opened from the bytes.
+  if (blob.kind !== "too_large" && fileKind(path, blob.body.subarray(0, HEAD_BYTES)) === "sqlite" && blob.size <= RENDER_CAP.sqlite)
+    return blob;
   return blob.kind !== "too_large" && blob.size > MAX_RENDER_BYTES
     ? { kind: "too_large", size: blob.size, head: blob.body.slice(0, HEAD_BYTES) }
     : blob;

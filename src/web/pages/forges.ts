@@ -62,6 +62,8 @@ function forgeRow(r: ClientRow): Html {
   return row({
     title: html`<a href="${r.url}">${r.name}</a>`,
     meta: html`${meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}`,
+    // Enter opens the row's first link, the forge's name.
+    nav: true,
     data: { forge: r.name, claimed: state },
     ...(r.reach === null
       ? {}

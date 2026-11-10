@@ -915,7 +915,7 @@ export function emptyState(
   s: Screen,
   r: Rect,
   c: Tokens,
-  o: { title: string; body?: string; action?: string },
+  o: { title: string; body?: string; detail?: string; action?: string },
 ): void {
   if (r.w <= 0 || r.h < 3) return;
   const w = Math.min(r.w, 44);
@@ -924,6 +924,9 @@ export function emptyState(
   s.line(inner, 2, truncate(o.title, w), style(c.fg, c.bg, BOLD), "center");
   if (o.body !== undefined && inner.h > 3)
     s.line(inner, 3, truncate(o.body, w), style(c.mutedFg, c.bg), "center");
+  // A detail (an address, say) may use the whole width: it is cut last.
+  if (o.detail !== undefined && inner.h > 4)
+    s.line({ ...r, y: inner.y }, 4, truncate(o.detail, r.w), style(c.faint, c.bg), "center");
   if (o.action !== undefined && inner.h > 5)
     button(
       s,

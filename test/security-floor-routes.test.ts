@@ -7,8 +7,14 @@
  * A pattern that needs a parameter the seed cannot supply is named in
  * `UNSEEDED` with why — it is still requested, with a placeholder, so its
  * miss answers carry the floor too — and the list is checked both ways.
+ *
+ * The two passes run 32 requests in flight against the one server; the
+ * work is bounded by the route table, never by a clock (#10401, #7824).
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { envDataDir } from "../src/apps/data.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +30,7 @@ import { repoDir } from "../src/git/repos.ts";
 import { buildApiRouter, buildRouter, serve, type Servers } from "../src/http/server.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { pool } from "./helpers/sweep-clock.ts";
 
 quietLogs();
 
@@ -155,6 +162,11 @@ beforeAll(async () => {
   const run = createRun(app.db, { repoId: repo.id, kind: "check", issueId: pull.value.id, commitOid: pull.value.headOid });
   const inserted = insertApp(app.db, { repoId: repo.id, slug: "notes", access: "public" });
   if (!inserted.ok) throw new Error(inserted.error);
+  // An app database for the data routes: data routes name the production env.
+  mkdirSync(envDataDir(dataDir, inserted.value.id, "production"), { recursive: true });
+  const appDb = new Database(join(envDataDir(dataDir, inserted.value.id, "production"), "app.db"));
+  appDb.exec("CREATE TABLE t (n INTEGER); INSERT INTO t VALUES (1)");
+  appDb.close();
   Object.assign(fill, {
     owner: "ada", name: "notes", username: "ada", ref: "main", oid: pull.value.headOid,
     path: "a.txt", env: "prod", slug: "notes", spec: "192", machine: "standard",
@@ -182,12 +194,16 @@ function pathFor(pattern: string): string {
     .replace(/[:*]([a-z_]+)/g, (_, key: string) => {
       if (key === "number") return number!;
       if (key === "id") return runId!;
+      if (key === "env" && pattern.includes("/data/:env/")) return "production";
+      if (key === "file" && pattern.includes("/data/:env/:file/")) return "app.db";
       return SEEDED.has(key) ? fill[key]! : "x";
     });
 }
 
 const unseeded = (pattern: string): boolean =>
-  paramsOf(pattern).some((key) => !SEEDED.has(key) && !(key === "id" && pattern.includes("/runs/:id")));
+  paramsOf(pattern).some(
+    (key) => !SEEDED.has(key) && !(key === "id" && pattern.includes("/runs/:id")) && !(key === "file" && pattern.includes("/data/:env/:file/")),
+  );
 
 /**
  * `accept-encoding: identity` skips gzip, which only costs time here: the floor
@@ -207,9 +223,7 @@ async function floor(path: string, headers: Record<string, string>): Promise<str
 const allPaths = (): string[] => [...getPatterns().map(pathFor), "/no/such/path/at/all", "/api/v1/no-such-route"];
 
 async function missingFloor(headers: Record<string, string>): Promise<string[]> {
-  const missing: string[] = [];
-  for (const path of allPaths()) missing.push(...(await floor(path, headers)));
-  return missing;
+  return (await pool(allPaths(), (path) => floor(path, headers))).flat();
 }
 
 test("every GET route, and an unknown path, carries the floor signed out", async () => {

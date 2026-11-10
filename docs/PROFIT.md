@@ -64,6 +64,19 @@ Rounding happens once, at the end, to the cent. Worked example: a $300 box,
 40 h of cloud at $0.05, 12 GB-months at $0.02 and $57.10 of crew spend
 cost $359.34.
 
+`src/core/revenue.ts` (`statementFor`) is the revenue half, one app and one
+UTC calendar month at a time: lines `{ what, quantity, unit, price, amount }`
+for awake time (every environment, owned or cloud), storage, crew spend at
+cost, and the margin on crew spend — the margin touches crew spend only.
+List prices are whole cents beside the costs (`awakePriceHourUsd`,
+`storagePriceGbMonthUsd` in Settings → Economics and the economics API).
+Amounts and the total are rounded once, at the end, as for cost. Worked
+example: 100 awake-hours at $0.10, 3 GB-months at $0.25 and $57.10 of crew
+at a 20% margin charge 10.00 + 0.75 + 57.10 + 11.42 = $79.27; at margin 0,
+$67.85. Read it at `GET /api/v1/repos/:owner/:name/statement?month=YYYY-MM`
+(JSON, or `format=csv`) or print it from the app's settings
+(`/:owner/:name/settings/app/statement`); see `docs/features/statement.md`.
+
 ## The order (what waits for what)
 
 | issue | what                                                         | waits for  |

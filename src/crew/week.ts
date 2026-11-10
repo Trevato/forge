@@ -33,8 +33,8 @@ export const WEEK = {
   reserve: 0.1,
   /** Slots the crew holds at while the week's capacity is unknown. */
   unknownSlots: 2,
-  /** How many hours back the burn is read over. */
-  burnHours: 1,
+  /** How many hours back the burn is read over: long enough that a meter moving in whole points resolves a pace of half a point an hour. */
+  burnHours: 6,
 } as const;
 
 export type Status = "on pace" | "ahead" | "behind" | "unknown";
@@ -64,6 +64,12 @@ export interface WeekInput {
   readonly startable: number;
   /** Issues only the Later gate holds. */
   readonly gated: number;
+  /**
+   * Whether agent runs finished with a cost over the last `WEEK.burnHours`.
+   * The meter moves in whole points; hours without a point while the crew ran
+   * is a meter too coarse to read, not a crew that is behind (#10440).
+   */
+  readonly crewRan?: boolean;
 }
 
 export interface WeekDecision {
@@ -117,8 +123,10 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   const room = Math.max(0, wall - used);
   const allowed = room / hours;
   const burn = meter.burnPctPerHour;
+  // A flat meter over a crew that ran says nothing about idling: it has not moved a point yet.
+  const unmoved = burn === 0 && input.crewRan === true;
   const burning = used >= wall || (burn !== null && burn > allowed * (1 + WEEK.tolerance));
-  const idling = used < wall && burn !== null && burn < allowed * (1 - WEEK.tolerance);
+  const idling = used < wall && burn !== null && !unmoved && burn < allowed * (1 - WEEK.tolerance);
   const runsOutAt = burn !== null && burn > 0 && burning ? new Date(now.getTime() + (room / burn) * 3_600_000) : null;
 
   const status: Status = burning ? "ahead" : idling ? "behind" : "on pace";
@@ -132,7 +140,12 @@ export function weekDecision(input: WeekInput): WeekDecision | null {
   const release = status === "behind" && input.idleSlots > 0 && input.startable === 0 && input.gated > 0;
   const gone = Math.round((1 - left / WINDOW_MS.week) * 100);
   const timeGone = `${gone}% of its time gone, reset ${utc(meter.resetsAt)}`;
-  const burnWords = burn === null ? "unread (too few readings)" : `${pct(burn)} an hour`;
+  const burnWords =
+    burn === null
+      ? "unread (too few readings)"
+      : unmoved
+        ? `under a point over the last ${WEEK.burnHours} h (the meter moves in whole points and the crew ran)`
+        : `${pct(burn)} an hour over the last ${WEEK.burnHours} h`;
   // `full`: the free percent and run-out time are said here; otherwise the crew line above says them.
   const say = (full: boolean): string => {
     const weekLeft = full ? `${Math.round(meter.freePct)}% of the week left with ${timeGone}` : `the week has ${timeGone}`;

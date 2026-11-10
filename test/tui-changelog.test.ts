@@ -101,3 +101,11 @@ test("a private forge repository leaves the terminal's screen empty", async () =
     app.db.run("UPDATE repo SET visibility = 'public' WHERE name = 'forge'");
   }
 });
+
+import { creditWords } from "../src/tui/screens/changelog.ts";
+
+test("creditWords says who built a pull in plain words, and nothing when the commit says nothing", () => {
+    expect(creditWords("Scout", ["Claude Sonnet 5.5", "Jay"])).toBe("by Scout, with Claude Sonnet 5.5, Jay");
+    expect(creditWords("Scout", [])).toBe("by Scout");
+    expect(creditWords(undefined, undefined)).toBe("");
+});

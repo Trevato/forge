@@ -13,6 +13,7 @@ import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.t
 import { sealedScope } from "../../core/sealed.ts";
 import { terminalFor } from "../../actions/apps.ts";
 import { envPull, previewEnv } from "../../apps/data.ts";
+import { appOnboardingLine } from "../../apps/onboarding.ts";
 import {
   appsRuntime,
   type AppsRuntime,
@@ -27,6 +28,8 @@ import { loadRepo, repoBase } from "../chrome.ts";
 import { testsClause } from "./words.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, missingFragment } from "../layout.ts";
+import { onboardingRow } from "../onboarding_row.ts";
+import { hasHistory } from "./fresh.ts";
 import {
   badge,
   btn,
@@ -284,6 +287,10 @@ export function appPanels(
   head: Html;
   previews: Html | null;
   deployTailing: boolean;
+  /** A new app that has not run yet: its page shows only its progress. */
+  fresh: boolean;
+  /** Anything ever shipped here, or (for a viewer who sees them) a run taken. */
+  history: boolean;
 } {
   const db = ctx.app.db;
   const base = repoBase(repo);
@@ -291,8 +298,14 @@ export function appPanels(
   const envs: EnvStatus[] = envsFor(ctx.app, ctx.auth.user, record);
   const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
   const checks = latestRunsForIssues(db, openPulls.map((p) => p.id));
-  const previews = previewsPanel(base, runtime, record, openPulls, envs, writer, checks);
   const production = envs.find((e) => e.env === "production");
+  // Until production has a deploy of its own to speak of, a new app's facts
+  // row says where it stands instead (`apps/onboarding.ts`).
+  const onboarding = production?.runId === undefined ? appOnboardingLine(ctx.app, repo, ctx.auth.user) : undefined;
+  const history = hasHistory(db, repo.id, writer);
+  const fresh = onboarding !== undefined && !history;
+  // A fresh app's pull is already the Now row; a second list would say it twice.
+  const previews = fresh ? null : previewsPanel(base, runtime, record, openPulls, envs, writer, checks);
   // The forge's own source shows the forge as its production; the app is its test copy.
   const { url, copy } = shownProduction(ctx.app, repo, runtime?.urlFor(record, "production"));
   const tail = productionTail(ctx, repo, production, writer);
@@ -310,20 +323,21 @@ export function appPanels(
             : { tone: live.tone },
         )}
       </h1>
-      <p class="muted">
-        ${repo.description || "No description yet."}
+      ${when(repo.description || url !== undefined || copy !== undefined, () => html`<p class="muted">
+        ${when(repo.description, (d) => html`${d}`)}
         ${url === undefined
           ? null
           : copy !== undefined || production?.state === "running"
-            ? html`·
-                <a href="${base}/app/production/open" class="mono"
+            ? html`${repo.description ? "· " : ""}<a href="${base}/app/production/open" class="mono"
                   >${url.replace(/^https?:\/\//, "")}</a
                 >`
-            : html`· <span class="mono">${url.replace(/^https?:\/\//, "")}</span>`}
-        ${when(copy, (c) => html`· ${testCopyLink(c)}`)}
-      </p>
-      ${when(production, (env) => envFacts(base, env))}
-      ${when(writer, () =>
+            : html`${repo.description ? "· " : ""}<span class="mono">${url.replace(/^https?:\/\//, "")}</span>`}
+        ${when(copy, (c) => html`${repo.description || url !== undefined ? "· " : ""}${testCopyLink(c)}`)}
+      </p>`)}
+      ${onboarding === undefined
+        ? when(production, (env) => envFacts(base, env))
+        : onboardingRow(onboarding)}
+      ${when(writer && !fresh, () =>
         terminalLine(
           terminalFor(ctx.app, record, "production", production),
           ctx.app.config.sshHostKey,
@@ -343,6 +357,8 @@ export function appPanels(
     head,
     previews,
     deployTailing: tail.deploying,
+    fresh,
+    history,
   };
 }
 

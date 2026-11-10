@@ -7,6 +7,7 @@
 import { escapeHtml, html, raw } from "../html.ts";
 import { fileSize } from "../ui.ts";
 import { numericColumns, parseCsv, type Delimiter } from "./csv-parse.ts";
+import { parseJsonl } from "./jsonl-parse.ts";
 import type { Rendered, RenderInput } from "./renderers.ts";
 
 /** Rows drawn by default, and by `?all=1` at most. */
@@ -35,10 +36,11 @@ const cells = (tag: "th" | "td", row: string[], width: number, numeric: boolean[
 
 export function csv(input: RenderInput): Rendered {
   const want = input.all ? ROW_CAP : ROW_WINDOW;
-  const parsed = parseCsv(new TextDecoder().decode(input.body), {
-    rows: want + 1,
-    columns: COLUMN_CAP,
-  });
+  const text = new TextDecoder().decode(input.body);
+  const lines = isJsonlPath(input.path);
+  const parsed = lines
+    ? parseJsonl(text, want, COLUMN_CAP)
+    : parseCsv(text, { rows: want + 1, columns: COLUMN_CAP });
   if ("error" in parsed) return { content: html``, lines: 0, fallback: parsed.error };
   const total = parsed.records - 1;
   const width = Math.min(parsed.columns, COLUMN_CAP);
@@ -83,12 +85,13 @@ export function csv(input: RenderInput): Rendered {
   return {
     content,
     lines: 0,
-    summary: `${total.toLocaleString()} rows × ${parsed.columns.toLocaleString()} columns · ${NAMES[parsed.delimiter]}-separated · ${fileSize(input.size)}`,
+    summary: `${total.toLocaleString()} rows × ${parsed.columns.toLocaleString()} columns · ${lines ? "JSON Lines" : `${NAMES[parsed.delimiter]}-separated`} · ${fileSize(input.size)}`,
   };
 }
 
 /** Whether a path can hold a table, so only those pages carry the script below. */
-export const isCsvPath = (path: string): boolean => /\.(csv|tsv)$/i.test(path);
+export const isCsvPath = (path: string): boolean => /\.(csv|tsv|jsonl|ndjson)$/i.test(path);
+const isJsonlPath = (path: string): boolean => /\.(jsonl|ndjson)$/i.test(path);
 
 /** Sort on a header click, filter on typing. Trusted static code. */
 export const csvJs = /* js */ `

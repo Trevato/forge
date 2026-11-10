@@ -16,7 +16,8 @@
  * #10168, #10222). After that the plain doubling takes over, so a version
  * that never answers costs its public URL a few loads an hour. When a newer
  * release answers instead, this process is being replaced: it keeps nothing
- * and never polls again (#10138).
+ * and does not poll again for `GIVE_UP_MS` (#10138); still running after
+ * that, it was not replaced and proves its version again (#10248).
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -39,6 +40,8 @@ export const TICK_MS = 60_000;
 export const RETRY_POLL_MS = 10_000;
 /** How many give-ups in a row are retried after one tick before the doubling takes over. */
 export const QUICK_RETRIES = 10;
+/** A proof not ended by then is hung: the next tick is scheduled anyway, or the last failure would stand for hours (#10313). */
+export const HANG_MS = GIVE_UP_MS + 5 * 60_000;
 
 export interface Proof {
   readonly version: string;
@@ -82,8 +85,14 @@ export function isNewer(a: string, b: string): boolean {
   return false;
 }
 
-/** Versions this process saw replaced by a newer one; never polled again. */
-const superseded = new Set<string>();
+/**
+ * Versions this process saw a newer release answer for, and until when it
+ * does not poll for them again. A replaced process is gone well within
+ * `GIVE_UP_MS`; one still running after it was not replaced (a roll the
+ * launcher undid), so it proves its version again rather than leave the last
+ * kept failure, and its past retry time, standing for hours (#10248).
+ */
+const superseded = new Map<string, number>();
 
 const proofFile = (dataDir: string): string => join(dataDir, "release", "proof.json");
 
@@ -107,9 +116,12 @@ function keep(dataDir: string, proof: Proof): Proof {
 }
 
 /** The card an unproven release is, saying when it is tried again; undefined while the last verdict is a pass. */
-export function proofNeed(dataDir: string): { sentence: string; since: string } | undefined {
+export function proofNeed(dataDir: string, running?: string): { sentence: string; since: string } | undefined {
   const p = lastProof(dataDir);
   if (p === undefined || p.ok) return undefined;
+  // Only the process running a version proves it: a failure kept for another version is not
+  // this process's to report, and stood for hours after a roll or a newer boot (#10248).
+  if (running !== undefined && running !== UNSTAMPED && p.version !== running) return undefined;
   const next = Date.parse(p.at) + retryAfter(p.failures ?? 1, p.slow === true, p.gaveUp === true);
   // When it is tried again, so a person reading the card knows it is not stuck.
   const again = Number.isFinite(next) ? ` It is proven again at ${new Date(next).toISOString().slice(11, 16)} UTC.` : "";
@@ -136,6 +148,8 @@ export interface ProveOptions {
   readonly giveUpMs?: number;
   /** The heavy-page load and `/healthz` watch after go-live; a shorter window for a test. */
   readonly heavy?: Heavy;
+  /** Aborted when the proof is hung: its asks stop and it keeps no verdict (#10313). */
+  readonly signal?: AbortSignal;
 }
 
 /** Is a proof of `version` due: never tried, or failed `retryAfter` its failures or more ago? */
@@ -149,16 +163,18 @@ export function proofDue(last: Proof | undefined, version: string, now: number):
 
 /**
  * Proves `version` unless it was proven before, or its last failure's
- * `retryAfter` has not passed. Returns what was kept, or undefined when nothing ran. Never throws.
+ * `retryAfter` has not passed. Returns what was kept, or undefined when nothing ran. Throws only when `signal` aborts it.
  */
 export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> {
   const now = o.now ?? Date.now;
   const last = lastProof(o.dataDir);
-  if (superseded.has(o.version) || !proofDue(last, o.version, now())) return undefined;
+  if (now() < (superseded.get(o.version) ?? -Infinity) || !proofDue(last, o.version, now())) return undefined;
   const sleep = o.sleep ?? Bun.sleep;
-  const doFetch = o.fetch ?? fetch;
+  const baseFetch = o.fetch ?? fetch;
+  const doFetch = ((url, init) => baseFetch(url, o.signal ? { ...init, signal: init?.signal ? AbortSignal.any([init.signal, o.signal]) : o.signal } : init)) as typeof fetch;
   const failedBefore = last?.version === o.version && !last.ok ? last : undefined;
   const finish = (failure?: string, slow = false, gaveUp = false): Proof => {
+    if (o.signal?.aborted) throw new Error("the proof was aborted as hung");
     const at = new Date(now()).toISOString();
     return keep(o.dataDir, {
       version: o.version,
@@ -174,6 +190,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
     const deadline = now() + (o.giveUpMs ?? (failedBefore?.gaveUp === true ? RETRY_POLL_MS : GIVE_UP_MS));
     let seen = "";
     for (;;) {
+      if (o.signal?.aborted) throw new Error("the proof was aborted as hung");
       try {
         // Each ask is a fresh URL and says no-cache, so a proxy or edge holding an older /healthz answer cannot stand for the public URL (#10184).
         const res = await doFetch(`${health}?proof=${now()}`, { redirect: "manual", cache: "no-store", headers: { ...ownProbeHeaders(o.dataDir), "cache-control": "no-cache" }, signal: AbortSignal.timeout(5_000) });
@@ -186,7 +203,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
       if (now() + POLL_MS > deadline) {
         // A newer release answers: this process is being replaced, and a failure kept now would stand over the newer version's own proof.
         if (isNewer(seen, o.version)) {
-          superseded.add(o.version);
+          superseded.set(o.version, now() + GIVE_UP_MS);
           return undefined;
         }
         return finish(`the public URL never answered as ${o.version}`, true, true);
@@ -225,13 +242,44 @@ export function startProving(
   everyMs = TICK_MS,
   schedule: Schedule = unrefTimer,
   prove: (o: ProveOptions) => Promise<Proof | undefined> = proveRelease,
+  hangMs = HANG_MS,
+  log?: Pick<Log, "warn">,
 ): () => void {
   let cancel: (() => void) | undefined;
   let stopped = false;
-  const tick = async (): Promise<void> => {
-    const p = await prove(o);
-    if (p) done(p);
+  // True from a proof's start until it settles: a proof is never started over one still running.
+  let running = false;
+  const next = (): void => {
     if (!stopped) cancel = schedule(() => void tick(), everyMs);
+  };
+  const tick = async (): Promise<void> => {
+    if (running) {
+      log?.warn("release proof still running", { version: o.version });
+      return next();
+    }
+    running = true;
+    const abort = new AbortController();
+    const work = prove({ ...o, signal: abort.signal }).then(
+      (p) => ({ p }),
+      (error) => {
+        log?.warn("release proof failed", { version: o.version, error: String(error) });
+        return { p: undefined };
+      },
+    );
+    void work.finally(() => void (running = false));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const hung = new Promise<"hung">((resolve) => {
+      timer = setTimeout(() => resolve("hung"), hangMs);
+      timer.unref?.();
+    });
+    const result = await Promise.race([work, hung]);
+    clearTimeout(timer);
+    if (result === "hung") {
+      // Stop its asks; the next tick waits for it to settle rather than run beside it.
+      log?.warn("release proof hung", { version: o.version, afterMs: hangMs });
+      abort.abort();
+    } else if (result.p) done(result.p);
+    next();
   };
   void tick();
   return () => {
@@ -243,10 +291,10 @@ export function startProving(
 /** What the forge runs at boot (`main.ts`): `startProving`, each verdict one `release proof` line in `log`. */
 export function proveRunning(
   o: ProveOptions,
-  log: Pick<Log, "info">,
+  log: Pick<Log, "info" | "warn">,
   everyMs = TICK_MS,
   schedule: Schedule = unrefTimer,
   prove: (o: ProveOptions) => Promise<Proof | undefined> = proveRelease,
 ): () => void {
-  return startProving(o, (p) => log.info("release proof", { version: p.version, ok: String(p.ok), ...(p.failure ? { failure: p.failure } : {}) }), everyMs, schedule, prove);
+  return startProving(o, (p) => log.info("release proof", { version: p.version, ok: String(p.ok), ...(p.failure ? { failure: p.failure } : {}) }), everyMs, schedule, prove, HANG_MS, log);
 }

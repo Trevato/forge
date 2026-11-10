@@ -466,7 +466,8 @@ describe("the look", () => {
   });
 
   test("a pull's preview is pictured at its own host, and what the page recorded reaches a check made afterwards", async () => {
-    // Invariant: a green preview gets its three looks at `hello--<n>`, and the phone's LCP and desktop's CLS reach the vitals of a check created after the look.
+    // Invariant: a green preview gets its three looks at `hello--<n>`, and the phone's LCP and desktop's CLS reach the vitals of a check
+    // created after the look.
     pull = greeting.pull;
     first = greeting.commitOid;
     const env = previewEnv(pull.number);
@@ -723,6 +724,7 @@ describe("the look", () => {
     const dark = recordLook(app.db, { ...base, theme: "dark", path: "looks/x-dark.png" });
     expect(dark.id).not.toBe(old.id);
     expect(dark.theme).toBe("dark");
+    expect(lookSlot("/o/r/settings#move", "phone")).toBe("o-r-settings-move-phone");
     expect(lookSlot("/", "phone")).toBe("phone");
     expect(lookSlot("/", "phone", "dark")).toBe("phone-dark");
     expect(lookSlot("/board", "phone", "dark")).toBe("board-phone-dark");

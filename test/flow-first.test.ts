@@ -109,7 +109,8 @@ describe("the flow label goes first", () => {
     const rw = createToken(app.db, alice.id, "rw", "rw").token;
     const cookie = { authorization: `Bearer ${rw}` };
     const list = await (await fetch(`${servers.url}/alice/svc/issues`, { headers: cookie })).text();
-    expect(list).toContain(`action="/alice/svc/issues/${target.number}/flow"`);
+    // The list's rows are title, word and time only (#10415); the button is on the issue page, in its header.
+    expect(list).not.toContain(`action="/alice/svc/issues/${target.number}/flow"`);
     const page = await (await fetch(`${servers.url}/alice/svc/issues/${target.number}`, { headers: cookie })).text();
     expect(page).toContain(`/alice/svc/issues/${target.number}/flow`);
     expect(page).toContain("Flow first");

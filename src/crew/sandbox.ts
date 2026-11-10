@@ -174,12 +174,13 @@ function others(dir: string, keep: string): string[] {
  */
 /** Whether the forge's data directory lives inside the machine's temp directory. */
 export function dataInTemp(data: string): boolean {
-  const rel = relative(tmpdir(), data);
-  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  return inside(tmpdir(), data);
 }
 
-function tempDenied(data: string): string[] {
+function tempDenied(data: string, tmpDir: string | undefined): string[] {
   const temp = tmpdir();
+  // The run's own temp directory is in it (`runTmpDir`): everything else there is denied.
+  if (tmpDir !== undefined && !inside(data, tmpDir) && inside(temp, tmpDir)) return others(temp, basename(tmpDir));
   if (!dataInTemp(data)) return [temp];
   return [
     join(temp, `claude-${process.getuid?.() ?? 0}`),
@@ -221,12 +222,49 @@ export function sweepRunTmp(dataDir: string, olderThanMs: number): number {
       }
     }
   }
+  for (const dir of others(tmpdir(), "").filter((path) => basename(path).startsWith(RUN_TMP_PREFIX))) {
+    try {
+      if (statSync(dir).mtimeMs > cutoff) continue;
+      rmSync(dir, { recursive: true, force: true });
+      swept++;
+    } catch {
+      // gone already
+    }
+  }
   return swept;
 }
 
-/** Where a run's temp directory lives: short, because Claude Code makes sockets in it. */
-export function runTmpDir(dataDir: string, agentName: string, runId: string): string {
-  return join(crewRoot(dataDir), agentName, ".t", runId.slice(-12));
+/** What a socket name takes in the run's temp directory: `/claude-socks-<16 hex>.sock`, with room to spare. */
+const SOCKET_NAME_ROOM = 40;
+/** The longest path a unix socket may have on Linux (`sun_path`, less its NUL). */
+const SOCKET_PATH_MAX = 107;
+
+/**
+ * Where a run's temp directory lives: under the agent, unless that leaves
+ * Claude Code's bridge sockets too long a path to bind. A child forge's data
+ * sits under `children/cell-<uuid>`, so there it is the machine's temp
+ * directory instead (in a cell, the cell's own `/tmp`). scottishbob,
+ * 2026-11-10: every Bash call failed "Failed to create bridge sockets after
+ * 5 attempts" at a 124-character socket path.
+ */
+export function runTmpDir(
+  dataDir: string,
+  agentName: string,
+  runId: string,
+  host: { readonly linux: boolean; readonly temp: string } = { linux: process.platform === "linux", temp: tmpdir() },
+): string {
+  const own = join(crewRoot(dataDir), agentName, ".t", runId.slice(-12));
+  if (!host.linux || own.length + SOCKET_NAME_ROOM <= SOCKET_PATH_MAX) return own;
+  return join(host.temp, `${RUN_TMP_PREFIX}${runId.slice(-12)}`);
+}
+
+/** A run temp directory in the machine's temp directory (`runTmpDir`) starts so. */
+const RUN_TMP_PREFIX = "fr-";
+
+/** Whether `path` is inside `dir`. */
+function inside(dir: string, path: string): boolean {
+  const rel = relative(dir, path);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -301,7 +339,7 @@ export function sandboxPolicy(input: {
     ...others(join(own, ".t"), tmpDir === undefined ? "" : basename(tmpDir)),
     // The machine's temp directory: every other session's files, and the
     // forge's own (a cell's sockets, a checkout's index).
-    ...tempDenied(data),
+    ...tempDenied(data, tmpDir),
     // Every repository's install cache, whole and not listed: one created
     // after this policy was built is denied too. This run's own is
     // re-allowed (`readAllow`) and written (`allowWrite`).

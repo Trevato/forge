@@ -10,6 +10,7 @@
  * `apps-new`. The forge they share is `helpers/apps-forge.ts`.
  */
 
+import { getRepo } from "../src/core/repos.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -59,6 +60,7 @@ import {
   stopAppsForge,
   type AppsForge,
 } from "./helpers/apps-forge.ts";
+import { giveHistory } from "./helpers/history.ts";
 
 describe("apps: production, previews, data, gates", () => {
   let forge: AppsForge;
@@ -631,6 +633,7 @@ exec bun -e "Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch
           visibility: "public",
         });
         if (!made.ok) throw new Error(String(made.error));
+        giveHistory(terminal.app.db, getRepo(terminal.app.db, "alice", "beacon")!.id);
         terminalCookie = await signedInCookie(terminal.servers);
       })(),
       (async () => {

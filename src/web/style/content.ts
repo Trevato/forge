@@ -414,6 +414,17 @@ form.inline { display: inline; margin-left: auto; }
 .csv-view .num { text-align: right; }
 .csv-more { padding: 10px 12px; margin: 0; }
 
+/* A terminal log (render/log.ts): SGR colours as fixed classes, theme tokens only. */
+.ansi-red { color: var(--danger); }
+.ansi-green { color: var(--success); }
+.ansi-yellow { color: var(--attn); }
+.ansi-blue { color: var(--tok-number); }
+.ansi-magenta { color: var(--merged); }
+.ansi-cyan { color: var(--tok-property); }
+.ansi-gray { color: var(--tok-comment); }
+.ansi-b { font-weight: 700; }
+.ansi-u { text-decoration: underline; }
+
 /* ---- syntax tokens (colors come from the active theme) ----
    Two layers, exactly as the tokenizer emits them: a colour class every
    consumer understands, and — where the web can say something finer — a kind
@@ -463,6 +474,18 @@ form.inline { display: inline; margin-left: auto; }
 .pdf-fallback { padding: 16px 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 /* A phone: a shorter frame, so a thumb can scroll the page past it. */
 @media (max-width: 600px) { .pdf-frame { height: 60vh; min-height: 360px; } }
+
+/* A font specimen: set in the font itself once the script has loaded it from
+   the media route; until then (or without script) in the page's own face. */
+/* ---- gpx view: the outline scales to the column; its facts are status rows ---- */
+.gpx-view { margin: 0; }
+.gpx-view svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--fg); }
+.gpx-view .status-rows { margin-top: 12px; }
+.font-view { padding: 16px 20px; }
+.font-name { margin: 0 0 12px; font-size: 1.75rem; line-height: 1.3; overflow-wrap: anywhere; }
+.font-line { margin: 0 0 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.font-s { font-size: 14px; } .font-m { font-size: 1.5rem; } .font-l { font-size: 3rem; line-height: 1.2; }
+.font-view.font-ready .font-name, .font-view.font-ready .font-line { font-family: "ForgeSpecimen", sans-serif; }
 
 /* ---- image view ---- */
 .imgview-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 16px; font-size: 12.5px; border-bottom: 1px solid var(--border); }

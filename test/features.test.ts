@@ -362,6 +362,20 @@ describe("absorbing an app", () => {
     expect(idle.ok && idle.value.schedule[0]!.line).toBe("scan every 1h · never run · next soon");
   });
 
+  test("the features tool with a slug says each scheduled tool's last and next run, as the page does", async () => {
+    const at = Date.now() - 120_000;
+    recordFire(app.db, appId, { tool: "scan", at, ok: false, error: "the app answered 500", durationMs: 7 });
+    const failed = await mcpTool(servers.url, adaToken, "features", { slug: "radar" });
+    expect(failed.value.schedule).toEqual([
+      expect.objectContaining({ tool: "scan", every: "1h", lastAt: at, ok: false, error: "the app answered 500", nextAt: at + 3_600_000 }),
+    ]);
+    clearFires(app.db, appId);
+    const idle = await mcpTool(servers.url, adaToken, "features", { slug: "radar" });
+    expect(idle.value.schedule).toEqual([
+      expect.objectContaining({ tool: "scan", every: "1h", lastAt: null, ok: null, error: null, nextAt: null }),
+    ]);
+  });
+
   test("the facts are plain and escaped", () => {
     const facts = provenanceFacts({ repo: "me/r", upstream: "them/r", changedBy: "<b>x</b>", changedAt: "2026-11-01T10:00:00Z" });
     expect(facts).toEqual([

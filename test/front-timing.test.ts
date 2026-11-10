@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 quietLogs();
 
@@ -30,7 +31,7 @@ async function read(): Promise<string[]> {
   const res = await fetch(`${servers.url}/`, { redirect: "manual" });
   expect(res.status).toBe(200);
   await res.text();
-  return (res.headers.get("server-timing") ?? "").split(", ");
+  return requestTiming(res).split(", ");
 }
 
 test("GET / signed out names session, key, shelf, tiles, render in order and covers the handler's share of app", async () => {

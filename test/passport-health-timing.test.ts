@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { issue } from "../src/kernel/passport.ts";
+import { requestTiming } from "./helpers/request-timing.ts";
 
 let dataDir = "";
 let app: App, servers: Servers;
@@ -23,7 +24,7 @@ afterAll(async () => {
 });
 
 const phases = (res: Response) =>
-  (res.headers.get("server-timing") ?? "").split(", ").map((p) => p.split(";")[0]!).filter((n) => n && n !== "app");
+  requestTiming(res).split(", ").map((p) => p.split(";")[0]!).filter((n) => n && n !== "app");
 
 const ask = (token?: string) =>
   fetch(`${servers.url}/api/v1/passport/health`, {

@@ -417,7 +417,8 @@ export function searchLocalIssues(
  * a query starting with `-` a pattern rather than a flag; `--` ends the
  * options so a query containing `--` cannot re-open them; `-F` makes the
  * query a fixed string, so a search box cannot hand git a pathological
- * regex; `-I` skips binaries; `--max-count` and the timeout bound the work.
+ * regex; `-I` skips binaries; `--max-count` (per file), the read that stops
+ * after `maxCount` lines and the timeout bound the work.
  * The ref goes through `isSafeRef` like every other rev in the forge.
  */
 export async function grepRepo(
@@ -463,12 +464,15 @@ async function grepRun(
       "--",
       ".",
     ],
-    { cwd: dir, timeoutMs },
+    // `--max-count` is per file: `a` in a repository of thousands of files
+    // is megabytes of matches. Only the first `maxCount` are kept, so git is
+    // stopped once they are read rather than left to write the rest (#10395).
+    { cwd: dir, timeoutMs, stopAfterLines: maxCount },
   );
   // Exit 1 is "no match" — data, not failure. Anything else (a repo with no
   // commits, a killed process) is simply no results from this repo.
   if (run.timedOut === true) return "timeout";
-  if (run.code !== 0 && run.code !== 1) return null;
+  if (run.stopped !== true && run.code !== 0 && run.code !== 1) return null;
 
   // `-z` makes each record `ref:path NUL line NUL text`, so a path with a
   // colon in it (`a:1:b.txt`) cannot be split at the wrong colon.

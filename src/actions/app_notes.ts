@@ -22,7 +22,8 @@ import { NOTE_EMPTY } from "../apps/note_words.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { openIssueThrough, setIssueLabelsThrough, setIssueStateThrough } from "./issues.ts";
 
-export const FROM_APP_LABEL = "from-app";
+export { FROM_APP_LABEL } from "../core/from_app.ts";
+import { FROM_APP_LABEL } from "../core/from_app.ts";
 /**
  * What every title opens with: the words after it are a stranger's, on an
  * issue filed in the owner's name (as `core/reports.ts` does for `/report`).

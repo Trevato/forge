@@ -16,6 +16,7 @@
  * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
+import { hoursSpan, readThroughput } from "../../flow/throughput.ts";
 import { usd } from "../../core/money.ts";
 import { NO_CLOUD_BODY } from "../../core/placement_policy.ts";
 import { CLOUD_BODY_CONFIGURED } from "../../spawn/placement.ts";
@@ -517,6 +518,7 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
     until: new Date(now).toISOString(),
   });
   if (r.spent.runs === 0) return null;
+  const ask = readThroughput(ctx.app.db, [], new Date(now)).medianAskToLiveMs;
   const href = `/board/returns${apps ? `?apps=${encodeURIComponent(apps)}` : ""}`;
   return html`<a class="muted small" id="returns-line" href="${href}"
     >Tokens, ${ASKS_WINDOW_DAYS} days: <b>${usd(r.spent.usd)}</b> → <b>${r.landed}</b> landed
@@ -524,7 +526,9 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
       ? null
       : html`· <b>${usd(r.onLanded.perChange.median)}</b> a landed change`}
     · <b>${usd(r.landedNothing.closed.usd)}</b> closed with nothing
-    · <b>${usd(r.landedNothing.open.usd)}</b> still open</a
+    · <b>${usd(r.landedNothing.open.usd)}</b> still open${
+      ask === null ? null : html` · median ask→live <b>${hoursSpan(ask)}</b> (24 h)`
+    }</a
   >`;
 }
 

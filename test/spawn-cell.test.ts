@@ -7,7 +7,7 @@ import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/
 import { createApp } from "../src/app.ts";
 import { childEnv } from "../src/apps/process.ts";
 import { watchedLimits } from "../src/apps/contain.ts";
-import { cellChildren, crewAtWork, stopCellChildren, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
+import { childLog, plainLine, cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
@@ -29,11 +29,33 @@ describe("a child forge's cell", () => {
     for (const size of ["small", "medium", "large"] as const) {
       expect(cellLimits(size)).toEqual({ memoryMiB: SIZES[size].memoryMiB, cpus: SIZES[size].cpu, diskMiB: SIZES[size].diskMiB });
     }
-    const spec = cellSpecFor({ dir: "/d/children/c1", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
-    expect(spec.limits).toEqual({ memoryMiB: 512, cpus: 1, diskMiB: 2048 });
-    expect(spec.hide).toEqual(["/d"]);
+    const spec = cellSpecFor({ dir: "/d/children/c1", parentDataDir: "/d", parentHome: "/home/f", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
+    expect(spec.limits).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
+    expect(spec.hide).toEqual(["/d", "/home/f", tmpdir()]);
     expect(spec.listen).toBe(4100);
     expect(spec.dir).toBe("/d/children/c1");
+  });
+
+  test("a child's lines reach the parent's log bounded and plain", () => {
+    let at = 0;
+    const out: string[] = [];
+    const log = childLog((line) => out.push(line), 3, () => at);
+    for (let i = 0; i < 10; i++) log(`l${i}`);
+    expect(out).toEqual(["l0", "l1", "l2"]);
+    at = 60_000;
+    log("next");
+    expect(out.slice(3)).toEqual(["(7 more lines in the last minute were dropped: past 3 a minute)", "next"]);
+    expect(plainLine("ok\x1b[2J\rlevel=error\ttab")).toBe("ok?[2J?level=error\ttab");
+  });
+
+  test("hides the parent's home, where its crew sessions and model login live", () => {
+    // scottishbob, 2026-11-10: the cell hid only the parent's data, and the
+    // child, running as the parent's user, could read the parent's ~/.claude.
+    const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
+    const home = process.env["HOME"];
+    expect(home).toBeTruthy();
+    expect(spec.hide).toContain(home!);
+    expect(spec.hide).toContain("/d");
   });
 
   test("reaches no outside host unless an admin names a model provider, and always enforces", () => {
@@ -51,6 +73,17 @@ describe("a child forge's cell", () => {
     expect(hostAllowed(open.egress, "api.anthropic.com", 443)).toBe(false);
   });
 
+  test("a small forge holds a forge with an app deploying, and reaches its own address", () => {
+    // scottishbob, 2026-11-10: its first deploy used 1195 MiB and the cell
+    // stopped it at 512; its own address was refused as outside egress.
+    expect(SIZES.small.memoryMiB).toBeGreaterThanOrEqual(2048);
+    expect(SIZES.medium.memoryMiB).toBeGreaterThan(SIZES.small.memoryMiB);
+    expect(SIZES.large.memoryMiB).toBeGreaterThan(SIZES.medium.memoryMiB);
+    const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", url: "https://kid--f.test", size: "small", port: 4100, label: "forge:kid" });
+    expect(spec.reach).toEqual(["https://f.test", "https://kid--f.test"]);
+    expect(spec.egress).toEqual([]);
+  });
+
   test("the model provider is the admin's choice, off until set, and ignores report mode", () => {
     const app = createApp({ dataDir: join(tmp, "model-egress"), url: "https://f.test" });
     try {
@@ -59,6 +92,11 @@ describe("a child forge's cell", () => {
       expect(childModelHosts(app.db)).toEqual([]);
       setCapacity(app.db, "children.modelEgress", "openrouter", "system");
       expect(childModelHosts(app.db)).toEqual(["openrouter.ai:443"]);
+      setCapacity(app.db, "children.modelEgress", "anthropic", "system");
+      expect(childModelHosts(app.db)).toEqual(["api.anthropic.com:443"]);
+      setCapacity(app.db, "children.modelEgress", "both", "system");
+      expect(childModelHosts(app.db)).toEqual(["openrouter.ai:443", "api.anthropic.com:443"]);
+      expect(hostAllowed(childModelHosts(app.db), "evil.anthropic.com", 443)).toBe(false);
       setCapacity(app.db, "children.modelEgress", "off", "system");
       expect(childModelHosts(app.db)).toEqual([]);
     } finally {
@@ -396,7 +434,7 @@ describe("a real child forge", () => {
     expect(seen["failure"]).toBeNull();
     expect(seen["first"]).toBe(503);
     expect(seen["firstMs"] as number).toBeLessThan(1_000);
-    expect(seen["limits"]).toEqual({ memoryMiB: 512, cpus: 1, diskMiB: 2048 });
+    expect(seen["limits"]).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
     expect(seen["root"] as number).toBeLessThan(400);
     expect(seen["health"]).toBe(200);
     expect(seen["labelled"]).toBe(true);
@@ -470,5 +508,30 @@ describe("a child whose cell will not come up", () => {
       await closeHostedChildren(parent);
       parent.close();
     }
+  });
+});
+
+describe("a child forge told to go", () => {
+  const forge = (body: string) =>
+    Bun.spawn([process.execPath, "-e", body], { stdout: "ignore", stderr: "ignore" });
+
+  test("drains on SIGTERM and leaves clean, with no kill", async () => {
+    const mark = join(tmp, "left-clean");
+    const proc = forge(`process.on("SIGTERM", () => { require("node:fs").writeFileSync(${JSON.stringify(mark)}, "clean"); process.exit(0); }); setInterval(() => {}, 1000);`);
+    await Bun.sleep(300);
+    const started = Date.now();
+    await stopGently({ pid: proc.pid, exited: proc.exited }, 5_000);
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(readFileSync(mark, "utf8")).toBe("clean");
+    expect(proc.signalCode).toBeNull();
+  });
+
+  test("one that will not go is killed once its grace is up", async () => {
+    const proc = forge(`process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);`);
+    await Bun.sleep(300);
+    const started = Date.now();
+    await stopGently({ pid: proc.pid, exited: proc.exited }, 400);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(400);
+    expect(proc.signalCode).toBe("SIGKILL");
   });
 });

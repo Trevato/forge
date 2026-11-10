@@ -21,7 +21,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { autonomyTick, driveRepo, settleAgentRun } from "../src/crew/autonomy.ts";
 import { taskPrompt } from "../src/crew/brief.ts";
-import { reserveOf, reserveTarget, reserveWords } from "../src/crew/reserve.ts";
+import { due, reserveOf, reserveTarget, reserveWords } from "../src/crew/reserve.ts";
 import { logLevel, setLogLevel } from "../src/kernel/log.ts";
 
 describe("the reserve's size", () => {
@@ -31,6 +31,17 @@ describe("the reserve's size", () => {
     expect(reserveTarget(1)).toBe(3);
     expect(reserveTarget(0)).toBe(3);
     expect(reserveWords(reserveOf(5, 7))).toBe("5/14");
+  });
+
+  test("the planner is due at half the target, not one below it", () => {
+    expect(due(reserveOf(7, 7))).toBe(true);
+    expect(due(reserveOf(8, 7))).toBe(false);
+    expect(due(reserveOf(13, 7))).toBe(false);
+    expect(due(reserveOf(2, 2))).toBe(true);
+    expect(due(reserveOf(3, 2))).toBe(false);
+    // A thin map of three is still asked at two: there is no half to run down.
+    expect(due(reserveOf(2, 1))).toBe(true);
+    expect(due(reserveOf(3, 1))).toBe(false);
   });
 });
 

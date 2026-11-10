@@ -198,7 +198,8 @@ export const scheduleClock = (ms: number): string => new Date(ms).toISOString().
 /** A piece of the line after the head: words, the last or next moment (ms) the reader formats, or the sentence of a failure. */
 export type SchedulePiece = string | { readonly last: number } | { readonly next: number } | { readonly error: string };
 
-/** The wording of the line after `scan every 1h`, once, for every door: the page formats the moments and styles the error, the rest print it with `scheduleLine`. */
+/** The wording of the line after `scan every 1h`, once, for every door: the page formats the moments and styles the error,
+    the rest print it with `scheduleLine`. */
 export function scheduleMeta(s: Omit<ScheduleStatus, "line">): SchedulePiece[] {
   if (s.lastAt === null) return ["never run · next soon"];
   return [
@@ -208,7 +209,8 @@ export function scheduleMeta(s: Omit<ScheduleStatus, "line">): SchedulePiece[] {
   ];
 }
 
-/** The line for one entry: `scan every 1h · last 10:02, ok · 42 ms · next 11:02` (UTC), the error's sentence when it failed, `never run · next soon` before the first fire. */
+/** The line for one entry: `scan every 1h · last 10:02, ok · 42 ms · next 11:02` (UTC), the error's sentence when it failed,
+    `never run · next soon` before the first fire. */
 export function scheduleLine(s: Omit<ScheduleStatus, "line">): string {
   const word = (p: SchedulePiece): string => (typeof p === "string" ? p : "error" in p ? p.error : scheduleClock("last" in p ? p.last : p.next));
   return `${s.tool} every ${s.every} · ${scheduleMeta(s).map(word).join("")}`;

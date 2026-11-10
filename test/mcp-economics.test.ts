@@ -110,9 +110,9 @@ describe("MCP economics", () => {
 
     const set = await call(admin, { ownedMonthUsd: 300, ownedSlots: 40, cloudHourUsd: 0.05, storageGbMonthUsd: 0.02, dryRun: false });
     expect(set.error).toBe(false);
-    expect(getPrices(app.db)).toEqual({ ownedMonthCents: 30_000, ownedSlots: 40, cloudHourCents: 5, storageGbMonthCents: 2 });
+    expect(getPrices(app.db)).toEqual({ ownedMonthCents: 30_000, ownedSlots: 40, cloudHourCents: 5, storageGbMonthCents: 2, awakePriceHourCents: 0, storagePriceGbMonthCents: 0 });
     const read = JSON.parse((await call(admin, {})).text);
-    expect(read.prices).toEqual({ ownedMonthUsd: 300, ownedSlots: 40, cloudHourUsd: 0.05, storageGbMonthUsd: 0.02 });
+    expect(read.prices).toEqual({ ownedMonthUsd: 300, ownedSlots: 40, cloudHourUsd: 0.05, storageGbMonthUsd: 0.02, awakePriceHourUsd: 0, storagePriceGbMonthUsd: 0 });
     expect(read.month.cost.owned).toBeGreaterThan(0);
     expect(read.month.cost.owned).toBeLessThanOrEqual(300);
   });

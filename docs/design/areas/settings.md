@@ -170,3 +170,16 @@ Settings › Danger zone (`src/web/pages/danger.ts`, #9952) adds no component cl
 `src/web/pages/detach.ts`, a fork only) and the delete are each a `<section class="settings-block">` with an `<h2>`,
 no `.card`: the plan says what goes and what survives, its danger button goes through `/-/confirm`. A running detach is
 one line with since-when; a failed one is a danger `.toast` over the plan. `test/danger-language.test.ts` holds the shape.
+
+## Calm: one help toggle per page (#10302)
+
+On Settings › Account (profile, password, tokens) a field is its label and its current value. What each field means
+moves into one `details.disclosure[data-page-help]` per page (`help()` in `src/web/pages/account.ts`: a `.status-rows`
+list of field → explanation), summary "Help with these fields" at normal size, closed until asked for, rendered at the
+top of the page (outside any block, with `mb` under it). The profile's role abilities are a row of that same Help, not
+a second disclosure. A rule that is a constraint stays beside its field as a one-line `hint` tied by `aria-describedby`:
+the password minimum (10 characters), the notify URL's https-only and, once saved, "Sending to <host>". No new class.
+The `settings` first-view budget fell from 274 to 137 words and 37 to 32 blocks (`FORGE_ATTENTION_WRITE=1`).
+`repository` and `app` read 197 / 29 on `main` itself (it fails the budget test there against the committed 189 / 28);
+this change does not touch them, and the file now records what they measure.
+Pinned by `test/account-help.test.ts`. Not done: the repository settings page (`settingsPage()`) and the admin pages still carry their prose.

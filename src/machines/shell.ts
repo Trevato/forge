@@ -22,7 +22,7 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cellHides } from "../spawn/hosted-mark.ts";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
@@ -364,7 +364,7 @@ export function shellCell(
     dir,
     writable: [],
     home: join(dir, "home"),
-    hide: [app.config.dataDir, process.env["HOME"] ?? "", tmpdir()],
+    hide: cellHides(app),
     egress: [],
     reach: shellReach(app.config.url, machine, appUrls),
     limits: {

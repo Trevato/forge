@@ -326,6 +326,29 @@ describe("what the tokens bought", () => {
     ).toBe(422);
   });
 
+  test("the line carries the day's median ask→live beside the dollars once a production deploy served a landing", async () => {
+    const before = await (await get("/board", { cookie: aliceCookie })).text();
+    expect(before).not.toContain("median ask→live");
+    const merged = app.db
+      .query<{ merged_at: string }, []>("SELECT merged_at FROM pull WHERE merged_at IS NOT NULL ORDER BY merged_at DESC LIMIT 1")
+      .get();
+    expect(merged).not.toBeNull();
+    // Served the instant it merged; the ask was exactly three hours before: 3.0 h.
+    const at = merged!.merged_at;
+    app.db
+      .query(
+        `UPDATE issue SET created_at = ?1 WHERE kind = 'issue' AND repo_id = ?3 AND number IN (
+           SELECT CAST(substr(i.body, 9) AS INTEGER) FROM pull p JOIN issue i ON i.id = p.issue_id WHERE p.merged_at = ?2)`,
+      )
+      .run(new Date(Date.parse(at) - 3 * 3_600_000).toISOString(), at, repo.id);
+    const dep = createRun(app.db, { repoId: repo.id, kind: "deploy", env: "production" });
+    app.db.query("UPDATE run SET state = 'ok', created_at = ?1, serving_at = ?1 WHERE id = ?2").run(at, dep.id);
+    const board = await (await get("/board", { cookie: aliceCookie })).text();
+    const line = /<a class="muted small" id="returns-line"[^>]*>([\s\S]*?)<\/a>/.exec(board)?.[1]?.replace(/\s+/g, " ");
+    expect(line).toContain("median ask→live <b>3.0 h</b> (24 h)");
+    expect(line).toContain("<b>$4.00</b> → <b>1</b> landed");
+  });
+
   test("spend reported from outside shows apart and is never added in", async () => {
     const post = (payload: unknown) =>
       fetch(`${servers.url}/api/v1/repos/alice/mill/spend`, {

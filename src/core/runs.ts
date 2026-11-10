@@ -82,6 +82,10 @@ export interface Run {
   readonly heartbeatAt: string | null;
   /** For an agent run: how many turns the model took. */
   readonly turns: number;
+  /** For an agent run: the context its session held at the end, in tokens; 0 when unreported. */
+  readonly contextTokens: number;
+  /** For an agent run: whether it moved its branch; null when unrecorded (runs from before). */
+  readonly pushed: boolean | null;
   /** For an agent run: whether its shell was held to the sandbox; null when unrecorded. */
   readonly sandboxEnforced: boolean | null;
   /** Why it was not, when it was not. */
@@ -123,6 +127,8 @@ interface RunRow {
   attempt: number;
   heartbeat_at: string | null;
   turns: number;
+  context_tokens: number;
+  pushed: number | null;
   sandbox_enforced: number | null;
   sandbox_note: string;
   check_detail: string;
@@ -155,6 +161,8 @@ const toRun = (r: RunRow): Run => ({
   attempt: r.attempt,
   heartbeatAt: r.heartbeat_at,
   turns: r.turns,
+  contextTokens: r.context_tokens,
+  pushed: r.pushed === null ? null : r.pushed !== 0,
   sandboxEnforced:
     r.sandbox_enforced === null ? null : r.sandbox_enforced !== 0,
   sandboxNote: r.sandbox_note,
@@ -294,6 +302,10 @@ export function finishRun(
     sessionId?: string | undefined;
     costUsd?: number | undefined;
     turns?: number | undefined;
+    /** For an agent run: the context its session held at the end, in tokens. */
+    contextTokens?: number | undefined;
+    /** For an agent run: whether it moved its branch. */
+    pushed?: boolean | undefined;
     /** A failed check's own detail, when its output was recognised. */
     checkDetail?: CheckDetail | undefined;
     /** For an agent run: the head it left the branch at, when that is worth keeping. */
@@ -306,6 +318,7 @@ export function finishRun(
          commit_oid = COALESCE(?8, commit_oid),
          session_id = COALESCE(?4, session_id), cost_usd = COALESCE(?5, cost_usd),
          turns = COALESCE(?6, turns), check_detail = ?7,
+         context_tokens = COALESCE(?9, context_tokens), pushed = COALESCE(?10, pushed),
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'running'`,
     )
@@ -318,6 +331,8 @@ export function finishRun(
       outcome.turns ?? null,
       outcome.checkDetail ? JSON.stringify(outcome.checkDetail) : "",
       outcome.commitOid ?? null,
+      outcome.contextTokens ?? null,
+      outcome.pushed === undefined ? null : outcome.pushed ? 1 : 0,
     ).changes;
   return changes > 0 ? getRun(db, runId) : undefined;
 }
@@ -1032,8 +1047,11 @@ export function latestRunsForIssues(
  * How many automatic follow-ups for a failed check an agent has had on a
  * pull since a person last spoke: the bound behind rule 7 in docs/APPS.md.
  * A bring-up-to-date run (`conflict`) is no try: main moving is not the
- * change's failing, and those runs are bounded where they are queued. `since` is the
- * moment of the last human comment or review, or the pull's creation.
+ * change's failing, and those runs are bounded where they are queued. A run
+ * that pushed nothing tried nothing — the red was not the pull's to fix —
+ * and is no try either; one from before this was recorded reads as a try.
+ * `since` is the moment of the last human comment or review, or the pull's
+ * creation.
  */
 export function automaticRunsSince(
   db: Database,
@@ -1044,7 +1062,7 @@ export function automaticRunsSince(
     .query<{ n: number }, [string, string]>(
       `SELECT COUNT(*) AS n FROM run
        WHERE kind = 'agent' AND issue_id = ?1 AND created_at > ?2
-         AND reason = 'check_failed'`,
+         AND reason = 'check_failed' AND (pushed IS NULL OR pushed <> 0)`,
     )
     .get(issueId, since);
   return row?.n ?? 0;
@@ -1068,7 +1086,7 @@ export function automaticRunsSinceFor(
         `WITH since (issue_id, at) AS (VALUES ${batch.map((_, n) => `(?${2 * n + 1}, ?${2 * n + 2})`).join(",")})
          SELECT run.issue_id, COUNT(*) AS n FROM run JOIN since ON since.issue_id = run.issue_id
          WHERE run.kind = 'agent' AND run.created_at > since.at
-           AND run.reason = 'check_failed'
+           AND run.reason = 'check_failed' AND (run.pushed IS NULL OR run.pushed <> 0)
          GROUP BY run.issue_id`,
       )
       .all(...batch.flat());

@@ -27,6 +27,7 @@ import { prerenderComments } from "../web/prerender.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { pipelinePage } from "../web/pages/pipeline.ts";
+import { adminDataPage, appDataPage, dataPage } from "../web/pages/data.ts";
 import { fleetAct, fleetReceipt, fleetUndo } from "../web/pages/fleet-ops.ts";
 import { maintenancePage, maintenancePrepare, maintenanceResume } from "../web/pages/maintenance.ts";
 import { nightlyOutputPage, resiliencePage } from "../web/pages/resilience.ts";
@@ -34,6 +35,7 @@ import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke }
 import { allFlowsPage } from "../web/pages/flows-all.ts";
 import { measureSubmit } from "./measure.ts";
 import { settingsRoutes } from "./settings_routes.ts";
+import { pluginRoutes } from "./plugin_routes.ts";
 import { pinnedRoutes } from "./pinned_routes.ts";
 import { boardsAsk, boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
@@ -190,6 +192,7 @@ import {
   treePage,
 } from "../web/pages/repo.ts";
 import { mediaBlob } from "../web/pages/media.ts";
+import { model3dAsset } from "../web/render/model3d.ts";
 import {
   branchCreate,
   branchDelete,
@@ -479,6 +482,7 @@ import {
   noteStart,
   takePhases,
   serverTiming,
+  withLag,
   takeDbTime,
   type RouteTiming,
 } from "../core/route_timing.ts";
@@ -489,9 +493,11 @@ import { startFeatureSchedule } from "../apps/feature_schedule.ts";
 import { startPullSchedule } from "../apps/pull_schedule.ts";
 import { startGithubPull } from "../perf/github_traffic.ts";
 import { appSourcesPage } from "../web/pages/sources.ts";
+import { statementPage } from "../web/pages/statement.ts";
 import { createViewWriter } from "../perf/views_store.ts";
 import { createReadWriter, readOf } from "../perf/reads.ts";
 import { parseServerTiming } from "../perf/record.ts";
+import { currentLoopLag, startLoopWorst } from "../perf/loop_worst.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { bearerChallenge, oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
@@ -766,6 +772,11 @@ export function buildRouter(): Router<Handler> {
       const term = await machineTermAsset();
       return term !== null && ctx.params.name === term.name ? assetResponse(ctx.request, term) : notFound();
     }
+    if (ctx.params.name!.startsWith("model3d-")) {
+      const viewer = await model3dAsset();
+      if (viewer === null || ctx.params.name !== viewer.name) return notFound();
+      return assetResponse(ctx.request, viewer);
+    }
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(ctx.request, asset);
@@ -917,10 +928,13 @@ export function buildRouter(): Router<Handler> {
   // Every /settings… page, in its own module (settings_routes.ts); literal, above /:owner.
   // The usage page is handed the pattern list, so settings_routes.ts never imports server.ts.
   settingsRoutes(router, knownPatterns);
+  // The OpenCode plugin file (#10198); literal, above /:owner.
+  pluginRoutes(router);
   // The Deploy to… page for a pinned forge (#8744); literal, above /:owner.
   pinnedRoutes(router);
   // Each THREATS.md protection against the last gate; literal, above /:owner.
   router.add("GET", "/resilience", resiliencePage);
+  router.add("GET", "/data", dataPage);
   router.add("GET", "/maintenance", maintenancePage);
   router.add("POST", "/maintenance/prepare", maintenancePrepare);
   router.add("POST", "/maintenance/resume", maintenanceResume);
@@ -990,6 +1004,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/boards/:slug", boardShow);
   router.add("GET", "/boards/:slug/live", boardLive);
   router.add("POST", "/boards/:slug/:op", boardPost);
+  router.add("GET", "/admin/data", adminDataPage);
   router.add("GET", "/admin/limits", limitsPage);
   router.add("GET", "/admin/flows", allFlowsPage);
   router.add("POST", "/admin/limits", limitsSet);
@@ -1298,6 +1313,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
   router.add("GET", "/:owner/:name/events", eventsList);
+  router.add("GET", "/:owner/:name/data", appDataPage);
   router.add("GET", "/:owner/:name/runs", runsList);
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
@@ -1442,6 +1458,7 @@ export function buildRouter(): Router<Handler> {
   );
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("GET", "/:owner/:name/settings/app/traffic", appSourcesPage);
+  router.add("GET", "/:owner/:name/settings/app/statement", statementPage);
   router.add("GET", "/:owner/:name/settings/machines", machinesSettingsPage);
   // The shell page; an upgrade at the same path is the socket (`machines/shell.ts`).
   router.add("GET", "/:owner/:name/machines/:machine/shell", machineShellPage);
@@ -2354,6 +2371,8 @@ export async function serve(app: App): Promise<Servers> {
   const featureSchedule = startFeatureSchedule(app);
   const pullSchedule = startPullSchedule(app);
   const readWriter = createReadWriter(app.db, readLedger, app.log);
+  // The worst event-loop lag of the last 10 s, on every response (#10288).
+  startLoopWorst();
   const counted = (
     owner: App,
     request: Request,
@@ -2365,7 +2384,8 @@ export async function serve(app: App): Promise<Servers> {
     finishedStrangerDeep(owner, request);
     try {
       const header = serverTiming(ms, takeDbTime(request), takePhases(request));
-      response.headers.set("server-timing", header);
+      // `lag` is the loop's, not this request's: kept out of the record's phases.
+      response.headers.set("server-timing", withLag(header, currentLoopLag()));
       const end = performance.now();
       const family = familyOf(request.headers.get("user-agent") ?? "");
       perfRecord.add(
@@ -2727,7 +2747,13 @@ async function answerGet(
   if (url.pathname === "/healthz") {
     noteUsage(request, { pattern: "/healthz", role: "anon" });
     const dbStart = performance.now();
-    const live = liveResponse(() => app.db.query("select 1").get(), app.log);
+    // `Accept: application/json` adds the loop's worst lag of the last 10 s (#10288).
+    const wantsJson = (request.headers.get("accept") ?? "").includes("application/json");
+    const live = liveResponse(
+      () => app.db.query("select 1").get(),
+      app.log,
+      wantsJson ? currentLoopLag() : undefined,
+    );
     noteDbTime(request, performance.now() - dbStart);
     // The release proof learns which release answered, old pod or new; a
     // stranger is told only that one did (#2917).

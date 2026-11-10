@@ -8,7 +8,7 @@
  */
 
 import { eventRows, mayView, sealedScope } from "../../core/sealed.ts";
-import { envPull } from "../../apps/data.ts";
+import { envPull, previewEnv } from "../../apps/data.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { listCrewRoles } from "../../core/agents.ts";
@@ -74,11 +74,14 @@ export async function nowCard(
     wordCtx: WordCtx;
     /** Whether the head card is tailing production's own deploy. */
     deployTailing: boolean;
+    /** A fresh app has no previews list, so each pull's row links its preview itself. */
+    previewLinks?: boolean;
   },
 ): Promise<{ card: Html }> {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const { openPulls, builderCount, ownerFacts, wordCtx, deployTailing } = o;
+  const previewLinks = o.previewLinks === true && appsRuntime(ctx.app) !== undefined;
   // A run on a sealed report, and the report, are for who may see it.
   const recent = listRuns(db, repo.id, { kind: "agent", limit: 8 });
   const sealed = eventRows(
@@ -266,12 +269,21 @@ export async function nowCard(
           { name: p.authorName, isAgent: p.authorIsAgent },
           ownerFacts,
         );
+        const meta = html`${who} · ${noteLine(note)} · ${time(p.createdAt)}`;
+        if (previewLinks)
+          return row({
+            nav: true,
+            lead: avatar(who),
+            title: html`<a href="${changeHref(base, p.number)}">${p.title}</a>`,
+            meta: html`${meta} · <a href="${base}/app/${previewEnv(p.number)}/open">Preview</a>`,
+            trail: wordBadge(word),
+          });
         return row({
           href: changeHref(base, p.number),
           nav: true,
           lead: avatar(who),
           title: p.title,
-          meta: html`${who} · ${noteLine(note)} · ${time(p.createdAt)}`,
+          meta,
           trail: wordBadge(word),
         });
       }),
@@ -358,10 +370,8 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
   );
   // The one fact Now borrows from the head card, decided where the head
   // card decides it, so the two never disagree about what is tailing.
-  const deployTailing = timePhase(
-    req,
-    "panels",
-    () => appPanels(ctx, repo, record, openPulls).deployTailing,
+  const { deployTailing, fresh } = timePhase(req, "panels", () =>
+    appPanels(ctx, repo, record, openPulls),
   );
   const rendering = performance.now();
   const { card } = await nowCard(ctx, repo, record, {
@@ -377,6 +387,7 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
       viewer: ctx.auth.user,
     },
     deployTailing,
+    previewLinks: fresh,
   });
   const response = fragment(nowRegion(repo, card), { request: req });
   notePhase(req, "render", performance.now() - rendering);

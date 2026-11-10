@@ -236,8 +236,16 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos),
   );
   const rendering = performance.now();
+  // The door to /data: an admin, or someone who writes an app (already counted
+  // above); no per-app work here, /data itself lists what exists.
+  const hasData =
+    ctx.auth.user !== undefined &&
+    (ctx.auth.user.isAdmin || writableAppsOf(ctx, ctx.auth.user).repos.length > 0);
   const body = html`<div data-apps-page>${when(ctx.auth.user, (user) => homeTabs("apps", unshippedAsks(ctx.app.db, user)))}
-    ${pageHead("Apps", { actions: create, sub: APPS_PURPOSE })}
+    ${pageHead("Apps", {
+      actions: hasData ? html`${btn("Data", { href: "/data", size: "sm" })}${create}` : create,
+      sub: APPS_PURPOSE,
+    })}
     ${cost}
     ${filters}
     ${archivedView
