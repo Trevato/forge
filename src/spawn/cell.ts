@@ -10,6 +10,7 @@
 
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { clientAddress } from "../http/peer.ts";
 import type { App } from "../app.ts";
@@ -100,6 +101,8 @@ export function cellLimits(size: Size): Limits {
 export function cellSpecFor(input: {
   dir: string;
   parentDataDir: string;
+  /** The parent's own home, where its crew's sessions and model login live; `HOME` unless a test names one. */
+  parentHome?: string;
   parentUrl: string;
   /** The child's own public address, which its pages and checks call back on; the parent answers it. */
   url?: string;
@@ -117,9 +120,11 @@ export function cellSpecFor(input: {
     dir: input.dir,
     writable: [],
     home: join(input.dir, ".home"),
-    // The parent's data is the one thing a child must not see; its own
-    // directory sits under it and is bound back, deepest last.
-    hide: [input.parentDataDir],
+    // The parent's data and home are what a child must not see: the home holds
+    // the parent crew's sessions and model login, and the child runs as the
+    // same user (scottishbob, 2026-11-10). Its own directory sits under the
+    // data and is bound back, deepest last.
+    hide: [input.parentDataDir, input.parentHome ?? process.env["HOME"] ?? "", tmpdir()].filter((path) => path !== ""),
     // The forge's own code may live under the parent's data (a release checkout).
     reveal: [CODE],
     egress: [...(input.modelHosts ?? []), ...(input.registryHosts ?? [])],

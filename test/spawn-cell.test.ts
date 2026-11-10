@@ -29,11 +29,21 @@ describe("a child forge's cell", () => {
     for (const size of ["small", "medium", "large"] as const) {
       expect(cellLimits(size)).toEqual({ memoryMiB: SIZES[size].memoryMiB, cpus: SIZES[size].cpu, diskMiB: SIZES[size].diskMiB });
     }
-    const spec = cellSpecFor({ dir: "/d/children/c1", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
+    const spec = cellSpecFor({ dir: "/d/children/c1", parentDataDir: "/d", parentHome: "/home/f", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
     expect(spec.limits).toEqual({ memoryMiB: 2048, cpus: 1, diskMiB: 2048 });
-    expect(spec.hide).toEqual(["/d"]);
+    expect(spec.hide).toEqual(["/d", "/home/f", tmpdir()]);
     expect(spec.listen).toBe(4100);
     expect(spec.dir).toBe("/d/children/c1");
+  });
+
+  test("hides the parent's home, where its crew sessions and model login live", () => {
+    // scottishbob, 2026-11-10: the cell hid only the parent's data, and the
+    // child, running as the parent's user, could read the parent's ~/.claude.
+    const spec = cellSpecFor({ dir: "/d/c", parentDataDir: "/d", parentUrl: "https://f.test", size: "small", port: 4100, label: "forge:kid" });
+    const home = process.env["HOME"];
+    expect(home).toBeTruthy();
+    expect(spec.hide).toContain(home!);
+    expect(spec.hide).toContain("/d");
   });
 
   test("reaches no outside host unless an admin names a model provider, and always enforces", () => {
