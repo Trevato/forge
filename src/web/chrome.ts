@@ -8,6 +8,7 @@
  * `ui.ts` may not. That is the line between the two files.
  */
 
+import { assetNotFound, isAssetMiss } from "../http/asset_miss.ts";
 import { audienceFacts, audienceOf } from "../core/audience.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../http/edge.ts";
 import {
@@ -65,6 +66,7 @@ export function crumbsFor(repo: Repo): { label: string; href: string }[] {
  * this address; `plain` leaves that out for a miss that must reveal nothing
  * (a dead `/go/:code`). */
 export function notFoundPage(ctx: Ctx, opts: { plain?: boolean } = {}): Response {
+  if (!opts.plain && isAssetMiss(ctx.request, ctx.url.pathname)) return assetNotFound();
   const get = !opts.plain && ctx.request.method === "GET";
   const offerSignIn = get && ctx.auth.user === undefined;
   const asked = get ? askedFor(ctx.url.pathname) : "";

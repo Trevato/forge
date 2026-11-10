@@ -459,6 +459,7 @@ import {
 } from "../web/pages/browse.ts";
 import { bringConnect, bringEnvSubmit, bringJobPage, bringPage, bringRun, bringSubmit } from "../web/pages/bring.ts";
 import { pushThrough } from "../origins/push-through.ts";
+import { assetNotFound, isAssetMiss, MACHINE_PREFIX } from "./asset_miss.ts";
 import { CAME_FROM_ELSEWHERE, forbiddenPage, notFoundPage, SENT_FROM_ELSEWHERE, signInHref } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
@@ -2810,7 +2811,8 @@ async function answerGet(
     // even for someone who is.
     // A plain GET (curl, a crawler, a link unfurler) names no type and gets the page too;
     // machine paths and anyone who asks for JSON keep the JSON body.
-    const machinePath = /^\/(?:contract|mcp|oauth|\.well-known|metrics|healthz)(?:\/|$)|\.(?:json|git)(?:\/|$)|\.git\//.test(url.pathname);
+    if (!isApiPath && isAssetMiss(request, url.pathname)) return assetNotFound();
+    const machinePath = MACHINE_PREFIX.test(url.pathname) || /\.(?:json|git)(?:\/|$)|\.git\//.test(url.pathname);
     const plainGet = (request.method === "GET" || request.method === "HEAD") && !machinePath && !prefersJson(request);
     if (!isApiPath && (prefersHtml(request, url.pathname) || plainGet)) {
       const themeCookie = cookieValue(request, "forge_theme") ?? "";
