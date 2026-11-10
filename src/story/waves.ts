@@ -188,3 +188,23 @@ export async function latestWave(dir: string, branch: string): Promise<Wave | nu
   }
   return null;
 }
+
+/** A wave's page on this forge. */
+export const wavePath = (owner: string, name: string, version: string): string =>
+  `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/waves/${encodeURIComponent(version)}`;
+
+/** The query a pull link carries so the pull can lead back to the wave it was opened from. */
+export const fromWave = (owner: string, name: string, version: string): string =>
+  `?from=${encodeURIComponent(`${owner}/${name}@${version}`)}`;
+
+const FROM = /^([A-Za-z0-9._-]{1,100})\/([A-Za-z0-9._-]{1,100})@(.{1,64})$/;
+
+/**
+ * The wave a `?from=` names, as its page path, or null when the value is not
+ * a well-formed wave address. Pure text: nothing is read, nothing echoed raw.
+ */
+export function backToWave(from: string | null): { href: string; version: string } | null {
+  const m = from === null ? null : FROM.exec(from);
+  if (!m || !WAVE_VERSION.test(m[3]!)) return null;
+  return { href: wavePath(m[1]!, m[2]!, m[3]!), version: m[3]! };
+}

@@ -127,7 +127,7 @@ describe("waves in the terminal", () => {
     repo: Repo,
     keys: string[] = [],
     remote = false,
-  ): Promise<{ text: string; stop(): void }> => {
+  ): Promise<{ text: string; after: string[]; stop(): void }> => {
     const terminal = headlessTerminal(120, 40);
     const { app, session } = createForgeApp(
       forge,
@@ -140,11 +140,13 @@ describe("waves in the terminal", () => {
     const src = remote ? remoteOf(here) : here;
     app.push(wavesScreen(session, app.ctx, src));
     await settleApp(app);
+    const after: string[] = [];
     for (const k of keys) {
-      terminal.feed(k === "enter" ? "\r" : k);
+      terminal.feed(k === "enter" ? "\r" : k === "esc" ? "\x1b" : k);
       await settleApp(app);
+      after.push(app.screen.toText());
     }
-    return { text: app.screen.toText(), stop: () => app.stop() };
+    return { text: app.screen.toText(), after, stop: () => app.stop() };
   };
 
   test("lists the web page's rows in the same order, bad files last", async () => {
@@ -184,6 +186,20 @@ describe("waves in the terminal", () => {
     expect(outsider.text).toContain("Shown work");
     expect(outsider.text).not.toContain("Secret work");
     expect(outsider.text).not.toContain("/alice/priv/pulls/");
+  });
+
+  test("the wave leads to its pulls and back: pick, open the pull, back returns to the wave", async () => {
+    const h = await open(alice, mix, ["enter", "n", "enter", "q"]);
+    h.stop();
+    const [wave, picked, pull, back] = h.after;
+    expect(wave).toContain("> #");
+    expect(picked).toContain("> #");
+    // The second pull is the private one, picked by `n`; the pull screen names it.
+    expect(picked).not.toEqual(wave);
+    expect(pull).toContain("Secret work");
+    expect(pull).not.toContain("Highlights");
+    expect(back).toContain("Highlights");
+    expect(back).toContain("Shown work");
   });
 
   test("the wave screen names the milestones it moved, as the page does, and not one the viewer may not see", async () => {

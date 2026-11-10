@@ -16,7 +16,7 @@ import type { Ctx } from "../../http/context.ts";
 import { VERSION, type Wave } from "../../story/wave.ts";
 import { movedForViewer } from "../../story/wave_moved.ts";
 import { carriedPulls, pullPath } from "../../story/wave_pulls.ts";
-import { pullRefs, readWave, readWaves } from "../../story/waves.ts";
+import { fromWave, pullRefs, readWave, readWaves } from "../../story/waves.ts";
 import { NO_WAVES } from "../../story/words.ts";
 import { loadRepo, notFoundPage, repoBase, scopeHeader } from "../chrome.ts";
 import { escapeHtml, html } from "../html.ts";
@@ -244,7 +244,7 @@ export async function wavePage(ctx: Ctx): Promise<Response> {
           : listCard(
               carried.map((p) =>
                 row({
-                  href: pullPath(p),
+                  href: `${pullPath(p)}${fromWave(repo.ownerName, repo.name, entry.wave.version)}`,
                   title: html`#${p.number} ${p.title}`,
                   meta: html`${p.mergedAt === null ? p.state : `merged ${p.mergedAt.slice(0, 10)}`}`,
                   state: p.mergedAt === null ? p.state : ("merged" as const),

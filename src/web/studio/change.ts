@@ -51,6 +51,7 @@ import { liveClientJs, liveMount } from "../live.ts";
 import {
   btn,
   card,
+  crumbs,
   confirmAction,
   badge,
   icon,
@@ -92,6 +93,7 @@ import { STEP_MEANS, STEPS, stepOfPull, stepWord, type PathStep } from "../../fl
 import { changeHref } from "./nouns.ts";
 import { pullWord, servingHistory, stateDot, wordDot, type WordCtx } from "./words.ts";
 import { getHold } from "../../core/holds.ts";
+import { backToWave } from "../../story/waves.ts";
 import { pullRoster } from "./pull_roster.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
@@ -737,7 +739,9 @@ async function changeConversation(
   const totals =
     status === undefined ? null : (await lap(spent, "diff", () => keptChange(wordCtx.dir, status))).diff;
   const verdict = verdictOf(verdictFacts(ctx, repo, pull, status, { mayMerge: writer }), thread, files);
+  const wave = backToWave(ctx.url.searchParams.get("from"));
   const body = html`${pageHead.top}
+    ${when(wave, (w) => crumbs([{ label: `Wave ${w.version}`, href: w.href }, { label: "This pull" }]))}
     ${verdictLine(verdict, { action: false })}
     ${changeSummary(pull.body, totals, files)}
     ${when(siblings.length > 0, () =>
