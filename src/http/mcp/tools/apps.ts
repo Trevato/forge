@@ -2,12 +2,14 @@ import { appsRuntime, envsFor } from "../../../apps/runtime.ts";
 import { listActiveRuns } from "../../../core/runs.ts";
 import { appsOf } from "../../../web/studio/asks.ts";
 import { PULL_RUNS_DEFAULT, PULL_RUNS_MAX, pullRunLines } from "../../../apps/pull.ts";
+import { envPull } from "../../../apps/data.ts";
+import { getUserById } from "../../../core/users.ts";
 import { getAppByRepo } from "../../../core/apps.ts";
 import { bad, good, isAnswer, repoArg, type Tool } from "../shared.ts";
 
 export const tool: Tool = {
   name: "apps",
-  doc: "`{ archived? }`: the apps you can see: live or not, where served, how each runs itself, what is working. `{ repo, pulls: true, limit? }`: an adapter's recorded pull runs, newest first, as `GET …/app/pulls` (`limit` 1-100); a reader's",
+    doc: "`{ archived? }`: your apps (`ui://forge/app` card): live or not, what is working, running `previews`, `crew` with a run now. `{ repo, pulls: true, limit? }`: an adapter's pull runs, as `GET …/app/pulls` (`limit`); a reader's",
   description:
     "Apps you can see: live or not, where served, how each runs, what works.",
   inputSchema: {
@@ -48,19 +50,29 @@ export const tool: Tool = {
       ctx.app.db,
       repos.map((r) => r.id),
     );
+    // One read per actor, not per run per repo.
+    const names = new Map<string, string>();
+    for (const r of active)
+      if (r.actorId !== null && !names.has(r.actorId)) names.set(r.actorId, getUserById(ctx.app.db, r.actorId)?.username ?? "");
     return good(
       repos.map((repo) => {
         const record = records.get(repo.id)!;
-        const production = envsFor(ctx.app, user, record).find(
-          (e) => e.env === "production",
+        const envs = envsFor(ctx.app, user, record);
+        const production = envs.find((e) => e.env === "production");
+        const previews = envs.flatMap((e) =>
+          e.state === "running" && envPull(e.env) !== undefined ? [{ pull: envPull(e.env)!, url: e.url }] : [],
         );
+        const mine = active.filter((r) => r.repoId === repo.id);
+        const crew = [...new Set(mine.flatMap((r) => (r.actorId === null ? [] : [names.get(r.actorId) ?? ""])))].filter((n) => n !== "");
         return {
           app: `${repo.ownerName}/${repo.name}`,
           description: repo.description,
           live: production?.state ?? "stopped",
           url: runtime?.urlFor(record, "production") ?? null,
           autonomy: repo.autonomy,
-          working: active.filter((r) => r.repoId === repo.id).length,
+          working: mine.length,
+          previews,
+          crew,
           ...(archived ? { archivedAt: repo.archivedAt } : {}),
         };
       }),

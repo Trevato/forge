@@ -105,6 +105,16 @@ const web = (u: string): boolean => /^https?:\/\//.test(u);
 /** A repository named `owner/name`. */
 const slugOf = (s: string): boolean => /^[^/]+\/[^/]+$/.test(s);
 
+/** " · smith, juniper": who has a run going on the app, or nothing. */
+const crewWords = (crew: unknown): string => {
+  const names = list(crew).map(text).filter((n) => n !== "").slice(0, 3);
+  return names.length === 0 ? "" : ` · ${names.join(", ")}`;
+};
+/** " · pull #7 https://…": the app's running previews, in its one line; only http(s) addresses. */
+const previewWords = (previews: unknown): string =>
+  list(previews).map(obj).filter((p) => web(text(p["url"]))).slice(0, 3)
+    .map((p) => ` · pull #${text(p["pull"])} ${text(p["url"])}`).join("");
+
 /** The card for a tool's answer, or nothing when the answer has no card. */
 export function cardFor(
   tool: string,
@@ -289,7 +299,7 @@ export function cardFor(
         label: text(a["app"]),
         value: `${text(a["live"])}${url && !web(url) ? ` · ${url}` : ""}${
           Number(a["working"]) > 0 ? ` · ${text(a["working"])} working` : ""
-        }`,
+        }${crewWords(a["crew"])}${previewWords(a["previews"])}`,
         ...(web(origin) && /^[^/]+\/[^/]+$/.test(text(a["app"]))
           ? { link: `${origin}/${text(a["app"])}` }
           : {}),
