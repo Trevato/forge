@@ -9,6 +9,7 @@
  * has been read once.
  */
 
+import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { resendVerification } from "../../actions/verify.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { emailVerified } from "../../core/verify.ts";
@@ -718,7 +719,7 @@ export function connectCard(ctx: Ctx, token: string | undefined): Html {
   const url = publicOrigin(ctx.app.config.url, ctx.url.origin);
   const env = `FORGE_URL=${url} FORGE_TOKEN=${token ?? "<token>"}`;
   // The plugin marketplace is the forge's configured source, offered only while anyone can clone it.
-  const repo = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo);
+  const repo = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO);
   const market = repo === undefined ? null : marketplaceLines(url, repo);
   const clone = copyField("connect-claude", `${env} claude --plugin-dir plugins/claude-code`, "Claude Code command", "Copy command");
   return block(

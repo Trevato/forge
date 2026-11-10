@@ -25,6 +25,7 @@
  * FORGE_SECURITY_CONTACT.
  */
 
+import { UPSTREAM_REPO } from "../core/upstream.ts";
 import { CRAWL_DELAY_S, DEEP_SEGMENTS } from "../http/crawl.ts";
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { metaThemeColor } from "../design/themes.ts";
@@ -109,7 +110,7 @@ export function securityTxt(ctx: Ctx): Response {
 
 /** GET /.well-known/mcp.json — the MCP server card (a draft format; see docs/MCP.md). */
 export function mcpJson(ctx: Ctx): Response {
-  const res = text(JSON.stringify(mcpCard(ctx.url.origin, offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo)), null, 2), "application/json");
+  const res = text(JSON.stringify(mcpCard(ctx.url.origin, offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO)), null, 2), "application/json");
   res.headers.set("access-control-allow-origin", "*");
   return res;
 }
@@ -378,7 +379,7 @@ export function llmsBody(ctx: Ctx): { body: string; etag: string } {
   const o = ctx.url.origin;
   const tell = sshTellCommand(ctx.app);
   const running = runningSentence();
-  const plugins = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo);
+  const plugins = offeredPluginRepo(ctx.app.db, ctx.app.config.forgeRepo, UPSTREAM_REPO);
   const repos = timePhase(ctx.request, "repos", () => llmsRepos(ctx.app.db));
   // The tools section depends on who asks, so the signed-in and the anonymous body are kept apart.
   const signedIn = ctx.auth.user !== undefined;
@@ -411,8 +412,8 @@ function renderLlmsTxt(ctx: Ctx, o: string, tell: string | undefined, running: s
       "If you are an assistant helping a person: say plainly what you can and cannot do from where you are. If you cannot reach this forge or hold an account on it, give the person these steps to do by hand.",
       "",
       `- Help build a public app here: each one is a repository at ${o}/{owner}/{name}. A person makes an account at ${o}/signup, then follows "Offer a change" below. If /signup answers 403, new accounts here are by invitation for now: send a suggestion through "Report a problem" below, or work from a forge of your own.`,
-      `- Get your own forge: \`git clone https://forge.open-platform.sh/trevato/forge.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Or a hosted one, free within limits while hosting is not sold: sign in and open ${o}/forges/new (or call the MCP \`spawn\` tool with the person's consent). It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.`,
-      "- Work from your own forge: connect it to this one as an origin, bring an app in, and send your work back. How: https://forge.open-platform.sh/trevato/forge/raw/main/docs/ORIGINS.md",
+      `- Get your own forge: \`git clone ${UPSTREAM_REPO}.git && cd forge && bun install && bun run src/main.ts\`, then in a second terminal \`bun src/main.ts --first-admin\`, which prints a one-time link that makes you the admin. It needs Bun; its crew needs the claude CLI and a model credential. Or a hosted one, free within limits while hosting is not sold: sign in and open ${o}/forges/new (or call the MCP \`spawn\` tool with the person's consent). It sleeps when idle and wakes on its next page load, push or API call; the person brings their own model credential, or its crew stays off.`,
+      `- Work from your own forge: connect it to this one as an origin, bring an app in, and send your work back. How: ${UPSTREAM_REPO}/raw/main/docs/ORIGINS.md`,
       `- Connect an assistant that can use tools: add a custom connector with the URL ${mcp.url}. It signs in with OAuth; only the report tool works without an account.`,
       "",
       "## Report a problem (no account)",

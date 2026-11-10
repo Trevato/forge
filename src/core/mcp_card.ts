@@ -38,16 +38,24 @@ export interface HarnessPlugin {
 }
 
 /**
- * The repository that holds the plugins, as `owner/name`: the forge's
- * configured source (admin setting, else `FORGE_REPO`), and only while it is
- * public here, so every printed line works for whoever reads it. The card,
- * /llms.txt, Settings › Tokens and the terminal all ask this one question.
+ * The repository that holds the plugins, as `owner/name`, or the upstream's
+ * full URL: the forge's own source (admin setting, else `FORGE_REPO`) while it
+ * is public here, else `upstream`, so every printed line works for whoever
+ * reads it. Undefined only when neither is available. The card, /llms.txt,
+ * Settings › Tokens and the terminal all ask this one question.
  */
-export function offeredPluginRepo(db: Database, fromEnv: string | undefined): string | undefined {
+export function offeredPluginRepo(db: Database, fromEnv: string | undefined, upstream: string | undefined): string | undefined {
   const repo = forgeSource(db, fromEnv);
-  if (repo === undefined) return undefined;
-  const [owner = "", name = ""] = repo.split("/");
-  return repoVisibility(db, owner, name) === "public" ? repo : undefined;
+  if (repo !== undefined) {
+    const [owner = "", name = ""] = repo.split("/");
+    if (repoVisibility(db, owner, name) === "public") return repo;
+  }
+  return upstream;
+}
+
+/** Where a plugin repository lives: `owner/name` is on this forge's origin, a full URL is its own. */
+function pluginBase(origin: string, repo: string): string {
+  return repo.startsWith("https://") ? repo : `${origin}/${repo}`;
 }
 
 /** The two Claude Code lines that install the plugin from the marketplace. */
@@ -57,7 +65,7 @@ export function marketplaceLines(origin: string, repo: string): { add: string; i
 
 /** The clone URL of that repository on this forge's origin. */
 export function pluginSource(origin: string, repo: string): string {
-  return `${origin}/${repo}.git`;
+  return `${pluginBase(origin, repo)}.git`;
 }
 
 /** The one list the card and /llms.txt both read, so they cannot drift. */
@@ -75,7 +83,7 @@ export const HARNESS_PLUGINS: readonly HarnessPlugin[] = [
     label: "OpenCode",
     path: "plugins/opencode/forge.ts",
     install: (o, r) =>
-      `mkdir -p .opencode/plugin && curl -fsSL ${o}/${r}/raw/main/plugins/opencode/forge.ts -o .opencode/plugin/forge.ts`,
+      `mkdir -p .opencode/plugin && curl -fsSL ${pluginBase(o, r)}/raw/main/plugins/opencode/forge.ts -o .opencode/plugin/forge.ts`,
     setup: "set FORGE_URL and FORGE_TOKEN",
   },
 ];

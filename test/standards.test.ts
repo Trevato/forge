@@ -277,8 +277,8 @@ describe("what the open web expects", () => {
     expect(section).toContain(`${base}/mcp`);
     expect(section).toContain(`${base}/.well-known/oauth-protected-resource`);
     expect(section).toContain("streamable HTTP");
-    // trevato/forge is not here, so no install line is printed that could not work.
-    expect(section).toContain("Harness plugins: not offered here (no public source)");
+    // trevato/forge is not here, so the lines come from the public upstream.
+    expect(section).toContain("Claude Code plugin (source https://forge.open-platform.sh/trevato/forge.git");
     expect(section).not.toContain("needs that repository to be public");
   });
 

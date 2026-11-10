@@ -6,6 +6,7 @@
  * best of what is public (`actions/front.ts`).
  */
 
+import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { foundryHref } from "../../actions/foundry_door.ts";
 import { forgeCeiling } from "../../flow/ceiling.ts";
 import { liveLine } from "../pages/releases.ts";
@@ -683,7 +684,7 @@ function doorPulse(days: FrontPage["pulse"]["days"]): Html | null {
   </figure>`;
 }
 
-const FORGE_REPO = "https://forge.open-platform.sh/trevato/forge";
+const FORGE_REPO = UPSTREAM_REPO;
 
 /**
  * One press for each shipped pack (#9572): what it is, and the way to its page,

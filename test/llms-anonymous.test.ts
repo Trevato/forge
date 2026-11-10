@@ -46,7 +46,7 @@ const section = (body: string): string[] => {
 test("the anonymous text is small, varies by reader, and lists report plus one line", async () => {
   const res = await fetch(`${servers.url}/llms.txt`);
   const body = await res.text();
-  expect(Buffer.byteLength(body)).toBeLessThan(5 * 1024);
+  expect(Buffer.byteLength(body)).toBeLessThan(6 * 1024);
   expect(res.headers.get("vary")).toContain("Cookie");
   expect(res.headers.get("vary")).toContain("Authorization");
   const listed = section(body);

@@ -249,16 +249,17 @@ describe("making a token in the terminal", () => {
       h.stop();
       return text;
     };
-    expect(await mint()).not.toContain("/plugin marketplace add");
+    expect(await mint()).toContain(`/plugin marketplace add https://forge.open-platform.sh/trevato/forge.git`); // no own source: the upstream's
     const { createRepo } = await import("../src/core/repos.ts");
     const owner = await createUser(forge.db, { origin: "seed", trusted: true, username: "trevato", email: "t@forge.local", password: "a-good-passphrase", adminIfFirst: false });
     if (!owner.ok) throw new Error(owner.error);
     const made = await createRepo(forge.db, forge.reposRoot, { ownerId: owner.value.id, name: "forge", visibility: "private", description: "" });
     expect(made.ok).toBe(true);
-    expect(await mint()).not.toContain("/plugin marketplace add");
+    expect(await mint()).toContain(`/plugin marketplace add https://forge.open-platform.sh/trevato/forge.git`); // private here: still the upstream's
     forge.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'forge'").run();
     const shown = await mint();
     expect(shown).toContain("/plugin marketplace add");
+    expect(shown).not.toContain("forge.open-platform.sh");
     expect(shown).toContain("/trevato/forge.git");
     expect(shown).toContain("/plugin install forge@forge");
   });

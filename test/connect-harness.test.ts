@@ -66,14 +66,14 @@ test("the marketplace lines show only while the forge's plugin repository is pub
   const cookie = ((await fetch(`${base}/signin`, { method: "POST", body: new URLSearchParams({ username: "ada", password: "connect-password" }), redirect: "manual" })).headers.get("set-cookie") ?? "").split(";")[0]!;
   const get = async () => (await fetch(`${base}/settings/tokens`, { headers: { cookie } })).text();
   const url = (app.config.url ?? base).replace(/\/+$/, "");
-  expect(await get()).not.toContain("connect-claude-add");
+  expect(value(await get(), "connect-claude-add")).toBe("/plugin marketplace add https://forge.open-platform.sh/trevato/forge.git"); // no own source: the upstream's
   expect(await get()).toContain('id="connect-claude"');
 
   const owner = await createUser(app.db, { origin: "seed", trusted: true, username: "trevato", email: "t@f.dev", password: "connect-password" });
   if (!owner.ok) throw new Error(owner.error);
   const made = await initRepo(app.db, app.reposRoot, { ownerId: owner.value.id, name: "forge", visibility: "private", description: "" });
   expect(made).toMatchObject({ ok: true });
-  expect(await get()).not.toContain("connect-claude-add"); // private: no line a stranger could not run
+  expect(value(await get(), "connect-claude-add")).toBe("/plugin marketplace add https://forge.open-platform.sh/trevato/forge.git"); // private: the upstream's, which a stranger can run
   app.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'forge'").run();
 
   const page = await get();

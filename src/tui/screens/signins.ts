@@ -21,6 +21,7 @@
  * ended from here.
  */
 
+import { UPSTREAM_REPO } from "../../core/upstream.ts";
 import { accountSignIns, endAccountSession } from "../../actions/signins.ts";
 import {
   CHANGE_PASSWORD_WORDS,
@@ -213,7 +214,7 @@ export function signInsScreen(f: Session, ctx: Ctx): Screen {
       return;
     }
     note = `Made ${name} (${scope}).`;
-    const repo = offeredPluginRepo(f.db, f.app.config.forgeRepo);
+    const repo = offeredPluginRepo(f.db, f.app.config.forgeRepo, UPSTREAM_REPO);
     const origin = publicOrigin(f.app.config.url, `http://${f.app.config.host ?? "localhost"}:${f.app.config.port ?? 3000}`);
     ctx.push(secretScreen(ctx, made.value.token, repo === undefined ? null : marketplaceLines(origin, repo)));
   };
