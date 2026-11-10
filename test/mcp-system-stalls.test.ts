@@ -9,6 +9,7 @@ import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { during } from "../src/perf/jobs.ts";
 import { loopWatch } from "../src/perf/live.ts";
+import { LIMIT_MS } from "../src/perf/loop.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -34,10 +35,12 @@ afterAll(async () => {
 });
 
 test("a stall under a named job is read through system, at most 10, most ms first", async () => {
-  // A stall is blamed on a request first: let any request an earlier file in this process ran fall out of the stall's window.
-  await Bun.sleep(400);
+  // A stall is blamed on any request that finished inside it, before a job:
+  // wait out the requests an earlier file in this process ended, then stall
+  // just past the limit so the window holds the job alone.
+  await Bun.sleep(LIMIT_MS + 50);
   during("test-job-10907", () => 1);
-  loopWatch.stalled(300, performance.now());
+  loopWatch.stalled(LIMIT_MS + 10, performance.now());
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
@@ -46,7 +49,7 @@ test("a stall under a named job is read through system, at most 10, most ms firs
   const body = (await res.json()) as any;
   const out = JSON.parse(body.result.content[0].text);
   expect(out.stalls.length).toBeLessThanOrEqual(10);
-  expect(out.stalls).toContainEqual({ cause: "job:test-job-10907", ms: 300, count: 1 });
+  expect(out.stalls).toContainEqual({ cause: "job:test-job-10907", ms: LIMIT_MS + 10, count: 1 });
   const ms = out.stalls.map((s: any) => s.ms);
   expect(ms).toEqual([...ms].sort((a, b) => b - a));
 });

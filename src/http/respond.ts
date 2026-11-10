@@ -29,10 +29,15 @@ export function json(
       data = { ...data, retryAfter: wait };
   }
   data = withHint(data, status);
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json", ...headers },
-  });
+  // The floor is laid here as well as at the server's one door (#10949): a
+  // JSON answer carried by a path that skips the door — the internal
+  // listener, a test calling a handler — still leaves inert.
+  return securityFloor(
+    new Response(JSON.stringify(data), {
+      status,
+      headers: { "content-type": "application/json", ...headers },
+    }),
+  );
 }
 
 /**
@@ -343,12 +348,30 @@ function asObject(bytes: Uint8Array): Record<string, unknown> {
  * A JSON object body, at most \`BODY_MAX\` bytes for a signed-in caller and
  * \`STRANGER_MAX\` for anyone else (\`http/limits.ts\`) — a route reads its
  * body before it asks who is calling, so the cap cannot wait for that. Past
- * the cap, or malformed, \`{}\`; an over-limit body closes its connection.
+ * the cap it throws \`BodyTooLarge\` (answered 413) and the connection closes;
+ * malformed, \`{}\`.
  */
 export async function body(request: Request): Promise<Record<string, unknown>> {
   const bytes = await readBounded(request, bodyCapFor(request));
-  return bytes === "too_large" ? {} : asObject(bytes);
+  if (bytes === "too_large") throw new BodyTooLarge(bodyCapFor(request));
+  return asObject(bytes);
 }
+
+/**
+ * A body past its cap, thrown by \`body\` so the handler stops before it acts
+ * on nothing: read as \`{}\`, an oversize issue answered 422 for a missing
+ * title, and a route with defaults would have acted on none (#10949). The
+ * server's door answers it 413 (\`http/server.ts\`, \`failure\`).
+ */
+export class BodyTooLarge extends Error {
+  constructor(readonly max: number) {
+    super(`body over ${max} bytes`);
+  }
+}
+
+/** The 413 a \`BodyTooLarge\` is answered with. */
+export const bodyTooLarge = (error: BodyTooLarge): Response =>
+  apiError("too_large", 413, `at most ${error.max} bytes`);
 
 /**
  * A JSON object body kept to at most \`max\` bytes, for a route a stranger

@@ -543,6 +543,8 @@ import {
   prefersHtml,
   prefersJson,
   securityFloor,
+  BodyTooLarge,
+  bodyTooLarge,
   privateWhenSignedIn,
   tooManyAttempts,
   tryAgain,
@@ -2179,6 +2181,7 @@ export interface Servers {
  * when a database trigger refused, else a 500 that says nothing of the fault.
  */
 function failure(app: App, error: unknown): Response {
+  if (error instanceof BodyTooLarge) return securityFloor(bodyTooLarge(error));
   const refused = refusedByDatabase(error);
   if (refused !== undefined) {
     const shown = shownRefusal(refused);
@@ -2263,24 +2266,8 @@ function serveInternal(app: App): InternalListener {
   const onPort = portInsteadOfSocket();
   const internal = Bun.serve({
     ...(onPort ? { hostname: "127.0.0.1", port: 0 } : { unix: app.socketPath }),
-    fetch(request) {
-      // The socket's file mode used to be the only door check; a loopback
-      // port has none, so every internal request proves the boot secret.
-      if (!hookCallerAllowed(app, request)) {
-        const path = new URL(request.url).pathname;
-        if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
-          app.log.warn("internal call refused: no boot secret", {
-            method: request.method,
-            path: path.slice(0, 120),
-          });
-        return new Response("forbidden", { status: 403 });
-      }
-      const url = new URL(request.url);
-      if (request.method === "POST" && url.pathname === "/internal/hook") {
-        return handleHook(app, request);
-      }
-      return new Response("not found", { status: 404 });
-    },
+    // Only hooks call here, but the floor holds on every listener (#10949).
+    fetch: async (request) => securityFloor(await answerInternal(app, request)),
   });
   if (onPort) app.hookAddress.current = tcpAddress(internal.port ?? 0);
   return {
@@ -2290,6 +2277,26 @@ function serveInternal(app: App): InternalListener {
       rmSync(app.socketPath, { force: true });
     },
   };
+}
+
+/** The internal listener's answer: a hook, with the boot secret, or nothing. */
+async function answerInternal(app: App, request: Request): Promise<Response> {
+  // The socket's file mode used to be the only door check; a loopback
+  // port has none, so every internal request proves the boot secret.
+  if (!hookCallerAllowed(app, request)) {
+    const path = new URL(request.url).pathname;
+    if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
+      app.log.warn("internal call refused: no boot secret", {
+        method: request.method,
+        path: path.slice(0, 120),
+      });
+    return new Response("forbidden", { status: 403 });
+  }
+  const url = new URL(request.url);
+  if (request.method === "POST" && url.pathname === "/internal/hook") {
+    return handleHook(app, request);
+  }
+  return new Response("not found", { status: 404 });
 }
 
 /**
