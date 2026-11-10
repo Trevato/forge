@@ -14,6 +14,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { deploySettled } from "./helpers/apps-forge.ts";
+import { forgeWaited, startLoopWorst, stopLoopWorst } from "../src/perf/loop_worst.ts";
 
 const DOMAIN = "apps.test";
 // node:http, not Bun.serve: Bun drops a streamed Response's content-length,
@@ -132,6 +133,36 @@ describe("a proxied answer's Server-Timing", () => {
     // No probe socket: the connect is inside ttfb, never named apart.
     expect(dur(header, "forge-connect")).toBeUndefined();
     expect(header).toMatch(/^[a-z0-9.;=, -]+$/);
+  });
+
+  test("forge-lag names the forge's own loop lag beside forge-ttfb, well-formed", async () => {
+    const res = await viaHost("/ttfb");
+    expect(res.status).toBe(200);
+    const header = res.headers.get("server-timing")!;
+    // Exactly one, a duration with one decimal, right after forge-ttfb.
+    expect(header.match(/(?:^|, )forge-lag;/g)?.length).toBe(1);
+    expect(header).toMatch(/(?:^|, )forge-ttfb;dur=[0-9]+\.[0-9], forge-lag;dur=[0-9]+\.[0-9](?:,|$)/);
+    expect(dur(header, "forge-lag")!).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a blocked forge loop shows in forge-lag, so the app is not blamed", async () => {
+    // The sampler started here, not by whoever ran first: the test cannot depend on it.
+    stopLoopWorst();
+    startLoopWorst({ everyMs: 5 });
+    try {
+      await Bun.sleep(20);
+      // Block the forge's loop for 250 ms; the sampler names it in the 10 s window.
+      const until = performance.now() + 250;
+      while (performance.now() < until) {}
+      await Bun.sleep(30);
+      const header = (await viaHost("/ttfb")).headers.get("server-timing")!;
+      expect(dur(header, "forge-lag")!).toBeGreaterThanOrEqual(200);
+      // /ttfb answers in ~30 ms: the lag is more than half of it, so the wait was the forge's.
+      expect(forgeWaited(dur(header, "forge-lag")!, dur(header, "forge-ttfb")!)).toBe(true);
+    } finally {
+      stopLoopWorst();
+      startLoopWorst();
+    }
   });
 
   test("forge-route splits into forge-lookup, forge-state and forge-session", async () => {
@@ -254,5 +285,25 @@ describe("a proxied answer's Server-Timing", () => {
     } finally {
       restore();
     }
+  });
+});
+
+describe("forgeWaited: the forge's lag explains the wait when it is more than half of forge-ttfb", () => {
+  test("the issue's own readings: 1490.7 ms ttfb with the app at 3.6 ms", () => {
+    expect(forgeWaited(1400, 1490.7)).toBe(true); // 1400 > 745.35
+    expect(forgeWaited(700, 1490.7)).toBe(false); // 700 < 745.35: the app's to explain
+  });
+
+  test("exactly half is not more than half", () => {
+    expect(forgeWaited(50, 100)).toBe(false);
+    expect(forgeWaited(50.1, 100)).toBe(true);
+    expect(forgeWaited(0, 43.8)).toBe(false);
+  });
+
+  test("a reading that is not a duration never blames the forge", () => {
+    expect(forgeWaited(10, 0)).toBe(false);
+    expect(forgeWaited(-1, 10)).toBe(false);
+    expect(forgeWaited(Number.NaN, 10)).toBe(false);
+    expect(forgeWaited(10, Number.POSITIVE_INFINITY)).toBe(false);
   });
 });

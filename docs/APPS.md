@@ -266,9 +266,13 @@ the sum of `forge-lookup`, the server finding the app by its host,
 grant read), `forge-wake` (waiting for a sleeping or starting environment; 0
 when none), `forge-upstream` and `forge-ttfb` (the same wait, until the app's
 headers: `fetch` reports nothing of its connection, so the socket's opening
-is inside it), `forge-body` (reading a page whole for the pill) and
+is inside it), `forge-lag` (the forge's own worst event-loop lag of the last
+10 s, written right after `forge-ttfb`: `forge-ttfb` is read on the forge's
+clock, so a loop busy with something else lands in it), `forge-body` (reading a page whole for the pill) and
 `forge-rewrite` (pill injection with that read, when it ran). Big `forge-wake`
-is a cold start, big `forge-ttfb` is the app or its listener, big `forge-body`
+is a cold start, big `forge-ttfb` is the app or its listener — unless
+`forge-lag` is more than half of `forge-ttfb`, when the wait was the forge's,
+not the app's (`forgeWaited` in `src/perf/loop_worst.ts`) — big `forge-body`
 is an app slow to finish its page; if all are small, the time went before the
 request reached the forge. The forge opens no second socket to time the
 connect: it would take a backlog slot in the very case it is meant to find.

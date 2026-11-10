@@ -98,3 +98,15 @@ export function stopLoopWorst(): void {
 export function currentLoopLag(): number {
   return loopWorst.worst(windowClock());
 }
+
+/**
+ * Was a relayed request's wait the forge's, not the app's (#10838)? True when
+ * the forge's worst loop lag (`forge-lag`) is more than half of the time to
+ * the app's headers (`forge-ttfb`): most of that wait was the forge's loop
+ * busy elsewhere, so the app must not be called slow. A non-finite or
+ * negative reading, or a zero wait, never blames the forge.
+ */
+export function forgeWaited(lagMs: number, ttfbMs: number): boolean {
+  if (!Number.isFinite(lagMs) || !Number.isFinite(ttfbMs) || lagMs < 0 || ttfbMs <= 0) return false;
+  return lagMs > ttfbMs / 2;
+}

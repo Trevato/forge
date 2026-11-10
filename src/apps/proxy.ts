@@ -65,6 +65,7 @@ import { notFound, securityFloor } from "../http/respond.ts";
 import { appMeasure } from "./measure.ts";
 import { holdPortRequest, holdPortSocket } from "./handoff.ts";
 import { secureFor } from "../http/cookie_secure.ts";
+import { currentLoopLag } from "../perf/loop_worst.ts";
 import { cspNonce, htmlAnswer, readPage, rewritable, TOOLBAR_ASSET_PATH, TOOLBAR_ASSET_PREFIX, toolbarResponse, withToolbar, type PillWhere } from "./toolbar.ts";
 
 const proxySecure = (request: Request, url: URL, forgeUrl: string): boolean =>
@@ -441,7 +442,7 @@ function withPhases(request: Request, res: Response): Response {
  */
 type RelayPhase =
   | "route" | "lookup" | "state" | "session" | "wake"
-  | "upstream" | "ttfb" | "body" | "rewrite";
+  | "upstream" | "ttfb" | "lag" | "body" | "rewrite";
 
 /** Name one of the forge's phases of relaying an app answer. Durations only. */
 function relayPhase(request: Request, name: RelayPhase, ms: number): void {
@@ -452,9 +453,15 @@ function relayPhase(request: Request, name: RelayPhase, ms: number): void {
  * Name `ttfb` and `upstream` for headers that took `headersMs`. `fetch` says
  * nothing of its connection, so the two are the same wait: `ttfb` is the name
  * the split reads by, `upstream` the total older readers know.
+ *
+ * Beside them, `forge-lag` (#10838): the forge's worst event-loop lag of the
+ * last 10 s (`perf/loop_worst.ts`). `forge-ttfb` is read on the forge's clock,
+ * so a loop blocked by something else lands in it while the app sat idle;
+ * `forgeWaited` (the one place the rule lives) says when the wait was the forge's.
  */
 function relayUpstream(request: Request, headersMs: number): void {
   relayPhase(request, "ttfb", headersMs);
+  relayPhase(request, "lag", currentLoopLag());
   relayPhase(request, "upstream", headersMs);
 }
 

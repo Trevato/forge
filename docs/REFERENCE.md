@@ -19,8 +19,10 @@ git underneath is one click away — the switch in the top bar, or `?mode=dev` o
 any URL — and it is the rest of this page.
 
 Slow app? Its response's `Server-Timing` keeps the app's entries and adds the
-forge's `forge-route`, `forge-wake`, `forge-upstream` and `forge-rewrite`
-(milliseconds only; see `docs/APPS.md`).
+forge's `forge-route`, `forge-wake`, `forge-upstream`, `forge-ttfb`,
+`forge-lag`, `forge-body` and `forge-rewrite` (milliseconds only; see
+`docs/APPS.md`). When `forge-lag` is more than half of `forge-ttfb`, the wait
+was the forge's, not the app's.
 
 A forge this one spawned (hosted) runs the apps it was given too: its `bakery`
 answers at `bakery--<child>--<this forge's host>`, in this forge's lanes, on the
