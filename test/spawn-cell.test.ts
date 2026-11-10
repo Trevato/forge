@@ -7,7 +7,7 @@ import { answerFromCell, closeHostedChildren, resolveHostedChild } from "../src/
 import { createApp } from "../src/app.ts";
 import { childEnv } from "../src/apps/process.ts";
 import { watchedLimits } from "../src/apps/contain.ts";
-import { cellChildren, crewAtWork, stopCellChildren, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
+import { cellChildren, crewAtWork, stopCellChildren, stopGently, cellEnv, cellLimits, cellPlacement, cellSpecFor, forward, ownsBody } from "../src/spawn/cell.ts";
 import { fallbackPlacement, hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 import { SIZES } from "../src/spawn/sizes.ts";
@@ -481,5 +481,30 @@ describe("a child whose cell will not come up", () => {
       await closeHostedChildren(parent);
       parent.close();
     }
+  });
+});
+
+describe("a child forge told to go", () => {
+  const forge = (body: string) =>
+    Bun.spawn([process.execPath, "-e", body], { stdout: "ignore", stderr: "ignore" });
+
+  test("drains on SIGTERM and leaves clean, with no kill", async () => {
+    const mark = join(tmp, "left-clean");
+    const proc = forge(`process.on("SIGTERM", () => { require("node:fs").writeFileSync(${JSON.stringify(mark)}, "clean"); process.exit(0); }); setInterval(() => {}, 1000);`);
+    await Bun.sleep(300);
+    const started = Date.now();
+    await stopGently({ pid: proc.pid, exited: proc.exited }, 5_000);
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(readFileSync(mark, "utf8")).toBe("clean");
+    expect(proc.signalCode).toBeNull();
+  });
+
+  test("one that will not go is killed once its grace is up", async () => {
+    const proc = forge(`process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);`);
+    await Bun.sleep(300);
+    const started = Date.now();
+    await stopGently({ pid: proc.pid, exited: proc.exited }, 400);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(400);
+    expect(proc.signalCode).toBe("SIGKILL");
   });
 });

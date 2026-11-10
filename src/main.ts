@@ -26,6 +26,7 @@ import { reconcile } from "./core/reconcile.ts";
 import { offerStartingBoards } from "./actions/boards.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren, childAwake } from "./spawn/host.ts";
+import { stopCellChildren } from "./spawn/cell.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { previewIdentityKey } from "./spawn/preview-owner.ts";
 import { PREVIEW_ADMIN, seedPreview } from "./spawn/preview-seed.ts";
@@ -898,6 +899,9 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     // Routers still send this process requests for the linger's length;
     // its apps answer them, and stop only after (#4496).
     (linger ?? Promise.resolve()).then(() => apps?.stop()).finally(() => presence?.stop()),
+    // Child forges in cells of their own leave after the linger too, each
+    // draining and marking its start clean; a release no longer kills them.
+    (linger ?? Promise.resolve()).then(() => stopCellChildren(app)),
     // A step leads a process group of its own, so a terminal's Ctrl-C no
     // longer ends it: a person's stop cuts checks off (queued again) at once.
     checks?.stop({ drain: signal === "SIGTERM" }),

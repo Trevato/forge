@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { clientAddress } from "../http/peer.ts";
 import type { App } from "../app.ts";
 import { connectUpstream, offeredProtocols, type AppSocket } from "../apps/proxy.ts";
-import { cellsAvailable, killTree, openCell, type Cell, type CellSpec, type Limits } from "../apps/contain.ts";
+import { cellsAvailable, commandPid, killTree, openCell, type Cell, type CellSpec, type Limits } from "../apps/contain.ts";
 import { childEnv, freePort } from "../apps/process.ts";
 import { childDirOf } from "../actions/spawn.ts";
 import { openBeatDoor, parentLocal, type BeatDoor } from "./beat-door.ts";
@@ -43,6 +43,44 @@ export function crewAtWork(dir: string): boolean {
     return false;
   } finally {
     db?.close();
+  }
+}
+
+/**
+ * How long a child forge told to go has to drain and mark its start clean
+ * (`kernel/boots.ts`) before it is killed: its own drain is ten seconds a
+ * budget (`drain.ts`), and an empty one leaves at once.
+ */
+export const STOP_GRACE_MS = 15_000;
+
+/**
+ * Ask a child forge to go the way its platform would, SIGTERM to the forge
+ * inside the cell, and kill the cell only if it is still there after
+ * `graceMs`. A sleep or a parent's release used to SIGKILL it outright, so
+ * every start read unclean (glint: 49 "unclean" exits, none of them a crash).
+ */
+export async function stopGently(child: { readonly pid: number; readonly exited: Promise<unknown> }, graceMs = STOP_GRACE_MS): Promise<void> {
+  const forge = commandPid(child.pid) ?? child.pid;
+  try {
+    process.kill(forge, "SIGTERM");
+  } catch {
+    // already gone
+  }
+  const until = Date.now() + graceMs;
+  let gone = false;
+  void child.exited.then(() => (gone = true));
+  while (!gone && alive(forge) && Date.now() < until) await Bun.sleep(100);
+  // The forge has left (or overstayed): what is left of its cell goes with it.
+  if (!gone) killTree(child.pid);
+  await child.exited;
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -280,8 +318,7 @@ function makeRegistry(parent: App): CellChildren {
       const child = held.get(bodyId);
       if (child === undefined) return;
       held.delete(bodyId);
-      killTree(child.pid);
-      await child.exited;
+      await stopGently(child);
     },
     get: (bodyId) => held.get(bodyId),
     failure: (bodyId) => failed.get(bodyId)?.why,
